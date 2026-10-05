@@ -29,6 +29,9 @@ public interface IRespireCommandQueue
     /// <summary>Generic key management commands.</summary>
     IBatchKeyCommands Keys { get; }
 
+    /// <summary>Server flush commands affecting only the execution node.</summary>
+    IBatchServerCommands Server => throw new NotSupportedException("This queue does not support server flush commands.");
+
     /// <summary>Hash (field → value map) commands.</summary>
     IBatchHashCommands Hashes { get; }
 

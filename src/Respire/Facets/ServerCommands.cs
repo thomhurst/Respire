@@ -107,8 +107,16 @@ public partial interface IServerCommands
     /// <summary>Deletes every key in the current database. Requires <see cref="RespireOptions.AllowAdmin"/>. Redis: FLUSHDB.</summary>
     ValueTask FlushDatabaseAsync(CancellationToken cancellationToken = default);
 
+    /// <summary>Deletes every key in the current database with an explicit reclamation mode. Requires AllowAdmin.</summary>
+    ValueTask FlushDatabaseAsync(ServerFlushMode mode, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("This implementation does not support explicit flush modes.");
+
     /// <summary>Deletes every key in every database. Requires <see cref="RespireOptions.AllowAdmin"/>. Redis: FLUSHALL.</summary>
     ValueTask FlushAllAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Deletes every key in every database with an explicit reclamation mode. Requires AllowAdmin.</summary>
+    ValueTask FlushAllAsync(ServerFlushMode mode, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("This implementation does not support explicit flush modes.");
 
     /// <summary>The server's clock. Redis: TIME.</summary>
     ValueTask<DateTimeOffset> TimeAsync(CancellationToken cancellationToken = default);
@@ -185,20 +193,10 @@ internal sealed partial class ServerCommands(RespireClient client) : IServerComm
             : DatabaseSizeClusterAsync(cancellationToken);
 
     public ValueTask FlushDatabaseAsync(CancellationToken cancellationToken = default)
-    {
-        EnsureAdminAllowed("FLUSHDB");
-        return client.Core.Cluster is null
-            ? client.OkAsync("FLUSHDB", new RawCommand(RespCommands.FlushDb), cancellationToken)
-            : FlushClusterAsync("FLUSHDB", RespCommands.FlushDb, cancellationToken);
-    }
+        => FlushDatabaseAsync(ServerFlushMode.Default, cancellationToken);
 
     public ValueTask FlushAllAsync(CancellationToken cancellationToken = default)
-    {
-        EnsureAdminAllowed("FLUSHALL");
-        return client.Core.Cluster is null
-            ? client.OkAsync("FLUSHALL", new RawCommand(RespCommands.FlushAll), cancellationToken)
-            : FlushClusterAsync("FLUSHALL", RespCommands.FlushAll, cancellationToken);
-    }
+        => FlushAllAsync(ServerFlushMode.Default, cancellationToken);
 
     public ValueTask<RespireServerClientInfo[]> ClientsAsync(CancellationToken cancellationToken = default)
         => ConvertAsync(
@@ -318,7 +316,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IServerComm
 
     private async ValueTask FlushClusterAsync(
         string operation,
-        byte[] command,
+        Cmd command,
         CancellationToken cancellationToken)
     {
         var cache = client.Core.ClientCache;
@@ -330,7 +328,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IServerComm
             foreach (var connection in connections)
             {
                 var reply = await client.SendToClusterTargetAsync(
-                        operation, connection, new RawCommand(command), cancellationToken)
+                        operation, connection, command, cancellationToken)
                     .ConfigureAwait(false);
                 try
                 {
@@ -675,6 +673,9 @@ internal sealed partial class ServerCommands(RespireClient client) : IServerComm
         => value > int.MaxValue ? int.MaxValue : value < int.MinValue ? int.MinValue : (int)value;
 
     private void EnsureAdminAllowed(string operation)
+        => EnsureAdminAllowed(client, operation);
+
+    internal static void EnsureAdminAllowed(RespireClient client, string operation)
     {
         if (!client.Core.Options.AllowAdmin)
         {

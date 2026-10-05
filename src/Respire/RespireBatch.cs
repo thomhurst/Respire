@@ -26,7 +26,8 @@ namespace Respire;
 /// <c>Evaluate</c> rather than the client's <c>ExecuteAsync</c> name and return owned results.
 /// Raw Execute supports known nonblocking key layouts and owned results. Unknown layouts are rejected.
 /// Stream append, range, count, remove, trim, and acknowledge commands support deferred execution.
-/// Blocking stream reads, consumer loops, group administration, server administration, and distributed
+/// Server flush commands affect only their execution node. Other server administration,
+/// blocking stream reads, consumer loops, group administration, and distributed
 /// locks remain client-only because their blocking, streaming, connection-scoped, or managed-lifetime
 /// semantics do not fit a deferred single-flush command queue.
 /// </remarks>
@@ -39,6 +40,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
 
     private IBatchStringCommands? _strings;
     private IBatchKeyCommands? _keys;
+    private IBatchServerCommands? _server;
     private IBatchHashCommands? _hashes;
     private IBatchListCommands? _lists;
     private IBatchSetCommands? _sets;
@@ -67,6 +69,9 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
 
     /// <summary>Generic key management commands. Redis: DEL, EXPIRE, TYPE, …</summary>
     public IBatchKeyCommands Keys => _keys ??= new BatchKeyCommands(this);
+
+    /// <summary>Server flush commands affecting only the execution node.</summary>
+    public IBatchServerCommands Server => _server ??= new BatchServerCommands(this);
 
     /// <summary>Hash (field → value map) commands. Redis: HSET, HGET, HGETALL, …</summary>
     public IBatchHashCommands Hashes => _hashes ??= new BatchHashCommands(this);
