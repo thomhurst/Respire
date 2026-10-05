@@ -235,15 +235,15 @@ public class SearchIntegrationTests(ModernRedisTestContainer fixture)
                 { Vector = new(RespireSearchVectorAlgorithm.Flat, RespireSearchVectorType.Float32, 2, RespireSearchDistanceMetric.L2) },
             ],
         });
+        // FT.CREATE scans the shared keyspace in the background. Hashes written during the scan are
+        // indexed twice, and a query racing the second pass can miss them, so write after it ends.
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        while ((await search.GetIndexInfoAsync(index, deadline.Token)).Properties["indexing"].Scalar != "0")
+            await Task.Delay(20, deadline.Token);
         for (var i = 1; i <= 3; i++)
             await client.Hashes.SetAsync(index + ":doc:" + i,
                 ("title", "redis"), ("category", i == 1 ? "cache|client" : "cache"),
                 ("year", "2025"), ("embedding", Vector));
-        // Vector indexing can finish after the hash writes and scalar indexes are visible.
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        while ((await search.VectorSearchAsync(index, new("embedding", Vector, 3),
-                   cancellationToken: deadline.Token)).Documents.Count != 3)
-            await Task.Delay(20, deadline.Token);
     }
 
     private static byte[] CreateVector()
