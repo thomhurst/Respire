@@ -16,7 +16,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
     // connection stops accepting commands; the drain then waits for its reply.
     private static readonly TimeSpan s_retirementGrace = TimeSpan.FromSeconds(1);
 
-    private readonly object _entriesGate = new();
+    private readonly Lock _entriesGate = new();
     private readonly ConcurrentDictionary<RespireEndpoint, Entry> _entries = new(RespireEndpointComparer.Instance);
     // Entries removed from the topology drain before closing so reads already using them can finish.
     private readonly ConcurrentDictionary<Entry, byte> _retiring = new();

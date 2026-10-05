@@ -5,7 +5,7 @@ namespace Respire.Internal;
 /// serializes publication and prevents additions after shutdown. Sharing its publication gate
 /// makes snapshots wait for in-progress publications. Pool operations run outside that gate.
 /// </summary>
-internal sealed class DedicatedPoolLedger(object gate)
+internal sealed class DedicatedPoolLedger(Lock gate)
 {
     private readonly HashSet<DedicatedConnectionPool> _pools = [];
 

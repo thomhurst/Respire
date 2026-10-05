@@ -3,7 +3,7 @@ namespace Respire.Internal;
 /// <summary>Owns the lifecycle and coalescing rules for cluster discovery refresh work.</summary>
 internal sealed class SharedRefreshCoordinator(TimeProvider clock, TimeSpan coalescingWindow)
 {
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private RefreshFlight? _current;
     private long _lastTopologyRefreshTimestamp;
     private bool _hasTopologyRefreshTimestamp;

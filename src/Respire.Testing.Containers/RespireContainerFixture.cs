@@ -1,3 +1,8 @@
+#if !NET9_0_OR_GREATER
+// This package does not use the core library's internal Lock polyfill.
+using Lock = System.Object;
+#endif
+
 using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
@@ -28,7 +33,7 @@ public sealed class RespireContainerFixture : IAsyncDisposable
     private readonly IContainer _container;
     private readonly RespireContainerOptions _options;
     private readonly int[] _ports;
-    private readonly object _disposeGate = new();
+    private readonly Lock _disposeGate = new();
     private Task? _disposeTask;
     private int _disposed;
     private readonly string _cli;

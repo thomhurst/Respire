@@ -13,7 +13,7 @@ internal sealed partial class ClusterRouter
     private sealed class ReplicaRefreshRound(int slot, RespireConnectionMultiplexer? originalOwner)
     {
         internal readonly object SnapshotBatch = new();
-        private readonly object _gate = new();
+        private readonly Lock _gate = new();
         private (List<ClusterTopologyRange> Ranges, long Version, long Generation)? _empty;
         private Exception? _failure;
 

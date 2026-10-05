@@ -11,7 +11,7 @@ namespace Respire.Internal;
 /// </remarks>
 internal sealed class ClusterNotificationCoordinator
 {
-    internal readonly object Gate = new();
+    internal readonly Lock Gate = new();
     internal readonly Dictionary<RespireEndpoint, ClusterNotificationNode> Nodes = [];
     internal readonly Dictionary<RespireSubscription, NotificationSubscriptionState> Subscriptions = [];
     internal readonly HashSet<RespireEndpoint> DisconnectedEndpoints = [];
@@ -90,7 +90,7 @@ internal sealed class ClusterNotificationNode(RespireEndpoint endpoint)
 {
     internal readonly RespireEndpoint Endpoint = endpoint;
     // Route writers hold the coordinator gate and then this gate; delivery takes this gate only.
-    internal readonly object Gate = new();
+    internal readonly Lock Gate = new();
     internal readonly ByteRouteDictionary<List<RespireSubscription>>[] Routes = [new(), new(), new()];
     internal RespireConnection? Connection;
     internal long Epoch;

@@ -85,7 +85,7 @@ internal sealed partial class SentinelDiscoveryState
                 TryRemove(membership.Endpoint);
         }
     }
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly List<RespireEndpoint> _endpoints = [];
     private readonly Dictionary<RespireEndpoint, long> _known = new(SentinelEndpointIdentity.EndpointComparer.Instance);
     private long _membershipVersion;

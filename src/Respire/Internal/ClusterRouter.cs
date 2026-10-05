@@ -23,7 +23,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     private readonly Dictionary<RespireConnectionMultiplexer, DedicatedConnectionPool> _dedicatedPools = [];
     private readonly Dictionary<RespireConnectionMultiplexer, Action> _dedicatedMovingHandlers = [];
     private readonly Dictionary<CorrectionPoolIdentity, CorrectionPoolEntry> _correctionPools = [];
-    private readonly object _nodesGate = new();
+    private readonly Lock _nodesGate = new();
     private ClusterRoutingSnapshot _topology = ClusterRoutingSnapshot.Empty;
     private ulong _dirtyTopologyPages;
     internal ClusterRoutingSnapshot RoutingSnapshot => Volatile.Read(ref _topology);
@@ -218,7 +218,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
     // ClientCore acquires its health gate first, then this gate, through membership checks
     // and health mutation. Router callbacks must always run outside this gate.
-    internal object NodeStateGate => _nodesGate;
+    internal Lock NodeStateGate => _nodesGate;
 
     internal bool IsNodeObserved(RespireConnectionMultiplexer node)
     {
@@ -1970,7 +1970,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     // The only reader-visible topology publication. The staging arrays remain writer-owned.
     private void PublishTopologyLocked()
     {
-        Debug.Assert(Monitor.IsEntered(_nodesGate), "Topology publication requires the writer gate.");
+        Debug.Assert(_nodesGate.IsHeldByCurrentThread, "Topology publication requires the writer gate.");
         var snapshot = _topology.Publish(_slots, _replicasBySlot, _dirtyTopologyPages,
             ImmutableCollectionsMarshal.AsImmutableArray(_masters), ImmutableCollectionsMarshal.AsImmutableArray(_replicaNodes),
             ImmutableCollectionsMarshal.AsImmutableArray(_replicas), _masterSlotCounts, _hasCompleteTopology != 0);

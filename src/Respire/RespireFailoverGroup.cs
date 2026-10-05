@@ -123,7 +123,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
     private readonly ILogger? _logger;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly CancellationTokenSource _stop = new();
-    private readonly object _disposeLock = new();
+    private readonly Lock _disposeLock = new();
     private Task? _monitor;
     private Task? _disposal;
     private CandidateState? _active;
@@ -633,7 +633,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
     private sealed class CandidateState(RespireClient client, int priority, int order, RespireEndpoint fallbackEndpoint,
         string? sentinelPrimaryName, IEnumerable<RespireEndpoint> configuredEndpoints)
     {
-        private readonly object _gate = new();
+        private readonly Lock _gate = new();
         // Standalone and Cluster clients have a fixed endpoint; a Sentinel candidate's endpoint is its current primary.
         private readonly RespireEndpoint? _fixedEndpoint = client.Core.Sentinel is null ? client.Endpoint : (RespireEndpoint?)null;
         private bool _isHealthy;

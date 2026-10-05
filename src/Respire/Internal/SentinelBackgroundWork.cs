@@ -4,10 +4,10 @@ internal enum SentinelWorkKind { Supervisor, Monitor, Rediscovery, SourceResolut
 
 // Shares the publication/disposal gate. Start never runs application or transport code
 // inline, and Stop closes registration before returning the complete shutdown snapshot.
-internal sealed class SentinelBackgroundWork(object gate)
+internal sealed class SentinelBackgroundWork(Lock gate)
 {
     internal const int MaximumRetainedFailuresPerKind = 8;
-    private readonly object _gate = gate;
+    private readonly Lock _gate = gate;
     private readonly Dictionary<Task, SentinelWorkKind> _tasks = [];
     private readonly Dictionary<SentinelWorkKind, Queue<Task>> _failures = [];
     private long _discardedFailures;

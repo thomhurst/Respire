@@ -6,7 +6,7 @@ internal sealed class DuplexPipeStream(PipeReader reader, PipeWriter writer, Act
 {
     private readonly Stream _input = reader.AsStream();
     private readonly Stream _output = writer.AsStream();
-    private readonly object _lifetimeGate = new();
+    private readonly Lock _lifetimeGate = new();
     private int _activeReads;
     private int _activeWrites;
     private bool _cancellationIssued;

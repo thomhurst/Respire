@@ -1833,7 +1833,7 @@ public class ClusterRetirementTests
         Publish(router, new("127.0.0.1", server.Port), "old", 1);
         var connection = await router.GetConnectionAsync(42, CancellationToken.None, discovery: null);
         var replacement = router.GetOrCreateNode(new("replacement.invalid", 6379));
-        var gate = typeof(ClusterRouter).GetField("_nodesGate", Private)!.GetValue(router)!;
+        var gate = (Lock)typeof(ClusterRouter).GetField("_nodesGate", Private)!.GetValue(router)!;
         var versions = (long[])typeof(ClusterRouter).GetField("_slotVersions", Private)!.GetValue(router)!;
         var result = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         bool readerReachedSnapshot;
@@ -2037,7 +2037,7 @@ public class ClusterRetirementTests
             var endpoint = Activator.CreateInstance(field.FieldType, "127.0.0.1", replacement.Port);
             var pool = new DedicatedConnectionPool("127.0.0.1", replacement.Port,
                 client.Core.Options.ToConnectionOptions(), NullLogger.Instance);
-            lock (typeof(ClusterRouter).GetField("_nodesGate", Private)!.GetValue(router)!)
+            lock ((Lock)typeof(ClusterRouter).GetField("_nodesGate", Private)!.GetValue(router)!)
             {
                 field.SetValue(oldNode, endpoint);
                 var pools = (Dictionary<RespireConnectionMultiplexer, DedicatedConnectionPool>)

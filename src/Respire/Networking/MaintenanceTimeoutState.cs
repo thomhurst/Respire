@@ -4,7 +4,7 @@ namespace Respire.Networking;
 internal sealed class MaintenanceTimeoutState(long maximumWindowMilliseconds)
 {
     private const int MaximumOperations = 256;
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly Dictionary<(string Family, long Sequence), Window> _windows = [];
     // Insertion order, so capacity eviction removes the oldest finished identity deterministically.
     private readonly List<(string Family, long Sequence)> _order = new(MaximumOperations);

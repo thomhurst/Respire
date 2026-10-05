@@ -173,7 +173,7 @@ internal sealed class RedisRateLimiter : RateLimiter
     private readonly int _segments;
     private readonly int _tokensPerPeriod;
     private readonly long _tokenBucketExpiryMs;
-    private readonly object _queueGate = new();
+    private readonly Lock _queueGate = new();
     private readonly LinkedList<QueuedRequest> _queue = [];
     private readonly SemaphoreSlim _queueChanged = new(0, 1);
     private int _queuedPermits;

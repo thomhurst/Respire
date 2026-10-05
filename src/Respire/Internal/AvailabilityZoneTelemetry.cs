@@ -26,7 +26,7 @@ internal static class AvailabilityZoneTelemetry
     // budget without permanently consuming other tests' observable metric labels.
     internal sealed class Registry
     {
-        private readonly object _gate = new();
+        private readonly Lock _gate = new();
         private readonly Dictionary<string, Counter> _zones = new(StringComparer.Ordinal);
         private KeyValuePair<string, Counter>[] _snapshot = [];
         private readonly Counter _unknown = new();

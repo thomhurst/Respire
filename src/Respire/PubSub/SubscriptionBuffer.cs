@@ -6,7 +6,7 @@ namespace Respire.Internal;
 /// <summary>Bounds data messages while retaining ordered, coalesced continuity markers.</summary>
 internal sealed class SubscriptionBuffer(int capacity, SubscriptionOverflow overflow)
 {
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly Entry[] _entries = CreateEntries(capacity);
     private readonly Channel<byte> _ready = Channel.CreateBounded<byte>(new BoundedChannelOptions(1)
     {

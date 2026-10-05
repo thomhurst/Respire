@@ -5,7 +5,7 @@ namespace Respire.Internal;
 /// <summary>Arms an upload deadline only while discovering or acquiring its connection.</summary>
 internal sealed class DedicatedAcquisitionCancellation : IDisposable
 {
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly CancellationTokenSource _source;
     private readonly Timer _timer;
     private CommandDeadline _deadline;

@@ -11,7 +11,7 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
     private readonly RespireCoordination _coordination;
     private readonly RespireLockToken _owner;
     private readonly SemaphoreSlim _operationGate = new(1, 1);
-    private readonly object _releaseSync = new();
+    private readonly Lock _releaseSync = new();
     private LeaseSnapshot _snapshot;
     private int _state;
     private Task<LockReleaseOutcome>? _releaseTask;

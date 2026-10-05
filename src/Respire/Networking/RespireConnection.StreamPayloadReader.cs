@@ -12,7 +12,7 @@ internal sealed partial class RespireConnection
     private sealed class StreamPayloadReader(Stream source, long length, ArrayPool<byte>? pool = null) : IDisposable
     {
         private readonly ArrayPool<byte> _pool = pool ?? ArrayPool<byte>.Shared;
-        private readonly object _bufferOwnershipGate = new();
+        private readonly Lock _bufferOwnershipGate = new();
         private CancellationTokenSource? _sourceCancellation;
         private CancellationToken _effectiveCancellation;
         private CancellationTokenRegistration _sourceCancellationRegistration;

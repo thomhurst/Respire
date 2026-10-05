@@ -41,7 +41,7 @@ internal sealed partial class DedicatedConnectionPool(
 
     // Cluster diagnostics acquire the router's _nodesGate before this gate. Never call
     // back into the router or invoke user callbacks while holding this gate.
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly List<Entry> _idle = new(MaxIdle);
     private readonly RespireConnectionOptions _ordinaryOptions = options.MaintenanceNotifications == RespireMaintenanceNotificationMode.Disabled
         ? options : options with { MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled };

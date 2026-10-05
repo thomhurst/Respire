@@ -341,7 +341,7 @@ public class FakeServerTests
             // retained ownership set; no production hook is needed for this leak regression.
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             var field = typeof(RespireFakeServer).GetField("_connections", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
-            var gate = typeof(RespireFakeServer).GetField("_gate", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(server)!;
+            var gate = (Lock)typeof(RespireFakeServer).GetField("_gate", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(server)!;
             while (true)
             {
                 bool empty;

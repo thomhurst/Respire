@@ -52,7 +52,7 @@ internal sealed partial class RespireConnection
 
     private readonly RespireConnectionOptions? _maintenanceOptions;
     // Serializes maintenance-window publication with streamed-upload deadline cancellation.
-    private readonly object _maintenancePublicationGate = new();
+    private readonly Lock _maintenancePublicationGate = new();
     private Queue<(MaintenanceNotification Notification, long Token)>? _unpublishedMigrations;
 
     // Publication and receive-side dispatch share this gate so a newer sequence cannot overtake

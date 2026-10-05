@@ -51,7 +51,7 @@ internal sealed class ClusterTopologyRefreshScheduler
     // Many clients started together should not all send CLUSTER SLOTS in the same instant.
     internal const double PeriodicJitterRatio = 0.1;
 
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly TimeProvider _clock;
     private readonly Func<double> _jitterSample;
     private readonly long _origin;

@@ -239,7 +239,7 @@ public class PubSubGapTests
         var hub = client.Core.Hub;
         const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         var epochField = typeof(SubscriptionHub).GetField("_connectionEpoch", flags)!;
-        var gate = typeof(SubscriptionHub).GetField("_gate", flags)!.GetValue(hub)!;
+        var gate = (Lock)typeof(SubscriptionHub).GetField("_gate", flags)!.GetValue(hub)!;
         var deliver = typeof(SubscriptionHub).GetMethod("Deliver", flags)!.CreateDelegate<DeliverFrame>(hub);
         var epoch = (long)epochField.GetValue(hub)!;
         lock (gate) epochField.SetValue(hub, epoch + 1);
@@ -249,7 +249,7 @@ public class PubSubGapTests
         deliver(epoch, SubscriptionKind.Channel, "ch"u8, "ch"u8, false, "stale"u8);
         deliver(epoch + 1, SubscriptionKind.Channel, "ch"u8, "ch"u8, false, "current"u8);
         var outsideGate = false;
-        subscription.DeliveryGap += _ => outsideGate = !Monitor.IsEntered(gate);
+        subscription.DeliveryGap += _ => outsideGate = !gate.IsHeldByCurrentThread;
         deliver(epoch + 1, SubscriptionKind.Channel, "ch"u8, "ch"u8, false, "latest"u8);
         subscription.Buffer.Complete();
         var items = new List<RespireMessage>();
