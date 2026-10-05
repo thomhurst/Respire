@@ -44,6 +44,7 @@ public class RespireHealthCheckTests
         await Assert.That(result.Status).IsEqualTo(HealthStatus.Healthy);
         await Assert.That(connections).IsEqualTo(1);
         await Assert.That(((RespireNodeHealth[])result.Data["nodes"]).Length).IsEqualTo(1);
+        await Assert.That((int)result.Data["failedNodes"]).IsEqualTo(0);
         await Assert.That(client.IsConnected).IsTrue();
     }
 
@@ -80,6 +81,7 @@ public class RespireHealthCheckTests
         var result = await new RespireHealthCheck(client).CheckHealthAsync(Context(failureStatus));
         await Assert.That(result.Status).IsEqualTo(failureStatus);
         await Assert.That(result.Exception).IsNotNull();
+        await Assert.That((int)result.Data["failedNodes"]).IsEqualTo(1);
         await Assert.That(((RespireNodeHealth[])result.Data["nodes"])[0].ErrorType).IsEqualTo(nameof(RespireServerException));
     }
 
@@ -214,31 +216,39 @@ public class RespireHealthCheckTests
         {
             var failed = (replica ? 1 : 0) + (disconnectFirstMaster ? 1 : 0);
             await Assert.That(result.Description).IsEqualTo($"{failed} of {nodes.Length} Respire node probes failed.");
+            await Assert.That((int)result.Data["failedNodes"]).IsEqualTo(failed);
         }
         await Assert.That(unused.CommandsSeen).IsEqualTo(0);
         await Assert.That(first.ReceivedConnectionIds.Concat(second.ReceivedConnectionIds).Except(connections).Count()).IsEqualTo(0);
     }
 
     [Test]
-    [Arguments(false, false)]
-    [Arguments(true, false)]
-    [Arguments(true, true)]
-    public async Task CustomClientProbesRespectConnectedStateAndSingleNodeMode(bool connected, bool allNodes)
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CustomClientProbesRespectConnectedState(bool connected)
     {
         var client = DispatchProxy.Create<IRespireClient, HealthClientProxy>();
         var proxy = (HealthClientProxy)client;
         proxy.Connected = connected;
-        var result = await new RespireHealthCheck(client, new() { ProbeAllNodes = allNodes }).CheckHealthAsync(Context());
-        var shouldProbe = connected && !allNodes;
-        await Assert.That(result.Status).IsEqualTo(shouldProbe ? HealthStatus.Healthy : HealthStatus.Unhealthy);
-        await Assert.That(proxy.PingCalls).IsEqualTo(shouldProbe ? 1 : 0);
-        if (shouldProbe)
+        var result = await new RespireHealthCheck(client).CheckHealthAsync(Context());
+        await Assert.That(result.Status).IsEqualTo(connected ? HealthStatus.Healthy : HealthStatus.Unhealthy);
+        await Assert.That(proxy.PingCalls).IsEqualTo(connected ? 1 : 0);
+        if (connected)
         {
             var node = ((RespireNodeHealth[])result.Data["nodes"])[0];
             await Assert.That(node.Endpoint).IsEqualTo(proxy.Endpoint);
             await Assert.That(node.Latency).IsEqualTo(TimeSpan.FromMilliseconds(5));
             await Assert.That(proxy.ProbeToken.CanBeCanceled).IsTrue();
         }
+    }
+
+    [Test]
+    public async Task CustomClientAllNodeModeFailsAtConstruction()
+    {
+        var client = DispatchProxy.Create<IRespireClient, HealthClientProxy>();
+        await Assert.That(() => new RespireHealthCheck(client, new() { ProbeAllNodes = true }))
+            .ThrowsExactly<NotSupportedException>();
+        await Assert.That(((HealthClientProxy)client).PingCalls).IsEqualTo(0);
     }
 
     public class HealthClientProxy : DispatchProxy

@@ -14,16 +14,20 @@ namespace Respire.HealthChecks;
 /// </remarks>
 public sealed class RespireHealthCheck : IHealthCheck
 {
+    private const string AllNodesUnsupported = "All-node probes require a RespireClient with an owned routing snapshot.";
     private readonly IRespireClient? _client;
     private readonly RespireFailoverGroup? _group;
     private readonly RespireHealthCheckOptions _options;
 
     /// <summary>Creates a health check for an existing client.</summary>
+    /// <exception cref="NotSupportedException">All-node probing is requested for a custom client.</exception>
     public RespireHealthCheck(IRespireClient client, RespireHealthCheckOptions? options = null)
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _options = options ?? new();
         _options.Validate();
+        if (_options.ProbeAllNodes && client is not RespireClient)
+            throw new NotSupportedException(AllNodesUnsupported);
     }
 
     /// <summary>Creates a health check that selects the group's active client on every invocation.</summary>
@@ -70,13 +74,14 @@ public sealed class RespireHealthCheck : IHealthCheck
             else
             {
                 if (_options.ProbeAllNodes)
-                    throw new NotSupportedException("All-node probes require a RespireClient with an owned routing snapshot.");
+                    throw new NotSupportedException(AllNodesUnsupported);
                 if (!client.IsConnected)
                     throw new RespireConnectionException("The existing Respire client is not connected.");
                 var latency = await client.PingAsync(deadline.Token).ConfigureAwait(false);
                 nodes = [new(client.Endpoint, true, latency, null)];
             }
             data["nodes"] = nodes;
+            data["failedNodes"] = errors.Count;
             cancellationToken.ThrowIfCancellationRequested();
             if (nodes.Length == 0)
                 throw new RespireConnectionException("No data nodes are available for a health check.");

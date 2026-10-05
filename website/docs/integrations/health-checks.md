@@ -44,6 +44,8 @@ current primary and configured or discovered read replicas. A known node without
 usable command connection reports a failure, even if that server might be reachable by
 opening a new connection. Sentinel monitor sockets and retired nodes are excluded.
 All-node mode requires a concrete `RespireClient`, including its prefixed/read views.
+Constructing a check with a custom client and `ProbeAllNodes = true` throws
+`NotSupportedException`. With DI factories, this validation runs when the check is resolved.
 Topology and connection observations are snapshots, not guarantees of subsequent operations.
 
 Probe failures use the registration's `failureStatus`, defaulting to `Unhealthy`. A
@@ -53,7 +55,10 @@ the `MaxConcurrentProbes` limit, which defaults to eight. Caller cancellation pr
 disposes the shared client. Application command timeouts may impose a shorter bound.
 
 Health data includes `connected`, a `nodes` array of `RespireNodeHealth` with endpoints,
-connection state, latency and failure type, and `clientSideCache` statistics when enabled.
+connection state, latency and failure type, a `failedNodes` count, and `clientSideCache`
+statistics when enabled. `nodes` and `failedNodes` are available after a probe round
+produces node results. If an earlier step fails, such as capturing the routing snapshot,
+the result retains only data collected before the failure; these fields can be absent.
 Set `IncludeClientSideCache = false` to omit cache statistics. Cache counters do not
 independently determine health.
 Health data contains deployment addresses and diagnostic details. Protect health endpoints
