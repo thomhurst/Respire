@@ -101,8 +101,38 @@ public partial class Json810IntegrationTests(Redis810JsonTestContainer fixture)
             .Should().BeEmpty();
     }
 
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task CollectionProjectionsPreserveOneTypedArray(int protocol)
+    {
+        await using var client = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+        var json = client.WithKeyPrefix($"json810:{Guid.NewGuid():N}:").Json;
+        await json.SetJsonAsync("doc", """{"obj":{"x":1,"y":2},"items":[1,2]}""");
+        var keysPath = RespireJsonPath.Legacy("$.obj.keys()");
+        var keys = await json.GetAsync("doc", Json810Context.Default.StringArray, keysPath);
+        keys.Found.Should().BeTrue();
+        keys.Value.Should().BeEquivalentTo(new[] { "x", "y" });
+        var multiple = await json.MultiGetAsync(["doc", "missing"], Json810Context.Default.StringArray, keysPath);
+        multiple[0]!.Single().Value.Should().BeEquivalentTo(new[] { "x", "y" });
+        multiple[1].Should().BeNull();
+
+        var appended = await json.GetManyAsync("doc", Json810Context.Default.Int32Array,
+            RespireJsonPath.Legacy("$.items.append(9)"));
+        appended.Should().ContainSingle();
+        appended[0].Found.Should().BeTrue();
+        appended[0].Value.Should().Equal(1, 2, 9);
+        (await json.GetAsync("doc", Json810Context.Default.Int32Array, ".items")).Value.Should().Equal(1, 2);
+        await json.SetJsonAsync("doc", """{"obj":{}}""");
+        var empty = await json.GetAsync("doc", Json810Context.Default.StringArray, keysPath);
+        empty.Found.Should().BeTrue();
+        empty.Value.Should().BeEmpty();
+    }
+
     [JsonSerializable(typeof(JsonElement))]
     [JsonSerializable(typeof(double))]
     [JsonSerializable(typeof(int[]))]
+    [JsonSerializable(typeof(string[]))]
     internal sealed partial class Json810Context : JsonSerializerContext;
 }

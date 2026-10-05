@@ -39,6 +39,8 @@ public partial class RespireJsonClientTests
         await Assert.That(projection.ResponseShape).IsEqualTo(RespireJsonResponseShape.MatchedValues);
         await Assert.That(RespireJsonPath.Legacy("items.sum()").ResponseShape).IsEqualTo(RespireJsonResponseShape.SingleValue);
         await Assert.That(RespireJsonPath.JsonPath("items.sum()")).IsEqualTo(projection);
+        await Assert.That(RespireJsonPath.Legacy("$.x").ResponseShape).IsEqualTo(RespireJsonResponseShape.SingleValue);
+        await Assert.That(RespireJsonPath.JsonPath("items").ResponseShape).IsEqualTo(RespireJsonResponseShape.MatchedValues);
         await Assert.That(projection == new RespireJsonPath("items.sum()")).IsFalse();
         var rooted = RespireJsonPath.Projection("$.items.sum()");
         await Assert.That(rooted == new RespireJsonPath("$.items.sum()")).IsTrue();
