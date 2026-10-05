@@ -10,6 +10,42 @@ namespace Respire.Tests.Serialization;
 public class DeflateValueCodecTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task BothWriteOverloadsDiscardOverflowWithoutTouchingAdjacentMemory(bool useSpan)
+    {
+        byte[] destination = [42, 0, 0, 0, 0, 43];
+        byte[] first = [1, 2, 3];
+        byte[] tooLarge = [4, 5];
+        bool overflowed;
+        long written;
+        unsafe
+        {
+            fixed (byte* pointer = destination)
+            {
+                using var stream = new DeflateValueCodec.BoundedWriteStream(pointer + 1, 4);
+                if (useSpan)
+                {
+                    stream.Write(first.AsSpan());
+                    stream.Write(tooLarge.AsSpan());
+                    stream.Write(new byte[] { 6 }.AsSpan());
+                }
+                else
+                {
+                    stream.Write(first, 0, first.Length);
+                    stream.Write(tooLarge, 0, tooLarge.Length);
+                    stream.Write(new byte[] { 6 }, 0, 1);
+                }
+                overflowed = stream.Overflowed;
+                written = stream.Length;
+            }
+        }
+        await Assert.That(overflowed).IsTrue();
+        await Assert.That(written).IsEqualTo(3);
+        await Assert.That(destination.AsSpan().SequenceEqual(new byte[] { 42, 1, 2, 3, 0, 43 })).IsTrue();
+    }
+
+    [Test]
     [Arguments(CompressionLevel.Fastest)]
     [Arguments(CompressionLevel.Optimal)]
     [Arguments(CompressionLevel.SmallestSize)]

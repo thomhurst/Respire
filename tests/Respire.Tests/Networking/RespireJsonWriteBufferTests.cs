@@ -1,8 +1,10 @@
 using System.Text;
+using System.Net.Sockets;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Respire.Json;
+using Respire.Protocol;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -11,6 +13,106 @@ namespace Respire.Tests.Networking;
 
 public partial class RespireJsonClientTests
 {
+    [Test]
+    [Arguments("SET")]
+    [Arguments("MERGE")]
+    [Arguments("MSET")]
+    public async Task CancelledJsonWriteKeepsItsFrameWhileSerializationBufferIsReused(string operation)
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        PausedJsonWriteStream? transport = null;
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            Connections = 1,
+            TestingStreamFactory = async (host, port, token) =>
+            {
+                var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+                try
+                {
+                    await socket.ConnectAsync(host, port, token);
+                    return transport = new PausedJsonWriteStream(new NetworkStream(socket, ownsSocket: true));
+                }
+                catch { socket.Dispose(); throw; }
+            },
+        });
+        var json = new RespireJsonClient(client);
+        var info = JsonWriteContext.Default.TextDocument;
+        var first = new TextDocument(new string('a', 32768));
+        var replacement = new TextDocument(new string('b', 32768));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var cancellation = new CancellationTokenSource();
+        transport!.PauseWrites = true;
+        var pending = Write(first, cancellation.Token);
+        Task next;
+        try
+        {
+            await transport.WriteStarted.Task.WaitAsync(timeout.Token);
+            cancellation.Cancel();
+            await Assert.That(async () => await pending.WaitAsync(timeout.Token)).Throws<OperationCanceledException>();
+            // The first using scope has cleared and returned its bytes. Serialize another value
+            // before allowing either frame onto the socket, exercising the same client's reuse.
+            next = Write(replacement, timeout.Token);
+        }
+        finally
+        {
+            transport.ResumeWrites.TrySetResult();
+        }
+        await next.WaitAsync(timeout.Token);
+        var frames = server.ReceivedArguments.Where(frame => Encoding.UTF8.GetString(frame[0]) == "JSON." + operation).ToArray();
+        await Assert.That(frames.Length).IsEqualTo(2);
+        var values = new[] { first, replacement };
+        for (var index = 0; index < frames.Length; index++)
+        {
+            var expected = JsonSerializer.SerializeToUtf8Bytes(values[index], info);
+            await Assert.That(frames[index][3].AsSpan().SequenceEqual(expected)).IsTrue();
+            if (operation == "MSET")
+                await Assert.That(frames[index][6].AsSpan().SequenceEqual(expected)).IsTrue();
+        }
+
+        Task Write(TextDocument value, CancellationToken token) => operation switch
+        {
+            "SET" => json.SetAsync("{same}:first", value, info, cancellationToken: token).AsTask(),
+            "MERGE" => json.MergeAsync("{same}:first", value, info, cancellationToken: token).AsTask(),
+            "MSET" => json.MultiSetAsync([new("{same}:first", value), new("{same}:second", value)], info, token).AsTask(),
+            _ => throw new ArgumentOutOfRangeException(nameof(operation)),
+        };
+    }
+
+    private sealed class PausedJsonWriteStream(Stream inner) : Stream
+    {
+        internal bool PauseWrites { get; set; }
+        internal TaskCompletionSource WriteStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource ResumeWrites { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() => inner.Flush();
+        public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
+        public override void Write(byte[] buffer, int offset, int count) => inner.Write(buffer, offset, count);
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+            => inner.ReadAsync(buffer, cancellationToken);
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (PauseWrites)
+            {
+                WriteStarted.TrySetResult();
+                await ResumeWrites.Task.WaitAsync(cancellationToken);
+            }
+            await inner.WriteAsync(buffer, cancellationToken);
+        }
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) inner.Dispose();
+            base.Dispose(disposing);
+        }
+    }
+
     [Test]
     [Arguments(false)]
     [Arguments(true)]

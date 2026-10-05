@@ -61,10 +61,23 @@ public sealed class DeflateValueCodec : RespireValueCodec
 
     // Incompressible output is discarded without exceptions or allocating expansion storage.
     // The stream and compressor are disposed before the destination leaves its fixed scope.
-    private sealed unsafe class BoundedWriteStream(byte* pointer, int capacity)
+    internal sealed unsafe class BoundedWriteStream(byte* pointer, int capacity)
         : UnmanagedMemoryStream(pointer, 0, capacity, FileAccess.Write)
     {
         internal bool Overflowed { get; private set; }
+
+        public override void Write(ReadOnlySpan<byte> buffer)
+        {
+            if (Overflowed) return;
+            if (buffer.Length > Capacity - Position)
+            {
+                Overflowed = true;
+                return;
+            }
+            // For derived streams the runtime delegates this to Write(byte[], int, int).
+            // Keep the guard here too, independently of that compatibility dispatch.
+            base.Write(buffer);
+        }
 
         public override void Write(byte[] buffer, int offset, int count)
         {

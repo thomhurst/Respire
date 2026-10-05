@@ -263,6 +263,9 @@ public sealed class RespireJsonClient
 
     // Retain at most one writer per client, with no byte rental retained between operations.
     // Concurrent calls own different buffers; returns from async continuations use atomic publication.
+    // Ordinary commands copy arguments into connection-owned write storage before publishing their
+    // cancellable response wait. An abandoned response can outlive this rental, but never reads it.
+    // Each private lease has exactly one using scope; Release only destroys an idle or rejected return.
     private sealed class SerializationBuffer(RespireJsonClient owner, JsonSerializerOptions options) : IDisposable
     {
         internal JsonSerializerOptions Options { get; } = options;
