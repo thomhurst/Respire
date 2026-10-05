@@ -2,7 +2,8 @@ namespace Respire.Json;
 
 /// <summary>A RedisJSON path. The default path selects the legacy root path <c>.</c>.</summary>
 /// <remarks>
-/// Paths that start with <c>$</c> and Redis 8.10 projection expressions use JSONPath and return an array.
+/// Paths that start with <c>$</c>, prefix functions, and grouped or rooted unary expressions use
+/// array replies. Use <see cref="Projection"/> for other Redis 8.10 projection expressions.
 /// Legacy paths return one value. Equality compares the path text and response shape, so
 /// <c>default(RespireJsonPath)</c> equals <see cref="Root"/>.
 /// </remarks>

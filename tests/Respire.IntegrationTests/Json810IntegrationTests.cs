@@ -73,6 +73,7 @@ public partial class Json810IntegrationTests(Redis810JsonTestContainer fixture)
             ("sum($.items)", 3),
             ("sum ( $.items )", 3),
             ("($.n + 1)", 4),
+            ("(2 * $.n)", 6),
             ("- $.n", -3),
         ];
         foreach (var (path, expected) in projections)
@@ -88,6 +89,11 @@ public partial class Json810IntegrationTests(Redis810JsonTestContainer fixture)
         var legacyProjection = await json.GetAsync("doc", Json810Context.Default.Double,
             RespireJsonPath.Projection("items.sum()"));
         legacyProjection.Value.Should().Be(3);
+        // Redis treats the ungrouped numeric-leading expression as legacy $.2 * $.n,
+        // producing no match for this document. Declare its projection reply explicitly.
+        var numericLeading = await json.GetAsync("doc", Json810Context.Default.Double,
+            RespireJsonPath.Projection("2 * $.n"));
+        numericLeading.Found.Should().BeFalse();
         await json.SetJsonAsync("doc", """{"items":[]}""");
         (await json.GetManyAsync("doc", Json810Context.Default.Double, "sum($.items)"))
             .Should().BeEmpty();

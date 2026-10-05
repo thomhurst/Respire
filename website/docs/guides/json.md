@@ -67,6 +67,10 @@ value; `GetManyAsync` then returns an empty array. See the
 [Redis JSONPath reference](https://redis.io/docs/latest/develop/data-types/json/path/).
 For projections written in legacy notation, use `RespireJsonPath.Projection("items.sum()")`
 to declare the array response shape explicitly, or write the rooted form `$.items.sum()`.
+Automatic detection covers `$` paths, prefix functions, parenthesized expressions, and unary
+signs on rooted or parenthesized expressions. Other expressions require `Projection`.
+Group numeric-leading arithmetic, for example `(2 * $.n)`: Redis interprets the ungrouped
+`2 * $.n` as a legacy expression rooted at the field `2`, which may produce no match.
 Respire does not parse the complete Redis expression grammar. A projection path compares
 equal to another path only when both its text and response shape match.
 
