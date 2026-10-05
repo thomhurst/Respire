@@ -78,22 +78,53 @@ public sealed partial class RespireTimeSeriesClient
     /// <remarks>
     /// Use Minimum to include history, Maximum to include the latest sample, or New for only future samples.
     /// Reads block indefinitely between samples and stop on cancellation. Backfilled samples or updates at already
-    /// emitted timestamps are not replayed. An empty reply after deletion retries the same cursor; a sentinel that
-    /// has not yet returned samples is resolved again by the server. Enumeration ends after long.MaxValue.
+    /// emitted timestamps are not replayed. New is resolved once with a nonblocking latest-sample read before
+    /// following a numeric cursor, so empty-reply backoff cannot re-resolve it and skip intervening samples.
+    /// An empty reply after deletion retries the same cursor. Enumeration ends after long.MaxValue.
+    /// Each page returns its blocking connection before yielding owned samples; paused consumers retain no pool lease.
     /// </remarks>
-    public async IAsyncEnumerable<RespireTimeSeriesSample> FollowAsync(RespireKey key, RespireTimeSeriesTimestamp timestamp,
-        int batchSize = 256, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public IAsyncEnumerable<RespireTimeSeriesSample> FollowAsync(RespireKey key, RespireTimeSeriesTimestamp timestamp,
+        int batchSize = 256, CancellationToken cancellationToken = default)
+        => FollowCoreAsync(key, timestamp, batchSize, null, cancellationToken);
+
+    /// <summary>Follows samples with an optional consecutive-empty-reply limit. Reaching the limit ends enumeration.</summary>
+    /// <remarks>The limit counts empty server replies, not elapsed idle time. A quiet BLOCK 0 read can still wait indefinitely.</remarks>
+    public IAsyncEnumerable<RespireTimeSeriesSample> FollowAsync(RespireTimeSeriesFollowOptions options,
+        RespireKey key, RespireTimeSeriesTimestamp timestamp, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        return FollowCoreAsync(key, timestamp, options.BatchSize, options.MaximumConsecutiveEmptyReads, cancellationToken);
+    }
+
+    private async IAsyncEnumerable<RespireTimeSeriesSample> FollowCoreAsync(RespireKey key, RespireTimeSeriesTimestamp timestamp,
+        int batchSize, int? maximumConsecutiveEmptyReads, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batchSize);
+        if (maximumConsecutiveEmptyReads is <= 0)
+            throw new ArgumentOutOfRangeException(nameof(maximumConsecutiveEmptyReads));
         timestamp.RequireRead(nameof(timestamp));
+        if (timestamp == RespireTimeSeriesTimestamp.New)
+        {
+            var latest = await ReadAsync(key, RespireTimeSeriesTimestamp.Maximum,
+                new RespireTimeSeriesReadOptions { MaximumCount = 1 }, cancellationToken).ConfigureAwait(false);
+            if (latest.Samples.Count == 0) timestamp = 0;
+            else
+            {
+                var last = latest.Samples[^1].Timestamp;
+                if (last == long.MaxValue) yield break;
+                timestamp = last + 1;
+            }
+        }
         var options = new RespireTimeSeriesReadOptions { BlockMilliseconds = 0, MaximumCount = batchSize };
         var emptyDelayMilliseconds = 100;
+        var emptyReads = 0;
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var result = await ReadAsync(key, timestamp, options, cancellationToken).ConfigureAwait(false);
             if (result.Samples.Count == 0)
             {
+                if (maximumConsecutiveEmptyReads is { } maximum && ++emptyReads >= maximum) yield break;
                 // Deletion can unblock an indefinite read without samples. Bound retries even if
                 // a server returns empty immediately, and keep cancellation responsive while waiting.
                 await Task.Delay(emptyDelayMilliseconds, cancellationToken).ConfigureAwait(false);
@@ -101,6 +132,7 @@ public sealed partial class RespireTimeSeriesClient
                 continue;
             }
             emptyDelayMilliseconds = 100;
+            emptyReads = 0;
             foreach (var sample in result.Samples)
             {
                 cancellationToken.ThrowIfCancellationRequested();

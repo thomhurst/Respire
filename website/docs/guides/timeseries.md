@@ -122,7 +122,12 @@ await foreach (var sample in timeSeries.FollowAsync(
 }
 ```
 
-`FollowAsync` blocks between samples and advances to the last emitted timestamp plus one. Choose `Minimum` for history, `Maximum` to include the latest existing sample, or `New` (`$`) for future samples only. Sentinels resolve on the server. Cancellation stops the reader and releases its blocking connection. Backfills and updates at already emitted timestamps are not replayed. Empty replies trigger cancellable backoff from 100 ms up to 1 second, reset when samples arrive. If deletion returns no samples before a sentinel has produced its first result, retrying resolves that sentinel again. With `New`, samples written between those calls can be skipped; use a numeric timestamp when those samples must be included. Enumeration ends after `long.MaxValue`; transport failures propagate so callers can choose a restart policy.
+`FollowAsync` blocks between samples and advances to the last emitted timestamp plus one. Choose `Minimum` for history, `Maximum` to include the latest existing sample, or `New` (`$`) for future samples only. For `New`, the follower first asks the server for its latest sample with a nonblocking `TS.READ + MAX_COUNT 1`, then follows the numeric timestamp immediately after it (or zero for a missing/empty series). This starting cursor is resolved once: deletion and empty-reply backoff do not skip samples written before the next read. Separate `ReadAsync` calls still pass sentinels directly to the server and resolve them independently. Cancellation stops the reader and releases its blocking connection. Backfills and updates below the current cursor are not replayed. Empty replies trigger cancellable backoff from 100 ms up to 1 second, reset when samples arrive. Enumeration ends after `long.MaxValue`; transport failures, including a failure of the initial latest-sample read, propagate so callers can choose a restart policy.
+
+To end a follower after repeated empty server replies, use the options-first overload:
+`FollowAsync(new RespireTimeSeriesFollowOptions { MaximumConsecutiveEmptyReads = 3 }, key, timestamp, cancellationToken)`.
+The positive limit counts consecutive empty replies, resets after any sample, and ends enumeration when reached.
+Omitting it retries until cancellation. This is not an idle timeout: a quiet `BLOCK 0` read can still wait indefinitely.
 
 See Redis's [explicit-key range semantics](https://redis.io/docs/latest/commands/ts.nrange/) and [blocking read semantics](https://redis.io/docs/latest/commands/ts.read/).
 

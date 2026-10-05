@@ -35,6 +35,17 @@ public sealed record RespireTimeSeriesReadOptions
     }
 }
 
+/// <summary>Controls continuous sample reads and optional completion after repeated empty server replies.</summary>
+public sealed record RespireTimeSeriesFollowOptions
+{
+    /// <summary>Maximum samples per page. Must be positive.</summary>
+    public int BatchSize { get; init; } = 256;
+
+    /// <summary>Ends enumeration after this many consecutive empty replies. Null retries until cancellation.</summary>
+    /// <remarks>Must be positive when set. Any sample resets the count. This does not impose an idle timeout on BLOCK 0.</remarks>
+    public int? MaximumConsecutiveEmptyReads { get; init; }
+}
+
 /// <summary>A timestamp and flattened values from explicit series keys, in request order.</summary>
 /// <remarks>
 /// Each key contributes one value without aggregation, or one per requested aggregator.

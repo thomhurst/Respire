@@ -22,6 +22,11 @@ public class TimeSeriesReadIntegrationTests(Redis810TimeSeriesContainer fixture)
         await using var client = await RespireClient.ConnectAsync($"{isolated.ConnectionString}?protocol={protocol}");
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         using var cancel = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
+        // Ensure TS.READ is present in commandstats before measuring the follower. Redis may
+        // leave its current blocked call out of the completed-command count until cancellation.
+        await client.TimeSeries.ReadAsync("missing", 0, cancellationToken: timeout.Token);
+        var before = await ReadCallCountAsync();
+        await Assert.That(before).IsGreaterThan(0);
         await using var reader = client.TimeSeries.FollowAsync("missing", 0, cancellationToken: cancel.Token).GetAsyncEnumerator();
         var elapsed = System.Diagnostics.Stopwatch.StartNew();
         var next = reader.MoveNextAsync().AsTask();
@@ -29,10 +34,38 @@ public class TimeSeriesReadIntegrationTests(Redis810TimeSeriesContainer fixture)
         cancel.Cancel();
         await Assert.That(async () => await next).Throws<OperationCanceledException>();
         var maximumCalls = (long)Math.Ceiling(elapsed.Elapsed.TotalMilliseconds / 100) + 1;
-        var info = await client.Server.InfoAsync("commandstats", timeout.Token);
-        var match = System.Text.RegularExpressions.Regex.Match(info, @"(?m)^cmdstat_ts\.read:calls=(\d+)");
-        var calls = match.Success ? long.Parse(match.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture) : 0;
+        var calls = await ReadCallCountAsync() - before;
+        await Assert.That(calls).IsGreaterThanOrEqualTo(0);
         await Assert.That(calls).IsLessThanOrEqualTo(maximumCalls);
+
+        async Task<long> ReadCallCountAsync()
+        {
+            var info = await client.Server.InfoAsync("commandstats", timeout.Token);
+            var match = System.Text.RegularExpressions.Regex.Match(info, @"(?m)^cmdstat_ts\.read:calls=(\d+)");
+            await Assert.That(match.Success).IsTrue();
+            return long.Parse(match.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+        }
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task NewFollowerKeepsSamplesAddedAfterDeletion(int protocol)
+    {
+        var name = $"follow-recreate-{Guid.NewGuid():N}";
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString)
+            with { Protocol = (RespProtocol)protocol, ClientName = name });
+        await using var observer = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await client.TimeSeries.AddAsync(name, 10, 1, cancellationToken: timeout.Token);
+        await using var reader = client.TimeSeries.FollowAsync(name, RespireTimeSeriesTimestamp.New,
+            cancellationToken: timeout.Token).GetAsyncEnumerator();
+        var next = reader.MoveNextAsync().AsTask();
+        await WaitForBlockedAsync(observer, name, timeout.Token);
+        using var deleted = await observer.ExecuteAsync("DEL", [name], cancellationToken: timeout.Token);
+        await observer.TimeSeries.AddAsync(name, 20, 2, cancellationToken: timeout.Token);
+        await Assert.That(await next).IsTrue();
+        await Assert.That(reader.Current.Timestamp).IsEqualTo(20);
     }
 
     [Test]

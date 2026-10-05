@@ -114,9 +114,12 @@ public class TimeSeriesReadTests
     {
         await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
         {
-            ReplyOverride = (_, command) => command.Contains(" $ ", StringComparison.Ordinal)
-                ? "*2\r\n*2\r\n:10\r\n+1\r\n*2\r\n:20\r\n+2\r\n"u8.ToArray()
-                : "*1\r\n*2\r\n:9223372036854775807\r\n+3\r\n"u8.ToArray(),
+            ReplyOverride = (_, command) => command switch
+            {
+                "TS.READ series + MAX_COUNT 1" => "*1\r\n*2\r\n:9\r\n+0\r\n"u8.ToArray(),
+                "TS.READ series 10 BLOCK 0 1 MAX_COUNT 2" => "*2\r\n*2\r\n:10\r\n+1\r\n*2\r\n:20\r\n+2\r\n"u8.ToArray(),
+                _ => "*1\r\n*2\r\n:9223372036854775807\r\n+3\r\n"u8.ToArray(),
+            },
         };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var samples = new List<long>();
@@ -124,7 +127,37 @@ public class TimeSeriesReadTests
             samples.Add(sample.Timestamp);
         await Assert.That(samples).IsEquivalentTo([10L, 20L, long.MaxValue]);
         await Assert.That(server.ReceivedCommands).IsEquivalentTo([
-            "TS.READ series $ BLOCK 0 1 MAX_COUNT 2", "TS.READ series 21 BLOCK 0 1 MAX_COUNT 2",
+            "TS.READ series + MAX_COUNT 1", "TS.READ series 10 BLOCK 0 1 MAX_COUNT 2", "TS.READ series 21 BLOCK 0 1 MAX_COUNT 2",
+        ]);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task NewCursorIsResolvedOnceAcrossEmptyReplies(bool initiallyMissing)
+    {
+        var blockingReads = 0;
+        await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) =>
+            {
+                if (command.Contains(" + ", StringComparison.Ordinal))
+                    return initiallyMissing ? "*0\r\n"u8.ToArray() : "*1\r\n*2\r\n:10\r\n+1\r\n"u8.ToArray();
+                return Interlocked.Increment(ref blockingReads) == 1 ? "*0\r\n"u8.ToArray()
+                    : "*1\r\n*2\r\n:11\r\n+2\r\n"u8.ToArray();
+            },
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await using var reader = client.TimeSeries.FollowAsync("series", RespireTimeSeriesTimestamp.New,
+            cancellationToken: timeout.Token).GetAsyncEnumerator();
+        await Assert.That(await reader.MoveNextAsync()).IsTrue();
+        await Assert.That(reader.Current.Timestamp).IsEqualTo(11);
+        var cursor = initiallyMissing ? 0 : 11;
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo([
+            "TS.READ series + MAX_COUNT 1",
+            $"TS.READ series {cursor} BLOCK 0 1 MAX_COUNT 256",
+            $"TS.READ series {cursor} BLOCK 0 1 MAX_COUNT 256",
         ]);
     }
 
@@ -147,6 +180,38 @@ public class TimeSeriesReadTests
         await Assert.That(async () => await timeSeries.ReadAsync("a", 0, cancellationToken: new(true))).Throws<OperationCanceledException>();
         await using var iterator = timeSeries.FollowAsync("a", 0, cancellationToken: new(true)).GetAsyncEnumerator();
         await Assert.That(async () => await iterator.MoveNextAsync()).Throws<OperationCanceledException>();
+        await Assert.That(server.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
+    public async Task EmptyReplyLimitResetsAfterSamplesAndEndsEnumeration()
+    {
+        var calls = 0;
+        await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, _) => Interlocked.Increment(ref calls) == 2
+                ? "*1\r\n*2\r\n:10\r\n+1\r\n"u8.ToArray() : "*0\r\n"u8.ToArray(),
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var options = new RespireTimeSeriesFollowOptions { BatchSize = 1, MaximumConsecutiveEmptyReads = 2 };
+        var samples = new List<long>();
+        await foreach (var sample in client.TimeSeries.FollowAsync(options, "series", 0, timeout.Token))
+            samples.Add(sample.Timestamp);
+        await Assert.That(samples).IsEquivalentTo([10L]);
+        await Assert.That(calls).IsEqualTo(4);
+    }
+
+    [Test]
+    [Arguments(0)]
+    [Arguments(-1)]
+    public async Task InvalidEmptyReplyLimitSendsNothing(int maximum)
+    {
+        await using var server = new FakeRespServer();
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var options = new RespireTimeSeriesFollowOptions { MaximumConsecutiveEmptyReads = maximum };
+        await using var reader = client.TimeSeries.FollowAsync(options, "series", RespireTimeSeriesTimestamp.New).GetAsyncEnumerator();
+        await Assert.That(async () => await reader.MoveNextAsync()).Throws<ArgumentOutOfRangeException>();
         await Assert.That(server.ReceivedCommands).IsEmpty();
     }
 }
