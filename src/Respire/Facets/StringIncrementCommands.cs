@@ -37,20 +37,22 @@ internal sealed partial class StringCommands
 
     internal static Cmd1N BuildIncrementExtended(RespireClient client, RespireKey key, long by, IntegerIncrementOptions options)
     {
+        // Lifted comparisons are false when either bound is absent, allowing one-sided bounds.
         if (options.LowerBound > options.UpperBound)
             throw new ArgumentException("LowerBound cannot exceed UpperBound.", nameof(options));
         return BuildIncrementExtended(client, key, "BYINT", by,
-            new(options.LowerBound, options.UpperBound), options.Saturate, options.Expiry, options.ExpireOnlyWhenPersistent);
+            new(options.LowerBound, options.UpperBound), options.Saturate, options.Expiry, options.ExpireOnlyWhenPersistent, nameof(options));
     }
 
     internal static Cmd1N BuildIncrementExtended(RespireClient client, RespireKey key, double by, FloatIncrementOptions options)
     {
         if (!double.IsFinite(by)) throw new ArgumentOutOfRangeException(nameof(by), "The increment must be finite.");
+        // The lifted ordering comparison only rejects bounds when both are present.
         if (options.LowerBound is { } lower && double.IsNaN(lower) ||
             options.UpperBound is { } upper && double.IsNaN(upper) || options.LowerBound > options.UpperBound)
             throw new ArgumentException("Bounds cannot be NaN and LowerBound cannot exceed UpperBound.", nameof(options));
         return BuildIncrementExtended(client, key, "BYFLOAT", by,
-            new(options.LowerBound, options.UpperBound), options.Saturate, options.Expiry, options.ExpireOnlyWhenPersistent);
+            new(options.LowerBound, options.UpperBound), options.Saturate, options.Expiry, options.ExpireOnlyWhenPersistent, nameof(options));
     }
 
     private readonly record struct IncrementBounds(RespireValue? Lower, RespireValue? Upper)
@@ -59,14 +61,14 @@ internal sealed partial class StringCommands
     }
 
     private static Cmd1N BuildIncrementExtended(RespireClient client, RespireKey key, string mode, RespireValue by,
-        IncrementBounds bounds, bool saturate, RespireExpiry expiry, bool enx)
+        IncrementBounds bounds, bool saturate, RespireExpiry expiry, bool enx, string optionsParameterName)
     {
         var relative = expiry.TryGetRelativeMilliseconds(out var milliseconds);
         var absolute = expiry.TryGetAbsoluteUnixMilliseconds(out var timestamp);
         if (relative && milliseconds <= 0 || absolute && timestamp <= 0)
-            throw new ArgumentOutOfRangeException(nameof(expiry), "INCREX expiry must be positive.");
+            throw new ArgumentOutOfRangeException(optionsParameterName, "INCREX expiry must be positive.");
         if (enx && !relative && !absolute)
-            throw new ArgumentException("ENX requires a relative or absolute expiry.", nameof(enx));
+            throw new ArgumentException("ENX requires a relative or absolute expiry.", optionsParameterName);
         var expiryCount = relative || absolute ? 2 : expiry.IsPersist ? 1 : 0;
         var arguments = new RespireValue[2 + bounds.TokenCount +
             (saturate ? 1 : 0) + expiryCount + (enx ? 1 : 0)];
