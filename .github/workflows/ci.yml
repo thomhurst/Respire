@@ -92,7 +92,7 @@ jobs:
         run: dotnet run --project tests/Respire.IntegrationTests -c Release -f net10.0 --no-build
 
       - name: Run Coordination Tests
-        run: dotnet run --project tests/Respire.Coordination.Tests -c Release -f net10.0 --no-build -- --maximum-parallel-tests 4
+        run: dotnet run --project tests/Respire.Coordination.Tests -c Release -f net10.0 --no-build
 
       - name: Run Azure Integration Tests
         run: dotnet run --project tests/Respire.Azure.Tests -c Release -f net10.0 --no-build
