@@ -65,8 +65,14 @@ public class AsyncFlushSignalTests
             _pending = _signal.WaitAsync();
             _pending.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(_resume);
             _signal.Signal(preferInline: false);
+            // Bounded so a lost wake fails this test instead of stalling the suite it runs alone in.
+            var deadline = Environment.TickCount64 + 5_000;
             var spin = new SpinWait();
-            while (!_resumed) spin.SpinOnce(sleep1Threshold: -1);
+            while (!_resumed)
+            {
+                if (Environment.TickCount64 > deadline) throw new TimeoutException("The dispatched wake never resumed the waiter.");
+                spin.SpinOnce(sleep1Threshold: -1);
+            }
         }
 
         private void Resume()
