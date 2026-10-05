@@ -47,7 +47,7 @@ public sealed partial class RespireSearchClient
     public async ValueTask<IReadOnlyList<string>> ListIndexesAsync(CancellationToken cancellationToken = default)
     {
         using var result = await _commands.ListIndexesAsync(cancellationToken).ConfigureAwait(false);
-        return ReadNames(result, "FT._LIST", "index");
+        return RespireSearchReply.ReadStringCollection(result, "FT._LIST", "an index name");
     }
 
     /// <summary>Creates an alias for an existing index with FT.ALIASADD.</summary>
@@ -78,22 +78,7 @@ public sealed partial class RespireSearchClient
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(index);
         using var result = await _commands.ListAliasesAsync(index, cancellationToken).ConfigureAwait(false);
-        return ReadNames(result, "FT.ALIASLIST", "alias");
-    }
-
-    private static string[] ReadNames(RespireResult result, string command, string nameKind)
-    {
-        if (result.Type is not (RespDataType.Array or RespDataType.Set) || result.IsNull)
-            throw RespireSearchReply.Unexpected(command, $"an {nameKind} name collection was expected");
-        var names = new string[result.Count];
-        for (var i = 0; i < names.Length; i++)
-        {
-            var value = result[i];
-            if (value.Type is not (RespDataType.BulkString or RespDataType.SimpleString) || value.IsNull)
-                throw RespireSearchReply.Unexpected(command, $"a non-string {nameKind} name");
-            names[i] = value.AsString();
-        }
-        return names;
+        return RespireSearchReply.ReadStringCollection(result, "FT.ALIASLIST", "an alias name");
     }
 
     /// <summary>Creates a search index.</summary>

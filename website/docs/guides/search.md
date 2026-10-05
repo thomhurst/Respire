@@ -174,7 +174,8 @@ await search.AddAliasAsync("books-live", "books-v1");
 // Build books-v2 and verify its indexing is complete before switching.
 await search.UpdateAliasAsync("books-live", "books-v2");
 var current = await search.SearchAsync("books-live", new(RespireSearchExpression.FromRaw("*")));
-await search.DropIndexAsync("books-v1"); // Keep the indexed documents.
+// Drop the old index only after UpdateAliasAsync completes; keep the indexed documents.
+await search.DropIndexAsync("books-v1");
 ```
 
 Without a Search coordinator, the alias and target index must resolve to the same server.
