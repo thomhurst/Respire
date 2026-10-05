@@ -21,7 +21,88 @@ Raw command values are not attached to spans because arbitrary Redis payloads ca
 
 ## Latency
 
-Operation latency uses the stable `db.client.operation.duration` histogram and records seconds, as required by the semantic convention.
+Operation latency uses the stable `db.client.operation.duration` histogram and records seconds, as required by the semantic convention. Enable the `Command` metric group to collect it.
+
+## Metric selection
+
+Redis metrics use process-wide selection, shared by every client and prefix view. The
+default is `Resiliency | ConnectionBasic`, following the Redis specification. Command
+latency and client-side cache metrics now require explicit opt-in, even when an exporter
+subscribes to the `Respire` meter. To retain all previously available standard measurements:
+
+```csharp
+using Respire;
+
+RespireMetrics.Configure(new RespireMetricsOptions
+{
+    Groups = RespireMetricGroups.All,
+});
+```
+
+For narrower collection, select flags and exact command names:
+
+```csharp
+using Respire;
+
+RespireMetrics.Configure(new RespireMetricsOptions
+{
+    Groups = RespireMetricGroups.Default | RespireMetricGroups.Command,
+    CommandAllowList = ["GET", "SET", "CLIENT LIST"],
+    CommandBlockList = ["SET"],
+});
+```
+
+Configure before creating clients or attaching exporters. Respire validates and copies
+both lists; mutating the supplied collections or `RespireMetrics.Configuration` cannot
+alter the active selection. A replacement is atomic and affects newly created operation
+scopes. An already selected scope can finish after replacement. Configuration does not
+create or own an OpenTelemetry provider, meter listener, exporter, or tracing listener.
+There is no client-specific override because the meter is shared by the process.
+
+| Flag | Redis group | Currently selected standard measurements |
+| --- | --- | --- |
+| `Resiliency` | `resiliency` | Maintenance notifications and geographic failovers |
+| `ConnectionBasic` | `connection-basic` | Reserved for connection lifecycle measurements in [#928](https://github.com/thomhurst/Respire/issues/928) |
+| `ConnectionAdvanced` | `connection-advanced` | Reserved for detailed connection measurements in #928 |
+| `Command` | `command` | Logical operation duration, including Redis commands used for pub/sub and streams |
+| `ClientSideCaching` | `client-side-caching` | Cache requests and evictions |
+| `PubSub` | `pubsub` | Reserved for pub/sub processing measurements in #928 |
+| `Streaming` | `streaming` | Reserved for stream processing measurements in #928 |
+
+`None` suppresses these standard measurements. Existing `respire.*` diagnostics remain
+available independently, including pub/sub gaps, cache invalidations, reconnects, and
+thread-pool health. Filter those instruments in the application's exporter when needed.
+Selecting a group does not invent a measurement that Respire has not implemented.
+
+Command filters affect only command metrics, never command execution, traces, or other
+groups. Names match ordinally without case sensitivity. Use the complete reported command
+name, such as `CLIENT LIST`; there are no wildcards or prefix matches. Empty allow lists
+allow every command, and block lists always win. Names must contain 1–64 ASCII characters:
+letters, digits, `.`, `_`, `-`, and single spaces between words. Null, empty, malformed,
+or longer names and unknown group flags are rejected before replacing configuration.
+
+A pipeline or transaction emits one duration only when every constituent command passes
+the filters. Homogeneous operations retain names such as `PIPELINE GET` or `MULTI SET`,
+but filters match their constituent `GET` or `SET`, not the compound label. Mixed operations
+retain `PIPELINE` or `MULTI`; excluding any member suppresses the whole duration. Empty
+operations match `PIPELINE` or `MULTI` directly. Durability batches additionally require their `WAIT` or `WAITAOF`
+acknowledgement to pass the filters. Script fallback remains one logical
+`EVALSHA` (or `EVALSHA_RO`) operation; filters use that initial command. Immediate, raw,
+blocking, streamed, and fire-and-forget operations use the same selection as other commands.
+
+Metric labels never include keys, raw channel or stream names, command arguments, payloads,
+or credentials. Script digests and function names remain trace attributes and are omitted
+from metrics to avoid per-script series growth. Command metric labels retain at most 1,024
+distinct names across the process lifetime, case insensitive; additional names share
+`OTHER`. Empty, non-ASCII, or names longer than 80 characters also use `OTHER`. The limit
+includes compound labels and does not reset when configuration changes. Other standard
+attributes still identify configured endpoints, database numbers, batch sizes, and errors.
+Metric selection and the label limit do not alter trace names or existing span attributes.
+
+Without a listener, or with the command group disabled or the command excluded, metric
+instrumentation avoids timestamps, metric tag formatting, and compound name construction.
+Tracing can independently require its own timestamps and span attributes. This does not
+make streamed or blocking operations allocation-free; their transport contracts still apply.
 
 ## Redis metric mapping
 
@@ -55,7 +136,7 @@ Respire-specific instruments remain available for hedging, availability zones, t
 health, coordination, Sentinel recovery, cache invalidation notifications, continuity
 flushes, and pub/sub delivery gaps. Mapping existing signals does not imply that every
 instrument or configuration group in the Redis specification is implemented. Additional
-connection, error, pub/sub, streaming, group-selection, and dashboard coverage is tracked
+connection, error, pub/sub, streaming, and dashboard coverage is tracked
 by [#866](https://github.com/thomhurst/Respire/issues/866).
 
 ## Reads by availability zone

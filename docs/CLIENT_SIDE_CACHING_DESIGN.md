@@ -244,7 +244,7 @@ only by already in-flight tokens and become collectible when those reads finish.
 
 | Instrument | Meaning |
 | --- | --- |
-| `redis.client.csc.requests` | cache lookups; `redis.client.csc.result=hit` for local responses or `miss` for reads requiring Redis |
+| `redis.client.csc.requests` | cache lookups when `RespireMetricGroups.ClientSideCaching` is enabled; `redis.client.csc.result=hit` for local responses or `miss` for reads requiring Redis |
 | `respire.client_cache.invalidations` | key or broadcast invalidations |
 | `redis.client.csc.evictions` | cached responses removed; optional `redis.client.csc.reason=full`, `ttl`, or `invalidation` for capacity, expiration, or server invalidation |
 | `respire.client_cache.continuity_flushes` | flushes caused by connection/topology uncertainty |

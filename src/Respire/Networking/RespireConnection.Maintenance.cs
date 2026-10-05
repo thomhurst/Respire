@@ -229,7 +229,9 @@ internal sealed partial class RespireConnection
         }
         _capacitySignal.Signal(); // Wake parked producers to recompute their effective deadline.
         MaintenanceStateChanged?.Invoke(); // Streamed SET timers recompute theirs too.
-        if (RespireTelemetry.Source.HasListeners() || RespireTelemetry.MaintenanceNotifications.Enabled || _logger is not null)
+        if (RespireTelemetry.Source.HasListeners()
+            || RespireTelemetry.IsMetricEnabled(RespireMetricGroups.Resiliency, RespireTelemetry.MaintenanceNotifications)
+            || _logger is not null)
         {
             (_maintenanceTelemetry ??= new MaintenanceTelemetry(Host, Port, _maintenanceOptions!.Database, _logger))
                 .Publish(notification);

@@ -2160,7 +2160,7 @@ public sealed partial class RespireClient : IRespireClient
         bool sendAsking,
         bool track)
         where TCommand : struct, IRespCommand
-        => RespireTelemetry.IsEnabled
+        => RespireTelemetry.IsOperationEnabled(operation)
             ? SendTrackedOnConnectionInstrumentedAsync(
                 operation, connection, command, cancellationToken, sendAsking, track)
             : SendTrackedOnConnectionCoreAsync(
@@ -2953,7 +2953,7 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken,
         string? storedProcedureName = null)
         where TCommand : struct, IRespCommand
-        => RespireTelemetry.IsEnabled
+        => RespireTelemetry.IsOperationEnabled(operation)
             ? SendFireAndForgetOnConnectionInstrumentedAsync(
                 operation, connection, command, cancellationToken, storedProcedureName)
             : connection.SendFireAndForgetAsync(in command, cancellationToken, operation,
@@ -3322,7 +3322,7 @@ public sealed partial class RespireClient : IRespireClient
         bool sendAsking = false)
         where TCommand : struct, IRespCommand
     {
-        if (RespireTelemetry.IsEnabled)
+        if (RespireTelemetry.IsOperationEnabled(operation))
         {
             return SendBulkStreamOnConnectionInstrumentedAsync(
                 operation, connection, command, cancellationToken, sendAsking);
@@ -3449,7 +3449,7 @@ public sealed partial class RespireClient : IRespireClient
         CommandDeadline commandDeadline = default,
         bool allowStreamingConnectionReroute = true)
         where TCommand : struct, IRespCommand
-        => RespireTelemetry.IsEnabled
+        => RespireTelemetry.IsOperationEnabled(operation)
             ? SendOnConnectionInstrumentedAsync(
                 operation, connection, command, cancellationToken, storedProcedureName, sendAsking,
                 commandDeadline, allowStreamingConnectionReroute)
@@ -3533,7 +3533,7 @@ public sealed partial class RespireClient : IRespireClient
                     .ConfigureAwait(false);
             }
 
-            var started = RespireTelemetry.CaptureStartTimestamp();
+            var started = RespireTelemetry.CaptureStartTimestamp(operation);
             RespireTelemetry.OperationScope telemetry = default;
             var telemetryStarted = false;
             RespireConnection? connection = null;
@@ -4078,7 +4078,7 @@ public sealed partial class RespireClient : IRespireClient
             return new RespireResult(in clusterReply, _core.Options.Serializer);
         }
 
-        var started = RespireTelemetry.CaptureStartTimestamp();
+        var started = RespireTelemetry.CaptureStartTimestamp(script.EvalShaOperation);
         var telemetry = default(RespireTelemetry.OperationScope);
         RespireConnection? connection = null;
         try
@@ -4879,7 +4879,7 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
-        if (!RespireTelemetry.IsEnabled
+        if (!RespireTelemetry.IsOperationEnabled(operation)
             && (_readFrom == RespireReadFrom.Primary || command.ReadKind == ReadCommandKind.None)
             && command is not IStreamingRespCommand
             && core.Cluster is null
@@ -4981,7 +4981,7 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
-        if (!RespireTelemetry.IsEnabled
+        if (!RespireTelemetry.IsOperationEnabled(operation)
             && core.Cluster is null
             && core.Sentinel is null
             && (_readFrom == RespireReadFrom.Primary || command.ReadKind == ReadCommandKind.None)

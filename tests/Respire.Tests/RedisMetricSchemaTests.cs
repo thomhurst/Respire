@@ -352,6 +352,7 @@ public class RedisMetricSchemaTests
 
     private sealed class Capture : IDisposable
     {
+        private readonly MetricConfigurationScope _metrics = new();
         private readonly MeterListener _listener = new();
         internal ConcurrentQueue<Item> Items { get; } = new();
 
@@ -367,6 +368,10 @@ public class RedisMetricSchemaTests
             _listener.Start();
         }
 
-        public void Dispose() => _listener.Dispose();
+        public void Dispose()
+        {
+            _listener.Dispose();
+            _metrics.Dispose();
+        }
     }
 }

@@ -622,7 +622,7 @@ concatenates). Client-side caching is configured through `RespireOptions.ClientS
   conventions (`db.system.name = redis`, `db.namespace`, `db.operation.name`, endpoint and
   error attrs). Query text stays excluded because arbitrary Redis command values cannot be
   reliably sanitized. Pipelines and transactions emit one span with `db.operation.batch.size`.
-- `Meter("Respire")` — stable `db.client.operation.duration` histogram in seconds.
+- `Meter("Respire")` — stable `db.client.operation.duration` histogram in seconds when `RespireMetricGroups.Command` is selected through process-wide `RespireMetrics.Configure`; default Redis groups are resiliency and basic connections. Tracing is independent.
 - Register the built-in source and meter with OpenTelemetry's standard extensions. There is
   no `Respire.OpenTelemetry` package or `AddRespireInstrumentation()` API.
 

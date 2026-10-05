@@ -25,6 +25,7 @@ internal static class RespireTelemetry
     public static readonly Meter Meter = new(SourceName, Version);
     private static readonly KeyValuePair<string, object?> LibraryTag = new("redis.client.library", "Respire:" + Version);
     private static readonly KeyValuePair<string, object?> SystemTag = new("db.system.name", DatabaseSystem);
+    private static readonly MetricOperationNames MetricNames = new();
 
     private static readonly Counter<long> TransactionConflicts = Meter.CreateCounter<long>(
         "respire.transaction.watch.conflicts", "{attempt}", "Watched transaction attempts discarded by Redis.");
@@ -133,7 +134,7 @@ internal static class RespireTelemetry
 
     internal static void RecordMaintenanceNotification(string host, int port, string kind)
     {
-        if (!MaintenanceNotifications.Enabled) return;
+        if (!IsMetricEnabled(RespireMetricGroups.Resiliency, MaintenanceNotifications)) return;
         TagList tags = default;
         tags.Add(LibraryTag);
         tags.Add(SystemTag);
@@ -210,7 +211,7 @@ internal static class RespireTelemetry
 
     internal static void RecordFailoverSwitch(RespireEndpoint? previous, RespireEndpoint? current, string reason)
     {
-        if (GeographicFailovers.Enabled && previous is { } from && current is { } to && from != to)
+        if (IsMetricEnabled(RespireMetricGroups.Resiliency, GeographicFailovers) && previous is { } from && current is { } to && from != to)
         {
             try
             {
@@ -323,7 +324,7 @@ internal static class RespireTelemetry
 
     internal static void RecordCacheRequest(bool hit)
     {
-        if (!ClientCacheRequests.Enabled) return;
+        if (!IsMetricEnabled(RespireMetricGroups.ClientSideCaching, ClientCacheRequests)) return;
         try { ClientCacheRequests.Add(1, LibraryTag, SystemTag, new("redis.client.csc.result", hit ? "hit" : "miss")); }
         catch { /* Metrics listeners must not change cache results. */ }
     }
@@ -342,7 +343,7 @@ internal static class RespireTelemetry
 
     internal static void RecordCacheEvictions(long count, string? reason = null)
     {
-        if (!ClientCacheEvictions.Enabled || count <= 0) return;
+        if (!IsMetricEnabled(RespireMetricGroups.ClientSideCaching, ClientCacheEvictions) || count <= 0) return;
         try
         {
             if (reason is null) ClientCacheEvictions.Add(count, LibraryTag, SystemTag);
@@ -356,17 +357,47 @@ internal static class RespireTelemetry
         unit: "{flush}",
         description: "Client-side cache flushes caused by uncertain tracking continuity.");
 
-    public static bool IsEnabled => Source.HasListeners() || OperationDuration.Enabled;
+    internal static bool IsMetricEnabled(RespireMetricGroups group, Instrument instrument)
+        => RespireMetrics.Current.Includes(group) && instrument.Enabled;
 
-    internal static long CaptureStartTimestamp() => IsEnabled ? Stopwatch.GetTimestamp() : 0;
+    public static bool IsEnabled => Source.HasListeners() || IsMetricEnabled(RespireMetricGroups.Command, OperationDuration);
+
+    internal static bool IsOperationEnabled(string operation)
+        => Source.HasListeners() || IsCommandMetricEnabled(operation);
+
+    private static bool IsCommandMetricEnabled(string operation)
+    {
+        var selection = RespireMetrics.Current;
+        return selection.Includes(RespireMetricGroups.Command) && OperationDuration.Enabled && selection.IncludesCommand(operation);
+    }
+
+    internal static long CaptureStartTimestamp(string operation) => IsOperationEnabled(operation) ? Stopwatch.GetTimestamp() : 0;
+
+    internal static long CaptureBatchStartTimestamp<T>(string prefix, IReadOnlyList<T> operations, Func<T, string> operationName)
+        => Source.HasListeners() || IsBatchMetricEnabled(prefix, operations, operationName) ? Stopwatch.GetTimestamp() : 0;
+
+    private static bool IsBatchMetricEnabled<T>(string prefix, IReadOnlyList<T> operations, Func<T, string> operationName)
+    {
+        var selection = RespireMetrics.Current;
+        if (!selection.Includes(RespireMetricGroups.Command) || !OperationDuration.Enabled) return false;
+        if ((prefix is "WAIT" or "WAITAOF") && !selection.IncludesCommand(prefix)) return false;
+        // One measurement covers the whole pipeline/transaction: suppress it if any member is excluded.
+        for (var i = 0; i < operations.Count; i++)
+            if (!selection.IncludesCommand(operationName(operations[i]))) return false;
+        return operations.Count != 0 || selection.IncludesCommand(prefix);
+    }
 
     internal static void RecordUnroutedBatchFailure<T>(string prefix, IReadOnlyList<T> operations,
         Func<T, string> operationName, int database, long started, Exception error, RespireEndpoint? endpoint = null)
     {
         if (started == 0) return;
+        var metricEnabled = IsBatchMetricEnabled(prefix, operations, operationName);
+        if (!Source.HasListeners() && !metricEnabled) return;
         var operation = BatchOperationName(prefix, operations, operationName);
         int? batchSize = operations.Count == 1 ? null : operations.Count;
-        RecordUnroutedFailure(operation, database, started, error, batchSize: batchSize, endpoint: endpoint);
+        StartOperationCore(operation, endpoint?.Host, endpoint?.Port ?? DefaultRedisPort, database,
+            batchSize, null, started, metricEnabled).Complete(operation, endpoint?.Host,
+                endpoint?.Port ?? DefaultRedisPort, database, error: error, batchSize: batchSize);
     }
 
     internal static void RecordUnroutedFailure(string operation, int database, long started,
@@ -410,9 +441,13 @@ internal static class RespireTelemetry
         int? batchSize = null,
         string? storedProcedureName = null,
         long started = 0)
+        => StartOperationCore(operation, host, port, database, batchSize, storedProcedureName,
+            started, IsCommandMetricEnabled(operation));
+
+    private static OperationScope StartOperationCore(string operation, string? host, int port, int database,
+        int? batchSize, string? storedProcedureName, long started, bool metricEnabled)
     {
         var traceEnabled = Source.HasListeners();
-        var metricEnabled = OperationDuration.Enabled;
         if (!traceEnabled && !metricEnabled)
         {
             return default;
@@ -465,15 +500,16 @@ internal static class RespireTelemetry
         string prefix, IReadOnlyList<T> operations, Func<T, string> operationName,
         int database, out string operation, long started = 0)
     {
-        if (!IsEnabled)
+        var metricEnabled = IsBatchMetricEnabled(prefix, operations, operationName);
+        if (!Source.HasListeners() && !metricEnabled)
         {
             operation = prefix;
             return default;
         }
 
         operation = BatchOperationName(prefix, operations, operationName);
-        return StartOperation(operation, host: null, DefaultRedisPort, database,
-            batchSize: operations.Count == 1 ? null : operations.Count, started: started);
+        return StartOperationCore(operation, null, DefaultRedisPort, database,
+            operations.Count == 1 ? null : operations.Count, null, started, metricEnabled);
     }
 
     public static OperationScope StartBatchOperation<T>(
@@ -486,20 +522,21 @@ internal static class RespireTelemetry
         out string operation,
         long started = 0)
     {
-        if (!IsEnabled)
+        var metricEnabled = IsBatchMetricEnabled(prefix, operations, operationName);
+        if (!Source.HasListeners() && !metricEnabled)
         {
             operation = prefix;
             return default;
         }
 
         operation = BatchOperationName(prefix, operations, operationName);
-        return StartOperation(
+        return StartOperationCore(
             operation,
             host,
             port,
             database,
-            batchSize: operations.Count == 1 ? null : operations.Count,
-            started: started);
+            operations.Count == 1 ? null : operations.Count,
+            null, started, metricEnabled);
     }
 
     private static string BatchOperationName<T>(
@@ -596,7 +633,7 @@ internal static class RespireTelemetry
                 activityDurationSeconds = activity.Duration.TotalSeconds;
             }
 
-            if (startTimestamp == 0)
+            if (startTimestamp == 0 || !OperationDuration.Enabled)
             {
                 return;
             }
@@ -605,17 +642,12 @@ internal static class RespireTelemetry
             {
                 { "db.system.name", DatabaseSystem },
                 { "db.namespace", database.ToString(CultureInfo.InvariantCulture) },
-                { "db.operation.name", operation },
+                { "db.operation.name", MetricNames.GetName(operation) },
             };
             if (host is not null)
             {
                 tags.Add("server.address", host);
                 if (port != DefaultRedisPort) tags.Add("server.port", port);
-            }
-
-            if (storedProcedureName is not null)
-            {
-                tags.Add("db.stored_procedure.name", storedProcedureName);
             }
 
             if (batchSize is not null)

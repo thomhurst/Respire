@@ -12,6 +12,7 @@ using TUnit.Core;
 
 namespace Respire.Tests;
 
+[NotInParallel]
 public class TelemetryTests
 {
     [Test]
@@ -148,13 +149,13 @@ public class TelemetryTests
         await Assert.That(evalActivity.OperationName).IsEqualTo($"EVALSHA {sha1}");
         await Assert.That(Tag(evalActivity, "db.stored_procedure.name")).IsEqualTo(sha1);
         var evalMeasurement = capture.SingleMeasurement("EVALSHA", server.Port);
-        await Assert.That(evalMeasurement.Tags["db.stored_procedure.name"]).IsEqualTo(sha1);
+        await Assert.That(evalMeasurement.Tags.ContainsKey("db.stored_procedure.name")).IsFalse();
 
         var functionActivity = capture.SingleActivity("FCALL", server.Port);
         await Assert.That(functionActivity.OperationName).IsEqualTo($"FCALL {function}");
         await Assert.That(Tag(functionActivity, "db.stored_procedure.name")).IsEqualTo(function);
         var functionMeasurement = capture.SingleMeasurement("FCALL", server.Port);
-        await Assert.That(functionMeasurement.Tags["db.stored_procedure.name"]).IsEqualTo(function);
+        await Assert.That(functionMeasurement.Tags.ContainsKey("db.stored_procedure.name")).IsFalse();
     }
 
     [Test]
@@ -494,6 +495,7 @@ public class TelemetryTests
 
     private sealed class TelemetryCapture : IDisposable
     {
+        private readonly MetricConfigurationScope _metrics = new();
         private readonly ActivityListener _activityListener;
         private readonly MeterListener _meterListener;
 
@@ -586,6 +588,7 @@ public class TelemetryTests
         {
             _activityListener.Dispose();
             _meterListener.Dispose();
+            _metrics.Dispose();
         }
     }
 

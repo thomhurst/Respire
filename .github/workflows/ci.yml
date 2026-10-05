@@ -68,12 +68,14 @@ jobs:
       - name: Run Unit Tests
         run: |
           dotnet run --project tests/Respire.Tests -c Release -f net10.0 --no-build -- \
+            --treenode-filter '/*/*/(!MetricSelectionTests)/*' \
             --results-directory "$GITHUB_WORKSPACE/TestResults" \
             --coverage \
             --coverage-output coverage.cobertura.xml \
             --coverage-output-format cobertura
 
-      - name: Run regressions without operation tracing
+      # These tests control process-wide listener state; the HTML reporter adds its own listener.
+      - name: Run telemetry and direct-path regressions without external tracing
         env:
           TUNIT_DISABLE_HTML_REPORTER: 'true'
         run: |
@@ -81,6 +83,12 @@ jobs:
             --treenode-filter '/*/*/(HedgedReadTests)|(BytesResponseTests)/*'
           dotnet run --project tests/Respire.Tests -c Release -f net10.0 --no-build -- \
             --treenode-filter '/*/*/GetStringDirectPathTests/*'
+          dotnet run --project tests/Respire.Tests -c Release -f net10.0 --no-build -- \
+            --treenode-filter '/*/*/MetricSelectionTests/*' \
+            --results-directory "$GITHUB_WORKSPACE/TestResults/isolated-telemetry" \
+            --coverage \
+            --coverage-output coverage.cobertura.xml \
+            --coverage-output-format cobertura
 
       - name: Run Health Check Tests
         run: dotnet run --project tests/Respire.HealthChecks.Tests -c Release -f net10.0 --no-build
@@ -239,6 +247,13 @@ jobs:
         run: >-
           dotnet run --project tests/Respire.Tests -c Release -f net8.0 --no-build --
           --treenode-filter '/*/*/BytesResponseTests/*'
+
+      - name: Run telemetry regressions without external tracing
+        env:
+          TUNIT_DISABLE_HTML_REPORTER: 'true'
+        run: |
+          dotnet run --project tests/Respire.Tests -c Release -f net8.0 --no-build -- \
+            --treenode-filter '/*/*/(MetricSelectionTests|TelemetryTests|RedisMetricSchemaTests)/*'
 
       - name: Run samples
         uses: ./.github/actions/run-samples

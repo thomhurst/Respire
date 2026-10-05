@@ -96,7 +96,7 @@ public sealed partial class RespireBatch
 
         _sent = true;
         var telemetryOperation = operation;
-        var started = RespireTelemetry.CaptureStartTimestamp();
+        var started = RespireTelemetry.CaptureBatchStartTimestamp(operation, _ops, static op => op.Operation);
         RespireTelemetry.OperationScope telemetry = default;
         DedicatedConnectionPool? pool = null;
         RespireConnection? connection = null;

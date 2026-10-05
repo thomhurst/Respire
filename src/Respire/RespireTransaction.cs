@@ -251,7 +251,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
         _completed = true;
         var core = _client.Core;
         var telemetryOperation = "MULTI";
-        var sentinelStarted = core.Sentinel is null ? 0 : RespireTelemetry.CaptureStartTimestamp();
+        var sentinelStarted = core.Sentinel is null ? 0 : RespireTelemetry.CaptureBatchStartTimestamp("MULTI", _ops, static op => op.Operation);
         var telemetry = core.Sentinel is null ? RespireTelemetry.StartBatchOperation(
             "MULTI",
             _ops,
