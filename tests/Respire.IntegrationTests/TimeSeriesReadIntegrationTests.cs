@@ -13,6 +13,31 @@ public class TimeSeriesReadIntegrationTests(Redis810TimeSeriesContainer fixture)
     [Test]
     [Arguments(2)]
     [Arguments(3)]
+    public async Task FollowingMissingKeyHasBoundedCommandCount(int protocol)
+    {
+        // Command statistics belong only to this test; concurrent readers on the shared fixture
+        // must not make the rate assertion depend on unrelated test scheduling.
+        await using var isolated = new Redis810TimeSeriesContainer();
+        await isolated.InitializeAsync();
+        await using var client = await RespireClient.ConnectAsync($"{isolated.ConnectionString}?protocol={protocol}");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var cancel = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
+        await using var reader = client.TimeSeries.FollowAsync("missing", 0, cancellationToken: cancel.Token).GetAsyncEnumerator();
+        var elapsed = System.Diagnostics.Stopwatch.StartNew();
+        var next = reader.MoveNextAsync().AsTask();
+        await Task.Delay(350, timeout.Token);
+        cancel.Cancel();
+        await Assert.That(async () => await next).Throws<OperationCanceledException>();
+        var maximumCalls = (long)Math.Ceiling(elapsed.Elapsed.TotalMilliseconds / 100) + 1;
+        var info = await client.Server.InfoAsync("commandstats", timeout.Token);
+        var match = System.Text.RegularExpressions.Regex.Match(info, @"(?m)^cmdstat_ts\.read:calls=(\d+)");
+        var calls = match.Success ? long.Parse(match.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture) : 0;
+        await Assert.That(calls).IsLessThanOrEqualTo(maximumCalls);
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
     public async Task ExplicitRangesLabelsAndReadRoundTrip(int protocol)
     {
         await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");

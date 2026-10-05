@@ -87,10 +87,20 @@ public sealed partial class RespireTimeSeriesClient
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batchSize);
         timestamp.RequireRead(nameof(timestamp));
         var options = new RespireTimeSeriesReadOptions { BlockMilliseconds = 0, MaximumCount = batchSize };
+        var emptyDelayMilliseconds = 100;
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var result = await ReadAsync(key, timestamp, options, cancellationToken).ConfigureAwait(false);
+            if (result.Samples.Count == 0)
+            {
+                // Deletion can unblock an indefinite read without samples. Bound retries even if
+                // a server returns empty immediately, and keep cancellation responsive while waiting.
+                await Task.Delay(emptyDelayMilliseconds, cancellationToken).ConfigureAwait(false);
+                emptyDelayMilliseconds = Math.Min(emptyDelayMilliseconds * 2, 1000);
+                continue;
+            }
+            emptyDelayMilliseconds = 100;
             foreach (var sample in result.Samples)
             {
                 cancellationToken.ThrowIfCancellationRequested();

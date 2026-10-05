@@ -10,6 +10,32 @@ namespace Respire.Tests;
 public class TimeSeriesReadTests
 {
     [Test]
+    public async Task EmptyFollowRepliesAreRateLimitedAndCancellationInterruptsBackoff()
+    {
+        var firstReply = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, _) =>
+            {
+                firstReply.TrySetResult();
+                return "*0\r\n"u8.ToArray();
+            },
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var cancel = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
+        await using var reader = client.TimeSeries.FollowAsync("missing", 0, cancellationToken: cancel.Token).GetAsyncEnumerator();
+        var next = reader.MoveNextAsync().AsTask();
+        await firstReply.Task.WaitAsync(timeout.Token);
+        var elapsed = System.Diagnostics.Stopwatch.StartNew();
+        await Task.Delay(350, timeout.Token);
+        cancel.Cancel();
+        await Assert.That(async () => await next).Throws<OperationCanceledException>();
+        var maximumCalls = (int)Math.Ceiling(elapsed.Elapsed.TotalMilliseconds / 100) + 2;
+        await Assert.That(server.ReceivedCommands.Count).IsLessThanOrEqualTo(maximumCalls);
+    }
+
+    [Test]
     [Arguments("TS.NRANGE")]
     [Arguments("TS.NREVRANGE")]
     public async Task ExplicitRangeLayoutRoutesEveryKeyAndRejectsCrossSlot(string operation)

@@ -20,6 +20,7 @@ public readonly record struct RespireTimeSeriesTimestamp(string Value)
     /// <summary>Server clock marker (<c>*</c>). Valid for writes only; range commands reject it.</summary>
     public static RespireTimeSeriesTimestamp Now => new("*");
     /// <summary>Only samples newer than the latest existing sample (<c>$</c>). Valid for TS.READ only.</summary>
+    /// <remarks>Retrying this sentinel after an empty reply resolves it again; samples written between the calls can be skipped.</remarks>
     public static RespireTimeSeriesTimestamp New => new("$");
     /// <summary>Creates a millisecond timestamp. Negative values are rejected when the timestamp is used.</summary>
     public static implicit operator RespireTimeSeriesTimestamp(long value) => new(value.ToString(CultureInfo.InvariantCulture));
