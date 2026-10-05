@@ -1,10 +1,11 @@
-using DotNet.Testcontainers.Builders;
 using FluentAssertions;
 using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
-public class SetManyIfNotExistsIntegrationTests
+[Category(TestCategories.ProtocolIndependent)]
+[ClassDataSource<VersionedServerFixture>(Shared = SharedType.PerTestSession)]
+public class SetManyIfNotExistsIntegrationTests(VersionedServerFixture servers)
 {
     [Test]
     [Arguments("redis:8.4-alpine", 2)]
@@ -13,12 +14,10 @@ public class SetManyIfNotExistsIntegrationTests
     [Arguments("valkey/valkey:8.1-alpine", 3)]
     public async Task AtomicWrites_WorkAcrossServersProtocolsAndDeferredSurfaces(string image, int protocol)
     {
-        await using var server = new ContainerBuilder(image).WithPortBinding(6379, true)
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build();
-        await server.StartAsync();
+        var server = await servers.LeaseAsync(image);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(server.Hostname, server.GetMappedPublicPort(6379))], Connections = 1,
+            Endpoints = [server.Endpoint], Database = server.Database, Connections = 1,
             Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3,
         });
         foreach (var mode in new[] { "immediate", "batch", "transaction" })

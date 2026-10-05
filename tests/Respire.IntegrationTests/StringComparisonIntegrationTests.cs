@@ -1,10 +1,11 @@
-using DotNet.Testcontainers.Builders;
 using FluentAssertions;
 using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
-public class StringComparisonIntegrationTests
+[Category(TestCategories.ProtocolIndependent)]
+[ClassDataSource<VersionedServerFixture>(Shared = SharedType.PerTestSession)]
+public class StringComparisonIntegrationTests(VersionedServerFixture servers)
 {
     private enum Mode { Immediate, Batch, Transaction }
 
@@ -17,10 +18,8 @@ public class StringComparisonIntegrationTests
     [Arguments("valkey/valkey:9.0-alpine", 3)]
     public async Task SupportedComparisons_PreserveAtomicOutcomesAndExpiry(string image, int protocol)
     {
-        await using var container = new ContainerBuilder(image).WithPortBinding(6379, true)
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build();
-        await container.StartAsync();
-        await using var client = await RespireClient.ConnectAsync($"redis://{container.Hostname}:{container.GetMappedPublicPort(6379)}?protocol={protocol}");
+        var server = await servers.LeaseAsync(image);
+        await using var client = await RespireClient.ConnectAsync(server.ConnectionString(protocol));
         var redis = image.StartsWith("redis:", StringComparison.Ordinal);
         var valkeyDelete = image.Contains(":9.0", StringComparison.Ordinal);
         foreach (var mode in Enum.GetValues<Mode>())
@@ -119,16 +118,14 @@ public class StringComparisonIntegrationTests
     }
 
     [Test]
-    [Arguments("redis:7.0.15-alpine", 2)]
-    [Arguments("redis:7.0.15-alpine", 3)]
+    [Arguments("redis:7.0.15", 2)]
+    [Arguments("redis:7.0.15", 3)]
     [Arguments("valkey/valkey:8.1-alpine", 2)]
     [Arguments("valkey/valkey:8.1-alpine", 3)]
     public async Task UnsupportedFeatures_RemainServerErrors(string image, int protocol)
     {
-        await using var container = new ContainerBuilder(image).WithPortBinding(6379, true)
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build();
-        await container.StartAsync();
-        await using var client = await RespireClient.ConnectAsync($"redis://{container.Hostname}:{container.GetMappedPublicPort(6379)}?protocol={protocol}");
+        var server = await servers.LeaseAsync(image);
+        await using var client = await RespireClient.ConnectAsync(server.ConnectionString(protocol));
         foreach (var mode in Enum.GetValues<Mode>())
         {
             await client.SetAsync("key", "old");

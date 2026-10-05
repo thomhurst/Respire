@@ -1,10 +1,13 @@
-using DotNet.Testcontainers.Builders;
 using FluentAssertions;
 using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
-public class NativeLockIntegrationTests
+[Category(TestCategories.ProtocolIndependent)]
+// INFO commandstats is server-wide, so these rows use their own servers and run one at a time.
+[ClassDataSource<VersionedServerFixture>(Shared = SharedType.Keyed, Key = VersionedServerFixture.CommandStatsKey)]
+[NotInParallel(VersionedServerFixture.CommandStatsKey)]
+public class NativeLockIntegrationTests(VersionedServerFixture servers)
 {
     [Test]
     [Arguments("redis:8.4-alpine", 2, true, "delex")]
@@ -13,17 +16,15 @@ public class NativeLockIntegrationTests
     [Arguments("valkey/valkey:8.1-alpine", 3, true, "evalsha")]
     [Arguments("valkey/valkey:9.0-alpine", 2, true, "delifeq")]
     [Arguments("valkey/valkey:9.0-alpine", 3, true, "delifeq")]
-    [Arguments("redis:7.0.15-alpine", 2, false, "evalsha")]
-    [Arguments("redis:7.0.15-alpine", 3, false, "evalsha")]
+    [Arguments("redis:7.0.15", 2, false, "evalsha")]
+    [Arguments("redis:7.0.15", 3, false, "evalsha")]
     public async Task VersionedLockOperationsPreserveOwnershipAndUseExpectedCommands(
         string image, int protocol, bool nativeExtension, string releaseCommand)
     {
-        await using var container = new ContainerBuilder(image).WithPortBinding(6379, true)
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build();
-        await container.StartAsync();
+        var server = await servers.LeaseAsync(image);
         await using var owner = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = { new RespireEndpoint(container.Hostname, container.GetMappedPublicPort(6379)) },
+            Endpoints = { server.Endpoint }, Database = server.Database,
             Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3,
             Connections = 1,
             ClientSideCache = protocol == 3 ? new() : null,
@@ -35,7 +36,7 @@ public class NativeLockIntegrationTests
         await VerifyOwnershipAndCommandSelectionAsync(owner, client, key, token, replacement, nativeExtension, releaseCommand);
         await VerifyExpiredOwnerAsync(client, key, token);
         await VerifyReplacementRaceAsync(client, key, token, replacement,
-            $"redis://{container.Hostname}:{container.GetMappedPublicPort(6379)}?protocol={protocol}");
+            server.ConnectionString(protocol));
         await VerifyWrongTypeAsync(client, key, token);
         await VerifyManagedLockAsync(client, key);
     }
