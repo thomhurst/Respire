@@ -218,6 +218,8 @@ internal static class RespireTelemetry
                 tags.Add(LibraryTag);
                 tags.Add(SystemTag);
                 tags.Add("db.client.geofailover.reason", "automatic");
+                // The only production caller is the failover group's health-driven selection loop.
+                // Endpoints contain host/port only; authentication options are stored separately.
                 tags.Add("db.client.geofailover.fail_from", from.ToString());
                 tags.Add("db.client.geofailover.fail_to", to.ToString());
                 GeographicFailovers.Add(1, tags);

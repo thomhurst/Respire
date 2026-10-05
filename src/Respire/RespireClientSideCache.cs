@@ -902,6 +902,8 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         private readonly ConcurrentDictionary<RespireKey, CacheEntry> _entries = new();
         private readonly ConcurrentDictionary<ClientCacheCommandKey, QueryCacheEntry> _queries = new();
         private readonly Dictionary<RespireKey, HashSet<ClientCacheCommandKey>> _dependencies = new();
+        // When both gates are needed, take _dependencyLock before _removalLock, never the reverse.
+        // Retirement shares the removal gate so its count is atomic with publication and removal claims.
         private readonly Lock _dependencyLock = new();
         private readonly Lock _removalLock = new();
         private readonly RespireClientSideCacheOptions _options;
@@ -1151,9 +1153,9 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             QueryCacheEntry expected,
             CacheRemoval reason)
         {
+            bool reportRemoval;
             lock (_dependencyLock)
             {
-                bool reportRemoval;
                 lock (_removalLock)
                 {
                     if (!((ICollection<KeyValuePair<ClientCacheCommandKey, QueryCacheEntry>>)_queries)
@@ -1165,9 +1167,9 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                 }
 
                 RemoveDependencies(in query, expected.Dependencies);
-                RecordRemoval(expected.Size, reason, reportRemoval);
-                return true;
             }
+            RecordRemoval(expected.Size, reason, reportRemoval);
+            return true;
         }
 
         private void AddDependencies(

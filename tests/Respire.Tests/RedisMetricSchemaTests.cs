@@ -12,6 +12,51 @@ namespace Respire.Tests;
 [NotInParallel]
 public class RedisMetricSchemaTests
 {
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task QueryEvictionCallbackDoesNotBlockOtherQueryPublication(bool capacity)
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var store = new ClientSideCacheCoordinator.CacheStore(new() { MaxEntries = 1 }, _ =>
+        {
+            entered.TrySetResult();
+            release.Task.GetAwaiter().GetResult();
+        });
+        var key = new RespireKey("query-callback");
+        var query = new ClientCacheCommandKey("HGET", "query-callback", "first");
+        using var response = RespValue.BulkString("value"u8.ToArray());
+        store.Set(in query, new(response.ToOwned(), [key], 100, capacity ? 0 : 1));
+        if (capacity)
+        {
+            var other = new ClientCacheCommandKey("HGET", "query-callback", "second");
+            store.Set(in other, new(response.ToOwned(), [key], 100, 0));
+        }
+        var removal = Task.Run(() =>
+        {
+            if (capacity) store.Trim();
+            else store.TryGet(in query, out _);
+        });
+        Task<bool>? publication = null;
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            publication = Task.Run(() =>
+            {
+                var next = new ClientCacheCommandKey("HGET", "query-callback", "next");
+                return store.Set(in next, new(response.ToOwned(), [key], 100, 0));
+            });
+            await Assert.That(await publication.WaitAsync(TimeSpan.FromSeconds(10))).IsTrue();
+        }
+        finally
+        {
+            release.TrySetResult();
+            await removal.WaitAsync(TimeSpan.FromSeconds(10));
+            if (publication is not null) await publication.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+    }
+
     /// <summary>Forces a flush between scalar and dependent-query removal for one invalidation.</summary>
     [Test]
     public async Task FlushDuringInvalidationCountsEachResponseOnce()
