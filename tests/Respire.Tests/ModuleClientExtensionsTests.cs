@@ -69,7 +69,7 @@ public class ModuleClientExtensionsTests
     }
 
     [Test]
-    [NotInParallel]
+    [NotInParallel] // Forced blocking, compacting full GCs would pause every concurrent timing-sensitive test.
     [Arguments("Json")]
     [Arguments("Search")]
     [Arguments("TimeSeries")]

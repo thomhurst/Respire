@@ -68,7 +68,8 @@ public class StalledDeliveryTests
         var tasks = sources.Select(source => ConsumeAsync(source.Task)).ToArray();
         var firstAwaiter = first.Task.ConfigureAwait(false).GetAwaiter();
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var release = new ManualResetEventSlim();
+        // Not disposed: a continuation delayed by a starved pool may still wait after the test ends.
+        var release = new ManualResetEventSlim();
         firstAwaiter.UnsafeOnCompleted(() =>
         {
             using var value = firstAwaiter.GetResult();
@@ -126,7 +127,8 @@ public class StalledDeliveryTests
         var first = new PendingResponsePool(1).Rent();
         var awaiter = first.Task.ConfigureAwait(false).GetAwaiter();
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var release = new ManualResetEventSlim();
+        // Not disposed: a continuation delayed by a starved pool may still wait after the test ends.
+        var release = new ManualResetEventSlim();
         awaiter.UnsafeOnCompleted(() =>
         {
             using var value = awaiter.GetResult();
@@ -164,7 +166,8 @@ public class StalledDeliveryTests
         var transactionTask = transaction.Task.AsTask();
         var firstAwaiter = first.Task.ConfigureAwait(false).GetAwaiter();
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var release = new ManualResetEventSlim();
+        // Not disposed: a continuation delayed by a starved pool may still wait after the test ends.
+        var release = new ManualResetEventSlim();
         firstAwaiter.UnsafeOnCompleted(() =>
         {
             using var value = firstAwaiter.GetResult();
@@ -201,7 +204,8 @@ public class StalledDeliveryTests
         var source = new PendingResponsePool(1).Rent();
         var awaiter = source.Task.ConfigureAwait(false).GetAwaiter();
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var release = new ManualResetEventSlim();
+        // Not disposed: a continuation delayed by a starved pool may still wait after the test ends.
+        var release = new ManualResetEventSlim();
         awaiter.UnsafeOnCompleted(() =>
         {
             using var value = awaiter.GetResult();
@@ -260,7 +264,8 @@ public class StalledDeliveryTests
     {
         await using var server = new FakeRespServer(FakeRespServer.PongReply);
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
-        using var release = new ManualResetEventSlim();
+        // Not disposed: a continuation delayed by a starved pool may still wait after the test ends.
+        var release = new ManualResetEventSlim();
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var awaiter = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).ConfigureAwait(false).GetAwaiter();
         awaiter.UnsafeOnCompleted(() =>
@@ -292,7 +297,8 @@ public class StalledDeliveryTests
     {
         await using var server = new FakeRespServer(FakeRespServer.PongReply);
         var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
-        using var release = new ManualResetEventSlim();
+        // Not disposed: a continuation delayed by a starved pool may still wait after the test ends.
+        var release = new ManualResetEventSlim();
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var awaiter = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).ConfigureAwait(false).GetAwaiter();
         awaiter.UnsafeOnCompleted(() =>

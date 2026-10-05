@@ -317,7 +317,6 @@ public class ReadEndpointRoutingTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task ReadOnlyScriptTelemetryUsesSelectedReplicaEndpoint()
     {
         await using var primary = new FakeRespServer(FakeRespServer.OkReply);
@@ -337,7 +336,8 @@ public class ReadEndpointRoutingTests
                 System.Diagnostics.ActivitySamplingResult.AllData,
             ActivityStopped = activity =>
             {
-                if (activity.OperationName.StartsWith("EVALSHA_RO", StringComparison.Ordinal))
+                if (activity.OperationName.StartsWith("EVALSHA_RO", StringComparison.Ordinal)
+                    && TestTelemetry.IsFrom(activity, primary.Port, replica.Port))
                     activities.Enqueue(activity);
             },
         };
@@ -353,7 +353,6 @@ public class ReadEndpointRoutingTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task ScriptAcquisitionFailureTelemetryUsesStandaloneEndpoint()
     {
         var reservation = new TcpListener(IPAddress.Loopback, 0);
@@ -374,7 +373,8 @@ public class ReadEndpointRoutingTests
                 System.Diagnostics.ActivitySamplingResult.AllData,
             ActivityStopped = activity =>
             {
-                if (activity.OperationName.StartsWith("EVALSHA ", StringComparison.Ordinal))
+                if (activity.OperationName.StartsWith("EVALSHA ", StringComparison.Ordinal)
+                    && TestTelemetry.IsFrom(activity, port))
                     activities.Enqueue(activity);
             },
         };

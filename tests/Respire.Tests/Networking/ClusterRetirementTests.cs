@@ -303,7 +303,6 @@ public class ClusterRetirementTests
     }
 
     [Test]
-    [NotInParallel] // The ActivityListener deterministically retires each selected generation.
     [Arguments("ordinary", false)]
     [Arguments("ordinary", true)]
     [Arguments("no-redirect", false)]
@@ -517,7 +516,6 @@ public class ClusterRetirementTests
     }
 
     [Test]
-    [NotInParallel] // The ActivityListener enables process-wide operation instrumentation.
     [Arguments("batch", "MOVED", false)]
     [Arguments("batch", "MOVED", true)]
     [Arguments("batch", "ASK", false)]

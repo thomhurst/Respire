@@ -137,7 +137,6 @@ public class AvailabilityZoneRoutingTests
     }
 
     [Test]
-    [NotInParallel]
     [Arguments(0)]
     [Arguments(1)]
     [Arguments(2)]
@@ -1312,7 +1311,6 @@ public class AvailabilityZoneRoutingTests
     }
 
     [Test]
-    [NotInParallel]
     [Arguments(true, 0)]
     [Arguments(true, 1)]
     [Arguments(true, 2)]
