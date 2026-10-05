@@ -22,7 +22,6 @@ env:
 
 permissions:
   contents: read
-  checks: write
 
 concurrency:
   # A newer commit on the same PR or branch supersedes older runs. Every main commit still runs.
@@ -68,8 +67,6 @@ jobs:
           dotnet run --project tests/Respire.Tests -c Release -f net10.0 --no-build -- \
             --maximum-parallel-tests 4 \
             --results-directory "$GITHUB_WORKSPACE/TestResults" \
-            --report-trx \
-            --report-trx-filename "Respire.Tests-net10.0.trx" \
             --coverage \
             --coverage-output coverage.cobertura.xml \
             --coverage-output-format cobertura
@@ -80,10 +77,7 @@ jobs:
         run: |
           dotnet run --project tests/Respire.Tests -c Release -f net10.0 --no-build -- \
             --maximum-parallel-tests 4 \
-            --treenode-filter '/*/*/HedgedReadTests/*' \
-            --results-directory "$GITHUB_WORKSPACE/TestResults" \
-            --report-trx \
-            --report-trx-filename "Respire.HedgedReads.Uninstrumented-net10.0.trx"
+            --treenode-filter '/*/*/HedgedReadTests/*'
 
       - name: Run Analyzer Tests
         run: dotnet run --project tests/Respire.Analyzers.Tests -c Release -f net10.0 --no-build
@@ -123,15 +117,6 @@ jobs:
             cat CoverageReport/SummaryGithub.md >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Generate Test Report
-        uses: dorny/test-reporter@v3
-        if: always()
-        with:
-          name: Unit Test Results (net10.0)
-          path: 'TestResults/*.trx'
-          reporter: dotnet-trx
-          fail-on-error: false
-
       - name: Upload TUnit HTML reports
         uses: actions/upload-artifact@v7
         if: always()
@@ -140,14 +125,12 @@ jobs:
           path: '**/TestResults/*-report.html'
           retention-days: 14
 
-      - name: Upload Test Results
+      - name: Upload coverage report
         uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: test-results-net10.0
-          path: |
-            TestResults/
-            CoverageReport/
+          name: coverage-report
+          path: CoverageReport/
           retention-days: 30
 
       - name: Upload coverage to Codecov
