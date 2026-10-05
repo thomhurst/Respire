@@ -17,7 +17,8 @@ runs:
             --treenode-filter "/*/*/$suite/*" \
             --results-directory "$GITHUB_WORKSPACE/SampleTestResults" \
             --report-trx \
-            --report-trx-filename "testing-sample-$suite-${{ inputs.framework }}.trx"
+            --report-trx-filename "testing-sample-$suite-${{ inputs.framework }}.trx" \
+            --report-html-filename "$GITHUB_WORKSPACE/SampleTestResults/testing-sample-$suite-${{ inputs.framework }}-report.html"
         done
 
     - name: Verify sample scenarios executed

@@ -132,6 +132,14 @@ jobs:
           reporter: dotnet-trx
           fail-on-error: false
 
+      - name: Upload TUnit HTML reports
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: tunit-reports-net10.0
+          path: '**/TestResults/*-report.html'
+          retention-days: 14
+
       - name: Upload Test Results
         uses: actions/upload-artifact@v7
         if: always()
@@ -194,7 +202,17 @@ jobs:
       - name: Run Caching Tests on Redis 7.4
         env:
           RESPIRE_TEST_REDIS_IMAGE: redis:7.4.11-alpine
-        run: dotnet run --project tests/Respire.Caching.Tests -c Release -f net10.0 --no-build
+        run: >-
+          dotnet run --project tests/Respire.Caching.Tests -c Release -f net10.0 --no-build --
+          --report-html-filename TestResults/Respire.Caching.Tests-redis7.4-linux-net10.0-report.html
+
+      - name: Upload TUnit HTML reports
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: tunit-reports-net10.0-resp2
+          path: '**/TestResults/*-report.html'
+          retention-days: 14
 
   build-and-test-net8:
     # The name is a required status check. This job is a smoke run; net10.0 carries the full suite.
@@ -246,6 +264,14 @@ jobs:
         uses: ./.github/actions/run-samples
         with:
           framework: net8.0
+
+      - name: Upload TUnit HTML reports
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: tunit-reports-net8.0
+          path: '**/TestResults/*-report.html'
+          retention-days: 14
 
   performance-validation:
     name: Performance Validation
