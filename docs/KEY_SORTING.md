@@ -78,6 +78,7 @@ the owned snapshots unless its initializer replaces them.
 without `destinationDatabase` continues to copy within the connection's database.
 
 ```csharp
+await using var client = await RespireClient.ConnectAsync("localhost:6379");
 var tenant = client.WithKeyPrefix("tenant:");
 var copied = await tenant.Keys.CopyAsync("source", "backup", destinationDatabase: 2, replace: true);
 
