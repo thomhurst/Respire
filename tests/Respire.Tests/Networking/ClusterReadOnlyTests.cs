@@ -13,30 +13,50 @@ public class ClusterReadOnlyTests
 {
     private static readonly byte[] ReadOnlyReply = "-READONLY You can't write against a read only replica.\r\n"u8.ToArray();
 
+    // The recovery tests below drive ClusterRecoveryBudget with a manual clock: a phase expires
+    // only after the fake server has observed the request that the phase must abandon. The
+    // real-time ConnectTimeout (which also bounds each topology query) is far longer than any
+    // test step, so CPU contention cannot expire a phase before its reply is injected.
+    private static readonly TimeSpan RecoveryRound = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan RecoveryHalf = RecoveryRound / 2;
+    // Advancing this far into the final reservation proves the seed keeps nearly all of it.
+    private static readonly TimeSpan MostOfReservation = RecoveryHalf - TimeSpan.FromMilliseconds(100);
+
+    private static TaskCompletionSource ObserveCommand(FakeRespServer server, string command)
+    {
+        var observed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        server.SuppressReply = received =>
+        {
+            if (received != command) return false;
+            observed.TrySetResult();
+            return true;
+        };
+        return observed;
+    }
+
     [Test]
-    [NotInParallel] // Preserve the final-seed scheduling budget while other wire tests run.
     [Arguments(false)]
     [Arguments(true)]
     public async Task UnavailableLastSeedLeavesReservedTimeForLastUsableSeed(bool configuredPolicy)
     {
+        var clock = new ClusterRecoveryTestClock();
         await using var replacement = new FakeRespServer(FakeRespServer.OkReply);
         await using var replica = new FakeRespServer(ReadOnlyReply);
         await using var initialSeed = new FakeRespServer(Topology(replica.Port));
         await using var healthySeed = new FakeRespServer(Topology(replacement.Port));
-        // Cached-owner connection failure can consume the primary phase first. This reply
-        // fits the final quarter-round but cannot run on the already-expired early-seed token.
-        healthySeed.DelayReply(0, 100);
         using var unavailable = new ReservedUnavailablePort();
         var unavailablePort = unavailable.Port;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespProtocol.Resp2,
-            UseCluster = true, Connections = 1, ConnectTimeout = TimeSpan.FromSeconds(2), CommandTimeout = null,
+            UseCluster = true, Connections = 1, ConnectTimeout = RecoveryRound, CommandTimeout = null,
+            ClusterRecoveryClock = clock,
             ReconnectPolicy = configuredPolicy ? new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0 } : null,
             Endpoints = [new("127.0.0.1", initialSeed.Port), new("127.0.0.1", healthySeed.Port),
                 new("127.0.0.1", unavailablePort)],
         });
-        initialSeed.SuppressReply = _ => true;
+        var initialRequest = ObserveCommand(initialSeed, "CLUSTER SLOTS");
+        var healthyRequest = ObserveCommand(healthySeed, "CLUSTER SLOTS");
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         replica.SuppressReply = _ => { received.TrySetResult(); return true; };
         var write = client.SetAsync("key", "value").AsTask();
@@ -46,22 +66,30 @@ public class ClusterReadOnlyTests
             router.GetMultiplexer(new RespireEndpoint("127.0.0.1", unavailablePort)));
         await replica.SendRawAsync(ReadOnlyReply);
 
-        await Assert.That(await write.WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
+        // The refused cached owner is skipped, and the stalled first seed spends the whole
+        // early-seed phase. The unavailable final endpoint must not hold the reservation.
+        await initialRequest.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        clock.Advance(RecoveryHalf);
+        await healthyRequest.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        clock.Advance(MostOfReservation);
+        await Assert.That(write.IsCompleted).IsFalse();
+        await healthySeed.SendRawAsync(Topology(replacement.Port));
+
+        await Assert.That(await write.WaitAsync(TimeSpan.FromSeconds(10))).IsTrue();
         await Assert.That(healthySeed.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
         await Assert.That(replacement.ReceivedCommands).IsEquivalentTo(["SET key value"]);
     }
 
     [Test]
-    [NotInParallel] // Other wire tests must not consume this test's final-seed scheduling budget.
     [Arguments(false)]
     [Arguments(true)]
     public async Task ManyStalledSeedsLeaveUsableTimeForFinalSeed(bool configuredPolicy)
     {
+        var clock = new ClusterRecoveryTestClock();
         await using var replacement = new FakeRespServer(FakeRespServer.OkReply);
         await using var replica = new FakeRespServer(ReadOnlyReply);
         await using var initialSeed = new FakeRespServer(Topology(replica.Port));
         await using var finalSeed = new FakeRespServer(Topology(replacement.Port));
-        finalSeed.DelayReply(0, 600);
         var stalledSeeds = Enumerable.Range(0, 8)
             .Select(_ => new FakeRespServer { SuppressReply = _ => true }).ToArray();
         try
@@ -72,16 +100,28 @@ public class ClusterReadOnlyTests
                 UseCluster = true,
                 ReconnectPolicy = configuredPolicy ? new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0 } : null,
                 Connections = 1,
-                ConnectTimeout = TimeSpan.FromSeconds(2),
+                ConnectTimeout = RecoveryRound,
                 CommandTimeout = null,
+                ClusterRecoveryClock = clock,
                 Endpoints = [new("127.0.0.1", initialSeed.Port),
                     .. stalledSeeds.Select(seed => new RespireEndpoint("127.0.0.1", seed.Port)),
                     new("127.0.0.1", finalSeed.Port)],
             };
             await using var client = await RespireClient.ConnectAsync(options);
-            initialSeed.SuppressReply = _ => true;
+            var initialRequest = ObserveCommand(initialSeed, "CLUSTER SLOTS");
+            var finalRequest = ObserveCommand(finalSeed, "CLUSTER SLOTS");
+            var write = client.SetAsync("key", "value").AsTask();
 
-            await Assert.That(await client.SetAsync("key", "value")).IsTrue();
+            // Every early seed shares one phase, however many there are. Expiring it while the
+            // first one stalls must still leave the final seed the reserved half of the round.
+            await initialRequest.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            clock.Advance(RecoveryHalf);
+            await finalRequest.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            clock.Advance(MostOfReservation);
+            await Assert.That(write.IsCompleted).IsFalse();
+            await finalSeed.SendRawAsync(Topology(replacement.Port));
+
+            await Assert.That(await write.WaitAsync(TimeSpan.FromSeconds(10))).IsTrue();
             await Assert.That(finalSeed.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
             await Assert.That(replacement.ReceivedCommands).IsEquivalentTo(["SET key value"]);
         }
@@ -134,20 +174,37 @@ public class ClusterReadOnlyTests
     }
 
     [Test]
-    [NotInParallel] // Other wire tests must not consume this test's final-seed scheduling budget.
     public async Task TwoStalledPrimariesStillLeaveTimeForSeedDiscovery()
     {
+        var clock = new ClusterRecoveryTestClock();
         await using var replacement = new FakeRespServer(FakeRespServer.OkReply);
         await using var replica = new FakeRespServer(ReadOnlyReply);
-        await using var first = new FakeRespServer { SuppressReply = _ => true };
-        await using var second = new FakeRespServer { SuppressReply = _ => true };
-        await using var seed = new FakeRespServer(SplitTopology(first.Port, replica.Port), Topology(replacement.Port));
-        seed.DelayReply(1, 600);
-        await using var client = await ConnectAsync(seed.Port, TimeSpan.FromSeconds(2));
+        var stalledRequest = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var first = new FakeRespServer { SuppressReply = _ => { stalledRequest.TrySetResult(); return true; } };
+        await using var second = new FakeRespServer { SuppressReply = _ => { stalledRequest.TrySetResult(); return true; } };
+        await using var seed = new FakeRespServer(SplitTopology(first.Port, replica.Port));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true, Connections = 1, ConnectTimeout = RecoveryRound, CommandTimeout = null,
+            ClusterRecoveryClock = clock,
+            Endpoints = [new("127.0.0.1", seed.Port)],
+        });
+        var seedRequest = ObserveCommand(seed, "CLUSTER SLOTS");
         var router = client.Core.Cluster!;
         router.SetSlotOwner(1, router.GetMultiplexer(new RespireEndpoint("127.0.0.1", second.Port)));
+        var write = client.SetAsync("key", "value").AsTask();
 
-        await Assert.That(await client.SetAsync("key", "value")).IsTrue();
+        // The first stalled primary spends the whole primary phase, and the second is skipped.
+        // Their count must not consume the half of the round reserved for seed discovery.
+        await stalledRequest.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        clock.Advance(RecoveryHalf);
+        await seedRequest.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        clock.Advance(MostOfReservation);
+        await Assert.That(write.IsCompleted).IsFalse();
+        await seed.SendRawAsync(Topology(replacement.Port));
+
+        await Assert.That(await write.WaitAsync(TimeSpan.FromSeconds(10))).IsTrue();
         await Assert.That(seed.CommandsSeen).IsEqualTo(2);
         await Assert.That(replacement.ReceivedCommands).Contains("SET key value");
     }
