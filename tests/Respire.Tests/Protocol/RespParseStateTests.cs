@@ -8,6 +8,71 @@ namespace Respire.Tests.Protocol;
 public class RespParseStateTests
 {
     [Test]
+    [Arguments(4096, false)]
+    [Arguments(16384, false)]
+    [Arguments(64512, false)]
+    [Arguments(4096, true)]
+    [Arguments(16384, true)]
+    [Arguments(64512, true)]
+    public async Task LargeBulkUsesDirectFillOnlyWhenIncomplete(int length, bool nested)
+    {
+        foreach (var type in new[] { '$', '=', '!' })
+        foreach (var missing in new[] { 0, 1, length / 2 })
+        {
+            var payload = type == '=' ? "txt:" + new string('x', length - 4) : new string('x', length);
+            var frame = System.Text.Encoding.ASCII.GetBytes($"{type}{length}\r\n{payload}\r\n");
+            using var parser = new RespParseState(4096);
+            var pos = 0;
+            if (nested)
+            {
+                await Assert.That(parser.TryParse("*1\r\n"u8, ref pos, out _, out _))
+                    .IsEqualTo(RespParseStatus.NeedMoreData);
+                pos = 0;
+            }
+
+            var status = parser.TryParse(frame.AsSpan(0, frame.Length - missing), ref pos, out var value, out var request);
+            if (missing != 0)
+            {
+                await Assert.That(status).IsEqualTo(RespParseStatus.NeedDirectFill);
+                await Assert.That(request.PayloadLength).IsEqualTo(length);
+                await Assert.That(pos).IsEqualTo(frame.Length - length - 2);
+                continue;
+            }
+
+            using (value)
+            {
+                await Assert.That(status).IsEqualTo(RespParseStatus.Done);
+                await Assert.That(pos).IsEqualTo(frame.Length);
+                var bulk = nested ? value.AsArray()[0] : value;
+                await Assert.That(bulk.Type).IsEqualTo(type switch
+                {
+                    '$' => RespDataType.BulkString,
+                    '=' => RespDataType.VerbatimString,
+                    _ => RespDataType.BulkError,
+                });
+                await Assert.That(bulk.AsSpan().Length).IsEqualTo(type == '=' ? length - 4 : length);
+                await Assert.That(parser.IsIdle).IsTrue();
+            }
+        }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task BufferedLargeBulkRejectsMalformedTerminator(bool nested)
+    {
+        using var parser = new RespParseState(4096);
+        var pos = 0;
+        if (nested)
+        {
+            parser.TryParse("*1\r\n"u8, ref pos, out _, out _);
+            pos = 0;
+        }
+        var frame = System.Text.Encoding.ASCII.GetBytes($"$4096\r\n{new string('x', 4096)}!\n");
+        await Assert.That(parser.TryParse(frame, ref pos, out _, out _)).IsEqualTo(RespParseStatus.InvalidData);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task FragmentedAttribute_YieldsOnlyWhenEnabled(bool stopAfterAttributes)

@@ -214,7 +214,7 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
             (byte)'=' => RespDataType.VerbatimString,
             _ => RespDataType.BulkError,
         };
-        if (declaredLength >= directFillThreshold)
+        if (declaredLength >= directFillThreshold && declaredLength > buffer.Length - headerEnd - 2)
         {
             if (declaredLength > int.MaxValue - 2)
             {
@@ -286,7 +286,7 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
             _ => RespDataType.BulkError,
         };
         var length = (int)declaredLength;
-        if (length >= directFillThreshold)
+        if (length >= directFillThreshold && buffer.Length - pos < length + 2)
         {
             directFill = new RespDirectFillRequest(type, length);
             return RespParseStatus.NeedDirectFill;

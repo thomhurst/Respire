@@ -1,0 +1,126 @@
+using System.Text;
+using System.Threading.Channels;
+using Respire.Commands;
+using Respire.Networking;
+using Respire.Protocol;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+
+namespace Respire.Tests.Networking;
+
+public class BufferedBulkReplyTests
+{
+    [Test]
+    [Arguments(4096, 0)]
+    [Arguments(16384, 0)]
+    [Arguments(64512, 0)]
+    [Arguments(4096, 1)]
+    [Arguments(16384, 1)]
+    [Arguments(64512, 1)]
+    [Arguments(4096, 2)]
+    [Arguments(16384, 2)]
+    [Arguments(64512, 2)]
+    public async Task CompleteAndSplitBulksPreservePipelineOrder(int length, int replyKind)
+    {
+        // Script exact receive boundaries; TCP writes alone cannot guarantee fragmentation.
+        foreach (var missing in new[] { 0, 1, length / 2 })
+        {
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var stream = new SegmentedStream();
+            await using var connection = await RespireConnection.ConnectAsync("scripted", 6379,
+                new RespireConnectionOptions
+                {
+                    Protocol = RespProtocol.Resp2, ReceiveBufferSize = 64 * 1024,
+                    TestingStreamFactory = (_, _, _) => ValueTask.FromResult<Stream>(stream),
+                });
+            var command = new Cmd1(Verbs.Get, "key");
+            var first = connection.SendAsync(command, deadline.Token).AsTask();
+            var text = replyKind == 0 ? connection.SendStringAsync(command, deadline.Token).AsTask() : null;
+            var general = replyKind != 0 ? connection.SendAsync(command, deadline.Token).AsTask() : null;
+            var last = connection.SendAsync(command, deadline.Token).AsTask();
+            await stream.NextReadAsync(deadline.Token);
+
+            var payload = new string('x', length);
+            var bulk = Encoding.ASCII.GetBytes($"${length}\r\n{payload}\r\n");
+            if (replyKind == 2)
+            {
+                // Force the connection into its resumable aggregate parser before the bulk.
+                stream.Publish(":11\r\n*1\r\n"u8.ToArray());
+                await stream.NextReadAsync(deadline.Token);
+            }
+            var prefix = replyKind == 2 ? Array.Empty<byte>() : ":11\r\n"u8.ToArray();
+            stream.Publish([.. prefix, .. bulk.AsSpan(0, bulk.Length - missing),
+                .. (missing == 0 ? ":22\r\n"u8.ToArray() : Array.Empty<byte>())]);
+            if (missing != 0)
+            {
+                await stream.NextReadAsync(deadline.Token);
+                // An earlier reply must be flushed before direct-fill waits for more bytes.
+                using var earlier = await first.WaitAsync(deadline.Token);
+                await Assert.That(earlier.AsInteger()).IsEqualTo(11);
+                await Assert.That(text?.IsCompleted ?? general!.IsCompleted).IsFalse();
+                await Assert.That(last.IsCompleted).IsFalse();
+                stream.Publish([.. bulk.AsSpan(bulk.Length - missing), .. ":22\r\n"u8]);
+            }
+            else
+            {
+                using var earlier = await first.WaitAsync(deadline.Token);
+                await Assert.That(earlier.AsInteger()).IsEqualTo(11);
+            }
+
+            if (text is not null)
+                await Assert.That(await text.WaitAsync(deadline.Token)).IsEqualTo(payload);
+            else
+            {
+                using var value = await general!.WaitAsync(deadline.Token);
+                var actual = replyKind == 2 ? value.AsArray()[0].AsString() : value.AsString();
+                await Assert.That(actual).IsEqualTo(payload);
+            }
+            using var following = await last.WaitAsync(deadline.Token);
+            await Assert.That(following.AsInteger()).IsEqualTo(22);
+            await Assert.That(connection.IsConnected).IsTrue();
+        }
+    }
+
+    private sealed class SegmentedStream : Stream
+    {
+        private readonly Channel<ReadOnlyMemory<byte>> _segments = Channel.CreateUnbounded<ReadOnlyMemory<byte>>();
+        private readonly Channel<bool> _reads = Channel.CreateUnbounded<bool>();
+        private ReadOnlyMemory<byte> _remaining;
+
+        public void Publish(byte[] bytes) => _segments.Writer.TryWrite(bytes);
+        public async Task NextReadAsync(CancellationToken token) => await _reads.Reader.ReadAsync(token);
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            _reads.Writer.TryWrite(true);
+            if (_remaining.IsEmpty)
+            {
+                try { _remaining = await _segments.Reader.ReadAsync(cancellationToken); }
+                catch (ChannelClosedException) { return 0; }
+            }
+            var count = Math.Min(buffer.Length, _remaining.Length);
+            _remaining[..count].CopyTo(buffer);
+            _remaining = _remaining[count..];
+            return count;
+        }
+
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+            => ValueTask.CompletedTask;
+        protected override void Dispose(bool disposing)
+        {
+            _segments.Writer.TryComplete();
+            base.Dispose(disposing);
+        }
+        public override bool CanRead => true;
+        public override bool CanWrite => true;
+        public override bool CanSeek => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+    }
+}
