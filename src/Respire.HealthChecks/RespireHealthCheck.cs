@@ -11,6 +11,7 @@ namespace Respire.HealthChecks;
 public sealed class RespireHealthCheck : IHealthCheck
 {
     private const string AllNodesUnsupported = "All-node probes require a client implementing IRespireHealthProbe.";
+    private const int ProviderCompletionGraceMilliseconds = 250;
     private readonly IRespireClient? _client;
     private readonly RespireFailoverGroup? _group;
     private readonly RespireHealthCheckOptions _options;
@@ -58,19 +59,19 @@ public sealed class RespireHealthCheck : IHealthCheck
             // Let cooperative providers finish assembling per-node timeout observations before
             // the backstop interrupts a provider that ignores its own timeout contract.
             var waitTimeout = client is IRespireHealthProbe
-                ? TimeSpan.FromMilliseconds(Math.Min(_options.ProbeTimeout.TotalMilliseconds + 250, uint.MaxValue - 1d))
+                ? TimeSpan.FromMilliseconds(Math.Min(_options.ProbeTimeout.TotalMilliseconds + ProviderCompletionGraceMilliseconds, uint.MaxValue - 1d))
                 : _options.ProbeTimeout;
             deadline.CancelAfter(waitTimeout);
             var errors = new List<Exception>();
             RespireNodeHealth[] nodes;
             if (client is IRespireHealthProbe probe)
             {
-                var results = await probe.ProbeHealthAsync(new()
+                var results = await WaitForProbeAsync(probe.ProbeHealthAsync(new()
                 {
                     ProbeAllNodes = _options.ProbeAllNodes,
                     MaxConcurrentProbes = _options.MaxConcurrentProbes,
                     Timeout = _options.ProbeTimeout,
-                }, deadline.Token).AsTask().WaitAsync(deadline.Token).ConfigureAwait(false);
+                }, deadline.Token).AsTask(), deadline.Token).ConfigureAwait(false);
                 if (results is null || results.Any(result => result is null))
                     throw new InvalidOperationException("The health probe provider returned null results or a null node result.");
                 nodes = results.Select(result => new RespireNodeHealth(result.Endpoint, result.IsConnected,
@@ -83,7 +84,7 @@ public sealed class RespireHealthCheck : IHealthCheck
                     throw new NotSupportedException(AllNodesUnsupported);
                 if (!client.IsConnected)
                     throw new RespireConnectionException("The existing Respire client is not connected.");
-                var latency = await client.PingAsync(deadline.Token).AsTask().WaitAsync(deadline.Token).ConfigureAwait(false);
+                var latency = await WaitForProbeAsync(client.PingAsync(deadline.Token).AsTask(), deadline.Token).ConfigureAwait(false);
                 nodes = [new(client.Endpoint, true, latency, null)];
             }
             data["nodes"] = nodes;
@@ -109,6 +110,24 @@ public sealed class RespireHealthCheck : IHealthCheck
         catch (Exception error)
         {
             return new(context.Registration.FailureStatus, "Respire health probe failed.", error, data);
+        }
+    }
+
+    private static async Task<T> WaitForProbeAsync<T>(Task<T> task, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // WaitAsync removes its observer when cancelled. A provider that ignores cancellation
+            // can still fault later, after this health check has already returned.
+            _ = task.ContinueWith(static completed => { _ = completed.Exception; },
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+            throw;
         }
     }
 }
