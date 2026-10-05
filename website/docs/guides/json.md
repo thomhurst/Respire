@@ -22,7 +22,6 @@ using System.Text.Json.Serialization;
 using Respire.Json;
 
 [JsonSerializable(typeof(Customer))]
-[JsonSerializable(typeof(string[]))]
 internal partial class CustomerJsonContext : JsonSerializerContext;
 
 internal sealed record Customer(string Name, string Email);
@@ -72,7 +71,8 @@ array-of-matches reply. For other expressions, use `RespireJsonPath.Projection("
 or `RespireJsonPath.Projection("($.price + 1)")`. `Legacy(path)` explicitly selects one JSON
 value; `JsonPath(path)` and `Projection(path)` explicitly select matched values. None rewrites
 the text sent to Redis or validates that its syntax agrees with the selected response shape.
-For example, `Legacy("$.x")` and `JsonPath("items")` are deliberate decoding overrides.
+Choose the shape Redis actually returns. A mismatched override can fail deserialization
+or change how results are grouped; the direct-array example below uses a matching override.
 `ResponseShape` exposes the stored choice without parsing the expression.
 Group numeric-leading arithmetic, for example `(2 * $.n)`: Redis interprets the ungrouped
 `2 * $.n` as a legacy expression rooted at the field `2`, which may produce no match.
@@ -84,8 +84,16 @@ Collection-valued projections such as `$.obj.keys()` and `$.items.append(9)` ret
 JSON array, without an extra array-of-matches wrapper. Pass `RespireJsonPath.Legacy(expression)`
 and array metadata to preserve it as one typed value, even though these expressions start with `$`:
 
+<!-- doc-test-declaration: split-before=await using var client -->
 ```csharp
-var keys = await json.GetAsync("doc", CustomerJsonContext.Default.StringArray,
+using System.Text.Json.Serialization;
+using Respire.Json;
+
+[JsonSerializable(typeof(string[]))]
+internal partial class ProjectionJsonContext : JsonSerializerContext;
+
+await using var client = await RespireClient.ConnectAsync("localhost:6379");
+var keys = await client.Json.GetAsync("doc", ProjectionJsonContext.Default.StringArray,
     RespireJsonPath.Legacy("$.obj.keys()"));
 ```
 
