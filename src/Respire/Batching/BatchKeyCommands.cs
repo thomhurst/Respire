@@ -61,6 +61,11 @@ public partial interface IBatchKeyCommands
     /// <summary>Copies a key, optionally replacing an existing target. Redis: COPY.</summary>
     RespirePending<bool> Copy(RespireKey source, RespireKey destination, bool replace = false);
 
+    /// <summary>Copies a key into the requested database. Redis 6.2+: COPY DB.</summary>
+    /// <remarks>Both keys receive the client prefix and must share a Cluster hash slot.
+    /// Unsupported or out-of-range databases return server errors through the pending result.</remarks>
+    RespirePending<bool> Copy(RespireKey source, RespireKey destination, int destinationDatabase, bool replace = false);
+
     /// <summary>Touches keys (updates access time); returns how many existed. Redis: TOUCH.</summary>
     RespirePending<long> Touch(params ReadOnlySpan<RespireKey> keys);
 }
@@ -187,6 +192,18 @@ internal sealed partial class BatchKeyCommands(IPendingSink sink) : IBatchKeyCom
                 "COPY", new Cmd2(Verbs.Copy, sink.Client.Key(in source), sink.Client.Key(in destination)),
                 source, destination,
                 static (c, v) => ResponseReader.Flag(in v));
+    }
+
+    public RespirePending<bool> Copy(RespireKey source, RespireKey destination, int destinationDatabase, bool replace = false)
+    {
+        var (resolvedSource, resolvedDestination) = KeyCommands.CopyDatabaseKeys(sink.Client, source, destination, destinationDatabase);
+        return replace
+            ? sink.Add<Cmd5, bool>("COPY",
+                new Cmd5(Verbs.Copy, resolvedSource, resolvedDestination, "DB", destinationDatabase, "REPLACE"),
+                source, destination, static (c, v) => ResponseReader.Flag(in v))
+            : sink.Add<Cmd4, bool>("COPY",
+                new Cmd4(Verbs.Copy, resolvedSource, resolvedDestination, "DB", destinationDatabase),
+                source, destination, static (c, v) => ResponseReader.Flag(in v));
     }
 
     public RespirePending<long> Touch(params ReadOnlySpan<RespireKey> keys)
