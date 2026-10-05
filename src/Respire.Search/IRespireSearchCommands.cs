@@ -6,6 +6,18 @@ namespace Respire.Search;
 [RespireCommands]
 internal interface IRespireSearchCommands
 {
+    [RespireCommand("FT.SUGADD")]
+    ValueTask<RespireResult> AddSuggestionAsync(RespireKey key, string suggestion, double score, RespireValue[] options, CancellationToken cancellationToken = default);
+
+    [RespireCommand("FT.SUGDEL")]
+    ValueTask<RespireResult> DeleteSuggestionAsync(RespireKey key, string suggestion, CancellationToken cancellationToken = default);
+
+    [RespireCommand("FT.SUGGET", Mutation = RespireCacheMutation.ReadOnly)]
+    ValueTask<RespireResult> GetSuggestionsAsync(RespireKey key, string prefix, RespireValue[] options, CancellationToken cancellationToken = default);
+
+    [RespireCommand("FT.SUGLEN", Mutation = RespireCacheMutation.ReadOnly)]
+    ValueTask<RespireResult> GetSuggestionCountAsync(RespireKey key, CancellationToken cancellationToken = default);
+
     /// <summary>Creates an index from command arguments.</summary>
     [RespireCommand("FT.CREATE")]
     ValueTask<RespireResult> CreateAsync(string index, RespireValue[] arguments, CancellationToken cancellationToken = default);

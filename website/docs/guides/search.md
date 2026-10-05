@@ -74,6 +74,49 @@ var hybrid = await search.HybridSearchAsync("books", new RespireHybridSearchQuer
 
 Text fields accept `Weight` and `NoStem`. Tag fields accept `Separator` and `CaseSensitive`. Vector fields take a typed `RespireSearchVectorOptions` (algorithm, element type, dimensions, and distance metric). The client computes the algorithm argument count, and `Attributes` adds settings such as `M` or `EF_CONSTRUCTION`. `RespireSearchField.Options` remains a raw-token escape hatch for server-version-specific settings that have no typed property. A vector field uses either typed `Vector` options or raw `Options`, not both. Invalid combinations, such as `Weight` on a tag field or `Sortable` on a vector field, throw before anything is sent.
 
+## Autocomplete dictionaries
+
+Suggestion dictionaries are Redis keys independent of Search indexes. They do not
+require `FT.CREATE`, and indexing documents does not populate them. Manage entries
+with `AddSuggestionAsync` (`FT.SUGADD`), `DeleteSuggestionAsync` (`FT.SUGDEL`),
+`GetSuggestionCountAsync` (`FT.SUGLEN`), and `GetSuggestionsAsync` (`FT.SUGGET`):
+
+```csharp
+using Respire.Search;
+
+await using var client = await RespireClient.ConnectAsync("localhost:6379");
+var search = client.Search;
+await search.AddSuggestionAsync("book-suggestions", "Redis in practice", 2,
+    new() { Payload = System.Text.Encoding.UTF8.GetBytes("book:42") });
+await search.AddSuggestionAsync("book-suggestions", "Redis in practice", 1,
+    new() { Increment = true });
+var suggestions = await search.GetSuggestionsAsync("book-suggestions", "Red",
+    new() { Fuzzy = true, Max = 10, WithScores = true, WithPayloads = true });
+foreach (var suggestion in suggestions)
+    Console.WriteLine($"{suggestion.Text}: {suggestion.Score}");
+```
+
+Adding an existing suggestion replaces its weight unless `Increment` is set;
+the return value is the dictionary's current entry count. Deletion returns whether
+an entry existed. Missing dictionaries have zero entries and no suggestions.
+Negative weights are valid; NaN is rejected. An empty prefix is allowed.
+
+`Fuzzy` allows one edit in the prefix. `Max` must be positive; omitting it uses the
+server default of 5. Scores are server-calculated match scores, not necessarily
+the stored weights. A score is null when `WithScores` is omitted. Payloads are
+owned binary memory, with null representing an absent or unrequested payload and
+empty memory preserving a returned empty payload. Keep input payload memory
+unchanged until `AddSuggestionAsync` completes. Redis 8.10 supports payloads,
+although the [FT.SUGADD reference](https://redis.io/docs/latest/commands/ft.sugadd/)
+marks the `PAYLOAD` option deprecated.
+
+The dictionary argument is a binary-safe `RespireKey`; commands route by that key
+without cross-node fan-out or merged suggestions. Server deployment support still
+applies: the [Redis command reference](https://redis.io/docs/latest/commands/ft.sugget/)
+lists restrictions for clustered Redis Software/Cloud databases. Prefixed views
+reject these FT commands like other Search operations. Reads retain the local
+client cache; adding and deleting suggestions conservatively invalidate it.
+
 ## Queries
 
 Supported index commands are `FT.CREATE`, `FT.ALTER`, `FT.DROPINDEX`, and `FT.INFO`. `GetIndexInfoAsync` returns a parsed `RespireSearchIndexInfo` with the index name, document count, schema attributes, and every reported property as a copied value. Query methods use `FT.SEARCH`, `FT.EXPLAIN`, and `FT.EXPLAINCLI`; `ExplainAsync` takes `RespireSearchExplainOptions` to select CLI output or a dialect.
