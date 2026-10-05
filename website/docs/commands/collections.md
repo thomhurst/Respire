@@ -265,6 +265,30 @@ Single-member `PopAsync` returns null when missing. Batch and transaction facets
 `PopMany` for arrays and `Pop` for scalars. Pre-release count-based `PopAsync`/`Pop` overloads
 are removed; rename those calls without changing their arguments.
 
+`DifferenceCountAsync` and `UnionCountAsync` use Redis 8.10+
+[SDIFFCARD](https://redis.io/docs/latest/commands/sdiffcard/) and
+[SUNIONCARD](https://redis.io/docs/latest/commands/sunioncard/) to count without returning members.
+Missing keys are empty sets. Difference counts preserve the order of input keys: the first
+set is reduced by every later set. At least one key is required. Limits must be nonnegative;
+zero means unlimited, and a positive limit caps the returned count.
+
+```csharp
+long exclusive = await redis.Sets.DifferenceCountAsync("team:red", "on-call");
+long limited = await redis.Sets.DifferenceCountAsync(10, "team:red", "on-call");
+long total = await redis.Sets.UnionCountAsync("team:red", "on-call");
+long estimate = await redis.Sets.UnionCountAsync(
+    new RespireSetUnionCountOptions(Limit: 100, Approximate: true), "team:red", "on-call");
+```
+
+`Approximate` selects Redis's union cardinality estimate; leave it false when an exact
+count is required. The deterministic fake server computes exact counts even with this flag.
+Batch and transaction facets expose `DifferenceCount` and `UnionCount` with the same options.
+Immediate overloads accept a key span and cancellation token. Every key receives the view's
+prefix; Cluster keys must share a slot. Deferred methods snapshot the key sequence while
+borrowing byte-backed key storage until execution completes. Reads use the existing cache
+invalidation metadata for every input key. External set-facet implementations must add these
+new interface members. Older servers preserve their unknown-command errors.
+
 ## Sorted sets
 
 ### Conditional adds and increments

@@ -10,7 +10,7 @@ namespace Respire;
 /// Set (unordered, unique members) commands. Collection cardinality uses
 /// <see cref="CountAsync"/>.
 /// </summary>
-public interface ISetCommands
+public partial interface ISetCommands
 {
     /// <summary>Adds members; returns how many were new. Redis: SADD.</summary>
     ValueTask<long> AddAsync(RespireKey key, params ReadOnlySpan<RespireValue> members);
@@ -131,7 +131,7 @@ public interface ISetCommands
         RespireKey destination, ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken);
 }
 
-internal sealed class SetCommands(RespireClient client) : ISetCommands
+internal sealed partial class SetCommands(RespireClient client) : ISetCommands
 {
     public ValueTask<long> AddAsync(RespireKey key, params ReadOnlySpan<RespireValue> members)
         => AddAsync(key, members, CancellationToken.None);

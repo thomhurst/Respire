@@ -11,7 +11,7 @@ namespace Respire;
 /// <see cref="RespireTransaction"/>. Mirrors <see cref="ISetCommands"/>; collection cardinality
 /// uses <see cref="Count"/>.
 /// </summary>
-public interface IBatchSetCommands
+public partial interface IBatchSetCommands
 {
     /// <summary>Adds members; returns how many were new. Redis: SADD.</summary>
     RespirePending<long> Add(RespireKey key, params ReadOnlySpan<RespireValue> members);
@@ -84,7 +84,7 @@ public interface IBatchSetCommands
     RespirePending<long> DifferenceStore(RespireKey destination, params ReadOnlySpan<RespireKey> keys);
 }
 
-internal sealed class BatchSetCommands(IPendingSink sink) : IBatchSetCommands
+internal sealed partial class BatchSetCommands(IPendingSink sink) : IBatchSetCommands
 {
     public RespirePending<long> Add(RespireKey key, params ReadOnlySpan<RespireValue> members)
         => sink.Add<Cmd1N, long>(

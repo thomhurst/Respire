@@ -81,6 +81,8 @@ public sealed partial class RespireFakeServer
         ["SUNIONSTORE"] = new(3, int.MaxValue, static (server, _, args) => server.SetCombine(args, SetOperation.Union, store: true)),
         ["SDIFFSTORE"] = new(3, int.MaxValue, static (server, _, args) => server.SetCombine(args, SetOperation.Difference, store: true)),
         ["SINTERCARD"] = new(3, int.MaxValue, static (server, _, args) => server.SetIntersectCount(args)),
+        ["SDIFFCARD"] = new(3, int.MaxValue, static (server, _, args) => server.SetCombineCount(args, SetOperation.Difference)),
+        ["SUNIONCARD"] = new(3, int.MaxValue, static (server, _, args) => server.SetCombineCount(args, SetOperation.Union)),
         ["LPUSH"] = new(3, int.MaxValue, static (server, _, args) => server.ListPush(args, left: true, onlyExisting: false)),
         ["RPUSH"] = new(3, int.MaxValue, static (server, _, args) => server.ListPush(args, left: false, onlyExisting: false)),
         ["LPUSHX"] = new(3, int.MaxValue, static (server, _, args) => server.ListPush(args, left: true, onlyExisting: true)),
