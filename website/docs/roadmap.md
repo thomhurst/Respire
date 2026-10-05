@@ -42,7 +42,7 @@ Server and protocol requirements vary by feature; each linked guide describes it
 - [Pub/sub](guides/pub-sub.md), pattern and sharded subscriptions, and delivery-gap reporting.
   Typed [keyspace, keyevent, and Redis 8.8 subkey notifications](guides/keyspace-notifications.md)
   include Cluster routing to the owning primary for exact keys and fan-out across primaries for patterns.
-  Delivery is at-most-once; reconnects and topology changes can expose gaps.
+  Reconnects can lose notifications; topology changes can lose or duplicate them.
 - [Managed distributed locks](guides/distributed-locks.md) and [coordination](guides/coordination.md)
   with fencing tokens, leases, semaphores, and rate limiting.
 - Typed [JSON](guides/json.md), [Search](guides/search.md), [TimeSeries](guides/timeseries.md),

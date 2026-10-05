@@ -127,14 +127,6 @@ The full surface, conventions, and roadmap live in
 
 ## Coming from StackExchange.Redis
 
-StackExchange.Redis 3.3.1 also attempts RESP3 by default, supports geo-failover through
-connection groups, and offers opt-in smart client handoffs and command retries classified by
-side effects. These are shared capabilities or areas where Respire still has work planned,
-not reasons on their own to switch. Respire's reconnect policy does not provide a general
-command retry wrapper, and its failover groups select a client for new operations without
-replaying in-flight calls. See the upstream
-[configuration](https://github.com/StackExchange/StackExchange.Redis/blob/3.3.1/docs/Configuration.md)
-and [failover/retry documentation](https://github.com/StackExchange/StackExchange.Redis/blob/3.3.1/docs/Failover.md).
-
 See [Coming from StackExchange.Redis](https://thomhurst.github.io/Respire/docs/stackexchange-redis)
-for a feature comparison and an API migration map.
+for the versioned feature comparison, upstream evidence, and API migration map, including
+RESP3 defaults, connection groups, smart client handoffs, and command retry behavior.
