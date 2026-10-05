@@ -17,6 +17,7 @@ public sealed class StreamReferenceRedisContainer : IAsyncInitializer, IAsyncDis
     public ValueTask DisposeAsync() => _container.DisposeAsync();
 }
 
+[Category(TestCategories.ProtocolIndependent)]
 [ClassDataSource<StreamReferenceRedisContainer>(Shared = SharedType.PerTestSession)]
 public class StreamReferenceIntegrationTests(StreamReferenceRedisContainer fixture)
 {

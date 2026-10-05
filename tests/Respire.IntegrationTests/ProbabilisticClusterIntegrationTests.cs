@@ -4,14 +4,17 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
-public class ProbabilisticClusterIntegrationTests
+[Category(TestCategories.ProtocolIndependent)]
+// Rows share one cluster; every key carries a per-test prefix.
+[ClassDataSource<BloomRedisClusterFixture>(Shared = SharedType.PerTestSession)]
+public class ProbabilisticClusterIntegrationTests(BloomRedisClusterFixture fixture)
 {
     [Test]
     [Arguments(2)]
     [Arguments(3)]
     public async Task ClusterRoutesPrefixedKeysAndEnforcesMergeSlots(int protocol)
     {
-        await using var cluster = await RedisClusterTestContainer.StartAsync("redis:8-alpine", loadBloomModule: true);
+        var cluster = fixture.Cluster;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             UseCluster = true, Protocol = (RespProtocol)protocol,

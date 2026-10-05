@@ -11,6 +11,9 @@ namespace Respire.IntegrationTests;
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
 public class ValueCodecIntegrationTests(RedisTestContainer fixture)
 {
+    [ClassDataSource<RedisTestContainer>(Shared = SharedType.Keyed, Key = TestConstraints.ClientCacheServer)]
+    public required RedisTestContainer CacheServer { get; init; }
+
     [Test]
     [Arguments("brotli", 2)]
     [Arguments("brotli", 3)]
@@ -84,7 +87,7 @@ public class ValueCodecIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
-    [NotInParallel] // Exact hit assertions require stable tracking connections.
+    [NotInParallel(TestConstraints.ClientCacheHits)] // Exact hit assertions require stable tracking connections.
     [Arguments("brotli")]
     [Arguments("deflate")]
     [Arguments("lz4")]
@@ -94,7 +97,7 @@ public class ValueCodecIntegrationTests(RedisTestContainer fixture)
         var codec = CreateCodec(algorithm);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.Database,
+            Endpoints = [new(CacheServer.Host, CacheServer.Port)], Database = CacheServer.Database,
             Serializer = new RespireValueCodecSerializer(RespireSerializer.Default, codec), ClientSideCache = new(),
         });
         var key = $"codec-cache:{Guid.NewGuid():N}";

@@ -3,6 +3,7 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
+[Category(TestCategories.ProtocolIndependent)]
 [ClassDataSource<SecuredRedisTestContainer>(Shared = SharedType.PerTestSession)]
 public class AuthenticationTests(SecuredRedisTestContainer fixture)
 {
@@ -20,8 +21,9 @@ public class AuthenticationTests(SecuredRedisTestContainer fixture)
         var roundTrip = await client.PingAsync();
         roundTrip.Should().BePositive();
 
-        (await client.SetAsync("auth:key", "auth-value")).Should().BeTrue();
-        (await client.GetStringAsync("auth:key")).Should().Be("auth-value");
+        var key = $"auth:{Guid.NewGuid():N}";
+        (await client.SetAsync(key, "auth-value")).Should().BeTrue();
+        (await client.GetStringAsync(key)).Should().Be("auth-value");
     }
 
     [Test]
@@ -35,8 +37,9 @@ public class AuthenticationTests(SecuredRedisTestContainer fixture)
             Connections = 1,
         });
 
-        (await client.SetAsync("auth:resp3", "resp3-value")).Should().BeTrue();
-        (await client.GetStringAsync("auth:resp3")).Should().Be("resp3-value");
+        var key = $"auth:{Guid.NewGuid():N}";
+        (await client.SetAsync(key, "resp3-value")).Should().BeTrue();
+        (await client.GetStringAsync(key)).Should().Be("resp3-value");
     }
 
     [Test]

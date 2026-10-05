@@ -1,23 +1,12 @@
-using DotNet.Testcontainers.Builders;
-using DotNet.Testcontainers.Containers;
 using FluentAssertions;
 using TUnit.Core;
-using TUnit.Core.Interfaces;
 
 namespace Respire.IntegrationTests;
 
-public sealed class StreamProductionRedisContainer : IAsyncInitializer, IAsyncDisposable
-{
-    private readonly IContainer _container = new ContainerBuilder("redis:8.6-alpine")
-        .WithPortBinding(6379, true)
-        .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build();
-    public string ConnectionString => $"redis://{_container.Hostname}:{_container.GetMappedPublicPort(6379)}";
-    public Task InitializeAsync() => _container.StartAsync();
-    public ValueTask DisposeAsync() => _container.DisposeAsync();
-}
-
-[ClassDataSource<StreamProductionRedisContainer>(Shared = SharedType.PerTestSession)]
-public class StreamIdempotencyIntegrationTests(StreamProductionRedisContainer fixture)
+// XADD IDMP needs Redis 8.6 or later.
+[Category(TestCategories.ProtocolIndependent)]
+[ClassDataSource<ModernRedisTestContainer>(Shared = SharedType.PerTestSession)]
+public class StreamIdempotencyIntegrationTests(ModernRedisTestContainer fixture)
 {
     [Test]
     [MatrixDataSource]

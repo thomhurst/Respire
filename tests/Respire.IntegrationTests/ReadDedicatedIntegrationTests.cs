@@ -7,6 +7,7 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
+[Category(TestCategories.ProtocolIndependent)]
 public class ReadDedicatedIntegrationTests
 {
     [Test]

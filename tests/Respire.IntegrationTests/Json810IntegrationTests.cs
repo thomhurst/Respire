@@ -6,10 +6,9 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
-public sealed class Redis810JsonTestContainer() : StandaloneRedisTestContainer("redis:8.10-alpine");
-
-[ClassDataSource<Redis810JsonTestContainer>(Shared = SharedType.PerTestSession)]
-public partial class Json810IntegrationTests(Redis810JsonTestContainer fixture)
+[Category(TestCategories.ProtocolIndependent)]
+[ClassDataSource<ModernRedisTestContainer>(Shared = SharedType.PerTestSession)]
+public partial class Json810IntegrationTests(ModernRedisTestContainer fixture)
 {
     [Test]
     [Arguments(2)]

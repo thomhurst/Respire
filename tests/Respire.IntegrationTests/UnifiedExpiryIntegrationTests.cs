@@ -3,13 +3,16 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
+[Category(TestCategories.ProtocolIndependent)]
 [ClassDataSource<ModernRedisTestContainer>(Shared = SharedType.PerTestSession)]
 public class UnifiedExpiryIntegrationTests(ModernRedisTestContainer fixture)
 {
     [Test]
     public async Task KeyExpiry_ConditionsAndPersistShareOneMethod()
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var root = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        // The fixture's database 0 is shared by every Redis 8 test class.
+        var client = root.WithKeyPrefix($"{Guid.NewGuid():N}:");
         await client.SetAsync("unified:key", "value", RespireExpiry.In(TimeSpan.FromSeconds(30)));
 
         (await client.Keys.ExpireAsync(
@@ -24,7 +27,9 @@ public class UnifiedExpiryIntegrationTests(ModernRedisTestContainer fixture)
     [Test]
     public async Task StringGetAndExpire_UpdatesAndRemovesExpiry()
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var root = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        // The fixture's database 0 is shared by every Redis 8 test class.
+        var client = root.WithKeyPrefix($"{Guid.NewGuid():N}:");
         await client.SetAsync("unified:string", "value");
 
         (await client.Strings.GetAndExpireAsync(
@@ -37,7 +42,9 @@ public class UnifiedExpiryIntegrationTests(ModernRedisTestContainer fixture)
     [Test]
     public async Task HashExpiry_UsesRelativeAbsolutePersistAndKeepForms()
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var root = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        // The fixture's database 0 is shared by every Redis 8 test class.
+        var client = root.WithKeyPrefix($"{Guid.NewGuid():N}:");
         await client.Hashes.SetAsync("unified:hash", "field", "value");
 
         (await client.Hashes.ExpireAsync(
@@ -57,7 +64,9 @@ public class UnifiedExpiryIntegrationTests(ModernRedisTestContainer fixture)
     [Test]
     public async Task ConditionalHashSet_ClearsExistingFieldExpiry()
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var root = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        // The fixture's database 0 is shared by every Redis 8 test class.
+        var client = root.WithKeyPrefix($"{Guid.NewGuid():N}:");
         await client.Hashes.SetAsync("conditional:hash", "field", "value");
         await client.Hashes.ExpireAsync(
             "conditional:hash", RespireExpiry.In(TimeSpan.FromSeconds(30)), "field");

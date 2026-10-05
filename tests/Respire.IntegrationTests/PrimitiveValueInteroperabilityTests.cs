@@ -19,7 +19,6 @@ public class PrimitiveValueInteroperabilityTests(RedisTestContainer fixture)
         _respireClient = await RespireClient.ConnectAsync(fixture.ConnectionString);
         _stackExchangeMultiplexer = await ConnectionMultiplexer.ConnectAsync(fixture.StackExchangeConnectionString);
         _stackExchangeDb = _stackExchangeMultiplexer.GetDatabase();
-        await _stackExchangeDb.ExecuteAsync("FLUSHDB");
     }
 
     [After(Test)]

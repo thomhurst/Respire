@@ -5,7 +5,9 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
-public class ServerHotKeysIntegrationTests
+[Category(TestCategories.ProtocolIndependent)]
+[ClassDataSource<VersionedServerFixture>(Shared = SharedType.PerTestSession)]
+public class ServerHotKeysIntegrationTests(VersionedServerFixture servers)
 {
     [Test]
     [MatrixDataSource]
@@ -164,9 +166,9 @@ public class ServerHotKeysIntegrationTests
     [Arguments(3)]
     public async Task UnsupportedRedisErrorsArePreserved(int protocol)
     {
-        await using var container = new RedisBuilder("redis:7.2.4").Build();
-        await container.StartAsync();
-        await using var client = await RespireClient.ConnectAsync($"redis://{container.Hostname}:{container.GetMappedPublicPort(6379)}?protocol={protocol}&allowAdmin=true");
+        // Unsupported commands change nothing, so the shared Redis 7.2 server is safe.
+        var lease = await servers.LeaseAsync("redis:7.2-alpine");
+        await using var client = await RespireClient.ConnectAsync(lease.ConnectionString(protocol) + "&allowAdmin=true");
         var tracker = await client.Server.GetHotKeysTrackerAsync();
         Func<Task>[] commands = [async () => await tracker.StartAsync(new()), async () => await tracker.GetAsync(),
             async () => await tracker.StopAsync(), async () => await tracker.ResetAsync()];

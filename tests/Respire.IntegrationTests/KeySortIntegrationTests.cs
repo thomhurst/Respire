@@ -132,16 +132,18 @@ public class KeySortIntegrationTests(RedisTestContainer fixture)
         (await view.Lists.RangeAsync("result")).Should().Equal("2", "3");
         (await Store(view, mode, "missing", "result", null)).Should().Be(0);
         (await view.Keys.ExistsAsync("result")).Should().BeFalse();
-        await using var other = await RespireClient.ConnectAsync($"redis://{fixture.Host}:{fixture.Port}/4095?protocol={protocol}");
+        // No test owns the scratch database; the Guid prefix keeps this row's keys apart there.
+        const int scratch = RedisTestContainer.ScratchDatabase;
+        await using var other = await RespireClient.ConnectAsync($"redis://{fixture.Host}:{fixture.Port}/{scratch}?protocol={protocol}");
         var target = other.WithKeyPrefix(prefix);
         try
         {
-            (await Move(view, mode, "source", 4095)).Should().BeTrue();
+            (await Move(view, mode, "source", scratch)).Should().BeTrue();
             (await view.Keys.ExistsAsync("source")).Should().BeFalse();
             (await target.Lists.RangeAsync("source")).Should().Equal("3", "1", "2");
-            (await Move(view, mode, "source", 4095)).Should().BeFalse();
+            (await Move(view, mode, "source", scratch)).Should().BeFalse();
             await view.SetAsync("source", "replacement");
-            (await Move(view, mode, "source", 4095)).Should().BeFalse();
+            (await Move(view, mode, "source", scratch)).Should().BeFalse();
             (await view.GetAsync<string>("source")).Should().Be("replacement");
         }
         finally { await target.Keys.DeleteAsync("source"); }

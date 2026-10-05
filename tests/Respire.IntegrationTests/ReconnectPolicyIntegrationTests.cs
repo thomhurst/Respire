@@ -5,6 +5,7 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
+[Category(TestCategories.ProtocolIndependent)]
 public class ReconnectPolicyIntegrationTests
 {
     [Test]
@@ -12,7 +13,7 @@ public class ReconnectPolicyIntegrationTests
     [Arguments(3)]
     public async Task KilledCommandConnectionRecoversAndResetsPolicy(int protocol)
     {
-        await using var container = new RedisBuilder("redis:7.2.4-alpine").Build();
+        await using var container = new RedisBuilder("redis:7.2-alpine").Build();
         await container.StartAsync();
         var options = new RespireOptions
         {

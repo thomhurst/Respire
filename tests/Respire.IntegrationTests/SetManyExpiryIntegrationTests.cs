@@ -3,6 +3,7 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
+[Category(TestCategories.ProtocolIndependent)]
 /// <summary>
 /// MSETEX behaviour against a real server: <c>SetManyExpireAsync(RespireExpiry, SetWhen, …)</c>
 /// overload has to map each expiry form onto a shared, live TTL and keep the NX/XX gating.
@@ -14,7 +15,9 @@ public class SetManyExpiryIntegrationTests(ModernRedisTestContainer fixture)
     [Test]
     public async Task SetMany_WithoutExpiry_WritesEveryPairWithoutATtl()
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var root = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        // The fixture's database 0 is shared by every Redis 8 test class.
+        var client = root.WithKeyPrefix($"{Guid.NewGuid():N}:");
 
         await client.Strings.SetManyAsync(("mset:a", "1"), ("mset:b", "2"));
 
@@ -26,7 +29,9 @@ public class SetManyExpiryIntegrationTests(ModernRedisTestContainer fixture)
     [Test]
     public async Task SetMany_WithRelativeTtl_SharesThatTtlAcrossKeys()
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var root = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        // The fixture's database 0 is shared by every Redis 8 test class.
+        var client = root.WithKeyPrefix($"{Guid.NewGuid():N}:");
 
         (await client.Strings.SetManyExpireAsync(
             TimeSpan.FromSeconds(30), pairs: [("msetex:a", "1"), ("msetex:b", "2")])).Should().BeTrue();
@@ -43,7 +48,9 @@ public class SetManyExpiryIntegrationTests(ModernRedisTestContainer fixture)
     [Test]
     public async Task SetMany_WithAbsoluteTtl_EndsAtThatInstant()
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var root = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        // The fixture's database 0 is shared by every Redis 8 test class.
+        var client = root.WithKeyPrefix($"{Guid.NewGuid():N}:");
         var instant = DateTimeOffset.UtcNow.AddSeconds(30);
 
         (await client.Strings.SetManyExpireAsync(RespireExpiry.At(instant), ("msetexat:a", "1"))).Should().BeTrue();
@@ -56,7 +63,9 @@ public class SetManyExpiryIntegrationTests(ModernRedisTestContainer fixture)
     [Test]
     public async Task SetMany_WithKeep_RetainsTheExistingTtl()
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var root = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        // The fixture's database 0 is shared by every Redis 8 test class.
+        var client = root.WithKeyPrefix($"{Guid.NewGuid():N}:");
 
         await client.SetAsync("msetkeep:a", "first", TimeSpan.FromSeconds(60));
 
@@ -70,7 +79,9 @@ public class SetManyExpiryIntegrationTests(ModernRedisTestContainer fixture)
     [Test]
     public async Task SetMany_WithConditions_GatesTheWrite()
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var root = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        // The fixture's database 0 is shared by every Redis 8 test class.
+        var client = root.WithKeyPrefix($"{Guid.NewGuid():N}:");
 
         (await client.Strings.SetManyExpireAsync(
             TimeSpan.FromSeconds(30), SetWhen.NotExists, ("msetnx:a", "first"))).Should().BeTrue();

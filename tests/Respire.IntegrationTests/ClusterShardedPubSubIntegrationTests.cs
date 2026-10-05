@@ -1,29 +1,33 @@
 using System.Text;
 using FluentAssertions;
-using Respire.Internal;
 using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
-public class ClusterShardedPubSubIntegrationTests
+[Category(TestCategories.ProtocolIndependent)]
+// The moving channel uses a slot reserved for this row; slot moves are serialized cluster-wide.
+[ClassDataSource<SharedRedisClusterFixture>(Shared = SharedType.PerTestSession)]
+[NotInParallel(SharedRedisClusterFixture.ReshardingKey)]
+public class ClusterShardedPubSubIntegrationTests(SharedRedisClusterFixture fixture)
 {
     [Test]
     [Arguments(2)]
     [Arguments(3)]
     public async Task ThreePrimariesDeliverBinaryChannelsAndReshardWithoutReplacingSubscription(int protocol)
     {
-        await using var cluster = await RedisClusterTestContainer.StartAsync();
+        var cluster = fixture.Cluster;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             UseCluster = true, Protocol = (RespProtocol)protocol, Connections = 1,
             Endpoints = { new RespireEndpoint(cluster.Host, cluster.Port(0)) },
         });
         // Hash tags keep the binary suffix in the routed channel while selecting three owners.
+        // Reserved slots keep other rows' slot moves away from these channels.
         RespireChannel[] channels =
         [
-            new byte[] { (byte)'{', (byte)'b', (byte)'a', (byte)'r', (byte)'}', 0, 0xff },
-            $"{{{TagForSlot(6000)}}}:middle",
-            "{foo}:moving",
+            (byte[])[(byte)'{', .. Encoding.ASCII.GetBytes(fixture.ReserveSlot(node: 0)), (byte)'}', 0, 0xff],
+            $"{{{fixture.ReserveSlot(node: 1)}}}:middle",
+            $"{{{fixture.ReserveSlot(node: 2)}}}:moving",
         ];
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await using var subscription = await client.SubscribeShardedAsync(channels, deadline.Token);
@@ -57,15 +61,6 @@ public class ClusterShardedPubSubIntegrationTests
                 received.Add(reader.Current.Channel);
             }
             received.Should().BeEquivalentTo(channels);
-        }
-    }
-
-    private static string TagForSlot(int slot)
-    {
-        for (var index = 0; ; index++)
-        {
-            var tag = index.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            if (ClusterHash.GetSlot(tag) == slot) return tag;
         }
     }
 }

@@ -5,10 +5,14 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
+[Category(TestCategories.ProtocolIndependent)]
 // Redis 8 bundles RedisTimeSeries; the shared Redis 7 fixture does not.
 [ClassDataSource<ModernRedisTestContainer>(Shared = SharedType.PerTestSession)]
 public class TimeSeriesIntegrationTests(ModernRedisTestContainer fixture)
 {
+    [ClassDataSource<ModernRedisTestContainer>(Shared = SharedType.Keyed, Key = TestConstraints.ClientCacheServer)]
+    public required ModernRedisTestContainer CacheServer { get; init; }
+
     private async Task<RespireClient> ConnectAsync(int protocol)
         => await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
 
@@ -239,10 +243,10 @@ public class TimeSeriesIntegrationTests(ModernRedisTestContainer fixture)
     }
 
     // Stable tracking is needed to prove a cache hit before each mutation, as in the cache suite.
-    [Test, NotInParallel]
+    [Test, NotInParallel(TestConstraints.ClientCacheHits)]
     public async Task LocalMutationsInvalidateTrackedReadsAndFlushCompactionDependencies()
     {
-        var options = RespireOptions.Parse(fixture.ConnectionString) with
+        var options = RespireOptions.Parse(CacheServer.ConnectionString) with
         {
             Protocol = RespProtocol.Resp3,
             ClientSideCache = new(),

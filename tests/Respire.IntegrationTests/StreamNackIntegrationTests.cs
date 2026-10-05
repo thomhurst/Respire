@@ -1,23 +1,12 @@
-using DotNet.Testcontainers.Builders;
-using DotNet.Testcontainers.Containers;
 using FluentAssertions;
 using TUnit.Core;
-using TUnit.Core.Interfaces;
 
 namespace Respire.IntegrationTests;
 
-public sealed class StreamNackRedisContainer : IAsyncInitializer, IAsyncDisposable
-{
-    private readonly IContainer _container = new ContainerBuilder("redis:8.8-alpine")
-        .WithPortBinding(6379, true)
-        .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build();
-    public string ConnectionString => $"redis://{_container.Hostname}:{_container.GetMappedPublicPort(6379)}";
-    public Task InitializeAsync() => _container.StartAsync();
-    public ValueTask DisposeAsync() => _container.DisposeAsync();
-}
-
-[ClassDataSource<StreamNackRedisContainer>(Shared = SharedType.PerTestSession)]
-public class StreamNackIntegrationTests(StreamNackRedisContainer fixture)
+[Category(TestCategories.ProtocolIndependent)]
+// XNACK needs Redis 8.8; the keyspace-notification fixture already runs it with per-test databases.
+[ClassDataSource<KeyNotificationRedisContainer>(Shared = SharedType.PerTestSession)]
+public class StreamNackIntegrationTests(KeyNotificationRedisContainer fixture)
 {
     [Test]
     [MatrixDataSource]

@@ -1,5 +1,4 @@
 using FluentAssertions;
-using Testcontainers.Redis;
 using TUnit.Core;
 
 namespace Respire.IntegrationTests;
@@ -7,6 +6,9 @@ namespace Respire.IntegrationTests;
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
 public class KeySerializationIntegrationTests(RedisTestContainer fixture)
 {
+    [ClassDataSource<LfuRedisTestContainer>(Shared = SharedType.PerTestSession)]
+    public required LfuRedisTestContainer Lfu { get; init; }
+
     public enum Mode { Immediate, Batch, Transaction }
 
     [Test]
@@ -114,12 +116,8 @@ public class KeySerializationIntegrationTests(RedisTestContainer fixture)
     [Arguments(3)]
     public async Task FrequencyRoundTripsUnderLfuWithoutChangingSharedServer(int protocol)
     {
-        await using var redis = new RedisBuilder("redis:7.0.15")
-            .WithCommand("redis-server", "--maxmemory-policy", "allkeys-lfu", "--lfu-decay-time", "0").Build();
-        await redis.StartAsync();
-        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(Lfu.ConnectionString) with
         {
-            Endpoints = { new RespireEndpoint(redis.Hostname, redis.GetMappedPublicPort(6379)) },
             Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3, Connections = 1
         });
         await client.SetAsync("source", "a non-integer value");

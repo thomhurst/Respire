@@ -4,6 +4,7 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
+[Category(TestCategories.ProtocolIndependent)]
 [Category("CompatibleServers")]
 public class ServerExtensionIntegrationTests
 {

@@ -5,6 +5,7 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
+[Category(TestCategories.ProtocolIndependent)]
 /// <summary>Redis 8 bundles RedisJSON, so these run against the shared modern Redis container.</summary>
 [ClassDataSource<ModernRedisTestContainer>(Shared = SharedType.PerTestSession)]
 public partial class JsonIntegrationTests(ModernRedisTestContainer fixture)

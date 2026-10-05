@@ -2,27 +2,34 @@ using System.Text;
 using System.Text.Json;
 using FluentAssertions;
 using Respire.Serialization;
-using Testcontainers.Redis;
 using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
-public class VectorSetIntegrationTests
+[Category(TestCategories.ProtocolIndependent)]
+[ClassDataSource<VersionedServerFixture>(Shared = SharedType.PerTestSession)]
+public class VectorSetIntegrationTests(VersionedServerFixture servers)
 {
+    [ClassDataSource<ModernRedisTestContainer>(Shared = SharedType.PerTestSession)]
+    public required ModernRedisTestContainer Redis8 { get; init; }
+
+    [ClassDataSource<ModernRedisTestContainer>(Shared = SharedType.Keyed, Key = TestConstraints.ClientCacheServer)]
+    public required ModernRedisTestContainer CacheServer { get; init; }
+
     [Test]
     [Arguments(2)]
     [Arguments(3)]
     public async Task RedisVectorSetsRoundTripEveryCommandAndDeferredSurface(int protocol)
     {
-        await using var container = new RedisBuilder("redis:8.6.0").Build();
-        await container.StartAsync();
-        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(Redis8.ConnectionString) with
         {
-            Endpoints = [new(container.Hostname, container.GetMappedPublicPort(6379))], Connections = 1,
+            Connections = 1,
             Protocol = (RespProtocol)protocol,
             Serializer = new SystemTextJsonSerializer(new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }),
         });
-        var redis = client.WithKeyPrefix("vectors:");
+        // The Redis 8 fixture is shared, so every key carries this row's prefix.
+        var prefix = $"vectors:{Guid.NewGuid():N}:";
+        var redis = client.WithKeyPrefix(prefix);
         byte[] member = [0, 255, 128];
         float[] vector = [1, 0, 0];
         foreach (var quantization in Enum.GetValues<RespireVectorQuantization>())
@@ -91,7 +98,7 @@ public class VectorSetIntegrationTests
             (await redis.VectorSets.SetAttributesJsonAsync(key, "missing", "{}")).Should().BeFalse();
             (await redis.VectorSets.RemoveAsync(key, "b")).Should().BeTrue();
             (await redis.VectorSets.RemoveAsync(key, "b")).Should().BeFalse();
-            (await client.Keys.ExistsAsync("vectors:" + key)).Should().BeTrue();
+            (await client.Keys.ExistsAsync(prefix + key)).Should().BeTrue();
         }
 
         (await redis.VectorSets.AddAsync("reduced", new[] { 1f, 2, 3, 4 }, "m", new() { ReduceDimensions = 2, CheckAndSet = true })).Should().BeTrue();
@@ -133,9 +140,9 @@ public class VectorSetIntegrationTests
     [Arguments(3)]
     public async Task OlderRedisReturnsItsUnsupportedCommandError(int protocol)
     {
-        await using var container = new RedisBuilder("redis:7.2.4").Build();
-        await container.StartAsync();
-        await using var client = await RespireClient.ConnectAsync($"redis://{container.Hostname}:{container.GetMappedPublicPort(6379)}?protocol={protocol}&connections=1");
+        // Unsupported commands change nothing, so the shared Redis 7.2 server is safe.
+        var lease = await servers.LeaseAsync("redis:7.2-alpine");
+        await using var client = await RespireClient.ConnectAsync(lease.ConnectionString(protocol) + "&connections=1");
         Func<Task> add = async () => await client.VectorSets.AddAsync("v", new[] { 1f }, "m");
         await add.Should().ThrowAsync<RespireServerException>();
         Func<Task> read = async () => await client.VectorSets.SearchAsync("v", new[] { 1f });
@@ -144,29 +151,28 @@ public class VectorSetIntegrationTests
     }
 
     [Test]
-    [NotInParallel]
+    [NotInParallel(TestConstraints.ClientCacheHits)]
     public async Task CachedAttributesOwnTheirBytesAndVectorMutationsInvalidateTheirKey()
     {
-        await using var container = new RedisBuilder("redis:8.6.0").Build();
-        await container.StartAsync();
-        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        await using var root = await RespireClient.ConnectAsync(RespireOptions.Parse(CacheServer.ConnectionString) with
         {
-            Endpoints = [new(container.Hostname, container.GetMappedPublicPort(6379))], Connections = 1,
+            Connections = 1,
             ClientSideCache = new RespireClientSideCacheOptions(),
         });
+        var client = root.WithKeyPrefix($"vectors:{Guid.NewGuid():N}:");
         await client.VectorSets.AddAsync("cached", new[] { 1f, 0, 0 }, "m", new() { AttributesJson = "{\"n\":1}" });
         await client.SetAsync("unrelated", "retained");
         await client.GetStringAsync("unrelated");
         var first = (await client.VectorSets.GetAttributesJsonAsync("cached", "m"))!;
         first[0] = 0;
-        var hits = client.ClientSideCache!.GetStatistics().Hits;
+        var hits = root.ClientSideCache!.GetStatistics().Hits;
         Encoding.UTF8.GetString((await client.VectorSets.GetAttributesJsonAsync("cached", "m"))!).Should().Be("{\"n\":1}");
-        client.ClientSideCache.GetStatistics().Hits.Should().BeGreaterThan(hits);
+        root.ClientSideCache.GetStatistics().Hits.Should().BeGreaterThan(hits);
         await client.VectorSets.SetAttributesJsonAsync("cached", "m", "{\"n\":2}");
         Encoding.UTF8.GetString((await client.VectorSets.GetAttributesJsonAsync("cached", "m"))!).Should().Be("{\"n\":2}");
-        hits = client.ClientSideCache.GetStatistics().Hits;
+        hits = root.ClientSideCache.GetStatistics().Hits;
         (await client.GetStringAsync("unrelated")).Should().Be("retained");
-        client.ClientSideCache.GetStatistics().Hits.Should().BeGreaterThan(hits);
+        root.ClientSideCache.GetStatistics().Hits.Should().BeGreaterThan(hits);
         await client.VectorSets.RemoveAsync("cached", "m");
         (await client.VectorSets.GetAttributesJsonAsync("cached", "m")).Should().BeNull();
         await client.VectorSets.AddAsync("cached", new[] { 1f, 0, 0 }, "m", new() { AttributesJson = "{\"n\":3}" });

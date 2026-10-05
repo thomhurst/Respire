@@ -20,7 +20,6 @@ public class RespireHybridCacheTests(RedisTestContainer fixture)
     public async Task InitializeAsync()
     {
         _client = await RespireClient.ConnectAsync(fixture.ConnectionString);
-        (await _client.ExecuteAsync("FLUSHDB")).Dispose();
     }
 
     [After(Test)]

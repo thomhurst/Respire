@@ -8,10 +8,11 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
+[Category(TestCategories.ProtocolIndependent)]
 public class ReplicaReadRoutingIntegrationTests
 {
     [Test]
-    [NotInParallel]
+    [ParallelLimiter<DockerHeavy>]
     [Arguments(RespireContainerServer.Redis, true, RespProtocol.Resp2)]
     [Arguments(RespireContainerServer.Redis, true, RespProtocol.Resp3)]
     [Arguments(RespireContainerServer.Redis, false, RespProtocol.Resp2)]
@@ -48,7 +49,7 @@ public class ReplicaReadRoutingIntegrationTests
     }
 
     [Test]
-    [NotInParallel]
+    [ParallelLimiter<DockerHeavy>]
     [Arguments(RespireContainerServer.Redis, true)]
     [Arguments(RespireContainerServer.Valkey, true)]
     [Arguments(RespireContainerServer.Redis, false)]
@@ -86,7 +87,7 @@ public class ReplicaReadRoutingIntegrationTests
     }
 
     [Test]
-    [NotInParallel]
+    [ParallelLimiter<DockerHeavy>]
     [Arguments(RespireContainerServer.Redis)]
     [Arguments(RespireContainerServer.Valkey)]
     public async Task PrimaryPreferredUsesReplicaOnlyWhenPrimaryIsUnavailable(RespireContainerServer server)
@@ -111,7 +112,7 @@ public class ReplicaReadRoutingIntegrationTests
     }
 
     [Test]
-    [NotInParallel]
+    [ParallelLimiter<DockerHeavy>]
     [Arguments(RespireContainerServer.Redis)]
     [Arguments(RespireContainerServer.Valkey)]
     public async Task ReplicaPreferredFallsBackToPrimaryButReplicaPolicyStaysStrict(RespireContainerServer server)
@@ -138,7 +139,7 @@ public class ReplicaReadRoutingIntegrationTests
     }
 
     [Test]
-    [NotInParallel]
+    [ParallelLimiter<DockerHeavy>]
     [Arguments(RespireContainerServer.Redis)]
     [Arguments(RespireContainerServer.Valkey)]
     public async Task StrictReplicaPolicyRejectsConfiguredEndpointWithPrimaryRole(RespireContainerServer server)
