@@ -56,7 +56,7 @@ internal static class RawCommandKeyLayouts
         Add(LayoutKind.First,
             "GET", "SET", "GETSET", "SETNX", "SETEX", "PSETEX", "GETDEL",
             "GETEX", "APPEND", "STRLEN", "GETRANGE", "SETRANGE", "INCR", "INCRBY", "DELEX", "DELIFEQ",
-            "INCRBYFLOAT", "DECR", "DECRBY", "TYPE", "TTL", "PTTL", "EXPIRE",
+            "INCRBYFLOAT", "INCREX", "DECR", "DECRBY", "TYPE", "TTL", "PTTL", "EXPIRE",
             "PEXPIRE", "EXPIREAT", "PEXPIREAT", "EXPIRETIME", "PEXPIRETIME", "PERSIST", "DUMP",
             "RESTORE", "HGET", "HSET", "HSETNX", "HMGET", "HMSET", "HGETALL",
             "HDEL", "HEXISTS", "HLEN", "HKEYS", "HVALS", "HSTRLEN", "HINCRBY",

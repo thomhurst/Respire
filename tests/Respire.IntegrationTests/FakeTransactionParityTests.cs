@@ -121,6 +121,11 @@ public class FakeTransactionParityTests(RedisTestContainer fixture)
             new([], ["SET", "key", "new", "XX"], false),
             new([ ["SET", "key", "value"] ], ["APPEND", "key", ""], true),
             new([ ["SET", "key", "1"] ], ["INCRBY", "key", "0"], true),
+            new([], ["INCREX", "key"], true),
+            new([ ["SET", "key", "1"] ], ["INCREX", "key", "BYINT", "0"], true),
+            new([ ["SET", "key", "1"] ], ["INCREX", "key", "UBOUND", "1"], false),
+            new([ ["SET", "key", "1"] ], ["INCREX", "key", "UBOUND", "1", "SATURATE"], true),
+            new([ ["SET", "key", "wrong"] ], ["INCREX", "key"], false, Error: true),
             new([ ["SET", "key", "wrong"] ], ["INCR", "key"], false, Error: true),
             new([], ["GETDEL", "key"], false),
             new([ ["SET", "key", "value"] ], ["GETDEL", "key"], true),
@@ -213,7 +218,7 @@ public class FakeTransactionParityTests(RedisTestContainer fixture)
         var unsupported = new HashSet<string>(StringComparer.Ordinal);
         if (!useFake)
         {
-            foreach (var command in new[] { "LMOVEM", "BLMOVEM" })
+            foreach (var command in new[] { "LMOVEM", "BLMOVEM", "INCREX" })
             {
                 using var info = await writer.CommandAsync("COMMAND", "INFO", command);
                 if (info.AsArray()[0].IsNull) unsupported.Add(command);

@@ -14,6 +14,37 @@ public class ClientSideCacheTests
     private static readonly byte[] HelloReply = "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray();
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ExtendedIncrementFencesOnlyItsPrefixedKeyAcrossReply(bool floating)
+    {
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(HelloReply, FakeRespServer.OkReply)
+        {
+            SuppressReply = command =>
+            {
+                if (!command.StartsWith("INCREX ", StringComparison.Ordinal)) return false;
+                received.TrySetResult();
+                return true;
+            },
+        };
+        await using var client = await ConnectAsync(server);
+        var view = client.WithKeyPrefix("tenant:");
+        var cache = client.Core.ClientCache!;
+        InsertCachedValue(cache, "tenant:key", "1");
+        InsertCachedValue(cache, "tenant:other", "untouched");
+        Task pending = floating ? view.Strings.IncrementExtendedAsync("key", 0.5).AsTask()
+            : view.Strings.IncrementExtendedAsync("key").AsTask();
+        await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(cache.Count).IsEqualTo(1);
+        InsertCachedValue(cache, "tenant:key", "racing-read");
+        await server.SendRawAsync(floating ? "*2\r\n,1.5\r\n,0.5\r\n"u8.ToArray() : "*2\r\n:2\r\n:1\r\n"u8.ToArray());
+        await pending;
+        await Assert.That(cache.Count).IsEqualTo(1);
+        await Assert.That(await view.GetStringAsync("other")).IsEqualTo("untouched");
+    }
+
+    [Test]
     public async Task ClientCachingCommand_WritesExpectedFrame()
     {
         var buffer = new WriteBuffer(128);

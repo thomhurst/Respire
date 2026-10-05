@@ -35,6 +35,7 @@ public sealed partial class RespireFakeServer
         ["STRLEN"] = new(2, 2, static (server, _, args) => FakeReply.Integer(server.Find(args[1])?.Value.Length ?? 0)),
         ["APPEND"] = new(3, 3, static (server, _, args) => server.Append(args[1], args[2])),
         ["INCR"] = new(2, 2, static (server, _, args) => server.Increment(args[1], 1)),
+        ["INCREX"] = new(2, int.MaxValue, static (server, _, args) => server.IncrementExtended(args)),
         ["DECR"] = new(2, 2, static (server, _, args) => server.Increment(args[1], -1)),
         ["INCRBY"] = new(3, 3, static (server, _, args) => server.Increment(args[1], Integer(args[2]))),
         ["DECRBY"] = new(3, 3, static (server, _, args) => server.Increment(args[1], Integer(args[2]), subtract: true)),

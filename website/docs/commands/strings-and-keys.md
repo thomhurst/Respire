@@ -7,6 +7,62 @@ description: Read, write, expire, scan, and manage Redis keys.
 
 Frequent operations are available directly on `IRespireClient`; complete string and key surfaces live under `Strings` and `Keys`.
 
+## Bounded counters with expiry
+
+Redis 8.8+ `INCREX` combines an increment, optional inclusive bounds, and an expiry
+update in one atomic command. `Strings.IncrementExtendedAsync` has integer (`long`)
+and floating-point (`double`) overloads. Both return `Value` and `AppliedIncrement`:
+
+```csharp
+RespireIncrementResult<long> counter = await redis.Strings.IncrementExtendedAsync(
+    "requests", by: 1, options: new IntegerIncrementOptions
+    {
+        UpperBound = 100,
+        Expiry = TimeSpan.FromMinutes(1),
+        ExpireOnlyWhenPersistent = true,
+    });
+
+RespireIncrementResult<double> balance = await redis.Strings.IncrementExtendedAsync(
+    "balance", by: -0.5, options: new FloatIncrementOptions
+    {
+        LowerBound = 0,
+        Saturate = true,
+    });
+
+using var batch = redis.CreateBatch();
+var queued = batch.Strings.IncrementExtended("requests", options: new IntegerIncrementOptions
+{
+    UpperBound = 100,
+});
+await batch.ExecuteAsync();
+long applied = queued.Result.AppliedIncrement;
+```
+
+A missing key starts at zero. Without `Saturate`, a result outside the bounds or the
+server's numeric range leaves the value and TTL unchanged and reports an applied
+increment of zero. With `Saturate`, Redis clamps the result and reports the actual
+delta; an unrepresentable delta still errors. Zero is not a general success flag:
+a zero increment or an already saturated value can still update expiry.
+
+`Expiry` accepts a positive relative TTL, a positive absolute Unix instant, or
+`RespireExpiry.Persist`. `None` and `Keep` preserve the existing TTL. Relative and
+absolute forms send `PX` and `PXAT`; raw `INCREX` also exposes `EX` and `EXAT`.
+`ExpireOnlyWhenPersistent` sends `ENX`, requires a relative or absolute expiry, and
+changes only expiry eligibility: the increment still runs on keys with a TTL.
+An expiry already in the past deletes the key after calculating the returned pair.
+
+Integer replies retain all 64 bits. Floating increments must be finite; bounds
+may be infinite but cannot be NaN. Redis computes with its platform's `long double`; the
+typed API converts replies to .NET `double`, so precision and range can differ.
+Both RESP2 bulk-string and RESP3 double replies are supported. Transactions expose
+the same `Strings.IncrementExtended` methods as batches. Deferred commands capture
+binary keys when queued, and writes invalidate only the affected client-cache key.
+
+Older Redis and Valkey servers without `INCREX` return an unsupported-command
+error. The typed command has no fallback. The coordination fixed-window limiter
+already uses its own atomic Lua fallback, caches unsupported-command results for
+five minutes across its partitions, and then probes again to detect server upgrades.
+
 ## Read and write
 
 ```csharp
