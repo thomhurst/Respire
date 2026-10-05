@@ -1,18 +1,19 @@
 using System.Buffers;
 using System.Buffers.Binary;
+using System.IO.Hashing;
 using System.Security.Cryptography;
 
 namespace Respire.Compression;
 
 /// <summary>Shared versioned framing, size bounds, and corruption checks for value compression codecs.</summary>
-/// <remarks>Frames use RVC-NUL, version 1, an algorithm byte, a little-endian original length,
-/// and the first eight SHA-256 bytes of the encoded payload. Algorithm 0 is uncompressed;
+/// <remarks>Frames use RVC-NUL, a version byte, an algorithm byte, a little-endian original length,
+/// and an eight-byte checksum of the encoded payload. Version 2 uses XxHash3 in little-endian order;
+/// version 1 uses the first eight SHA-256 bytes and remains readable. Algorithm 0 is uncompressed;
 /// 1/2 are Brotli/Deflate, 3/4 are reserved for LZ4/Zstandard, and 16-255 are available to custom codecs.
-/// SHA-256 provides a platform implementation without adding a hashing dependency; truncating it bounds
-/// frame overhead. The checksum detects accidental corruption, not authentication. Unframed input is rejected.</remarks>
+/// The checksum detects accidental corruption, not authentication. Unframed input is rejected.</remarks>
 public abstract class RespireValueCodec : IRespireValueCodec
 {
-    /// <summary>Number of bytes preceding the encoded payload in a version 1 frame.</summary>
+    /// <summary>Number of bytes preceding the encoded payload in either supported frame version.</summary>
     public const int HeaderLength = 18;
     private static ReadOnlySpan<byte> Magic => "RVC\0"u8;
 
@@ -31,11 +32,14 @@ public abstract class RespireValueCodec : IRespireValueCodec
         options ??= new();
         ArgumentOutOfRangeException.ThrowIfNegative(options.MinimumLength);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumDecodedLength);
+        if (options.FrameVersion is not (1 or 2))
+            throw new ArgumentOutOfRangeException(nameof(options), "Frame version must be 1 or 2.");
         if (options.MaximumDecodedLength > Array.MaxLength - HeaderLength)
             throw new ArgumentOutOfRangeException(nameof(options), "Maximum decoded length leaves no room for framing.");
         AlgorithmId = algorithmId;
         MinimumLength = options.MinimumLength;
         MaximumDecodedLength = options.MaximumDecodedLength;
+        FrameVersion = options.FrameVersion;
     }
 
     /// <summary>The stable identifier of this codec's compressed payload format.</summary>
@@ -44,6 +48,8 @@ public abstract class RespireValueCodec : IRespireValueCodec
     public int MinimumLength { get; }
     /// <summary>The maximum allowed original or decoded length.</summary>
     public int MaximumDecodedLength { get; }
+    /// <summary>The version written by this codec. Decoding accepts both versions regardless of this setting.</summary>
+    public byte FrameVersion { get; }
 
     /// <inheritdoc/>
     public byte[] Encode(ReadOnlySpan<byte> payload)
@@ -102,13 +108,13 @@ public abstract class RespireValueCodec : IRespireValueCodec
         return payload;
     }
 
-    private static void WriteFrame(ReadOnlySpan<byte> payload, int originalLength, byte algorithm, Span<byte> frame)
+    private void WriteFrame(ReadOnlySpan<byte> payload, int originalLength, byte algorithm, Span<byte> frame)
     {
         Magic.CopyTo(frame);
-        frame[4] = 1;
+        frame[4] = FrameVersion;
         frame[5] = algorithm;
         BinaryPrimitives.WriteInt32LittleEndian(frame[6..], originalLength);
-        WriteChecksum(payload, frame.Slice(10, 8));
+        WriteChecksum(payload, frame.Slice(10, 8), FrameVersion);
         payload.CopyTo(frame[HeaderLength..]);
     }
 
@@ -139,7 +145,7 @@ public abstract class RespireValueCodec : IRespireValueCodec
     {
         if (payload.Length < HeaderLength || !payload[..4].SequenceEqual(Magic))
             throw new InvalidDataException("Value is not a complete Respire codec frame.");
-        if (payload[4] != 1) throw new InvalidDataException("Unsupported Respire codec frame version.");
+        if (payload[4] is not (1 or 2)) throw new InvalidDataException("Unsupported Respire codec frame version.");
         algorithm = payload[5];
         if (algorithm != 0 && algorithm != AlgorithmId)
             throw new InvalidDataException($"Codec algorithm {algorithm} is not supported by this decoder.");
@@ -151,7 +157,7 @@ public abstract class RespireValueCodec : IRespireValueCodec
         if (algorithm == 0 ? encoded.Length != length : encoded.Length >= length)
             throw new InvalidDataException("Codec payload length does not match its frame.");
         Span<byte> checksum = stackalloc byte[8];
-        WriteChecksum(encoded, checksum);
+        WriteChecksum(encoded, checksum, payload[4]);
         if (!checksum.SequenceEqual(payload.Slice(10, 8)))
             throw new InvalidDataException("Codec payload checksum does not match its frame.");
         return encoded;
@@ -177,8 +183,13 @@ public abstract class RespireValueCodec : IRespireValueCodec
     /// <summary>Fills the entire bounded destination or throws InvalidDataException for malformed data or a length mismatch.</summary>
     protected abstract void Decompress(ReadOnlySpan<byte> payload, Span<byte> destination);
 
-    private static void WriteChecksum(ReadOnlySpan<byte> payload, Span<byte> destination)
+    private static void WriteChecksum(ReadOnlySpan<byte> payload, Span<byte> destination, byte version)
     {
+        if (version == 2)
+        {
+            BinaryPrimitives.WriteUInt64LittleEndian(destination, XxHash3.HashToUInt64(payload));
+            return;
+        }
         Span<byte> hash = stackalloc byte[32];
         SHA256.HashData(payload, hash);
         hash[..8].CopyTo(destination);

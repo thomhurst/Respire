@@ -43,7 +43,7 @@ public class Lz4ValueCodecTests
         for (var offset = 64; offset < payload.Length; offset += 64)
             payload.AsSpan(0, 64).CopyTo(payload.AsSpan(offset));
         var frame = new Lz4ValueCodec(level: level).Encode(payload);
-        await Assert.That(frame[4]).IsEqualTo((byte)1);
+        await Assert.That(frame[4]).IsEqualTo((byte)2);
         await Assert.That(frame[5]).IsEqualTo((byte)3);
         await Assert.That(frame.Length).IsLessThan(payload.Length);
         // The decoder uses no encoder-level state.

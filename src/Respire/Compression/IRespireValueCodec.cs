@@ -31,6 +31,11 @@ public interface IRespireValueCodec
 /// <summary>Immutable settings captured by a framed value codec when it is constructed.</summary>
 public sealed record RespireValueCodecOptions
 {
+    /// <summary>Frame version to write: 2 (default) uses XxHash3; 1 uses the legacy SHA-256 checksum.</summary>
+    /// <remarks>Both versions remain readable. Use 1 while any reader still requires version 1,
+    /// then switch writers to 2 after every reader is upgraded.</remarks>
+    public byte FrameVersion { get; init; } = 2;
+
     /// <summary>Minimum input bytes before trying compression. Smaller values still receive a frame. Default: 1 KiB.</summary>
     public int MinimumLength { get; init; } = 1024;
 

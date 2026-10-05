@@ -2,8 +2,13 @@
 
 The focused `ValueCodecBenchmarks` fixture compares an unchanged raw payload with
 Brotli quality 4, Deflate Fastest, LZ4 level 0, and Zstandard level 3. It measures the destination overloads
-of `IRespireValueCodec`, including frame validation, SHA-256 checksums, compression,
+of `IRespireValueCodec`, including frame validation, checksums, compression,
 decompression, and the codecs' own scratch-buffer management.
+
+Current runs use version 2 XxHash3 checksums by default. Historical results below used
+version 1 SHA-256 checksums. `ValueCodecChecksumBenchmarks` compares both frame versions
+through the same destination APIs with compression disabled, isolating the checksum
+change while retaining framing, validation, and copying costs.
 
 ## Inputs and comparison
 

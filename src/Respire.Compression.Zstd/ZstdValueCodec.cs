@@ -4,7 +4,7 @@ using ZstdSharp.Unsafe;
 
 namespace Respire.Compression.Zstd;
 
-/// <summary>Zstandard compression using version 1 Respire frames and reserved algorithm ID 4.</summary>
+/// <summary>Zstandard compression using versioned Respire frames and reserved algorithm ID 4.</summary>
 /// <remarks>Requires the optional Respire.Compression.Zstd package. Each compressed payload is one
 /// ordinary Zstandard frame without an external dictionary. Per-call contexts are disposed before return,
 /// so the codec supports concurrent calls and does not require disposal.</remarks>
