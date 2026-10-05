@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Serialization;
 
@@ -11,8 +12,10 @@ public partial interface ISortedSetCommands
         CancellationToken cancellationToken = default);
 
     /// <summary>Adds or conditionally updates one serialized member; booleans retain Redis 1/0 encoding. Returns true when new, or changed with CH.</summary>
+    /// <remarks>Specify the type argument explicitly to select serialization for types with an implicit RespireValue conversion.</remarks>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    [OverloadResolutionPriority(-1)]
     ValueTask<bool> AddAsync<T>(RespireKey key, RespireSortedSetAddOptions options, T member, double score,
         CancellationToken cancellationToken = default);
 
@@ -37,6 +40,7 @@ internal sealed partial class SortedSetCommands
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    [OverloadResolutionPriority(-1)]
     public ValueTask<bool> AddAsync<T>(RespireKey key, RespireSortedSetAddOptions options, T member, double score,
         CancellationToken cancellationToken = default)
     {

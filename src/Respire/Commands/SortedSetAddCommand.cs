@@ -14,6 +14,8 @@ internal readonly struct SortedSetAddCommand(
 
     public void Write(ref RespWriter writer)
     {
+        // Each validated option bit writes exactly one token below. Count verb/key, optional INCR,
+        // and either the flattened score/member pairs or the single score/member pair.
         writer.WriteArrayHeader(2 + BitOperations.PopCount((uint)options) + (increment ? 1 : 0) + (pairs?.Length ?? 2));
         writer.WriteRaw(Verbs.ZAdd.Bulk);
         key.WriteTo(ref writer);

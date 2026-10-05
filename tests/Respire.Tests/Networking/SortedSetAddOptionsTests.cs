@@ -24,7 +24,7 @@ public class SortedSetAddOptionsTests
             var view = client.WithKeyPrefix("tenant:");
             if (mode == "immediate")
             {
-                await Assert.That(await view.SortedSets.AddAsync("key", options, (RespireValue)"one", 1.5)).IsTrue();
+                await Assert.That(await view.SortedSets.AddAsync("key", options, "one", 1.5)).IsTrue();
                 await Assert.That(await view.SortedSets.AddAsync("key", options, ("one", 1.5), ("two", 2))).IsEqualTo(2);
                 await Assert.That(await view.SortedSets.IncrementAsync("key", options, "one", 1)).IsEqualTo(2.5);
             }
@@ -33,7 +33,7 @@ public class SortedSetAddOptionsTests
                 using var batch = view.CreateBatch();
                 await using var transaction = view.CreateTransaction();
                 IRespireCommandQueue queue = mode == "batch" ? batch : transaction;
-                var single = queue.SortedSets.Add("key", options, (RespireValue)"one", 1.5);
+                var single = queue.SortedSets.Add("key", options, "one", 1.5);
                 var many = queue.SortedSets.Add("key", options, ("one", 1.5), ("two", 2));
                 var increment = queue.SortedSets.Increment("key", options, "one", 1);
                 if (mode == "batch") await batch.ExecuteAsync();
