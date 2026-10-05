@@ -41,7 +41,13 @@ public class SearchSynonymIntegrationTests(ModernRedisTestContainer fixture)
             var tags = await search.GetTagValuesAsync(index, "tags");
             tags.Should().BeEquivalentTo(["red", "blue", "green"]);
             await search.UpdateSynonymsAsync(index, "literal", ["car", "SKIPINITIALSCAN"]);
-            (await search.GetSynonymsAsync(index))["skipinitialscan"].Should().Contain("literal");
+            var current = await search.GetSynonymsAsync(index);
+            current["skipinitialscan"].Should().Contain("literal");
+            current["car"].Should().BeEquivalentTo(["vehicles", "body", "new-only", "literal"]);
+            await client.Hashes.SetAsync(index + ":doc:3", ("title", "plane"), ("tags", "Purple"));
+            await WaitForCountAsync(search, index, "*", 3);
+            (await search.GetTagValuesAsync(index, "tags")).Should().BeEquivalentTo(["red", "blue", "green", "purple"]);
+            // Server state now differs from both earlier snapshots; owned replies must retain their original values.
             retained["car"].Should().BeEquivalentTo(["vehicles", "body"]);
             tags.Should().BeEquivalentTo(["red", "blue", "green"]);
         }

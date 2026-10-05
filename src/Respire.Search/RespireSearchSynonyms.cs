@@ -43,8 +43,8 @@ public sealed partial class RespireSearchClient
         var terms = new Dictionary<string, IReadOnlyList<string>>(result.Count / 2, StringComparer.Ordinal);
         for (var i = 0; i < result.Count; i += 2)
         {
-            var term = ReadSynonymString(result[i], command);
-            var groups = ReadSynonymStrings(result[i + 1], command);
+            var term = RespireSearchReply.ReadString(result[i], command);
+            var groups = RespireSearchReply.ReadStringCollection(result[i + 1], command);
             if (!terms.TryAdd(term, groups))
                 throw RespireSearchReply.Unexpected(command, "a duplicate synonym term");
         }
@@ -58,22 +58,6 @@ public sealed partial class RespireSearchClient
         ArgumentException.ThrowIfNullOrWhiteSpace(index);
         ArgumentException.ThrowIfNullOrWhiteSpace(field);
         using var result = await _commands.GetTagValuesAsync(index, field, cancellationToken).ConfigureAwait(false);
-        return ReadSynonymStrings(result, "FT.TAGVALS");
-    }
-
-    private static string[] ReadSynonymStrings(RespireResult result, string command)
-    {
-        if (result.IsNull || result.Type is not (RespDataType.Array or RespDataType.Set))
-            throw RespireSearchReply.Unexpected(command, "a string collection was expected");
-        var strings = new string[result.Count];
-        for (var i = 0; i < strings.Length; i++) strings[i] = ReadSynonymString(result[i], command);
-        return strings;
-    }
-
-    private static string ReadSynonymString(RespireResult result, string command)
-    {
-        if (result.IsNull || result.Type is not (RespDataType.BulkString or RespDataType.SimpleString))
-            throw RespireSearchReply.Unexpected(command, "a string was expected");
-        return result.AsString();
+        return RespireSearchReply.ReadStringCollection(result, "FT.TAGVALS");
     }
 }

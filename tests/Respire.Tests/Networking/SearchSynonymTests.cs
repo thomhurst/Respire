@@ -76,6 +76,21 @@ public class SearchSynonymTests
     }
 
     [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task PrefixViewsRejectEverySynonymCommandBeforeSending(int protocol)
+    {
+        await using var server = Server(_ => "+OK\r\n"u8.ToArray());
+        await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+        var search = client.WithKeyPrefix("tenant:").Search;
+        await Assert.That(async () => await search.UpdateSynonymsAsync("shared-index", "g", ["car", "auto"]))
+            .Throws<NotSupportedException>();
+        await Assert.That(async () => await search.GetSynonymsAsync("shared-index")).Throws<NotSupportedException>();
+        await Assert.That(async () => await search.GetTagValuesAsync("shared-index", "tags")).Throws<NotSupportedException>();
+        await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("FT.", StringComparison.Ordinal))).IsFalse();
+    }
+
+    [Test]
     public async Task InvalidNamesTermsAndAmbiguousFirstTermAreRejectedBeforeSending()
     {
         await using var server = Server(_ => "+OK\r\n"u8.ToArray());
