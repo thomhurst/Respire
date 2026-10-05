@@ -533,7 +533,8 @@ internal static class DynamicCommandRouting
                 firstArgumentIndex == 1 ? firstArgumentIndex + 1 : firstArgumentIndex,
             "XREAD" or "XREADGROUP" => IndexAfter(tokens, firstArgumentIndex, "STREAMS"),
             "ACL" or "ASKING" or "AUTH" or "BGSAVE" or "BGREWRITEAOF" or "CLIENT" or "CLUSTER" or
-            "COMMAND" or "CONFIG" or "CONFIG GET" or "CONFIG SET" or "DBSIZE" or "DISCARD" or "ECHO" or
+            "COMMAND" or "CONFIG" or "CONFIG GET" or "CONFIG SET" or "FT.CONFIG" or "FT.CONFIG GET" or
+            "FT.CONFIG SET" or "DBSIZE" or "DISCARD" or "ECHO" or
             "EXEC" or "FAILOVER" or "FLUSHALL" or "FLUSHDB" or "FUNCTION" or "HELLO" or "INFO" or
             "KEYS" or "LASTSAVE" or "LATENCY" or "LOLWUT" or "MODULE" or "MONITOR" or "MULTI" or
             "PING" or "PSUBSCRIBE" or "PUBSUB" or "PUNSUBSCRIBE" or "QUIT" or "RANDOMKEY" or

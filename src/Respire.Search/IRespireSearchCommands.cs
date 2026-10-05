@@ -18,6 +18,14 @@ internal interface IRespireSearchCommands
     [RespireCommand("FT.SUGLEN", Mutation = RespireCacheMutation.ReadOnly)]
     ValueTask<RespireResult> GetSuggestionCountAsync(RespireKey key, CancellationToken cancellationToken = default);
 
+    /// <summary>Reads node-local Search configuration.</summary>
+    [RespireCommand("FT.CONFIG GET")]
+    ValueTask<RespireResult> ConfigGetAsync(string option, CancellationToken cancellationToken = default);
+
+    /// <summary>Writes node-local Search configuration.</summary>
+    [RespireCommand("FT.CONFIG SET")]
+    ValueTask<RespireResult> ConfigSetAsync(string option, string value, CancellationToken cancellationToken = default);
+
     /// <summary>Creates or extends an index's synonym group.</summary>
     [RespireCommand("FT.SYNUPDATE")]
     ValueTask<RespireResult> UpdateSynonymsAsync(string index, string groupId, string[] termsAndOptions, CancellationToken cancellationToken = default);
