@@ -198,15 +198,18 @@ public class ClusterNodeIdentityTests
             },
             SuppressReply = static command => command is "PING" or "ECHO stuck",
         };
+        // The barrier deadline (ConnectTimeout) runs on a controlled clock and expires only once
+        // the unanswered PING is on the wire, so socket setup keeps a normal deadline and only
+        // the 150 ms drain fallback is real time. Without that bound, retirement would wait
+        // forever for the stuck command; the generous wait below only detects such a hang.
+        var clock = new MaintenanceDrainClock();
         var options = new RespireOptions
         {
             Protocol = RespProtocol.Resp3,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             MaintenanceRelaxedTimeout = TimeSpan.FromMilliseconds(25),
             CommandTimeout = null,
-            // This also bounds the maintenance barrier, but socket setup needs scheduling headroom.
-            // Keep the separate 150 ms drain grace and three-second retirement assertion below.
-            ConnectTimeout = TimeSpan.FromSeconds(1),
+            ConnectTimeout = TimeSpan.FromSeconds(5),
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
         };
@@ -215,6 +218,7 @@ public class ClusterNodeIdentityTests
             options: options.ToConnectionOptions(enableMaintenanceNotifications: true) with
             {
                 RetirementDrainFallbackTimeout = TimeSpan.FromMilliseconds(150),
+                MaintenanceDrainTimeProvider = clock,
             });
         var connection = node.GetConnection();
         var stuckCommand = new RawCommand("*2\r\n$4\r\nECHO\r\n$5\r\nstuck\r\n"u8.ToArray());
@@ -222,8 +226,14 @@ public class ClusterNodeIdentityTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (!server.ReceivedCommands.Contains("ECHO stuck")) await Task.Delay(10, timeout.Token);
 
-        await node.RetireAsync().WaitAsync(TimeSpan.FromSeconds(3));
-        await Assert.That(async () => await stuckReply.WaitAsync(TimeSpan.FromSeconds(1)))
+        var retirement = node.RetireAsync();
+        var barrierTimer = await clock.Timer.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        using (var barrierSent = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+            while (!server.ReceivedCommands.Contains("PING")) await Task.Delay(10, barrierSent.Token);
+        barrierTimer.Fire();
+
+        await retirement.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(async () => await stuckReply.WaitAsync(TimeSpan.FromSeconds(5)))
             .Throws<RespireConnectionException>();
     }
 
