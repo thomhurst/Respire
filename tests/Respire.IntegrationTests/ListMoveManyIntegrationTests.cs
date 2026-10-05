@@ -11,6 +11,15 @@ public class ListMoveManyIntegrationTests(Redis810ListMoveTestContainer fixture)
     [Test]
     [Arguments(2)]
     [Arguments(3)]
+    public async Task Redis810WatchTracksListMoveMutationsAndRejections(int protocol)
+    {
+        await FakeTransactionParityTests.AssertWatchTracksMutationsAsync(
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol, Database = protocol }, useFake: false);
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
     public async Task AllOrderingModesMatchRedisAcrossImmediateAndQueuedMoves(int protocol)
     {
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });

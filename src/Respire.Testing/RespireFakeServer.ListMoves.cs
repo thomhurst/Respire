@@ -6,7 +6,13 @@ namespace Respire.Testing;
 
 public sealed partial class RespireFakeServer
 {
-    private TaskCompletionSource? _listMoveChanged;
+    private readonly Dictionary<byte[], ListMoveWaiters> _listMoveWaiters = new(BinaryKeyComparer.Instance);
+
+    private sealed class ListMoveWaiters
+    {
+        internal TaskCompletionSource Changed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal int Count;
+    }
 
     private FakeReply ListMoveMany(byte[][] args, bool blocking)
     {
@@ -37,7 +43,7 @@ public sealed partial class RespireFakeServer
         // when moving within one list, even if the selected block includes every element.
         var destinationEntry = Find(args[2]);
         var destination = destinationEntry?.List ?? [];
-        var movedCount = (int)Math.Min(count, source.Count);
+        var movedCount = (int)Math.Min(count, source.Count); // Bounded by the list's int-sized count.
         var start = from == "LEFT" ? 0 : source.Count - movedCount;
         var values = source.GetRange(start, movedCount);
         if (!bulk && from == to) values.Reverse();
@@ -64,17 +70,28 @@ public sealed partial class RespireFakeServer
             if (changed is null) return reply;
             // A null move reply proves the handler accepted every argument, including timeout.
             _ = TryListMoveTimeout(arguments[5], out var seconds);
-            var remaining = seconds == 0 ? double.PositiveInfinity : seconds - Stopwatch.GetElapsedTime(started).TotalSeconds;
-            if (remaining <= 0) return QueueListMoveTimeout(connection);
             try
             {
+                var remaining = seconds == 0 ? double.PositiveInfinity : seconds - Stopwatch.GetElapsedTime(started).TotalSeconds;
+                if (remaining <= 0) return QueueListMoveTimeout(connection);
                 // Bound each timer while retaining support for server-sized, very long waits.
-                await changed.WaitAsync(TimeSpan.FromSeconds(Math.Min(remaining, 86_400)), connection.Lifetime.Token).ConfigureAwait(false);
+                await changed.Changed.Task.WaitAsync(TimeSpan.FromSeconds(Math.Min(remaining, 86_400)), connection.Lifetime.Token).ConfigureAwait(false);
             }
             catch (TimeoutException)
             {
                 if (seconds != 0 && Stopwatch.GetElapsedTime(started).TotalSeconds >= seconds)
                     return QueueListMoveTimeout(connection);
+            }
+            finally
+            {
+                lock (_gate)
+                {
+                    // A mutation removes the old group before waking it. Do not remove a
+                    // newer group that registered for the same key while this wait completed.
+                    if (--changed.Count == 0 && _listMoveWaiters.TryGetValue(arguments[1], out var current)
+                        && ReferenceEquals(current, changed))
+                        _listMoveWaiters.Remove(arguments[1]);
+                }
             }
         }
     }

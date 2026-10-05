@@ -93,6 +93,7 @@ internal sealed partial class ListCommands
         arguments[2] = fromToken;
         arguments[3] = toToken;
         var index = 4;
+        // TimeSpan.Zero maps to 1 ms: Redis interprets a wire timeout of zero as infinite.
         if (waitFor is { } timeout) arguments[index++] = MultiKeyPop.ToSeconds(timeout);
         arguments[index++] = selector;
         arguments[index++] = count;

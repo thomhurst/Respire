@@ -10,6 +10,112 @@ namespace Respire.Tests;
 public class FakeListMoveManyTests
 {
     [Test]
+    public async Task UnrelatedCommandsDoNotReexecuteBlockedMoves()
+    {
+        var clock = new CountingClock();
+        await using var server = new RespireFakeServer(clock);
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var observed = server.InjectFault("BLMOVEM", RespireFakeFault.Delay(TimeSpan.Zero));
+        var move = client.Lists.MoveManyAsync("source", "destination", waitFor: Timeout.InfiniteTimeSpan,
+            cancellationToken: deadline.Token).AsTask();
+        await observed.Matched.WaitAsync(deadline.Token);
+        while (observed.ExecutionCount == 0) await Task.Delay(1, deadline.Token);
+        // The clock is sampled once per execution under the server gate. Taking the same
+        // gate ensures the blocked command has registered its wait before the baseline.
+        var gate = typeof(RespireFakeServer).GetField("_gate",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(server)!;
+        long before;
+        lock (gate) before = clock.Count;
+        await client.GetStringAsync("source");
+        await client.SetAsync("unrelated", "value");
+        await client.PingAsync();
+        await Task.Delay(100, deadline.Token);
+        long after;
+        lock (gate) after = clock.Count;
+        await Assert.That(after - before).IsEqualTo(3);
+        await Assert.That(move.IsCompleted).IsFalse();
+        await client.Lists.RightPushAsync("source", "ready");
+        await Assert.That((await move.WaitAsync(deadline.Token))!).IsEquivalentTo(["ready"]);
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task CancellationAndTimeoutRemoveOnlyTheirOwnWaiters(int protocol)
+    {
+        await using var server = new RespireFakeServer();
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var cancel = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
+        var cancelled = client.Lists.MoveManyAsync("same", "destination", waitFor: Timeout.InfiniteTimeSpan,
+            cancellationToken: cancel.Token).AsTask();
+        var survivor = client.Lists.MoveManyAsync("same", "destination", waitFor: Timeout.InfiniteTimeSpan,
+            cancellationToken: deadline.Token).AsTask();
+        await WaitForWaiterCount(server, 2, deadline.Token);
+        cancel.Cancel();
+        await Assert.That(async () => await cancelled).Throws<OperationCanceledException>();
+        await WaitForWaiterCount(server, 1, deadline.Token);
+        await Assert.That(await client.Lists.MoveManyAsync("same", "destination", waitFor: TimeSpan.Zero,
+            cancellationToken: deadline.Token)).IsNull();
+        await Assert.That(await client.Lists.MoveManyAsync("other", "destination", waitFor: TimeSpan.Zero,
+            cancellationToken: deadline.Token)).IsNull();
+        await WaitForWaiterCount(server, 1, deadline.Token);
+        await client.Lists.RightPushAsync("same", "value");
+        await Assert.That((await survivor.WaitAsync(deadline.Token))!).IsEquivalentTo(["value"]);
+        await WaitForWaiterCount(server, 0, deadline.Token);
+    }
+
+    [Test]
+    public async Task CompetingWaitersKeepTheNextGenerationRegisteredForBinaryKeys()
+    {
+        await using var server = new RespireFakeServer();
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        byte[] key = [0, 255, 128];
+        var first = client.Lists.MoveManyAsync(key, "destination", waitFor: Timeout.InfiniteTimeSpan,
+            cancellationToken: deadline.Token).AsTask();
+        var second = client.Lists.MoveManyAsync(key.ToArray(), "destination", waitFor: Timeout.InfiniteTimeSpan,
+            cancellationToken: deadline.Token).AsTask();
+        await WaitForWaiterCount(server, 2, deadline.Token);
+        await client.Lists.RightPushAsync(key.ToArray(), "first");
+        var completed = await Task.WhenAny(first, second).WaitAsync(deadline.Token);
+        await Assert.That((await completed)!).IsEquivalentTo(["first"]);
+        await WaitForWaiterCount(server, 1, deadline.Token);
+        await client.Lists.RightPushAsync(key.ToArray(), "second");
+        var remaining = ReferenceEquals(completed, first) ? second : first;
+        await Assert.That((await remaining.WaitAsync(deadline.Token))!).IsEquivalentTo(["second"]);
+        await WaitForWaiterCount(server, 0, deadline.Token);
+    }
+
+    private static async Task WaitForWaiterCount(RespireFakeServer server, int expected, CancellationToken cancellationToken)
+    {
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var gate = typeof(RespireFakeServer).GetField("_gate", flags)!.GetValue(server)!;
+        var groups = (System.Collections.IDictionary)typeof(RespireFakeServer).GetField("_listMoveWaiters", flags)!.GetValue(server)!;
+        while (true)
+        {
+            lock (gate)
+            {
+                var count = groups.Values.Cast<object>().Sum(group => (int)group.GetType().GetField("Count", flags)!.GetValue(group)!);
+                if (count == expected && (expected != 0 || groups.Count == 0)) return;
+            }
+            await Task.Delay(1, cancellationToken);
+        }
+    }
+
+    private sealed class CountingClock : TimeProvider
+    {
+        private long _count;
+        public long Count => Interlocked.Read(ref _count);
+        public override DateTimeOffset GetUtcNow()
+        {
+            Interlocked.Increment(ref _count);
+            return DateTimeOffset.UtcNow;
+        }
+    }
+
+    [Test]
     public async Task MovesInvalidateBothWatchesAndBlockingInsideExecIsImmediate()
     {
         await using var server = new RespireFakeServer();

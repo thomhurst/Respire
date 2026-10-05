@@ -158,7 +158,7 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
     }
 
     private Outbound? ExecuteLocked(Connection connection, byte[][] arguments, RespireFakeFaultScope? scope,
-        out Task? listMoveChanged, bool allowListMoveWait = false)
+        out ListMoveWaiters? listMoveChanged, bool allowListMoveWait = false)
     {
         listMoveChanged = null;
         // Keep synchronous state protection outside the async receive state machine,
@@ -175,18 +175,18 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
                 var result = Execute(connection, arguments);
                 if (allowListMoveWait && ReferenceEquals(result, FakeReply.NullArray))
                 {
-                    _listMoveChanged ??= new(TaskCreationOptions.RunContinuationsAsynchronously);
-                    listMoveChanged = _listMoveChanged.Task;
+                    if (!_listMoveWaiters.TryGetValue(arguments[1], out listMoveChanged))
+                    {
+                        listMoveChanged = new ListMoveWaiters();
+                        _listMoveWaiters.Add(arguments[1], listMoveChanged);
+                    }
+                    listMoveChanged.Count++;
                     return null;
                 }
                 var reply = result.Encode(connection.Resp3);
                 // Enqueue before releasing state ownership: newly subscribed routes cannot
                 // receive a publication ahead of their acknowledgement, even behind a fault gate.
-                var outbound = QueueOutputLocked(connection, reply, push: false);
-                var changed = _listMoveChanged;
-                _listMoveChanged = null;
-                changed?.TrySetResult();
-                return outbound;
+                return QueueOutputLocked(connection, reply, push: false);
             }
             catch
             {
