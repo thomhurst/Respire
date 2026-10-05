@@ -218,4 +218,53 @@ public class RepositoryTests(RedisTestContainer fixture)
         repository.GetAllElements();
         await Assert.That(calls).IsEqualTo(2);
     }
+
+    [Test]
+    public async Task ServiceProviderFactoryIsLazyAndSnapshotsKeyAtRegistration()
+    {
+        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        var calls = 0;
+        var keyName = $"keys:{Guid.NewGuid():N}";
+        var keyBytes = System.Text.Encoding.UTF8.GetBytes(keyName);
+        var services = new ServiceCollection();
+        services.AddSingleton<IRespireClient>(client);
+        var builder = services.AddDataProtection();
+        var result = builder.PersistKeysToRespireFromServices(provider =>
+        {
+            calls++;
+            return provider.GetRequiredService<IRespireClient>();
+        }, new RespireKey(keyBytes.AsMemory()));
+        Array.Fill(keyBytes, (byte)'x');
+        using (var provider = services.BuildServiceProvider())
+        {
+            var repository = provider.GetRequiredService<IOptions<KeyManagementOptions>>().Value.XmlRepository!;
+            await Assert.That(ReferenceEquals(builder, result)).IsTrue();
+            await Assert.That(calls).IsEqualTo(0);
+            repository.StoreElement(new XElement("key"), "one");
+            await Assert.That(repository.GetAllElements().Count).IsEqualTo(1);
+            await Assert.That(calls).IsEqualTo(2);
+        }
+        // Externally supplied singleton instances remain caller-owned after provider disposal.
+        await Assert.That((await client.Lists.RangeAsync(keyName)).Length).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task ContainerCreatedSingletonIsDisposedWithProvider()
+    {
+        RespireClient? client = null;
+        var key = $"keys:{Guid.NewGuid():N}";
+        var services = new ServiceCollection();
+        services.AddSingleton<IRespireClient>(_ => client = RespireClient.Create(RespireOptions.Parse(fixture.ConnectionString)));
+        services.AddDataProtection().PersistKeysToRespireFromServices(
+            provider => provider.GetRequiredService<IRespireClient>(), key);
+        await using (var provider = services.BuildServiceProvider())
+        {
+            var repository = provider.GetRequiredService<IOptions<KeyManagementOptions>>().Value.XmlRepository!;
+            await Assert.That(client).IsNull();
+            repository.StoreElement(new XElement("key"), "one");
+            await Assert.That(client).IsNotNull();
+            await Assert.That(repository.GetAllElements().Count).IsEqualTo(1);
+        }
+        await Assert.That(async () => await client!.Lists.RangeAsync(key)).Throws<ObjectDisposedException>();
+    }
 }

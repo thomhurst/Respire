@@ -7,6 +7,23 @@ namespace Respire.DataProtection;
 /// <summary>Configures Respire storage for ASP.NET Core DataProtection keys.</summary>
 public static class RespireDataProtectionBuilderExtensions
 {
+    /// <summary>Persists keys using a client resolved from the application's service provider.</summary>
+    /// <param name="builder">The DataProtection builder.</param>
+    /// <param name="clientFactory">Resolves a client from the root provider for each repository operation. Ownership remains with its registrant or the DI container; the repository never disposes it.</param>
+    /// <param name="key">The Redis list key shared by application instances. Its bytes are copied during registration.</param>
+    /// <returns>The builder, for further configuration.</returns>
+    /// <remarks>The factory must be cheap and thread-safe. Resolve a singleton client rather than a scoped service.</remarks>
+    public static IDataProtectionBuilder PersistKeysToRespireFromServices(
+        this IDataProtectionBuilder builder, Func<IServiceProvider, IRespireClient> clientFactory, RespireKey key)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(clientFactory);
+        var ownedKey = key.Snapshot();
+        builder.Services.AddOptions<KeyManagementOptions>().Configure<IServiceProvider>((options, services) =>
+            options.XmlRepository = new RespireXmlRepository(() => clientFactory(services), ownedKey));
+        return builder;
+    }
+
     /// <summary>Persists DataProtection keys in the specified Redis list using an existing client.</summary>
     /// <param name="builder">The DataProtection builder.</param>
     /// <param name="clientFactory">Returns a caller-owned client. The repository does not dispose it.</param>

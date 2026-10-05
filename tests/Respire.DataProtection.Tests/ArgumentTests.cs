@@ -15,6 +15,9 @@ public class ArgumentTests
         await Assert.That(() => new RespireXmlRepository(null!, "keys")).Throws<ArgumentNullException>();
         var builder = new ServiceCollection().AddDataProtection();
         await Assert.That(() => builder.PersistKeysToRespire(null!, "keys")).Throws<ArgumentNullException>();
+        await Assert.That(() => builder.PersistKeysToRespireFromServices(null!, "keys")).Throws<ArgumentNullException>();
+        await Assert.That(() => RespireDataProtectionBuilderExtensions.PersistKeysToRespireFromServices(
+            null!, _ => throw new InvalidOperationException(), "keys")).Throws<ArgumentNullException>();
         await Assert.That(() => RespireDataProtectionBuilderExtensions.PersistKeysToRespire(
             null!, () => throw new InvalidOperationException(), "keys")).Throws<ArgumentNullException>();
     }

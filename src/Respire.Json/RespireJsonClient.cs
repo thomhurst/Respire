@@ -19,7 +19,7 @@ namespace Respire.Json;
 /// String paths starting with <c>$</c> select array-of-matches decoding; other strings select one value.
 /// Projection syntax is not detected: use <see cref="RespireJsonPath.Projection"/> for wrapped scalar
 /// projections such as <c>sum($.items)</c>. Collection-valued projections such as <c>$.obj.keys()</c>
-/// return a direct array; use <see cref="RespireJsonPath.Legacy"/> to decode that array as one value.
+/// return a direct array; use <see cref="RespireJsonPath.DirectArray"/> to decode that array as one value.
 /// </para>
 /// </remarks>
 public sealed class RespireJsonClient

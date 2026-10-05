@@ -45,6 +45,12 @@ make future connections throw a historical error.
 
 ## Supported subset
 
+For `INCREX BYFLOAT`, the fake calculates with .NET `double`, while Redis uses
+platform-dependent `long double`. Rounding near bounds can therefore differ.
+Increments, stored values, and results outside the fake's finite `double` range
+fail before mutation; bounds may be infinite.
+Use a real Redis fixture when testing floating-point precision or extreme values.
+
 This is a test double with explicit limits, not a Redis implementation or a compatibility
 oracle. Unsupported commands return server errors containing the command name.
 Unsupported options also fail explicitly instead of silently changing behavior.
@@ -54,15 +60,25 @@ An error consumes exactly one response slot, so later valid commands still work.
 | --- | --- |
 | Strings | `GET`, `SET` with `NX`, `XX`, `GET`, `KEEPTTL`, `EX`, `PX`, `EXAT`, `PXAT`; `MGET`, `MSET`, `MSETNX`, `GETDEL`, `GETSET`, `GETEX`, `STRLEN`, `APPEND` |
 | Integer strings | `INCR`, `DECR`, `INCRBY`, `DECRBY`, with checked signed 64-bit arithmetic |
+| Extended counters | `INCREX` with integer/floating increments, bounds, `SATURATE`, expiry, and `ENX`; integer arithmetic preserves the full signed 64-bit range |
 | Hashes | `HSET`, `HSETNX`, `HMSET`, `HGET`, `HMGET`, `HGETALL`, `HDEL`, `HEXISTS`, `HLEN`, `HKEYS`, `HVALS`, `HSTRLEN`, `HINCRBY` |
 | Lists | `LPUSH`, `RPUSH`, `LPUSHX`, `RPUSHX`, `LPOP`/`RPOP` with optional count, `LLEN`, `LRANGE`, `LINDEX`, `LSET`, `LTRIM`, `LREM`, `LINSERT BEFORE/AFTER`, `LPOS RANK/COUNT/MAXLEN` |
 | Sets | `SADD`, `SREM`, `SMEMBERS`, `SCARD`, `SISMEMBER`, `SMISMEMBER`, `SMOVE`, `SINTER`, `SUNION`, `SDIFF`, their `STORE` forms, and `SINTERCARD` with `LIMIT` |
 | Sorted sets | `ZADD` with `NX`, `XX`, `GT`, `LT`, `CH`, `INCR`; `ZINCRBY`, `ZREM`, `ZCARD`, `ZSCORE`, `ZMSCORE`, `ZRANK`, `ZREVRANK`, `ZCOUNT`, `ZLEXCOUNT`; `ZRANGE` with `BYSCORE`/`BYLEX`, `REV`, `LIMIT`, `WITHSCORES`; legacy `ZREVRANGE`, `ZRANGEBYSCORE`, `ZREVRANGEBYSCORE`, `ZRANGEBYLEX`, `ZREVRANGEBYLEX`; `ZPOPMIN`, `ZPOPMAX`; `ZREMRANGEBYRANK`, `ZREMRANGEBYSCORE`, `ZREMRANGEBYLEX`; `ZINTERCARD` with `LIMIT` |
 | Pub/sub | `SUBSCRIBE`, `UNSUBSCRIBE`, `PUBLISH`, with binary channel names and payloads |
+| Streams | Basic `XADD` with numeric IDs or `*`; `XGROUP CREATE` with optional `MKSTREAM`; `XREAD`/`XREADGROUP` with `COUNT`, `MAXCOUNT`, `MAXSIZE`, `BLOCK`; `XACK` |
 | Keys | `DEL`, `UNLINK`, `EXISTS`, `TYPE`, `PERSIST` |
 | Expiry | `EXPIRE`, `PEXPIRE`, `EXPIREAT`, `PEXPIREAT` with `NX`, `XX`, `GT`, `LT`; `TTL`, `PTTL`, `EXPIRETIME`, `PEXPIRETIME` |
 | Connection | `HELLO 2/3` without authentication, `PING`, `ECHO`, `SELECT 0`, `CLIENT ID`, `CLIENT GETNAME`, `CLIENT SETNAME` |
 | Transactions | `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH` with connection-owned queues and optimistic concurrency |
+
+Stream reads support multiple keys, new group entries, pending history, acknowledgements,
+and cumulative Redis 8.10 count/byte budgets. Blocking reads wake after appends, resolve `$`
+once, and release on connection cancellation. Blocking timeouts use wall-clock time rather
+than `RespireFakeClock`. Transactions execute stream reads without blocking, as Redis does.
+The fake does not implement trimming, deletion of individual entries, automatic claiming,
+`NOACK`, `CLAIM`, stream metadata, or other group-administration commands. Unsupported
+append/read options fail explicitly. Use real Redis tests for those operations.
 
 `GETEX` supports its expiry options and `PERSIST`. Binary keys and values are preserved,
 including empty values and embedded zero bytes. Multi-key mutations are atomic; integer
@@ -141,7 +157,13 @@ if (first.Result != 10 || !rest.Result.SequenceEqual(new[] { 30, 20 }))
     throw new InvalidOperationException("List ordering did not round-trip.");
 ```
 
-Blocking pops, multi-key pops, and moves (`BLPOP`, `BRPOP`, `LMPOP`, `BLMPOP`, `LMOVE`,
+Multi-element moves (`LMOVEM`, `BLMOVEM`) support COUNT/EXACTLY and OBO/BULK, including
+same-list ordering, wrong-type validation, TTL preservation, and WATCH invalidation.
+BLMOVEM waits for the required source length without holding the server-state lock. Its
+timeouts use wall-clock time; `RespireFakeClock` still controls only key expiry. Cancellation
+or server disposal releases the wait. Inside MULTI, BLMOVEM runs immediately as Redis does.
+
+Other blocking pops, multi-key pops, and moves (`BLPOP`, `BRPOP`, `LMPOP`, `BLMPOP`, `LMOVE`,
 `BLMOVE`, `RPOPLPUSH`, and `BRPOPLPUSH`) remain explicitly unsupported. Use the nonblocking
 typed overloads without `waitFor`; a populated list does not make a blocking command supported.
 

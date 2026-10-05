@@ -164,6 +164,36 @@ The key span is copied into command arguments; caller-owned byte buffers must re
 until execution finishes. Returned key bytes and value strings survive deferred response disposal.
 Blocking pops have no batch or transaction form.
 
+### Moving several elements (Redis 8.10+)
+
+`MoveManyAsync` uses LMOVEM, or BLMOVEM when `waitFor` is supplied. `UpTo` moves as many
+elements as available, up to the positive count; `Exactly` moves nothing unless the entire
+count is available. Blocking `Exactly` waits for that many elements, while blocking `UpTo`
+waits for at least one. Missing sources, unsatisfied exact counts, and timeouts return `null`.
+
+```csharp
+string[]? moved = await redis.Lists.MoveManyAsync(
+    "{jobs}:ready", "{jobs}:processing", count: 10,
+    from: ListSide.Left, to: ListSide.Right,
+    countMode: ListMoveCountMode.Exactly, order: ListMoveOrder.Bulk,
+    waitFor: TimeSpan.FromSeconds(5));
+```
+
+The owned result contains UTF-8 strings in destination order. `Bulk` preserves the selected
+elements' source order; `OneByOne` uses pop order and reverses it when inserting at the head.
+When both keys are the same, Redis removes the selected block before reinserting it, so a
+same-end `OneByOne` move reverses that block and an opposite-end move can rotate the list.
+Both keys are prefixed and must share a Cluster slot. Blocking moves use the dedicated pool;
+cancellation discards the blocked lease. An infinite wait uses `Timeout.InfiniteTimeSpan`,
+and `TimeSpan.Zero` uses a minimum one-millisecond timeout.
+
+Batch and transaction `Lists.MoveMany` queue only LMOVEM and never wait. Redis itself treats
+BLMOVEM inside MULTI as immediate, but Respire does not expose a queued blocking overload.
+The existing single-element `MoveAsync` and `Move` behavior is unchanged.
+
+See the [LMOVEM reference](https://redis.io/docs/latest/commands/lmovem/) and
+[BLMOVEM reference](https://redis.io/docs/latest/commands/blmovem/) for server requirements.
+
 Set `waitFor` to transparently select the blocking command and a dedicated connection. See [blocking queues](../guides/blocking-queues).
 
 ## Sets
@@ -205,6 +235,40 @@ Single-member `PopAsync` returns null when missing. Batch and transaction facets
 are removed; rename those calls without changing their arguments.
 
 ## Sorted sets
+
+### Conditional adds and increments
+
+Pass `RespireSortedSetAddOptions` immediately after the key to use ZADD conditions:
+
+```csharp
+bool added = await redis.SortedSets.AddAsync("scores", RespireSortedSetAddOptions.Nx, "ada", 98.5);
+bool improved = await redis.SortedSets.AddAsync("scores",
+    RespireSortedSetAddOptions.Xx | RespireSortedSetAddOptions.Gt | RespireSortedSetAddOptions.Ch,
+    "ada", 100);
+long changed = await redis.SortedSets.AddAsync("scores", RespireSortedSetAddOptions.Ch,
+    ("ada", 101), ("grace", 99));
+double? increased = await redis.SortedSets.IncrementAsync("scores",
+    RespireSortedSetAddOptions.Xx | RespireSortedSetAddOptions.Gt, "ada", 2);
+```
+
+`Nx` only inserts missing members; `Xx` only updates existing ones. `Gt` and `Lt` compare
+the proposed score with the existing score, but still permit new members unless combined
+with `Xx`. They require Redis 6.2 or later. Without `Ch`, add results count only new members;
+with `Ch`, changed scores count too. Setting an unchanged score never counts as a change.
+
+The options-taking `IncrementAsync` uses `ZADD INCR` and returns null when a condition rejects
+the update. Its comparison uses the resulting score; `Ch` does not change its score result.
+INCR accepts exactly one member by API construction, so it cannot be combined with a bulk add.
+The existing options-free `IncrementAsync` continues to use `ZINCRBY` and returns `double`.
+Invalid flag combinations (`Nx` with `Xx`, `Gt`, or `Lt`, or `Gt` with `Lt`) are rejected
+before sending or queueing. Bulk options-taking adds require at least one entry.
+
+Batch and transaction facets expose the same overloads as `SortedSets.Add` and
+`SortedSets.Increment`, returning `RespirePending<bool>`, `RespirePending<long>`, or
+`RespirePending<double?>`. Generic single-member adds preserve the existing typed serialization
+rules, including Redis `1`/`0` encoding for booleans.
+
+### Reads and other operations
 
 `RandomMemberAsync(key)` returns one member or `null`; `RandomMembersAsync(key, count)`
 and `RandomMembersWithScoresAsync(key, count)` return owned arrays (Redis 6.2+). Positive
@@ -483,6 +547,39 @@ await foreach (var item in redis.Streams.ReadAllAsync(
 ```
 
 `ReadAsync` implements [XREAD](https://redis.io/docs/latest/commands/xread/) (Redis 5.0+).
+
+Redis 8.10 adds cumulative reply limits to `XREAD` and `XREADGROUP`. Pass
+`StreamReadOptions` to the options-first `ReadAsync` overload or queued `Read` overload:
+
+```csharp
+var page = await redis.Streams.ReadAsync(
+    new StreamReadOptions { Count = 50, MaxCount = 80, MaxSize = 65_536 },
+    [("{events}:one", "0"), ("{events}:two", "0")]);
+```
+
+`Count` limits entries per stream. `MaxCount` limits the total across streams and must
+be positive and at least `Count` when both are set. `MaxSize` is a positive byte budget
+for the total reply; Redis still returns the first available entry even if it exceeds
+that budget. When both cumulative limits are set, the first reached limit wins. Streams
+are visited in request order for nonblocking reads, so earlier streams can consume the
+whole budget. These are server-side limits, not client-side truncation.
+
+`WaitFor` uses the dedicated blocking pool, including when cumulative limits are set.
+Queued reads in batches and transactions are nonblocking and reject `WaitFor` locally.
+Omitting `MaxCount` and `MaxSize` keeps the existing server requirements.
+
+For consumer groups, `ReadGroupOnceAsync(key, group, consumer, options)` reads one page.
+The multi-stream `ReadGroupAsync(streams, group, consumer, options)` also reads one page;
+use `>` cursors for new entries or numeric cursors for that consumer's pending entries.
+Both forms return entries with `AckAsync` support. `queue.Streams.ReadGroup` provides the
+same nonblocking operations in batches and transactions. All multi-stream keys must share
+a Cluster hash slot, including after prefixing. Limits also apply to pending history and
+after blocking reads wake; entries excluded by the byte budget are not added to the PEL.
+
+The existing single-stream consumer loops remain available. Their options-first overload
+accepts the same reply limits; new-entry loops default to a five-second blocking interval
+when `WaitFor` is omitted, while explicit pending cursors replay without blocking until empty.
+See [XREADGROUP](https://redis.io/docs/latest/commands/xreadgroup/) for server semantics.
 The default start id is `0`; only entries newer than each supplied id are returned. `count`
 limits entries **per stream**. Missing/empty streams are omitted from multi-stream results;
 an empty or timed-out response returns an empty array. Keys, ids, field names, and binary

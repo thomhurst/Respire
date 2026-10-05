@@ -8,6 +8,11 @@ public sealed partial class RespireFakeServer
 
     private static readonly Dictionary<string, Command> Commands = new(StringComparer.Ordinal)
     {
+        ["XADD"] = new(5, int.MaxValue, static (server, _, args) => server.StreamAdd(args)),
+        ["XGROUP"] = new(5, 6, static (server, _, args) => server.StreamCreateGroup(args)),
+        ["XREAD"] = new(4, int.MaxValue, static (server, connection, args) => server.StreamRead(connection, args)),
+        ["XREADGROUP"] = new(7, int.MaxValue, static (server, connection, args) => server.StreamRead(connection, args)),
+        ["XACK"] = new(4, int.MaxValue, static (server, _, args) => server.StreamAcknowledge(args)),
         ["HELLO"] = new(1, int.MaxValue, static (_, connection, args) => Hello(connection, args)),
         ["PING"] = new(1, 2, static (_, connection, args) => Ping(connection, args)),
         ["SUBSCRIBE"] = new(2, int.MaxValue, static (server, connection, args) => server.Subscribe(connection, args)),
@@ -35,6 +40,7 @@ public sealed partial class RespireFakeServer
         ["STRLEN"] = new(2, 2, static (server, _, args) => FakeReply.Integer(server.Find(args[1])?.Value.Length ?? 0)),
         ["APPEND"] = new(3, 3, static (server, _, args) => server.Append(args[1], args[2])),
         ["INCR"] = new(2, 2, static (server, _, args) => server.Increment(args[1], 1)),
+        ["INCREX"] = new(2, int.MaxValue, static (server, _, args) => server.IncrementExtended(args)),
         ["DECR"] = new(2, 2, static (server, _, args) => server.Increment(args[1], -1)),
         ["INCRBY"] = new(3, 3, static (server, _, args) => server.Increment(args[1], Integer(args[2]))),
         ["DECRBY"] = new(3, 3, static (server, _, args) => server.Increment(args[1], Integer(args[2]), subtract: true)),
@@ -81,6 +87,8 @@ public sealed partial class RespireFakeServer
         ["RPUSHX"] = new(3, int.MaxValue, static (server, _, args) => server.ListPush(args, left: false, onlyExisting: true)),
         ["LPOP"] = new(2, 3, static (server, _, args) => server.ListPop(args, left: true)),
         ["RPOP"] = new(2, 3, static (server, _, args) => server.ListPop(args, left: false)),
+        ["LMOVEM"] = new(5, int.MaxValue, static (server, _, args) => server.ListMoveMany(args, blocking: false)),
+        ["BLMOVEM"] = new(6, int.MaxValue, static (server, _, args) => server.ListMoveMany(args, blocking: true)),
         ["LLEN"] = new(2, 2, static (server, _, args) => FakeReply.Integer(server.Find(args[1])?.List.Count ?? 0)),
         ["LRANGE"] = new(4, 4, static (server, _, args) => server.ListRange(args)),
         ["LTRIM"] = new(4, 4, static (server, _, args) => server.ListTrim(args)),

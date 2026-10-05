@@ -12,6 +12,9 @@ public class SentinelClientTests
     [Test]
     [Arguments("", false, false, false)]
     [Arguments("redis_version:unknown", false, false, false)]
+    // Bare major versions are deliberately unknown: Version.TryParse requires major.minor.
+    [Arguments("redis_version:8", false, false, false)]
+    [Arguments("valkey_version:8", false, false, false)]
     [Arguments("redis_version:4.0.14", false, false, false)]
     [Arguments("redis_version:5.0.0", false, true, false)]
     [Arguments("redis_version:7.1.9", false, true, false)]

@@ -56,7 +56,7 @@ internal static class RawCommandKeyLayouts
         Add(LayoutKind.First,
             "GET", "SET", "GETSET", "SETNX", "SETEX", "PSETEX", "GETDEL",
             "GETEX", "APPEND", "STRLEN", "GETRANGE", "SETRANGE", "INCR", "INCRBY", "DELEX", "DELIFEQ",
-            "INCRBYFLOAT", "DECR", "DECRBY", "TYPE", "TTL", "PTTL", "EXPIRE",
+            "INCRBYFLOAT", "INCREX", "DECR", "DECRBY", "TYPE", "TTL", "PTTL", "EXPIRE",
             "PEXPIRE", "EXPIREAT", "PEXPIREAT", "EXPIRETIME", "PEXPIRETIME", "PERSIST", "DUMP",
             "RESTORE", "HGET", "HSET", "HSETNX", "HMGET", "HMSET", "HGETALL",
             "HDEL", "HEXISTS", "HLEN", "HKEYS", "HVALS", "HSTRLEN", "HINCRBY",
@@ -73,7 +73,7 @@ internal static class RawCommandKeyLayouts
             "OBJECT IDLETIME", "OBJECT REFCOUNT", "MEMORY USAGE", "XINFO STREAM", "XINFO GROUPS", "XINFO CONSUMERS", "XGROUP CREATE",
             "XGROUP SETID", "XGROUP DESTROY", "XGROUP CREATECONSUMER", "XGROUP DELCONSUMER", "XSETID");
         Add(LayoutKind.FirstTwo,
-            "RENAME", "RENAMENX", "LCS", "SMOVE", "LMOVE", "RPOPLPUSH");
+            "RENAME", "RENAMENX", "LCS", "SMOVE", "LMOVE", "LMOVEM", "RPOPLPUSH");
         AddMutation(LayoutKind.FirstTwo, MutationKind.SecondArgument, ["COPY"]);
         AddMutation(LayoutKind.FirstTwo, MutationKind.FirstArgument, ["ZRANGESTORE", "GEOSEARCHSTORE"]);
         Add(LayoutKind.All,
@@ -102,7 +102,7 @@ internal static class RawCommandKeyLayouts
         AddPrefixable(LayoutKind.AfterFirst, "JSON.DEBUG");
         AddPrefixable(LayoutKind.None, "JSON.DEBUG HELP");
         // LMOVEM/BLMOVEM are Redis 8.10 commands, with source and destination in the first two positions.
-        AddImmediate(LayoutKind.FirstTwo, "LMOVEM", "BLMOVE", "BLMOVEM", "BRPOPLPUSH");
+        AddImmediate(LayoutKind.FirstTwo, "BLMOVE", "BLMOVEM", "BRPOPLPUSH");
         AddImmediate(LayoutKind.AllExceptLast, "BLPOP", "BRPOP", "BZPOPMIN", "BZPOPMAX");
         AddPrefixable(LayoutKind.AllExceptLast, "JSON.MGET");
         AddImmediate(LayoutKind.CountedAfterTimeout, "BLMPOP", "BZMPOP");

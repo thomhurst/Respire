@@ -113,6 +113,9 @@ public sealed partial class RespireFakeServer
 
     private void TouchWatchedKey(byte[] key)
     {
+        // A source mutation can satisfy a blocked move or change its type. Reads and
+        // mutations of other keys must not make blocked connections execute again.
+        if (_listMoveWaiters.Remove(key, out var waiting)) waiting.Changed.TrySetResult();
         if (!_watchers.TryGetValue(key, out var watchers)) return;
         foreach (var watcher in watchers) watcher.WatchChanged = true;
     }

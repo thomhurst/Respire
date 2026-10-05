@@ -16,6 +16,14 @@ public readonly record struct RespireStreamReadEntry(RespireKey Key, RespireStre
 
 public partial interface IStreamCommands
 {
+    /// <summary>Reads one stream with optional cumulative Redis 8.10 reply limits.</summary>
+    ValueTask<RespireStreamEntry[]> ReadAsync(StreamReadOptions options, RespireKey key,
+        RespireStreamId after = default, CancellationToken cancellationToken = default);
+
+    /// <summary>Reads same-slot streams with shared reply limits. Options precede keys to preserve existing overloads.</summary>
+    ValueTask<RespireStreamReadResult[]> ReadAsync(StreamReadOptions options,
+        ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams, CancellationToken cancellationToken = default);
+
     /// <summary>Reads entries newer than after. Null waitFor is nonblocking; InfiniteTimeSpan waits until cancelled.</summary>
     ValueTask<RespireStreamEntry[]> ReadAsync(RespireKey key, RespireStreamId after = default,
         int? count = null, TimeSpan? waitFor = null, CancellationToken cancellationToken = default);
@@ -41,6 +49,14 @@ public partial interface IStreamCommands
 
 internal sealed partial class StreamCommands
 {
+    public ValueTask<RespireStreamEntry[]> ReadAsync(StreamReadOptions options, RespireKey key,
+        RespireStreamId after = default, CancellationToken cancellationToken = default)
+        => ReadSingleAsync(BuildReadCommand(client, [(key, after)], options), options.WaitFor.HasValue, cancellationToken);
+
+    public ValueTask<RespireStreamReadResult[]> ReadAsync(StreamReadOptions options,
+        ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams, CancellationToken cancellationToken = default)
+        => ReadCoreAsync(BuildReadCommand(client, streams, options), options.WaitFor.HasValue, cancellationToken);
+
     public ValueTask<RespireStreamEntry[]> ReadAsync(RespireKey key, RespireStreamId after = default,
         int? count = null, TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
         => ReadSingleAsync(BuildReadCommand(client, [(key, after)], count, waitFor), waitFor.HasValue, cancellationToken);
@@ -67,16 +83,15 @@ internal sealed partial class StreamCommands
 
     internal static StreamReadCommand BuildReadCommand(RespireClient client,
         ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams, int? count, TimeSpan? waitFor)
+        => BuildReadCommand(client, streams, new StreamReadOptions { Count = count, WaitFor = waitFor });
+
+    internal static StreamReadCommand BuildReadCommand(RespireClient client,
+        ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams, StreamReadOptions options,
+        bool queued = false, string? group = null, string? consumer = null)
     {
-        if (count is { } take) ArgumentOutOfRangeException.ThrowIfNegativeOrZero(take);
-        long? milliseconds = null;
-        if (waitFor is { } wait)
-        {
-            MultiKeyPop.ValidateWait(wait);
-            milliseconds = wait == Timeout.InfiniteTimeSpan ? 0
-                : Math.Max(1, wait.Ticks / TimeSpan.TicksPerMillisecond + (wait.Ticks % TimeSpan.TicksPerMillisecond == 0 ? 0 : 1));
-        }
-        var snapshots = SnapshotStreams(client, streams);
+        options.Validate(queued);
+        var milliseconds = options.GetBlockMilliseconds();
+        var snapshots = SnapshotStreams(client, streams, group is not null);
         var keys = new RespireValue[snapshots.Length];
         var ids = new RespireStreamId[snapshots.Length];
         for (var i = 0; i < snapshots.Length; i++)
@@ -84,11 +99,11 @@ internal sealed partial class StreamCommands
             keys[i] = client.Key(snapshots[i].Key);
             ids[i] = snapshots[i].After;
         }
-        return new StreamReadCommand(keys, ids, count, milliseconds);
+        return new StreamReadCommand(keys, ids, options.Count, milliseconds, options.MaxCount, options.MaxSize, group, consumer);
     }
 
     private static (RespireKey Key, RespireStreamId After)[] SnapshotStreams(RespireClient client,
-        ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams)
+        ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams, bool group = false)
     {
         if (streams.IsEmpty) throw new ArgumentException("At least one stream is required.", nameof(streams));
         var snapshot = streams.ToArray();
@@ -99,24 +114,24 @@ internal sealed partial class StreamCommands
             var key = snapshot[i].Key.Snapshot();
             if (!seen.Add(key)) throw new ArgumentException("Each stream key must appear only once.", nameof(streams));
             var id = snapshot[i].After;
-            if (id != RespireStreamId.New)
+            if (group ? id.Value != ">" : id != RespireStreamId.New)
             {
-                if (id == RespireStreamId.Min || id == RespireStreamId.Max)
-                    throw new ArgumentException("XREAD requires a numeric start id or $.", nameof(streams));
+                if (id == RespireStreamId.Min || id == RespireStreamId.Max || (group && id == RespireStreamId.New))
+                    throw new ArgumentException(group ? "XREADGROUP requires a numeric start id or >." : "XREAD requires a numeric start id or $.", nameof(streams));
                 try
                 {
                     _ = id.CompareTo(RespireStreamId.Beginning);
                 }
                 catch (FormatException error)
                 {
-                    throw new ArgumentException("XREAD requires a numeric start id or $.", nameof(streams), error);
+                    throw new ArgumentException(group ? "XREADGROUP requires a numeric start id or >." : "XREAD requires a numeric start id or $.", nameof(streams), error);
                 }
             }
             if (client.Core.Cluster is not null)
             {
                 var current = client.ResolveKey(key).ClusterSlot;
                 if (slot is { } expected && current != expected)
-                    throw new RespireServerException("CROSSSLOT Keys in request don't hash to the same slot", "XREAD");
+                    throw new RespireServerException("CROSSSLOT Keys in request don't hash to the same slot", group ? "XREADGROUP" : "XREAD");
                 slot = current;
             }
             snapshot[i] = (key, id);
@@ -124,7 +139,7 @@ internal sealed partial class StreamCommands
         return snapshot;
     }
 
-    internal static RespireStreamReadResult[] ParseStreamRead(in RespValue reply, RespireClient client)
+    internal static RespireStreamReadResult[] ParseStreamRead(in RespValue reply, RespireClient client, string? group = null)
     {
         if (reply.IsNull) return [];
         if (reply.Type is not (RespDataType.Array or RespDataType.Map))
@@ -142,7 +157,7 @@ internal sealed partial class StreamCommands
                 || pair[1].Type != RespDataType.Array)
                 throw new RespireProtocolException("XREAD returned an invalid stream pair.");
             var key = MultiKeyPop.ParsePoppedKey(in pair[0], client.KeyPrefixBytes);
-            result[i] = new(key, ParseEntries(in pair[1], client: null, resolvedKey: default, group: null));
+            result[i] = new(key, ParseEntries(in pair[1], group is null ? null : client, group is null ? default : client.Key(key), group));
         }
         return result;
     }

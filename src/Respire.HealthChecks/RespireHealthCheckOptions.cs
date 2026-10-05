@@ -11,6 +11,7 @@ public sealed record RespireHealthCheckOptions
     public int MaxConcurrentProbes { get; init; } = 8;
 
     /// <summary>Maximum time for a probe round. Defaults to two seconds.</summary>
+    /// <remarks>Capability providers receive up to 250 milliseconds of additional completion grace, capped at the timer limit. Caller cancellation remains immediate.</remarks>
     public TimeSpan ProbeTimeout { get; init; } = TimeSpan.FromSeconds(2);
 
     /// <summary>Report degraded when any successful PING reaches this latency. Null disables the threshold.</summary>
