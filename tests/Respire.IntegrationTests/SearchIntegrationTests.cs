@@ -221,6 +221,7 @@ public class SearchIntegrationTests(ModernRedisTestContainer fixture)
         }
     }
 
+    /// <summary>Creates isolated documents and waits until all vectors are searchable before assertions run.</summary>
     private static async Task CreateDocumentsAsync(RespireClient client, RespireSearchClient search, string index)
     {
         await search.CreateIndexAsync(index, new()
