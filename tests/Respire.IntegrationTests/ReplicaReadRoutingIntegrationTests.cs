@@ -12,6 +12,30 @@ namespace Respire.IntegrationTests;
 public class ReplicaReadRoutingIntegrationTests
 {
     [Test]
+    [NotInParallel]
+    public void RouteListenerIgnoresUnrelatedCommandTraces()
+    {
+        using var scope = StartRoutingScope();
+        var routes = new ConcurrentDictionary<string, ConcurrentQueue<RespireEndpoint>>(StringComparer.Ordinal);
+        using var listener = Listen(routes, scope.TraceId);
+        using var source = new ActivitySource("Respire");
+        using (var command = source.StartActivity("SET"))
+        {
+            command!.SetTag("db.operation.name", "SET");
+            command.SetTag("server.address", "127.0.0.1");
+            command.SetTag("server.port", 1234);
+        }
+        var unrelated = new ActivityContext(ActivityTraceId.CreateRandom(), ActivitySpanId.CreateRandom(), ActivityTraceFlags.Recorded);
+        using (var command = source.StartActivity("SET", ActivityKind.Client, unrelated))
+        {
+            command!.SetTag("db.operation.name", "SET");
+            command.SetTag("server.address", "127.0.0.1");
+            command.SetTag("server.port", 5678);
+        }
+        routes["SET"].Should().ContainSingle().Which.Should().Be(new RespireEndpoint("127.0.0.1", 1234));
+    }
+
+    [Test]
     [ParallelLimiter<DockerHeavy>]
     [Arguments(RespireContainerServer.Redis, true, RespProtocol.Resp2)]
     [Arguments(RespireContainerServer.Redis, true, RespProtocol.Resp3)]
@@ -36,7 +60,8 @@ public class ReplicaReadRoutingIntegrationTests
         };
         await using var client = await RespireClient.ConnectAsync(options with { Protocol = protocol, Connections = 1 });
         var routes = new ConcurrentDictionary<string, ConcurrentQueue<RespireEndpoint>>(StringComparer.Ordinal);
-        using var listener = Listen(routes);
+        using var scope = StartRoutingScope();
+        using var listener = Listen(routes, scope.TraceId);
         var reader = client.WithReadFrom(RespireReadFrom.Nearest);
         await reader.SetAsync("nearest-key", "value");
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
@@ -75,7 +100,8 @@ public class ReplicaReadRoutingIntegrationTests
             ClientSideCache = new(),
         });
         var routes = new ConcurrentDictionary<string, ConcurrentQueue<RespireEndpoint>>(StringComparer.Ordinal);
-        using var listener = Listen(routes);
+        using var scope = StartRoutingScope();
+        using var listener = Listen(routes, scope.TraceId);
         var prefixed = client.WithKeyPrefix("replica-read:");
         await prefixed.SetAsync("key", "value");
         (await prefixed.GetStringAsync("key")).Should().Be("value");
@@ -158,7 +184,12 @@ public class ReplicaReadRoutingIntegrationTests
             .Throws<RespireConnectionException>();
     }
 
-    private static ActivityListener Listen(ConcurrentDictionary<string, ConcurrentQueue<RespireEndpoint>> routes)
+    private static Activity StartRoutingScope()
+        // Do not inherit a test-runner trace shared with other tests or background commands.
+        => new Activity("routing-test").SetIdFormat(ActivityIdFormat.W3C)
+            .SetParentId(ActivityTraceId.CreateRandom(), ActivitySpanId.CreateRandom(), ActivityTraceFlags.Recorded).Start();
+
+    private static ActivityListener Listen(ConcurrentDictionary<string, ConcurrentQueue<RespireEndpoint>> routes, ActivityTraceId traceId)
     {
         var listener = new ActivityListener
         {
@@ -166,7 +197,8 @@ public class ReplicaReadRoutingIntegrationTests
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
             ActivityStopped = activity =>
             {
-                if (activity.GetTagItem("db.operation.name") is not string operation
+                if (activity.TraceId != traceId
+                    || activity.GetTagItem("db.operation.name") is not string operation
                     || activity.GetTagItem("server.address") is not string host
                     || activity.GetTagItem("server.port") is not { } port) return;
                 routes.GetOrAdd(operation, static _ => new()).Enqueue(new(host, Convert.ToInt32(port)));

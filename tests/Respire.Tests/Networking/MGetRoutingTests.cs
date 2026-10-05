@@ -77,6 +77,7 @@ public class MGetRoutingTests
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
             ReadFrom = RespireReadFrom.ReplicaPreferred,
+            ClientSideCache = new(),
             HedgedReads = new() { Delay = TimeSpan.FromMilliseconds(10), MaximumExtraLoadPercent = 100 },
         });
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
