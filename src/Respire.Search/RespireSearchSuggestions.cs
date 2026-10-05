@@ -43,10 +43,9 @@ public sealed partial class RespireSearchClient
         if (double.IsNaN(score)) throw new ArgumentOutOfRangeException(nameof(score), "A suggestion score cannot be NaN.");
         var increment = options?.Increment == true;
         var payload = options?.Payload;
-        var arguments = CreateSuggestionArguments([
-            increment ? (RespireValue?)"INCR" : null,
-            payload.HasValue ? (RespireValue?)"PAYLOAD" : null,
-            payload is { } bytes ? (RespireValue?)bytes : null]);
+        var arguments = CreateSuggestionArguments(
+            [increment ? (RespireValue?)"INCR" : null],
+            "PAYLOAD", payload is { } bytes ? (RespireValue?)bytes : null);
         using var result = await _commands.AddSuggestionAsync(key, suggestion, score, arguments, cancellationToken).ConfigureAwait(false);
         return ReadSuggestionCount(result, "FT.SUGADD");
     }
@@ -84,9 +83,8 @@ public sealed partial class RespireSearchClient
         var arguments = CreateSuggestionArguments([
             fuzzy ? (RespireValue?)"FUZZY" : null,
             withScores ? (RespireValue?)"WITHSCORES" : null,
-            withPayloads ? (RespireValue?)"WITHPAYLOADS" : null,
-            options?.Max is not null ? (RespireValue?)"MAX" : null,
-            options?.Max is { } max ? (RespireValue?)max : null]);
+            withPayloads ? (RespireValue?)"WITHPAYLOADS" : null],
+            "MAX", options?.Max is { } max ? (RespireValue?)max : null);
         using var result = await _commands.GetSuggestionsAsync(key, prefix, arguments, cancellationToken).ConfigureAwait(false);
         if (result.Type != RespDataType.Array || result.IsNull)
             throw RespireSearchReply.Unexpected("FT.SUGGET", "an array was expected");
@@ -107,16 +105,22 @@ public sealed partial class RespireSearchClient
         return suggestions;
     }
 
-    private static RespireValue[] CreateSuggestionArguments(ReadOnlySpan<RespireValue?> candidates)
+    private static RespireValue[] CreateSuggestionArguments(
+        ReadOnlySpan<RespireValue?> flags, RespireValue optionName, RespireValue? optionValue)
     {
-        var count = 0;
-        foreach (var candidate in candidates)
-            if (candidate.HasValue) count++;
+        var count = optionValue.HasValue ? 2 : 0;
+        foreach (var flag in flags)
+            if (flag.HasValue) count++;
         if (count == 0) return [];
         var arguments = new RespireValue[count];
         var offset = 0;
-        foreach (var candidate in candidates)
-            if (candidate is { } value) arguments[offset++] = value;
+        foreach (var flag in flags)
+            if (flag is { } value) arguments[offset++] = value;
+        if (optionValue is { } pairedValue)
+        {
+            arguments[offset++] = optionName;
+            arguments[offset] = pairedValue;
+        }
         return arguments;
     }
 
