@@ -294,6 +294,7 @@ public sealed class RespireJsonClient
             Encoder = options.Encoder,
             Indented = options.WriteIndented,
             MaxDepth = options.MaxDepth == 0 ? DefaultMaxDepth : options.MaxDepth,
+            // JsonSerializer controls the complete token sequence, so writer validation is redundant.
             SkipValidation = true,
 #if NET9_0_OR_GREATER
             IndentCharacter = options.IndentCharacter,
