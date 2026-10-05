@@ -34,6 +34,7 @@ namespace Respire;
 public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IPendingSink
 {
     private readonly RespireClient _client;
+    private readonly RespireHashImportSession? _importSession;
     private readonly List<Op> _ops = [];
     private bool _disposed;
     private bool _sent;
@@ -54,6 +55,12 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
     private IBatchStreamCommands? _streams;
 
     internal RespireBatch(RespireClient client) => _client = client;
+
+    internal RespireBatch(RespireClient client, RespireHashImportSession importSession)
+    {
+        _client = client;
+        _importSession = importSession;
+    }
 
     /// <summary>Gets whether any batch execution method has started sending this batch.</summary>
     public bool IsSent => _sent;
@@ -159,6 +166,8 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
 
     RespireClient IPendingSink.Client => _client;
 
+    RespireHashImportSession? IPendingSink.ImportSession => _importSession;
+
     bool IPendingSink.DefersSerialization => true;
 
     RespirePending<T> IPendingSink.Add<TCommand, T>(
@@ -218,6 +227,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             throw new InvalidOperationException("This batch has already been sent.");
         }
 
+        using var importUsage = _importSession?.EnterOperation();
         _sent = true;
         var core = _client.Core;
         var telemetryOperation = "PIPELINE";
@@ -253,7 +263,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             cacheToInvalidate = null;
         cacheToInvalidate?.FlushForUnknownCommand();
 
-        if (core.Cluster is not null)
+        if (core.Cluster is not null && _importSession is null)
         {
             var groups = new List<(int? Slot, List<Op> Operations)>();
             var groupIndexes = new Dictionary<int, int>();
@@ -300,7 +310,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         RespireConnection? connection = null;
         try
         {
-            connection = await _client.AcquireConnectionAsync(cancellationToken).ConfigureAwait(false);
+            connection = _importSession?.Connection ?? await _client.AcquireConnectionAsync(cancellationToken).ConfigureAwait(false);
             if (core.Sentinel is not null)
                 telemetry = RespireTelemetry.StartBatchOperation(
                     "PIPELINE", _ops, static op => op.Operation,
@@ -331,13 +341,17 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         // batch-level CancellationTokenSource or per-operation registrations needed.
         try
         {
-            var tasks = new Task<Exception?>[_ops.Count];
-            for (var i = 0; i < _ops.Count; i++)
+            if (_importSession is not null)
             {
-                tasks[i] = _ops[i].RunAsync(_client, connection, cancellationToken);
+                await RunImportBatchAsync(connection, cancellationToken).ConfigureAwait(false);
             }
-
-            await Task.WhenAll(tasks).ConfigureAwait(false);
+            else
+            {
+                var tasks = new Task<Exception?>[_ops.Count];
+                for (var i = 0; i < _ops.Count; i++)
+                    tasks[i] = _ops[i].RunAsync(_client, connection, cancellationToken);
+                await Task.WhenAll(tasks).ConfigureAwait(false);
+            }
         }
         finally
         {
@@ -353,6 +367,29 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             connection: connection,
             batchSize: _ops.Count == 1 ? null : _ops.Count);
         return new RespireBatchResult(_ops.Count, batchFailures);
+    }
+
+    private async Task RunImportBatchAsync(RespireConnection connection, CancellationToken cancellationToken)
+    {
+        // Bound retained reply tasks, and await each admission before starting the next.
+        // Even an empty ring may be fenced by credential renewal; its waiters are not FIFO.
+        var tasks = new Task<Exception?>[Math.Min(_ops.Count, _client.Core.Options.MaxInflightCommands)];
+        for (var offset = 0; offset < _ops.Count;)
+        {
+            var count = Math.Min(tasks.Length, _ops.Count - offset);
+            for (var index = 0; index < count; index++)
+                tasks[index] = await _ops[offset + index].StartImportAsync(_client, connection, cancellationToken).ConfigureAwait(false);
+            // Slots beyond count still contain completed tasks from the preceding chunk.
+            await Task.WhenAll(tasks).ConfigureAwait(false);
+            offset += count;
+            for (var index = 0; index < count; index++)
+            {
+                if (tasks[index].Result is not { } error || !RespireHashImportSession.RequiresExpiration(error)) continue;
+                await _importSession!.ExpireIfUncertainAsync(error).ConfigureAwait(false);
+                for (; offset < _ops.Count; offset++) _ops[offset].Fail(error);
+                return;
+            }
+        }
     }
 
     /// <summary>
@@ -526,6 +563,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             throw new InvalidOperationException("This batch has already been sent.");
         }
 
+        _importSession?.ValidateQueuedCommand(operation);
         var pending = new RespirePending<T>();
         _ops.Add(new Op<TCommand, T>(operation, command, pending, convert));
         return pending;
@@ -544,6 +582,9 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         public abstract bool IsReadOnly { get; }
 
         public abstract Task<Exception?> RunAsync(
+            RespireClient client, RespireConnection connection, CancellationToken cancellationToken);
+
+        public abstract ValueTask<Task<Exception?>> StartImportAsync(
             RespireClient client, RespireConnection connection, CancellationToken cancellationToken);
 
         public abstract bool TryGetClusterSlot(out int slot);
@@ -637,14 +678,40 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             }
         }
 
-        public override async Task<Exception?> RunAsync(
+        public override async ValueTask<Task<Exception?>> StartImportAsync(
             RespireClient client, RespireConnection connection, CancellationToken cancellationToken)
         {
             try
             {
-                var value = await connection.SendAsync(in command, cancellationToken, commandName: Operation)
-                    .ConfigureAwait(false);
-                return Complete(client, value);
+                var reply = await connection.EnqueuePinnedAsync(command, cancellationToken, Operation).ConfigureAwait(false);
+                return CompleteReplyAsync(client, reply);
+            }
+            catch (Exception ex)
+            {
+                pending.Fail(ex);
+                return Task.FromResult<Exception?>(ex);
+            }
+        }
+
+        public override Task<Exception?> RunAsync(
+            RespireClient client, RespireConnection connection, CancellationToken cancellationToken)
+        {
+            try
+            {
+                return CompleteReplyAsync(client, connection.SendAsync(in command, cancellationToken, commandName: Operation));
+            }
+            catch (Exception ex)
+            {
+                pending.Fail(ex);
+                return Task.FromResult<Exception?>(ex);
+            }
+        }
+
+        private async Task<Exception?> CompleteReplyAsync(RespireClient client, ValueTask<RespValue> reply)
+        {
+            try
+            {
+                return Complete(client, await reply.ConfigureAwait(false));
             }
             catch (Exception ex)
             {

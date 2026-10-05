@@ -10,6 +10,11 @@ public class DeferredFacetParityTests
 {
     private static readonly HashSet<MethodInfo> ImmediateOnlyMethods =
     [
+        // Opening an import session acquires a connection and owns its lifetime; it is not a queued command.
+        typeof(IHashCommands).GetMethod(nameof(IHashCommands.CreateImportSessionAsync),
+            [typeof(CancellationToken)])!,
+        typeof(IHashCommands).GetMethod(nameof(IHashCommands.CreateImportSessionAsync),
+            [typeof(RespireKey), typeof(CancellationToken)])!,
         // Cursor scans issue multiple commands while streaming; they are not one queued result.
         typeof(IKeyCommands).GetMethod(nameof(IKeyCommands.ScanAsync),
             [typeof(string), typeof(RespireKeyType?), typeof(int), typeof(CancellationToken)])!,

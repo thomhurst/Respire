@@ -8,8 +8,28 @@ namespace Respire.Networking;
 internal sealed partial class RespireConnection
 {
     private CredentialSession? _credentialSession;
+    private SemaphoreSlim? _credentialSequenceGate;
     // Protected by _writeGate. Only the private renewal command can cross this fence.
     private bool _credentialRenewalPending;
+
+    // Only expiring-credential connections need this gate. An exclusive caller can
+    // hold it across a multi-frame protocol sequence without admitting AUTH midway.
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    internal async ValueTask<CredentialSequenceLease> AcquireCredentialSequenceAsync(CancellationToken cancellationToken)
+    {
+        var gate = _credentialSequenceGate;
+        if (gate is null) return default;
+        try { await gate.WaitAsync(cancellationToken).ConfigureAwait(false); }
+        catch (OperationCanceledException error) { throw new RespireCommandNotSubmittedException(error); }
+        return new(gate);
+    }
+
+    internal readonly struct CredentialSequenceLease(SemaphoreSlim? gate) : IDisposable
+    {
+        public void Dispose() => gate?.Release();
+    }
 
     private readonly struct CredentialRenewalAuthCommand(RespireCredentials credentials) : IRespCommand
     {
@@ -101,6 +121,9 @@ internal sealed partial class RespireConnection
             throw new RespireAuthenticationException($"Credentials expired during connection setup for {Host}:{Port}.");
         var session = new CredentialSession(this,
             options with { Username = null, Password = null, InitialCredentials = null }, credentials);
+        // Do not dispose the managed gate with the worker: an exclusive lease can
+        // still release it after closing this connection and awaiting that worker.
+        _credentialSequenceGate = new SemaphoreSlim(1, 1);
         _credentialSession = session;
         session.Start();
         if (!IsConnected) session.RequestStop();
@@ -244,6 +267,7 @@ internal sealed partial class RespireConnection
                 using var authDeadline = new CancellationTokenSource(Min(authRemaining, options.ConnectTimeout), clock);
                 using var authCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, authDeadline.Token);
                 PublishCacheMetrics(InvalidateCache());
+                using var sequence = await connection.AcquireCredentialSequenceAsync(authCancellation.Token).ConfigureAwait(false);
                 using var reply = await connection.SendCredentialRenewalAsync(next, authCancellation.Token).ConfigureAwait(false);
                 if (reply.Type != RespDataType.SimpleString || !reply.AsSpan().SequenceEqual("OK"u8))
                     throw new RespireAuthenticationException($"Credential renewal was rejected by {connection.Host}:{connection.Port}.");

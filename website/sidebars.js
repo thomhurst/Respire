@@ -51,6 +51,7 @@ const sidebars = {
         'guides/value-codecs',
         'guides/in-memory-testing',
         'guides/batches-and-transactions',
+        'guides/hash-import',
         'guides/durability-acknowledgements',
         'guides/raw-commands',
         'guides/generated-commands',

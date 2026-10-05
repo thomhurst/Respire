@@ -24,6 +24,7 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
         None = 0,
         PooledPayload = 1,
         PooledElements = 2,
+        TransactionStateCleared = 4,
     }
 
     private readonly RespDataType _type;
@@ -36,6 +37,12 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
     public RespDataType Type => _type;
     public bool IsNull => _type == RespDataType.Null;
     public bool IsError => _type is RespDataType.Error or RespDataType.BulkError;
+
+    // Retained queue errors carry EXEC's confirmed outcome without changing payload ownership.
+    internal bool TransactionStateCleared => (_flags & ValueFlags.TransactionStateCleared) != 0;
+
+    internal RespValue WithTransactionStateCleared()
+        => new(_type, _flags | ValueFlags.TransactionStateCleared, _integerValue, _payload, _elements, _elementCount);
 
     private RespValue(RespDataType type, ValueFlags flags = ValueFlags.None, long integerValue = 0,
         ReadOnlyMemory<byte> payload = default, RespValue[]? elements = null, int elementCount = 0)

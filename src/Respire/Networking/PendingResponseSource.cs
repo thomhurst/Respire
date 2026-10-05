@@ -270,8 +270,14 @@ internal sealed class MultiReplyPendingResponseSource : PendingResponse, IValueT
         var completion = result;
         if (_hasQueueError)
         {
-            result.Dispose();
             completion = _queueError;
+            // EXECABORT also wraps rejected EXEC commands. Only the canonical queue-abort
+            // reply (or a completed EXEC array/null) proves that transaction state cleared.
+            if (_commandName == "MULTI/EXEC" && (result.Type == RespDataType.Array || result.IsNull
+                || result.IsError && result.AsMemory().Span.SequenceEqual(
+                    "EXECABORT Transaction discarded because of previous errors."u8)))
+                completion = completion.WithTransactionStateCleared();
+            result.Dispose();
             _queueError = default;
             _hasQueueError = false;
         }

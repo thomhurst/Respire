@@ -204,6 +204,7 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
     private FakeReply Execute(Connection connection, byte[][] args)
     {
         var command = Token(args[0]);
+        if (command == "HIMPORT" && args.Length > 1) command += " " + Token(args[1]);
         try
         {
             if (!Commands.TryGetValue(command, out var handler))
@@ -384,6 +385,7 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
         internal bool TransactionError { get; set; }
         internal bool WatchChanged { get; set; }
         internal HashSet<byte[]> WatchedKeys { get; } = new(BinaryKeyComparer.Instance);
+        internal Dictionary<byte[], byte[][]> ImportFieldsets { get; } = new(BinaryKeyComparer.Instance);
     }
 
     private sealed class WrongTypeException : Exception { }

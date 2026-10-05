@@ -234,12 +234,13 @@ public class FakeTransactionParityTests(RedisTestContainer fixture)
             new([ ["XADD", "key", "*", "field", "value"] ], ["XCFGSET", "key", "IDMP-MAXSIZE", "1"], false),
             new([ ["XADD", "key", "*", "field", "value"] ], ["XCFGSET", "key", "IDMP-MAXSIZE", "100"], false),
             new([ ["XADD", "key", "*", "field", "value"] ], ["XCFGSET", "key", "IDMP-MAXSIZE", "0"], false, Error: true),
+            new([ ["HIMPORT", "PREPARE", "watch-import", "field"] ], ["HIMPORT", "SET", "key", "watch-import", "value"], true),
         };
         if (useFake) AssertMutationCoverage(scenarios);
         var unsupported = new HashSet<string>(StringComparer.Ordinal);
         if (!useFake)
         {
-            foreach (var command in new[] { "LMOVEM", "BLMOVEM", "INCREX", "XCFGSET" })
+            foreach (var command in new[] { "LMOVEM", "BLMOVEM", "INCREX", "XCFGSET", "HIMPORT" })
             {
                 using var info = await writer.CommandAsync("COMMAND", "INFO", command);
                 if (info.AsArray()[0].IsNull) unsupported.Add(command);
@@ -305,6 +306,7 @@ public class FakeTransactionParityTests(RedisTestContainer fixture)
         string[] nonInvalidatingCommands =
         [
             "HELLO", "MULTI", "EXEC", "DISCARD", "WATCH", "UNWATCH", "PING", "ECHO",
+            "HIMPORT PREPARE", "HIMPORT DISCARD", "HIMPORT DISCARDALL",
             "SUBSCRIBE", "UNSUBSCRIBE", "PUBLISH", "XREAD",
             // Group cursor/PEL changes do not invalidate WATCH, unlike XGROUP CREATE ... MKSTREAM.
             "XREADGROUP", "XACK",
@@ -321,7 +323,8 @@ public class FakeTransactionParityTests(RedisTestContainer fixture)
             .GetField("Commands", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
             .GetValue(null)!;
         var covered = scenarios.Where(scenario => scenario.Changes && !scenario.Error)
-            .Select(scenario => scenario.Mutation[0]).Distinct();
+            .Select(scenario => scenario.Mutation[0] == "HIMPORT"
+                ? $"HIMPORT {scenario.Mutation[1]}" : scenario.Mutation[0]).Distinct();
         commands.Keys.Cast<string>().Except(nonInvalidatingCommands).Should().BeEquivalentTo(covered,
             "every WATCH-invalidating fake command needs a successful invalidation parity case");
     }

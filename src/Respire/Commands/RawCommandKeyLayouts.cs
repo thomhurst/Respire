@@ -51,6 +51,9 @@ internal static class RawCommandKeyLayouts
     private static FrozenDictionary<string, Definition> CreateLayouts()
     {
         var layouts = new Dictionary<string, Definition>(StringComparer.Ordinal);
+        // HIMPORT SET names one database key, but connection-local fieldsets require
+        // the typed session queues rather than ordinary deferred raw execution.
+        AddPrefixable(LayoutKind.First, "HIMPORT SET");
         Add(LayoutKind.None,
             "PING", "ECHO", "TIME");
         Add(LayoutKind.First,
