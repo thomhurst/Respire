@@ -102,6 +102,27 @@ public class SearchAliasTests
         }
     }
 
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task PrefixedViewsRejectEveryAliasCommandBeforeSending(int protocol)
+    {
+        await using var server = Server(_ => "+OK\r\n"u8.ToArray());
+        await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+        var search = client.WithKeyPrefix("tenant:").Search;
+        Func<Task>[] calls =
+        [
+            () => search.ListIndexesAsync().AsTask(),
+            () => search.ListAliasesAsync("idx").AsTask(),
+            () => search.AddAliasAsync("alias", "idx").AsTask(),
+            () => search.UpdateAliasAsync("alias", "idx").AsTask(),
+            () => search.DeleteAliasAsync("alias").AsTask(),
+        ];
+        foreach (var call in calls)
+            await Assert.That(call).ThrowsExactly<NotSupportedException>();
+        await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("FT.", StringComparison.Ordinal))).IsFalse();
+    }
+
     private static FakeRespServer Server(Func<string, byte[]> reply) => new(1, FakeRespServer.PongReply)
     {
         ReplyOverride = (_, command) => command == "HELLO 3"
