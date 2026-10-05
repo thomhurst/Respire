@@ -139,7 +139,7 @@ A client key prefix does not restrict either command's database-wide or server-w
 Queued flushes affect only their execution node. In Cluster batches, keyless flushes form
 a separate routing group with no ordering guarantee relative to keyed groups. Transactions
 flush their selected node, including when keys queued later select that node. Use immediate
-`redis.Server.FlushDatabaseAsync(mode)` or `FlushAllAsync(mode)` to visit all discovered
+`redis.Server.FlushDatabaseAsync(mode, cancellationToken)` or `FlushAllAsync(mode, cancellationToken)` to visit all discovered
 primaries; that fan-out is not atomic across the Cluster.
 
 The raw `Execute` queue method supports known nonblocking command forms; see

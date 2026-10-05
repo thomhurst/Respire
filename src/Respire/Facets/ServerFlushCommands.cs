@@ -15,17 +15,17 @@ public enum ServerFlushMode
 
 internal sealed partial class ServerCommands
 {
-    private static readonly Verb FlushDb = new(-1, "FLUSHDB");
-    private static readonly Verb FlushDbSync = new(-1, "FLUSHDB", "SYNC");
-    private static readonly Verb FlushDbAsync = new(-1, "FLUSHDB", "ASYNC");
-    private static readonly Verb FlushAll = new(-1, "FLUSHALL");
-    private static readonly Verb FlushAllSync = new(-1, "FLUSHALL", "SYNC");
+    private static readonly Verb FlushDbVerb = new(-1, "FLUSHDB");
+    private static readonly Verb FlushDbSyncVerb = new(-1, "FLUSHDB", "SYNC");
+    private static readonly Verb FlushDbAsyncVerb = new(-1, "FLUSHDB", "ASYNC");
+    private static readonly Verb FlushAllVerb = new(-1, "FLUSHALL");
+    private static readonly Verb FlushAllSyncVerb = new(-1, "FLUSHALL", "SYNC");
     private static readonly Verb FlushAllAsyncVerb = new(-1, "FLUSHALL", "ASYNC");
 
-    public ValueTask FlushDatabaseAsync(ServerFlushMode mode, CancellationToken cancellationToken = default)
+    public ValueTask FlushDatabaseAsync(ServerFlushMode mode, CancellationToken cancellationToken)
         => FlushAsync("FLUSHDB", FlushVerb(false, mode), cancellationToken);
 
-    public ValueTask FlushAllAsync(ServerFlushMode mode, CancellationToken cancellationToken = default)
+    public ValueTask FlushAllAsync(ServerFlushMode mode, CancellationToken cancellationToken)
         => FlushAsync("FLUSHALL", FlushVerb(true, mode), cancellationToken);
 
     private ValueTask FlushAsync(string operation, Verb verb, CancellationToken cancellationToken)
@@ -39,11 +39,11 @@ internal sealed partial class ServerCommands
 
     internal static Verb FlushVerb(bool allDatabases, ServerFlushMode mode) => (allDatabases, mode) switch
     {
-        (false, ServerFlushMode.Default) => FlushDb,
-        (false, ServerFlushMode.Sync) => FlushDbSync,
-        (false, ServerFlushMode.Async) => FlushDbAsync,
-        (true, ServerFlushMode.Default) => FlushAll,
-        (true, ServerFlushMode.Sync) => FlushAllSync,
+        (false, ServerFlushMode.Default) => FlushDbVerb,
+        (false, ServerFlushMode.Sync) => FlushDbSyncVerb,
+        (false, ServerFlushMode.Async) => FlushDbAsyncVerb,
+        (true, ServerFlushMode.Default) => FlushAllVerb,
+        (true, ServerFlushMode.Sync) => FlushAllSyncVerb,
         (true, ServerFlushMode.Async) => FlushAllAsyncVerb,
         _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unknown flush mode."),
     };

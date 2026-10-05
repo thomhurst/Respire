@@ -3963,8 +3963,8 @@ public class ClusterTests
         });
 
         await Assert.That(await client.Server.DatabaseSizeAsync()).IsEqualTo(5);
-        await client.Server.FlushDatabaseAsync(mode);
-        await client.Server.FlushAllAsync(mode);
+        await client.Server.FlushDatabaseAsync(mode, default);
+        await client.Server.FlushAllAsync(mode, default);
 
         var expected = new[] { "DBSIZE", "FLUSHDB" + suffix, "FLUSHALL" + suffix };
         await Assert.That(firstNode.ReceivedCommands).IsEquivalentTo(expected);

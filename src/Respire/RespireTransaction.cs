@@ -416,6 +416,9 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
         async ValueTask<RespValue> SendAsync(CancellationToken token)
         {
             var slot = _hasClusterSlot ? _clusterSlot : (int?)null;
+            if (slot is null && core.Cluster is { } flushCluster
+                && _ops.Exists(static operation => operation.Operation is "FLUSHDB" or "FLUSHALL"))
+                slot = await flushCluster.GetPrimaryRoutingSlotAsync(token).ConfigureAwait(false);
             ClusterRouter.DiscoveryRound? discovery = null;
             var discoveryPending = false;
             try

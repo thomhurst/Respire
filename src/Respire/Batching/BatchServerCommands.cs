@@ -6,8 +6,9 @@ namespace Respire;
 /// <summary>Server flush commands queued on a batch or transaction. Requires RespireOptions.AllowAdmin.</summary>
 /// <remarks>
 /// Each command affects only its execution node. Cluster batches route these keyless commands to
-/// one node; transactions use their selected node. Neither form fans out or makes a Cluster-wide
-/// flush atomic. Use IServerCommands for immediate fan-out to all discovered primaries.
+/// one discovered primary; transactions use their selected primary. Neither form fans out or makes
+/// a Cluster-wide flush atomic. Keyless batch flushes form a separate group, so their order relative
+/// to keyed commands is not guaranteed. Use IServerCommands for immediate fan-out to all primaries.
 /// </remarks>
 public interface IBatchServerCommands
 {

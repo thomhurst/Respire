@@ -7,6 +7,47 @@ namespace Respire.Tests.Networking;
 public class ServerFlushCommandTests
 {
     [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task KeylessFlushQueuesSelectPrimaryInsteadOfReplicaSeed(bool transaction, bool demoteSeed)
+    {
+        await using var primary = new FakeRespServer(8, FakeRespServer.OkReply);
+        await using var seed = new FakeRespServer(8, FakeRespServer.OkReply);
+        byte[] Topology(int owner, int replica) => System.Text.Encoding.ASCII.GetBytes(
+            $"*1\r\n*4\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{owner}\r\n" +
+            $"*2\r\n$9\r\n127.0.0.1\r\n:{replica}\r\n");
+        var topology = demoteSeed ? Topology(seed.Port, primary.Port) : Topology(primary.Port, seed.Port);
+        seed.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology
+            : "-READONLY You can't write against a read only replica.\r\n"u8.ToArray();
+        primary.ReplyOverride = (_, command) => command switch
+        {
+            "CLUSTER SLOTS" => topology,
+            "MULTI" => FakeRespServer.OkReply,
+            "EXEC" => "*2\r\n+OK\r\n+OK\r\n"u8.ToArray(),
+            _ => transaction ? "+QUEUED\r\n"u8.ToArray() : FakeRespServer.OkReply,
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, UseCluster = true, AllowAdmin = true, ClusterTopologyRefreshInterval = null,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+        topology = Topology(primary.Port, seed.Port);
+        using var batch = client.CreateBatch();
+        await using var tx = client.CreateTransaction();
+        IRespireCommandQueue queue = transaction ? tx : batch;
+        var database = queue.Server.FlushDatabase();
+        var all = queue.Server.FlushAll();
+        if (transaction) await tx.CommitAsync(); else await batch.ExecuteAsync();
+        await Assert.That(database.Result).IsTrue();
+        await Assert.That(all.Result).IsTrue();
+        await Assert.That(seed.ReceivedCommands.Any(command => command.StartsWith("FLUSH", StringComparison.Ordinal))).IsFalse();
+        await Assert.That(primary.ReceivedCommands.Where(command => command.StartsWith("FLUSH", StringComparison.Ordinal)))
+            .IsEquivalentTo(["FLUSHDB", "FLUSHALL"]);
+    }
+
+    [Test]
     [Arguments(false, ServerFlushMode.Default, "")]
     [Arguments(false, ServerFlushMode.Sync, " SYNC")]
     [Arguments(false, ServerFlushMode.Async, " ASYNC")]
@@ -25,7 +66,7 @@ public class ServerFlushCommandTests
             $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{second.Port}\r\n");
         await using var seed = new FakeRespServer(topology)
         {
-            // A keyless batch can use the seed connection; keyed transactions select a slot owner.
+            // Topology discovery uses the seed; flushes must select a slot-owning primary.
             ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology : FakeRespServer.OkReply,
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
@@ -48,6 +89,7 @@ public class ServerFlushCommandTests
         await Assert.That(database.Result).IsTrue();
         await Assert.That(all.Result).IsTrue();
         var participants = new[] { first, second, seed };
+        await Assert.That(seed.ReceivedCommands.Any(command => command.StartsWith("FLUSH", StringComparison.Ordinal))).IsFalse();
         await Assert.That(participants.Count(server => server.ReceivedCommands.Any(command => command.StartsWith("FLUSH", StringComparison.Ordinal))))
             .IsEqualTo(1);
         if (transaction) await Assert.That(first.ReceivedCommands).IsEmpty();
@@ -83,13 +125,13 @@ public class ServerFlushCommandTests
             {
                 if (mode == ServerFlushMode.Default)
                 {
-                    await client.Server.FlushDatabaseAsync();
-                    await client.Server.FlushAllAsync();
+                    await client.Server.FlushDatabaseAsync(default);
+                    await client.Server.FlushAllAsync(default);
                 }
                 else
                 {
-                    await client.Server.FlushDatabaseAsync(mode);
-                    await client.Server.FlushAllAsync(mode);
+                    await client.Server.FlushDatabaseAsync(mode, default);
+                    await client.Server.FlushAllAsync(mode, default);
                 }
             }
             else
@@ -120,8 +162,8 @@ public class ServerFlushCommandTests
         await using var tx = client.CreateTransaction();
         if (allowAdmin)
         {
-            await Assert.That(async () => await client.Server.FlushDatabaseAsync((ServerFlushMode)99)).ThrowsExactly<ArgumentOutOfRangeException>();
-            await Assert.That(async () => await client.Server.FlushAllAsync((ServerFlushMode)99)).ThrowsExactly<ArgumentOutOfRangeException>();
+            await Assert.That(async () => await client.Server.FlushDatabaseAsync((ServerFlushMode)99, default)).ThrowsExactly<ArgumentOutOfRangeException>();
+            await Assert.That(async () => await client.Server.FlushAllAsync((ServerFlushMode)99, default)).ThrowsExactly<ArgumentOutOfRangeException>();
             foreach (IRespireCommandQueue queue in new IRespireCommandQueue[] { batch, tx })
             {
                 await Assert.That(() => queue.Server.FlushDatabase((ServerFlushMode)99)).ThrowsExactly<ArgumentOutOfRangeException>();
@@ -132,8 +174,8 @@ public class ServerFlushCommandTests
         {
             foreach (var mode in Enum.GetValues<ServerFlushMode>())
             {
-                await Assert.That(async () => await client.Server.FlushDatabaseAsync(mode)).ThrowsExactly<NotSupportedException>();
-                await Assert.That(async () => await client.Server.FlushAllAsync(mode)).ThrowsExactly<NotSupportedException>();
+                await Assert.That(async () => await client.Server.FlushDatabaseAsync(mode, default)).ThrowsExactly<NotSupportedException>();
+                await Assert.That(async () => await client.Server.FlushAllAsync(mode, default)).ThrowsExactly<NotSupportedException>();
                 foreach (IRespireCommandQueue queue in new IRespireCommandQueue[] { batch, tx })
                 {
                     await Assert.That(() => queue.Server.FlushDatabase(mode)).ThrowsExactly<NotSupportedException>();

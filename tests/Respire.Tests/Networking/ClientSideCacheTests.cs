@@ -1283,7 +1283,7 @@ public class ClientSideCacheTests
         await client.GetStringAsync("key");
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
 
-        var flush = client.Server.FlushDatabaseAsync(mode).AsTask();
+        var flush = client.Server.FlushDatabaseAsync(mode, default).AsTask();
         await arrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(client.ClientSideCache.Count).IsEqualTo(0);
         InsertCachedValue(client.Core.ClientCache!, "key", "value");
@@ -1634,7 +1634,7 @@ public class ClientSideCacheTests
         });
         InsertCachedValue(client.Core.ClientCache!, "key", "old");
         if (execution == 0)
-            await client.Server.FlushAllAsync(mode);
+            await client.Server.FlushAllAsync(mode, default);
         else
         {
             using var batch = client.CreateBatch();

@@ -389,6 +389,8 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         RespireConnection connection;
         try
         {
+            if (slot is null && operations.Exists(static operation => operation.Operation is "FLUSHDB" or "FLUSHALL"))
+                slot = await _client.Core.Cluster!.GetPrimaryRoutingSlotAsync(cancellationToken).ConfigureAwait(false);
             connection = await _client.AcquireConnectionAsync(slot, cancellationToken, readFrom).ConfigureAwait(false);
         }
         catch (Exception ex)

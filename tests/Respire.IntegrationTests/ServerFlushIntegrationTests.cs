@@ -40,7 +40,7 @@ public class ServerFlushIntegrationTests
     {
         if (execution == 0)
         {
-            if (all) await client.Server.FlushAllAsync(mode); else await client.Server.FlushDatabaseAsync(mode);
+            if (all) await client.Server.FlushAllAsync(mode, default); else await client.Server.FlushDatabaseAsync(mode, default);
             return;
         }
         using var batch = client.CreateBatch();
