@@ -17,7 +17,7 @@ public class ValueCodecBenchmarks
 {
     public enum PayloadPattern { RepeatedText, RandomBytes }
 
-    [Params(64, 16384)]
+    [Params(64, 1024, 16384)]
     public int Length { get; set; }
 
     [Params(PayloadPattern.RepeatedText, PayloadPattern.RandomBytes)]

@@ -189,8 +189,19 @@ trailing bytes, and external dictionaries are not supported.
 The package uses [ZstdSharp.Port 0.8.8](https://www.nuget.org/packages/ZstdSharp.Port/0.8.8)
 under its [MIT license](https://github.com/oleg-st/ZstdSharp/blob/0.8.8/LICENSE).
 This is managed code with unsafe internals and unmanaged context memory; no native
-zstd binary is required. Each call owns and disposes its context before returning,
-so the codec is thread-safe and requires no disposal. This has a per-call cost.
+zstd binary is required. Each call exclusively rents a context from shared pools,
+so the codec is thread-safe and requires no disposal. Each pool retains at most
+eight idle contexts (fewer on machines with fewer processors), shared across codec
+instances and compression levels. Excess contexts, failed operations, and contexts
+used for values larger than 64 KiB are disposed instead of retained. Reused contexts
+start a new session and compression always applies the calling codec's level.
+With ZstdSharp.Port 0.8.8 on x64, a workspace probe across levels 1–22 and repeated
+and seeded-random 64 KiB inputs measured up to 1,791,447 bytes per compressor and
+95,968 bytes per decompressor after session reset. At eight of each, that is about
+14.4 MiB of retained context workspace. The same probe at 1 MiB reached 18,088,086
+bytes per compressor, which is why larger values bypass the pools. These are
+dependency-reported workspace sizes, excluding allocator overhead, managed buffers,
+and active concurrent operations; they are not a process-wide memory ceiling.
 Higher levels can need more time and workspace. The decoded-length limit bounds
 the value, not all compressor workspace or concurrent process memory. Choose levels
 and limits for your workload; no performance claim is implied (#527).
