@@ -303,10 +303,7 @@ public partial interface IStringCommands
 internal sealed partial class StringCommands(RespireClient client) : IStringCommands
 {
     public ValueTask<string?> GetStringAsync(RespireKey key, CancellationToken cancellationToken = default)
-        => client.CachedGetAsync(
-            client.ResolveKey(key),
-            cancellationToken,
-            static (RespireClient _, in Protocol.RespValue value) => ResponseReader.StringOrNull(in value));
+        => client.CachedGetStringAsync(client.ResolveKey(key), cancellationToken);
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
