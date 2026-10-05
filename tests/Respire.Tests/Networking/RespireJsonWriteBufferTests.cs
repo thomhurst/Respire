@@ -1,6 +1,5 @@
 using System.Text;
 using System.Net.Sockets;
-using System.Reflection;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -58,11 +57,8 @@ public partial class RespireJsonClientTests
             if (expire)
             {
                 var connection = client.Core.Multiplexer.GetConnection();
-                var ring = (InflightRing)typeof(RespireConnection).GetField("_inflight",
-                    BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(connection)!;
-                await Assert.That(ring.TryPeek(out var source)).IsTrue();
                 // Expire only after the transport holds the frame, without waiting on a timer.
-                ring.SweepExpired(source.Deadline.Ticks + 1, TimeSpan.FromMinutes(1), connection);
+                await Assert.That(connection.ExpireOldestCommandForTesting()).IsTrue();
                 await Assert.That(async () => await pending.WaitAsync(timeout.Token)).Throws<RespireTimeoutException>();
             }
             else
