@@ -1,16 +1,110 @@
 using System.Buffers;
 using System.Buffers.Binary;
 using System.Security.Cryptography;
+using Reservoir;
 using Respire.Compression;
 using Respire.Compression.Zstd;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using ZstdSharp;
 
 namespace Respire.Tests.Serialization;
 
 public class ZstdValueCodecTests
 {
+    [Test]
+    public async Task ReusedContextsMatchFreshContextsAcrossLevelsAndFailures()
+    {
+        var random = new byte[16384];
+        new Random(980).NextBytes(random);
+        var repeated = new byte[16384];
+        for (var index = 0; index < repeated.Length; index++) repeated[index] = (byte)(index % 97);
+        var large = new byte[1024 * 1024 + 1];
+        // Alternate incompressible input (TryWrap returns false), compressed input, and discarded
+        // large workspaces. Each resulting frame must match a completely fresh context.
+        foreach (var level in new[] { 3, 10, -1, 0, 22, 1, -131072, 3 })
+        {
+            var codec = new ZstdValueCodec(new() { MinimumLength = 0 }, level);
+            foreach (var payload in new[] { random, repeated, large, repeated })
+            {
+                using var fresh = new Compressor(level);
+                var compressed = fresh.Wrap(payload).ToArray();
+                var frame = codec.Encode(payload);
+                var expected = compressed.Length < payload.Length ? compressed : payload;
+                await Assert.That(frame.AsSpan(RespireValueCodec.HeaderLength).SequenceEqual(expected)).IsTrue();
+                await Assert.That(new ZstdValueCodec().Decode(frame).AsSpan().SequenceEqual(payload)).IsTrue();
+            }
+            byte[] block = [0x28, 0xb5, 0x2f, 0xfd, 0x20, 64, 0x03, 0x02, 0, 0x41];
+            foreach (var invalidLength in new[] { 63, 65 })
+            {
+                await Assert.That(() => codec.Decode(Frame(block, invalidLength))).Throws<InvalidDataException>();
+                await Assert.That(codec.Decode(codec.Encode(repeated)).AsSpan().SequenceEqual(repeated)).IsTrue();
+            }
+        }
+    }
+
+    [Test]
+    public async Task ConcurrentCodecsKeepLevelsAndPayloadsIndependent()
+    {
+        await Task.WhenAll(Enumerable.Range(0, 16).Select(worker => Task.Run(async () =>
+        {
+            var level = (worker % 4) switch { 0 => -1, 1 => 0, 2 => 3, _ => 10 };
+            var codec = new ZstdValueCodec(new() { MinimumLength = 0 }, level);
+            var payload = Enumerable.Range(0, 16384).Select(index => (byte)((index + worker) % 127)).ToArray();
+            using var fresh = new Compressor(level);
+            var expected = fresh.Wrap(payload).ToArray();
+            for (var iteration = 0; iteration < 32; iteration++)
+            {
+                var frame = codec.Encode(payload);
+                await Assert.That(frame.AsSpan(RespireValueCodec.HeaderLength).SequenceEqual(expected)).IsTrue();
+                await Assert.That(codec.Decode(frame).AsSpan().SequenceEqual(payload)).IsTrue();
+            }
+        })));
+    }
+
+    [Test]
+    public async Task PoolEvictionAndTrimmingDisposeContextMemory()
+    {
+        using var compressors = new ObjectPool<Compressor, ZstdValueCodec.CompressorPolicy>(1);
+        using var decompressors = new ObjectPool<Decompressor, ZstdValueCodec.DecompressorPolicy>(1);
+        var firstCompressor = compressors.Rent();
+        var secondCompressor = compressors.Rent();
+        var firstDecompressor = decompressors.Rent();
+        var secondDecompressor = decompressors.Rent();
+        compressors.Return(firstCompressor);
+        compressors.Return(secondCompressor);
+        decompressors.Return(firstDecompressor);
+        decompressors.Return(secondDecompressor);
+        // Overflow may discard either object; exactly one remains alive before trimming.
+        await Assert.That(IsAlive(firstCompressor) != IsAlive(secondCompressor)).IsTrue();
+        await Assert.That(IsAlive(firstDecompressor) != IsAlive(secondDecompressor)).IsTrue();
+        compressors.Clear();
+        decompressors.Clear();
+        await Assert.That(IsAlive(firstCompressor) || IsAlive(secondCompressor)).IsFalse();
+        await Assert.That(IsAlive(firstDecompressor) || IsAlive(secondDecompressor)).IsFalse();
+        // A context returned after its pool is disposed must also release its unmanaged memory.
+        var outstandingCompressor = compressors.Rent();
+        var outstandingDecompressor = decompressors.Rent();
+        compressors.Dispose();
+        decompressors.Dispose();
+        compressors.Return(outstandingCompressor);
+        decompressors.Return(outstandingDecompressor);
+        await Assert.That(IsAlive(outstandingCompressor) || IsAlive(outstandingDecompressor)).IsFalse();
+    }
+
+    private static bool IsAlive(Compressor context)
+    {
+        try { context.ResetStream(); return true; }
+        catch (ObjectDisposedException) { return false; }
+    }
+
+    private static bool IsAlive(Decompressor context)
+    {
+        try { context.ResetStream(); return true; }
+        catch (ObjectDisposedException) { return false; }
+    }
+
     [Test]
     public async Task TinyValuesAndCompressionLevelsRoundTrip()
     {

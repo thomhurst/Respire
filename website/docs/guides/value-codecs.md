@@ -189,8 +189,12 @@ trailing bytes, and external dictionaries are not supported.
 The package uses [ZstdSharp.Port 0.8.8](https://www.nuget.org/packages/ZstdSharp.Port/0.8.8)
 under its [MIT license](https://github.com/oleg-st/ZstdSharp/blob/0.8.8/LICENSE).
 This is managed code with unsafe internals and unmanaged context memory; no native
-zstd binary is required. Each call owns and disposes its context before returning,
-so the codec is thread-safe and requires no disposal. This has a per-call cost.
+zstd binary is required. Each call exclusively rents a context from shared pools,
+so the codec is thread-safe and requires no disposal. Each pool retains at most
+eight idle contexts (fewer on machines with fewer processors), shared across codec
+instances and compression levels. Excess contexts, failed operations, and contexts
+used for values larger than 1 MiB are disposed instead of retained. Reused contexts
+start a new session and compression always applies the calling codec's level.
 Higher levels can need more time and workspace. The decoded-length limit bounds
 the value, not all compressor workspace or concurrent process memory. Choose levels
 and limits for your workload; no performance claim is implied (#527).
