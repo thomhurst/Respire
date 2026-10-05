@@ -101,24 +101,42 @@ nodes. Discovery errors throw; after discovery, inspect every result's `IsSucces
 
 ## Filtering and closing clients
 
-`RespireClientFilterOptions` combines supplied filters with logical AND. Multiple `Ids`
-match any ID in the list; `ExcludedIds` excludes every listed ID. ID collections are
+`RespireClientFilterOptions.Include` and `.Exclude` group positive and negative selectors.
+Supplied selectors combine with logical AND. Multiple `Include.Ids`
+match any ID in the list; `Exclude.Ids` excludes every listed ID. ID collections are
 snapshotted when calling or queueing the command. No filter value is key-prefixed.
 
 ```csharp
+using Respire;
+
+await using var redis = RespireClient.Create(new RespireOptions
+{
+    Endpoints = [new RespireEndpoint("localhost", 6379)],
+    AllowAdmin = true,
+});
+var cancellationToken = CancellationToken.None;
+// Replace these example IDs with IDs of disposable clients your application owns.
 var filter = new RespireClientFilterOptions
 {
-    Ids = [123, 456],
+    Include = new() { Ids = [123, 456] },
 };
 RespireServerClientInfo[] matches = await redis.Server.ClientsAsync(filter, cancellationToken);
 var endpoint = await redis.Server.GetClientConnectionAsync();
 long closed = await endpoint.KillClientsAsync(new RespireClientFilterOptions
 {
-    Ids = [123],
-    User = "worker",
+    Include = new() { Ids = [123], User = "worker" },
     SkipMe = true,
 }, cancellationToken);
 ```
+
+Existing flat properties such as `Ids`, `User`, and `ExcludedIds` remain supported.
+To migrate, move positive selectors into `RespireClientIncludeFilters` and negative
+selectors into `RespireClientExcludeFilters`, removing the `Excluded` prefix from their names.
+Keep `SkipMe` and `AllowUnfilteredKill` on the outer options. Either group may be omitted.
+When either group is supplied, any non-null flat scalar selector or nonempty flat ID list
+throws synchronously before sending or queueing, even if both values are identical.
+Null flat scalars and empty flat ID lists remain omitted; a null ID list is invalid.
+An empty group supplies no selector and does not permit an unfiltered KILL.
 
 IDs belong to one server. The connection handle runs filters on its known endpoint and
 never switches sockets. The immediate `Server` forms use one normally selected execution
@@ -137,7 +155,7 @@ false for LIST. Killing the handle's socket invalidates that handle. Cancellatio
 undo connections already closed by the server.
 
 **Exclusion-only filters can close almost every connection on a node.** They count as
-selectors: `ExcludedType = RespireClientType.PubSub`, for example, permits KILL without
+selectors: `Exclude = new() { Type = RespireClientType.PubSub }`, for example, permits KILL without
 `AllowUnfilteredKill` and selects every non-pub/sub connection except the executing socket
 when `SkipMe` is true. Prefer a positive selector such as an owned client ID when possible.
 `SkipMe` protects only the executing socket, including when the caller owns other pooled
@@ -145,7 +163,7 @@ or multiplexed connections.
 
 Empty excluded addresses, IPs, names, library names, and library versions are rejected
 before sending or queueing because those values can exclude no connections. Empty
-`ExcludedFlags` and `ExcludedCapabilities` instead exclude every connection and select
+`Exclude.Flags` and `Exclude.Capabilities` instead exclude every connection and select
 none; they remain valid. Null means that the corresponding filter is omitted.
 
 Both batches and transactions expose `Server.Clients(filter)` and `Server.KillClients(filter)`.

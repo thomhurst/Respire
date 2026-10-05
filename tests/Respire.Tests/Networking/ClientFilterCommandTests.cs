@@ -8,17 +8,27 @@ namespace Respire.Tests.Networking;
 public class ClientFilterCommandTests
 {
     [Test]
-    [Arguments(0)]
-    [Arguments(1)]
-    [Arguments(2)]
-    [Arguments(3)]
-    [Arguments(4)]
-    [Arguments(5)]
-    [Arguments(6)]
-    [Arguments(7)]
-    [Arguments(8)]
-    [Arguments(9)]
-    public async Task MatchAllFiltersFailSynchronouslyAcrossAllPaths(int filter)
+    [Arguments(0, false)]
+    [Arguments(1, false)]
+    [Arguments(2, false)]
+    [Arguments(3, false)]
+    [Arguments(4, false)]
+    [Arguments(5, false)]
+    [Arguments(6, false)]
+    [Arguments(7, false)]
+    [Arguments(8, false)]
+    [Arguments(9, false)]
+    [Arguments(0, true)]
+    [Arguments(1, true)]
+    [Arguments(2, true)]
+    [Arguments(3, true)]
+    [Arguments(4, true)]
+    [Arguments(5, true)]
+    [Arguments(6, true)]
+    [Arguments(7, true)]
+    [Arguments(8, true)]
+    [Arguments(9, true)]
+    public async Task MatchAllFiltersFailSynchronouslyAcrossAllPaths(int filter, bool grouped)
     {
         await using var server = new FakeRespServer(":7\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
@@ -42,11 +52,13 @@ public class ClientFilterCommandTests
             8 => new RespireClientFilterOptions { ExcludedLibraryName = "" },
             _ => new RespireClientFilterOptions { ExcludedLibraryVersion = "" },
         };
+        if (grouped) options = ClientFilterTestOptions.Group(options);
         await Assert.That(() => { _ = client.Server.KillClientsAsync(options); }).ThrowsExactly<ArgumentException>();
         await Assert.That(() => { _ = handle.KillClientsAsync(options); }).ThrowsExactly<ArgumentException>();
         await Assert.That(() => batch.Server.KillClients(options)).ThrowsExactly<ArgumentException>();
         await Assert.That(() => tx.Server.KillClients(options)).ThrowsExactly<ArgumentException>();
         var invalid = new RespireClientFilterOptions { Ids = [0] };
+        if (grouped) invalid = ClientFilterTestOptions.Group(invalid);
         await Assert.That(() => { _ = client.Server.ClientsAsync(invalid, default); }).ThrowsExactly<ArgumentOutOfRangeException>();
         await Assert.That(() => { _ = client.Server.ClientsOnAllNodesAsync(invalid, default); }).ThrowsExactly<ArgumentOutOfRangeException>();
         await Assert.That(() => { _ = handle.ClientsAsync(invalid); }).ThrowsExactly<ArgumentOutOfRangeException>();
@@ -56,7 +68,9 @@ public class ClientFilterCommandTests
     }
 
     [Test]
-    public async Task ExplicitUnfilteredKillAndReplicaTokensUseCompatibleWireForms()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ExplicitUnfilteredKillAndReplicaTokensUseCompatibleWireForms(bool grouped)
     {
         await using var server = new FakeRespServer(4, ":0\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
@@ -64,20 +78,26 @@ public class ClientFilterCommandTests
             Protocol = RespProtocol.Resp2, Connections = 1, AllowAdmin = true,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
-        await client.Server.KillClientsAsync(new() { AllowUnfilteredKill = true });
-        await client.Server.KillClientsAsync(new() { AllowUnfilteredKill = true, SkipMe = false });
-        await client.Server.KillClientsAsync(new() { Type = RespireClientType.Replica });
-        await client.Server.KillClientsAsync(new() { ExcludedType = RespireClientType.Replica });
+        foreach (var filter in new RespireClientFilterOptions[]
+        {
+            new() { AllowUnfilteredKill = true }, new() { AllowUnfilteredKill = true, SkipMe = false },
+            new() { Type = RespireClientType.Replica }, new() { ExcludedType = RespireClientType.Replica },
+        })
+            await client.Server.KillClientsAsync(grouped ? ClientFilterTestOptions.Group(filter) : filter);
         await Assert.That(server.ReceivedCommands.ToArray()).IsEquivalentTo([
             "CLIENT KILL SKIPME yes", "CLIENT KILL SKIPME no", "CLIENT KILL TYPE slave", "CLIENT KILL NOT-TYPE slave"]);
     }
 
     [Test]
-    [Arguments(0)]
-    [Arguments(1)]
-    [Arguments(2)]
-    [Arguments(3)]
-    public async Task FiltersSnapshotIdsAndPreserveTypedReplies(int execution)
+    [Arguments(0, false)]
+    [Arguments(1, false)]
+    [Arguments(2, false)]
+    [Arguments(3, false)]
+    [Arguments(0, true)]
+    [Arguments(1, true)]
+    [Arguments(2, true)]
+    [Arguments(3, true)]
+    public async Task FiltersSnapshotIdsAndPreserveTypedReplies(int execution, bool grouped)
     {
         const string row = "id=42 addr=127.0.0.1:4567 name=worker db=0 flags=N cmd=ping user=default age=9 idle=1 future=kept\n";
         var list = Encoding.UTF8.GetBytes($"${Encoding.UTF8.GetByteCount(row)}\r\n{row}\r\n");
@@ -105,6 +125,7 @@ public class ClientFilterCommandTests
             ExcludedName = "admin", ExcludedFlags = "b", ExcludedLibraryName = "otherlib", ExcludedLibraryVersion = "2",
             ExcludedDatabase = 1, ExcludedCapabilities = "x", ExcludedIp = "127.0.0.2",
         };
+        if (grouped) options = ClientFilterTestOptions.Group(options);
         RespireServerClientInfo[] rows;
         long killed;
         if (execution == 0)
@@ -141,7 +162,9 @@ public class ClientFilterCommandTests
     }
 
     [Test]
-    public async Task InvalidFiltersFailBeforeSendingOrQueueing()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task InvalidFiltersFailBeforeSendingOrQueueing(bool grouped)
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
@@ -159,11 +182,15 @@ public class ClientFilterCommandTests
             (new() { IdleSeconds = -1 }, "IdleSeconds"), (new() { Database = -1 }, "Database"),
             (new() { ExcludedDatabase = -1 }, "ExcludedDatabase"),
         ];
-        foreach (var (options, property) in invalid)
+        foreach (var (flatOptions, property) in invalid)
         {
+            var options = grouped ? ClientFilterTestOptions.Group(flatOptions) : flatOptions;
             var error = await Assert.That(() => { _ = client.Server.ClientsAsync(options, default); })
                 .ThrowsExactly<ArgumentOutOfRangeException>();
-            await Assert.That(error!.Message).Contains(property);
+            var expectedProperty = property;
+            if (grouped)
+                expectedProperty = property.StartsWith("Excluded", StringComparison.Ordinal) ? "Exclude." + property[8..] : "Include." + property;
+            await Assert.That(error!.Message).Contains(expectedProperty);
             await Assert.That(error.ParamName).IsEqualTo("options");
             await Assert.That(async () => await client.Server.ClientsAsync(options, default)).ThrowsExactly<ArgumentOutOfRangeException>();
             await Assert.That(async () => await client.Server.KillClientsAsync(options)).ThrowsExactly<ArgumentOutOfRangeException>();
@@ -180,19 +207,24 @@ public class ClientFilterCommandTests
     }
 
     [Test]
-    public async Task KillFiltersRequireAdminPermission()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task KillFiltersRequireAdminPermission(bool grouped)
     {
-        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        await using var server = new FakeRespServer(":7\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)],
         });
         var options = new RespireClientFilterOptions { Ids = [42] };
+        if (grouped) options = ClientFilterTestOptions.Group(options);
         using var batch = client.CreateBatch();
         await using var tx = client.CreateTransaction();
+        var handle = await client.Server.GetClientConnectionAsync();
         await Assert.That(async () => await client.Server.KillClientsAsync(options)).ThrowsExactly<NotSupportedException>();
+        await Assert.That(() => { _ = handle.KillClientsAsync(options); }).ThrowsExactly<NotSupportedException>();
         await Assert.That(() => batch.Server.KillClients(options)).ThrowsExactly<NotSupportedException>();
         await Assert.That(() => tx.Server.KillClients(options)).ThrowsExactly<NotSupportedException>();
-        await Assert.That(server.ReceivedCommands).IsEmpty();
+        await Assert.That(server.ReceivedCommands.ToArray()).IsEquivalentTo(["CLIENT ID"]);
     }
 }
