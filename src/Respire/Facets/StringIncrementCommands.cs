@@ -40,9 +40,7 @@ internal sealed partial class StringCommands
         if (options.LowerBound > options.UpperBound)
             throw new ArgumentException("LowerBound cannot exceed UpperBound.", nameof(options));
         return BuildIncrementExtended(client, key, "BYINT", by,
-            options.LowerBound is { } lower ? lower : default(RespireValue),
-            options.UpperBound is { } upper ? upper : default(RespireValue),
-            options.LowerBound.HasValue, options.UpperBound.HasValue, options.Saturate, options.Expiry, options.ExpireOnlyWhenPersistent);
+            new(options.LowerBound, options.UpperBound), options.Saturate, options.Expiry, options.ExpireOnlyWhenPersistent);
     }
 
     internal static Cmd1N BuildIncrementExtended(RespireClient client, RespireKey key, double by, FloatIncrementOptions options)
@@ -52,13 +50,16 @@ internal sealed partial class StringCommands
             options.UpperBound is { } upper && double.IsNaN(upper) || options.LowerBound > options.UpperBound)
             throw new ArgumentException("Bounds cannot be NaN and LowerBound cannot exceed UpperBound.", nameof(options));
         return BuildIncrementExtended(client, key, "BYFLOAT", by,
-            options.LowerBound is { } lowerValue ? lowerValue : default(RespireValue),
-            options.UpperBound is { } upperValue ? upperValue : default(RespireValue),
-            options.LowerBound.HasValue, options.UpperBound.HasValue, options.Saturate, options.Expiry, options.ExpireOnlyWhenPersistent);
+            new(options.LowerBound, options.UpperBound), options.Saturate, options.Expiry, options.ExpireOnlyWhenPersistent);
+    }
+
+    private readonly record struct IncrementBounds(RespireValue? Lower, RespireValue? Upper)
+    {
+        internal int TokenCount => (Lower.HasValue ? 2 : 0) + (Upper.HasValue ? 2 : 0);
     }
 
     private static Cmd1N BuildIncrementExtended(RespireClient client, RespireKey key, string mode, RespireValue by,
-        RespireValue lower, RespireValue upper, bool hasLower, bool hasUpper, bool saturate, RespireExpiry expiry, bool enx)
+        IncrementBounds bounds, bool saturate, RespireExpiry expiry, bool enx)
     {
         var relative = expiry.TryGetRelativeMilliseconds(out var milliseconds);
         var absolute = expiry.TryGetAbsoluteUnixMilliseconds(out var timestamp);
@@ -67,13 +68,13 @@ internal sealed partial class StringCommands
         if (enx && !relative && !absolute)
             throw new ArgumentException("ENX requires a relative or absolute expiry.", nameof(enx));
         var expiryCount = relative || absolute ? 2 : expiry.IsPersist ? 1 : 0;
-        var arguments = new RespireValue[2 + (hasLower ? 2 : 0) + (hasUpper ? 2 : 0) +
+        var arguments = new RespireValue[2 + bounds.TokenCount +
             (saturate ? 1 : 0) + expiryCount + (enx ? 1 : 0)];
         var index = 0;
         arguments[index++] = mode;
         arguments[index++] = by;
-        if (hasLower) { arguments[index++] = "LBOUND"; arguments[index++] = lower; }
-        if (hasUpper) { arguments[index++] = "UBOUND"; arguments[index++] = upper; }
+        if (bounds.Lower is { } lower) { arguments[index++] = "LBOUND"; arguments[index++] = lower; }
+        if (bounds.Upper is { } upper) { arguments[index++] = "UBOUND"; arguments[index++] = upper; }
         if (saturate) arguments[index++] = "SATURATE";
         if (relative || absolute)
         {
