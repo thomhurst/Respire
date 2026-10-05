@@ -13,6 +13,7 @@ public class OutputCacheValidationTests
     [Test]
     [Arguments("one")]
     [Arguments("two")]
+    [Arguments("last")]
     public async Task TagFailureDoesNotPublishTheValue(string failingTag)
     {
         await using var server = new FakeRespServer
@@ -26,7 +27,8 @@ public class OutputCacheValidationTests
         };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var store = new RespireOutputCacheStore(client, new() { InstanceName = "output:" });
-        await Assert.That(async () => await store.SetAsync("key", "value"u8.ToArray(), ["one", "two"], TimeSpan.FromMinutes(1)))
+        string[] tags = failingTag == "last" ? Enumerable.Range(0, 125).Select(index => $"tag{index}").Append("last").ToArray() : ["one", "two"];
+        await Assert.That(async () => await store.SetAsync("key", "value"u8.ToArray(), tags, TimeSpan.FromMinutes(1)))
             .ThrowsExactly<RespireServerException>();
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("SET ", StringComparison.Ordinal))).IsFalse();
     }
@@ -95,7 +97,7 @@ public class OutputCacheValidationTests
     }
 
     private static bool IsTagRegistration(string command, string tagKey) =>
-        command.StartsWith("EVALSHA ", StringComparison.Ordinal)
+        command.StartsWith("EVAL ", StringComparison.Ordinal)
         && command.Contains($" 1 {tagKey} ", StringComparison.Ordinal);
 
     private sealed class TestClock(long milliseconds) : TimeProvider

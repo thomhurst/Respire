@@ -1,6 +1,8 @@
 using System.Buffers;
 using System.IO.Pipelines;
 using Microsoft.AspNetCore.OutputCaching;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Respire.OutputCaching;
 
@@ -27,9 +29,11 @@ public sealed class RespireOutputCacheStore : IOutputCacheBufferStore
     private readonly RespireKey _tagMaster;
     private readonly RespireKey _cleanupLock;
     private readonly TimeProvider _clock;
+    private readonly ILogger<RespireOutputCacheStore> _logger;
 
     /// <summary>Creates a store over an existing client without taking ownership of it.</summary>
-    public RespireOutputCacheStore(IRespireClient client, RespireOutputCacheOptions? options = null)
+    public RespireOutputCacheStore(IRespireClient client, RespireOutputCacheOptions? options = null,
+        ILogger<RespireOutputCacheStore>? logger = null)
     {
         ArgumentNullException.ThrowIfNull(client);
         options ??= new();
@@ -40,6 +44,7 @@ public sealed class RespireOutputCacheStore : IOutputCacheBufferStore
         _tagMaster = options.InstanceName + "__MSOCT";
         _cleanupLock = options.InstanceName + "__MSOCTGC";
         _clock = options.TimeProvider;
+        _logger = logger ?? NullLogger<RespireOutputCacheStore>.Instance;
     }
 
     /// <inheritdoc />
@@ -86,16 +91,22 @@ public sealed class RespireOutputCacheStore : IOutputCacheBufferStore
         // from outliving its tag references; it also validates timestamp overflow before any I/O.
         var expiresAt = _clock.GetUtcNow() + validFor;
         var expires = expiresAt.ToUnixTimeMilliseconds();
-        for (var index = 0; index < tags.Length; index++)
+        for (var start = 0; start < tags.Length;)
         {
-            var tag = tags.Span[index];
-            using var masterResult = await _client.Scripts.ExecuteAsync(RecordTagExpiry,
-                [_tagMaster], [tag, expires], cancellationToken).ConfigureAwait(false);
-            // A shorter concurrent writer must not expire the membership of a longer-lived
-            // value that publishes last. Preserve the maximum deadline for each member too.
-            using var memberResult = await _client.Scripts.ExecuteAsync(RecordTagExpiry,
-                [_tagPrefix + tag], [key, expires], cancellationToken).ConfigureAwait(false);
+            using var batch = _client.CreateBatch();
+            var end = start + Math.Min(125, tags.Length - start);
+            for (var index = start; index < end; index++)
+            {
+                var tag = tags.Span[index];
+                _ = batch.Scripts.Evaluate(RecordTagExpiry, [_tagMaster], [tag, expires]);
+                // Preserve the longest potentially published value's membership too.
+                _ = batch.Scripts.Evaluate(RecordTagExpiry, [_tagPrefix + tag], [key, expires]);
+            }
+            // Single-key scripts remain Cluster-safe. Every registration must succeed before SET.
+            await batch.ExecuteAsync(cancellationToken).ConfigureAwait(false);
+            start = end;
         }
+        cancellationToken.ThrowIfCancellationRequested();
         var expiry = tags.IsEmpty ? RespireExpiry.In(validFor) : RespireExpiry.At(expiresAt);
         if (value.IsSingleSegment)
             await _client.SetAsync(_valuePrefix + key, (RespireValue)value.First, expiry, cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -153,18 +164,32 @@ public sealed class RespireOutputCacheStore : IOutputCacheBufferStore
         await using var attempt = await _client.Locks.AcquireAsync(_cleanupLock, lockLifetime, cancellationToken).ConfigureAwait(false);
         if (!attempt.Acquired) return;
         var cutoff = _clock.GetUtcNow().ToUnixTimeMilliseconds();
-        var untilRenewal = 250;
+        List<RespireValue> tags = new(250);
         await foreach (var tag in _client.SortedSets.ScanAsync(_tagMaster, cancellationToken: cancellationToken).ConfigureAwait(false))
         {
-            await _client.SortedSets.RemoveRangeByScoreAsync(_tagPrefix + tag.Member, 0, cutoff, cancellationToken).ConfigureAwait(false);
-            if (--untilRenewal == 0)
+            tags.Add(tag.Member);
+            if (tags.Count == 250)
             {
-                if (!await attempt.Lock.ResetExpiryAsync(lockLifetime, cancellationToken).ConfigureAwait(false)) return;
-                untilRenewal = 250;
+                await RemoveExpiredMembersAsync(tags, cutoff, cancellationToken).ConfigureAwait(false);
+                tags.Clear();
+                if (!await attempt.Lock.ResetExpiryAsync(lockLifetime, cancellationToken).ConfigureAwait(false))
+                {
+                    _logger.LogDebug("Respire output-cache cleanup lost its lock; skipping the remaining sweep and master purge.");
+                    return;
+                }
             }
         }
+        if (tags.Count != 0) await RemoveExpiredMembersAsync(tags, cutoff, cancellationToken).ConfigureAwait(false);
         // Both passes use the same cutoff. Concurrent writes with later deadlines survive the
         // per-tag removal and increase the master score, so the final purge preserves that tag.
         await _client.SortedSets.RemoveRangeByScoreAsync(_tagMaster, 0, cutoff, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask RemoveExpiredMembersAsync(List<RespireValue> tags, long cutoff, CancellationToken cancellationToken)
+    {
+        using var batch = _client.CreateBatch();
+        foreach (var tag in tags)
+            _ = batch.SortedSets.RemoveRangeByScore(_tagPrefix + tag, 0, cutoff);
+        await batch.ExecuteAsync(cancellationToken).ConfigureAwait(false);
     }
 }

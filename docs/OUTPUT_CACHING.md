@@ -58,6 +58,8 @@ value's lifetime. Microsoft writers can still shorten individual member scores, 
 concurrent-write guarantee applies only when all participating writers use Respire.
 Set and eviction are still separate operations: a concurrent eviction can race registration
 and publication. This mode does not promise generation-aware or atomic invalidation.
+In particular, a replacement written after eviction's `DEL` but before its `ZREM` can survive
+while losing that tag membership, so later eviction by that tag may miss it.
 As in the Microsoft store, overwriting a key with different tags does not remove its old
 tag memberships. Evicting an old tag can therefore remove the replacement value. Use stable
 tags for a cache key, or include the policy/tag generation in the key when changing tags.
@@ -92,6 +94,11 @@ when small test datasets never reach that threshold.
 Tag eviction works in bounded groups: value deletions are pipelined, followed by one bulk
 `ZREM` after every deletion in the group succeeds. Separate pipelined `DEL` commands preserve
 support for values in different Cluster slots; one multi-key `DEL` would reject those keys.
+Tag registration pipelines groups of up to 125 tags (250 single-key script calls) before
+publishing the value. Deferred scripts use `EVAL`, avoiding script-cache misses within a
+pipeline. Cleanup pipelines up to 250 per-tag removals before renewing its lock; it preserves
+the captured cutoff for every group. Lock loss emits a debug log and skips the remaining pass
+and master purge. Direct construction accepts an optional logger; DI supplies one automatically.
 
 If constructing `RespireOutputCacheStore` directly without a host, schedule
 `CollectExpiredTagsAsync` yourself. Redis still expires values automatically; without tag

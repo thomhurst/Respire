@@ -25,7 +25,8 @@ public static class RespireOutputCacheServiceCollectionExtensions
             .ValidateOnStart();
         if (configure is not null) services.Configure(configure);
         services.TryAddSingleton(provider => new RespireOutputCacheStore(
-            provider.GetRequiredService<IRespireClient>(), provider.GetRequiredService<IOptions<RespireOutputCacheOptions>>().Value));
+            provider.GetRequiredService<IRespireClient>(), provider.GetRequiredService<IOptions<RespireOutputCacheOptions>>().Value,
+            provider.GetRequiredService<ILogger<RespireOutputCacheStore>>()));
         services.Replace(ServiceDescriptor.Singleton<IOutputCacheStore>(provider => provider.GetRequiredService<RespireOutputCacheStore>()));
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, OutputCacheCleanupService>());
         return services;
