@@ -108,15 +108,13 @@ public partial interface IServerCommands
     ValueTask FlushDatabaseAsync(CancellationToken cancellationToken = default);
 
     /// <summary>Deletes every key in the current database with an explicit reclamation mode. Requires AllowAdmin.</summary>
-    ValueTask FlushDatabaseAsync(ServerFlushMode mode, CancellationToken cancellationToken = default)
-        => throw new NotSupportedException("This implementation does not support explicit flush modes.");
+    ValueTask FlushDatabaseAsync(ServerFlushMode mode, CancellationToken cancellationToken = default);
 
     /// <summary>Deletes every key in every database. Requires <see cref="RespireOptions.AllowAdmin"/>. Redis: FLUSHALL.</summary>
     ValueTask FlushAllAsync(CancellationToken cancellationToken = default);
 
     /// <summary>Deletes every key in every database with an explicit reclamation mode. Requires AllowAdmin.</summary>
-    ValueTask FlushAllAsync(ServerFlushMode mode, CancellationToken cancellationToken = default)
-        => throw new NotSupportedException("This implementation does not support explicit flush modes.");
+    ValueTask FlushAllAsync(ServerFlushMode mode, CancellationToken cancellationToken = default);
 
     /// <summary>The server's clock. Redis: TIME.</summary>
     ValueTask<DateTimeOffset> TimeAsync(CancellationToken cancellationToken = default);

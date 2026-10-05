@@ -3,6 +3,8 @@
 `client.Server.FlushDatabaseAsync()` deletes keys in the selected database;
 `FlushAllAsync()` deletes keys in every database. Both require
 `RespireOptions.AllowAdmin = true`. Existing overloads use the server's configured default.
+Custom `IServerCommands` implementations must implement the two added mode overloads,
+following the repository's abstract command-interface contract.
 Pass `ServerFlushMode.Sync` or `ServerFlushMode.Async` to override memory reclamation:
 
 ```csharp

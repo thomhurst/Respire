@@ -23,7 +23,11 @@ public class ServerFlushCommandTests
         var topology = System.Text.Encoding.ASCII.GetBytes(
             $"*2\r\n*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{first.Port}\r\n" +
             $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{second.Port}\r\n");
-        await using var seed = new FakeRespServer(topology);
+        await using var seed = new FakeRespServer(topology)
+        {
+            // A keyless batch can use the seed connection; keyed transactions select a slot owner.
+            ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology : FakeRespServer.OkReply,
+        };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespProtocol.Resp2, UseCluster = true, AllowAdmin = true,
@@ -43,9 +47,11 @@ public class ServerFlushCommandTests
         if (transaction) await tx.CommitAsync(); else await batch.ExecuteAsync();
         await Assert.That(database.Result).IsTrue();
         await Assert.That(all.Result).IsTrue();
-        await Assert.That(first.ReceivedCommands.Count == 0 || second.ReceivedCommands.Count == 0).IsTrue();
+        var participants = new[] { first, second, seed };
+        await Assert.That(participants.Count(server => server.ReceivedCommands.Any(command => command.StartsWith("FLUSH", StringComparison.Ordinal))))
+            .IsEqualTo(1);
         if (transaction) await Assert.That(first.ReceivedCommands).IsEmpty();
-        await Assert.That(first.ReceivedCommands.Concat(second.ReceivedCommands)
+        await Assert.That(participants.SelectMany(server => server.ReceivedCommands)
             .Where(command => command.StartsWith("FLUSH", StringComparison.Ordinal)).ToArray())
             .IsEquivalentTo(new[] { "FLUSHDB" + suffix, "FLUSHALL" + suffix });
     }
