@@ -18,16 +18,21 @@ public readonly record struct StreamReadOptions
     /// <summary>Null is nonblocking; InfiniteTimeSpan waits until cancelled. Queued reads require null.</summary>
     public TimeSpan? WaitFor { get; init; }
 
-    internal long? Validate(bool queued = false)
+    internal void Validate(bool queued = false)
     {
         if (Count is { } count) ArgumentOutOfRangeException.ThrowIfNegativeOrZero(count, nameof(Count));
         if (MaxCount is { } maxCount) ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxCount, nameof(MaxCount));
         if (MaxSize is { } maxSize) ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxSize, nameof(MaxSize));
         if (MaxCount is { } total && Count is { } perStream && total < perStream)
             throw new ArgumentException("MAXCOUNT must be greater than or equal to COUNT.", nameof(MaxCount));
-        if (WaitFor is not { } wait) return null;
+        if (WaitFor is not { } wait) return;
         if (queued) throw new ArgumentException("Queued stream reads cannot block.", nameof(WaitFor));
         MultiKeyPop.ValidateWait(wait);
+    }
+
+    internal long? GetBlockMilliseconds()
+    {
+        if (WaitFor is not { } wait) return null;
         return wait == Timeout.InfiniteTimeSpan ? 0
             : Math.Max(1, wait.Ticks / TimeSpan.TicksPerMillisecond + (wait.Ticks % TimeSpan.TicksPerMillisecond == 0 ? 0 : 1));
     }

@@ -86,7 +86,7 @@ public sealed partial class RespireFakeServer
             group = args[index++];
             consumer = args[index++];
         }
-        long count = long.MaxValue, maxCount = long.MaxValue, maxSize = long.MaxValue;
+        long? count = null, maxCount = null, maxSize = null;
         long? block = null;
         while (index < args.Length && Token(args[index]) != "STREAMS")
         {
@@ -103,7 +103,7 @@ public sealed partial class RespireFakeServer
                 default: throw new FormatException();
             }
         }
-        if (maxCount < count && count != long.MaxValue) throw new FormatException();
+        if (maxCount is { } total && count is { } perStream && total < perStream) throw new FormatException();
         if (index >= args.Length || (args.Length - ++index) % 2 != 0 || index == args.Length) throw new FormatException();
         var length = (args.Length - index) / 2;
         var keys = args[index..(index + length)];
@@ -114,7 +114,7 @@ public sealed partial class RespireFakeServer
             ids[i] = (group is null && token == "$") || (group is not null && token == ">")
                 ? new RespireStreamId(token) : StreamId(args[index + length + i]);
         }
-        return new(group, consumer, count, maxCount, maxSize, block, keys, ids);
+        return new(group, consumer, count ?? long.MaxValue, maxCount ?? long.MaxValue, maxSize ?? long.MaxValue, block, keys, ids);
     }
 
     private FakeReply StreamRead(Connection connection, byte[][] args)
@@ -140,6 +140,7 @@ public sealed partial class RespireFakeServer
             if (!hasEntry && !history) continue;
             var keyReply = FakeReply.Bulk(request.Keys[i]);
             // Redis defers outer/entry-list headers; account the stream pair and bulk key now.
+            // FakeMatchesRedisAcrossReplyBudgets verifies this framing arithmetic against Redis in RESP2/RESP3.
             bytes += keyReply.Encode(connection.Resp3).Length + (connection.Resp3 ? 0 : 4);
             var entries = new List<FakeReply>();
             while (hasEntry)

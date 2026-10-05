@@ -10,6 +10,22 @@ public class FakeStreamReadTests
     [Test]
     [Arguments(2)]
     [Arguments(3)]
+    public async Task ExplicitMaximumCountIsNotTreatedAsUnspecified(int protocol)
+    {
+        await using var server = new RespireFakeServer();
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await client.Streams.AddAsync("events", new StreamAddOptions { Id = "1-0" }, ("f", "value"));
+        await Assert.That(async () =>
+        {
+            using var reply = await client.ExecuteAsync("XREAD", "COUNT", long.MaxValue, "MAXCOUNT", 1, "STREAMS", "events", "0");
+        }).ThrowsExactly<RespireServerException>();
+        var entries = await client.Streams.ReadAsync(new StreamReadOptions { MaxCount = 1 }, "events");
+        await Assert.That(entries.Length).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
     public async Task LimitsPreservePendingEntriesAndQueuedReads(int protocol)
     {
         await using var server = new RespireFakeServer();
