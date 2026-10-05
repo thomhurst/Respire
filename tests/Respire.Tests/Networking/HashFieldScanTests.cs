@@ -84,32 +84,64 @@ public class HashFieldScanTests
     }
 
     [Test]
-    public async Task ReplicaCursorCannotSwitchToPrimaryInMixedBatch()
+    [Arguments(RespireReadFrom.Replica, 0)]
+    [Arguments(RespireReadFrom.Replica, 7)]
+    [Arguments(RespireReadFrom.PrimaryPreferred, 0)]
+    [Arguments(RespireReadFrom.PrimaryPreferred, 7)]
+    public async Task MixedBatchPreservesCursorIssuingNode(RespireReadFrom policy, int cursor)
     {
-        await using var primary = new FakeRespServer(FakeRespServer.OkReply);
+        var pageReply = "*2\r\n$1\r\n7\r\n*0\r\n"u8.ToArray();
+        await using var replica = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("HSCAN ", StringComparison.Ordinal) ? pageReply : FakeRespServer.OkReply,
+        };
+        await using var primary = new FakeRespServer(8, FakeRespServer.OkReply);
         var topology = System.Text.Encoding.ASCII.GetBytes(
-            $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{primary.Port}\r\n");
-        primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology : null;
+            $"*1\r\n*4\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{primary.Port}\r\n" +
+            $"*2\r\n$9\r\n127.0.0.1\r\n:{replica.Port}\r\n");
+        primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology
+            : command.StartsWith("HSCAN ", StringComparison.Ordinal) ? pageReply : FakeRespServer.OkReply;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
             Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
         });
-        using var batch = client.WithReadFrom(RespireReadFrom.Replica).CreateBatch();
-        var page = batch.Hashes.ScanFieldsPage("key", 7);
+        await using var reads = client.WithReadFrom(policy);
+        // Fresh primary pages must create a pin. Replica pages must not bypass an existing replica pin.
+        var establishPin = cursor != 0 || policy == RespireReadFrom.Replica;
+        if (establishPin) await reads.Hashes.ScanFieldsPageAsync("key");
+        using var batch = reads.CreateBatch();
+        var page = batch.Hashes.ScanFieldsPage("key", (ulong)cursor);
         var write = batch.Strings.Set("key", (RespireValue)"value");
-        await Assert.That(async () => await batch.ExecuteAsync()).ThrowsExactly<NotSupportedException>();
-        await Assert.That(() => page.Result).ThrowsExactly<NotSupportedException>();
-        await Assert.That(() => write.Result).ThrowsExactly<NotSupportedException>();
-        await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("HSCAN", StringComparison.Ordinal)
-            || command.StartsWith("SET ", StringComparison.Ordinal))).IsFalse();
+        if (policy == RespireReadFrom.Replica)
+        {
+            await Assert.That(async () => await batch.ExecuteAsync()).ThrowsExactly<NotSupportedException>();
+            await Assert.That(() => page.Result).ThrowsExactly<NotSupportedException>();
+            await Assert.That(() => write.Result).ThrowsExactly<NotSupportedException>();
+            await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("HSCAN", StringComparison.Ordinal)
+                || command.StartsWith("SET ", StringComparison.Ordinal))).IsFalse();
+            await Assert.That(replica.ReceivedCommands.Count(command => command.StartsWith("HSCAN ", StringComparison.Ordinal))).IsEqualTo(1);
+        }
+        else
+        {
+            await batch.ExecuteAsync();
+            await Assert.That(page.Result.Cursor).IsEqualTo(7UL);
+            using var continuation = reads.CreateBatch();
+            var next = continuation.Hashes.ScanFieldsPage("key", page.Result.Cursor);
+            await continuation.ExecuteAsync();
+            await Assert.That(next.Result.Cursor).IsEqualTo(7UL);
+            await Assert.That(primary.ReceivedCommands.Count(command => command.StartsWith("HSCAN ", StringComparison.Ordinal))).IsEqualTo(establishPin ? 3 : 2);
+            await Assert.That(primary.ReceivedCommands.Contains("SET key value")).IsTrue();
+            await Assert.That(replica.ReceivedCommands.Any(command => command.StartsWith("HSCAN ", StringComparison.Ordinal)
+                || command.StartsWith("SET ", StringComparison.Ordinal))).IsFalse();
+        }
     }
 
     [Test]
     public async Task CommandPreservesCursorAndKeyRoutingMetadata()
     {
         await using var client = RespireClient.Create(new RespireOptions { Endpoints = { new RespireEndpoint("localhost") } });
-        var command = HashCommands.ScanFieldsCommand(client.WithKeyPrefix("p:"), "hash", 17, null, null);
+        var command = HashCommands.ScanFieldsCommand((RespireClient)client.WithKeyPrefix("p:"), "hash", 17, null, null);
         await Assert.That(command.ReadKind).IsEqualTo(ReadCommandKind.CursorRead);
         await Assert.That(command.CursorArgumentIndex).IsEqualTo(1);
         await Assert.That(command.TryGetClusterSlot(out var slot)).IsTrue();

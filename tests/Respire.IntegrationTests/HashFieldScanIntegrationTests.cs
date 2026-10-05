@@ -48,7 +48,7 @@ public class HashFieldScanIntegrationTests(ModernRedisTestContainer fixture)
         pairs.Should().OnlyContain(pair => pair.Value == "value");
     }
 
-    private static async Task<RespireHashScanPage> ReadPageAsync(RespireClient client, string key, ulong cursor, int execution)
+    private static async Task<RespireHashScanPage> ReadPageAsync(IRespireClient client, string key, ulong cursor, int execution)
     {
         if (execution == 0) return await client.Hashes.ScanFieldsPageAsync(key, cursor, "field:0*", 13);
         using var batch = client.CreateBatch();

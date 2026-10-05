@@ -403,13 +403,18 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
                     isContinuation |= continuation;
                 }
             }
-            if (isContinuation && readFrom != configuredReadFrom)
-                throw new NotSupportedException("A cursor continuation cannot share a replica-routed batch group with writes. Keep cursor pages in a read-only group.");
-            // Cursor pages must return to their issuing replica across separate batches.
-            connection = hasCursor && slot is { } cursorSlot && readFrom != RespireReadFrom.Primary
+            // Consult the configured policy even when writes force this group onto the primary.
+            // This records fresh pages and preserves the issuing node for continuations.
+            connection = hasCursor && slot is { } cursorSlot
                 ? await _client.Core.ReadRouter.Cursors.GetClusterConnectionAsync(
-                    _client.Core.Cluster!, cursorSlot, readFrom, affinity: null, isContinuation, cancellationToken).ConfigureAwait(false)
+                    _client.Core.Cluster!, cursorSlot, configuredReadFrom, affinity: null, isContinuation, cancellationToken).ConfigureAwait(false)
                 : await _client.AcquireConnectionAsync(slot, cancellationToken, readFrom).ConfigureAwait(false);
+            if (hasCursor && readFrom != configuredReadFrom)
+            {
+                var primary = await _client.AcquireConnectionAsync(slot, cancellationToken, RespireReadFrom.Primary).ConfigureAwait(false);
+                if (!ReferenceEquals(connection.Multiplexer, primary.Multiplexer))
+                    throw new NotSupportedException("A cursor page pinned to a replica cannot share its batch group with writes. Keep cursor pages in a read-only group.");
+            }
         }
         catch (Exception ex)
         {
