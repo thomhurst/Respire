@@ -20,6 +20,7 @@ public partial interface IStreamCommands
 
 internal sealed partial class StreamCommands
 {
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     public async ValueTask<RespireStreamEntry[]> ReadGroupOnceAsync(RespireKey key, string group, string consumer,
         StreamReadOptions options = default, RespireStreamId? startAt = null, CancellationToken cancellationToken = default)
     {
@@ -37,6 +38,7 @@ internal sealed partial class StreamCommands
         return ReadGroupCoreAsync(command, group, options.WaitFor.HasValue, cancellationToken);
     }
 
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<RespireStreamReadResult[]> ReadGroupCoreAsync(Commands.StreamReadCommand command,
         string group, bool blocking, CancellationToken cancellationToken)
     {

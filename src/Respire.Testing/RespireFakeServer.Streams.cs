@@ -134,16 +134,18 @@ public sealed partial class RespireFakeServer
             var history = group is not null && request.Ids[i].ToString() != ">";
             var cursor = group is not null && !history ? group.Last
                 : request.Ids[i] == RespireStreamId.New ? stream.Last : request.Ids[i];
-            var candidates = stream.Entries.Where(entry => entry.Key > cursor
-                && (!history || group!.Pending.TryGetValue(entry.Key, out var owner) && owner.AsSpan().SequenceEqual(request.Consumer))).ToArray();
-            if (candidates.Length == 0 && !history) continue;
+            using var candidates = stream.Entries.Where(entry => entry.Key > cursor
+                && (!history || group!.Pending.TryGetValue(entry.Key, out var owner) && owner.AsSpan().SequenceEqual(request.Consumer))).GetEnumerator();
+            var hasEntry = candidates.MoveNext();
+            if (!hasEntry && !history) continue;
             var keyReply = FakeReply.Bulk(request.Keys[i]);
             // Redis defers outer/entry-list headers; account the stream pair and bulk key now.
             bytes += keyReply.Encode(connection.Resp3).Length + (connection.Resp3 ? 0 : 4);
             var entries = new List<FakeReply>();
-            foreach (var entry in candidates)
+            while (hasEntry)
             {
                 if (entries.Count >= request.Count || total >= request.MaxCount || (total > 0 && bytes >= request.MaxSize)) break;
+                var entry = candidates.Current;
                 var reply = FakeReply.Array([FakeReply.Text(entry.Key.ToString()), FakeReply.Array(entry.Value.Select(FakeReply.Bulk).ToArray())]);
                 entries.Add(reply);
                 bytes += reply.Encode(connection.Resp3).Length;
@@ -154,6 +156,9 @@ public sealed partial class RespireFakeServer
                     group.Pending[entry.Key] = request.Consumer!;
                     TouchWatchedKey(request.Keys[i]);
                 }
+                // Do not advance through any remaining history once the page's budget is exhausted.
+                hasEntry = entries.Count < request.Count && total < request.MaxCount && bytes < request.MaxSize
+                    && candidates.MoveNext();
             }
             var entryReply = FakeReply.Array(entries.ToArray());
             bytes += 3 + entries.Count.ToString(CultureInfo.InvariantCulture).Length;
