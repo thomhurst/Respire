@@ -62,8 +62,11 @@ public class TelemetryTests
         cache.FlushForContinuityLoss();
 
         var names = capture.Measurements.Select(static measurement => measurement.InstrumentName);
-        await Assert.That(names).Contains("respire.client_cache.hits");
-        await Assert.That(names).Contains("respire.client_cache.misses");
+        await Assert.That(names).Contains("redis.client.csc.requests");
+        var results = capture.Measurements.Where(static item => item.InstrumentName == "redis.client.csc.requests")
+            .Select(static item => item.Tags["redis.client.csc.result"]);
+        await Assert.That(results).Contains("hit");
+        await Assert.That(results).Contains("miss");
         await Assert.That(names).Contains("respire.client_cache.invalidations");
         await Assert.That(names).Contains("respire.client_cache.continuity_flushes");
     }
@@ -525,7 +528,8 @@ public class TelemetryTests
                     }
                     else if (instrument.Name == "respire.pubsub.messages.dropped"
                              || instrument.Name == "respire.pubsub.delivery.gaps"
-                             || instrument.Name.StartsWith("respire.client_cache.", StringComparison.Ordinal))
+                             || instrument.Name.StartsWith("respire.client_cache.", StringComparison.Ordinal)
+                             || instrument.Name.StartsWith("redis.client.csc.", StringComparison.Ordinal))
                     {
                         listener.EnableMeasurementEvents(instrument);
                     }

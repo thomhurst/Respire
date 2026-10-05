@@ -75,10 +75,7 @@ internal sealed class MaintenanceTelemetry(string host, int port, int database, 
 
             try
             {
-                RespireTelemetry.MaintenanceNotifications.Add(1,
-                    new KeyValuePair<string, object?>("server.address", host),
-                    new KeyValuePair<string, object?>("server.port", port),
-                    new KeyValuePair<string, object?>("respire.maintenance.kind", notification.Kind));
+                RespireTelemetry.RecordMaintenanceNotification(host, port, notification.Kind);
             }
             catch (Exception error)
             {

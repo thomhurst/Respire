@@ -102,19 +102,25 @@ public class ListMoveManyIntegrationTests(Redis810ListMoveTestContainer fixture)
         await view.Lists.RightPushAsync("s", ["b"], deadline.Token);
         (await move.WaitAsync(deadline.Token)).Should().Equal("a", "b");
         var blocked = view.Lists.MoveManyAsync("s", "d", waitFor: Timeout.InfiniteTimeSpan, cancellationToken: cancel.Token).AsTask();
-        await WaitForBlocked(observer, name, deadline.Token);
+        var blockedId = await WaitForBlocked(observer, name, deadline.Token);
         cancel.Cancel();
         Func<Task> canceled = async () => await blocked.WaitAsync(deadline.Token);
         await canceled.Should().ThrowAsync<OperationCanceledException>();
+        // Local socket disposal does not acknowledge Redis processing the disconnect. Wait for
+        // that exact blocked client to disappear before a write could satisfy its old command.
+        while ((await observer.Server.ClientsAsync(deadline.Token)).Any(client => client.Id == blockedId))
+            await Task.Delay(10, deadline.Token);
         await view.Lists.RightPushAsync("s", "next");
         (await view.Lists.MoveManyAsync("s", "d", waitFor: TimeSpan.FromSeconds(1), cancellationToken: deadline.Token)).Should().Equal("next");
     }
 
-    private static async Task WaitForBlocked(IRespireClient observer, string name, CancellationToken cancellationToken)
+    private static async Task<long> WaitForBlocked(IRespireClient observer, string name, CancellationToken cancellationToken)
     {
         while (true)
         {
-            if ((await observer.Server.ClientsAsync(cancellationToken)).Any(x => x.Name == name && x.Flags.Contains('b') && x.Command == "blmovem")) return;
+            var blocked = (await observer.Server.ClientsAsync(cancellationToken))
+                .FirstOrDefault(x => x.Name == name && x.Flags.Contains('b') && x.Command == "blmovem");
+            if (blocked is not null) return blocked.Id;
             await Task.Delay(10, cancellationToken);
         }
     }

@@ -1756,7 +1756,8 @@ public class ClusterNodeIdentityTests
             core.NotifyCommandStateChanged(original, 0, RespireConnectionState.Reconnecting);
         }
         listener.Dispose();
-        await Assert.That(measurements).IsEqualTo(2);
+        // Continuity loss reports its Respire-specific signal, not a standard eviction.
+        await Assert.That(measurements).IsEqualTo(1);
         await Assert.That(gateHeld).IsFalse();
     }
 
