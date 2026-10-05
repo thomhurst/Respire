@@ -23,8 +23,8 @@ def docker(*arguments):
 
 
 class Connection:
-    def __init__(self, port):
-        self.socket = socket.create_connection(("127.0.0.1", port), timeout=5)
+    def __init__(self, port, timeout=5):
+        self.socket = socket.create_connection(("127.0.0.1", port), timeout=timeout)
         self.stream = self.socket.makefile("rb")
 
     def close(self):
@@ -157,7 +157,7 @@ def run(port):
         cache[("hash", "field")] = held
         fresh = writer.command("HGET", "hash", "field")
         expect(cache[("hash", "field")] == "before" and fresh == "after")
-        report("modeled delayed fill (constructed schedule)", {"held": held, "fresh": fresh, "events": messages})
+        print("MODEL delayed fill (constructed schedule):", json.dumps({"held": held, "fresh": fresh, "events": messages}), flush=True)
 
         subscriber.close()
         connections.remove(subscriber)
@@ -178,20 +178,32 @@ def run(port):
             connection.close()
 
 
+def wait_for_redis(port):
+    deadline = time.monotonic() + 10
+    while True:
+        connection = None
+        try:
+            connection = Connection(port, timeout=1)
+            if connection.command("PING") != "PONG":
+                raise ConnectionError("Redis readiness PING did not return PONG")
+            return
+        except (OSError, EOFError):
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.1)
+        finally:
+            if connection is not None:
+                connection.close()
+
+
 def main():
     container = docker("run", "--detach", "--rm", "--publish", "127.0.0.1::6379", IMAGE)
     try:
-        print("image:", docker("inspect", "--format", "{{.Image}}", container), flush=True)
+        print("registry image pin:", IMAGE, flush=True)
+        print("local image ID:", docker("inspect", "--format", "{{.Image}}", container), flush=True)
+        print("registry digests:", docker("image", "inspect", "--format", "{{json .RepoDigests}}", IMAGE), flush=True)
         port = int(docker("port", container, "6379/tcp").rsplit(":", 1)[1])
-        deadline = time.monotonic() + 10
-        while True:
-            try:
-                with socket.create_connection(("127.0.0.1", port), timeout=1):
-                    break
-            except OSError:
-                if time.monotonic() >= deadline:
-                    raise
-                time.sleep(0.1)
+        wait_for_redis(port)
         run(port)
     except Exception:
         print(f"Probe failed; logs for owned container {container}:", file=sys.stderr)
