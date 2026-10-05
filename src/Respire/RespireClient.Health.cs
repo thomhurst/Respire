@@ -13,9 +13,15 @@ public sealed partial class RespireClient
             var snapshot = cluster.RoutingSnapshot;
             if (!snapshot.IsComplete)
                 throw new RespireConnectionException("Redis Cluster topology is not available for a health check.");
-            var nodes = allNodes ? snapshot.Masters.Concat(snapshot.ReplicaNodes) : snapshot.Masters.Take(1);
-            return nodes.Distinct().Select(node =>
-                (new RespireEndpoint(node.Host, node.Port), node.GetExistingHealthConnection())).ToArray();
+            var nodes = allNodes ? snapshot.Masters.Concat(snapshot.ReplicaNodes) : snapshot.Masters;
+            var targets = nodes.Distinct().Select(node =>
+                (Endpoint: new RespireEndpoint(node.Host, node.Port), Connection: node.GetExistingHealthConnection())).ToArray();
+            if (allNodes) return targets;
+            foreach (var candidate in targets)
+            {
+                if (candidate.Connection is not null) return [candidate];
+            }
+            return targets.Take(1).ToArray();
         }
 
         var primary = _core.Sentinel is { } sentinel ? sentinel.Current?.Multiplexer : _core.Multiplexer;

@@ -1,14 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <IsTestProject>true</IsTestProject>
-    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/Respire.HealthChecks/Respire.HealthChecks.csproj" />
     <ProjectReference Include="../../src/Respire.DependencyInjection/Respire.DependencyInjection.csproj" />
     <ProjectReference Include="../../src/Respire.Testing/Respire.Testing.csproj" />
     <PackageReference Include="TUnit" />
+    <PackageReference Include="Microsoft.Testing.Extensions.HangDump" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     <Compile Include="../Respire.Tests/Networking/FakeRespServer.cs" Link="FakeRespServer.cs" />
   </ItemGroup>

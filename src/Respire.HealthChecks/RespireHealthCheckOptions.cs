@@ -7,6 +7,9 @@ public sealed record RespireHealthCheckOptions
     /// <remarks>Known nodes without an open usable connection fail the check. No connection is opened.</remarks>
     public bool ProbeAllNodes { get; init; }
 
+    /// <summary>Maximum concurrent node probes. Defaults to eight.</summary>
+    public int MaxConcurrentProbes { get; init; } = 8;
+
     /// <summary>Maximum time for a probe round. Defaults to two seconds.</summary>
     public TimeSpan ProbeTimeout { get; init; } = TimeSpan.FromSeconds(2);
 
@@ -21,6 +24,8 @@ public sealed record RespireHealthCheckOptions
 
     internal void Validate()
     {
+        if (MaxConcurrentProbes <= 0)
+            throw new ArgumentOutOfRangeException(nameof(MaxConcurrentProbes));
         if (ProbeTimeout <= TimeSpan.Zero || ProbeTimeout.TotalMilliseconds > uint.MaxValue - 1d)
             throw new ArgumentOutOfRangeException(nameof(ProbeTimeout));
         if (DegradedLatency is { } latency && latency <= TimeSpan.Zero)

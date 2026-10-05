@@ -7,7 +7,11 @@ using Respire.Protocol;
 namespace Respire.HealthChecks;
 
 /// <summary>Checks Redis through an existing client or the active client of an existing failover group.</summary>
-/// <remarks>This check does not own or dispose clients and never creates probe connections.</remarks>
+/// <remarks>
+/// This check does not own or dispose clients. RespireClient probes reuse existing command connections.
+/// Other IRespireClient implementations are probed through PingAsync when IsConnected is true;
+/// their implementation controls connection creation and cancellation handling.
+/// </remarks>
 public sealed class RespireHealthCheck : IHealthCheck
 {
     private readonly IRespireClient? _client;
@@ -52,7 +56,7 @@ public sealed class RespireHealthCheck : IHealthCheck
 
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             deadline.CancelAfter(_options.ProbeTimeout);
-            using var capacity = new SemaphoreSlim(8);
+            using var capacity = new SemaphoreSlim(_options.MaxConcurrentProbes);
             var errors = new List<Exception>();
             RespireNodeHealth[] nodes;
             if (client is RespireClient concrete)
@@ -77,7 +81,7 @@ public sealed class RespireHealthCheck : IHealthCheck
             if (nodes.Length == 0)
                 throw new RespireConnectionException("No data nodes are available for a health check.");
             if (errors.Count != 0)
-                return new(context.Registration.FailureStatus, "One or more Respire node probes failed.",
+                return new(context.Registration.FailureStatus, $"{errors.Count} of {nodes.Length} Respire node probes failed.",
                     new AggregateException(errors), data);
             var slow = _options.DegradedLatency is { } threshold && nodes.Any(node => node.Latency >= threshold);
             var failover = _options.DegradeOnFailover && statuses?.Any(status => !status.IsHealthy) == true;

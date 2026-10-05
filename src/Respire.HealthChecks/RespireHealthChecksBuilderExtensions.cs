@@ -14,15 +14,8 @@ public static class RespireHealthChecksBuilderExtensions
         HealthStatus? failureStatus = null,
         IEnumerable<string>? tags = null,
         Func<IServiceProvider, IRespireClient>? clientFactory = null)
-    {
-        ArgumentNullException.ThrowIfNull(builder);
-        var settings = options ?? new();
-        settings.Validate();
-        return builder.Add(new HealthCheckRegistration(name,
-            provider => new RespireHealthCheck(clientFactory is null
-                ? provider.GetRequiredService<IRespireClient>() : clientFactory(provider), settings),
-            failureStatus, tags));
-    }
+        => Add(builder, options, name, failureStatus, tags, clientFactory,
+            static (client, settings) => new RespireHealthCheck(client, settings));
 
     /// <summary>Checks the registered failover group, including its candidate state and currently selected client.</summary>
     public static IHealthChecksBuilder AddRespireFailoverGroup(
@@ -32,13 +25,25 @@ public static class RespireHealthChecksBuilderExtensions
         HealthStatus? failureStatus = null,
         IEnumerable<string>? tags = null,
         Func<IServiceProvider, RespireFailoverGroup>? groupFactory = null)
+        => Add(builder, options, name, failureStatus, tags, groupFactory,
+            static (group, settings) => new RespireHealthCheck(group, settings));
+
+    private static IHealthChecksBuilder Add<TClient>(
+        IHealthChecksBuilder builder,
+        RespireHealthCheckOptions? options,
+        string name,
+        HealthStatus? failureStatus,
+        IEnumerable<string>? tags,
+        Func<IServiceProvider, TClient>? clientFactory,
+        Func<TClient, RespireHealthCheckOptions, RespireHealthCheck> createCheck)
+        where TClient : class
     {
         ArgumentNullException.ThrowIfNull(builder);
         var settings = options ?? new();
         settings.Validate();
         return builder.Add(new HealthCheckRegistration(name,
-            provider => new RespireHealthCheck(groupFactory is null
-                ? provider.GetRequiredService<RespireFailoverGroup>() : groupFactory(provider), settings),
+            provider => createCheck(clientFactory is null
+                ? provider.GetRequiredService<TClient>() : clientFactory(provider), settings),
             failureStatus, tags));
     }
 }

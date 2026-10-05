@@ -25,13 +25,19 @@ var app = builder.Build();
 app.MapHealthChecks("/health/ready");
 ```
 
-The check sends `PING` on an existing usable command connection. It never creates a probe
+For `RespireClient`, the check sends `PING` on an existing usable command connection. It never creates a probe
 client, initializes an unused connection slot, discovers topology, or rents a dedicated
 connection. A lazy client that has not connected reports unhealthy until application work
 establishes a connection. For eager startup validation, register an already connected
 `IRespireClient` created with `RespireClient.ConnectAsync`.
 
-The default probes one primary. For Cluster this is one primary in the current routing
+Other `IRespireClient` implementations are supported in default single-node mode. The check
+first requires `IsConnected`, then calls their `PingAsync` with the probe cancellation token.
+The custom implementation controls connection creation and cancellation handling, so the
+existing-connection and timeout guarantees depend on that implementation.
+
+The default probes one primary. For Cluster this is a primary with an existing usable
+connection in the current routing
 snapshot; it does not prove that every slot owner is available. Set `ProbeAllNodes = true`
 to probe every known primary and replica. Standalone and Sentinel checks include the
 current primary and configured or discovered read replicas. A known node without an open
@@ -43,13 +49,15 @@ Topology and connection observations are snapshots, not guarantees of subsequent
 Probe failures use the registration's `failureStatus`, defaulting to `Unhealthy`. A
 successful PING at or above `DegradedLatency` reports `Degraded`; the default has no
 latency threshold. `ProbeTimeout` bounds the whole probe round, including admission to
-the limit of eight concurrent probes. Caller cancellation propagates. A probe never
+the `MaxConcurrentProbes` limit, which defaults to eight. Caller cancellation propagates. A probe never
 disposes the shared client. Application command timeouts may impose a shorter bound.
 
 Health data includes `connected`, a `nodes` array of `RespireNodeHealth` with endpoints,
 connection state, latency and failure type, and `clientSideCache` statistics when enabled.
 Set `IncludeClientSideCache = false` to omit cache statistics. Cache counters do not
 independently determine health.
+Health data contains deployment addresses and diagnostic details. Protect health endpoints
+whose custom response writer serializes `Data` against unauthenticated access.
 
 For a keyed registration, select its shared client:
 
