@@ -1140,7 +1140,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         ReadOnlyMemory<byte> serializedCommands, int commandCount, CancellationToken cancellationToken = default,
         TimeSpan? cancellationTimeout = null, CancellationToken callerCancellationToken = default)
     {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(commandCount);
+        ArgumentOutOfRangeException.ThrowIfNegative(commandCount);
 
         // MULTI's +OK plus one +QUEUED per command precede the EXEC reply. A transaction
         // needing more slots than the ring holds could never enqueue and would spin in the

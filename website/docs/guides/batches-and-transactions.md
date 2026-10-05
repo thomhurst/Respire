@@ -254,7 +254,8 @@ long updated = await redis.RunTransactionAsync(
     new RespireTransactionRetryOptions
     {
         MaxAttempts = 5,
-        Backoff = attempt => TimeSpan.FromMilliseconds(attempt * 10),
+        Backoff = RespireTransactionRetryOptions.ExponentialBackoff(
+            TimeSpan.FromMilliseconds(10), TimeSpan.FromSeconds(1)),
     },
     cancellationToken);
 ```
@@ -265,11 +266,17 @@ side effects outside it. The generic overload returns only the successful attemp
 queued pending values cannot be inspected until after commit. The non-generic overload
 accepts a callback without a result. WATCH key arrays and binary key storage are copied before
 the first await, so later caller changes cannot change the keys being watched on a retry.
+Callbacks that queue no commands still validate WATCH through an empty MULTI/EXEC before
+returning a decision. The helper does not enforce the routing or caching settings of clients
+captured by the callback; supplying a safe read view directly is tracked in
+[#949](https://github.com/thomhurst/Respire/issues/949).
 
 Backoff receives the one-based failed attempt number and returns a nonnegative delay of at
 most 2,147,483,647 milliseconds. The failed transaction is disposed before the delay; caller
 cancellation interrupts delays and subsequent attempts. Invalid delays and backoff exceptions
-propagate. Callback exceptions, network failures, timeouts, cancellation, Redis errors, and
+propagate. `ExponentialBackoff` doubles the delay ceiling per conflict up to `maxDelay`,
+then picks a random delay from zero to that ceiling to spread concurrent retries.
+Callback exceptions, network failures, timeouts, cancellation, Redis errors, and
 Cluster routing rejections are not retried. A lost commit reply remains ambiguous and may
 represent an executed transaction. Errors in an executed result array remain on its pendings.
 

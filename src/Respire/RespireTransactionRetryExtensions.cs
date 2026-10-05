@@ -13,17 +13,21 @@ public static class RespireTransactionRetryExtensions
     /// exceptions propagate without replay. WATCH and queued keys retain the existing same-slot Cluster requirement.
     /// A canceled accepted commit may still execute. Failed attempts are disposed before backoff and before a new WATCH.
     /// </remarks>
-    public static async ValueTask RunTransactionAsync(
+    public static ValueTask RunTransactionAsync(
         this IRespireClient client, RespireKey[] watchKeys,
         Func<RespireWatchedTransaction, CancellationToken, ValueTask> action,
         RespireTransactionRetryOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(action);
-        await RunTransactionAsync(client, watchKeys, async (transaction, token) =>
+        var operation = RunTransactionAsync(client, watchKeys, async (transaction, token) =>
         {
             await action(transaction, token).ConfigureAwait(false);
             return true;
-        }, options, cancellationToken).ConfigureAwait(false);
+        }, options, cancellationToken);
+        return AwaitCompletionAsync(operation);
+
+        static async ValueTask AwaitCompletionAsync(ValueTask<bool> operation)
+            => _ = await operation.ConfigureAwait(false);
     }
 
     /// <summary>Runs a watched transaction and returns only the successful attempt's callback result.</summary>
@@ -57,21 +61,19 @@ public static class RespireTransactionRetryExtensions
             var transaction = await client.CreateTransactionAsync(watchKeys, cancellationToken).ConfigureAwait(false);
             await using (transaction.ConfigureAwait(false))
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (attempt > 1) RespireTelemetry.RecordTransactionRetry();
                 result = await action(transaction, cancellationToken).ConfigureAwait(false);
                 cancellationToken.ThrowIfCancellationRequested();
-                committed = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                committed = await transaction.CommitWithWatchValidationAsync(cancellationToken).ConfigureAwait(false);
             }
 
             if (committed) return result;
             RespireTelemetry.RecordTransactionConflict();
             cancellationToken.ThrowIfCancellationRequested();
             if (attempt == options.MaxAttempts) throw new RespireTransactionConflictException(attempt);
-            var delay = options.Backoff?.Invoke(attempt) ?? TimeSpan.Zero;
-            if (delay < TimeSpan.Zero || delay.TotalMilliseconds > int.MaxValue)
-                throw new ArgumentOutOfRangeException(nameof(options.Backoff), "Backoff must be between zero and 2,147,483,647 milliseconds.");
+            var delay = options.GetDelay(attempt);
             if (delay > TimeSpan.Zero) await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
-            cancellationToken.ThrowIfCancellationRequested();
-            RespireTelemetry.RecordTransactionRetry();
         }
     }
 }

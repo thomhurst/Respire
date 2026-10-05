@@ -13,6 +13,26 @@ public class TransactionRetryTests
     [Test]
     [Arguments(2)]
     [Arguments(3)]
+    public async Task ReadOnlyDecisionValidatesWatchBeforeReturning(int protocol)
+    {
+        await using var server = new RespireFakeServer();
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await client.SetAsync("balance", "1");
+        var attempts = 0;
+        var result = await client.RunTransactionAsync(["balance"], async (_, token) =>
+        {
+            var balance = await client.GetStringAsync("balance", token);
+            if (++attempts == 1) await client.SetAsync("balance", "2", cancellationToken: token);
+            return balance;
+        });
+
+        await Assert.That(result).IsEqualTo("2");
+        await Assert.That(attempts).IsEqualTo(2);
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
     public async Task ConcurrentWritersConvergeAfterConflicts(int protocol)
     {
         await using var server = new RespireFakeServer();
@@ -202,6 +222,91 @@ public class TransactionRetryTests
     }
 
     [Test]
+    public async Task NonGenericValidationThrowsSynchronously()
+    {
+        await using var client = RespireClient.Create("127.0.0.1:1");
+        Assert.Throws<ArgumentNullException>(() => { _ = client.RunTransactionAsync([], null!); });
+        Assert.Throws<ArgumentNullException>(() => { _ = client.RunTransactionAsync(null!, (_, _) => ValueTask.CompletedTask); });
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+        {
+            _ = client.RunTransactionAsync([], (_, _) => ValueTask.CompletedTask,
+                new RespireTransactionRetryOptions { MaxAttempts = 0 });
+        });
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        Assert.Throws<OperationCanceledException>(() =>
+        {
+            _ = client.RunTransactionAsync([], (_, _) => ValueTask.CompletedTask, cancellationToken: cancellation.Token);
+        });
+        await Assert.That(client.IsConnected).IsFalse();
+    }
+
+    [Test]
+    [NotInParallel]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task FailedRetryAcquisitionDoesNotEmitRetryCounter(bool cancel)
+    {
+        long retries = 0;
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, owner) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.transaction.watch.retries")
+                owner.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, value, _, _) => Interlocked.Add(ref retries, value));
+        listener.Start();
+        await using var server = new RespireFakeServer();
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+        using var cancellation = new CancellationTokenSource();
+        IDisposable? fault = null;
+        var callbacks = 0;
+        Exception? failure = null;
+        try
+        {
+            await client.RunTransactionAsync(["watched"], async (transaction, token) =>
+            {
+                callbacks++;
+                await client.IncrementAsync("watched", cancellationToken: token);
+                _ = transaction.Increment("result");
+            }, new RespireTransactionRetryOptions
+            {
+                Backoff = _ =>
+                {
+                    if (cancel) cancellation.Cancel();
+                    else fault = server.InjectFault("WATCH", RespireFakeFault.Loading());
+                    return TimeSpan.Zero;
+                },
+            }, cancellation.Token);
+        }
+        catch (Exception error) { failure = error; }
+        finally { fault?.Dispose(); }
+
+        await Assert.That(cancel ? failure is OperationCanceledException : failure is RespireServerException).IsTrue();
+        await Assert.That(callbacks).IsEqualTo(1);
+        await Assert.That(retries).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task ExponentialBackoffBoundsDelayAndValidatesInputs()
+    {
+        var backoff = RespireTransactionRetryOptions.ExponentialBackoff(TimeSpan.FromMilliseconds(10), TimeSpan.FromMilliseconds(25));
+        foreach (var (attempt, ceiling) in new[] { (1, 10), (2, 20), (3, 25), (int.MaxValue, 25) })
+        {
+            for (var sample = 0; sample < 32; sample++)
+            {
+                var delay = backoff(attempt);
+                await Assert.That(delay >= TimeSpan.Zero && delay <= TimeSpan.FromMilliseconds(ceiling)).IsTrue();
+            }
+        }
+        await Assert.That(RespireTransactionRetryOptions.ExponentialBackoff(TimeSpan.Zero, TimeSpan.Zero)(int.MaxValue)).IsEqualTo(TimeSpan.Zero);
+        Assert.Throws<ArgumentOutOfRangeException>(() => backoff(0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => RespireTransactionRetryOptions.ExponentialBackoff(TimeSpan.FromTicks(-1), TimeSpan.Zero));
+        Assert.Throws<ArgumentOutOfRangeException>(() => RespireTransactionRetryOptions.ExponentialBackoff(TimeSpan.FromSeconds(1), TimeSpan.Zero));
+        Assert.Throws<ArgumentOutOfRangeException>(() => RespireTransactionRetryOptions.ExponentialBackoff(TimeSpan.Zero, TimeSpan.MaxValue));
+    }
+
+    [Test]
     public async Task ClusterCrossSlotWatchFailsBeforeCallbackOrConnection()
     {
         await using var client = RespireClient.Create(new RespireOptions
@@ -240,7 +345,7 @@ public class TransactionRetryTests
             await client.IncrementAsync("watched", cancellationToken: token);
             transaction.Increment("result");
         }, new RespireTransactionRetryOptions { Backoff = _ => TimeSpan.FromMilliseconds(-1) }))
-            .Throws<ArgumentOutOfRangeException>();
+            .Throws<InvalidOperationException>();
         await Assert.That(attempts).IsEqualTo(1);
     }
 

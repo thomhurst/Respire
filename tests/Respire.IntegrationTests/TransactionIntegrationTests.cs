@@ -11,6 +11,30 @@ public class TransactionIntegrationTests(RedisTestContainer fixture)
     [Arguments(false, 3)]
     [Arguments(true, 2)]
     [Arguments(true, 3)]
+    public async Task ReadOnlyRetryCallbackValidatesWatch(bool useFake, int protocol)
+    {
+        await using var server = useFake ? new RespireFakeServer() : null;
+        var options = (server?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString))
+            with { Protocol = (RespProtocol)protocol };
+        await using var client = await RespireClient.ConnectAsync(options);
+        var key = $"tx:readonly:{Guid.NewGuid():N}";
+        await client.SetAsync(key, "before");
+        var attempts = 0;
+        var result = await client.RunTransactionAsync([key], async (_, token) =>
+        {
+            var value = await client.GetStringAsync(key, token);
+            if (++attempts == 1) await client.SetAsync(key, "after", cancellationToken: token);
+            return value;
+        });
+        result.Should().Be("after");
+        attempts.Should().Be(2);
+    }
+
+    [Test]
+    [Arguments(false, 2)]
+    [Arguments(false, 3)]
+    [Arguments(true, 2)]
+    [Arguments(true, 3)]
     public async Task Transaction_ReturnsPerCommandResultsInOrder(bool useFake, int protocol)
     {
         await using var server = useFake ? new RespireFakeServer() : null;

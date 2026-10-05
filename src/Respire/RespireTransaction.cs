@@ -241,7 +241,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
     }
 
     /// <summary>Executes the shared transaction path and reports a watched abort.</summary>
-    private protected async ValueTask<bool> CommitCoreAsync(CancellationToken cancellationToken)
+    private protected async ValueTask<bool> CommitCoreAsync(CancellationToken cancellationToken, bool validateEmptyWatch = false)
     {
         ThrowIfCompleted();
         _completed = true;
@@ -260,7 +260,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
         var returnWatchConnection = false;
         try
         {
-            if (_ops.Count == 0)
+            if (_ops.Count == 0 && (!validateEmptyWatch || _watchConnection is null))
             {
                 if (core.Sentinel is not null)
                 {
@@ -272,7 +272,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
             }
 
             // MULTI/EXEC bypasses the regular send path and can contain arbitrary mutations.
-            core.ClientCache?.FlushForUnknownCommand();
+            if (_ops.Count != 0) core.ClientCache?.FlushForUnknownCommand();
 
             RespValue result;
             try
@@ -392,7 +392,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
                 if (connection is null && operationError is not null)
                     RespireTelemetry.RecordUnroutedBatchFailure("MULTI", _ops, static op => op.Operation,
                         core.Options.Database, sentinelStarted, operationError);
-                if (core.Sentinel is not null && _ops.Count == 0)
+                if (core.Sentinel is not null && _ops.Count == 0 && (!validateEmptyWatch || _watchConnection is null))
                 {
                     telemetry.Complete(telemetryOperation, host: null, port: 6379,
                         database: core.Options.Database, error: operationError, batchSize: 0);
@@ -729,4 +729,8 @@ public sealed class RespireWatchedTransaction : RespireTransactionBase
     /// </summary>
     public ValueTask<bool> CommitAsync(CancellationToken cancellationToken = default)
         => CommitCoreAsync(cancellationToken);
+
+    // A read-only retry callback still needs EXEC to validate its decision against WATCH.
+    internal ValueTask<bool> CommitWithWatchValidationAsync(CancellationToken cancellationToken)
+        => CommitCoreAsync(cancellationToken, validateEmptyWatch: true);
 }
