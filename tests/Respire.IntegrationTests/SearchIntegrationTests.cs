@@ -4,9 +4,14 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
-[ClassDataSource<SearchRedisTestContainer>(Shared = SharedType.PerTestSession)]
-public class SearchIntegrationTests(SearchRedisTestContainer fixture)
+[Category(TestCategories.ProtocolIndependent)]
+// FT.HYBRID needs Redis 8.4 or later; indexes only cover their own per-test key prefix.
+[ClassDataSource<ModernRedisTestContainer>(Shared = SharedType.PerTestSession)]
+public class SearchIntegrationTests(ModernRedisTestContainer fixture)
 {
+    [ClassDataSource<ModernRedisTestContainer>(Shared = SharedType.Keyed, Key = TestConstraints.ClientCacheServer)]
+    public required ModernRedisTestContainer CacheServer { get; init; }
+
     private static readonly RespireSearchExpression All = RespireSearchExpression.FromRaw("*");
     private static readonly byte[] Vector = CreateVector();
 
@@ -106,10 +111,10 @@ public class SearchIntegrationTests(SearchRedisTestContainer fixture)
         finally { await DropIndexIfPresentAsync(search, index); }
     }
 
-    [Test, NotInParallel]
+    [Test, NotInParallel(TestConstraints.ClientCacheHits)]
     public async Task QueryAndCursorOperationsRetainCacheWhileIndexMutationsInvalidateIt()
     {
-        await using var client = await ConnectAsync(3, cache: true);
+        await using var client = await ConnectAsync(3, cache: true, CacheServer);
         var search = new RespireSearchClient(client);
         var index = NewIndex();
         var key = index + ":unrelated";
@@ -198,8 +203,8 @@ public class SearchIntegrationTests(SearchRedisTestContainer fixture)
         client.ClientSideCache.GetStatistics().Hits.Should().Be(hits + 1);
     }
 
-    private ValueTask<RespireClient> ConnectAsync(int protocol, bool cache = false)
-        => RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
+    private ValueTask<RespireClient> ConnectAsync(int protocol, bool cache = false, StandaloneRedisTestContainer? server = null)
+        => RespireClient.ConnectAsync(RespireOptions.Parse((server ?? fixture).ConnectionString) with
         { Protocol = (RespProtocol)protocol, ClientSideCache = cache ? new() : null });
 
     private static string NewIndex() => "search:" + Guid.NewGuid().ToString("N");
@@ -208,7 +213,9 @@ public class SearchIntegrationTests(SearchRedisTestContainer fixture)
     {
         try { await search.DropIndexAsync(index, deleteDocuments: true); }
         catch (RespireServerException error) when (error.Message.Equals($"{index}: no such index", StringComparison.Ordinal)
-            || error.Message.Equals("Unknown Index name", StringComparison.OrdinalIgnoreCase))
+            || error.Message.Equals("Unknown Index name", StringComparison.OrdinalIgnoreCase)
+            // Redis 8.10 reports a missing index with an error code prefix.
+            || error.Message.EndsWith($"Index not found: {index}", StringComparison.Ordinal))
         {
             // Setup can fail before CREATE succeeds. Do not replace that failure during cleanup.
         }

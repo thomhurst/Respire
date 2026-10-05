@@ -9,7 +9,6 @@ namespace Respire.Coordination.Tests;
 public class FencedLockWireTests
 {
     [Test]
-    [NotInParallel]
     public async Task CancellationAfterSuccessfulSemaphoreReplyReleasesUnreturnedPermit()
     {
         await using var server = new FakeRespServer(
@@ -40,7 +39,6 @@ public class FencedLockWireTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task CancellationAfterSuccessfulReadWriteReplyReleasesUnreturnedLease()
     {
         var evalCount = 0;
@@ -288,7 +286,7 @@ public class FencedLockWireTests
     }
 
     [Test]
-    [NotInParallel] // Activity completion deterministically cancels after the script reply was parsed.
+    // Activity completion deterministically cancels after the script reply was parsed.
     public async Task CancellationAfterSuccessfulReplyReleasesTheUnreturnedLease()
     {
         await using var server = new FakeRespServer("$1\r\n1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
@@ -512,8 +510,11 @@ public class FencedLockWireTests
         var pending = new RespireCoordination(client).AcquireFencedLockAsync(
             "lease", "counter", TimeSpan.FromSeconds(10)).AsTask();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (Volatile.Read(ref attempts) == 0) await Task.Delay(5, timeout.Token);
-        await Task.Delay(50, timeout.Token);
+        // The waiter parks after the PTTL that follows the contended attempt. Disposing earlier races
+        // a command send instead of stopping the wait.
+        while (Volatile.Read(ref attempts) == 0 || !server.ReceivedCommands.Contains("PTTL lease"))
+            await Task.Delay(5, timeout.Token);
+        await Task.Delay(200, timeout.Token);
 
         await client.DisposeAsync();
 

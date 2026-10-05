@@ -7,6 +7,7 @@ using TUnit.Core.Interfaces;
 namespace Respire.IntegrationTests;
 
 // Notifications are configured by the fixture, never by the subscription API.
+// Redis 8.8 stream tests share this server; every test uses its own database.
 public sealed class KeyNotificationRedisContainer : IAsyncInitializer, IAsyncDisposable
 {
     private readonly RedisContainer _container = new RedisBuilder("redis:8.8-alpine")
@@ -18,10 +19,13 @@ public sealed class KeyNotificationRedisContainer : IAsyncInitializer, IAsyncDis
         Database = TestContext.Current!.Isolation.UniqueId,
         Protocol = (RespProtocol)protocol, Connections = 1, AllowAdmin = true,
     };
+    public string ConnectionString =>
+        $"redis://{_container.Hostname}:{_container.GetMappedPublicPort(6379)}/{TestContext.Current!.Isolation.UniqueId}";
     public Task InitializeAsync() => _container.StartAsync();
     public ValueTask DisposeAsync() => _container.DisposeAsync();
 }
 
+[Category(TestCategories.ProtocolIndependent)]
 [ClassDataSource<KeyNotificationRedisContainer>(Shared = SharedType.PerTestSession)]
 public class KeyNotificationIntegrationTests(KeyNotificationRedisContainer fixture)
 {
@@ -237,6 +241,7 @@ public sealed class KeyNotificationLegacyRedisContainer : IAsyncInitializer, IAs
     public ValueTask DisposeAsync() => _container.DisposeAsync();
 }
 
+[Category(TestCategories.ProtocolIndependent)]
 [ClassDataSource<KeyNotificationLegacyRedisContainer>(Shared = SharedType.PerTestSession)]
 public class KeyNotificationLegacyIntegrationTests(KeyNotificationLegacyRedisContainer fixture)
 {

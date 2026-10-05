@@ -28,7 +28,6 @@ public class DistributedLockTests(RedisTestContainer fixture)
         _stackExchangeMultiplexer = await ConnectionMultiplexer.ConnectAsync(_fixture.StackExchangeConnectionString);
         _stackExchangeDb = _stackExchangeMultiplexer.GetDatabase();
 
-        await _stackExchangeDb.ExecuteAsync("FLUSHDB");
     }
 
     [After(Test)]

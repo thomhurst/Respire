@@ -972,7 +972,6 @@ public class ClusterNodeIdentityTests
     }
 
     [Test]
-    [NotInParallel]
     [Arguments(false)]
     [Arguments(true)]
     public async Task DeferredSkipMetricKeepsOriginalSender(bool evict)
@@ -1005,7 +1004,9 @@ public class ClusterNodeIdentityTests
                 if (tag.Key == "server.address") host = tag.Value as string;
                 if (tag.Key == "server.port") port = tag.Value as int?;
             }
-            if (reason == (evict ? "deferral_evicted" : "deferral_expired")) recorded.Add((host, port));
+            // Other tests' routers share the process-wide meter; only count this test's senders.
+            if (host is not ("original-metric-sender" or "later-metric-sender")) return;
+            if (reason == (evict ? "deferral_evicted" : "deferral_expired")) lock (recorded) recorded.Add((host, port));
         });
         listener.Start();
         var migration = new MaintenanceSlotMigration(new("absent-source", 7200), new("target", 7201), "0");

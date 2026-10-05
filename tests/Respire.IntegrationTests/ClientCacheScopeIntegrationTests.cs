@@ -5,8 +5,8 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
-[ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
-[NotInParallel]
+[ClassDataSource<RedisTestContainer>(Shared = SharedType.Keyed, Key = TestConstraints.ClientCacheServer)]
+[NotInParallel(TestConstraints.ClientCacheHits)]
 public class ClientCacheScopeIntegrationTests(RedisTestContainer fixture)
 {
     [Test]

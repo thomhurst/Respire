@@ -12,11 +12,11 @@ namespace Respire.Coordination.Tests;
 public class HashFieldLeaseWireTests
 {
     [Test]
-    [NotInParallel]
+    [ParallelLimiter<TimingSensitive>]
     public async Task LeaseEstimateStartsAfterCorrectionOrderingBootstrap()
     {
         await using var server = new FakeRespServer(2, ":1\r\n"u8.ToArray());
-        server.DelayReply(0, 250);
+        server.DelayReply(0, 1500);
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespProtocol.Resp2,
@@ -26,7 +26,7 @@ public class HashFieldLeaseWireTests
         });
 
         await using var lease = await (new RespireCoordination(client)
-            .TryAcquireLeaseAsync("registry", "worker", TimeSpan.FromMilliseconds(100))
+            .TryAcquireLeaseAsync("registry", "worker", TimeSpan.FromSeconds(1))
             .AsTask().WaitAsync(TimeSpan.FromSeconds(10)))
             ?? throw new InvalidOperationException("Expected lease acquisition.");
 
@@ -36,7 +36,6 @@ public class HashFieldLeaseWireTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task CancellationAfterSuccessfulReplyReleasesTheLease()
     {
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
@@ -167,11 +166,11 @@ public class HashFieldLeaseWireTests
     }
 
     [Test]
-    [NotInParallel]
+    [ParallelLimiter<TimingSensitive>]
     public async Task QueuedReleaseDeadlineIncludesRenewalWait()
     {
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
-        server.DelayReply(3, 2500);
+        server.DelayReply(3, 3500);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         await using var lease = await new RespireCoordination(client)
             .TryAcquireLeaseAsync("registry", "worker", TimeSpan.FromSeconds(30))
@@ -220,7 +219,7 @@ public class HashFieldLeaseWireTests
     }
 
     [Test]
-    [NotInParallel]
+    [ParallelLimiter<TimingSensitive>]
     public async Task QueuedReleaseDeadlineIncludesAnUnresponsiveRenewal()
     {
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray());
@@ -278,7 +277,6 @@ public class HashFieldLeaseWireTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task CancellationDuringCorrectionOrderingBootstrapSkipsLeaseCleanup()
     {
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray())
@@ -306,7 +304,6 @@ public class HashFieldLeaseWireTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task UncertainAcquisitionCorrectionFollowsEveryPossibleConnectionCopy()
     {
         await using var server = new FakeRespServer(2, ":1\r\n"u8.ToArray())
@@ -344,7 +341,7 @@ public class HashFieldLeaseWireTests
     }
 
     [Test]
-    [NotInParallel]
+    [ParallelLimiter<TimingSensitive>]
     public async Task UncertainAcquisitionCleanupAlsoTargetsPromotedSentinelPrimary()
     {
         await using var oldPrimary = new FakeRespServer(8, ":1\r\n"u8.ToArray())
@@ -403,7 +400,6 @@ public class HashFieldLeaseWireTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task UncertainAcquisitionCleanupAlsoTargetsCurrentClusterOwner()
     {
         await using var currentOwner = new FakeRespServer(":1\r\n"u8.ToArray())
@@ -446,7 +442,7 @@ public class HashFieldLeaseWireTests
     }
 
     [Test]
-    [NotInParallel]
+    [ParallelLimiter<TimingSensitive>]
     [Arguments(true)]
     [Arguments(false)]
     public async Task UncertainCleanupFollowsNewClusterOwnerWhileCurrentOwnerReleaseIsPending(bool originalCorrectionStalls)
@@ -507,7 +503,7 @@ public class HashFieldLeaseWireTests
     }
 
     [Test]
-    [NotInParallel]
+    [ParallelLimiter<TimingSensitive>]
     [Arguments(false)]
     [Arguments(true)]
     public async Task UncertainCleanupRechecksSentinelWhileOldPrimaryCorrectionIsPending(bool promotedReleaseStalls)

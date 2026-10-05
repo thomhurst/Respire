@@ -5,21 +5,23 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
-public sealed class Redis810TimeSeriesContainer() : StandaloneRedisTestContainer("redis:8.10-alpine");
-
-[ClassDataSource<Redis810TimeSeriesContainer>(Shared = SharedType.PerTestSession)]
-public class TimeSeriesReadIntegrationTests(Redis810TimeSeriesContainer fixture)
+[Category(TestCategories.ProtocolIndependent)]
+[ClassDataSource<ModernRedisTestContainer>(Shared = SharedType.PerTestSession)]
+public class TimeSeriesReadIntegrationTests(ModernRedisTestContainer fixture)
 {
+    // Command statistics are server-wide, so the rate assertion reads them on servers that only
+    // serialized commandstats tests use; concurrent readers on the shared fixture cannot disturb it.
+    [ClassDataSource<VersionedServerFixture>(Shared = SharedType.Keyed, Key = VersionedServerFixture.CommandStatsKey)]
+    public required VersionedServerFixture CommandStatsServers { get; init; }
+
     [Test]
+    [NotInParallel(VersionedServerFixture.CommandStatsKey)]
     [Arguments(2)]
     [Arguments(3)]
     public async Task FollowingMissingKeyHasBoundedCommandCount(int protocol)
     {
-        // Command statistics belong only to this test; concurrent readers on the shared fixture
-        // must not make the rate assertion depend on unrelated test scheduling.
-        await using var isolated = new Redis810TimeSeriesContainer();
-        await isolated.InitializeAsync();
-        await using var client = await RespireClient.ConnectAsync($"{isolated.ConnectionString}?protocol={protocol}");
+        var server = await CommandStatsServers.LeaseAsync("redis:8.10-alpine");
+        await using var client = await RespireClient.ConnectAsync(server.ConnectionString(protocol));
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         using var cancel = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
         // Ensure TS.READ is present in commandstats before measuring the follower. Redis may

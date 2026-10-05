@@ -9,7 +9,6 @@ namespace Respire.Tests.Networking;
 public partial class SentinelRoutingTests
 {
     [Test]
-    [NotInParallel]
     [Arguments(false, false, false)]
     [Arguments(true, false, false)]
     [Arguments(false, true, false)]
@@ -42,8 +41,9 @@ public partial class SentinelRoutingTests
             ShouldListenTo = source => source.Name == "Respire",
             Sample = (ref ActivityCreationOptions<ActivityContext> options) => options.Name == "GET"
                 ? ActivitySamplingResult.AllDataAndRecorded : ActivitySamplingResult.None,
-            ActivityStarted = _ =>
+            ActivityStarted = activity =>
             {
+                if (activity.OperationName != "GET" || !TestTelemetry.IsFrom(activity, first.Port, replacement.Port)) return;
                 if (retirements != 0 && !retireReplacement) return;
                 if (coalesce && retirements == 0)
                     follower = client.GetStringAsync("key").AsTask();

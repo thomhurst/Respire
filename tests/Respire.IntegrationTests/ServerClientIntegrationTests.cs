@@ -4,15 +4,23 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
+// Every test pins its protocol or owns its server, so RESPIRE_TEST_PROTOCOL does not apply.
+[Category(TestCategories.ProtocolIndependent)]
 public class ServerClientIntegrationTests
 {
+    [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
+    public required RedisTestContainer Redis7 { get; init; }
+
+    [ClassDataSource<ModernRedisTestContainer>(Shared = SharedType.PerTestSession)]
+    public required ModernRedisTestContainer Redis8 { get; init; }
+
     [Test]
     [Arguments(2)]
     [Arguments(3)]
     public async Task ConnectionControlsStayOnOneSocketAndNode(int protocol)
     {
         // PAUSE affects the whole server, so this test owns its container.
-        await using var container = new RedisBuilder("redis:8.10.0").Build();
+        await using var container = new RedisBuilder("redis:8.10-alpine").Build();
         await container.StartAsync();
         var options = new RespireOptions
         {
@@ -89,12 +97,10 @@ public class ServerClientIntegrationTests
     [Arguments(3)]
     public async Task Redis7PreservesUnsupportedCommandErrors(int protocol)
     {
-        await using var container = new RedisBuilder("redis:7.0.15").Build();
-        await container.StartAsync();
-        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        // Connection-scoped settings only, so the shared Redis 7 server is safe.
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(Redis7.ConnectionString) with
         {
             Connections = 1, AllowAdmin = true, Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3,
-            Endpoints = [new(container.Hostname, container.GetMappedPublicPort(6379))],
         });
         var connection = await client.Server.GetClientConnectionAsync();
         Func<Task> noTouch = async () => await connection.SetNoTouchAsync(true);
@@ -110,26 +116,25 @@ public class ServerClientIntegrationTests
     [Test]
     public async Task TrackingInspectionPreservesClientSideCaching()
     {
-        await using var container = new RedisBuilder("redis:8.10.0").Build();
-        await container.StartAsync();
-        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(Redis8.ConnectionString) with
         {
             Connections = 1, ClientSideCache = new(),
-            Endpoints = [new(container.Hostname, container.GetMappedPublicPort(6379))],
         });
+        var key = $"cached:{Guid.NewGuid():N}";
         var connection = await client.Server.GetClientConnectionAsync();
         var before = await connection.TrackingInfoAsync();
         before.Flags.Should().Contain(["on", "optin"]);
-        await client.Strings.SetAsync("cached", "value");
-        (await client.Strings.GetAsync<string>("cached")).Should().Be("value");
+        await client.Strings.SetAsync(key, "value");
+        (await client.Strings.GetAsync<string>(key)).Should().Be("value");
         var after = await connection.TrackingInfoAsync();
         after.Flags.Should().BeEquivalentTo(before.Flags);
         after.RedirectClientId.Should().Be(before.RedirectClientId);
-        (await client.Strings.GetAsync<string>("cached")).Should().Be("value");
+        (await client.Strings.GetAsync<string>(key)).Should().Be("value");
     }
 }
 
 
+[Category(TestCategories.ProtocolIndependent)]
 [ClassDataSource<ClusterTransactionTestContainer>(Shared = SharedType.PerTestSession)]
 public class ServerClientClusterIntegrationTests(ClusterTransactionTestContainer fixture)
 {

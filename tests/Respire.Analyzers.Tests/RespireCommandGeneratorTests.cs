@@ -5,7 +5,6 @@ using TUnit.Core;
 
 namespace Respire.Analyzers.Tests;
 
-[NotInParallel]
 public class RespireCommandGeneratorTests
 {
     private const string Preamble = "#nullable enable\nusing Respire; using System; using System.Threading; using System.Threading.Tasks;\n";

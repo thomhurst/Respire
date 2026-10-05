@@ -27,9 +27,6 @@ public class ClientComparisonTests
         // Initialize StackExchange.Redis client
         _stackExchangeMultiplexer = await ConnectionMultiplexer.ConnectAsync(_fixture.StackExchangeConnectionString);
         _stackExchangeDb = _stackExchangeMultiplexer.GetDatabase();
-
-        // Clear the database before each test
-        await _stackExchangeDb.ExecuteAsync("FLUSHDB");
     }
 
     [After(HookType.Test)]

@@ -5,6 +5,7 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
+[Category(TestCategories.ProtocolIndependent)]
 public class ServerAclIntegrationTests
 {
     [Test]
@@ -15,7 +16,7 @@ public class ServerAclIntegrationTests
     public async Task AdministerIsolatedUsersAndInspectNodeLocalResults(int protocol, bool modern)
     {
         // ACL state and logs are global to a server, so this test owns the entire server.
-        await using var container = new RedisBuilder(modern ? "redis:7.2.4" : "redis:6.2.14").Build();
+        await using var container = new RedisBuilder(modern ? "redis:7.2-alpine" : "redis:6.2.14-alpine").Build();
         await container.StartAsync();
         var address = $"redis://{container.Hostname}:{container.GetMappedPublicPort(6379)}?protocol={protocol}";
         await using var client = await RespireClient.ConnectAsync(address + "&allowAdmin=true");

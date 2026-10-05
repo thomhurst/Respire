@@ -18,7 +18,6 @@ public class BufferDistributedCacheTests(RedisTestContainer fixture)
     public async Task InitializeAsync()
     {
         _client = await RespireClient.ConnectAsync(fixture.ConnectionString);
-        (await _client.ExecuteAsync("FLUSHDB")).Dispose();
         _cache = new RespireDistributedCache(_client);
     }
 

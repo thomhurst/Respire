@@ -7,6 +7,7 @@ using TUnit.Core.Interfaces;
 
 namespace Respire.IntegrationTests;
 
+[Category(TestCategories.ProtocolIndependent)]
 [RunOn(OS.Linux)]
 [ClassDataSource<UnixSocketRedisFixture>(Shared = SharedType.PerTestSession)]
 public class UnixSocketIntegrationTests(UnixSocketRedisFixture fixture)

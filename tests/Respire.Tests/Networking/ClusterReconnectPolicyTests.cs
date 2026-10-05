@@ -776,7 +776,7 @@ public class ClusterReconnectPolicyTests
     }
 
     [Test]
-    [NotInParallel] // Keep time available for the real READONLY phase deadline and seed fallback.
+    [ParallelLimiter<TimingSensitive>] // Keep time available for the real READONLY phase deadline and seed fallback.
     [Arguments(false)]
     [Arguments(true)]
     public async Task ReadOnlyPhaseCancellationDoesNotPoisonSuccessfulSeedFallback(bool cachedOwner)

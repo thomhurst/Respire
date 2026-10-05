@@ -124,7 +124,7 @@ public class HedgedReadTests
     }
 
     [Test]
-    [NotInParallel]
+    [NotInParallel] // With the HTML reporter disabled this asserts that no other test has enabled Respire telemetry.
     public async Task HedgeRetirementBetweenSelectionAndDispatchDoesNotReplaceOriginalSuccess()
     {
         await using var primary = new FakeRespServer(Bulk("primary"));
@@ -344,7 +344,6 @@ public class HedgedReadTests
     }
 
     [Test]
-    [NotInParallel]
     [Arguments(false)]
     [Arguments(true)]
     public async Task MetricsReportExtraLoadAndContainThrowingListeners(bool throwing)

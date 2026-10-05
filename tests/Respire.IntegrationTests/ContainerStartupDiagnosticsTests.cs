@@ -7,6 +7,7 @@ using static Respire.IntegrationTests.ContainerStartupRetryTests;
 
 namespace Respire.IntegrationTests;
 
+[Category(TestCategories.ProtocolIndependent)]
 public class ContainerStartupDiagnosticsTests
 {
     [Test]

@@ -4,6 +4,7 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
+[Category(TestCategories.ProtocolIndependent)]
 /// <summary>Redis 8 bundles the Bloom, Cuckoo, Count-Min, Top-K, and t-digest data types.</summary>
 [ClassDataSource<ModernRedisTestContainer>(Shared = SharedType.PerTestSession)]
 public class ProbabilisticIntegrationTests(ModernRedisTestContainer fixture)

@@ -1922,7 +1922,6 @@ public partial class SentinelRoutingTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task RetiredSwitchSourceResolutionQueuesFreshDiscoveryBehindActiveHint()
     {
         await using var client = RespireClient.Create(Options(26379));
@@ -2145,7 +2144,9 @@ public partial class SentinelRoutingTests
         await using var original = Primary();
         await using var unavailable = Primary((_, command) => command == "ROLE"
             ? "*1\r\n$5\r\nslave\r\n"u8.ToArray() : null);
-        unavailable.DelayCommand("ROLE", 100);
+        // Each hint must be queued while the previous ROLE probe is still pending. A short
+        // delay lets a loaded scheduler finish the round first and strand the next hint.
+        unavailable.DelayCommand("ROLE", 1_000);
         var port = original.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
         await using var client = RespireClient.Create(Options(sentinel.Port) with
@@ -2775,7 +2776,6 @@ public partial class SentinelRoutingTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task EndpointSnapshotsNeverMixPublishedGenerations()
     {
         await using var client = RespireClient.Create(Options(26379));
@@ -2823,7 +2823,6 @@ public partial class SentinelRoutingTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task StaleQueuedSwitchSourceCannotRetireNewGeneration()
     {
         await using var client = RespireClient.Create(Options(26379));
@@ -2842,7 +2841,6 @@ public partial class SentinelRoutingTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task RapidFailoversDoNotWaitForBlockedObserversAndDrainNotificationsInOrder()
     {
         const int handoffs = 12;
@@ -3143,7 +3141,6 @@ public partial class SentinelRoutingTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task RetriedStreamedSetCompletesOneTelemetryScope()
     {
         var rejectWrites = false;
@@ -4144,7 +4141,6 @@ public partial class SentinelRoutingTests
     }
 
     [Test]
-    [NotInParallel]
     [Arguments("batch")]
     [Arguments("durability")]
     [Arguments("transaction")]
@@ -4169,7 +4165,12 @@ public partial class SentinelRoutingTests
             ShouldListenTo = source => source.Name == "Respire",
             Sample = (ref ActivityCreationOptions<ActivityContext> options) =>
             {
-                if (options.Name == "SET" || options.Name == "BLPOP" || options.Name.StartsWith("EVALSHA")) samples.Enqueue(options.Tags!.ToDictionary(tag => tag.Key, tag => tag.Value));
+                if (options.Name == "SET" || options.Name == "BLPOP" || options.Name.StartsWith("EVALSHA"))
+                {
+                    var tags = options.Tags!.ToDictionary(tag => tag.Key, tag => tag.Value);
+                    if (tags.TryGetValue("server.port", out var port) && (Equals(port, primary.Port) || Equals(port, sentinel.Port)))
+                        samples.Enqueue(tags);
+                }
                 return ActivitySamplingResult.AllDataAndRecorded;
             },
         };
@@ -4199,7 +4200,6 @@ public partial class SentinelRoutingTests
     }
 
     [Test]
-    [NotInParallel]
     [Arguments("blocking", false)]
     [Arguments("blocking", true)]
     [Arguments("script", false)]
@@ -4238,10 +4238,17 @@ public partial class SentinelRoutingTests
             ShouldListenTo = source => trace && source.Name == "Respire",
             Sample = (ref ActivityCreationOptions<ActivityContext> options) =>
             {
-                if (options.Name.StartsWith(operation)) sampled.Add(options.Tags!.ToDictionary(tag => tag.Key, tag => tag.Value));
+                if (!options.Name.StartsWith(operation)) return ActivitySamplingResult.AllDataAndRecorded;
+                var tags = options.Tags!.ToDictionary(tag => tag.Key, tag => tag.Value);
+                if (tags.TryGetValue("server.port", out var port) && (Equals(port, primary.Port) || Equals(port, sentinel.Port)))
+                    lock (sampled) sampled.Add(tags);
                 return ActivitySamplingResult.AllDataAndRecorded;
             },
-            ActivityStopped = activity => { if (Equals(activity.GetTagItem("db.operation.name"), operation)) activities.Add(activity); },
+            ActivityStopped = activity =>
+            {
+                if (Equals(activity.GetTagItem("db.operation.name"), operation) && TestTelemetry.IsFrom(activity, primary.Port, sentinel.Port))
+                    lock (activities) activities.Add(activity);
+            },
         };
         ActivitySource.AddActivityListener(activityListener);
         var measurements = new List<(double Duration, Dictionary<string, object?> Tags)>();
@@ -4253,8 +4260,9 @@ public partial class SentinelRoutingTests
         };
         meterListener.SetMeasurementEventCallback<double>((_, duration, tags, _) =>
         {
+            if (!TestTelemetry.IsFrom(tags, primary.Port, sentinel.Port)) return;
             var captured = tags.ToArray().ToDictionary(pair => pair.Key, pair => pair.Value);
-            if (Equals(captured["db.operation.name"], operation)) measurements.Add((duration, captured));
+            if (Equals(captured["db.operation.name"], operation)) lock (measurements) measurements.Add((duration, captured));
         });
         meterListener.Start();
         var execution = ExecuteAsync();
@@ -4697,7 +4705,7 @@ public partial class SentinelRoutingTests
     [Arguments("transaction", true)]
     [Arguments("identity", false)]
     [Arguments("identity", true)]
-    [NotInParallel]
+    [ParallelLimiter<TimingSensitive>] // The real 3-second command timeout must expire in the connecting stage.
     public async Task OtherSentinelAcquisitionTimeoutsDoNotReportDiscoveryPeers(string kind, bool rediscovery)
     {
         await using var primary = Primary();

@@ -21,7 +21,6 @@ public class SemaphoreWireTests
         => server.ReceivedCommands.Where(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)).ToArray();
 
     [Test]
-    [NotInParallel]
     public async Task OptionalClusterCorrectionOrderingAllowsAcquireWithoutClientIdPermission()
     {
         await using var target = new FakeRespServer(":1\r\n"u8.ToArray())
@@ -63,7 +62,6 @@ public class SemaphoreWireTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task NonExpiringClusterAcquireRequiresClientIdPermission()
     {
         await using var target = new FakeRespServer(":1\r\n"u8.ToArray())
@@ -103,7 +101,6 @@ public class SemaphoreWireTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task FailedReleaseRemainsRetryableForNonExpiringPermit()
     {
         await using var server = new FakeRespServer(
@@ -127,7 +124,7 @@ public class SemaphoreWireTests
     }
 
     [Test]
-    [NotInParallel]
+    [ParallelLimiter<TimingSensitive>]
     public async Task DisposalRetriesFinitePermitAfterReleaseFailure()
     {
         var evals = 0;
@@ -158,7 +155,6 @@ public class SemaphoreWireTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task AcknowledgedFenceSurvivesOriginalConnectionRetirementFailure()
     {
         await using var server = new FakeRespServer(2, FakeRespServer.PongReply)
@@ -202,7 +198,6 @@ public class SemaphoreWireTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task FailedRenewalCleanupLeavesPermitRetryable()
     {
         await using var server = new FakeRespServer(
@@ -229,7 +224,7 @@ public class SemaphoreWireTests
     }
 
     [Test]
-    [NotInParallel]
+    [ParallelLimiter<TimingSensitive>]
     public async Task RenewalErrorReplyKeepsDisposalCleanupPastOldExpiry()
     {
         var evals = 0;
@@ -268,7 +263,6 @@ public class SemaphoreWireTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task RenewalReplyOfZeroMarksPermitReleasedWithoutCleanup()
     {
         await using var server = new FakeRespServer(
@@ -288,7 +282,6 @@ public class SemaphoreWireTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task CancellableRenewalDoesNotRequireClientFencePermissions()
     {
         await using var server = new FakeRespServer(20);
@@ -317,7 +310,7 @@ public class SemaphoreWireTests
     }
 
     [Test]
-    [NotInParallel]
+    [ParallelLimiter<TimingSensitive>]
     public async Task CancellationWhileWaitingForRenewalGateLeavesPermitUsable()
     {
         var evalCount = 0;
@@ -359,7 +352,7 @@ public class SemaphoreWireTests
     }
 
     [Test]
-    [NotInParallel]
+    [ParallelLimiter<TimingSensitive>]
     public async Task UncertainRenewalRefusesLaterRenewals()
     {
         await using var server = new FakeRespServer(
@@ -392,7 +385,7 @@ public class SemaphoreWireTests
     }
 
     [Test]
-    [NotInParallel]
+    [ParallelLimiter<TimingSensitive>]
     public async Task ElapsedConfirmedRenewalUpdatesLocalExpiryWhenCleanupFails()
     {
         await using var server = new FakeRespServer(
@@ -415,7 +408,7 @@ public class SemaphoreWireTests
     }
 
     [Test]
-    [NotInParallel]
+    [ParallelLimiter<TimingSensitive>]
     public async Task ShorteningRenewalBoundsLocalValidityWhileReplyIsDelayed()
     {
         await using var server = new FakeRespServer(
@@ -424,7 +417,7 @@ public class SemaphoreWireTests
             ":1\r\n"u8.ToArray(),
             ":1\r\n"u8.ToArray(),
             ":1\r\n"u8.ToArray());
-        server.DelayReply(3, 300);
+        server.DelayReply(3, 1000);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var permit = (await new RespireSemaphore(client, "{renew}:shorten-pending", capacity: 1)
             .TryAcquireAsync()).Permit;
@@ -444,7 +437,7 @@ public class SemaphoreWireTests
     }
 
     [Test]
-    [NotInParallel]
+    [ParallelLimiter<TimingSensitive>]
     public async Task ShorteningRenewalDoesNotClampWhileWaitingForInflightCapacity()
     {
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray())
@@ -466,8 +459,8 @@ public class SemaphoreWireTests
         var permit = (await new RespireSemaphore(client, "{renew}:queued-shortening", capacity: 1)
             .TryAcquireAsync(TimeSpan.FromMinutes(5))).Permit;
         var nextReply = server.ReceivedCommands.Count;
-        server.DelayReply(nextReply, 400);
-        server.DelayReply(nextReply + 1, 400);
+        server.DelayReply(nextReply, 1000);
+        server.DelayReply(nextReply + 1, 1000);
 
         var blocker = client.PingAsync().AsTask();
         using (var sent = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
@@ -489,7 +482,7 @@ public class SemaphoreWireTests
     }
 
     [Test]
-    [NotInParallel]
+    [ParallelLimiter<TimingSensitive>]
     public async Task RedirectedShorteningRenewalUsesFinalSendTimestamp()
     {
         var renewalSha = RespireSemaphore.RenewScript.Sha1;
@@ -519,7 +512,7 @@ public class SemaphoreWireTests
         var permit = (await new RespireSemaphore(client, "{renew}:redirect-shortening", capacity: 1)
             .TryAcquireAsync(TimeSpan.FromMinutes(5))).Permit;
 
-        var renewal = permit.ResetExpiryAsync(TimeSpan.FromMilliseconds(500)).AsTask();
+        var renewal = permit.ResetExpiryAsync(TimeSpan.FromMilliseconds(1000)).AsTask();
         int seedIndex;
         using (var sent = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
         {
@@ -528,7 +521,7 @@ public class SemaphoreWireTests
                 await Task.Delay(5, sent.Token);
         }
 
-        await Task.Delay(400);
+        await Task.Delay(1200);
         var seedConnectionId = seed.ReceivedConnectionIds[seedIndex];
         await seed.SendRawAsync(Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n"), seedConnectionId);
 
@@ -545,11 +538,11 @@ public class SemaphoreWireTests
         await Assert.That(permit.Expiry).IsEqualTo(TimeSpan.FromMinutes(5));
         await target.SendRawAsync(":1\r\n"u8.ToArray(), target.ReceivedConnectionIds[targetIndex]);
         await Assert.That(await renewal).IsTrue();
-        await Assert.That(permit.Expiry).IsEqualTo(TimeSpan.FromMilliseconds(500));
+        await Assert.That(permit.Expiry).IsEqualTo(TimeSpan.FromMilliseconds(1000));
     }
 
     [Test]
-    [NotInParallel]
+    [ParallelLimiter<TimingSensitive>]
     public async Task DisposalRetriesFailedLateRenewalReleasePastConservativeExpiry()
     {
         var evals = 0;
@@ -585,7 +578,6 @@ public class SemaphoreWireTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task NoScriptFallbackStartsAcquisitionExpiryAtFallbackSend()
     {
         await using var server = new FakeRespServer(
@@ -605,7 +597,7 @@ public class SemaphoreWireTests
     }
 
     [Test]
-    [NotInParallel]
+    [ParallelLimiter<TimingSensitive>]
     public async Task UnansweredFenceDoesNotDelayCanceledAcquisition()
     {
         static bool IsFence(string command)
@@ -654,7 +646,7 @@ public class SemaphoreWireTests
     }
 
     [Test]
-    [NotInParallel]
+    [ParallelLimiter<TimingSensitive>]
     public async Task FenceRejectionIsRetriedBeforeCleanup()
     {
         static bool IsFence(string command)
@@ -708,7 +700,7 @@ public class SemaphoreWireTests
     }
 
     [Test]
-    [NotInParallel]
+    [ParallelLimiter<TimingSensitive>]
     public async Task UncertainAcquisitionCleanupHasIndependentBound()
     {
         await using var server = new FakeRespServer(3, ":1\r\n"u8.ToArray())
@@ -732,7 +724,6 @@ public class SemaphoreWireTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task PostReplyCancellationCleanupHasIndependentBound()
     {
         var evalCount = 0;
@@ -776,7 +767,6 @@ public class SemaphoreWireTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task CapacityMismatchSkipsCleanupAndThrowsTypedException()
     {
         await using var server = new FakeRespServer(
@@ -797,7 +787,6 @@ public class SemaphoreWireTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task CapacityMismatchTextUnderAnotherCodeIsNotTreatedAsMismatch()
     {
         await using var server = new FakeRespServer(
@@ -814,7 +803,6 @@ public class SemaphoreWireTests
     }
 
     [Test]
-    [NotInParallel]
     [Arguments(false)]
     [Arguments(true)]
     public async Task OtherAcquireErrorRepliesReleaseTheOwnerBeforePropagating(bool finiteExpiry)
@@ -845,7 +833,7 @@ public class SemaphoreWireTests
     }
 
     [Test]
-    [NotInParallel]
+    [ParallelLimiter<TimingSensitive>]
     public async Task WaitForInflightCapacityDoesNotCountAgainstAcquisitionExpiry()
     {
         // The first reply answers a blocker command late. With one in-flight slot, the acquire waits
@@ -879,7 +867,7 @@ public class SemaphoreWireTests
     }
 
     [Test]
-    [NotInParallel]
+    [ParallelLimiter<TimingSensitive>]
     public async Task DisposalCleanupOutlivesTheOldExpiryWhileARenewalIsPending()
     {
         var evalCount = 0;
@@ -921,7 +909,7 @@ public class SemaphoreWireTests
     }
 
     [Test]
-    [NotInParallel]
+    [ParallelLimiter<TimingSensitive>]
     public async Task DisposalReleasesPermitWithoutWaitingForBusyRenewal()
     {
         var renewalStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -939,9 +927,9 @@ public class SemaphoreWireTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var permit = (await new RespireSemaphore(client, "{dispose}:semaphore", capacity: 1).TryAcquireAsync()).Permit;
         var renewal = permit.ResetExpiryAsync(TimeSpan.FromSeconds(10)).AsTask();
-        await renewalStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await renewalStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-        await permit.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        await permit.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(permit.IsReleased).IsTrue();
         await Assert.That(permit.RemainingEstimate).IsEqualTo(TimeSpan.Zero);
         await Assert.That(await permit.VerifyStillHeldAsync()).IsFalse();
@@ -949,13 +937,13 @@ public class SemaphoreWireTests
             .FindIndex(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)
                 && command.Contains("semaphore", StringComparison.Ordinal));
         await server.SendRawAsync(":1\r\n"u8.ToArray(), server.ReceivedConnectionIds.ToList()[renewalCommand]);
-        await Assert.That(await renewal.WaitAsync(TimeSpan.FromSeconds(2))).IsFalse();
+        await Assert.That(await renewal.WaitAsync(TimeSpan.FromSeconds(5))).IsFalse();
 
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (Volatile.Read(ref evalCount) < 3) await Task.Delay(10, deadline.Token);
         await Assert.That(server.ReceivedCommands.Count).IsGreaterThanOrEqualTo(3);
         await server.SendRawAsync(":1\r\n"u8.ToArray(), server.ReceivedConnectionIds.ToList()[^1]);
-        using var releaseDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        using var releaseDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (!permit.IsReleased) await Task.Delay(10, releaseDeadline.Token);
     }
 

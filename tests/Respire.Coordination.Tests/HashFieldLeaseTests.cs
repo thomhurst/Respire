@@ -9,18 +9,26 @@ namespace Respire.Coordination.Tests;
 
 public class HashFieldLeaseTests
 {
+    [ClassDataSource<SharedRedis72>(Shared = SharedType.PerTestSession)]
+    public required SharedRedis72 Redis72 { get; init; }
+
+    [ClassDataSource<SharedRedis74>(Shared = SharedType.PerTestSession)]
+    public required SharedRedis74 Redis74 { get; init; }
+
+    [ClassDataSource<SharedRedis74Cluster>(Shared = SharedType.PerTestSession)]
+    public required SharedRedis74Cluster Cluster { get; init; }
+
     [Test]
-    [NotInParallel]
     public async Task BinaryFieldLeaseExpiresIndependentlyAndRejectsStaleOwner()
     {
-        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });
+        var fixture = Redis74;
         await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions() with
         {
             Protocol = RespProtocol.Resp3,
             Connections = 1,
             ClientSideCache = new(),
         });
-        var view = client.WithKeyPrefix("tenant:");
+        var view = client.WithKeyPrefix(SharedRespireContainer.Prefix("tenant"));
         var coordination = new RespireCoordination(view);
         byte[] hashBytes = [0xff, 0, 1];
         byte[] fieldBytes = [0xff, 0, 2];
@@ -51,57 +59,61 @@ public class HashFieldLeaseTests
     [Test]
     public async Task OlderRedisFailsBeforeWritingAField()
     {
-        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.2-alpine" });
+        var fixture = Redis72;
+        var registry = SharedRespireContainer.Key("registry");
         await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions() with { Connections = 1 });
         var coordination = new RespireCoordination(client);
 
         var error = await Assert.That(async () => await coordination.TryAcquireLeaseAsync(
-                "registry", "worker-1", TimeSpan.FromSeconds(1)))
+                registry, "worker-1", TimeSpan.FromSeconds(1)))
             .Throws<RespireServerException>();
         await Assert.That(error!.Message).Contains("Redis 7.4+");
-        await Assert.That(await client.Hashes.GetBytesAsync("registry", "worker-1")).IsNull();
+        await Assert.That(await client.Hashes.GetBytesAsync(registry, "worker-1")).IsNull();
     }
 
     [Test]
     public async Task OlderRedisReportsUnsupportedLeaseExpiryEvenWhenFieldIsOccupied()
     {
-        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.2-alpine" });
+        var fixture = Redis72;
+        var registry = SharedRespireContainer.Key("registry");
         await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions() with { Connections = 1 });
-        await client.Hashes.SetAsync("registry", "worker-1", "another owner");
+        await client.Hashes.SetAsync(registry, "worker-1", "another owner");
         var coordination = new RespireCoordination(client);
 
         var error = await Assert.That(async () => await coordination.TryAcquireLeaseAsync(
-                "registry", "worker-1", TimeSpan.FromSeconds(1)))
+                registry, "worker-1", TimeSpan.FromSeconds(1)))
             .Throws<RespireServerException>();
         await Assert.That(error!.Message).Contains("Redis 7.4+");
-        await Assert.That(await client.Hashes.GetStringAsync("registry", "worker-1"))
+        await Assert.That(await client.Hashes.GetStringAsync(registry, "worker-1"))
             .IsEqualTo("another owner");
     }
 
     [Test]
     public async Task ExpiringHashKeyIsRejectedBeforeLeaseFieldIsWritten()
     {
-        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });
+        var fixture = Redis74;
+        var registry = SharedRespireContainer.Key("registry");
         await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions() with { Connections = 1 });
-        await client.Hashes.SetAsync("registry", "unrelated", "value");
-        await client.Keys.ExpireAsync("registry", RespireExpiry.In(TimeSpan.FromSeconds(30)));
+        await client.Hashes.SetAsync(registry, "unrelated", "value");
+        await client.Keys.ExpireAsync(registry, RespireExpiry.In(TimeSpan.FromSeconds(30)));
         var coordination = new RespireCoordination(client);
 
         var error = await Assert.That(async () => await coordination.TryAcquireLeaseAsync(
-                "registry", "worker", TimeSpan.FromSeconds(5)))
+                registry, "worker", TimeSpan.FromSeconds(5)))
             .Throws<RespireServerException>();
         await Assert.That(error!.Message).Contains("hash key without key expiration");
-        await Assert.That(await client.Hashes.GetBytesAsync("registry", "worker")).IsNull();
+        await Assert.That(await client.Hashes.GetBytesAsync(registry, "worker")).IsNull();
     }
 
     [Test]
     public async Task LeaseDurationReportsWholeMillisecondsAppliedByRedis()
     {
-        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });
+        var fixture = Redis74;
+        var registry = SharedRespireContainer.Key("registry");
         await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions() with { Connections = 1 });
         var coordination = new RespireCoordination(client);
         var requested = TimeSpan.FromTicks(TimeSpan.TicksPerMillisecond * 1500 + 7);
-        await using var lease = await coordination.TryAcquireLeaseAsync("registry", "worker", requested)
+        await using var lease = await coordination.TryAcquireLeaseAsync(registry, "worker", requested)
             ?? throw new InvalidOperationException("Expected lease acquisition.");
 
         await Assert.That(lease.Duration).IsEqualTo(TimeSpan.FromMilliseconds(1500));
@@ -112,7 +124,8 @@ public class HashFieldLeaseTests
     [Test]
     public async Task EarlyReleaseWakesLeaseWaiterBeforeExpiry()
     {
-        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });
+        var fixture = Redis74;
+        var registry = SharedRespireContainer.Key("registry");
         await using var ownerClient = await RespireClient.ConnectAsync(fixture.CreateOptions() with
         {
             Protocol = RespProtocol.Resp3,
@@ -126,10 +139,10 @@ public class HashFieldLeaseTests
         var ownerCoordination = new RespireCoordination(ownerClient);
         var waiterCoordination = new RespireCoordination(waiterClient);
         await using var owner = await ownerCoordination.TryAcquireLeaseAsync(
-            "registry", "worker", TimeSpan.FromSeconds(20))
+            registry, "worker", TimeSpan.FromSeconds(20))
             ?? throw new InvalidOperationException("Expected lease acquisition.");
 
-        var waiting = waiterCoordination.AcquireLeaseAsync("registry", "worker", TimeSpan.FromSeconds(20)).AsTask();
+        var waiting = waiterCoordination.AcquireLeaseAsync(registry, "worker", TimeSpan.FromSeconds(20)).AsTask();
         await Task.Delay(100);
         await Assert.That(waiting.IsCompleted).IsFalse();
         await Assert.That(await owner.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
@@ -140,17 +153,12 @@ public class HashFieldLeaseTests
     [Test]
     public async Task ClusterKeepsHashFieldLeaseOperationsOnThePrefixedSlotOwner()
     {
-        await using var fixture = await RespireContainerFixture.StartAsync(new()
-        {
-            Topology = RespireContainerTopology.Cluster,
-            Image = "redis:7.4-alpine",
-        });
-        await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions() with
+        await using var client = await RespireClient.ConnectAsync(Cluster.CreateOptions() with
         {
             Protocol = RespProtocol.Resp3,
             Connections = 1,
         });
-        var view = client.WithKeyPrefix("coordination:");
+        var view = client.WithKeyPrefix(SharedRespireContainer.Prefix("coordination"));
         var coordination = new RespireCoordination(view);
         await using var lease = await coordination.TryAcquireLeaseAsync(
             "{tenant}:leases", "{worker}:binary-field"u8.ToArray(), TimeSpan.FromSeconds(5))
@@ -164,16 +172,13 @@ public class HashFieldLeaseTests
     }
 
     [Test]
+    // Dedicated: this test promotes the replica.
     public async Task PromotedReplicaCanReacquireAfterReplicatedFieldExpiry()
     {
-        await using var fixture = await RespireContainerFixture.StartAsync(new()
-        {
-            Topology = RespireContainerTopology.Sentinel,
-            Image = "redis:7.4-alpine",
-        });
+        await using var fixture = await RedisReplicaPair.StartAsync("redis:7.4-alpine");
         await using var primary = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [fixture.DataEndpoints[0]],
+            Endpoints = [fixture.Primary],
             Connections = 1,
             Protocol = RespProtocol.Resp3,
             AllowAdmin = true,
@@ -189,7 +194,7 @@ public class HashFieldLeaseTests
 
         await using var promoted = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [fixture.DataEndpoints[1]],
+            Endpoints = [fixture.Replica],
             Connections = 1,
             Protocol = RespProtocol.Resp3,
             AllowAdmin = true,
@@ -200,7 +205,7 @@ public class HashFieldLeaseTests
 
         await using var replacementClient = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [fixture.DataEndpoints[1]],
+            Endpoints = [fixture.Replica],
             Connections = 1,
             Protocol = RespProtocol.Resp3,
         });

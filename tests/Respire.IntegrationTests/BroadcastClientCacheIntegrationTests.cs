@@ -5,8 +5,8 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
-[ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
-[NotInParallel]
+[ClassDataSource<RedisTestContainer>(Shared = SharedType.Keyed, Key = TestConstraints.ClientCacheServer)]
+[NotInParallel(TestConstraints.ClientCacheHits)]
 public class BroadcastClientCacheIntegrationTests(RedisTestContainer fixture)
 {
     [Test]
@@ -95,7 +95,8 @@ public class BroadcastClientCacheIntegrationTests(RedisTestContainer fixture)
     }
 }
 
-[NotInParallel]
+[Category(TestCategories.ProtocolIndependent)]
+[ParallelLimiter<DockerHeavy>]
 public class BroadcastClientCacheTopologyTests
 {
     [Test]

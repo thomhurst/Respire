@@ -4,10 +4,11 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
-[ClassDataSource<ModernRedisTestContainer>(Shared = SharedType.PerTestSession)]
+[Category(TestCategories.ProtocolIndependent)]
+[ClassDataSource<ModernRedisTestContainer>(Shared = SharedType.Keyed, Key = TestConstraints.ClientCacheServer)]
 public class ProbabilisticCacheIntegrationTests(ModernRedisTestContainer fixture)
 {
-    [Test, NotInParallel]
+    [Test, NotInParallel(TestConstraints.ClientCacheHits)]
     [Arguments("bloom")]
     [Arguments("cuckoo")]
     [Arguments("cms")]
@@ -54,7 +55,7 @@ public class ProbabilisticCacheIntegrationTests(ModernRedisTestContainer fixture
         cache.GetStatistics().Hits.Should().Be(hits + 1);
     }
 
-    [Test, NotInParallel]
+    [Test, NotInParallel(TestConstraints.ClientCacheHits)]
     [Arguments(false)]
     [Arguments(true)]
     public async Task MergeInvalidatesDestinationAndRetainsCachedSource(bool digest)

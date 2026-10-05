@@ -6,10 +6,11 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
+[Category(TestCategories.ProtocolIndependent)]
 public class HedgedReadIntegrationTests
 {
     [Test]
-    [NotInParallel]
+    [ParallelLimiter<DockerHeavy>]
     [Arguments(RespireContainerServer.Redis, false, RespProtocol.Resp2)]
     [Arguments(RespireContainerServer.Redis, false, RespProtocol.Resp3)]
     [Arguments(RespireContainerServer.Redis, true, RespProtocol.Resp2)]
@@ -58,7 +59,7 @@ public class HedgedReadIntegrationTests
     }
 
     [Test]
-    [NotInParallel]
+    [ParallelLimiter<DockerHeavy>]
     [Arguments(RespProtocol.Resp2)]
     [Arguments(RespProtocol.Resp3)]
     public async Task PausedClusterReplicaLosesToItsSlotPrimary(RespProtocol protocol)

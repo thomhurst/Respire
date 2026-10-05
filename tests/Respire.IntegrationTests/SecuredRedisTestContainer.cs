@@ -21,8 +21,7 @@ public sealed class SecuredRedisTestContainer : IAsyncInitializer, IAsyncDisposa
 
     public async Task InitializeAsync()
     {
-        var container = new ContainerBuilder()
-            .WithImage("redis:7-alpine")
+        var container = new ContainerBuilder("redis:7.4.11-alpine")
             .WithPortBinding(RedisPort, true)
             .WithCommand("redis-server", "--requirepass", Password)
             .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(RedisPort))

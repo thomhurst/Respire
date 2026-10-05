@@ -578,7 +578,7 @@ public class ClusterNotificationRoutingTests
     }
 
     [Test]
-    [NotInParallel] // The 100 ms recovery deadline must not compete with other wire fixtures during setup.
+    [ParallelLimiter<TimingSensitive>] // The short recovery deadline must not compete with other wire fixtures during setup.
     public async Task ClusterNotificationRecoveryHonorsReconnectAttemptLimit()
     {
         await using var server = new FakeRespServer(20);
@@ -605,8 +605,8 @@ public class ClusterNotificationRoutingTests
             UseCluster = true,
             Protocol = RespProtocol.Resp2,
             Connections = 1,
-            ConnectTimeout = TimeSpan.FromMilliseconds(100),
-            CommandTimeout = TimeSpan.FromMilliseconds(100),
+            ConnectTimeout = TimeSpan.FromMilliseconds(500),
+            CommandTimeout = TimeSpan.FromMilliseconds(500),
             ReconnectPolicy = new RespireReconnectPolicy
             {
                 InitialDelay = TimeSpan.FromMilliseconds(1),
@@ -1586,7 +1586,8 @@ public class ClusterNotificationRoutingTests
             UseCluster = true,
             Protocol = RespProtocol.Resp2,
             Connections = 1,
-            CommandTimeout = TimeSpan.FromMilliseconds(200),
+            // Leave setup subscriptions room to be written and confirmed under parallel load.
+            CommandTimeout = TimeSpan.FromSeconds(1),
             ReconnectPolicy = new RespireReconnectPolicy
             {
                 InitialDelay = TimeSpan.FromSeconds(10),

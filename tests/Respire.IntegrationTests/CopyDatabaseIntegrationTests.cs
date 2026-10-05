@@ -18,7 +18,8 @@ public class CopyDatabaseIntegrationTests(RedisTestContainer fixture)
     public async Task CopyTargetsRequestedDatabaseWithoutChangingSource(int protocol, ExecutionMode mode)
     {
         var options = RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol };
-        var destinationDatabase = (options.Database + 1) % 4096;
+        // No test owns the scratch database; the Guid prefix keeps this row's keys apart there.
+        const int destinationDatabase = RedisTestContainer.ScratchDatabase;
         await using var source = await RespireClient.ConnectAsync(options);
         await using var destination = await RespireClient.ConnectAsync(options with { Database = destinationDatabase });
         var prefix = $"copy-db:{Guid.NewGuid():N}:";
@@ -45,6 +46,7 @@ public class CopyDatabaseIntegrationTests(RedisTestContainer fixture)
         // The same key name is valid when its destination database differs.
         (await Copy(sourceView, mode, "source", "source", destinationDatabase)).Should().BeTrue();
         (await destinationView.GetStringAsync("source")).Should().Be("updated");
+        await destinationView.Keys.DeleteAsync("source", "target");
     }
 
     [Test]

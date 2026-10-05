@@ -5,10 +5,10 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
-[ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
 // Exact hit-count assertions require stable tracking connections; shared-container overload can
 // legitimately cause a continuity flush and turn a local hit into a server miss.
-[NotInParallel]
+[ClassDataSource<RedisTestContainer>(Shared = SharedType.Keyed, Key = TestConstraints.ClientCacheServer)]
+[NotInParallel(TestConstraints.ClientCacheHits)]
 public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
 {
     [Test]

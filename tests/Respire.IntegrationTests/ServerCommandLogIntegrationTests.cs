@@ -1,21 +1,28 @@
 using System.Text;
 using FluentAssertions;
-using Testcontainers.Redis;
 using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
-public class ServerCommandLogIntegrationTests
+[Category(TestCategories.ProtocolIndependent)]
+[ClassDataSource<VersionedServerFixture>(Shared = SharedType.PerTestSession)]
+public class ServerCommandLogIntegrationTests(VersionedServerFixture servers)
 {
+    private const string CommandLogKey = "valkey-commandlog";
+
+    // Logging thresholds and resets affect the whole node, so the Valkey cases share a server that
+    // only they use, one case at a time; each case resets every log and threshold it relies on.
+    [ClassDataSource<VersionedServerFixture>(Shared = SharedType.Keyed, Key = CommandLogKey)]
+    public required VersionedServerFixture CommandLogServers { get; init; }
+
     [Test]
+    [NotInParallel(CommandLogKey)]
     [MatrixDataSource]
     public async Task ValkeyLogsKeepUnitsBinaryArgumentsCountsAndIndependentResets([Matrix(2, 3)] int protocol,
         [Matrix(RespireCommandLogType.Slow, RespireCommandLogType.LargeRequest, RespireCommandLogType.LargeReply)] RespireCommandLogType type)
     {
-        // Logging thresholds and resets affect the whole node; each case owns its server.
-        await using var container = new RedisBuilder("valkey/valkey:8.1.3-alpine").Build();
-        await container.StartAsync();
-        var address = $"redis://{container.Hostname}:{container.GetMappedPublicPort(6379)}?protocol={protocol}";
+        var lease = await CommandLogServers.LeaseAsync("valkey/valkey:8.1-alpine");
+        var address = lease.ConnectionString(protocol);
         await using var client = await RespireClient.ConnectAsync(address + "&allowAdmin=true&connections=1&clientName=commandlog-owner");
         var server = client.WithKeyPrefix("ignored:").Server;
         string[] thresholds = ["commandlog-execution-slower-than", "commandlog-request-larger-than", "commandlog-reply-larger-than"];
@@ -44,7 +51,7 @@ public class ServerCommandLogIntegrationTests
         (await server.CommandLogLengthAsync(type)).Should().Be(all.Length);
         var fanOut = await server.CommandLogOnAllNodesAsync(type, -1);
         fanOut.Should().ContainSingle();
-        fanOut[0].Endpoint.Port.Should().Be(container.GetMappedPublicPort(6379));
+        fanOut[0].Endpoint.Port.Should().Be(lease.Port);
         fanOut[0].Value.Select(x => x.Id).Should().Equal(all.Select(x => x.Id));
         (await server.CommandLogLengthOnAllNodesAsync(type)).Single().Value.Should().Be(all.Length);
         foreach (var other in Enum.GetValues<RespireCommandLogType>().Where(x => x != type))
@@ -66,7 +73,7 @@ public class ServerCommandLogIntegrationTests
         await server.AclSetUserAsync("restricted", ["reset", "on", ">commandlog-test-password", "+ping"]);
         await using var restricted = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(container.Hostname, container.GetMappedPublicPort(6379))], Connections = 1,
+            Endpoints = [lease.Endpoint], Connections = 1,
             Protocol = (RespProtocol)protocol, Username = "restricted", Password = "commandlog-test-password",
         });
         Func<Task> denied = async () => await restricted.Server.CommandLogAsync(type);
@@ -81,9 +88,9 @@ public class ServerCommandLogIntegrationTests
     [Arguments(3)]
     public async Task RedisDoesNotSilentlySubstituteSlowlog(int protocol)
     {
-        await using var container = new RedisBuilder("redis:7.2.4").Build();
-        await container.StartAsync();
-        await using var client = await RespireClient.ConnectAsync($"redis://{container.Hostname}:{container.GetMappedPublicPort(6379)}?protocol={protocol}&allowAdmin=true");
+        // Unsupported commands change nothing, so the shared Redis 7.2 server is safe.
+        var lease = await servers.LeaseAsync("redis:7.2-alpine");
+        await using var client = await RespireClient.ConnectAsync(lease.ConnectionString(protocol) + "&allowAdmin=true");
         foreach (var type in Enum.GetValues<RespireCommandLogType>())
         {
             Func<Task>[] unsupported = [async () => await client.Server.CommandLogAsync(type),

@@ -9,7 +9,9 @@ using TUnit.Core.Interfaces;
 
 namespace Respire.IntegrationTests;
 
-[NotInParallel]
+[Category(TestCategories.ProtocolIndependent)]
+// One test restarts a primary of this class's own cluster, so these tests exclude only each other.
+[NotInParallel(nameof(ClusterKeyNotificationRedisCluster))]
 [ClassDataSource<ClusterKeyNotificationRedisCluster>(Shared = SharedType.PerTestSession)]
 public sealed class ClusterKeyNotificationIntegrationTests(ClusterKeyNotificationRedisCluster cluster)
 {

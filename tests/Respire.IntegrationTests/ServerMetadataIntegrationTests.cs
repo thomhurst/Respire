@@ -4,7 +4,9 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
-public class ServerMetadataIntegrationTests
+[Category(TestCategories.ProtocolIndependent)]
+[ClassDataSource<VersionedServerFixture>(Shared = SharedType.PerTestSession)]
+public class ServerMetadataIntegrationTests(VersionedServerFixture servers)
 {
     [Test]
     [Arguments(2, false)]
@@ -15,7 +17,7 @@ public class ServerMetadataIntegrationTests
     {
         // CONFIG REWRITE and persistence affect the whole server. This test owns its server,
         // writable configuration and ephemeral /data; no shared fixture is mutated.
-        await using var container = new RedisBuilder(modern ? "redis:7.2.4" : "redis:6.2.14")
+        await using var container = new RedisBuilder(modern ? "redis:7.2-alpine" : "redis:6.2.14-alpine")
             .WithEntrypoint("/bin/sh")
             .WithCommand("-c", "printf 'bind 0.0.0.0\nprotected-mode no\ndir /data\nsave \"\"\nappendonly yes\n' > /data/metadata.conf; exec redis-server /data/metadata.conf")
             .Build();
@@ -91,9 +93,9 @@ public class ServerMetadataIntegrationTests
     [Arguments(3)]
     public async Task ConfigurationWithoutAFilePreservesServerError(int protocol)
     {
-        await using var container = new RedisBuilder("redis:7.2.4").Build();
-        await container.StartAsync();
-        await using var client = await RespireClient.ConnectAsync($"redis://{container.Hostname}:{container.GetMappedPublicPort(6379)}?protocol={protocol}&allowAdmin=true");
+        // A server started without a config file rejects CONFIG REWRITE and changes nothing.
+        var lease = await servers.LeaseAsync("redis:7.2-alpine");
+        await using var client = await RespireClient.ConnectAsync(lease.ConnectionString(protocol) + "&allowAdmin=true");
         Func<Task> rewrite = async () => await client.Server.ConfigRewriteAsync();
         await rewrite.Should().ThrowAsync<RespireServerException>();
         (await client.Server.ConfigRewriteOnAllNodesAsync())[0].Error.Should().BeOfType<RespireServerException>();

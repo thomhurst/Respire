@@ -5,7 +5,11 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
-public class ClusterStreamUploadIntegrationTests
+[Category(TestCategories.ProtocolIndependent)]
+// Each row moves its own reserved slot on the shared cluster; slot moves are serialized cluster-wide.
+[ClassDataSource<SharedRedisClusterFixture>(Shared = SharedType.PerTestSession)]
+[NotInParallel(SharedRedisClusterFixture.ReshardingKey)]
+public class ClusterStreamUploadIntegrationTests(SharedRedisClusterFixture fixture)
 {
     [Test]
     [Arguments(RespProtocol.Resp2, false, false)]
@@ -18,15 +22,14 @@ public class ClusterStreamUploadIntegrationTests
     [Arguments(RespProtocol.Resp3, true, true)]
     public async Task RedirectReplaysTheEntireUpload(RespProtocol protocol, bool asking, bool sequence)
     {
-        await using var cluster = await RedisClusterTestContainer.StartAsync();
+        var cluster = fixture.Cluster;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             UseCluster = true, Protocol = protocol, Connections = 1,
             ClusterTopologyRefreshInterval = null,
             Endpoints = [new(cluster.Host, cluster.Port(0))],
         });
-        var key = Enumerable.Range(0, 100).Select(index => $"upload:{index}")
-            .First(candidate => ClusterHash.GetSlot(candidate) < 5461);
+        var key = $"upload:{{{fixture.ReserveSlot(node: 0)}}}";
         var slot = ClusterHash.GetSlot(key);
         client.Core.Cluster!.GetSlotOwnerEndpoint(slot)!.Value.Port.Should().Be(cluster.Port(0));
         await cluster.MoveKeysAsync(slot, source: 0, target: 1);

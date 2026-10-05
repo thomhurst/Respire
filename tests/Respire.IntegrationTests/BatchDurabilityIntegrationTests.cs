@@ -4,6 +4,7 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
+[Category(TestCategories.ProtocolIndependent)]
 public class BatchDurabilityIntegrationTests
 {
     [Test]
@@ -88,8 +89,8 @@ public class BatchDurabilityIntegrationTests
     }
 
     [Test]
-    [Arguments("redis:7.0.15-alpine", 2)]
-    [Arguments("redis:7.0.15-alpine", 3)]
+    [Arguments("redis:7.0.15", 2)]
+    [Arguments("redis:7.0.15", 3)]
     [Arguments("redis:8.4-alpine", 2)]
     [Arguments("redis:8.4-alpine", 3)]
     public async Task UnsupportedAofConfigurationKeepsServerErrorAndWriteResult(string image, int protocol)

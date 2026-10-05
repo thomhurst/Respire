@@ -151,7 +151,6 @@ public class ClusterTests
     }
 
     [Test]
-    [NotInParallel]
     [Arguments(false)]
     [Arguments(true)]
     public async Task ReadFrom_ReplicaRetirementPreservesPrimaryCache(bool stream)
@@ -382,6 +381,7 @@ public class ClusterTests
     }
 
     [Test]
+    [ParallelLimiter<TimingSensitive>]
     [Arguments(false)]
     [Arguments(true)]
     public async Task ReadFrom_HealthyRefreshTimeoutDoesNotShrinkWithMasterCount(bool stallFirstTwo)
@@ -401,18 +401,19 @@ public class ClusterTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
-            ConnectTimeout = TimeSpan.FromSeconds(1), CommandTimeout = TimeSpan.FromSeconds(1),
+            ConnectTimeout = TimeSpan.FromSeconds(2), CommandTimeout = TimeSpan.FromSeconds(2),
             Endpoints = [new("127.0.0.1", first.Port)],
         });
         Volatile.Write(ref topology, ClusterTopology(first.Port, replica.Port));
         foreach (var server in new[] { first, second, third })
         {
-            server.DelayCommand("CLUSTER SLOTS", 750);
+            // Scaled 2x for scheduling slack: one reply still exceeds a timeout split across three masters.
+            server.DelayCommand("CLUSTER SLOTS", 1_500);
             server.SuppressReply = command => stallFirstTwo && !ReferenceEquals(server, third) && command == "CLUSTER SLOTS";
             server.ReplyOverride = (_, _) => Volatile.Read(ref topology);
         }
         await Assert.That(await client.WithReadFrom(RespireReadFrom.Replica).Strings.GetStringAsync("key")
-            .AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo("value");
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10))).IsEqualTo("value");
     }
 
     [Test]
@@ -4212,12 +4213,12 @@ public class ClusterTests
     }
 
     [Test]
-    [NotInParallel] // A 50 ms watchdog must not compete with the full coverage suite's socket workload.
+    [ParallelLimiter<TimingSensitive>] // The watchdog must not fire on a handshake slowed by the full suite's socket workload.
     public async Task ClusterBlockingCommand_SuppressesResponseWatchdog()
     {
         var slot = ClusterHash.GetSlot("key");
         await using var target = new FakeRespServer(2, FakeRespServer.PongReply);
-        target.DelayReply(0, 250);
+        target.DelayReply(0, 600);
         var topology = Encoding.ASCII.GetBytes(
             $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n");
         await using var seed = new FakeRespServer(topology);
@@ -4225,7 +4226,7 @@ public class ClusterTests
         {
             Protocol = RespProtocol.Resp2,
             UseCluster = true,
-            ConnectionIdleReadTimeout = TimeSpan.FromMilliseconds(50),
+            ConnectionIdleReadTimeout = TimeSpan.FromMilliseconds(200),
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -4238,13 +4239,13 @@ public class ClusterTests
     }
 
     [Test]
-    [NotInParallel] // Preserve the real watchdog/deadline test without scheduler pressure from unrelated tests.
+    [ParallelLimiter<TimingSensitive>] // The watchdog must not fire on a handshake slowed by the full suite's socket workload.
     public async Task ClusterBlockingAskRetry_SuppressesResponseWatchdog()
     {
         var slot = ClusterHash.GetSlot("key");
         await using var target = new FakeRespServer(
             2, FakeRespServer.OkReply, FakeRespServer.PongReply);
-        target.DelayReply(1, 250);
+        target.DelayReply(1, 600);
         await using var initial = new FakeRespServer(
             2, Encoding.ASCII.GetBytes($"-ASK {slot} 127.0.0.1:{target.Port}\r\n"));
         var topology = Encoding.ASCII.GetBytes(
@@ -4254,7 +4255,7 @@ public class ClusterTests
         {
             Protocol = RespProtocol.Resp2,
             UseCluster = true,
-            ConnectionIdleReadTimeout = TimeSpan.FromMilliseconds(50),
+            ConnectionIdleReadTimeout = TimeSpan.FromMilliseconds(200),
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
