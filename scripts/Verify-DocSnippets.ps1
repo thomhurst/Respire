@@ -45,6 +45,7 @@ $requiredPackages = @(
     'Respire.Probabilistic'
     'Respire.DependencyInjection'
     'Respire.DataProtection'
+    'Respire.HealthChecks'
     'Respire.Azure'
     'Respire.Json'
     'Respire.Search'
@@ -245,6 +246,7 @@ $builder = [Text.StringBuilder]::new()
 [void]$builder.AppendLine('using Respire.Caching;')
 [void]$builder.AppendLine('using Respire.Caching.Hybrid;')
 [void]$builder.AppendLine('using Respire.DependencyInjection;')
+[void]$builder.AppendLine('using Respire.HealthChecks;')
 [void]$builder.AppendLine('using Respire.Search;')
 [void]$builder.AppendLine('using Respire.Aws;')
 [void]$builder.AppendLine('using Respire.Json;')

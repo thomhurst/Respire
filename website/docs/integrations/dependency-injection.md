@@ -81,3 +81,4 @@ primary eagerly. Prefixed views and DI consumers retain the same client across r
 Sentinel primary changes.
 
 For ASP.NET Core cache abstractions, continue to [caching integrations](./caching).
+For readiness endpoints, see [health checks](./health-checks).

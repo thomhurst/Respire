@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Respire.HealthChecks</PackageId>
+    <Title>Respire.HealthChecks</Title>
+    <Description>ASP.NET Core health checks using existing Respire client connections.</Description>
+    <PackageTags>$(PackageTags);health-checks;aspnetcore</PackageTags>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Respire/Respire.csproj" />
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks" />
+  </ItemGroup>
+</Project>

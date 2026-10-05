@@ -82,6 +82,10 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
 
     internal bool IsConnected => _entries.Values.Any(static entry => entry.IsConnected);
 
+    internal (RespireEndpoint Endpoint, RespireConnection? Connection)[] CaptureHealthConnections()
+        => Volatile.Read(ref _replicas).Select(endpoint =>
+            (endpoint, _entries.TryGetValue(endpoint, out var entry) ? entry.GetExistingHealthConnection() : null)).ToArray();
+
     private void SetEndpoints(IEnumerable<RespireEndpoint> replicas)
     {
         // SENTINEL REPLICAS never lists the current primary, and ROLE validation rejects a node
@@ -578,6 +582,8 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         private TaskCompletionSource? _disposeCompletion;
 
         internal RespireEndpoint Endpoint => endpoint;
+        internal RespireConnection? GetExistingHealthConnection()
+            => IsConnected ? Volatile.Read(ref _multiplexer)?.GetExistingHealthConnection() : null;
         internal bool IsOpen => Volatile.Read(ref _multiplexer) is not null;
         internal bool IsConnected
         {

@@ -20,6 +20,7 @@
     <PackageReference Include="Respire.Caching.Hybrid" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.DependencyInjection" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.DataProtection" Version="$(RespirePackageVersion)" />
+    <PackageReference Include="Respire.HealthChecks" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Azure" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Azure.Identity" Version="1.21.0" />
     <PackageReference Include="Respire.Json" Version="$(RespirePackageVersion)" />
@@ -33,6 +34,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <Compile Include="$(GeneratedSnippetsPath)" Link="GeneratedSnippets.g.cs" />
   </ItemGroup>
 

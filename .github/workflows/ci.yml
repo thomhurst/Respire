@@ -49,6 +49,7 @@ jobs:
         run: |
           for project in \
             tests/Respire.Tests \
+            tests/Respire.HealthChecks.Tests \
             tests/Respire.Analyzers.Tests \
             tests/Respire.IntegrationTests \
             tests/Respire.Coordination.Tests \
@@ -78,6 +79,9 @@ jobs:
           dotnet run --project tests/Respire.Tests -c Release -f net10.0 --no-build -- \
             --maximum-parallel-tests 4 \
             --treenode-filter '/*/*/HedgedReadTests/*'
+
+      - name: Run Health Check Tests
+        run: dotnet run --project tests/Respire.HealthChecks.Tests -c Release -f net10.0 --no-build -- --maximum-parallel-tests 4
 
       - name: Run Analyzer Tests
         run: dotnet run --project tests/Respire.Analyzers.Tests -c Release -f net10.0 --no-build
