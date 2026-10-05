@@ -54,7 +54,7 @@ Uncached wire performance is comparable. See the [benchmarks](./benchmarks) and
 | Fire-and-forget | `CommandFlags.FireAndForget` on any command | `ExecuteFireAndForgetAsync` for raw commands |
 | Multiple databases | `GetDatabase(n)` per call | One database per client (`Database` option) |
 | Health-checked failover between deployments | `ConnectGroupAsync` connection groups | [`RespireFailoverGroup`](./guides/failover-groups); read `ActiveClient` for each operation |
-| Smart client handoffs | Opt-in maintenance notifications and endpoint handoff | Opt-in [maintenance notifications and handoff](./fundamentals/connections#maintenance-notifications); combining handoff with failover groups is tracked in [#893](https://github.com/thomhurst/Respire/issues/893) |
+| Smart client handoffs | Opt-in maintenance notifications and endpoint handoff; maintenance notifications are disabled for connection-group members in 3.3.1 | Opt-in [maintenance notifications and handoff](./fundamentals/connections#maintenance-notifications); combining handoff with failover groups is tracked in [#893](https://github.com/thomhurst/Respire/issues/893) |
 | Command retry policy | Async `WithRetry(...)` wrapper with `RetryPolicy` and `CommandRetry*` categories | Connection recovery and specific routing retries; a general per-command retry policy is tracked in [#862](https://github.com/thomhurst/Respire/issues/862) |
 | Diagnostics | `RegisterProfiler` profiling sessions | OpenTelemetry `ActivitySource` and `Meter` |
 | `IDistributedCache` | `Microsoft.Extensions.Caching.StackExchangeRedis` | [`Respire.Caching`](./integrations/caching); entries are interchangeable while `ValueCodec` is unset |
