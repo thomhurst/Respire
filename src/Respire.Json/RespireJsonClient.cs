@@ -39,6 +39,7 @@ public sealed class RespireJsonClient
     /// <remarks>
     /// Object members set to JSON null are removed; arrays and other non-object values replace the
     /// matching value. The metadata controls property names, converters, and null serialization.
+    /// A null patch itself replaces the target with JSON null; it does not delete the document key.
     /// Argument and serialization failures are reported through the returned task.
     /// </remarks>
     public async ValueTask MergeAsync<T>(

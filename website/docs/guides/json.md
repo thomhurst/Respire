@@ -55,6 +55,7 @@ The default `RespireJsonPath` is the legacy root path `.` (also `RespireJsonPath
 supplied `System.Text.Json` metadata. Object members serialized as JSON `null` are deleted;
 arrays and scalar values replace the selected value. Configure null handling deliberately:
 omitting a null member from the serialized patch leaves that member unchanged.
+A null patch itself replaces the target with JSON `null`; it does not delete the document key.
 
 The generated `Commands.MergeAsync`, `Commands.ArrayLengthAsync`, and
 `Commands.NumberPowerByAsync` expose `JSON.MERGE`, `JSON.ARRLEN`, and `JSON.NUMPOWBY`.
@@ -65,14 +66,16 @@ Redis 8.10 projection expressions, including `$.items.sum()`, `sum($.items)`, an
 supplied result metadata, just like ordinary JSONPath matches. A projection can yield no
 value; `GetManyAsync` then returns an empty array. See the
 [Redis JSONPath reference](https://redis.io/docs/latest/develop/data-types/json/path/).
-For projections written in legacy notation, use `RespireJsonPath.Projection("items.sum()")`
-to declare the array response shape explicitly, or write the rooted form `$.items.sum()`.
-Automatic detection covers `$` paths, prefix functions, parenthesized expressions, and unary
-signs on rooted or parenthesized expressions. Other expressions require `Projection`.
+The string constructor retains its original rule: only paths starting with `$` select an
+array-of-matches reply. For other expressions, use `RespireJsonPath.Projection("sum($.items)")`
+or `RespireJsonPath.Projection("($.price + 1)")`. `Legacy(path)` explicitly selects one JSON
+value; `JsonPath(path)` and `Projection(path)` explicitly select matched values. None rewrites
+the text sent to Redis. `ResponseShape` exposes the stored choice without parsing the expression.
 Group numeric-leading arithmetic, for example `(2 * $.n)`: Redis interprets the ungrouped
 `2 * $.n` as a legacy expression rooted at the field `2`, which may produce no match.
 Respire does not parse the complete Redis expression grammar. A projection path compares
 equal to another path only when both its text and response shape match.
+Inspecting the JSON reply alone cannot infer the choice: a legacy value may itself be an array.
 
 `RespireJsonClient.Commands` exposes generated low-level methods for `JSON.GET`, `JSON.SET`, `JSON.MGET`, `JSON.MSET`, `JSON.DEL`, `JSON.FORGET`, `JSON.CLEAR`, array, number, object, string, type, response, and toggle commands. Low-level methods expose Redis reply types as `RespireResult`; dispose each result after use. Conditional `JSON.SET` and `JSON.DEBUG MEMORY` take fixed modifier tokens, so they are available only through the typed `SetAsync`, `SetJsonAsync`, and `GetMemoryUsageAsync` methods.
 

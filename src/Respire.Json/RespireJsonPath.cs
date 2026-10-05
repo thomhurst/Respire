@@ -2,15 +2,15 @@ namespace Respire.Json;
 
 /// <summary>A RedisJSON path. The default path selects the legacy root path <c>.</c>.</summary>
 /// <remarks>
-/// Paths that start with <c>$</c>, prefix functions, and grouped or rooted unary expressions use
-/// array replies. Use <see cref="Projection"/> for other Redis 8.10 projection expressions.
+/// The string constructor treats paths starting with <c>$</c> as JSONPath; all others are legacy.
+/// Use <see cref="Projection"/> for Redis 8.10 expressions that do not start with <c>$</c>.
 /// Legacy paths return one value. Equality compares the path text and response shape, so
 /// <c>default(RespireJsonPath)</c> equals <see cref="Root"/>.
 /// </remarks>
 public readonly struct RespireJsonPath : IEquatable<RespireJsonPath>
 {
     private readonly string? _value;
-    private readonly bool _projection;
+    private readonly bool _usesJsonPath;
 
     /// <summary>Creates a non-empty RedisJSON path.</summary>
     /// <exception cref="ArgumentException">The path is null, empty, or whitespace.</exception>
@@ -18,16 +18,23 @@ public readonly struct RespireJsonPath : IEquatable<RespireJsonPath>
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(value);
         _value = value;
+        _usesJsonPath = value.StartsWith('$');
     }
 
-    private RespireJsonPath(string value, bool projection) : this(value) => _projection = projection;
+    private RespireJsonPath(string value, bool usesJsonPath) : this(value) => _usesJsonPath = usesJsonPath;
+
+    /// <summary>Declares a single-value reply without modifying the path text.</summary>
+    public static RespireJsonPath Legacy(string path) => new(path, usesJsonPath: false);
+
+    /// <summary>Declares an array of matches without modifying the path text.</summary>
+    public static RespireJsonPath JsonPath(string path) => new(path, usesJsonPath: true);
 
     /// <summary>Creates a Redis 8.10 projection expression with an array response shape.</summary>
     /// <remarks>
-    /// Use this for expressions written in legacy notation, such as <c>items.sum()</c> or
-    /// <c>price + 1</c>. The expression is sent unchanged; Redis validates its syntax.
+    /// Use this for expressions such as <c>sum($.items)</c>, <c>($.price + 1)</c>, or
+    /// <c>items.sum()</c>. The expression is sent unchanged; Redis validates its syntax.
     /// </remarks>
-    public static RespireJsonPath Projection(string expression) => new(expression, projection: true);
+    public static RespireJsonPath Projection(string expression) => JsonPath(expression);
 
     /// <summary>Root path using the legacy single-value response shape.</summary>
     public static RespireJsonPath Root => new(".");
@@ -39,27 +46,11 @@ public readonly struct RespireJsonPath : IEquatable<RespireJsonPath>
     public string Value => _value ?? ".";
 
     /// <summary>Whether this path uses the JSONPath response shape.</summary>
-    public bool UsesJsonPath
-    {
-        get
-        {
-            if (_projection) return true;
-            var path = Value.AsSpan();
-            if (path[0] is '$' or '(') return true;
-            if (path[0] is '+' or '-')
-            {
-                path = path[1..].TrimStart(' ');
-                return !path.IsEmpty && path[0] is '$' or '(';
-            }
+    public bool UsesJsonPath => _usesJsonPath;
 
-            // Redis 8.10 prefix projections such as sum($.items) also wrap their result in an array.
-            if (!char.IsAsciiLetter(path[0]) && path[0] != '_') return false;
-            var index = 1;
-            while (index < path.Length && (char.IsAsciiLetterOrDigit(path[index]) || path[index] == '_')) index++;
-            path = path[index..].TrimStart(' ');
-            return !path.IsEmpty && path[0] == '(';
-        }
-    }
+    /// <summary>The declared response shape, captured once when the path is constructed.</summary>
+    public RespireJsonResponseShape ResponseShape => _usesJsonPath
+        ? RespireJsonResponseShape.MatchedValues : RespireJsonResponseShape.SingleValue;
 
     /// <summary>Creates a non-empty RedisJSON path. Equivalent to the constructor.</summary>
     /// <exception cref="ArgumentException">The path is null, empty, or whitespace.</exception>
@@ -87,4 +78,13 @@ public readonly struct RespireJsonPath : IEquatable<RespireJsonPath>
 
     /// <inheritdoc />
     public override string ToString() => Value;
+}
+
+/// <summary>How a typed JSON read interprets the outermost serialized value.</summary>
+public enum RespireJsonResponseShape
+{
+    /// <summary>The entire JSON reply is one value, including when that value is itself an array.</summary>
+    SingleValue,
+    /// <summary>The reply is an array of matched or computed values.</summary>
+    MatchedValues,
 }

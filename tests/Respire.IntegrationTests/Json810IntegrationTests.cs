@@ -44,6 +44,8 @@ public partial class Json810IntegrationTests(Redis810JsonTestContainer fixture)
         var replacement = JsonSerializer.Deserialize("[8,9]", Json810Context.Default.JsonElement);
         await json.MergeAsync("doc", replacement, Json810Context.Default.JsonElement);
         (await json.GetJsonAsync("doc")).Should().Be("[8,9]");
+        // A legacy array value and an aggregate reply cannot be distinguished from JSON text alone.
+        (await json.GetAsync("doc", Json810Context.Default.Int32Array)).Value.Should().Equal(8, 9);
     }
 
     [Test]
@@ -78,12 +80,12 @@ public partial class Json810IntegrationTests(Redis810JsonTestContainer fixture)
         ];
         foreach (var (path, expected) in projections)
         {
-            var result = await json.GetAsync("doc", Json810Context.Default.Double, path);
+            var result = await json.GetAsync("doc", Json810Context.Default.Double, RespireJsonPath.Projection(path));
             result.Found.Should().BeTrue();
             result.Value.Should().Be(expected);
         }
 
-        var multiple = await json.MultiGetAsync(["doc", "missing"], Json810Context.Default.Double, "sum($.items)");
+        var multiple = await json.MultiGetAsync(["doc", "missing"], Json810Context.Default.Double, RespireJsonPath.Projection("sum($.items)"));
         multiple[0]!.Single().Value.Should().Be(3);
         multiple[1].Should().BeNull();
         var legacyProjection = await json.GetAsync("doc", Json810Context.Default.Double,
@@ -95,11 +97,12 @@ public partial class Json810IntegrationTests(Redis810JsonTestContainer fixture)
             RespireJsonPath.Projection("2 * $.n"));
         numericLeading.Found.Should().BeFalse();
         await json.SetJsonAsync("doc", """{"items":[]}""");
-        (await json.GetManyAsync("doc", Json810Context.Default.Double, "sum($.items)"))
+        (await json.GetManyAsync("doc", Json810Context.Default.Double, RespireJsonPath.Projection("sum($.items)")))
             .Should().BeEmpty();
     }
 
     [JsonSerializable(typeof(JsonElement))]
     [JsonSerializable(typeof(double))]
+    [JsonSerializable(typeof(int[]))]
     internal sealed partial class Json810Context : JsonSerializerContext;
 }

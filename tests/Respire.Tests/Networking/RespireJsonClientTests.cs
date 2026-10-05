@@ -13,18 +13,21 @@ namespace Respire.Tests.Networking;
 public partial class RespireJsonClientTests
 {
     [Test]
-    [Arguments("sum($.items)", true)]
-    [Arguments("sum ( $.items )", true)]
-    [Arguments("($.price + 1)", true)]
-    [Arguments("- $.price", true)]
-    [Arguments("+($.price)", true)]
+    [Arguments("sum($.items)", false)]
+    [Arguments("sum ( $.items )", false)]
+    [Arguments("($.price + 1)", false)]
+    [Arguments("- $.price", false)]
+    [Arguments("+($.price)", false)]
+    [Arguments("+ ($.price)", false)]
+    [Arguments("_function($.price)", false)]
+    [Arguments("_x (", false)]
     [Arguments("$.items.sum()", true)]
     [Arguments(".items", false)]
     [Arguments("items", false)]
     [Arguments("sum", false)]
     [Arguments("-price", false)]
     [Arguments("['field(with-parentheses)']", false)]
-    public async Task ProjectionPathsUseAggregateReplies(string path, bool aggregate)
+    public async Task ConstructorOnlyInfersDollarPaths(string path, bool aggregate)
         => await Assert.That(new RespireJsonPath(path).UsesJsonPath).IsEqualTo(aggregate);
 
     [Test]
@@ -33,6 +36,9 @@ public partial class RespireJsonClientTests
         var projection = RespireJsonPath.Projection("items.sum()");
         await Assert.That(projection.Value).IsEqualTo("items.sum()");
         await Assert.That(projection.UsesJsonPath).IsTrue();
+        await Assert.That(projection.ResponseShape).IsEqualTo(RespireJsonResponseShape.MatchedValues);
+        await Assert.That(RespireJsonPath.Legacy("items.sum()").ResponseShape).IsEqualTo(RespireJsonResponseShape.SingleValue);
+        await Assert.That(RespireJsonPath.JsonPath("items.sum()")).IsEqualTo(projection);
         await Assert.That(projection == new RespireJsonPath("items.sum()")).IsFalse();
         var rooted = RespireJsonPath.Projection("$.items.sum()");
         await Assert.That(rooted == new RespireJsonPath("$.items.sum()")).IsTrue();
@@ -57,10 +63,12 @@ public partial class RespireJsonClientTests
         var json = client.WithKeyPrefix("tenant:").Json;
 
         await json.MergeAsync("profile", new Profile(7), JsonTestContext.Default.Profile);
+        await json.MergeAsync<Profile>("null-patch", null!, JsonTestContext.Default.Profile);
         using (await json.Commands.ArrayLengthAsync("profile", "$.items")) { }
         using (await json.Commands.NumberPowerByAsync("profile", "$.Age", 2.5)) { }
 
         await Assert.That(server.ReceivedCommands).Contains("JSON.MERGE tenant:profile . {\"Age\":7}");
+        await Assert.That(server.ReceivedCommands).Contains("JSON.MERGE tenant:null-patch . null");
         await Assert.That(server.ReceivedCommands).Contains("JSON.ARRLEN tenant:profile $.items");
         await Assert.That(server.ReceivedCommands).Contains("JSON.NUMPOWBY tenant:profile $.Age 2.5");
     }
