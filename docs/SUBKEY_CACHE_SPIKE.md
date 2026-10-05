@@ -94,6 +94,24 @@ The probe used a disposable `redis:8.8-alpine` container reporting `redis_versio
 ID `sha256:0b2b77d3ea5078274795e3177cdbdada8b96316684a38911d528534ed679b5ec`.
 The container was stopped afterward. No shared Redis configuration was changed.
 
+Run the checked-in [socket probe](../scripts/probes/subkey-notifications.py) from the
+repository root with Python 3.10+ and Docker available:
+
+```shell
+python scripts/probes/subkey-notifications.py
+```
+
+The script starts its own `redis:8.8.3-alpine` container on a dynamically assigned loopback
+port, asserts the server version, and stops that exact container in `finally`. It requires
+no Python packages and never connects to an existing Redis instance. Run Python without
+`-O`, because assertions verify the observations. It prints the image ID and the actual
+RESP frames for all seven probes, and exits unsuccessfully if an assertion or socket operation
+fails. The reproduced run used the same image ID shown above and passed all seven probes.
+
+The implementation includes a RESP2/RESP3 frame reader, subscription acknowledgement checks,
+the `PING barrier` collection loop, and the explicit held-reply/cache-insertion schedule.
+These are executable steps rather than assumptions about sleeps or notification timing.
+
 Use separate writer, subscriber, and tracking connections. Await `PSUBSCRIBE` acknowledgement
 before mutations. After each acknowledged writer command, send `PING barrier` on the subscribed
 connection and collect messages through its `pong` reply. This bounds the observation by protocol
