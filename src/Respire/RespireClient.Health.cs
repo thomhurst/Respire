@@ -34,6 +34,9 @@ public sealed partial class RespireClient : IRespireHealthProbe
             if (!connected) throw new RespireConnectionException("The node has no existing usable command connection.");
             await capacity.WaitAsync(cancellationToken).ConfigureAwait(false);
             entered = true;
+            // Admission can win the semaphore race while deadline cancellation is releasing
+            // another probe. Do not publish a new PING with an already-canceled token.
+            cancellationToken.ThrowIfCancellationRequested();
             var started = Stopwatch.GetTimestamp();
             using var reply = await connection!.SendAsync(new RawCommand(RespCommands.Ping),
                 cancellationToken, commandName: "PING", pinToConnection: true).ConfigureAwait(false);

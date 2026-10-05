@@ -34,7 +34,9 @@ public sealed record RespireHealthProbeOptions
     /// <summary>Whole-round deadline, including admission waits. Defaults to two seconds; must be a positive finite timer duration.</summary>
     public TimeSpan Timeout { get; init; } = TimeSpan.FromSeconds(2);
 
-    internal void Validate()
+    /// <summary>Validates concurrency and the positive timer duration; custom providers should call this before probing.</summary>
+    /// <exception cref="ArgumentOutOfRangeException">Concurrency is not positive, or Timeout is outside the supported timer range.</exception>
+    public void Validate()
     {
         if (MaxConcurrentProbes <= 0) throw new ArgumentOutOfRangeException(nameof(MaxConcurrentProbes));
         if (Timeout <= TimeSpan.Zero || Timeout.TotalMilliseconds > uint.MaxValue - 1d)

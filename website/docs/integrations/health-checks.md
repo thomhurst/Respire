@@ -114,6 +114,8 @@ async Task<RespireHealthProbeResult[]> ProbeExistingAsync(
 
 An implementation must follow these requirements:
 
+- Call `RespireHealthProbeOptions.Validate()` before probing. Concurrency must be positive;
+  timeout must be greater than zero and no greater than 4,294,967,294 milliseconds.
 - Capture data-node membership and existing connection identities before awaiting probes.
   Primary-only mode selects one primary, preferring an existing usable connection. All-node
   mode includes every known primary and replica, including unavailable nodes. Return results
@@ -140,7 +142,11 @@ capture. A subsequent call captures current state again. Prefixes and read prefe
 not change health selection or cause PING to route to replicas in primary-only mode.
 
 The health package passes its timeout and concurrency settings to the provider and bounds
-its own asynchronous wait as well. A custom provider remains responsible for cancelling its
+its own asynchronous wait as well. The outer wait allows up to 250 milliseconds of completion
+grace beyond `ProbeTimeout`, capped at the timer limit, so cooperative providers can return
+per-node timeout diagnostics. Caller cancellation remains immediate. A null result array or
+null node produces a descriptive `InvalidOperationException` in the health result.
+A custom provider remains responsible for cancelling its
 underlying work and releasing any temporary resources. Node exceptions are aggregated into
 the health result; `RespireNodeHealth` remains the package's existing public diagnostic shape.
 
@@ -154,6 +160,7 @@ all-node behavior remain available.
 
 The core retains the original internal health entry point and friend-assembly permission
 for older `Respire.HealthChecks` binaries. New integrations must use the public contract.
+Removal at the next major version is tracked in [#950](https://github.com/thomhurst/Respire/issues/950).
 Future optional probe capabilities require a separate opt-in interface rather than adding
 abstract members to `IRespireHealthProbe`. The contract does not transfer client ownership
 or promise access to transport implementation types.

@@ -32,6 +32,37 @@ public class RespireHealthProbeContractTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task InvalidProviderResultsHaveClearDiagnostics(bool nullElement)
+    {
+        var client = DispatchProxy.Create<IProbeClient, ProbeClientProxy>();
+        ((ProbeClientProxy)client).Probe = (_, _) => ValueTask.FromResult<RespireHealthProbeResult[]>(nullElement ? [null!] : null!);
+        var result = await new RespireHealthCheck(client).CheckHealthAsync(Context());
+        await Assert.That(result.Status).IsEqualTo(HealthStatus.Unhealthy);
+        await Assert.That(result.Exception is InvalidOperationException).IsTrue();
+        await Assert.That(result.Exception!.Message).Contains("provider returned null");
+    }
+
+    [Test]
+    public async Task CooperativeTimeoutRetainsNodeDiagnostics()
+    {
+        var client = DispatchProxy.Create<IProbeClient, ProbeClientProxy>();
+        var timeout = new TimeoutException("node timed out");
+        ((ProbeClientProxy)client).Probe = async (options, token) =>
+        {
+            await Task.Delay(options.Timeout, token);
+            return [new(new("slow.example"), true, null, timeout), new(new("fast.example"), true, TimeSpan.Zero)];
+        };
+        var result = await new RespireHealthCheck(client, new() { ProbeTimeout = TimeSpan.FromMilliseconds(30) })
+            .CheckHealthAsync(Context());
+        await Assert.That(result.Status).IsEqualTo(HealthStatus.Unhealthy);
+        await Assert.That(((RespireNodeHealth[])result.Data["nodes"]).Length).IsEqualTo(2);
+        await Assert.That((int)result.Data["failedNodes"]).IsEqualTo(1);
+        await Assert.That(((AggregateException)result.Exception!).InnerExceptions[0]).IsSameReferenceAs(timeout);
+    }
+
+    [Test]
     [Arguments(false, false)]
     [Arguments(false, true)]
     [Arguments(true, false)]
@@ -239,6 +270,9 @@ public class RespireHealthProbeContractTests
     [Test]
     public async Task InvalidContractSettingsAndResultsAreRejected()
     {
+        new RespireHealthProbeOptions().Validate();
+        Assert.Throws<ArgumentOutOfRangeException>(() => new RespireHealthProbeOptions { Timeout = TimeSpan.Zero }.Validate());
+        Assert.Throws<ArgumentOutOfRangeException>(() => new RespireHealthProbeOptions { MaxConcurrentProbes = 0 }.Validate());
         await using var server = new RespireFakeServer();
         await using var client = RespireClient.Create(server.CreateOptions());
         await Assert.That(async () => await client.ProbeHealthAsync(new() { MaxConcurrentProbes = 0 })).Throws<ArgumentOutOfRangeException>();

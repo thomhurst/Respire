@@ -55,7 +55,12 @@ public sealed class RespireHealthCheck : IHealthCheck
                 data["clientSideCache"] = cache.GetStatistics();
 
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            deadline.CancelAfter(_options.ProbeTimeout);
+            // Let cooperative providers finish assembling per-node timeout observations before
+            // the backstop interrupts a provider that ignores its own timeout contract.
+            var waitTimeout = client is IRespireHealthProbe
+                ? TimeSpan.FromMilliseconds(Math.Min(_options.ProbeTimeout.TotalMilliseconds + 250, uint.MaxValue - 1d))
+                : _options.ProbeTimeout;
+            deadline.CancelAfter(waitTimeout);
             var errors = new List<Exception>();
             RespireNodeHealth[] nodes;
             if (client is IRespireHealthProbe probe)
@@ -66,6 +71,8 @@ public sealed class RespireHealthCheck : IHealthCheck
                     MaxConcurrentProbes = _options.MaxConcurrentProbes,
                     Timeout = _options.ProbeTimeout,
                 }, deadline.Token).AsTask().WaitAsync(deadline.Token).ConfigureAwait(false);
+                if (results is null || results.Any(result => result is null))
+                    throw new InvalidOperationException("The health probe provider returned null results or a null node result.");
                 nodes = results.Select(result => new RespireNodeHealth(result.Endpoint, result.IsConnected,
                     result.Latency, result.Error?.GetType().Name)).ToArray();
                 errors.AddRange(results.Where(result => result.Error is not null).Select(result => result.Error!));
