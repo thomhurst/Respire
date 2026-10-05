@@ -5,6 +5,30 @@ namespace Respire.TimeSeries;
 /// <summary>Parses RedisTimeSeries replies, in both RESP2 and RESP3 shapes, into the public model types.</summary>
 internal static class TimeSeriesReplyParser
 {
+    internal static IReadOnlyList<RespireTimeSeriesRow> ParseRows(RespireResult result, int width)
+    {
+        if (result.Type != RespDataType.Array) throw UnexpectedReply();
+        var rows = new RespireTimeSeriesRow[result.Count];
+        for (var index = 0; index < rows.Length; index++)
+        {
+            var row = result[index];
+            if (row.Count != 2 || row[1].Type != RespDataType.Array || row[1].Count != width)
+                throw UnexpectedReply();
+            var values = new double[width];
+            for (var value = 0; value < width; value++) values[value] = row[1][value].AsDouble();
+            rows[index] = new(row[0].AsInteger(), values);
+        }
+        return rows;
+    }
+
+    internal static string[] ParseLabelTokens(RespireResult result)
+    {
+        if (result.Type is not (RespDataType.Array or RespDataType.Set)) throw UnexpectedReply();
+        var values = new string[result.Count];
+        for (var index = 0; index < values.Length; index++) values[index] = result[index].AsString();
+        return values;
+    }
+
     /// <summary>Parses a TS.RANGE or TS.REVRANGE reply.</summary>
     internal static RespireTimeSeriesRangeResult ParseRange(RespireResult result) => new(ParseSampleList(result));
 

@@ -42,6 +42,10 @@ public class TimeSeriesClientTests
             ["DeleteRuleAsync"] = RespireCacheMutation.MultiKey,
             ["InfoAsync"] = RespireCacheMutation.ReadOnly,
             ["QueryIndexAsync"] = RespireCacheMutation.ReadOnly,
+            ["QueryLabelsAsync"] = RespireCacheMutation.ReadOnly,
+            ["RangeKeysAsync"] = RespireCacheMutation.ReadOnly,
+            ["ReverseRangeKeysAsync"] = RespireCacheMutation.ReadOnly,
+            ["ReadAsync"] = RespireCacheMutation.ReadOnly,
         };
         foreach (var (method, mutation) in expected)
         {
