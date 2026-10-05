@@ -1,0 +1,94 @@
+name: Primitive numeric GET benchmarks
+
+on:
+  pull_request:
+    paths:
+      - 'src/Respire/Serialization/PrimitiveCodec.cs'
+      - 'benchmarks/Respire.ComparisonBenchmarks/CommonOperationsBenchmarks.cs'
+      - '.github/workflows/benchmark-primitive-codec.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    name: Compare typed numeric GET on one runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      redis:
+        image: redis:8.10
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      REDIS_HOST: localhost
+      REDIS_PORT: 6379
+    steps:
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: baseline
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: candidate
+          persist-credentials: false
+      - name: Compare identical GET workloads with bracketing baseline controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp candidate/benchmarks/Respire.ComparisonBenchmarks/CommonOperationsBenchmarks.cs baseline/benchmarks/Respire.ComparisonBenchmarks/
+          for phase in baseline-a candidate baseline-b; do
+            source=baseline
+            if [ "$phase" = candidate ]; then source=candidate; fi
+            (
+              cd "$source"
+              git rev-parse HEAD
+              dotnet run --project benchmarks/Respire.ComparisonBenchmarks -c Release -f net10.0 -- \
+                --filter '*CommonOperationsBenchmarks.Respire_GetLong' --job Medium --exporters json markdown \
+                --artifacts "$GITHUB_WORKSPACE/numeric-results/$phase"
+            ) > "$GITHUB_WORKSPACE/numeric-$phase.log" 2>&1
+          done
+      - name: Require successful measurements
+        shell: python
+        run: |
+          import json
+          from pathlib import Path
+          for phase in ("baseline-a", "candidate", "baseline-b"):
+              reports = list(Path("numeric-results", phase, "results").glob("*-report-full-compressed.json"))
+              assert len(reports) == 1, f"Missing or duplicate report: {phase}"
+              cases = json.loads(reports[0].read_text(encoding="utf-8"))["Benchmarks"]
+              assert len(cases) == 1 and cases[0]["Method"] == "Respire_GetLong", phase
+              assert cases[0]["Statistics"] and cases[0]["Statistics"]["Mean"] > 0, phase
+      - name: Publish measured results
+        if: always()
+        shell: bash
+        run: |
+          echo 'Compare candidate latency, dispersion and allocations with both baseline controls before merge. These are end-to-end Redis GET<long> measurements on one runner; no arbitrary timing threshold is enforced.' >> "$GITHUB_STEP_SUMMARY"
+          for phase in baseline-a candidate baseline-b; do
+            echo "## $phase" >> "$GITHUB_STEP_SUMMARY"
+            for report in numeric-results/$phase/results/*-report-default.md; do
+              if [ -f "$report" ]; then cat "$report" >> "$GITHUB_STEP_SUMMARY"; fi
+            done
+          done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: primitive-numeric-get-comparison
+          path: |
+            numeric-results/
+            numeric-*.log
