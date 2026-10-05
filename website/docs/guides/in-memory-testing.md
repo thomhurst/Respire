@@ -141,7 +141,13 @@ if (first.Result != 10 || !rest.Result.SequenceEqual(new[] { 30, 20 }))
     throw new InvalidOperationException("List ordering did not round-trip.");
 ```
 
-Blocking pops, multi-key pops, and moves (`BLPOP`, `BRPOP`, `LMPOP`, `BLMPOP`, `LMOVE`,
+Multi-element moves (`LMOVEM`, `BLMOVEM`) support COUNT/EXACTLY and OBO/BULK, including
+same-list ordering, wrong-type validation, TTL preservation, and WATCH invalidation.
+BLMOVEM waits for the required source length without holding the server-state lock. Its
+timeouts use wall-clock time; `RespireFakeClock` still controls only key expiry. Cancellation
+or server disposal releases the wait. Inside MULTI, BLMOVEM runs immediately as Redis does.
+
+Other blocking pops, multi-key pops, and moves (`BLPOP`, `BRPOP`, `LMPOP`, `BLMPOP`, `LMOVE`,
 `BLMOVE`, `RPOPLPUSH`, and `BRPOPLPUSH`) remain explicitly unsupported. Use the nonblocking
 typed overloads without `waitFor`; a populated list does not make a blocking command supported.
 

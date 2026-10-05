@@ -81,6 +81,8 @@ public sealed partial class RespireFakeServer
         ["RPUSHX"] = new(3, int.MaxValue, static (server, _, args) => server.ListPush(args, left: false, onlyExisting: true)),
         ["LPOP"] = new(2, 3, static (server, _, args) => server.ListPop(args, left: true)),
         ["RPOP"] = new(2, 3, static (server, _, args) => server.ListPop(args, left: false)),
+        ["LMOVEM"] = new(5, int.MaxValue, static (server, _, args) => server.ListMoveMany(args, blocking: false)),
+        ["BLMOVEM"] = new(6, int.MaxValue, static (server, _, args) => server.ListMoveMany(args, blocking: true)),
         ["LLEN"] = new(2, 2, static (server, _, args) => FakeReply.Integer(server.Find(args[1])?.List.Count ?? 0)),
         ["LRANGE"] = new(4, 4, static (server, _, args) => server.ListRange(args)),
         ["LTRIM"] = new(4, 4, static (server, _, args) => server.ListTrim(args)),

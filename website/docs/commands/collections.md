@@ -164,6 +164,36 @@ The key span is copied into command arguments; caller-owned byte buffers must re
 until execution finishes. Returned key bytes and value strings survive deferred response disposal.
 Blocking pops have no batch or transaction form.
 
+### Moving several elements (Redis 8.10+)
+
+`MoveManyAsync` uses LMOVEM, or BLMOVEM when `waitFor` is supplied. `UpTo` moves as many
+elements as available, up to the positive count; `Exactly` moves nothing unless the entire
+count is available. Blocking `Exactly` waits for that many elements, while blocking `UpTo`
+waits for at least one. Missing sources, unsatisfied exact counts, and timeouts return `null`.
+
+```csharp
+string[]? moved = await redis.Lists.MoveManyAsync(
+    "{jobs}:ready", "{jobs}:processing", count: 10,
+    from: ListSide.Left, to: ListSide.Right,
+    countMode: ListMoveCountMode.Exactly, order: ListMoveOrder.Bulk,
+    waitFor: TimeSpan.FromSeconds(5));
+```
+
+The owned result contains UTF-8 strings in destination order. `Bulk` preserves the selected
+elements' source order; `OneByOne` uses pop order and reverses it when inserting at the head.
+When both keys are the same, Redis removes the selected block before reinserting it, so a
+same-end `OneByOne` move reverses that block and an opposite-end move can rotate the list.
+Both keys are prefixed and must share a Cluster slot. Blocking moves use the dedicated pool;
+cancellation discards the blocked lease. An infinite wait uses `Timeout.InfiniteTimeSpan`,
+and `TimeSpan.Zero` uses a minimum one-millisecond timeout.
+
+Batch and transaction `Lists.MoveMany` queue only LMOVEM and never wait. Redis itself treats
+BLMOVEM inside MULTI as immediate, but Respire does not expose a queued blocking overload.
+The existing single-element `MoveAsync` and `Move` behavior is unchanged.
+
+See the [LMOVEM reference](https://redis.io/docs/latest/commands/lmovem/) and
+[BLMOVEM reference](https://redis.io/docs/latest/commands/blmovem/) for server requirements.
+
 Set `waitFor` to transparently select the blocking command and a dedicated connection. See [blocking queues](../guides/blocking-queues).
 
 ## Sets
