@@ -1,0 +1,72 @@
+name: Unix socket benchmarks
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src/Respire/Networking/**'
+      - 'src/Respire/RespireOptions.cs'
+      - 'benchmarks/Respire.Benchmarks/UnixSocketBenchmarks.cs'
+      - '.github/workflows/benchmark-unix-sockets.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unix-sockets-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - name: Start local Redis with both transports
+        shell: bash
+        run: |
+          set -euo pipefail
+          socket_dir=$(mktemp -d /tmp/respire-uds.XXXXXX)
+          chmod 777 "$socket_dir"
+          container_name="respire-uds-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "SOCKET_DIR=$socket_dir" >> "$GITHUB_ENV"
+          echo "REDIS_CONTAINER=$container_name" >> "$GITHUB_ENV"
+          echo "RESPIRE_UNIX_SOCKET=$socket_dir/redis.sock" >> "$GITHUB_ENV"
+          docker run --detach --name "$container_name" --network host \
+            --mount "type=bind,source=$socket_dir,target=/sockets" redis:7.4.11-alpine \
+            redis-server --bind 127.0.0.1 --unixsocket /sockets/redis.sock --unixsocketperm 777
+          for attempt in $(seq 1 30); do
+            if docker exec "$container_name" redis-cli -s /sockets/redis.sock ping | grep -q PONG; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+      - name: Validate benchmark cases
+        run: >-
+          dotnet run --project benchmarks/Respire.Benchmarks -c Release -f net10.0 --
+          --filter '*UnixSocketBenchmarks*' --job Dry --artifacts artifacts/uds-dry
+          > uds-dry.log 2>&1
+      - name: Compare TCP loopback and Unix sockets
+        run: >-
+          dotnet run --project benchmarks/Respire.Benchmarks -c Release -f net10.0 --no-build --
+          --filter '*UnixSocketBenchmarks*' --exporters markdown json --artifacts artifacts/uds
+          > uds-benchmark.log 2>&1
+      - name: Publish comparison table
+        run: cat artifacts/uds/results/*-report-github.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: unix-socket-comparison
+          path: |
+            artifacts/uds*
+            uds-*.log
+      - name: Stop owned Redis
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${REDIS_CONTAINER:-}" ]; then docker rm -f "$REDIS_CONTAINER"; fi
+          if [ -n "${SOCKET_DIR:-}" ]; then rm -f "$SOCKET_DIR/redis.sock"; rmdir "$SOCKET_DIR"; fi

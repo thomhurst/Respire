@@ -8,16 +8,57 @@ using Respire.Serialization;
 
 namespace Respire;
 
-/// <summary>A Redis endpoint (host and port).</summary>
+/// <summary>A Redis TCP endpoint, or a Unix domain socket whose Host is its path and Port is zero.</summary>
 public readonly record struct RespireEndpoint(string Host, int Port = 6379)
 {
-    /// <summary>Parses "host", "host:port", or an IPv6 address.</summary>
+    /// <summary>Whether this endpoint identifies a Unix domain socket rather than a TCP port.</summary>
+    public bool IsUnixSocket => Port == 0;
+
+    /// <summary>Creates a Unix domain socket endpoint. Relative paths are resolved against the current directory.</summary>
+    public static RespireEndpoint UnixSocket(string path)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        if (path.Contains('\0'))
+            throw new ArgumentException("A Unix socket path cannot contain NUL characters.", nameof(path));
+        if (!path.StartsWith('/') && !Path.IsPathFullyQualified(path))
+            path = Path.GetFullPath(path);
+        if (!IsValidUnixPath(path))
+            throw new ArgumentException("A Unix socket requires a non-root filesystem path.", nameof(path));
+        return new RespireEndpoint(path, 0);
+    }
+
+    internal static bool IsValidUnixPath(string? path)
+        => !string.IsNullOrWhiteSpace(path) && path.Length > 1 && !path.Contains('\0')
+            && (path.StartsWith('/') || Path.IsPathFullyQualified(path));
+
+    internal static bool IsUnixScheme(string scheme)
+        => scheme.Equals("unix", StringComparison.OrdinalIgnoreCase)
+            || scheme.Equals("redis+unix", StringComparison.OrdinalIgnoreCase);
+
+    internal static RespireEndpoint FromUnixUri(Uri uri)
+    {
+        if (uri.Host.Length != 0 || uri.UserInfo.Length != 0 || uri.Port != -1 || uri.Fragment.Length != 0)
+            throw new ArgumentException("A Unix socket URI must have a local path without authority or fragment.", nameof(uri));
+        return UnixSocket(Uri.UnescapeDataString(uri.AbsolutePath));
+    }
+
+    /// <summary>Parses a TCP endpoint, a unix:/// or redis+unix:/// URI, or a StackExchange.Redis !path socket endpoint.</summary>
     public static RespireEndpoint Parse(string value) => Parse(value, 6379);
 
     internal static RespireEndpoint Parse(string value, int defaultPort)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(value);
         value = value.Trim();
+
+        if (value[0] == '!') return UnixSocket(value[1..]);
+        if (value.StartsWith("unix://", StringComparison.OrdinalIgnoreCase)
+            || value.StartsWith("redis+unix://", StringComparison.OrdinalIgnoreCase))
+        {
+            var uri = new Uri(value, UriKind.Absolute);
+            if (uri.Query.Length != 0)
+                throw new ArgumentException("Endpoint URIs cannot contain options; use RespireOptions.Parse.", nameof(value));
+            return FromUnixUri(uri);
+        }
 
         if (value[0] == '[')
         {
@@ -60,13 +101,15 @@ public readonly record struct RespireEndpoint(string Host, int Port = 6379)
 
     private static bool IsValidPort(int port) => port is >= 1 and <= 65535;
 
-    /// <summary>Parses a host or host-and-port string.</summary>
+    /// <summary>Parses a TCP or Unix socket endpoint string.</summary>
     public static implicit operator RespireEndpoint(string value) => Parse(value);
 
     /// <inheritdoc/>
-    public override string ToString() => Host.Contains(':', StringComparison.Ordinal)
-        ? $"[{Host}]:{Port}"
-        : $"{Host}:{Port}";
+    public override string ToString()
+    {
+        if (IsUnixSocket) return $"!{Host}";
+        return Host.Contains(':', StringComparison.Ordinal) ? $"[{Host}]:{Port}" : $"{Host}:{Port}";
+    }
 }
 
 /// <summary>RESP protocol selection or automatic negotiation policy.</summary>
@@ -484,6 +527,11 @@ public sealed record RespireOptions
 
         foreach (var endpoint in Endpoints)
         {
+            if (endpoint.IsUnixSocket)
+            {
+                ValidateUnixEndpoint(endpoint, nameof(Endpoints));
+                continue;
+            }
             if (endpoint.Port is < 1 or > 65535)
             {
                 throw new RespireConfigurationException(
@@ -493,6 +541,11 @@ public sealed record RespireOptions
 
         foreach (var endpoint in ReplicaEndpoints)
         {
+            if (endpoint.IsUnixSocket)
+            {
+                ValidateUnixEndpoint(endpoint, nameof(ReplicaEndpoints));
+                continue;
+            }
             if (endpoint.Port is < 1 or > 65535)
                 throw new RespireConfigurationException($"RespireOptions.ReplicaEndpoints contains invalid TCP port {endpoint.Port}.");
         }
@@ -504,6 +557,13 @@ public sealed record RespireOptions
             Protocol = effectiveProtocol,
             ClientSideCache = ClientSideCache?.ValidateAndSnapshot(),
         };
+    }
+
+    private void ValidateUnixEndpoint(RespireEndpoint endpoint, string optionName)
+    {
+        UnixSocketConfiguration.Validate(endpoint.Host, UseTls, MaintenanceNotifications, $"RespireOptions.{optionName}");
+        if (UseCluster || !string.IsNullOrWhiteSpace(SentinelPrimaryName))
+            throw new RespireConfigurationException("Unix socket endpoints cannot be mixed with Cluster or Sentinel discovery, which advertises TCP endpoints.");
     }
 
     private static void Require(bool condition, string optionName, string requirement)
@@ -569,7 +629,9 @@ public sealed record RespireOptions
     /// <c>useCluster</c> (true or false), <c>sentinelPrimaryName</c>, <c>sentinelUser</c>,
     /// <c>sentinelPassword</c>, <c>sentinelTls</c> (true or false), and
     /// <c>allowAdmin</c> (true or false).
-    /// Use <c>rediss://</c> to enable TLS.
+    /// Use <c>rediss://</c> to enable TLS. Unix sockets accept <c>unix:///path</c>,
+    /// <c>redis+unix:///path</c>, or <c>!/path</c> in comma-delimited strings.
+    /// A Unix URI uses its path for the socket and <c>?db=N</c> for the database.
     /// In comma-delimited strings, <c>sslHost</c> enables TLS unless <c>ssl=false</c> is explicit;
     /// <c>sentinelSslHost</c> similarly enables Sentinel TLS unless <c>sentinelTls=false</c> is explicit.
     /// URI connections contain one endpoint. Comma-delimited seed lists preserve endpoint order;
@@ -578,6 +640,8 @@ public sealed record RespireOptions
     public static RespireOptions Parse(string connectionString)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+        if (connectionString.TrimStart().StartsWith('!'))
+            return ParseStackExchangeConnectionString(connectionString);
 
         var uriMarker = connectionString.IndexOf("://", StringComparison.Ordinal);
         var optionMarker = connectionString.IndexOf(',');
@@ -600,10 +664,11 @@ public sealed record RespireOptions
 
         var uri = new Uri(connectionString, UriKind.Absolute);
         var useTls = uri.Scheme.Equals("rediss", StringComparison.OrdinalIgnoreCase);
-        if (!useTls && !uri.Scheme.Equals("redis", StringComparison.OrdinalIgnoreCase))
+        var useUnixSocket = RespireEndpoint.IsUnixScheme(uri.Scheme);
+        if (!useUnixSocket && !useTls && !uri.Scheme.Equals("redis", StringComparison.OrdinalIgnoreCase))
         {
             throw new ArgumentException(
-                $"Unsupported scheme '{uri.Scheme}' — expected redis:// or rediss://.", nameof(connectionString));
+                $"Unsupported scheme '{uri.Scheme}' — expected redis://, rediss://, unix:// or redis+unix://.", nameof(connectionString));
         }
 
         string? username = null;
@@ -624,7 +689,7 @@ public sealed record RespireOptions
 
         var database = 0;
         var path = uri.AbsolutePath.Trim('/');
-        if (path.Length > 0)
+        if (!useUnixSocket && path.Length > 0)
         {
             database = ParseIntegerOption("database", path);
         }
@@ -690,7 +755,8 @@ public sealed record RespireOptions
         var defaultPort = mode.ServiceName is null ? 6379 : 26379;
         return new RespireOptions
         {
-            Endpoints = { new RespireEndpoint(uri.Host, uri.IsDefaultPort ? defaultPort : uri.Port) },
+            Endpoints = { useUnixSocket ? RespireEndpoint.FromUnixUri(uri)
+                : new RespireEndpoint(uri.Host, uri.IsDefaultPort ? defaultPort : uri.Port) },
             Username = username,
             Password = password,
             SentinelUsername = mode.SentinelUsername,

@@ -280,17 +280,27 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 nameof(options), "CommandTimeout must be at least one millisecond.");
         }
 
-        ValidateTcpKeepAlive(options);
+        var isUnixSocket = port == 0;
+        if (isUnixSocket)
+        {
+            UnixSocketConfiguration.Validate(host, options.UseTls, options.MaintenanceNotifications, nameof(host));
+            // Redis advertises TCP targets for handoffs, never local filesystem paths.
+            // Normalize per physical connection: a standalone replica set may mix TCP and Unix endpoints.
+            options = options with { MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled };
+        }
+        else
+        {
+            ValidateTcpKeepAlive(options);
+        }
 
         options = await ResolveCredentialsAsync(host, port, options, cancellationToken).ConfigureAwait(false);
 
         if (options.TestingStreamFactory is not null)
             return await ConnectTestingStreamAsync(host, port, options, logger, cancellationToken, armHandshakeDeadline).ConfigureAwait(false);
 
-        var socket = new Socket(SocketType.Stream, ProtocolType.Tcp)
-        {
-            NoDelay = true,
-        };
+        var socket = isUnixSocket
+            ? new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified)
+            : new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
 
         if (options.SocketReceiveBufferSize > 0)
         {
@@ -305,14 +315,17 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         SslStream? tlsStream = null;
         try
         {
-            ApplyTcpKeepAlive(socket, options);
+            if (!isUnixSocket) ApplyTcpKeepAlive(socket, options);
 
             using var timeoutCts = CommandTimeoutCancellation.Create(
                 cancellationToken,
                 options.ConnectTimeout);
             try
             {
-                await socket.ConnectAsync(host, port, timeoutCts.Token).ConfigureAwait(false);
+                if (isUnixSocket)
+                    await socket.ConnectAsync(new UnixDomainSocketEndPoint(host), timeoutCts.Token).ConfigureAwait(false);
+                else
+                    await socket.ConnectAsync(host, port, timeoutCts.Token).ConfigureAwait(false);
                 timeoutCts.Token.ThrowIfCancellationRequested();
 
                 if (options.UseTls)
