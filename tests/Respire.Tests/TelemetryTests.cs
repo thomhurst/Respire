@@ -15,12 +15,15 @@ namespace Respire.Tests;
 public class TelemetryTests
 {
     [Test]
-    [NotInParallel] // This process-wide instrument also receives reconnects from wire tests.
     public async Task SubscriptionGap_EmitsCounterWithReasonTags()
     {
         using var capture = new TelemetryCapture();
+        // This process-wide instrument also receives reconnect gaps from concurrent wire tests.
+        // Only measurements recorded inside this test's trace belong to it.
+        using var trace = TelemetryCapture.StartTestTrace();
         RespireTelemetry.RecordSubscriptionGap(SubscriptionKind.Sharded, RespireSubscriptionGapReason.Reconnect);
-        var measurement = capture.Measurements.Single(item => item.InstrumentName == "respire.pubsub.delivery.gaps"
+        var measurement = capture.Measurements.Single(item => item.TraceId == trace.TraceId
+            && item.InstrumentName == "respire.pubsub.delivery.gaps"
             && item.Tags.GetValueOrDefault("respire.subscription.kind") as string == "Sharded"
             && item.Tags.GetValueOrDefault("respire.subscription.gap.reason") as string == "Reconnect");
         await Assert.That(measurement.Unit).IsEqualTo("{gap}");
@@ -370,10 +373,12 @@ public class TelemetryTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task EmptySentinelBatchAndTransaction_EmitEndpointlessTelemetry()
     {
         using var capture = new TelemetryCapture();
+        // Endpointless operations carry no unique port, and concurrent tests emit PIPELINE and
+        // MULTI too. Only telemetry recorded inside this test's trace belongs to it.
+        using var trace = TelemetryCapture.StartTestTrace();
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespProtocol.Resp2,
@@ -387,11 +392,12 @@ public class TelemetryTests
 
         foreach (var operation in new[] { "PIPELINE", "MULTI" })
         {
-            var activity = capture.Activities.Single(item => Tag(item, "db.operation.name") as string == operation);
+            var activity = capture.Activities.Single(item => item.TraceId == trace.TraceId
+                && Tag(item, "db.operation.name") as string == operation);
             await Assert.That(Tag(activity, "db.operation.batch.size")).IsEqualTo(0);
             await Assert.That(Tag(activity, "server.address")).IsNull();
-            var measurement = capture.Measurements.Single(item =>
-                item.InstrumentName == RespireTelemetry.OperationDuration.Name
+            var measurement = capture.Measurements.Single(item => item.TraceId == trace.TraceId
+                && item.InstrumentName == RespireTelemetry.OperationDuration.Name
                 && item.Tags.GetValueOrDefault("db.operation.name") as string == operation);
             await Assert.That(measurement.Tags["db.operation.batch.size"]).IsEqualTo(0);
             await Assert.That(measurement.Tags.GetValueOrDefault("server.address")).IsNull();
@@ -535,20 +541,36 @@ public class TelemetryTests
                     }
                 },
             };
+            // Measurement callbacks run on the recording thread, so the ambient activity at that
+            // point identifies which test's trace recorded it.
             _meterListener.SetMeasurementEventCallback<double>((instrument, value, tags, _) =>
                 Measurements.Enqueue(new Measurement(
                     instrument.Name,
                     instrument.Unit,
                     value,
-                    tags.ToArray().ToDictionary(static tag => tag.Key, static tag => tag.Value))));
+                    tags.ToArray().ToDictionary(static tag => tag.Key, static tag => tag.Value),
+                    Activity.Current?.TraceId)));
             _meterListener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
                 Measurements.Enqueue(new Measurement(
                     instrument.Name,
                     instrument.Unit,
                     value,
-                    tags.ToArray().ToDictionary(static tag => tag.Key, static tag => tag.Value))));
+                    tags.ToArray().ToDictionary(static tag => tag.Key, static tag => tag.Value),
+                    Activity.Current?.TraceId)));
             _meterListener.Start();
         }
+
+        /// <summary>
+        /// Starts an ambient parent activity. Respire activities and measurements recorded in
+        /// its async flow share its trace ID, which separates them from concurrent tests that
+        /// emit the same process-wide instruments without a unique endpoint tag.
+        /// </summary>
+        public static Activity StartTestTrace()
+            // An explicit random parent gives a fresh trace even if the runner already has
+            // an ambient activity that concurrent tests share.
+            => new Activity("respire-telemetry-test")
+                .SetParentId(ActivityTraceId.CreateRandom(), ActivitySpanId.CreateRandom())
+                .Start();
 
         public Activity SingleActivity(string operation, int port)
             => Activities.Single(activity =>
@@ -571,7 +593,8 @@ public class TelemetryTests
         string InstrumentName,
         string? Unit,
         double Value,
-        Dictionary<string, object?> Tags);
+        Dictionary<string, object?> Tags,
+        ActivityTraceId? TraceId = null);
 
     private sealed record Payload;
 
