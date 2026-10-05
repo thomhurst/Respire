@@ -3,6 +3,7 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
+[Category(TestCategories.ProtocolIndependent)]
 [ClassDataSource<ModernRedisTestContainer>(Shared = SharedType.PerTestSession)]
 public class HashReadIntegrationTests(ModernRedisTestContainer fixture)
 {

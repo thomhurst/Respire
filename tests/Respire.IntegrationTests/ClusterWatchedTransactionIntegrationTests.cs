@@ -3,6 +3,7 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
+[Category(TestCategories.ProtocolIndependent)]
 [ClassDataSource<ClusterTransactionTestContainer>(Shared = SharedType.PerTestSession)]
 public class ClusterWatchedTransactionIntegrationTests(ClusterTransactionTestContainer fixture)
 {
