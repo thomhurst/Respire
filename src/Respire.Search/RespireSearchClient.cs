@@ -6,21 +6,22 @@ namespace Respire.Search;
 /// <summary>Typed Redis Search index, query, aggregation, vector, and hybrid operations.</summary>
 /// <remarks>
 /// <para>
-/// FT.* commands carry an index name rather than keys. Respire routes them like other module
+/// Index operations carry an index name rather than keys. Respire routes them like other module
 /// commands: on a cluster, a command goes to the node that owns the index name's hash slot, and
 /// cursor reads follow the same index name. Respire does not fan out queries or merge shard
 /// results; cross-shard search relies on the server's search coordinator. On a cluster without
 /// one (for example, plain Redis Open Source cluster mode), each command sees only the documents
-/// on the node that receives it, and Respire cannot detect the partial result.
+/// on the node that receives it, and Respire cannot detect the partial result. Suggestion operations
+/// use independent dictionary keys and route by those keys.
 /// </para>
 /// <para>
 /// With client-side caching, read-only Search commands leave the local cache intact; FT.CREATE,
-/// FT.ALTER, and FT.DROPINDEX invalidate it conservatively. Key-prefixed views reject Search
+/// FT.ALTER, FT.DROPINDEX, FT.SUGADD, and FT.SUGDEL invalidate it conservatively. Key-prefixed views reject Search
 /// commands, so include prefixes in index definitions. Each query method builds one argument list
 /// per call; this package does not target the zero-allocation hot path.
 /// </para>
 /// </remarks>
-public sealed class RespireSearchClient
+public sealed partial class RespireSearchClient
 {
     private static readonly string[] DeleteDocumentsOption = ["DD"];
     private static readonly string[] NoOptions = [];
