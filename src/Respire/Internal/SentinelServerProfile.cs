@@ -25,9 +25,16 @@ internal readonly record struct SentinelServerProfile(
 
     private static Version? ServerVersion(string info, string prefix)
     {
-        foreach (var line in info.Split('\n'))
+        var remaining = info.AsSpan();
+        while (!remaining.IsEmpty)
+        {
+            var newline = remaining.IndexOf('\n');
+            var line = newline < 0 ? remaining : remaining[..newline];
             if (line.StartsWith(prefix, StringComparison.Ordinal)
                 && Version.TryParse(line[prefix.Length..].Trim(), out var version)) return version;
+            if (newline < 0) break;
+            remaining = remaining[(newline + 1)..];
+        }
         return null;
     }
 }
