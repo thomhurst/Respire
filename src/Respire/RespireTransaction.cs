@@ -385,7 +385,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
                 var itemError = _ops[i].Complete(_client, in elements[i]);
                 operationError ??= itemError;
                 if (_importSession is not null && itemError is not null
-                    && (itemError is not RespireServerException serverError || ClusterRouter.IsRedirect(serverError)))
+                    && RespireHashImportSession.RequiresExpiration(itemError))
                     importError ??= itemError;
             }
 

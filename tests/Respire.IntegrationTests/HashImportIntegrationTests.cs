@@ -25,7 +25,10 @@ public class HashImportIntegrationTests(Redis810HashImportTestContainer fixture)
     public async Task ImportOverwritesHashAndTtlWithOriginalFieldOrder(bool useFake, int protocol, string mode)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
-        await using var root = await RespireClient.ConnectAsync(Options(fake, protocol));
+        var options = Options(fake, protocol);
+        // Five dependent commands span multiple capacity-limited pipeline chunks.
+        if (mode == "batch") options = options with { MaxInflightCommands = 2 };
+        await using var root = await RespireClient.ConnectAsync(options);
         var client = root.WithKeyPrefix($"import:{Guid.NewGuid():N}:");
         await client.Hashes.SetAsync("key", "old", "old");
         (await client.Keys.ExpireAsync("key", TimeSpan.FromMinutes(1))).Should().BeTrue();

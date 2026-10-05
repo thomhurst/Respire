@@ -341,13 +341,17 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         // batch-level CancellationTokenSource or per-operation registrations needed.
         try
         {
-            var tasks = new Task<Exception?>[_ops.Count];
-            for (var i = 0; i < _ops.Count; i++)
+            if (_importSession is not null)
             {
-                tasks[i] = _ops[i].RunAsync(_client, connection, cancellationToken);
+                await RunImportBatchAsync(connection, cancellationToken).ConfigureAwait(false);
             }
-
-            await Task.WhenAll(tasks).ConfigureAwait(false);
+            else
+            {
+                var tasks = new Task<Exception?>[_ops.Count];
+                for (var i = 0; i < _ops.Count; i++)
+                    tasks[i] = _ops[i].RunAsync(_client, connection, cancellationToken);
+                await Task.WhenAll(tasks).ConfigureAwait(false);
+            }
         }
         finally
         {
@@ -356,9 +360,6 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
 
         var batchFailures = CollectFailures(_ops);
         var batchFirstError = batchFailures is { Length: > 0 } ? batchFailures[0].Error : null;
-        if (_importSession is not null && batchFailures is not null)
-            foreach (var failure in batchFailures)
-                await _importSession.ExpireIfUncertainAsync(failure.Error).ConfigureAwait(false);
         telemetry.Complete(
             core,
             telemetryOperation,
@@ -366,6 +367,29 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             connection: connection,
             batchSize: _ops.Count == 1 ? null : _ops.Count);
         return new RespireBatchResult(_ops.Count, batchFailures);
+    }
+
+    private async Task RunImportBatchAsync(RespireConnection connection, CancellationToken cancellationToken)
+    {
+        // The session exclusively owns this connection. Fill at most one ring's worth of
+        // commands, then drain it before admitting more; capacity waiters are not FIFO.
+        var tasks = new Task<Exception?>[Math.Min(_ops.Count, _client.Core.Options.MaxInflightCommands)];
+        for (var offset = 0; offset < _ops.Count;)
+        {
+            var count = Math.Min(tasks.Length, _ops.Count - offset);
+            for (var index = 0; index < count; index++)
+                tasks[index] = _ops[offset + index].RunAsync(_client, connection, cancellationToken);
+            // Slots beyond count still contain completed tasks from the preceding chunk.
+            await Task.WhenAll(tasks).ConfigureAwait(false);
+            offset += count;
+            for (var index = 0; index < count; index++)
+            {
+                if (tasks[index].Result is not { } error || !RespireHashImportSession.RequiresExpiration(error)) continue;
+                await _importSession!.ExpireIfUncertainAsync(error).ConfigureAwait(false);
+                for (; offset < _ops.Count; offset++) _ops[offset].Fail(error);
+                return;
+            }
+        }
     }
 
     /// <summary>

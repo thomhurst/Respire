@@ -69,6 +69,115 @@ public class HashImportTests
     }
 
     [Test]
+    [Arguments(1, 2)]
+    [Arguments(2, 2)]
+    [Arguments(4, 2)]
+    [Arguments(5, 2)]
+    [Arguments(1, 3)]
+    [Arguments(2, 3)]
+    [Arguments(4, 3)]
+    [Arguments(5, 3)]
+    public async Task BatchesPreserveFieldsetOrderBeyondInflightCapacity(int capacity, int protocol)
+    {
+        await using var server = new RespireFakeServer();
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with
+            { MaxInflightCommands = capacity, Protocol = (RespProtocol)protocol });
+        await using var session = await client.Hashes.CreateImportSessionAsync();
+        using var batch = session.CreateBatch();
+        for (var index = 0; index < 32; index++)
+        {
+            _ = batch.Hashes.PrepareImport("schema", $"field:{index}");
+            _ = batch.Hashes.Import($"key:{index}", "schema", $"value:{index}");
+            _ = batch.Hashes.DiscardImport("schema");
+        }
+        var gate = new RespireFakeGate();
+        using var pause = server.InjectFault("HIMPORT", RespireFakeFault.Pause(gate));
+        var execute = batch.ExecuteAsync().AsTask();
+        try
+        {
+            await pause.Matched.WaitAsync(TimeSpan.FromSeconds(5));
+            gate.Release();
+            await execute.WaitAsync(TimeSpan.FromSeconds(10));
+            for (var index = 0; index < 32; index++)
+                await Assert.That(await client.Hashes.GetStringAsync($"key:{index}", $"field:{index}"))
+                    .IsEqualTo($"value:{index}");
+            await Assert.That(await session.DiscardAllAsync()).IsEqualTo(0);
+        }
+        finally { gate.Release(); }
+    }
+
+    [Test]
+    [Arguments("immediate")]
+    [Arguments("batch")]
+    [Arguments("transaction")]
+    public async Task ReadOnlyFailoverExpiresSessionWithoutReplay(string mode)
+    {
+        await using var server = new FakeRespServer(20, FakeRespServer.OkReply);
+        var topology = Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{server.Port}\r\n");
+        var inMulti = false;
+        server.ReplyOverride = (_, command) =>
+        {
+            if (command == "CLUSTER SLOTS") return topology;
+            if (command == "MULTI") { inMulti = true; return FakeRespServer.OkReply; }
+            if (command == "EXEC")
+            {
+                inMulti = false;
+                return "*2\r\n-ERR unknown fieldset\r\n-READONLY demoted primary\r\n"u8.ToArray();
+            }
+            if (inMulti) return "+QUEUED\r\n"u8.ToArray();
+            return command.StartsWith("HIMPORT SET", StringComparison.Ordinal)
+                ? "-READONLY demoted primary\r\n"u8.ToArray() : FakeRespServer.OkReply;
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+            { UseCluster = true, Protocol = RespProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)] });
+        await using var session = await client.Hashes.CreateImportSessionAsync("{one}:anchor");
+        await session.PrepareAsync("schema", "field");
+        if (mode == "immediate")
+            await Assert.That(async () => await session.SetAsync("{one}:key", "schema", "value")).Throws<RespireServerException>();
+        else if (mode == "batch")
+        {
+            using var batch = session.CreateBatch();
+            _ = batch.Hashes.Import("{one}:key", "schema", "value");
+            await Assert.That(async () => await batch.ExecuteAsync()).Throws<RespireServerException>();
+        }
+        else
+        {
+            await using var transaction = session.CreateTransaction();
+            _ = transaction.Hashes.Import("{one}:unknown", "unknown", "value");
+            var rejected = transaction.Hashes.Import("{one}:key", "schema", "value");
+            await transaction.CommitAsync();
+            await Assert.That(rejected.Error is RespireServerException { Code: RespireErrorCodes.ReadOnly }).IsTrue();
+        }
+        await Assert.That(server.ReceivedCommands.Count(command => command == "HIMPORT SET {one}:key schema value")).IsEqualTo(1);
+        await Assert.That(async () => await session.SetAsync("{one}:later", "schema", "value")).Throws<ObjectDisposedException>();
+        await Assert.That(client.Core.Cluster!.GetKnownSlotOwner(session.ClusterSlot!.Value)).IsNull();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task UncertainBatchChunkFaultsUnsentImports(bool afterExecution)
+    {
+        await using var server = new RespireFakeServer();
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { MaxInflightCommands = 1 });
+        await using var session = await client.Hashes.CreateImportSessionAsync();
+        using var batch = session.CreateBatch();
+        var prepared = batch.Hashes.PrepareImport("schema", "field");
+        var uncertain = batch.Hashes.Import("first", "schema", "value");
+        var unsent = batch.Hashes.Import("later", "schema", "value");
+        using var fault = server.InjectFault("HIMPORT", RespireFakeFault.Disconnect(afterExecution),
+            firstArgument: "SET"u8.ToArray());
+        await Assert.That(async () => await batch.ExecuteAsync()).Throws<RespireException>();
+        await Assert.That(prepared.Result).IsTrue();
+        await Assert.That(uncertain.Status).IsEqualTo(RespirePendingStatus.Faulted);
+        await Assert.That(unsent.Status).IsEqualTo(RespirePendingStatus.Faulted);
+        await Assert.That(await client.ExistsAsync("first")).IsEqualTo(afterExecution);
+        await Assert.That(await client.ExistsAsync("later")).IsFalse();
+        await Assert.That(fault.MatchedCount).IsEqualTo(1);
+        await Assert.That(async () => await session.SetAsync("retry", "schema", "value")).Throws<ObjectDisposedException>();
+    }
+
+    [Test]
     public async Task OrdinaryQueuesRejectConnectionLocalImports()
     {
         await using var server = new RespireFakeServer();
@@ -123,7 +232,7 @@ public class HashImportTests
     public async Task QueueErrorsPreserveOtherResultsAndSession(bool transaction)
     {
         await using var server = new RespireFakeServer();
-        await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { MaxInflightCommands = transaction ? 16 : 1 });
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
         using var batch = transaction ? null : session.CreateBatch();

@@ -231,11 +231,15 @@ public sealed class RespireHashImportSession : IAsyncDisposable
             throw new InvalidOperationException("The hash import session lost its connection or route. Dispose it and open a new session.");
     }
 
+    internal static bool RequiresExpiration(Exception error)
+        => error is not RespireServerException server || ClusterRouter.IsRedirect(server)
+            || server.Code == RespireErrorCodes.ReadOnly;
+
     internal async ValueTask ExpireIfUncertainAsync(Exception error)
     {
+        if (!RequiresExpiration(error)) return;
         if (error is RespireServerException server)
         {
-            if (!ClusterRouter.IsRedirect(server)) return;
             _client.Core.Cluster?.LearnWatchedRoute(server, _connection, ClusterSlot);
         }
         try { await DisposeAsync().ConfigureAwait(false); }
