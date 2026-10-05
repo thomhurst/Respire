@@ -4,13 +4,14 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
+[Category(TestCategories.ProtocolIndependent)]
 public class ServerDiagnosticsIntegrationTests
 {
     [Test]
     [Arguments("redis:6.2.14-alpine", 2, false)]
     [Arguments("redis:6.2.14-alpine", 3, false)]
-    [Arguments("redis:7.0.15-alpine", 2, true)]
-    [Arguments("redis:7.0.15-alpine", 3, true)]
+    [Arguments("redis:7.0.15", 2, true)]
+    [Arguments("redis:7.0.15", 3, true)]
     [Arguments("valkey/valkey:8.1-alpine", 2, true)]
     [Arguments("valkey/valkey:8.1-alpine", 3, true)]
     public async Task NodeLocalDiagnosticsPreserveVersionedContracts(string image, int protocol, bool histogramSupported)
