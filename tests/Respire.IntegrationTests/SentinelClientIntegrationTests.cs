@@ -41,6 +41,7 @@ public class SentinelClientIntegrationTests
         await client.ConfigSetAsync(config, deadline.Token);
         await client.SetAsync(name, new Dictionary<string, string> { ["parallel-syncs"] = "1" }, deadline.Token);
         await client.FlushConfigAsync(deadline.Token);
+        await client.SimulateFailureAsync(RespireSentinelFailure.CrashAfterElection | RespireSentinelFailure.CrashAfterPromotion, deadline.Token);
         await client.SimulateFailureAsync(RespireSentinelFailure.None, deadline.Token);
 
         const string temporary = "typed-sentinel-admin";

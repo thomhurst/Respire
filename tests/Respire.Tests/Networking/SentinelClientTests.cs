@@ -10,6 +10,35 @@ public class SentinelClientTests
 {
     private static byte[] Bulk(string value) => Encoding.UTF8.GetBytes($"${Encoding.UTF8.GetByteCount(value)}\r\n{value}\r\n");
 
+    /// <summary>Checks version-gated multi-option writes and preserves single-option support.</summary>
+    [Test]
+    [Arguments("redis_version:6.2.14", false)]
+    [Arguments("redis_version:7.0.15", false)]
+    [Arguments("redis_version:7.2.0", true)]
+    [Arguments("redis_version:7.2.4\r\nvalkey_version:8.0.0", true)]
+    [Arguments("unknown_version:1.0.0", false)]
+    public async Task MultiOptionConfigUsesOnlySupportedServerVersions(string version, bool supported)
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "INFO SERVER" ? Bulk(version) : null,
+        };
+        await using var client = await RespireSentinelClient.ConnectAsync(new("127.0.0.1", server.Port), new() { AllowAdmin = true });
+        var options = new Dictionary<string, string> { ["announce-ip"] = "127.0.0.2", ["announce-port"] = "26380" };
+        if (supported)
+        {
+            await client.ConfigSetAsync(options);
+            await Assert.That(server.ReceivedCommands.Contains("SENTINEL CONFIG SET announce-ip 127.0.0.2 announce-port 26380")).IsTrue();
+        }
+        else
+        {
+            await Assert.That(async () => await client.ConfigSetAsync(options)).Throws<NotSupportedException>();
+            await Assert.That(server.CommandsSeen).IsEqualTo(1);
+        }
+        await client.ConfigSetAsync(new Dictionary<string, string> { ["announce-port"] = "26380" });
+        await Assert.That(server.ReceivedCommands.Contains("SENTINEL CONFIG SET announce-port 26380")).IsTrue();
+    }
+
     [Test]
     [Arguments("redis_version:4.0.14", "MASTER", "MASTERS", "SLAVES", "IS-MASTER-DOWN-BY-ADDR")]
     [Arguments("redis_version:8.10.2", "MASTER", "MASTERS", "REPLICAS", "IS-MASTER-DOWN-BY-ADDR")]
@@ -50,6 +79,7 @@ public class SentinelClientTests
             {
                 "INFO SERVER" => Bulk("redis_version:7.2.0"),
                 "SENTINEL RESET temp*" => ":1\r\n"u8.ToArray(),
+                "SENTINEL SIMULATE-FAILURE help" => "*2\r\n$20\r\ncrash-after-election\r\n$21\r\ncrash-after-promotion\r\n"u8.ToArray(),
                 _ => FakeRespServer.OkReply,
             },
         };
@@ -77,6 +107,53 @@ public class SentinelClientTests
         await Assert.That(Encoding.UTF8.GetString(server.ReceivedArguments[monitorIndex][2])).IsEqualTo("temp name");
         await Assert.That(commands.Contains("SENTINEL CONFIG SET announce-ip 127.0.0.2")).IsTrue();
         await Assert.That(commands.Contains("SENTINEL SIMULATE-FAILURE crash-after-election crash-after-promotion")).IsTrue();
+        await Assert.That(commands.Contains("SENTINEL SIMULATE-FAILURE help")).IsTrue();
+    }
+
+    /// <summary>Checks that the monitoring API sends caller-specified ordering and duplicate options unchanged.</summary>
+    [Test]
+    public async Task MonitoringOptionsPreserveExplicitOrderAndDuplicates()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "INFO SERVER" ? Bulk("redis_version:7.2.0") : null,
+        };
+        await using var client = await RespireSentinelClient.ConnectAsync(new("127.0.0.1", server.Port), new() { AllowAdmin = true });
+        KeyValuePair<string, string>[] options =
+        [
+            new("auth-user", "first"), new("auth-pass", "secret"), new("auth-user", "second"),
+        ];
+        await client.SetAsync("main", options);
+        await Assert.That(server.ReceivedCommands.Contains("SENTINEL SET main auth-user first auth-pass secret auth-user second")).IsTrue();
+    }
+
+    /// <summary>Checks conservative ACL fallback without hiding authentication failures.</summary>
+    [Test]
+    [Arguments("NOPERM permission denied", true)]
+    [Arguments("NOAUTH authentication required", false)]
+    public async Task OnlyInfoPermissionDenialFallsBackToLegacyNames(string error, bool fallback)
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "INFO SERVER" => Encoding.UTF8.GetBytes("-" + error + "\r\n"),
+                "SENTINEL SLAVES main" => "*0\r\n"u8.ToArray(),
+                _ => null,
+            },
+        };
+        if (!fallback)
+        {
+            await Assert.That(async () => await RespireSentinelClient.ConnectAsync(new("127.0.0.1", server.Port))).Throws<RespireServerException>();
+            return;
+        }
+        await using var client = await RespireSentinelClient.ConnectAsync(new("127.0.0.1", server.Port), new() { AllowAdmin = true });
+        await Assert.That(await client.ReplicasAsync("main")).IsEmpty();
+        await Assert.That(async () => await client.ConfigSetAsync(new Dictionary<string, string>
+        {
+            ["announce-ip"] = "127.0.0.2", ["announce-port"] = "26380",
+        })).Throws<NotSupportedException>();
+        await Assert.That(server.CommandsSeen).IsEqualTo(2);
     }
 
     [Test]

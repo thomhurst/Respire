@@ -47,15 +47,17 @@ public sealed class RespireSentinelClient : IAsyncDisposable
     private readonly RespireClient _client;
     private readonly bool _primaryAliases;
     private readonly bool _replicaAlias;
+    private readonly bool _multiOptionConfig;
 
-    private RespireSentinelClient(RespireClient client, bool primaryAliases, bool replicaAlias)
-        => (_client, _primaryAliases, _replicaAlias) = (client, primaryAliases, replicaAlias);
+    /// <summary>Owns an established connection and its detected wire capabilities.</summary>
+    private RespireSentinelClient(RespireClient client, bool primaryAliases, bool replicaAlias, bool multiOptionConfig)
+        => (_client, _primaryAliases, _replicaAlias, _multiOptionConfig) = (client, primaryAliases, replicaAlias, multiOptionConfig);
 
     /// <summary>The Sentinel endpoint selected at connection time.</summary>
     public RespireEndpoint Endpoint => _client.Endpoint;
 
     /// <summary>Connects directly to one Sentinel. Does not discover or connect to a data primary.</summary>
-    /// <remarks>INFO SERVER permission is required to select version-appropriate command names.</remarks>
+    /// <remarks>When INFO SERVER is denied by ACL, uses legacy command names and disables multi-option CONFIG SET.</remarks>
     public static async ValueTask<RespireSentinelClient> ConnectAsync(RespireEndpoint endpoint,
         RespireOptions? options = null, CancellationToken cancellationToken = default)
     {
@@ -68,11 +70,21 @@ public sealed class RespireSentinelClient : IAsyncDisposable
         var client = await RespireClient.ConnectAsync(sentinelOptions, cancellationToken).ConfigureAwait(false);
         try
         {
-            using var reply = await client.ExecuteAsync("INFO SERVER", [], cancellationToken: cancellationToken).ConfigureAwait(false);
+            RespireResult reply;
+            try
+            {
+                reply = await client.ExecuteAsync("INFO SERVER", [], cancellationToken: cancellationToken).ConfigureAwait(false);
+            }
+            catch (RespireServerException exception) when (exception.Code == RespireErrorCodes.NoPerm)
+            {
+                return new(client, false, false, false);
+            }
+            using var lease = reply;
             var info = SentinelReply.Text(reply);
             var valkey = ServerVersion(info, "valkey_version:");
             var redis = ServerVersion(info, "redis_version:");
-            return new(client, valkey is { Major: >= 8 }, valkey is not null || redis is { Major: >= 5 });
+            return new(client, valkey is { Major: >= 8 }, valkey is not null || redis is { Major: >= 5 },
+                valkey is { Major: >= 8 } || redis is { Major: > 7 } or { Major: 7, Minor: >= 2 });
         }
         catch
         {
@@ -81,6 +93,7 @@ public sealed class RespireSentinelClient : IAsyncDisposable
         }
     }
 
+    /// <summary>Reads a server-family version; missing or unparseable versions leave capabilities disabled.</summary>
     private static Version? ServerVersion(string info, string prefix)
     {
         foreach (var line in info.Split('\n'))
@@ -115,7 +128,11 @@ public sealed class RespireSentinelClient : IAsyncDisposable
 
     /// <summary>Returns cached INFO from all primaries and replicas, or only the requested primaries. Redis 3.2+.</summary>
     public ValueTask<RespireSentinelInfo[]> InfoCacheAsync(string[]? names = null, CancellationToken cancellationToken = default)
-        => ReadAsync("INFO-CACHE", names is null ? [] : names.Select(name => (RespireValue)Name(name)).ToArray(), SentinelReply.InfoCache, cancellationToken);
+    {
+        RespireValue[] arguments = names is null ? [] : new RespireValue[names.Length];
+        for (var index = 0; index < arguments.Length; index++) arguments[index] = Name(names![index]);
+        return ReadAsync("INFO-CACHE", arguments, SentinelReply.InfoCache, cancellationToken);
+    }
 
     /// <summary>Returns pending scripts with owned argument strings.</summary>
     public ValueTask<RespireSentinelScript[]> PendingScriptsAsync(CancellationToken cancellationToken = default)
@@ -150,12 +167,19 @@ public sealed class RespireSentinelClient : IAsyncDisposable
     }
 
     /// <summary>Sets ordered monitoring options for one primary. Requires AllowAdmin.</summary>
-    public ValueTask SetAsync(string name, IReadOnlyDictionary<string, string> options, CancellationToken cancellationToken = default)
+    /// <remarks>Preserves enumeration order and duplicate options. Use a list or array when order matters.</remarks>
+    public ValueTask SetAsync(string name, IEnumerable<KeyValuePair<string, string>> options, CancellationToken cancellationToken = default)
         => MutateAsync("SET", [Name(name), .. Options(options)], cancellationToken);
 
-    /// <summary>Sets global configuration. Requires AllowAdmin. Redis 6.2+.</summary>
+    /// <summary>Sets global configuration. Requires AllowAdmin. Redis 6.2+; multiple pairs require Redis 7.2+ or Valkey 8+.</summary>
     public ValueTask ConfigSetAsync(IReadOnlyDictionary<string, string> options, CancellationToken cancellationToken = default)
-        => MutateAsync("CONFIG SET", Options(options), cancellationToken);
+    {
+        EnsureAdmin();
+        var arguments = Options(options);
+        if (arguments.Length > 2 && !_multiOptionConfig)
+            throw new NotSupportedException("Multiple Sentinel CONFIG SET options require Redis 7.2+ or Valkey 8+.");
+        return MutateAsync("CONFIG SET", arguments, cancellationToken);
+    }
 
     /// <summary>Rewrites this Sentinel's configuration file. Requires AllowAdmin.</summary>
     public ValueTask FlushConfigAsync(CancellationToken cancellationToken = default)
@@ -174,16 +198,24 @@ public sealed class RespireSentinelClient : IAsyncDisposable
     }
 
     /// <summary>Configures crash simulation; None clears it. Requires AllowAdmin. Redis 3.2+.</summary>
-    public ValueTask SimulateFailureAsync(RespireSentinelFailure failure, CancellationToken cancellationToken = default)
+    public async ValueTask SimulateFailureAsync(RespireSentinelFailure failure, CancellationToken cancellationToken = default)
     {
         if ((failure & ~(RespireSentinelFailure.CrashAfterElection | RespireSentinelFailure.CrashAfterPromotion)) != 0)
             throw new ArgumentOutOfRangeException(nameof(failure));
+        EnsureAdmin();
+        if (failure == RespireSentinelFailure.None)
+        {
+            // HELP resets flags before returning its array; a command without flags fails arity validation.
+            await ReadAsync("SIMULATE-FAILURE", ["help"], SentinelReply.FailureHelp, cancellationToken).ConfigureAwait(false);
+            return;
+        }
         List<RespireValue> arguments = [];
         if (failure.HasFlag(RespireSentinelFailure.CrashAfterElection)) arguments.Add("crash-after-election");
         if (failure.HasFlag(RespireSentinelFailure.CrashAfterPromotion)) arguments.Add("crash-after-promotion");
-        return MutateAsync("SIMULATE-FAILURE", arguments.ToArray(), cancellationToken);
+        await MutateAsync("SIMULATE-FAILURE", arguments.ToArray(), cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>Parses an owned result before returning the pooled reply lease.</summary>
     private async ValueTask<T> ReadAsync<T>(string command, RespireValue[] arguments, Func<RespireResult, T> parse,
         CancellationToken cancellationToken)
     {
@@ -191,40 +223,45 @@ public sealed class RespireSentinelClient : IAsyncDisposable
         return parse(reply);
     }
 
+    /// <summary>Checks administrative opt-in and requires an OK acknowledgement.</summary>
     private async ValueTask MutateAsync(string command, RespireValue[] arguments, CancellationToken cancellationToken)
     {
         EnsureAdmin();
         await ReadAsync(command, arguments, SentinelReply.Ok, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>Rejects writes and election votes before sending command bytes when administration is disabled.</summary>
     private void EnsureAdmin()
     {
         if (!_client.Core.Options.AllowAdmin) throw new NotSupportedException("Sentinel mutations require RespireOptions.AllowAdmin=true.");
     }
 
+    /// <summary>Rejects missing names and option keys without splitting embedded whitespace.</summary>
     private static string Name(string value)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(value);
         return value;
     }
 
+    /// <summary>Requires a nonblank host and a usable TCP port for monitoring and voting commands.</summary>
     private static void ValidateEndpoint(RespireEndpoint endpoint)
     {
         Name(endpoint.Host);
         if (endpoint.Port is < 1 or > 65535) throw new ArgumentOutOfRangeException(nameof(endpoint));
     }
 
-    private static RespireValue[] Options(IReadOnlyDictionary<string, string> options)
+    /// <summary>Validates and materializes option pairs in exactly their supplied enumeration order.</summary>
+    private static RespireValue[] Options(IEnumerable<KeyValuePair<string, string>> options)
     {
         ArgumentNullException.ThrowIfNull(options);
-        if (options.Count == 0) throw new ArgumentException("At least one option is required.", nameof(options));
-        List<RespireValue> arguments = new(options.Count * 2);
+        List<RespireValue> arguments = [];
         foreach (var pair in options)
         {
             arguments.Add(Name(pair.Key));
             ArgumentNullException.ThrowIfNull(pair.Value);
             arguments.Add(pair.Value);
         }
+        if (arguments.Count == 0) throw new ArgumentException("At least one option is required.", nameof(options));
         return arguments.ToArray();
     }
 
@@ -232,8 +269,19 @@ public sealed class RespireSentinelClient : IAsyncDisposable
     public ValueTask DisposeAsync() => _client.DisposeAsync();
 }
 
+/// <summary>Copies Sentinel reply shapes into managed snapshots and rejects malformed fields.</summary>
 internal static class SentinelReply
 {
+    /// <summary>Validates the HELP acknowledgement used to clear crash simulation flags.</summary>
+    internal static bool FailureHelp(RespireResult value)
+    {
+        Array(value);
+        if (value.Count != 2 || Text(value[0]) != "crash-after-election" || Text(value[1]) != "crash-after-promotion")
+            throw Invalid();
+        return true;
+    }
+
+    /// <summary>Copies a textual reply without coercing integers, nulls, or aggregates.</summary>
     internal static string Text(RespireResult value)
     {
         if (value.Type is not (RespDataType.SimpleString or RespDataType.BulkString or RespDataType.VerbatimString))
@@ -241,20 +289,24 @@ internal static class SentinelReply
         return value.AsString();
     }
 
+    /// <summary>Requires the exact successful mutation acknowledgement.</summary>
     internal static bool Ok(RespireResult value)
         => Text(value) == "OK" ? true : throw Invalid();
 
+    /// <summary>Reads an integer count or epoch and rejects negative values.</summary>
     internal static long NonnegativeInteger(RespireResult value)
     {
         if (value.Type != RespDataType.Integer || value.AsInteger() < 0) throw Invalid();
         return value.AsInteger();
     }
 
+    /// <summary>Requires positional array framing for row-oriented replies.</summary>
     private static void Array(RespireResult value)
     {
         if (value.Type != RespDataType.Array) throw Invalid();
     }
 
+    /// <summary>Copies RESP2 pairs or RESP3 map entries, rejecting odd lengths and duplicate keys.</summary>
     internal static IReadOnlyDictionary<string, string> Fields(RespireResult value)
     {
         if (value.Type is not (RespDataType.Array or RespDataType.Map) || value.Count % 2 != 0) throw Invalid();
@@ -264,9 +316,11 @@ internal static class SentinelReply
         return fields;
     }
 
+    /// <summary>Reads a mandatory field without replacing missing server state with defaults.</summary>
     private static string Required(IReadOnlyDictionary<string, string> fields, string name)
         => fields.TryGetValue(name, out var value) ? value : throw Invalid();
 
+    /// <summary>Parses a nonnegative scalar, accepting the legacy field name when its replacement is absent.</summary>
     private static long Number(IReadOnlyDictionary<string, string> fields, string name, string? legacy = null)
     {
         var text = fields.TryGetValue(name, out var value) ? value : Required(fields, legacy ?? name);
@@ -274,12 +328,14 @@ internal static class SentinelReply
             ? number : throw Invalid();
     }
 
+    /// <summary>Reads a numeric field and rejects values outside the Int32 range.</summary>
     private static int IntNumber(IReadOnlyDictionary<string, string> fields, string name, string? legacy = null)
     {
         var number = Number(fields, name, legacy);
         return number <= int.MaxValue ? (int)number : throw Invalid();
     }
 
+    /// <summary>Builds a reported endpoint only when its address and TCP port are valid.</summary>
     private static RespireEndpoint Endpoint(IReadOnlyDictionary<string, string> fields, string host = "ip", string port = "port")
     {
         var address = Required(fields, host);
@@ -288,6 +344,7 @@ internal static class SentinelReply
         return new(address, number);
     }
 
+    /// <summary>Copies primary identity, configuration, flags, and all scalar fields.</summary>
     internal static RespireSentinelPrimary Primary(RespireResult value)
     {
         var fields = Fields(value);
@@ -295,10 +352,14 @@ internal static class SentinelReply
             Number(fields, "config-epoch"), IntNumber(fields, "quorum"), fields);
     }
 
+    /// <summary>Copies every primary row, including unhealthy primaries.</summary>
     internal static RespireSentinelPrimary[] Primaries(RespireResult value) => Rows(value, Primary);
+    /// <summary>Copies every replica row, including disconnected replicas.</summary>
     internal static RespireSentinelReplica[] Replicas(RespireResult value) => Rows(value, Replica);
+    /// <summary>Copies the Sentinel peers reported by this node.</summary>
     internal static RespireSentinelPeer[] Peers(RespireResult value) => Rows(value, Peer);
 
+    /// <summary>Preserves replica state and represents an undiscovered upstream address as null.</summary>
     private static RespireSentinelReplica Replica(RespireResult value)
     {
         var fields = Fields(value);
@@ -312,12 +373,14 @@ internal static class SentinelReply
             Number(fields, "replica-repl-offset", "slave-repl-offset"), IntNumber(fields, "replica-priority", "slave-priority"), fields);
     }
 
+    /// <summary>Copies a peer endpoint, run ID, flags, and scalar attributes.</summary>
     private static RespireSentinelPeer Peer(RespireResult value)
     {
         var fields = Fields(value);
         return new(Required(fields, "name"), Endpoint(fields), Required(fields, "flags"), Required(fields, "runid"), fields);
     }
 
+    /// <summary>Materializes an array of owned values using the command-specific row parser.</summary>
     private static T[] Rows<T>(RespireResult value, Func<RespireResult, T> parse)
     {
         Array(value);
@@ -326,6 +389,7 @@ internal static class SentinelReply
         return result;
     }
 
+    /// <summary>Flattens primary and replica INFO caches while preserving nullable text and server-reported ages.</summary>
     internal static RespireSentinelInfo[] InfoCache(RespireResult value)
     {
         if (value.Type is not (RespDataType.Array or RespDataType.Map) || value.Count % 2 != 0) throw Invalid();
@@ -346,8 +410,10 @@ internal static class SentinelReply
         return result.ToArray();
     }
 
+    /// <summary>Copies pending script rows and their owned argument arrays.</summary>
     internal static RespireSentinelScript[] Scripts(RespireResult value) => Rows(value, Script);
 
+    /// <summary>Reads script scheduling fields, selecting runtime or delay according to the reported flags.</summary>
     private static RespireSentinelScript Script(RespireResult value)
     {
         if (value.Type is not (RespDataType.Array or RespDataType.Map) || value.Count % 2 != 0) throw Invalid();
@@ -369,6 +435,7 @@ internal static class SentinelReply
             Number(fields, "retry-num"));
     }
 
+    /// <summary>Validates the down-state bit and copies the election leader and epoch.</summary>
     internal static RespireSentinelDownState DownState(RespireResult value)
     {
         Array(value);
@@ -378,5 +445,6 @@ internal static class SentinelReply
         return new(down == 1, Text(value[1]), NonnegativeInteger(value[2]));
     }
 
+    /// <summary>Creates the shared protocol error for invalid Sentinel reply shapes.</summary>
     private static RespireProtocolException Invalid() => new("Malformed Sentinel reply.");
 }
