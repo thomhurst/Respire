@@ -3438,7 +3438,7 @@ public sealed partial class RespireClient : IRespireClient
     internal ValueTask<RespValue> SendOnPinnedConnectionAsync<TCommand>(
         string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
-        => RespireTelemetry.IsEnabled
+        => RespireTelemetry.IsOperationEnabled(operation)
             ? SendOnConnectionInstrumentedAsync(operation, connection, command, cancellationToken,
                 storedProcedureName: null, sendAsking: false, commandDeadline: default,
                 allowStreamingConnectionReroute: false, pinToConnection: true)
@@ -5062,7 +5062,7 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
-        if (!RespireTelemetry.IsEnabled && core.Cluster is null && core.Sentinel is null
+        if (!RespireTelemetry.IsOperationEnabled(operation) && core.Cluster is null && core.Sentinel is null
             && (_readFrom == RespireReadFrom.Primary || command.ReadKind == ReadCommandKind.None)
             && core.Multiplexer.IsInitialized && command is not IStreamingRespCommand
             && (ReadCache is null || !ClientSideCacheCoordinator.CanCacheOperation(operation)))

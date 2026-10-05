@@ -2,7 +2,10 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Runtime.CompilerServices;
+using Respire.Commands;
 using Respire.Internal;
+using Respire.Networking;
+using Respire.Protocol;
 using Respire.Tests.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -13,6 +16,88 @@ namespace Respire.Tests;
 [NotInParallel]
 public class MetricSelectionTests
 {
+    [Test]
+    [Arguments("GET", "blocked")]
+    [Arguments("GET", "excluded")]
+    [Arguments("GET", "enabled")]
+    [Arguments("HGET", "blocked")]
+    [Arguments("HGET", "excluded")]
+    [Arguments("HGET", "enabled")]
+    [Arguments("DUMP", "blocked")]
+    [Arguments("DUMP", "excluded")]
+    [Arguments("DUMP", "enabled")]
+    public async Task ByteResponseSelectionPreservesDirectOwnership(string operation, string mode)
+    {
+        foreach (var trace in new[] { false, true })
+        {
+            using var configuration = new MetricConfigurationScope(new()
+            {
+                Groups = RespireMetricGroups.Command,
+                CommandAllowList = mode == "excluded" ? ["SET"] : [operation],
+                CommandBlockList = mode == "blocked" ? [operation] : [],
+            });
+            await using var server = new FakeRespServer
+                { SuppressReply = command => command.StartsWith(operation + " ", StringComparison.Ordinal) };
+            await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+            using var capture = new Capture(trace);
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var pending = operation switch
+            {
+                "GET" => client.GetBytesAsync("key", deadline.Token),
+                "HGET" => client.Hashes.GetBytesAsync("key", "field", deadline.Token),
+                _ => client.Keys.DumpAsync("key", deadline.Token),
+            };
+            while (!server.ReceivedCommands.Any(command => command.StartsWith(operation + " ", StringComparison.Ordinal)))
+                await Task.Delay(1, deadline.Token);
+            await Assert.That(Inflight(client.Core.Multiplexer.GetConnection()).TryPeek(out var head)).IsTrue();
+            await Assert.That(head is BytesPendingResponseSource).IsEqualTo(!trace && mode != "enabled");
+            byte[] expected = [0, 255, 97, 98];
+            await server.SendRawAsync([.. "$4\r\n"u8, .. expected, 13, 10]);
+            var bytes = await pending;
+            await Assert.That(bytes!.AsSpan().SequenceEqual(expected)).IsTrue();
+            await Assert.That(capture.Items.Count(item => item.Name == "db.client.operation.duration")).IsEqualTo(mode == "enabled" ? 1 : 0);
+            await Assert.That(capture.Activities.Count).IsEqualTo(trace ? 1 : 0);
+        }
+    }
+
+    [Test]
+    [Arguments("blocked")]
+    [Arguments("excluded")]
+    [Arguments("enabled")]
+    public async Task PinnedResponseSelectionAvoidsUnneededTelemetryWrapper(string mode)
+    {
+        foreach (var trace in new[] { false, true })
+        {
+            using var configuration = new MetricConfigurationScope(new()
+            {
+                Groups = RespireMetricGroups.Command,
+                CommandAllowList = mode == "excluded" ? ["SET"] : ["GET"],
+                CommandBlockList = mode == "blocked" ? ["GET"] : [],
+            });
+            await using var server = new FakeRespServer
+                { SuppressReply = command => command.StartsWith("GET ", StringComparison.Ordinal) };
+            await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+            var connection = client.Core.Multiplexer.GetConnection();
+            using var capture = new Capture(trace);
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var pending = client.SendOnPinnedConnectionAsync("GET", connection, new Cmd1(Verbs.Get, "key"), deadline.Token);
+            while (!server.ReceivedCommands.Contains("GET key")) await Task.Delay(1, deadline.Token);
+            await Assert.That(Inflight(connection).TryPeek(out var head)).IsTrue();
+            await Assert.That(ReferenceEquals(ResponseSource(ref pending), head)).IsEqualTo(!trace && mode != "enabled");
+            await server.SendRawAsync("$5\r\nhello\r\n"u8.ToArray());
+            using var value = await pending;
+            await Assert.That(value.AsString()).IsEqualTo("hello");
+            await Assert.That(capture.Items.Count(item => item.Name == "db.client.operation.duration")).IsEqualTo(mode == "enabled" ? 1 : 0);
+            await Assert.That(capture.Activities.Count).IsEqualTo(trace ? 1 : 0);
+        }
+    }
+
+    [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_inflight")]
+    private static extern ref InflightRing Inflight(RespireConnection connection);
+
+    [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_obj")]
+    private static extern ref object? ResponseSource(ref ValueTask<RespValue> value);
+
     [Test]
     public async Task DefaultsSelectOnlyBasicConnectionsAndResiliency()
     {
