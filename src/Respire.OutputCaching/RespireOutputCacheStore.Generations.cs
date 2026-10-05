@@ -70,26 +70,39 @@ public sealed partial class RespireOutputCacheStore
     {
         if (members.Count == 1)
         {
-            var (key, generation) = ParseGenerationMember(members[0]);
-            _ = await _client.Scripts.ExecuteIntegerAsync(EvictGeneration,
-                [_valuePrefix + key, tagKey], [generation, members[0]], cancellationToken).ConfigureAwait(false);
+            if (TryParseGenerationMember(members[0], out var key, out var generation))
+                _ = await _client.Scripts.ExecuteIntegerAsync(EvictGeneration,
+                    [_valuePrefix + key, tagKey], [generation, members[0]], cancellationToken).ConfigureAwait(false);
+            else
+                await _client.SortedSets.RemoveAsync(tagKey, [members[0]], cancellationToken).ConfigureAwait(false);
             return;
         }
         using var batch = _client.CreateBatch();
         foreach (var member in members)
         {
-            var (key, generation) = ParseGenerationMember(member);
-            _ = batch.Scripts.Evaluate(EvictGeneration, [_valuePrefix + key, tagKey], [generation, member]);
+            if (TryParseGenerationMember(member, out var key, out var generation))
+                _ = batch.Scripts.Evaluate(EvictGeneration, [_valuePrefix + key, tagKey], [generation, member]);
+            else
+                _ = batch.SortedSets.Remove(tagKey, member);
         }
+        // The pipeline is not atomic across members. Each script and malformed-member
+        // removal is idempotent, so a retry safely completes a partially failed page.
         await batch.ExecuteAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private static (string Key, string Generation) ParseGenerationMember(string member)
+    private static bool TryParseGenerationMember(string member, out string key, out string generation)
     {
         // The fixed-width generation allows arbitrary keys, including colons and
         // empty strings, without delimiter escaping or a reverse tag index.
         if (member.Length < 33 || member[32] != ':' || !Guid.TryParseExact(member.AsSpan(0, 32), "N", out _))
-            throw new InvalidDataException("Invalid generation-aware output-cache tag member.");
-        return (member[33..], member[..32]);
+        {
+            // A corrupt index entry identifies no trustworthy value key. Remove only
+            // that entry so it cannot block all future eviction attempts for the tag.
+            key = generation = string.Empty;
+            return false;
+        }
+        key = member[33..];
+        generation = member[..32];
+        return true;
     }
 }

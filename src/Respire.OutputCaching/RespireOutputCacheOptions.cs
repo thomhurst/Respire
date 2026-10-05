@@ -18,7 +18,9 @@ public sealed class RespireOutputCacheOptions
 
     /// <summary>Tag invalidation contract. Defaults to MicrosoftCompatible.</summary>
     /// <remarks>GenerationAware uses a separate format and requires a nonempty Redis hash tag in InstanceName.
-    /// Microsoft writers cannot participate in that format; switching modes starts a separate cache.</remarks>
+    /// Microsoft writers cannot participate in that format; switching modes starts a separate cache.
+    /// GenerationAware buffer reads allocate an owned byte array for each nonempty payload.
+    /// Tag metadata grows with tagged writes over the value lifetime, including overwrites.</remarks>
     public RespireOutputCacheTaggingMode TaggingMode { get; set; }
 
     /// <summary>Interval between hosted cleanup passes. Defaults to five minutes.</summary>

@@ -147,12 +147,20 @@ Replacing a key with different tags or reusing an expired key therefore makes it
 memberships harmless. Old references remain until tag eviction or periodic expiry cleanup;
 there is no reverse tag index or global tag scan on writes.
 
+Size each tag index for roughly its tagged writes per second multiplied by the value TTL
+in seconds, plus expired members awaiting cleanup. Repeated overwrites count as separate
+writes even when they reuse one cache key. Longer TTLs and cleanup intervals retain more
+metadata. Each nonempty generation-aware buffer read currently copies its hash payload into
+an owned `byte[]` before writing to the destination, adding one payload allocation per hit;
+the hash API does not expose the pooled lease used by MicrosoftCompatible buffer reads.
+
 Eviction is atomic per membership, not across all keys carrying a tag. A write whose
 membership is added after the eviction scan can survive that scan and remains discoverable
 by a later eviction. A concurrent replacement cannot lose its new membership when an old
 member is removed, even if the replacement keeps the same tag. Cleanup uses one captured
-cutoff and preserves later-deadline members and master scores. Time spent sending a set
-counts toward its lifetime; all generation-aware values use absolute expiry, including
+cutoff and preserves later-deadline members and master scores. Malformed members are removed
+from the tag index without deleting a value, so they cannot block valid entries' eviction.
+Time spent sending a set counts toward its lifetime; all generation-aware values use absolute expiry, including
 untagged values. Keep application and Redis clocks synchronized.
 
 Lua scripts serialize their commands but do not roll back commands preceding an error.

@@ -13,6 +13,41 @@ namespace Respire.Caching.Tests;
 public class GenerationAwareOutputCacheTests(RedisTestContainer fixture)
 {
     [Test]
+    [Arguments(2, false)]
+    [Arguments(3, false)]
+    [Arguments(2, true)]
+    [Arguments(3, true)]
+    public async Task CorruptTagMembersAreRemovedWithoutBlockingValidEviction(int protocol, bool mixedPage)
+    {
+        await using var client = await ConnectAsync(protocol);
+        var options = Options();
+        var store = new RespireOutputCacheStore(client, options);
+        var tagKey = options.InstanceName + "__RPOCT2_corrupt";
+        await store.SetAsync("retained", [9], ["other"], TimeSpan.FromMinutes(1));
+        using (var added = await client.ExecuteAsync("ZADD", [tagKey, "1", "bad"])) { }
+        if (mixedPage)
+        {
+            await store.SetAsync("evicted", [1], ["corrupt"], TimeSpan.FromMinutes(1));
+            await store.SetAsync("replacement", [2], ["corrupt"], TimeSpan.FromMinutes(1));
+            await store.SetAsync("replacement", [3], ["new"], TimeSpan.FromMinutes(1));
+            using var added = await client.ExecuteAsync("ZADD", [tagKey, "1",
+                new string('x', 32) + ":retained", "1", new string('0', 32) + "/retained"]);
+        }
+        await store.EvictByTagAsync("corrupt");
+        using (var count = await client.ExecuteAsync("ZCARD", [tagKey]))
+            await Assert.That(count.AsInteger()).IsEqualTo(0);
+        await AssertPayload(store, "retained", 9);
+        if (mixedPage)
+        {
+            await Assert.That(await store.GetAsync("evicted")).IsNull();
+            await AssertPayload(store, "replacement", 3);
+            await store.EvictByTagAsync("new");
+            await Assert.That(await store.GetAsync("replacement")).IsNull();
+        }
+        await store.EvictByTagAsync("corrupt");
+    }
+
+    [Test]
     [Arguments(2)]
     [Arguments(3)]
     public async Task ObsoleteTagCannotDeleteReplacement(int protocol)
