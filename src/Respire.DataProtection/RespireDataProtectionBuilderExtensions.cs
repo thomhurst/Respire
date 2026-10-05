@@ -17,8 +17,8 @@ public static class RespireDataProtectionBuilderExtensions
     {
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(clientFactory);
-        builder.Services.Configure<KeyManagementOptions>(options =>
-            options.XmlRepository = new RespireXmlRepository(clientFactory, key));
+        var repository = new RespireXmlRepository(clientFactory, key);
+        builder.Services.Configure<KeyManagementOptions>(options => options.XmlRepository = repository);
         return builder;
     }
 }

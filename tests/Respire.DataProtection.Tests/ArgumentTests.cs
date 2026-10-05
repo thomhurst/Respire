@@ -33,4 +33,12 @@ public class ArgumentTests
         await Assert.That(() => repository.GetAllElements()).Throws<InvalidOperationException>();
         await Assert.That(() => repository.StoreElement(new XElement("key"), "key")).Throws<InvalidOperationException>();
     }
+
+    [Test]
+    public async Task NullClientProducesConfigurationError()
+    {
+        var repository = new RespireXmlRepository(() => null!, "keys");
+        await Assert.That(() => repository.GetAllElements()).Throws<InvalidOperationException>();
+        await Assert.That(() => repository.StoreElement(new XElement("key"), "key")).Throws<InvalidOperationException>();
+    }
 }

@@ -19,13 +19,14 @@ public sealed class RespireXmlRepository : IXmlRepository
     {
         ArgumentNullException.ThrowIfNull(clientFactory);
         _clientFactory = clientFactory;
-        _key = key;
+        _key = key.Snapshot();
     }
 
     /// <inheritdoc />
     public IReadOnlyCollection<XElement> GetAllElements()
     {
-        var values = _clientFactory().Lists.RangeAsync(_key).AsTask().GetAwaiter().GetResult();
+        var values = GetClient().WithReadFrom(RespireReadFrom.Primary)
+            .Lists.RangeAsync(_key).AsTask().GetAwaiter().GetResult();
         var elements = new XElement[values.Length];
         for (var i = 0; i < values.Length; i++)
         {
@@ -41,7 +42,10 @@ public sealed class RespireXmlRepository : IXmlRepository
     {
         ArgumentNullException.ThrowIfNull(element);
         // friendlyName is metadata for file repositories; Redis stores only the XML, without expiry.
-        _clientFactory().Lists.RightPushAsync(_key, element.ToString(SaveOptions.DisableFormatting))
+        GetClient().Lists.RightPushAsync(_key, element.ToString(SaveOptions.DisableFormatting))
             .AsTask().GetAwaiter().GetResult();
     }
+
+    private IRespireClient GetClient()
+        => _clientFactory() ?? throw new InvalidOperationException("The DataProtection client factory returned null.");
 }

@@ -44,6 +44,7 @@ $requiredPackages = @(
     'Respire.Caching.Hybrid'
     'Respire.Probabilistic'
     'Respire.DependencyInjection'
+    'Respire.DataProtection'
     'Respire.Azure'
     'Respire.Json'
     'Respire.Search'

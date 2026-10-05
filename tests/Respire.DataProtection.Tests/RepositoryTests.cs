@@ -17,6 +17,63 @@ namespace Respire.DataProtection.Tests;
 public class RepositoryTests(RedisTestContainer fixture)
 {
     [Test]
+    public async Task DefaultKeyUsesValidEmptyRedisListKey()
+    {
+        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        var repository = new RespireXmlRepository(() => client, default);
+        var element = new XElement("key", new XAttribute("id", "empty-key"));
+        repository.StoreElement(element, "empty-key");
+
+        await Assert.That(XNode.DeepEquals(element, repository.GetAllElements().Single())).IsTrue();
+        await Assert.That((await client.Lists.RangeAsync(RespireKey.Empty)).Length).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task RepositoryReadsPrimaryEvenWhenFactoryUsesReplicaRouting()
+    {
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new(fixture.Host, fixture.Port)],
+            Database = fixture.Database,
+            ReplicaEndpoints = [new("127.0.0.1", 1)],
+            ReadFrom = RespireReadFrom.Replica,
+            ConnectTimeout = TimeSpan.FromMilliseconds(100),
+        });
+        var view = client.WithKeyPrefix("app:").WithReadFrom(RespireReadFrom.Replica);
+        var repository = new RespireXmlRepository(() => view, $"keys:{Guid.NewGuid():N}");
+        var element = new XElement("key", new XAttribute("id", "primary"));
+        repository.StoreElement(element, "primary");
+
+        await Assert.That(XNode.DeepEquals(element, repository.GetAllElements().Single())).IsTrue();
+        // Primary-routed views must not take ownership of the caller's root connection.
+        await client.PingAsync();
+        await Assert.That(client.IsConnected).IsTrue();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RetainedBinaryKeyCannotBeChangedByCaller(bool registerThroughBuilder)
+    {
+        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        byte[] key = System.Text.Encoding.UTF8.GetBytes($"keys:{Guid.NewGuid():N}");
+        var original = key.ToArray();
+        var services = new ServiceCollection();
+        var repository = registerThroughBuilder ? null : new RespireXmlRepository(() => client, key);
+        if (registerThroughBuilder)
+            services.AddDataProtection().PersistKeysToRespire(() => client, new RespireKey(key.AsMemory()));
+        Array.Fill(key, (byte)'x');
+        using var provider = services.BuildServiceProvider();
+        repository ??= (RespireXmlRepository)provider.GetRequiredService<IOptions<KeyManagementOptions>>().Value.XmlRepository!;
+        var element = new XElement("key", new XAttribute("id", "owned"));
+        repository.StoreElement(element, "owned");
+
+        await Assert.That(XNode.DeepEquals(element, repository.GetAllElements().Single())).IsTrue();
+        await Assert.That((await client.Lists.RangeAsync(original)).Length).IsEqualTo(1);
+        await Assert.That(await client.ExistsAsync(key)).IsFalse();
+    }
+
+    [Test]
     public async Task RoundTripPreservesOrderDuplicatesAndXmlWithoutExpiry()
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
