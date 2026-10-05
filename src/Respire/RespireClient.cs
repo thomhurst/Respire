@@ -2642,6 +2642,7 @@ public sealed partial class RespireClient : IRespireClient
             {
                 if (cursorContinuation) throw initialRejection;
                 if (ReadFallbackPolicy.IsStrictReplicaAsk(initialRejection, readFrom)) throw ReadFallbackPolicy.CreateStrictReplicaAskException(initialRejection, slot);
+                command.ValidateAdmission();
                 cluster.RecordRejection(ref discovery, connection, initialRejection);
                 _core.ClientCache?.FlushForContinuityLoss();
                 discoveryPending = true;
@@ -2712,6 +2713,9 @@ public sealed partial class RespireClient : IRespireClient
                 {
                     if (!isHedge && hedgeOriginalRoute is not null) hedgeOriginalRoute.Connection = null;
                     if (ReadFallbackPolicy.IsStrictReplicaAsk(error, readFrom)) throw ReadFallbackPolicy.CreateStrictReplicaAskException(error, slot);
+                    // An accepted reply may outlive admission. Check before redirect discovery
+                    // so a failed topology query cannot replace an expired retry budget.
+                    command.ValidateAdmission();
                     // Learn the new owner before touching the caller-owned stream. A broken seek
                     // must not leave later commands pinned to the stale slot owner.
                     _core.ClientCache?.FlushForContinuityLoss();

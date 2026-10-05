@@ -140,7 +140,7 @@ internal interface IRespCommand
 
     void OnAccepted() { }
 
-    /// <summary>Checks admission immediately before the frame and response slot are published.</summary>
+    /// <summary>Checks admission before redirect recovery and immediately before frame and response-slot publication.</summary>
     void ValidateAdmission() { }
 
     /// <summary>Separates a pre-submission budget from cancellation of an accepted response.</summary>

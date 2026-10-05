@@ -257,6 +257,8 @@ public class FunctionClusterTests
         await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("FCALL", StringComparison.Ordinal))).IsFalse();
         await Assert.That(target.ReceivedCommands.Count(command => command.StartsWith("FCALL", StringComparison.Ordinal)))
             .IsEqualTo(outcome == "accepted-ASK" ? 1 : 0);
+        await Assert.That(target.ReceivedCommands.Any(command => command.StartsWith("CLUSTER SLOTS", StringComparison.Ordinal)))
+            .IsFalse();
         if (outcome == "accepted-ASK") await Assert.That(target.ReceivedCommands).Contains("ASKING");
 
         byte[] Redirect(string kind) => Encoding.ASCII.GetBytes($"-{kind} {ClusterHash.GetSlot("foo")} 127.0.0.1:{target.Port}\r\n");
