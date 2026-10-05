@@ -300,7 +300,7 @@ public class SearchIntegrationTests(ModernRedisTestContainer fixture)
         }
     }
 
-    /// <summary>Creates isolated documents after the initial FT.CREATE scan finishes so each document is indexed once.</summary>
+    /// <summary>Creates isolated documents after the initial scan and waits for vector visibility before assertions run.</summary>
     private static async Task CreateDocumentsAsync(RespireClient client, RespireSearchClient search, string index)
     {
         await search.CreateIndexAsync(index, new()
@@ -315,8 +315,7 @@ public class SearchIntegrationTests(ModernRedisTestContainer fixture)
                 { Vector = new(RespireSearchVectorAlgorithm.Flat, RespireSearchVectorType.Float32, 2, RespireSearchDistanceMetric.L2) },
             ],
         });
-        // FT.CREATE scans the shared keyspace in the background. Hashes written during the scan are
-        // indexed twice, and a query racing the second pass can miss them, so write after it ends.
+        // Preserve the initial-scan barrier before writes: a scan racing HSET can index a hash twice.
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         while ((await search.GetIndexInfoAsync(index, deadline.Token)).Properties["indexing"].Scalar != "0")
             await Task.Delay(20, deadline.Token);
@@ -324,6 +323,16 @@ public class SearchIntegrationTests(ModernRedisTestContainer fixture)
             await client.Hashes.SetAsync(index + ":doc:" + i,
                 ("title", "redis"), ("category", i == 1 ? "cache|client" : "cache"),
                 ("year", "2025"), ("embedding", Vector));
+        // Wait for the initial scan and vector visibility; HSET completion alone proves neither.
+        while (true)
+        {
+            var info = await search.GetIndexInfoAsync(index, deadline.Token);
+            if (info.DocumentCount == 3 && info.Properties["indexing"].Scalar == "0"
+                && (await search.VectorSearchAsync(index, new("embedding", Vector, 3),
+                    cancellationToken: deadline.Token)).Documents.Count == 3)
+                return;
+            await Task.Delay(20, deadline.Token);
+        }
     }
 
     private static byte[] CreateVector()

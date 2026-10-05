@@ -150,6 +150,7 @@ as deprecated, but Redis 8.10 supports it. Synonym dumps and tag-value reads ret
 the client cache; synonym updates conservatively invalidate it. All three commands
 retain Search's prefix restrictions and index/coordinator routing, without client
 fan-out or merged shard results.
+
 ## Index inventory and aliases
 
 `ListIndexesAsync()` sends `FT._LIST`. `ListAliasesAsync(index)` sends

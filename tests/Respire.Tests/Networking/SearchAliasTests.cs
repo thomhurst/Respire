@@ -56,8 +56,10 @@ public class SearchAliasTests
     {
         await using var server = Server(_ => Encoding.UTF8.GetBytes(reply));
         await using var client = await RespireClient.ConnectAsync(Options(server, 3));
-        await Assert.That(async () => await client.Search.ListIndexesAsync()).Throws<InvalidOperationException>();
-        await Assert.That(async () => await client.Search.ListAliasesAsync("idx")).Throws<InvalidOperationException>();
+        var indexError = await Assert.That(async () => await client.Search.ListIndexesAsync()).Throws<InvalidOperationException>();
+        await Assert.That(indexError!.Message).Contains("index name");
+        var aliasError = await Assert.That(async () => await client.Search.ListAliasesAsync("idx")).Throws<InvalidOperationException>();
+        await Assert.That(aliasError!.Message).Contains("alias name");
     }
 
     [Test]
@@ -121,6 +123,42 @@ public class SearchAliasTests
         foreach (var call in calls)
             await Assert.That(call).ThrowsExactly<NotSupportedException>();
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("FT.", StringComparison.Ordinal))).IsFalse();
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task TypedInventoryReadsPreserveCacheAndAliasWritesInvalidateIt(int protocol)
+    {
+        await using var server = Server(_ => "*0\r\n"u8.ToArray());
+        server.ReplyOverride = (_, command) => command switch
+        {
+            "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
+            "FT._LIST" or "FT.ALIASLIST idx" => "*0\r\n"u8.ToArray(),
+            "GET cache-key" => "$5\r\nalive\r\n"u8.ToArray(),
+            _ => FakeRespServer.OkReply,
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server, protocol) with { ClientSideCache = new() });
+        await client.GetStringAsync("cache-key");
+        await client.Search.ListIndexesAsync();
+        await client.GetStringAsync("cache-key");
+        await Assert.That(server.ReceivedCommands.Count(command => command == "GET cache-key")).IsEqualTo(1);
+        await client.Search.ListAliasesAsync("idx");
+        await client.GetStringAsync("cache-key");
+        await Assert.That(server.ReceivedCommands.Count(command => command == "GET cache-key")).IsEqualTo(1);
+
+        Func<Task>[] mutations =
+        [
+            () => client.Search.AddAliasAsync("alias", "idx").AsTask(),
+            () => client.Search.UpdateAliasAsync("alias", "next").AsTask(),
+            () => client.Search.DeleteAliasAsync("alias").AsTask(),
+        ];
+        for (var index = 0; index < mutations.Length; index++)
+        {
+            await mutations[index]();
+            await client.GetStringAsync("cache-key");
+            await Assert.That(server.ReceivedCommands.Count(command => command == "GET cache-key")).IsEqualTo(index + 2);
+        }
     }
 
     private static FakeRespServer Server(Func<string, byte[]> reply) => new(1, FakeRespServer.PongReply)
