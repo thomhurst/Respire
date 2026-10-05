@@ -110,7 +110,7 @@ public partial class Json810IntegrationTests(Redis810JsonTestContainer fixture)
             RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
         var json = client.WithKeyPrefix($"json810:{Guid.NewGuid():N}:").Json;
         await json.SetJsonAsync("doc", """{"obj":{"x":1,"y":2},"items":[1,2]}""");
-        var keysPath = RespireJsonPath.Legacy("$.obj.keys()");
+        var keysPath = RespireJsonPath.DirectArray("$.obj.keys()");
         var keys = await json.GetAsync("doc", Json810Context.Default.StringArray, keysPath);
         keys.Found.Should().BeTrue();
         keys.Value.Should().BeEquivalentTo(new[] { "x", "y" });
@@ -119,7 +119,7 @@ public partial class Json810IntegrationTests(Redis810JsonTestContainer fixture)
         multiple[1].Should().BeNull();
 
         var appended = await json.GetManyAsync("doc", Json810Context.Default.Int32Array,
-            RespireJsonPath.Legacy("$.items.append(9)"));
+            RespireJsonPath.DirectArray("$.items.append(9)"));
         appended.Should().ContainSingle();
         appended[0].Found.Should().BeTrue();
         appended[0].Value.Should().Equal(1, 2, 9);

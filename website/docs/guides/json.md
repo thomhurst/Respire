@@ -16,15 +16,11 @@ The existing `new RespireJsonClient(client)` constructor remains available.
 
 `RespireJsonClient` uses `System.Text.Json` metadata supplied by the caller. This avoids reflection and supports Native AOT:
 
-<!-- doc-test-declaration: split-before=await using var client -->
+<!-- doc-test-tail-declaration: split-before=[JsonSerializable -->
 ```csharp
 using System.Text.Json.Serialization;
+using Respire;
 using Respire.Json;
-
-[JsonSerializable(typeof(Customer))]
-internal partial class CustomerJsonContext : JsonSerializerContext;
-
-internal sealed record Customer(string Name, string Email);
 
 await using var client = await RespireClient.ConnectAsync("localhost:6379");
 var json = client.Json;
@@ -35,6 +31,11 @@ await json.SetAsync(key, customer, CustomerJsonContext.Default.Customer);
 var loaded = await json.GetAsync(key, CustomerJsonContext.Default.Customer);
 if (loaded.Found)
     Console.WriteLine(loaded.Value?.Name);
+
+[JsonSerializable(typeof(Customer))]
+internal partial class CustomerJsonContext : JsonSerializerContext;
+
+internal sealed record Customer(string Name, string Email);
 ```
 
 ## Paths and response shapes
@@ -81,23 +82,26 @@ equal to another path only when both its text and response shape match.
 Inspecting the JSON reply alone cannot infer the choice: a legacy value may itself be an array.
 
 Collection-valued projections such as `$.obj.keys()` and `$.items.append(9)` return a direct
-JSON array, without an extra array-of-matches wrapper. Pass `RespireJsonPath.Legacy(expression)`
+JSON array, without an extra array-of-matches wrapper. Pass `RespireJsonPath.DirectArray(expression)`
 and array metadata to preserve it as one typed value, even though these expressions start with `$`:
 
-<!-- doc-test-declaration: split-before=await using var client -->
+<!-- doc-test-tail-declaration: split-before=[JsonSerializable -->
 ```csharp
 using System.Text.Json.Serialization;
+using Respire;
 using Respire.Json;
-
-[JsonSerializable(typeof(string[]))]
-internal partial class ProjectionJsonContext : JsonSerializerContext;
 
 await using var client = await RespireClient.ConnectAsync("localhost:6379");
 var keys = await client.Json.GetAsync("doc", ProjectionJsonContext.Default.StringArray,
-    RespireJsonPath.Legacy("$.obj.keys()"));
+    RespireJsonPath.DirectArray("$.obj.keys()"));
+
+[JsonSerializable(typeof(string[]))]
+internal partial class ProjectionJsonContext : JsonSerializerContext;
 ```
 
 `GetManyAsync` with the same metadata and path returns one value containing that array.
+`DirectArray` names this intent explicitly; it selects the same single-value decoding as
+`Legacy` and preserves the expression unchanged. The caller supplies matching array metadata.
 Using `Projection(...)` or an implicit string path would instead interpret its elements as separate matches.
 
 `RespireJsonClient.Commands` exposes generated low-level methods for `JSON.GET`, `JSON.SET`, `JSON.MGET`, `JSON.MSET`, `JSON.DEL`, `JSON.FORGET`, `JSON.CLEAR`, array, number, object, string, type, response, and toggle commands. Low-level methods expose Redis reply types as `RespireResult`; dispose each result after use. Conditional `JSON.SET` and `JSON.DEBUG MEMORY` take fixed modifier tokens, so they are available only through the typed `SetAsync`, `SetJsonAsync`, and `GetMemoryUsageAsync` methods.
