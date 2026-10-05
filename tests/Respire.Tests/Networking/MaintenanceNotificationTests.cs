@@ -913,6 +913,9 @@ public class MaintenanceNotificationTests
         await Task.Delay(400); // Exceed the normal 300 ms deadline while the source is being read.
         await sourceServer.SendRawAsync(Moving(1, targetServer.Port));
         await WaitForPort(multiplexer, targetServer.Port);
+        // The handoff publishes the target before it stops admission on the old socket. A
+        // payload completed in between is accepted and drained by the source instead.
+        await WaitForRetirement(staleSelection);
         await pipe.Writer.WriteAsync("ta"u8.ToArray());
 
         using var reply = await set.WaitAsync(TimeSpan.FromSeconds(5));
@@ -1440,23 +1443,25 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task FailingRetirementCacheFenceObserverDoesNotFailPublishedHandoff()
     {
-        // Isolate the process-wide continuity metric from other handoffs.
         await using var source = Server(maxConnections: 2);
         await using var target = Server(maxConnections: 2);
         var published = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        // The continuity metric is process-wide and untagged. The handoff invokes the cache flush
+        // and publishes its metrics in one synchronous section, so a value set by this handoff's
+        // flush callback isolates its measurement from other tests' handoffs.
+        var observe = new AsyncLocal<bool>();
         using var continuity = MeterFor("respire.client_cache.continuity_flushes", (value, _) =>
         {
-            if (value == 1) published.TrySetResult();
+            if (observe.Value && value == 1) published.TrySetResult();
         });
         var logger = new HandoffFailureLogger();
         await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
             logger: logger,
             options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true) with
             {
-                CredentialCacheInvalidation = () => 1,
+                CredentialCacheInvalidation = () => { observe.Value = true; return 1; },
                 CredentialCacheRetirementFence = () => throw new InvalidOperationException("Metrics observer failure."),
             });
 
@@ -1698,16 +1703,14 @@ public class MaintenanceNotificationTests
     public async Task MaintenanceProtectsPendingAndNewCommandsThenRestoresTimeout(string start, string finish)
     {
         await using var server = Server();
-        server.SuppressReply = command => command == "PING";
-        await using var connection = await Connect(server, TimeSpan.FromMilliseconds(200));
+        StartMaintenanceOnFirstPing(server, Start(start, 11));
+        await using var connection = await Connect(server, TimeSpan.FromSeconds(1));
         var first = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
-        await WaitForCommands(server, 3);
-        await server.SendRawAsync(Start(start, 11));
         await WaitForMaintenance(connection);
         var second = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
         await WaitForCommands(server, 4);
         // Cross the ordinary command deadline while the server deliberately withholds replies.
-        await Task.Delay(400);
+        await Task.Delay(1_200);
         await Assert.That(first.IsCompleted).IsFalse();
         await Assert.That(second.IsCompleted).IsFalse();
         await server.SendRawAsync(Finish(finish, 11));
@@ -1724,15 +1727,13 @@ public class MaintenanceNotificationTests
     public async Task CapacityWakeAfterCommandDeadlineTimesOutBeforeSending()
     {
         await using var server = Server();
-        server.SuppressReply = command => command == "PING";
-        await using var connection = await Connect(server, TimeSpan.FromMilliseconds(200), capacity: 1);
+        StartMaintenanceOnFirstPing(server, Start("MIGRATING", 11));
+        await using var connection = await Connect(server, TimeSpan.FromSeconds(1), capacity: 1);
         var first = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
-        await WaitForCommands(server, 3);
-        await server.SendRawAsync(Start("MIGRATING", 11));
         await WaitForMaintenance(connection);
 
         var waiting = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
-        await Task.Delay(400);
+        await Task.Delay(1_200);
         await server.SendRawAsync(Finish("MIGRATED", 11).Concat("+first\r\n"u8.ToArray()).ToArray());
 
         await Assert.That(async () => { using var _ = await waiting.WaitAsync(TimeSpan.FromSeconds(5)); })
@@ -1971,13 +1972,15 @@ public class MaintenanceNotificationTests
     {
         await using var server = Server();
         server.SuppressReply = command => command == "PING";
-        await using var connection = await Connect(server, TimeSpan.FromMilliseconds(150), capacity: 1);
+        // The waiter's ordinary capacity deadline must outlast the test's reaction until the
+        // window starts; the delay below then crosses it while maintenance relaxes it.
+        await using var connection = await Connect(server, TimeSpan.FromSeconds(1), capacity: 1);
         var accepted = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
         await WaitForCommands(server, 3);
         var waiting = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
         await server.SendRawAsync(Start("MIGRATING", 1));
         await WaitForMaintenance(connection);
-        await Task.Delay(350);
+        await Task.Delay(1_200);
         await Assert.That(waiting.IsCompleted).IsFalse();
         await server.SendRawAsync(Finish("MIGRATED", 1));
         await Assert.That(async () => { using var _ = await waiting.WaitAsync(TimeSpan.FromSeconds(3)); }).Throws<RespireTimeoutException>();
@@ -2326,6 +2329,18 @@ public class MaintenanceNotificationTests
     private static byte[] Finish(string kind, int sequence) => Encoding.UTF8.GetBytes(kind == "SMIGRATED"
         ? $">3\r\n+{kind}\r\n:{sequence}\r\n*1\r\n*3\r\n+old:6379\r\n+new:6380\r\n+0-10\r\n"
         : $">2\r\n+{kind}\r\n:{sequence}\r\n");
+
+    // Answers the first PING with the maintenance start push and withholds later PING replies, so
+    // the window starts while that command is pending without waiting for the test to react.
+    private static void StartMaintenanceOnFirstPing(FakeRespServer server, byte[] start)
+    {
+        var pings = 0;
+        var pushed = 0;
+        var reply = server.ReplyOverride!;
+        server.SuppressReply = command => command == "PING" && Interlocked.Increment(ref pings) > 1;
+        server.ReplyOverride = (connection, command) => command == "PING" && Interlocked.Exchange(ref pushed, 1) == 0
+            ? start : reply(connection, command);
+    }
 
     private static async Task WaitForCommands(FakeRespServer server, int count)
     {

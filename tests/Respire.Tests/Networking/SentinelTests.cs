@@ -781,16 +781,15 @@ public class SentinelTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task ConnectAsync_GivesPrimaryFreshConnectTimeoutAfterSlowDiscovery()
     {
         await using var primary = new FakeRespServer(
             FakeRespServer.OkReply,
             PrimaryRole,
             FakeRespServer.PongReply);
-        primary.DelayReply(0, 1_200);
+        primary.DelayReply(0, 2_400);
         await using var sentinel = new FakeRespServer(PrimaryReply(primary.Port));
-        sentinel.DelayReply(0, 1_200);
+        sentinel.DelayReply(0, 2_400);
 
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
@@ -799,11 +798,11 @@ public class SentinelTests
             SentinelPrimaryName = "mymaster",
             Password = "redis-secret",
             SentinelPassword = string.Empty,
-            // Each phase fits, but their combined 2.4 seconds exceeds the 2-second discovery budget.
-            // Run alone so parallel test load cannot consume a phase's scheduling headroom.
-            // Reusing discovery's token for the primary connection would therefore still fail.
-            CommandTimeout = TimeSpan.FromSeconds(2),
-            ConnectTimeout = TimeSpan.FromSeconds(3),
+            // Each 2.4-second phase fits, but together they exceed the 4-second discovery budget,
+            // so reusing discovery's token for the primary connection would still fail. Load can
+            // only lengthen the sum; each phase keeps 1.6 seconds of scheduling headroom.
+            CommandTimeout = TimeSpan.FromSeconds(4),
+            ConnectTimeout = TimeSpan.FromSeconds(6),
         });
 
         _ = await client.PingAsync();

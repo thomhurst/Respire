@@ -442,22 +442,37 @@ public class NearestReadRoutingTests
     [Test]
     public async Task CanceledColdSamplingWaitPreservesConnectionReplyOrder()
     {
+        using var cancellation = new CancellationTokenSource();
+        using var pingReply = new ManualResetEventSlim();
         await using var primary = Server("primary");
-        primary.DelayCommand("PING", 250);
+        // Cancel when the cold probe arrives and hold its reply until the next read is queued.
+        // Canceling from the test after polling for PING could miss the sampling wait under load.
+        primary.ReplyOverride = (_, command) =>
+        {
+            if (command == "PING")
+            {
+                cancellation.Cancel();
+                pingReply.Wait(TimeSpan.FromSeconds(5));
+            }
+            return Reply(command, "primary");
+        };
         await using var replica = Server("replica");
         replica.ReplyOverride = (_, command) => command == "PING"
             ? "-NOPERM ping denied\r\n"u8.ToArray() : Reply(command, "replica");
-        await using var client = RespireClient.Create(Options(primary, replica));
-        await using var nearest = client.WithReadFrom(RespireReadFrom.Nearest);
-        using var cancellation = new CancellationTokenSource();
-        var first = nearest.GetStringAsync("first", cancellation.Token).AsTask();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (!primary.ReceivedCommands.Contains("PING")) await Task.Delay(1, deadline.Token);
-        cancellation.Cancel();
-        await Assert.That(async () => await first).Throws<OperationCanceledException>();
-        await Assert.That(await nearest.GetStringAsync("second", deadline.Token)).IsEqualTo("primary");
-        await Assert.That(primary.ReceivedCommands.Count(command => command == "PING")).IsEqualTo(1);
-        await Assert.That(primary.ReceivedCommands).DoesNotContain("GET first");
+        try
+        {
+            await using var client = RespireClient.Create(Options(primary, replica));
+            await using var nearest = client.WithReadFrom(RespireReadFrom.Nearest);
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            var first = nearest.GetStringAsync("first", cancellation.Token).AsTask();
+            await Assert.That(async () => await first).Throws<OperationCanceledException>();
+            var second = nearest.GetStringAsync("second", deadline.Token).AsTask();
+            pingReply.Set();
+            await Assert.That(await second).IsEqualTo("primary");
+            await Assert.That(primary.ReceivedCommands.Count(command => command == "PING")).IsEqualTo(1);
+            await Assert.That(primary.ReceivedCommands).DoesNotContain("GET first");
+        }
+        finally { pingReply.Set(); }
     }
 
     [Test]
