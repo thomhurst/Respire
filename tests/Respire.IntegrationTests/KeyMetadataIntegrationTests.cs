@@ -6,6 +6,9 @@ namespace Respire.IntegrationTests;
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
 public class KeyMetadataIntegrationTests(RedisTestContainer fixture)
 {
+    [ClassDataSource<LfuRedisTestContainer>(Shared = SharedType.PerTestSession)]
+    public required LfuRedisTestContainer Lfu { get; init; }
+
     public enum ExecutionMode { Immediate, Batch, Transaction }
 
     [Test]
@@ -67,7 +70,6 @@ public class KeyMetadataIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
-    [NotInParallel] // Eviction policy belongs to the whole shared test server, not one database.
     [Arguments(2, ExecutionMode.Immediate)]
     [Arguments(2, ExecutionMode.Batch)]
     [Arguments(2, ExecutionMode.Transaction)]
@@ -76,26 +78,16 @@ public class KeyMetadataIntegrationTests(RedisTestContainer fixture)
     [Arguments(3, ExecutionMode.Transaction)]
     public async Task LfuFrequencyAndIdlePolicyErrorArePreserved(int protocol, ExecutionMode mode)
     {
-        await using var control = await RespireClient.ConnectAsync(fixture.ConnectionString);
-        using var original = await control.ExecuteAsync("CONFIG", "GET", "maxmemory-policy");
-        var policy = original[1].AsString();
-        try
-        {
-            using var configured = await control.ExecuteAsync("CONFIG", "SET", "maxmemory-policy", "allkeys-lfu");
-            await using var client = await RespireClient.ConnectAsync(
-                RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
-            await client.SetAsync("frequency", "value");
-            var frequency = await Run(client, mode, k => k.FrequencyAsync("frequency"), k => k.Frequency("frequency"));
-            frequency.Should().NotBeNull();
-            frequency!.Value.Should().BeInRange(0, 255);
-            (await Run(client, mode, k => k.FrequencyAsync("missing"), k => k.Frequency("missing"))).Should().BeNull();
-            Func<Task> idle = async () => { await Run(client, mode, k => k.IdleTimeAsync("frequency"), k => k.IdleTime("frequency")); };
-            await idle.Should().ThrowAsync<RespireServerException>();
-        }
-        finally
-        {
-            using var restored = await control.ExecuteAsync("CONFIG", "SET", "maxmemory-policy", policy);
-        }
+        // The eviction policy is server-wide, so this runs on the dedicated LFU server.
+        await using var client = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(Lfu.ConnectionString) with { Protocol = (RespProtocol)protocol });
+        await client.SetAsync("frequency", "value");
+        var frequency = await Run(client, mode, k => k.FrequencyAsync("frequency"), k => k.Frequency("frequency"));
+        frequency.Should().NotBeNull();
+        frequency!.Value.Should().BeInRange(0, 255);
+        (await Run(client, mode, k => k.FrequencyAsync("missing"), k => k.Frequency("missing"))).Should().BeNull();
+        Func<Task> idle = async () => { await Run(client, mode, k => k.IdleTimeAsync("frequency"), k => k.IdleTime("frequency")); };
+        await idle.Should().ThrowAsync<RespireServerException>();
     }
 
     private static async Task<T> Run<T>(IRespireClient client, ExecutionMode mode,

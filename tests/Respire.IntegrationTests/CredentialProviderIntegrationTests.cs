@@ -4,7 +4,8 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
-[NotInParallel]
+[Category(TestCategories.ProtocolIndependent)]
+[ParallelLimiter<DockerHeavy>]
 public class CredentialProviderIntegrationTests
 {
     [Test]
