@@ -50,6 +50,8 @@ public sealed partial class RespireFakeServer
         if (floating)
         {
             var current = entry is null ? 0 : IncrementFloat(entry.Value);
+            // Redis's human-formatted floating replies and stored results canonicalize negative zero.
+            if (current == 0) current = 0;
             var result = current + floatBy;
             // The fake uses double, not the server's platform-dependent long double arithmetic.
             if (!double.IsFinite(result)) return FakeReply.Error("ERR Respire.Testing INCREX arithmetic exceeds double range");
@@ -58,7 +60,9 @@ public sealed partial class RespireFakeServer
                 if (!saturate) return FakeReply.Array([FakeReply.Double(current), FakeReply.Double(0)]);
                 result = Math.Clamp(result, floatLower, floatUpper);
             }
+            if (result == 0) result = 0;
             var delta = result - current;
+            if (delta == 0) delta = 0;
             if (!double.IsFinite(delta)) return FakeReply.Error("ERR Respire.Testing INCREX applied increment exceeds double range");
             stored = result.ToString("R", CultureInfo.InvariantCulture);
             reply = FakeReply.Array([FakeReply.Double(result), FakeReply.Double(delta)]);

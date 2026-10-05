@@ -7,6 +7,38 @@ namespace Respire.IntegrationTests;
 public class IncrementExtendedIntegrationTests
 {
     [Test]
+    [Arguments(false, 2)]
+    [Arguments(false, 3)]
+    [Arguments(true, 2)]
+    [Arguments(true, 3)]
+    public async Task FloatingZeroIsCanonicalAcrossExecutionModes(bool useFake, int protocol)
+    {
+        await using var fake = useFake ? new RespireFakeServer() : null;
+        await using var container = useFake ? null : new ContainerBuilder("redis:8.10-alpine").WithPortBinding(6379, true)
+            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build();
+        if (container is not null) await container.StartAsync();
+        var options = fake?.CreateOptions() ?? RespireOptions.Parse($"redis://{container!.Hostname}:{container.GetMappedPublicPort(6379)}");
+        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        foreach (var mode in new[] { "immediate", "batch", "transaction" })
+        {
+            await client.SetAsync("zero", "-1");
+            var saturated = await Floating(client, mode, "zero", 0, new() { LowerBound = -0.0, Saturate = true });
+            BitConverter.DoubleToInt64Bits(saturated.Value).Should().Be(0);
+            (await client.GetStringAsync("zero")).Should().Be("0");
+            await client.SetAsync("zero", "-0");
+            var zero = await Floating(client, mode, "zero", -0.0);
+            BitConverter.DoubleToInt64Bits(zero.Value).Should().Be(0);
+            BitConverter.DoubleToInt64Bits(zero.AppliedIncrement).Should().Be(0);
+            (await client.GetStringAsync("zero")).Should().Be("0");
+            await client.SetAsync("zero", "-0");
+            var rejected = await Floating(client, mode, "zero", 1, new() { UpperBound = -1 });
+            BitConverter.DoubleToInt64Bits(rejected.Value).Should().Be(0);
+            BitConverter.DoubleToInt64Bits(rejected.AppliedIncrement).Should().Be(0);
+            (await client.GetStringAsync("zero")).Should().Be("-0", "a rejected increment must not rewrite the stored value");
+        }
+    }
+
+    [Test]
     [Arguments("redis:8.10-alpine", 2)]
     [Arguments("redis:8.10-alpine", 3)]
     [Arguments("redis:7.4-alpine", 2)]
