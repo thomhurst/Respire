@@ -19,7 +19,7 @@ public class OutputCacheValidationTests
         {
             ReplyOverride = (_, command) =>
             {
-                if (command.StartsWith($"ZADD output:__MSOCT_{failingTag} ", StringComparison.Ordinal))
+                if (IsTagRegistration(command, $"output:__MSOCT_{failingTag}"))
                     return "-WRONGTYPE invalid tag index\r\n"u8.ToArray();
                 return command.StartsWith("SET ", StringComparison.Ordinal) ? FakeRespServer.OkReply : ":1\r\n"u8.ToArray();
             },
@@ -39,7 +39,7 @@ public class OutputCacheValidationTests
         {
             ReplyOverride = (_, command) =>
             {
-                if (command.StartsWith("ZADD ", StringComparison.Ordinal)) cancellation.Cancel();
+                if (IsTagRegistration(command, "__MSOCT_tag")) cancellation.Cancel();
                 return command.StartsWith("SET ", StringComparison.Ordinal) ? FakeRespServer.OkReply : ":1\r\n"u8.ToArray();
             },
         };
@@ -58,15 +58,15 @@ public class OutputCacheValidationTests
         {
             ReplyOverride = (_, command) =>
             {
-                if (command.StartsWith("ZADD ", StringComparison.Ordinal)) clock.Advance(10_000);
+                if (IsTagRegistration(command, "output:__MSOCT_tag")) clock.Advance(10_000);
                 return command.StartsWith("SET ", StringComparison.Ordinal) ? FakeRespServer.OkReply : ":1\r\n"u8.ToArray();
             },
         };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var store = new RespireOutputCacheStore(client, new() { InstanceName = "output:", TimeProvider = clock });
         await store.SetAsync("key", "value"u8.ToArray(), ["tag"], TimeSpan.FromMinutes(1));
-        await Assert.That(server.ReceivedCommands.Single(command => command.StartsWith("ZADD ", StringComparison.Ordinal)))
-            .IsEqualTo("ZADD output:__MSOCT_tag 2000000060000 key");
+        await Assert.That(server.ReceivedCommands.Single(command => IsTagRegistration(command, "output:__MSOCT_tag"))
+            .EndsWith(" 1 output:__MSOCT_tag key 2000000060000", StringComparison.Ordinal)).IsTrue();
         await Assert.That(server.ReceivedCommands.Last()).IsEqualTo("SET output:__MSOCV_key value PXAT 2000000060000");
     }
 
@@ -93,6 +93,10 @@ public class OutputCacheValidationTests
         await Assert.That(() => provider.GetRequiredService<IStartupValidator>().Validate())
             .ThrowsExactly<OptionsValidationException>();
     }
+
+    private static bool IsTagRegistration(string command, string tagKey) =>
+        command.StartsWith("EVALSHA ", StringComparison.Ordinal)
+        && command.Contains($" 1 {tagKey} ", StringComparison.Ordinal);
 
     private sealed class TestClock(long milliseconds) : TimeProvider
     {

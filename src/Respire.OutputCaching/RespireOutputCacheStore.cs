@@ -89,9 +89,12 @@ public sealed class RespireOutputCacheStore : IOutputCacheBufferStore
         for (var index = 0; index < tags.Length; index++)
         {
             var tag = tags.Span[index];
-            using var result = await _client.Scripts.ExecuteAsync(RecordTagExpiry,
+            using var masterResult = await _client.Scripts.ExecuteAsync(RecordTagExpiry,
                 [_tagMaster], [tag, expires], cancellationToken).ConfigureAwait(false);
-            await _client.SortedSets.AddAsync(_tagPrefix + tag, (RespireValue)key, expires, cancellationToken).ConfigureAwait(false);
+            // A shorter concurrent writer must not expire the membership of a longer-lived
+            // value that publishes last. Preserve the maximum deadline for each member too.
+            using var memberResult = await _client.Scripts.ExecuteAsync(RecordTagExpiry,
+                [_tagPrefix + tag], [key, expires], cancellationToken).ConfigureAwait(false);
         }
         var expiry = tags.IsEmpty ? RespireExpiry.In(validFor) : RespireExpiry.At(expiresAt);
         if (value.IsSingleSegment)

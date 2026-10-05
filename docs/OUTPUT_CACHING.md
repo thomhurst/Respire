@@ -51,6 +51,11 @@ metadata is harmless and expires through cleanup. Tagged writes use Redis 6.2+
 [`SET PXAT`](https://redis.io/docs/latest/commands/set/) with the same absolute deadline
 as their tag scores, so a delayed value write cannot outlive its references. Time spent
 registering tags counts toward the requested lifetime. Untagged writes retain relative TTLs.
+Respire preserves the longest recorded deadline for both each tag and each cache key within
+that tag. A shorter concurrent write cannot make cleanup remove the last-published value's
+membership early. Shorter overwrites can consequently retain metadata beyond the replacement
+value's lifetime. Microsoft writers can still shorten individual member scores, so this
+concurrent-write guarantee applies only when all participating writers use Respire.
 Set and eviction are still separate operations: a concurrent eviction can race registration
 and publication. This mode does not promise generation-aware or atomic invalidation.
 As in the Microsoft store, overwriting a key with different tags does not remove its old
