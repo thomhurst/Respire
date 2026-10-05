@@ -446,6 +446,22 @@ public sealed record RespireSearchValue(
 /// <summary>Shared readers for Redis Search replies. Malformed shapes throw instead of dropping data.</summary>
 internal static class RespireSearchReply
 {
+    internal static string[] ReadStringCollection(RespireResult result, string command)
+    {
+        if (result.IsNull || result.Type is not (RespDataType.Array or RespDataType.Set))
+            throw Unexpected(command, "a string collection was expected");
+        var strings = new string[result.Count];
+        for (var i = 0; i < strings.Length; i++) strings[i] = ReadString(result[i], command);
+        return strings;
+    }
+
+    internal static string ReadString(RespireResult result, string command)
+    {
+        if (result.IsNull || result.Type is not (RespDataType.BulkString or RespDataType.SimpleString))
+            throw Unexpected(command, "a string was expected");
+        return result.AsString();
+    }
+
     internal static bool IsCollection(RespireResult value)
         => value.Type is RespDataType.Array or RespDataType.Map or RespDataType.Set or RespDataType.Push or RespDataType.Attribute;
 

@@ -117,6 +117,40 @@ lists restrictions for clustered Redis Software/Cloud databases. Prefixed views
 reject these FT commands like other Search operations. Reads retain the local
 client cache; adding and deleting suggestions conservatively invalidate it.
 
+## Synonyms and tag values
+
+`UpdateSynonymsAsync` sends `FT.SYNUPDATE` to create or extend a synonym group;
+updating a group adds terms without removing existing members. By default, the
+server scans existing documents to index the new synonym mappings. Set
+`skipInitialScan: true` only when the mappings should apply to documents indexed
+after the update. Background reindexing may still be running when the command
+returns.
+
+```csharp
+using Respire.Search;
+
+await using var client = await RespireClient.ConnectAsync("localhost:6379");
+var search = client.Search;
+await search.UpdateSynonymsAsync("books", "computing", ["computer", "pc", "laptop"]);
+var memberships = await search.GetSynonymsAsync("books");
+var categories = await search.GetTagValuesAsync("books", "category");
+```
+
+`GetSynonymsAsync` sends `FT.SYNDUMP` and returns owned term-to-group mappings.
+A term can belong to several groups; all memberships are retained. Index names,
+group IDs, and terms must be nonblank, and updates require at least one term.
+Without `skipInitialScan`, the first term cannot literally be `SKIPINITIALSCAN`
+(case-insensitive), because Redis interprets that position as the option. Place
+that literal term after another term, or explicitly enable `skipInitialScan`.
+
+`GetTagValuesAsync` sends `FT.TAGVALS` for a TAG field and returns owned distinct
+values in the server's order and normalization. There is no paging or sorting.
+Redis documents [FT.TAGVALS](https://redis.io/docs/latest/commands/ft.tagvals/)
+as deprecated, but Redis 8.10 supports it. Synonym dumps and tag-value reads retain
+the client cache; synonym updates conservatively invalidate it. All three commands
+retain Search's prefix restrictions and index/coordinator routing, without client
+fan-out or merged shard results.
+
 ## Queries
 
 Supported index commands are `FT.CREATE`, `FT.ALTER`, `FT.DROPINDEX`, and `FT.INFO`. `GetIndexInfoAsync` returns a parsed `RespireSearchIndexInfo` with the index name, document count, schema attributes, and every reported property as a copied value. Query methods use `FT.SEARCH`, `FT.EXPLAIN`, and `FT.EXPLAINCLI`; `ExplainAsync` takes `RespireSearchExplainOptions` to select CLI output or a dialect.
