@@ -583,6 +583,10 @@ concatenates). Client-side caching is configured through `RespireOptions.ClientS
   Endpoint changes emit lifecycle events and `respire.sentinel.failover`. Sentinel event monitors
   (#549) subscribe to `+switch-master`, `+sdown`, and `+odown` and treat them as rediscovery hints;
   their retry budget reports `respire.reconnect.scope=sentinel-monitor`.
+  [Typed Sentinel administration](SENTINEL_COMMANDS.md) uses a separately owned
+  `RespireSentinelClient` connected to one explicit Sentinel endpoint. It reuses Sentinel
+  credentials and TLS, selects server-specific primary/replica command names, returns owned
+  state snapshots, and requires `AllowAdmin` for mutations and leader-vote requests.
   Dedicated rents use independent
   per-rent budgets; pub/sub shares a budget until all live routes are resubscribed. Cluster
   discovery shares one budget across cached-owner, known-master, topology, seed, tracked,
