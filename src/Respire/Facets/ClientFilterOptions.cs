@@ -44,7 +44,7 @@ public sealed record RespireClientFilterOptions
     public long? MaximumAgeSeconds { get; init; }
     /// <summary>Match the connection name. Requires Valkey 9+.</summary>
     public string? Name { get; init; }
-    /// <summary>Match connections idle for at least this many seconds. Requires Valkey 9+.</summary>
+    /// <summary>Match connections idle for at least this many seconds. Must be positive. Requires Valkey 9+.</summary>
     public long? IdleSeconds { get; init; }
     /// <summary>Match connection flags. Must be nonempty when specified. Requires Valkey 9+.</summary>
     public string? Flags { get; init; }
@@ -92,23 +92,24 @@ internal static class ClientFilterArguments
         if (options.Flags is "" || options.Capabilities is "")
             throw new ArgumentException("Flags and Capabilities must be nonempty when specified.", nameof(options));
         var args = new List<RespireValue>();
-        AddType("TYPE", options.Type);
-        AddIds("ID", options.Ids);
+        var hasSelector = false;
+        AddType("TYPE", options.Type, nameof(options.Type));
+        AddIds("ID", options.Ids, nameof(options.Ids));
         Add("USER", options.User);
         Add("ADDR", options.Address);
         Add("LADDR", options.LocalAddress);
-        if (options.SkipMe is { } skip) Add("SKIPME", skip ? "yes" : "no");
-        AddNumber("MAXAGE", options.MaximumAgeSeconds, positive: true);
+        if (options.SkipMe is { } skip) Add("SKIPME", skip ? "yes" : "no", isSelector: false);
+        AddNumber("MAXAGE", options.MaximumAgeSeconds, nameof(options.MaximumAgeSeconds), positive: true);
         Add("NAME", options.Name);
-        AddNumber("IDLE", options.IdleSeconds, positive: true);
+        AddNumber("IDLE", options.IdleSeconds, nameof(options.IdleSeconds), positive: true);
         Add("FLAGS", options.Flags);
         Add("LIB-NAME", options.LibraryName);
         Add("LIB-VER", options.LibraryVersion);
-        AddNumber("DB", options.Database);
+        AddNumber("DB", options.Database, nameof(options.Database));
         Add("CAPA", options.Capabilities);
         Add("IP", options.Ip);
-        AddType("NOT-TYPE", options.ExcludedType);
-        AddIds("NOT-ID", options.ExcludedIds);
+        AddType("NOT-TYPE", options.ExcludedType, nameof(options.ExcludedType));
+        AddIds("NOT-ID", options.ExcludedIds, nameof(options.ExcludedIds));
         Add("NOT-USER", options.ExcludedUser);
         Add("NOT-ADDR", options.ExcludedAddress);
         Add("NOT-LADDR", options.ExcludedLocalAddress);
@@ -116,34 +117,37 @@ internal static class ClientFilterArguments
         Add("NOT-FLAGS", options.ExcludedFlags);
         Add("NOT-LIB-NAME", options.ExcludedLibraryName);
         Add("NOT-LIB-VER", options.ExcludedLibraryVersion);
-        AddNumber("NOT-DB", options.ExcludedDatabase);
+        AddNumber("NOT-DB", options.ExcludedDatabase, nameof(options.ExcludedDatabase));
         Add("NOT-CAPA", options.ExcludedCapabilities);
         Add("NOT-IP", options.ExcludedIp);
-        if (kill && args.Count == (options.SkipMe.HasValue ? 2 : 0))
+        if (kill && !hasSelector)
         {
             if (!options.AllowUnfilteredKill)
                 throw new ArgumentException("CLIENT KILL requires a selector or AllowUnfilteredKill = true.", nameof(options));
-            if (!options.SkipMe.HasValue) Add("SKIPME", "yes");
+            if (!options.SkipMe.HasValue) Add("SKIPME", "yes", isSelector: false);
         }
         return new CmdN(kill ? Verbs.ClientKill : Verbs.ClientList, args.ToArray());
 
-        void Add(string token, string? value)
+        void Add(string token, string? value, bool isSelector = true)
         {
             if (value is null) return;
             args.Add(token);
             args.Add(value);
+            hasSelector |= isSelector;
         }
 
-        void AddNumber(string token, long? value, bool positive = false)
+        void AddNumber(string token, long? value, string propertyName, bool positive = false)
         {
             if (value is not { } number) return;
-            ArgumentOutOfRangeException.ThrowIfNegative(number, nameof(options));
-            if (positive) ArgumentOutOfRangeException.ThrowIfZero(number, nameof(options));
+            if (number < 0 || (positive && number == 0))
+                throw new ArgumentOutOfRangeException(nameof(options), number,
+                    $"{propertyName} must be {(positive ? "positive" : "nonnegative")}.");
             args.Add(token);
             args.Add(number);
+            hasSelector = true;
         }
 
-        void AddType(string token, RespireClientType? type)
+        void AddType(string token, RespireClientType? type, string propertyName)
         {
             if (type is null) return;
             Add(token, type switch
@@ -152,20 +156,22 @@ internal static class ClientFilterArguments
                 RespireClientType.Primary => "master",
                 RespireClientType.Replica => kill ? "slave" : "replica",
                 RespireClientType.PubSub => "pubsub",
-                _ => throw new ArgumentOutOfRangeException(nameof(options), "Unknown client type."),
+                _ => throw new ArgumentOutOfRangeException(nameof(options), type, $"{propertyName} is an unknown client type."),
             });
         }
 
-        void AddIds(string token, IReadOnlyList<long> ids)
+        void AddIds(string token, IReadOnlyList<long> ids, string propertyName)
         {
             ArgumentNullException.ThrowIfNull(ids);
             if (ids.Count == 0) return;
             args.Add(token);
             foreach (var id in ids)
             {
-                ArgumentOutOfRangeException.ThrowIfNegativeOrZero(id, nameof(options));
+                if (id <= 0)
+                    throw new ArgumentOutOfRangeException(nameof(options), id, $"{propertyName} must contain only positive client IDs.");
                 args.Add(id);
             }
+            hasSelector = true;
         }
     }
 }

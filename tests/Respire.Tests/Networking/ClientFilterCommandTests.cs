@@ -139,14 +139,20 @@ public class ClientFilterCommandTests
         });
         using var batch = client.CreateBatch();
         await using var tx = client.CreateTransaction();
-        RespireClientFilterOptions[] invalid =
+        (RespireClientFilterOptions Options, string Property)[] invalid =
         [
-            new() { Ids = [0] }, new() { ExcludedIds = [-1] }, new() { Type = (RespireClientType)99 },
-            new() { ExcludedType = (RespireClientType)99 }, new() { MaximumAgeSeconds = 0 },
-            new() { IdleSeconds = -1 }, new() { Database = -1 }, new() { ExcludedDatabase = -1 },
+            (new() { Ids = [0] }, "Ids"), (new() { ExcludedIds = [-1] }, "ExcludedIds"),
+            (new() { Type = (RespireClientType)99 }, "Type"), (new() { ExcludedType = (RespireClientType)99 }, "ExcludedType"),
+            (new() { MaximumAgeSeconds = 0 }, "MaximumAgeSeconds"), (new() { IdleSeconds = 0 }, "IdleSeconds"),
+            (new() { IdleSeconds = -1 }, "IdleSeconds"), (new() { Database = -1 }, "Database"),
+            (new() { ExcludedDatabase = -1 }, "ExcludedDatabase"),
         ];
-        foreach (var options in invalid)
+        foreach (var (options, property) in invalid)
         {
+            var error = await Assert.That(() => { _ = client.Server.ClientsAsync(options, default); })
+                .ThrowsExactly<ArgumentOutOfRangeException>();
+            await Assert.That(error!.Message).Contains(property);
+            await Assert.That(error.ParamName).IsEqualTo("options");
             await Assert.That(async () => await client.Server.ClientsAsync(options, default)).ThrowsExactly<ArgumentOutOfRangeException>();
             await Assert.That(async () => await client.Server.KillClientsAsync(options)).ThrowsExactly<ArgumentOutOfRangeException>();
             foreach (IRespireCommandQueue queue in new IRespireCommandQueue[] { batch, tx })
