@@ -382,6 +382,9 @@ internal static class PrimitiveCodec
 
     private static ReadOnlySpan<byte> ValidateNumber<T>(ReadOnlySpan<byte> payload)
     {
+        // The normal wire form needs only JSON's number grammar, not a JSON reader.
+        // Keep the existing reader for whitespace and unusual/malformed inputs.
+        if (IsCanonicalNumber(payload)) return payload;
         payload = TrimJsonWhitespace(payload);
         try
         {
@@ -395,6 +398,40 @@ internal static class PrimitiveCodec
         }
         throw InvalidValue<T>();
     }
+
+    private static bool IsCanonicalNumber(ReadOnlySpan<byte> payload)
+    {
+        var index = 0;
+        if (payload.IsEmpty) return false;
+        if (payload[0] == (byte)'-' && ++index == payload.Length) return false;
+
+        if (payload[index] == (byte)'0') index++;
+        else
+        {
+            if (payload[index] < (byte)'1' || payload[index] > (byte)'9') return false;
+            do { index++; }
+            while (index < payload.Length && IsDigit(payload[index]));
+        }
+        if (index == payload.Length) return true;
+
+        if (payload[index] == (byte)'.')
+        {
+            var start = ++index;
+            while (index < payload.Length && IsDigit(payload[index])) index++;
+            if (index == start) return false;
+        }
+        if (index < payload.Length && payload[index] is (byte)'e' or (byte)'E')
+        {
+            index++;
+            if (index < payload.Length && payload[index] is (byte)'+' or (byte)'-') index++;
+            var start = index;
+            while (index < payload.Length && IsDigit(payload[index])) index++;
+            if (index == start) return false;
+        }
+        return index == payload.Length;
+    }
+
+    private static bool IsDigit(byte value) => (uint)(value - (byte)'0') <= 9;
 
     private static FormatException InvalidValue<T>()
         => new($"Redis value is not a valid {typeof(T).Name}.");

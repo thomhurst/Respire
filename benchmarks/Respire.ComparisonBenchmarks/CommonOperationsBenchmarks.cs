@@ -61,6 +61,7 @@ public class CommonOperationsBenchmarks
         _stackExchangeDb = _stackExchange.GetDatabase();
 
         await _respire.SetAsync("seeded:string", _smallValue);
+        await _respire.SetAsync("seeded:integer", 123456789L);
         await _respire.Hashes.SetAsync("seeded:hash", "field", _smallValue);
         await _respire.Sets.AddAsync("seeded:set", "member");
 
@@ -98,6 +99,12 @@ public class CommonOperationsBenchmarks
 
     [Benchmark, BenchmarkCategory("GET")]
     public ValueTask<string?> Respire_Get() => _respire.GetStringAsync("seeded:string");
+
+    [Benchmark(Baseline = true), BenchmarkCategory("GET long")]
+    public async Task<long> StackExchange_GetLong() => (long)await _stackExchangeDb.StringGetAsync("seeded:integer");
+
+    [Benchmark, BenchmarkCategory("GET long")]
+    public ValueTask<long> Respire_GetLong() => _respire.GetAsync<long>("seeded:integer");
 
     // SET
 
