@@ -107,7 +107,11 @@ public class FakeTransactionParityTests(RedisTestContainer fixture)
     public async Task WatchTracksMutationsButNotRejectedOrNoOpWrites(bool useFake, int protocol)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
-        var options = Options(fake, protocol);
+        await AssertWatchTracksMutationsAsync(Options(fake, protocol), useFake);
+    }
+
+    internal static async Task AssertWatchTracksMutationsAsync(RespireOptions options, bool useFake)
+    {
         await using var session = await TestRespSession.ConnectAsync(options);
         await using var writer = await TestRespSession.ConnectAsync(options);
         var scenarios = new WatchCase[]
@@ -156,6 +160,18 @@ public class FakeTransactionParityTests(RedisTestContainer fixture)
             new([ ["RPUSH", "key", "value"] ], ["LREM", "key", "0", "value"], true),
             new([ ["RPUSH", "key", "value"] ], ["LINSERT", "key", "BEFORE", "missing", "new"], false),
             new([ ["RPUSH", "key", "value"] ], ["LINSERT", "key", "BEFORE", "value", "new"], true),
+            new([ ["RPUSH", "key", "value"] ], ["LMOVEM", "key", "other", "LEFT", "RIGHT"], true),
+            new([ ["RPUSH", "other", "value"] ], ["LMOVEM", "other", "key", "LEFT", "RIGHT"], true),
+            new([ ["RPUSH", "key", "value"] ], ["LMOVEM", "key", "key", "LEFT", "RIGHT"], true),
+            new([ ["RPUSH", "key", "value"] ], ["LMOVEM", "key", "other", "LEFT", "RIGHT", "EXACTLY", "2", "BULK"], false),
+            new([ ["RPUSH", "key", "value"], ["SET", "other", "wrong"] ], ["LMOVEM", "key", "other", "LEFT", "RIGHT"], false, Error: true),
+            new([], ["LMOVEM", "key", "other", "LEFT", "RIGHT"], false),
+            new([ ["RPUSH", "key", "value"] ], ["BLMOVEM", "key", "other", "LEFT", "RIGHT", "0.001"], true),
+            new([ ["RPUSH", "other", "value"] ], ["BLMOVEM", "other", "key", "LEFT", "RIGHT", "0.001"], true),
+            new([ ["RPUSH", "key", "value"] ], ["BLMOVEM", "key", "key", "LEFT", "RIGHT", "0.001"], true),
+            new([ ["RPUSH", "key", "value"] ], ["BLMOVEM", "key", "other", "LEFT", "RIGHT", "0.001", "EXACTLY", "2", "BULK"], false),
+            new([ ["RPUSH", "key", "value"], ["SET", "other", "wrong"] ], ["BLMOVEM", "key", "other", "LEFT", "RIGHT", "0.001"], false, Error: true),
+            new([], ["BLMOVEM", "key", "other", "LEFT", "RIGHT", "0.001"], false),
             new([], ["ZADD", "key", "1", "member"], true),
             new([], ["ZADD", "key", "XX", "1", "member"], false),
             new([ ["ZADD", "key", "1", "member"] ], ["ZADD", "key", "1", "member"], false),
@@ -194,8 +210,18 @@ public class FakeTransactionParityTests(RedisTestContainer fixture)
             new([ ["ZADD", "key", "1", "member"] ], ["ZPOPMIN", "key"], true),
         };
         if (useFake) AssertMutationCoverage(scenarios);
+        var unsupported = new HashSet<string>(StringComparer.Ordinal);
+        if (!useFake)
+        {
+            foreach (var command in new[] { "LMOVEM", "BLMOVEM" })
+            {
+                using var info = await writer.CommandAsync("COMMAND", "INFO", command);
+                if (info.AsArray()[0].IsNull) unsupported.Add(command);
+            }
+        }
         foreach (var scenario in scenarios)
         {
+            if (unsupported.Contains(scenario.Mutation[0])) continue;
             using (var cleared = await writer.CommandAsync("DEL", "key", "other", "marker")) { }
             foreach (var setup in scenario.Setup) using (var reply = await writer.CommandAsync(setup)) reply.IsError.Should().BeFalse();
             await Text(session, "OK", "WATCH", "key");

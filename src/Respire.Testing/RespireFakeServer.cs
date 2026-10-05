@@ -157,8 +157,10 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
         return arguments;
     }
 
-    private Outbound? ExecuteLocked(Connection connection, byte[][] arguments, RespireFakeFaultScope? scope)
+    private Outbound? ExecuteLocked(Connection connection, byte[][] arguments, RespireFakeFaultScope? scope,
+        out ListMoveWaiters? listMoveChanged, bool allowListMoveWait = false)
     {
+        listMoveChanged = null;
         // Keep synchronous state protection outside the async receive state machine,
         // including exceptional command execution and clock callbacks.
         lock (_gate)
@@ -170,7 +172,18 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
                 scope?.ObserveExecution();
                 // EXEC and all its commands share one server-time sample.
                 _commandTime = _clock.GetUtcNow().ToUnixTimeMilliseconds();
-                var reply = Execute(connection, arguments).Encode(connection.Resp3);
+                var result = Execute(connection, arguments);
+                if (allowListMoveWait && ReferenceEquals(result, FakeReply.NullArray))
+                {
+                    if (!_listMoveWaiters.TryGetValue(arguments[1], out listMoveChanged))
+                    {
+                        listMoveChanged = new ListMoveWaiters();
+                        _listMoveWaiters.Add(arguments[1], listMoveChanged);
+                    }
+                    listMoveChanged.Count++;
+                    return null;
+                }
+                var reply = result.Encode(connection.Resp3);
                 // Enqueue before releasing state ownership: newly subscribed routes cannot
                 // receive a publication ahead of their acknowledgement, even behind a fault gate.
                 return QueueOutputLocked(connection, reply, push: false);
