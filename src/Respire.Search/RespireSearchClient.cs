@@ -3,7 +3,7 @@ using Respire.Protocol;
 
 namespace Respire.Search;
 
-/// <summary>Typed Redis Search index, query, aggregation, vector, and hybrid operations.</summary>
+/// <summary>Typed Redis Search index, query, aggregation, vector, hybrid, and configuration operations.</summary>
 /// <remarks>
 /// <para>
 /// Index operations carry an index name rather than keys. Respire routes them like other module
@@ -14,6 +14,7 @@ namespace Respire.Search;
 /// on the node that receives it, and Respire cannot detect the partial result. Suggestion operations
 /// use independent dictionary keys and route by those keys.
 /// </para>
+/// <para>FT.CONFIG reads and writes are node-local. They use one selected node and never fan out.</para>
 /// <para>
 /// With client-side caching, read-only Search commands leave the local cache intact; FT.CREATE,
 /// FT.ALTER, FT.DROPINDEX, FT.SUGADD, and FT.SUGDEL invalidate it conservatively. Key-prefixed views reject Search

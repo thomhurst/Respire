@@ -73,6 +73,7 @@ try {
     $mutationExpectations = @{
         GET = 'ReadOnly'; SET = 'Mutation'; 'JSON.GET' = 'ReadOnly'; 'BF.EXISTS' = 'ReadOnly'
         'KEYDB.NHGET' = 'Mutation'; 'CLUSTER SLOT-STATS' = 'ReadOnly'
+        'FT.CONFIG GET' = 'ReadOnly'; 'FT.CONFIG SET' = 'Mutation'
     }
     foreach ($entry in $mutationExpectations.GetEnumerator()) {
         $pattern = '(?m)^\s*public static readonly RespireCommand \w+ = new\("' +

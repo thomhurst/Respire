@@ -852,6 +852,9 @@ public sealed partial class RespireClient : IRespireClient
 
     private void ValidateCatalogCommand(RespireCommand command)
     {
+        // The typed Search configuration API executes through the catalog rather than a server facet.
+        if (command.Name == "FT.CONFIG SET") ServerCommands.EnsureAdminAllowed(this, command.Name);
+
         if (string.IsNullOrEmpty(command.Name))
         {
             throw new ArgumentException("Command must be an entry from RespireCommands.", nameof(command));
@@ -1065,6 +1068,8 @@ public sealed partial class RespireClient : IRespireClient
         {
             "CONFIG" when candidate.EqualsAsciiIgnoreCase("GET") => "CONFIG GET",
             "CONFIG" when candidate.EqualsAsciiIgnoreCase("SET") => "CONFIG SET",
+            "FT.CONFIG" when candidate.EqualsAsciiIgnoreCase("GET") => "FT.CONFIG GET",
+            "FT.CONFIG" when candidate.EqualsAsciiIgnoreCase("SET") => "FT.CONFIG SET",
             "CLIENT" when candidate.EqualsAsciiIgnoreCase("CACHING") => "CLIENT CACHING",
             "CLIENT" when candidate.EqualsAsciiIgnoreCase("TRACKING") => "CLIENT TRACKING",
             "MEMORY" when candidate.EqualsAsciiIgnoreCase("USAGE") => "MEMORY USAGE",

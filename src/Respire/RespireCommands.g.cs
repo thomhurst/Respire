@@ -1179,7 +1179,7 @@ public static class RespireCommands
 
         /// <summary><c>FT.CONFIG GET</c>.</summary>
         [RespireCommandCatalogName("FT.CONFIG GET")]
-        public static readonly RespireCommand FT_CONFIG_GET = new("FT.CONFIG GET", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand FT_CONFIG_GET = new("FT.CONFIG GET", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
 
         /// <summary><c>FT.CONFIG SET</c>.</summary>
         [RespireCommandCatalogName("FT.CONFIG SET")]
@@ -2988,6 +2988,7 @@ public static class RespireCommands
             "ECHO",
             "FT.AGGREGATE",
             "FT.ALIASLIST",
+            "FT.CONFIG GET",
             "FT.CURSOR",
             "FT.CURSOR DEL",
             "FT.CURSOR GC",

@@ -143,9 +143,32 @@ For large results, `AggregatePagesAsync` runs the aggregation with `WITHCURSOR` 
 
 `RespireSearchDocument.Fields` and aggregate `Rows` provide string views for convenient text results. `StructuredFields` and `StructuredRows` preserve RESP types, nested values, and copied raw bytes for binary fields. Replies with an unexpected shape throw `InvalidOperationException` rather than silently dropping data.
 
+## Search configuration
+
+`GetConfigurationAsync(option)` returns an owned, read-only dictionary of option names and nullable string values. Its default option is `*`; individual names and wildcard support are server-defined. `SetConfigurationAsync(option, value)` changes one option and requires `RespireOptions.AllowAdmin = true`, like the standard server configuration API. Both methods preserve server errors, including invalid values, immutable options, and ACL denials.
+
+```csharp
+using Respire.Search;
+
+await using var client = await RespireClient.ConnectAsync(new RespireOptions
+{
+    Endpoints = [new("localhost", 6379)],
+    AllowAdmin = true,
+});
+var configuration = await client.Search.GetConfigurationAsync();
+Console.WriteLine(configuration["TIMEOUT"]);
+await client.Search.SetConfigurationAsync("TIMEOUT", "1000");
+```
+
+These methods send the legacy `FT.CONFIG GET/SET` commands, which remain available on Redis 8.10 but are [deprecated since Redis 8.0](https://redis.io/docs/latest/commands/ft.config-get/). Modern Redis exposes Search options through standard `CONFIG GET/SET` with `search-` names: prefer `client.Server.ConfigAsync("search-*")` and `client.Server.SetConfigAsync("search-timeout", "1000")`. The server's [Search configuration reference](https://redis.io/docs/latest/develop/ai/search-and-query/administration/configuration/) maps legacy option names to modern names. Options vary by server version and deployment; installing this package does not enable configuration on a managed service that restricts it.
+
+Configuration belongs to one node. Each call selects one node and never fans out. Cluster and Sentinel clients use the primary command route; standalone clients use their connected endpoint. Separate calls can select different nodes after topology changes. To target a specific node, use a separate standalone client connected directly to that node. Key-prefixed views reject both methods. Reads preserve the local client-side cache; writes invalidate it conservatively. Cancellation stops waiting and cannot undo a change already accepted by the server.
+
+Legacy [FT.CONFIG SET](https://redis.io/docs/latest/commands/ft.config-set/) changes do not persist across restarts. Use the deployment's configuration mechanism or standard `CONFIG REWRITE` where supported to persist modern configuration. Not every option can change at runtime.
+
 ## Routing, caching, and ownership
 
-FT.* commands carry an index name instead of keys. On a Redis Cluster, Respire routes each Search command, including cursor reads, to the node that owns the index name's hash slot. Respire does not fan out queries or merge shard results. Cross-shard search relies on the server's search coordinator, so check that your cluster deployment provides one. Without it, for example in plain Redis Open Source cluster mode, a query only sees the documents on the node that receives it, and Respire cannot tell that the result is partial. Standalone and Sentinel deployments need no special handling.
+Index commands carry an index name instead of keys. On a Redis Cluster, Respire routes each index command, including cursor reads, to the node that owns the index name's hash slot. Configuration commands follow the node-local scope described above. Respire does not fan out queries or merge shard results. Cross-shard search relies on the server's search coordinator, so check that your cluster deployment provides one. Without it, for example in plain Redis Open Source cluster mode, a query only sees the documents on the node that receives it, and Respire cannot tell that the result is partial. Standalone and Sentinel deployments need no special handling.
 
 With client-side caching enabled, read-only Search commands leave the local cache intact, while index changes invalidate it conservatively. Key-prefixed views reject Search commands, so include prefixes in the indexed keyspace and use keys in the format your index expects. Search methods build one argument list per call and are not part of Respire's zero-allocation hot path. The caller owns the underlying client.
 
