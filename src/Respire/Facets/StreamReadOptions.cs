@@ -3,6 +3,8 @@ using Respire.Internal;
 namespace Respire;
 
 /// <summary>Reply limits and blocking behavior for XREAD and XREADGROUP.</summary>
+/// <remarks>This is a shared public API. Additional read options should use init-only properties,
+/// preserving existing call shapes; this includes the planned consumer options tracked in issue #873.</remarks>
 public readonly record struct StreamReadOptions
 {
     /// <summary>Maximum entries per stream. Must be positive when specified.</summary>

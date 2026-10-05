@@ -72,7 +72,7 @@ public sealed partial class RespireFakeServer
         var start = Token(args[4]) == "$" ? stream.Last : StreamId(args[4]);
         if (!stream.Groups.TryAdd(args[3], new(start))) return FakeReply.Error("BUSYGROUP Consumer Group name already exists");
         if (Find(args[2]) is null) SetEntry(args[2], new Entry(stream));
-        else TouchWatchedKey(args[2]);
+        // Redis does not invalidate WATCH for group metadata on an existing stream.
         return FakeReply.Ok;
     }
 
@@ -155,7 +155,6 @@ public sealed partial class RespireFakeServer
                 {
                     group.Last = entry.Key;
                     group.Pending[entry.Key] = request.Consumer!;
-                    TouchWatchedKey(request.Keys[i]);
                 }
                 // Do not advance through any remaining history once the page's budget is exhausted.
                 hasEntry = entries.Count < request.Count && total < request.MaxCount && bytes < request.MaxSize
@@ -176,7 +175,6 @@ public sealed partial class RespireFakeServer
         var ids = args[3..].Select(StreamId).ToArray();
         if (stream is null || !stream.Groups.TryGetValue(args[2], out var group)) return FakeReply.Integer(0);
         var removed = ids.Count(group.Pending.Remove);
-        if (removed != 0) TouchWatchedKey(args[1]);
         return FakeReply.Integer(removed);
     }
 
