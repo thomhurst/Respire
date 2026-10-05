@@ -30,9 +30,13 @@ public class SearchProfileIntegrationTests(ModernRedisTestContainer fixture)
         });
         try
         {
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            // Finish the initial keyspace scan before publishing documents. A vector query
+            // can see both vectors while the scan is still rebuilding text/numeric indexes.
+            while ((await search.GetIndexInfoAsync(index, deadline.Token)).Properties["indexing"].Scalar != "0")
+                await Task.Delay(20, deadline.Token);
             for (var i = 1; i <= 2; i++)
                 await client.Hashes.SetAsync(index + ":doc:" + i, ("title", "hello"), ("price", i), ("embedding", Vector));
-            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             while ((await search.VectorSearchAsync(index, new("embedding", Vector, 2), cancellationToken: deadline.Token)).Documents.Count != 2)
                 await Task.Delay(20, deadline.Token);
 
