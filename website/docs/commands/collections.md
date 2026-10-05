@@ -206,6 +206,40 @@ are removed; rename those calls without changing their arguments.
 
 ## Sorted sets
 
+### Conditional adds and increments
+
+Pass `RespireSortedSetAddOptions` immediately after the key to use ZADD conditions:
+
+```csharp
+bool added = await redis.SortedSets.AddAsync("scores", RespireSortedSetAddOptions.Nx, "ada", 98.5);
+bool improved = await redis.SortedSets.AddAsync("scores",
+    RespireSortedSetAddOptions.Xx | RespireSortedSetAddOptions.Gt | RespireSortedSetAddOptions.Ch,
+    "ada", 100);
+long changed = await redis.SortedSets.AddAsync("scores", RespireSortedSetAddOptions.Ch,
+    ("ada", 101), ("grace", 99));
+double? increased = await redis.SortedSets.IncrementAsync("scores",
+    RespireSortedSetAddOptions.Xx | RespireSortedSetAddOptions.Gt, "ada", 2);
+```
+
+`Nx` only inserts missing members; `Xx` only updates existing ones. `Gt` and `Lt` compare
+the proposed score with the existing score, but still permit new members unless combined
+with `Xx`. They require Redis 6.2 or later. Without `Ch`, add results count only new members;
+with `Ch`, changed scores count too. Setting an unchanged score never counts as a change.
+
+The options-taking `IncrementAsync` uses `ZADD INCR` and returns null when a condition rejects
+the update. Its comparison uses the resulting score; `Ch` does not change its score result.
+INCR accepts exactly one member by API construction, so it cannot be combined with a bulk add.
+The existing options-free `IncrementAsync` continues to use `ZINCRBY` and returns `double`.
+Invalid flag combinations (`Nx` with `Xx`, `Gt`, or `Lt`, or `Gt` with `Lt`) are rejected
+before sending or queueing. Bulk options-taking adds require at least one entry.
+
+Batch and transaction facets expose the same overloads as `SortedSets.Add` and
+`SortedSets.Increment`, returning `RespirePending<bool>`, `RespirePending<long>`, or
+`RespirePending<double?>`. Generic single-member adds preserve the existing typed serialization
+rules, including Redis `1`/`0` encoding for booleans.
+
+### Reads and other operations
+
 `RandomMemberAsync(key)` returns one member or `null`; `RandomMembersAsync(key, count)`
 and `RandomMembersWithScoresAsync(key, count)` return owned arrays (Redis 6.2+). Positive
 counts select distinct members up to the set size; negative counts allow duplicates and
