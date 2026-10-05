@@ -3838,11 +3838,15 @@ public partial class SentinelRoutingTests
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, meter) =>
         {
-            if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.client_cache.hits")
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "redis.client.csc.requests")
                 meter.EnableMeasurementEvents(instrument);
         };
-        listener.SetMeasurementEventCallback<long>((_, _, _, _) =>
+        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
         {
+            var hit = false;
+            foreach (var tag in tags)
+                if (tag.Key == "redis.client.csc.result" && Equals(tag.Value, "hit")) hit = true;
+            if (!hit) return;
             if (!intercept.Value) return;
             intercept.Value = false;
             Volatile.Write(ref port, promoted.Port);
@@ -3915,11 +3919,15 @@ public partial class SentinelRoutingTests
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, meter) =>
         {
-            if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.client_cache.hits")
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "redis.client.csc.requests")
                 meter.EnableMeasurementEvents(instrument);
         };
-        listener.SetMeasurementEventCallback<long>((_, _, _, _) =>
+        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
         {
+            var hit = false;
+            foreach (var tag in tags)
+                if (tag.Key == "redis.client.csc.result" && Equals(tag.Value, "hit")) hit = true;
+            if (!hit) return;
             if (!intercept.Value) return;
             intercept.Value = false;
             Volatile.Write(ref port, promoted.Port);

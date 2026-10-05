@@ -11,7 +11,7 @@ namespace Respire;
 /// <see cref="RespireTransaction"/>. Mirrors <see cref="IHashCommands"/>; collection cardinality
 /// uses <see cref="Count"/>.
 /// </summary>
-public interface IBatchHashCommands
+public partial interface IBatchHashCommands
 {
     /// <summary>Sets one field. True when the field was newly created. Redis: HSET.</summary>
     RespirePending<bool> Set(RespireKey key, string field, RespireValue value);
@@ -152,7 +152,7 @@ public interface IBatchHashCommands
         params ReadOnlySpan<(string Field, RespireValue Value)> fields);
 }
 
-internal sealed class BatchHashCommands(IPendingSink sink) : IBatchHashCommands
+internal sealed partial class BatchHashCommands(IPendingSink sink) : IBatchHashCommands
 {
     public RespirePending<bool> Set(RespireKey key, string field, RespireValue value)
         => Set(key, field, value, SetWhen.Always);

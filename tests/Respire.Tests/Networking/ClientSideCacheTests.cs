@@ -1679,6 +1679,24 @@ public class ClientSideCacheTests
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
     }
 
+    [Test]
+    public async Task HashFieldOnlyScanPreservesCachedValues()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply, FakeRespServer.OkReply, FakeRespServer.OkReply,
+            "$3\r\nold\r\n"u8.ToArray(),
+            "*2\r\n$1\r\n0\r\n*1\r\n$5\r\nfield\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("old");
+        var page = await client.Hashes.ScanFieldsPageAsync("hash");
+        await Assert.That(page.Fields).IsEquivalentTo(new[] { "field" });
+        await foreach (var field in client.Hashes.ScanFieldsAsync("hash"))
+            await Assert.That(field).IsEqualTo("field");
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("old");
+        await Assert.That(server.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
+    }
+
     private static ValueTask<RespireClient> ConnectAsync(FakeRespServer server)
         => RespireClient.ConnectAsync(new RespireOptions
         {

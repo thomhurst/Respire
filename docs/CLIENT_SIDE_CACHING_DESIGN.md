@@ -244,11 +244,18 @@ only by already in-flight tokens and become collectible when those reads finish.
 
 | Instrument | Meaning |
 | --- | --- |
-| `respire.client_cache.hits` | reads served locally |
-| `respire.client_cache.misses` | reads requiring Redis |
+| `redis.client.csc.requests` | cache lookups; `redis.client.csc.result=hit` for local responses or `miss` for reads requiring Redis |
 | `respire.client_cache.invalidations` | key or broadcast invalidations |
-| `respire.client_cache.evictions` | capacity, TTL, and flush removals |
+| `redis.client.csc.evictions` | cached responses removed; optional `redis.client.csc.reason=full`, `ttl`, or `invalidation` for capacity, expiration, or server invalidation |
 | `respire.client_cache.continuity_flushes` | flushes caused by connection/topology uncertainty |
+
+Standardized counters include `db.system.name=redis` and `redis.client.library=Respire:<version>`.
+An invalidated key can remove multiple cached responses or none; eviction measurements count
+responses removed by capacity limits, expiration, or server invalidation. Local writes,
+explicit clearing, and continuity flushes do not increment the standardized eviction counter.
+`GetStatistics().Evictions` retains
+its existing capacity, expiration, and flush semantics. These prerelease metric renames replace
+the old hit/miss/eviction names without dual emission.
 
 When disabled, no coordinator, dictionary, payload, tracking handshake, push handler, or metric
 recording exists. The ordinary command path pays only the predictable null coordinator check used

@@ -23,6 +23,41 @@ Raw command values are not attached to spans because arbitrary Redis payloads ca
 
 Operation latency uses the stable `db.client.operation.duration` histogram and records seconds, as required by the semantic convention.
 
+## Redis metric mapping
+
+Existing signals use names, units, and attributes from the
+[Redis client observability specification](https://redis.io/docs/latest/develop/clients/observability/).
+The meter name remains `Respire`.
+
+| Previous instrument | Current instrument | Unit | Attributes and counting |
+| --- | --- | --- | --- |
+| `respire.client_cache.hits`, `respire.client_cache.misses` | `redis.client.csc.requests` | `{request}` | `redis.client.csc.result=hit` or `miss`; one measurement per cache lookup |
+| `respire.client_cache.evictions` | `redis.client.csc.evictions` | `{eviction}` | Removed cached responses; optional `redis.client.csc.reason=full`, `ttl`, or `invalidation` |
+| `respire.maintenance.notifications` | `redis.client.maintenance.notifications` | `{notification}` | `redis.client.connection.notification` identifies the notification; `server.address` and `server.port` identify its source |
+| Deployment switches between known endpoints | `redis.client.geofailover.failovers` | `{failover}` | `db.client.geofailover.reason=automatic`, `db.client.geofailover.fail_from`, and `db.client.geofailover.fail_to` |
+| `db.client.operation.duration` | Unchanged | `s` | Existing logical operation latency and database attributes |
+
+The four standardized counters carry `redis.client.library=Respire:<version>` and
+`db.system.name=redis`. Keys, command values, and credentials are never metric labels.
+An invalidated key can remove several responses or none; eviction counts reflect actual
+removals caused by capacity limits, local expiration, or server invalidation. Local
+mutation, explicit clearing, and continuity flushes do not increment this standardized
+counter. Respire-specific invalidation and continuity-flush instruments remain available.
+
+This prerelease replaces the old cache and maintenance names without legacy aliases or
+dual emission. Update exporter filters and dashboards when upgrading. The broader
+`respire.failover.endpoint.switches` counter remains: it also records initial selection
+and transitions to or from having no healthy endpoint. Those events are excluded from
+the standardized geographic failover counter. Cache statistics keep their existing
+meaning and are independent of exported metric totals.
+
+Respire-specific instruments remain available for hedging, availability zones, thread-pool
+health, coordination, Sentinel recovery, cache invalidation notifications, continuity
+flushes, and pub/sub delivery gaps. Mapping existing signals does not imply that every
+instrument or configuration group in the Redis specification is implemented. Additional
+connection, error, pub/sub, streaming, group-selection, and dashboard coverage is tracked
+by [#866](https://github.com/thomhurst/Respire/issues/866).
+
 ## Reads by availability zone
 
 When `ClientAvailabilityZone` is configured, the `Respire` meter exposes the observable
@@ -228,7 +263,7 @@ endpoint/database, `respire.maintenance.kind`, `respire.maintenance.sequence_id`
 announced seconds/target endpoint. They retain the receive timestamp and have no application
 command parent. Information logs identify the kind, sequence, and receiving endpoint.
 
-The `respire.maintenance.notifications` counter counts notifications delivered to diagnostics,
+The `redis.client.maintenance.notifications` counter counts notifications delivered to diagnostics,
 with endpoint and kind tags. Sequence IDs are deliberately absent from metric tags.
 Diagnostics run serially on a thread-pool worker for each physical connection. Listener
 exceptions are isolated; a slow listener cannot block RESP parsing or timeout handling.

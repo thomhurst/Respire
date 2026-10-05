@@ -2518,14 +2518,16 @@ public sealed partial class RespireClient : IRespireClient
         RespireConnectionRetiredException error, RespireReadFrom readFrom, CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
         => SendClusterAsync(operation, _core.Cluster!, command, cancellationToken,
-            initialConnection: source, firstAttempt: 1, initialRetirement: error, readFromOverride: readFrom);
+            initialConnection: source, firstAttempt: 1, initialRetirement: error, readFromOverride: readFrom,
+            cursorReadFromOverride: EffectiveReadFrom);
 
     internal ValueTask<RespValue> ResumeRejectedClusterSendAsync<TCommand>(
         string operation, TCommand command, RespireConnection source,
         RespireServerException error, RespireReadFrom readFrom, CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
         => SendClusterAsync(operation, _core.Cluster!, command, cancellationToken,
-            initialConnection: source, firstAttempt: 1, initialRejection: error, readFromOverride: readFrom);
+            initialConnection: source, firstAttempt: 1, initialRejection: error, readFromOverride: readFrom,
+            cursorReadFromOverride: EffectiveReadFrom);
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
@@ -2545,12 +2547,14 @@ public sealed partial class RespireClient : IRespireClient
         RespireReadFrom? readFromOverride = null,
         ReadAffinity? cursorAffinity = null,
         HedgeOriginalRoute? hedgeOriginalRoute = null,
-        bool isHedge = false)
+        bool isHedge = false,
+        RespireReadFrom? cursorReadFromOverride = null)
         where TCommand : struct, IRespCommand
     {
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
         var readFrom = readFromOverride ?? GetReadFromForCommand(in command, allowReadFrom);
-        var cursorReadFrom = readFrom;
+        // A mixed batch routes retries to the primary but publishes the cursor under its configured policy.
+        var cursorReadFrom = cursorReadFromOverride ?? readFrom;
         var cursorContinuation = command.ReadKind == ReadCommandKind.CursorRead
             && (cursorAffinity?.IsPinned == true || CursorCommandMetadata.IsCursorContinuation(in command));
         var preferredZone = ReadFallbackPolicy.UsesAvailabilityZone(readFrom) ? _core.Options.ClientAvailabilityZone : null;

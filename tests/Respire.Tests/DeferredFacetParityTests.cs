@@ -18,6 +18,8 @@ public class DeferredFacetParityTests
             [typeof(RespireClusterScanCursor), typeof(string), typeof(RespireKeyType?), typeof(int), typeof(CancellationToken)])!,
         typeof(IHashCommands).GetMethod(nameof(IHashCommands.ScanAsync),
             [typeof(RespireKey), typeof(string), typeof(int), typeof(CancellationToken)])!,
+        typeof(IHashCommands).GetMethod(nameof(IHashCommands.ScanFieldsAsync),
+            [typeof(RespireKey), typeof(string), typeof(int), typeof(CancellationToken)])!,
         typeof(ISetCommands).GetMethod(nameof(ISetCommands.ScanAsync),
             [typeof(RespireKey), typeof(string), typeof(int), typeof(CancellationToken)])!,
         typeof(ISortedSetCommands).GetMethod(nameof(ISortedSetCommands.ScanAsync),

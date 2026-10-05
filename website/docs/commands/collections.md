@@ -53,6 +53,37 @@ RESTORE invalidates its target key through the existing mutation handling.
 
 ## Hashes
 
+`Hashes.ScanFieldsAsync` enumerates field names without transferring values, using
+[`HSCAN NOVALUES`](https://redis.io/docs/latest/commands/hscan/) (Redis 7.4 or later).
+The existing `ScanAsync` continues to return field/value pairs.
+
+```csharp
+await foreach (var field in redis.Hashes.ScanFieldsAsync("user:42", match: "profile:*", countHint: 100))
+{
+    Console.WriteLine(field);
+}
+```
+
+For manual pagination, `ScanFieldsPageAsync(key, cursor, match, countHint)` returns an
+owned `RespireHashScanPage` with `Fields`, unsigned 64-bit `Cursor`, and `IsComplete`.
+Start with cursor zero, then pass each returned cursor until `IsComplete` is true.
+An empty page with a nonzero cursor does not finish the scan. A null page count omits
+`COUNT`; enumeration defaults to 250. Positive counts are hints, not page-size limits.
+
+Both `batch.Hashes.ScanFieldsPage(...)` and `transaction.Hashes.ScanFieldsPage(...)`
+return the same page through a pending result. Execute the queue and read its result
+before constructing the next page request. Key prefixes apply to the hash key, not the
+field pattern. Reads retain cursor/read metadata; queued pages retain the queue's cache policy.
+
+Scans are not snapshots: duplicates are possible, and concurrent additions/removals have
+undefined inclusion. Keep the same key, match, execution form, and read policy across pages.
+Enumeration keeps its own cursor affinity. Immediate manual pages and read-only Cluster
+batches share cursor affinity per read policy and slot; lost replica affinity fails a
+continuation rather than moving it to another server. A replica continuation cannot share
+a batch group with writes, which would route that group to the primary. Standalone batches
+and transactions execute on their primary connection. Restart from zero after topology
+changes; use a primary read view if moving pages between execution forms.
+
 ```csharp
 await redis.Hashes.SetAsync("user:42", "name", "Ada");
 await redis.Hashes.SetAsync(
