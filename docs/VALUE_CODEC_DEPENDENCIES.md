@@ -1,5 +1,20 @@
 # Optional codec dependency audit
 
+## Frame compatibility
+
+All built-in codecs write version 2 frames by default and continue to decode version 1
+frames indefinitely. Both versions use the same 18-byte header and compression algorithm
+IDs. Version 1 stores the first eight SHA-256 bytes of the encoded payload; version 2
+stores the seed-zero XxHash3 64-bit result in little-endian order. Checksums detect
+accidental payload corruption, not authentication, and do not cover header bytes.
+
+Old readers cannot decode version 2. During a rolling upgrade, configure every new
+writer with `new RespireValueCodecOptions { FrameVersion = 1 }` until all readers
+support version 2. Then switch writers to the default version 2. The write setting
+does not restrict decoding: upgraded readers accept both versions. Existing values
+need no rewrite. Before rolling back to an old reader, remove or rewrite version 2
+values using version 1; changing the write setting alone does not migrate stored values.
+
 ## LZ4
 
 `Respire.Compression.Lz4` references `K4os.Compression.LZ4` 1.3.8, the latest stable
@@ -31,7 +46,7 @@ expansion buffer. The shared frame validates size and checksum before decoding.
 This is managed code with unsafe internals, not a native P/Invoke dependency. The public
 Respire API exposes integer compression levels rather than dependency-specific types.
 Level 0 and levels 3–12 are accepted. Raw LZ4 blocks, LZ4 frame streams, and K4os pickles
-are different formats: reserved ID 3 denotes only a raw block inside a version 1
+are different formats: reserved ID 3 denotes only a raw block inside a versioned
 Respire frame. Cross-level decoding, an independent block fixture, trailing/truncated
 input, checksum-valid malformed blocks, size limits, and writer commit behavior are
 covered by tests. Performance comparisons remain separate in #527.

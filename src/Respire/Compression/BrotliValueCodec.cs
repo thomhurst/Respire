@@ -3,7 +3,7 @@ using System.IO.Compression;
 
 namespace Respire.Compression;
 
-/// <summary>Brotli value compression using version 1 Respire frames and algorithm ID 1.</summary>
+/// <summary>Brotli value compression using versioned Respire frames and algorithm ID 1.</summary>
 public sealed class BrotliValueCodec : RespireValueCodec
 {
     private readonly int _quality;

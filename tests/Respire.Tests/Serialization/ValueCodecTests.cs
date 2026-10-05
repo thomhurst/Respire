@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Buffers.Binary;
 using System.IO.Compression;
+using System.IO.Hashing;
 using System.Security.Cryptography;
 using System.Text;
 using Respire.Compression;
@@ -55,13 +56,13 @@ public class ValueCodecTests
     }
 
     [Test]
-    public async Task UncompressedVersionOneHasAStableFormatAndWorksAcrossAlgorithms()
+    public async Task VersionTwoHasAStableFormatAndIsTheDefault()
     {
-        byte[] expected = [0x52, 0x56, 0x43, 0, 1, 0, 3, 0, 0, 0,
-            0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea, 0x61, 0x62, 0x63];
-        var frame = new BrotliValueCodec().Encode("abc"u8);
-        await Assert.That(frame).IsEquivalentTo(expected);
-        await Assert.That(new DeflateValueCodec().Decode(frame)).IsEquivalentTo("abc"u8.ToArray());
+        byte[] expected = [0x52, 0x56, 0x43, 0, 2, 0, 3, 0, 0, 0,
+            0x50, 0x39, 0x2f, 0x89, 0x94, 0x5f, 0xaf, 0x78, 0x61, 0x62, 0x63];
+        await Assert.That(new BrotliValueCodec().Encode("abc"u8)).IsEquivalentTo(expected);
+        await Assert.That(new DeflateValueCodec(new() { FrameVersion = 1 }).Decode(expected))
+            .IsEquivalentTo("abc"u8.ToArray());
     }
 
     [Test]
@@ -69,9 +70,51 @@ public class ValueCodecTests
     [Arguments("deflate")]
     [Arguments("lz4")]
     [Arguments("zstd")]
-    public async Task InvalidFramesFailWithoutLegacyFallback(string algorithm)
+    public async Task BothVersionsRoundTripThroughEitherWriterSetting(string algorithm)
     {
-        var codec = Create(algorithm);
+        foreach (byte version in new byte[] { 1, 2 })
+        {
+            var writer = Create(algorithm, new() { FrameVersion = version });
+            var reader = Create(algorithm, new() { FrameVersion = (byte)(3 - version) });
+            foreach (var input in new[] { Array.Empty<byte>(), "abc"u8.ToArray(), new byte[4096] })
+            {
+                var frame = writer.Encode(input);
+                await Assert.That(frame[4]).IsEqualTo(version);
+                await Assert.That(reader.Decode(frame)).IsEquivalentTo(input);
+                var destination = new ArrayBufferWriter<byte>();
+                reader.Decode(frame, destination);
+                await Assert.That(destination.WrittenMemory.ToArray()).IsEquivalentTo(input);
+                var encoded = new ArrayBufferWriter<byte>();
+                writer.Encode(input, encoded);
+                await Assert.That(encoded.WrittenMemory.ToArray()).IsEquivalentTo(frame);
+                frame[4] = (byte)(3 - version);
+                await Assert.That(() => reader.Decode(frame)).Throws<InvalidDataException>();
+            }
+        }
+    }
+
+    [Test]
+    public async Task UncompressedVersionOneHasAStableFormatAndWorksAcrossAlgorithms()
+    {
+        byte[] expected = [0x52, 0x56, 0x43, 0, 1, 0, 3, 0, 0, 0,
+            0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea, 0x61, 0x62, 0x63];
+        var frame = new BrotliValueCodec(new() { FrameVersion = 1 }).Encode("abc"u8);
+        await Assert.That(frame).IsEquivalentTo(expected);
+        await Assert.That(new DeflateValueCodec().Decode(frame)).IsEquivalentTo("abc"u8.ToArray());
+    }
+
+    [Test]
+    [Arguments("brotli", (byte)1)]
+    [Arguments("deflate", (byte)1)]
+    [Arguments("lz4", (byte)1)]
+    [Arguments("zstd", (byte)1)]
+    [Arguments("brotli", (byte)2)]
+    [Arguments("deflate", (byte)2)]
+    [Arguments("lz4", (byte)2)]
+    [Arguments("zstd", (byte)2)]
+    public async Task InvalidFramesFailWithoutLegacyFallback(string algorithm, byte version)
+    {
+        var codec = Create(algorithm, new() { FrameVersion = version });
         var original = codec.Encode(Encoding.UTF8.GetBytes(new string('x', 4096)));
         var invalid = new List<byte[]> { "unframed legacy data"u8.ToArray(), original[..17], original[..^1] };
         foreach (var offset in new[] { 0, 4, 5, 10, original.Length - 1 })
@@ -134,7 +177,8 @@ public class ValueCodecTests
         await Assert.That(() => new BrotliValueCodec(quality: 12)).Throws<ArgumentOutOfRangeException>();
         await Assert.That(() => new DeflateValueCodec(level: (CompressionLevel)99)).Throws<ArgumentOutOfRangeException>();
         foreach (var options in new RespireValueCodecOptions[]
-                 { new() { MinimumLength = -1 }, new() { MaximumDecodedLength = 0 }, new() { MaximumDecodedLength = int.MaxValue } })
+                 { new() { MinimumLength = -1 }, new() { MaximumDecodedLength = 0 }, new() { MaximumDecodedLength = int.MaxValue },
+                   new() { FrameVersion = 0 }, new() { FrameVersion = 3 } })
             await Assert.That(() => new BrotliValueCodec(options)).Throws<ArgumentOutOfRangeException>();
         await Assert.That(() => new RespireValueCodecSerializer(null!, new BrotliValueCodec())).Throws<ArgumentNullException>();
         await Assert.That(() => new RespireValueCodecSerializer(RespireSerializer.Default, null!)).Throws<ArgumentNullException>();
@@ -284,7 +328,11 @@ public class ValueCodecTests
     }
 
     private static void RefreshChecksum(byte[] frame)
-        => SHA256.HashData(frame.AsSpan(RespireValueCodec.HeaderLength)).AsSpan(0, 8).CopyTo(frame.AsSpan(10));
+    {
+        var payload = frame.AsSpan(RespireValueCodec.HeaderLength);
+        if (frame[4] == 1) SHA256.HashData(payload).AsSpan(0, 8).CopyTo(frame.AsSpan(10));
+        else BinaryPrimitives.WriteUInt64LittleEndian(frame.AsSpan(10), XxHash3.HashToUInt64(payload));
+    }
 
     private sealed record BinaryValue(byte[] Bytes);
 

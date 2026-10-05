@@ -202,22 +202,28 @@ the caller, as with the built-in codecs.
 
 ## Frame and bounds
 
-Version 1 uses this byte layout; offsets and length exclude any Redis RESP framing:
+Versions 1 and 2 use this byte layout; offsets and length exclude any Redis RESP framing:
 
 | Offset | Length | Meaning |
 | --- | --- | --- |
 | 0 | 4 | Magic bytes `52 56 43 00` (`RVC` followed by NUL) |
-| 4 | 1 | Frame version, currently `1` |
+| 4 | 1 | Frame version: `2` by default; `1` remains supported |
 | 5 | 1 | Algorithm: `0` uncompressed, `1` Brotli, `2` raw DEFLATE, `3` raw LZ4 block, `4` Zstandard frame |
 | 6 | 4 | Original length, unsigned little-endian |
-| 10 | 8 | First eight bytes of SHA-256 of the encoded payload |
+| 10 | 8 | Encoded payload checksum: little-endian XxHash3 64-bit (seed zero) in version 2; first eight SHA-256 bytes in version 1 |
 | 18 | remaining | Encoded payload |
 
 The checksum detects accidental changes and truncation before invoking a decompressor;
-it does not authenticate data. SHA-256 uses the platform implementation without adding
-a hashing dependency; truncation limits frame overhead to eight checksum bytes. This
-choice does not claim a throughput advantage over noncryptographic checksums. Hashing
-the payload consumes CPU on each encode and decode; #527 must include that cost.
+it does not authenticate data or cover header bytes. Version 2 reduces checksum CPU
+cost using the existing `System.IO.Hashing` dependency. Both versions remain readable
+regardless of the writer's configured version.
+
+Old readers reject version 2. During a rolling upgrade, set
+`new RespireValueCodecOptions { FrameVersion = 1 }` on every upgraded writer until all
+readers support version 2, then switch writers to the default. Existing version 1
+values need no rewrite. Before rolling back to old readers, remove or rewrite any
+version 2 values as version 1; changing the write setting does not migrate stored values.
+
 A compressed payload must be smaller than the declared
 original, while an uncompressed payload must have exactly that length. Output length is
 checked against `MaximumDecodedLength` before allocation and must match the decompressor's

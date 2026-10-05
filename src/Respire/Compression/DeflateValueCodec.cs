@@ -2,7 +2,7 @@ using System.IO.Compression;
 
 namespace Respire.Compression;
 
-/// <summary>Raw DEFLATE value compression using version 1 Respire frames and algorithm ID 2.</summary>
+/// <summary>Raw DEFLATE value compression using versioned Respire frames and algorithm ID 2.</summary>
 public sealed class DeflateValueCodec : RespireValueCodec
 {
     private readonly CompressionLevel _level;
