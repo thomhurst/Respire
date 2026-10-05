@@ -9,7 +9,7 @@ namespace Respire;
 /// <summary>
 /// Hash (field → value map) commands. Collection cardinality uses <see cref="CountAsync"/>.
 /// </summary>
-public interface IHashCommands
+public partial interface IHashCommands
 {
     /// <summary>Sets one field. Returns true when the field was newly created. Redis: HSET.</summary>
     ValueTask<bool> SetAsync(
@@ -236,7 +236,7 @@ public interface IHashCommands
         CancellationToken cancellationToken);
 }
 
-internal sealed class HashCommands(RespireClient client) : IHashCommands
+internal sealed partial class HashCommands(RespireClient client) : IHashCommands
 {
     public ValueTask<bool> SetAsync(
         RespireKey key, string field, RespireValue value,
