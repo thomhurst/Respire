@@ -12,7 +12,7 @@ namespace Respire.Tests.Networking;
 
 /// <summary>
 /// Wire tests for the direct bulk-string response path (GET-family commands returning
-/// <c>string?</c>). Small fully buffered bulk replies decode straight from the receive buffer;
+/// <c>string?</c>). Fully buffered bulk replies decode straight from the receive buffer;
 /// every other reply shape must fall back to the general RespValue conversion path with
 /// identical results.
 /// </summary>
@@ -100,7 +100,7 @@ public class StringFastPathWireTests
     [Test]
     public async Task Get_LargeBulkReply_DirectFillFallbackRoundTrips()
     {
-        // Above the 4 KB direct-fill threshold: must take the pooled RespValue path.
+        // The frame exceeds the 64 KB receive buffer, so direct-fill must finish the payload.
         var payload = new string('y', 64 * 1024);
         var reply = Encoding.UTF8.GetBytes($"${payload.Length}\r\n{payload}\r\n");
         await using var server = new FakeRespServer(reply);

@@ -31,8 +31,8 @@ namespace Respire.Networking;
 /// <b>Read path.</b> One receive loop reads straight from the socket into a pooled contiguous
 /// buffer (no pipe — that costs a second full-payload copy) and incrementally parses RESP
 /// values, copying each payload exactly once into pooled storage owned by the completed
-/// <see cref="RespValue"/>. Bulk payloads at or above <see cref="DirectFillThreshold"/> are
-/// received directly into their pooled payload array. Because RESP has no correlation ids,
+/// <see cref="RespValue"/>. Incomplete bulk payloads at or above <see cref="DirectFillThreshold"/>
+/// are received directly into their pooled payload array. Because RESP has no correlation ids,
 /// responses complete in-flight sources strictly in FIFO order.
 /// </para>
 /// <para>
@@ -2289,7 +2289,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                             continue;
                         }
 
-                        if (hasBulkHeader && bulkLength >= DirectFillThreshold)
+                        if (hasBulkHeader && bulkLength >= DirectFillThreshold
+                            && end - headerEnd < bulkLength + 2)
                         {
                             start = headerEnd;
                             value = default;
@@ -2350,8 +2351,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                         case RespParseStatus.NeedDirectFill:
                             ValidateBulkResponseSize(responseBytes, directFill.PayloadLength);
 
-                            // Flush before awaiting so already-parsed replies don't wait on
-                            // the rest of a large frame.
+                            // Only incomplete frames request direct-fill, including nested
+                            // bulks. Flush before awaiting their remaining payload or CRLF.
                             _completions.Flush();
                             var filled = await ReceiveLargeBulkAsync(
                                     buffer, start, end, directFill.Type, directFill.PayloadLength)
@@ -2788,7 +2789,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
     /// <summary>
     /// Completes the head in-flight command with a string decoded straight from the receive
-    /// buffer when the reply is a small, fully buffered bulk string and the head source asked
+    /// buffer when the reply is a fully buffered bulk string and the head source asked
     /// for a <c>string?</c>. Skips the pooled payload rent/copy/return and the
     /// <see cref="RespValue"/> round-trip of the general path. A bulk string is never a push
     /// frame, so FIFO pairing with the ring head is safe. Returns false — leaving the general
@@ -2819,7 +2820,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 return false;
             }
 
-            // The caller's direct-fill branch bounds payloadLength below DirectFillThreshold.
+            // ValidateBulkResponseSize bounds payloadLength before this path is entered.
             var length = (int)payloadLength;
             if (buffer.Length - headerEnd < length + 2)
             {
