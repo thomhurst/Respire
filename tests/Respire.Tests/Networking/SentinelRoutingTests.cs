@@ -3823,8 +3823,10 @@ public partial class SentinelRoutingTests
     [Arguments("HGET", true)]
     [Arguments("RAW MGET", false)]
     [Arguments("RAW MGET", true)]
+    [NotInParallel]
     public async Task RetirementDuringCacheLookupRejectsTheOldValue(string operation, bool coalesce)
     {
+        using var metrics = new MetricConfigurationScope();
         static byte[]? Reply(string command, string value) => command switch
         {
             "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
@@ -3901,8 +3903,10 @@ public partial class SentinelRoutingTests
     [Arguments(true, false, true)]
     [Arguments(true, true, false)]
     [Arguments(true, true, true)]
+    [NotInParallel]
     public async Task RetirementDuringHashFieldLookupRefetchesEveryField(bool raw, bool partial, bool coalesce)
     {
+        using var metrics = new MetricConfigurationScope();
         static byte[]? Reply(string command, string value) => command switch
         {
             "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
@@ -4078,8 +4082,10 @@ public partial class SentinelRoutingTests
     [Arguments("script", false)]
     [Arguments("blocking-rental", true)]
     [Arguments("blocking-rental", false)]
+    [NotInParallel] // Configures process-wide metric selection.
     public async Task FailedDiscoveryRetainsTelemetryWithoutInventingAPrimary(string kind, bool trace)
     {
+        using var metrics = new MetricConfigurationScope();
         var operation = kind switch { "blocking" or "blocking-rental" => "BLPOP", "script" => "EVALSHA", _ => "SET" };
         var rental = kind == "blocking-rental";
         var queried = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -4170,8 +4176,10 @@ public partial class SentinelRoutingTests
     [Arguments("transaction")]
     [Arguments("blocking")]
     [Arguments("script")]
+    [NotInParallel] // Configures process-wide metric selection.
     public async Task FirstLazyOperationIsSampledWithThePrimaryEndpoint(string kind)
     {
+        using var metrics = new MetricConfigurationScope();
         await using var primary = Primary((_, command) => command switch
         {
             "SET key value" when kind == "transaction" => "+QUEUED\r\n"u8.ToArray(),
@@ -4234,8 +4242,10 @@ public partial class SentinelRoutingTests
     [Arguments("durability", true)]
     [Arguments("transaction", false)]
     [Arguments("transaction", true)]
+    [NotInParallel] // Configures process-wide metric selection.
     public async Task SuccessfulSentinelOperationIncludesDiscoveryInItsDuration(string kind, bool trace)
     {
+        using var metrics = new MetricConfigurationScope();
         var operation = kind switch { "blocking" => "BLPOP", "script" => "EVALSHA", _ => "SET" };
         await using var primary = Primary((_, command) => command switch
         {
@@ -4334,8 +4344,10 @@ public partial class SentinelRoutingTests
     [Arguments("batch")]
     [Arguments("durability")]
     [Arguments("transaction")]
+    [NotInParallel] // Configures process-wide metric selection.
     public async Task BatchDurationKeepsTheAdmittedPrimaryAfterPromotion(string kind)
     {
+        using var metrics = new MetricConfigurationScope();
         var admitted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var primary = Primary((_, command) => command.StartsWith("SET delayed") && kind == "transaction"
             ? "+QUEUED\r\n"u8.ToArray() : null);

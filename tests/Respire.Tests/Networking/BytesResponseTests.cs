@@ -133,7 +133,7 @@ public class BytesResponseTests
         while (!server.ReceivedCommands.Contains("GET tenant:key")) await Task.Delay(1, deadline.Token);
         var ring = Inflight(client.Core.Multiplexer.GetConnection());
         await Assert.That(ring.TryPeek(out var head)).IsTrue();
-        await Assert.That(head is BytesPendingResponseSource).IsEqualTo(!cached && !RespireTelemetry.IsEnabled);
+        await Assert.That(head is BytesPendingResponseSource).IsEqualTo(!cached && !RespireTelemetry.IsOperationEnabled("GET"));
         await server.SendRawAsync(reply);
         var first = await pending.WaitAsync(deadline.Token);
         await Assert.That(first!.AsSpan().SequenceEqual(expected)).IsTrue();
