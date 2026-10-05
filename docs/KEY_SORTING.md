@@ -1,4 +1,4 @@
-# Sorting, random keys, and moving between databases
+# Sorting, random keys, and copying or moving between databases
 
 `Keys.SortAsync` sorts a list, set, or sorted set numerically by default. It returns
 an array of strings, including nulls for missing external GET values. Set `Alpha`
@@ -70,6 +70,41 @@ at initialization. Later edits to the supplied arrays do not change the options.
 Record equality compares all settings and ordered pattern bytes, so equal patterns
 from separate arrays compare equal and have equal hash codes. A `with` copy shares
 the owned snapshots unless its initializer replaces them.
+
+## COPY to another database
+
+`Keys.CopyAsync(source, destination, destinationDatabase, replace)` sends Redis 6.2+
+`COPY source destination DB destinationDatabase [REPLACE]`. The existing overload
+without `destinationDatabase` continues to copy within the connection's database.
+
+```csharp
+await using var client = await RespireClient.ConnectAsync("localhost:6379");
+var tenant = client.WithKeyPrefix("tenant:");
+var copied = await tenant.Keys.CopyAsync("source", "backup", destinationDatabase: 2, replace: true);
+
+using var batch = tenant.CreateBatch();
+var pending = batch.Keys.Copy("source", "backup", destinationDatabase: 2);
+await batch.ExecuteAsync();
+var copiedByBatch = pending.Result;
+```
+
+Transactions expose the same `Keys.Copy` overload. Both key names receive the
+view's prefix. The source stays in the client's selected database; copying does
+not change that database or delete the source. A missing source or existing target
+without `replace` returns false. The same key name can be used in two different
+databases. This operation stays on one server; it does not transfer between servers.
+
+Negative destination database numbers fail before sending or enqueueing. Other
+database restrictions remain server-enforced, and errors are preserved rather than
+silently copying into the current database. In particular, [Redis Cluster supports
+only database 0](https://redis.io/docs/latest/commands/select/); compatible servers with multiple Cluster databases must be
+configured to accept the requested index. In Cluster mode, source and destination
+must share a hash slot after prefixing, including when their databases differ.
+The new overload rejects mismatched slots locally with `RespireServerException`
+(`CROSSSLOT`, command `COPY`) in every execution mode.
+
+Adapters implementing `IKeyCommands` or `IBatchKeyCommands` must implement the
+new destination-database overload. See Redis's [COPY reference](https://redis.io/docs/latest/commands/copy/).
 
 ## RANDOMKEY and MOVE
 

@@ -1714,6 +1714,11 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             CancellationToken cancellationToken = default)
             => inner.CopyAsync(source, destination, replace, cancellationToken);
 
+        public ValueTask<bool> CopyAsync(
+            RespireKey source, RespireKey destination, int destinationDatabase, bool replace = false,
+            CancellationToken cancellationToken = default)
+            => inner.CopyAsync(source, destination, destinationDatabase, replace, cancellationToken);
+
         public ValueTask<long> TouchAsync(params ReadOnlySpan<RespireKey> keys) => inner.TouchAsync(keys);
 
         public ValueTask<long> TouchAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)

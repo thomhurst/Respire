@@ -125,6 +125,16 @@ public partial interface IKeyCommands
         bool replace = false,
         CancellationToken cancellationToken = default);
 
+    /// <summary>Copies a key into the requested database, optionally replacing its destination. Redis 6.2+: COPY DB.</summary>
+    /// <remarks>Both keys receive the client prefix. Cluster keys must share a hash slot.
+    /// The server must support the requested database; unsupported or out-of-range databases return server errors.</remarks>
+    ValueTask<bool> CopyAsync(
+        RespireKey source,
+        RespireKey destination,
+        int destinationDatabase,
+        bool replace = false,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Touches keys (updates access time); returns how many existed. Redis: TOUCH.</summary>
     ValueTask<long> TouchAsync(params ReadOnlySpan<RespireKey> keys);
 
@@ -282,6 +292,34 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
             : client.FlagAsync(
                 "COPY", new Cmd2(Verbs.Copy, client.Key(in source), client.Key(in destination)),
                 cancellationToken);
+
+    public ValueTask<bool> CopyAsync(
+        RespireKey source,
+        RespireKey destination,
+        int destinationDatabase,
+        bool replace = false,
+        CancellationToken cancellationToken = default)
+    {
+        var (resolvedSource, resolvedDestination) = CopyDatabaseKeys(client, source, destination, destinationDatabase);
+        return replace
+            ? client.FlagAsync("COPY",
+                new Cmd5(Verbs.Copy, resolvedSource, resolvedDestination, "DB", destinationDatabase, "REPLACE"),
+                cancellationToken)
+            : client.FlagAsync("COPY",
+                new Cmd4(Verbs.Copy, resolvedSource, resolvedDestination, "DB", destinationDatabase),
+                cancellationToken);
+    }
+
+    internal static (RespireValue Source, RespireValue Destination) CopyDatabaseKeys(
+        RespireClient client, RespireKey source, RespireKey destination, int destinationDatabase)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(destinationDatabase);
+        var resolvedSource = client.Key(in source);
+        var resolvedDestination = client.Key(in destination);
+        if (client.Core.Cluster is not null && resolvedSource.AsKey().ClusterSlot != resolvedDestination.AsKey().ClusterSlot)
+            throw new RespireServerException("CROSSSLOT Keys in request don't hash to the same slot", "COPY");
+        return (resolvedSource, resolvedDestination);
+    }
 
     public ValueTask<long> TouchAsync(params ReadOnlySpan<RespireKey> keys)
         => client.IntegerKeysAsync("TOUCH", Verbs.Touch, keys, CancellationToken.None);
