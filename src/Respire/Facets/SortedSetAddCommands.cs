@@ -44,6 +44,8 @@ internal sealed partial class SortedSetCommands
     public ValueTask<bool> AddAsync<T>(RespireKey key, RespireSortedSetAddOptions options, T member, double score,
         CancellationToken cancellationToken = default)
     {
+        // Reject invalid options before invoking user serialization. AddCommand also validates
+        // because non-generic callers reach it directly.
         SortedSetAddCommand.Validate(options);
         return AddAsync(key, options, client.SerializeCollectionMember(member), score, cancellationToken);
     }
@@ -72,6 +74,6 @@ internal sealed partial class SortedSetCommands
     {
         SortedSetAddCommand.Validate(options);
         if (entries.IsEmpty) throw new ArgumentException("At least one member is required.", nameof(entries));
-        return new(client.Key(in key), options, default, default, pairs: ScoreMemberPairs(entries));
+        return new(client.Key(in key), options, member: default, score: default, pairs: ScoreMemberPairs(entries));
     }
 }

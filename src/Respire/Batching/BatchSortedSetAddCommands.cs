@@ -38,6 +38,8 @@ internal sealed partial class BatchSortedSetCommands
     [OverloadResolutionPriority(-1)]
     public RespirePending<bool> Add<T>(RespireKey key, RespireSortedSetAddOptions options, T member, double score)
     {
+        // Reject invalid options before invoking user serialization. AddCommand also validates
+        // because non-generic callers reach it directly.
         SortedSetAddCommand.Validate(options);
         return Add(key, options, sink.Client.SerializeCollectionMember(member), score);
     }
