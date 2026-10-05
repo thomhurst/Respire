@@ -4,6 +4,7 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
+[NotInParallel]
 public class SentinelClientIntegrationTests
 {
     [Test]
@@ -12,6 +13,7 @@ public class SentinelClientIntegrationTests
     public async Task ReadsAndAdministersExplicitSentinel(RespireContainerServer server)
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        // Each case owns a container with private server processes; failover never targets a shared fixture.
         await using var fixture = await RespireContainerFixture.StartAsync(new()
         {
             Server = server, Topology = RespireContainerTopology.Sentinel,

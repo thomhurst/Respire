@@ -45,13 +45,11 @@ public enum RespireSentinelFailure
 public sealed class RespireSentinelClient : IAsyncDisposable
 {
     private readonly RespireClient _client;
-    private readonly bool _primaryAliases;
-    private readonly bool _replicaAlias;
-    private readonly bool _multiOptionConfig;
+    private readonly SentinelServerProfile _profile;
 
     /// <summary>Owns an established connection and its detected wire capabilities.</summary>
-    private RespireSentinelClient(RespireClient client, bool primaryAliases, bool replicaAlias, bool multiOptionConfig)
-        => (_client, _primaryAliases, _replicaAlias, _multiOptionConfig) = (client, primaryAliases, replicaAlias, multiOptionConfig);
+    private RespireSentinelClient(RespireClient client, SentinelServerProfile profile)
+        => (_client, _profile) = (client, profile);
 
     /// <summary>The Sentinel endpoint selected at connection time.</summary>
     public RespireEndpoint Endpoint => _client.Endpoint;
@@ -77,14 +75,11 @@ public sealed class RespireSentinelClient : IAsyncDisposable
             }
             catch (RespireServerException exception) when (exception.Code == RespireErrorCodes.NoPerm)
             {
-                return new(client, false, false, false);
+                return new(client, SentinelServerProfile.Legacy);
             }
             using var lease = reply;
             var info = SentinelReply.Text(reply);
-            var valkey = ServerVersion(info, "valkey_version:");
-            var redis = ServerVersion(info, "redis_version:");
-            return new(client, valkey is { Major: >= 8 }, valkey is not null || redis is { Major: >= 5 },
-                valkey is { Major: >= 8 } || redis is { Major: > 7 } or { Major: 7, Minor: >= 2 });
+            return new(client, SentinelServerProfile.FromInfo(info));
         }
         catch
         {
@@ -93,26 +88,17 @@ public sealed class RespireSentinelClient : IAsyncDisposable
         }
     }
 
-    /// <summary>Reads a server-family version; missing or unparseable versions leave capabilities disabled.</summary>
-    private static Version? ServerVersion(string info, string prefix)
-    {
-        foreach (var line in info.Split('\n'))
-            if (line.StartsWith(prefix, StringComparison.Ordinal)
-                && Version.TryParse(line[prefix.Length..].Trim(), out var version)) return version;
-        return null;
-    }
-
     /// <summary>Lists all monitored primaries, retaining every reported state.</summary>
     public ValueTask<RespireSentinelPrimary[]> PrimariesAsync(CancellationToken cancellationToken = default)
-        => ReadAsync(_primaryAliases ? "PRIMARIES" : "MASTERS", [], SentinelReply.Primaries, cancellationToken);
+        => ReadAsync(_profile.PrimariesCommand, [], SentinelReply.Primaries, cancellationToken);
 
     /// <summary>Returns the named primary. Unknown names produce the original server error.</summary>
     public ValueTask<RespireSentinelPrimary> PrimaryAsync(string name, CancellationToken cancellationToken = default)
-        => ReadAsync(_primaryAliases ? "PRIMARY" : "MASTER", [Name(name)], SentinelReply.Primary, cancellationToken);
+        => ReadAsync(_profile.PrimaryCommand, [Name(name)], SentinelReply.Primary, cancellationToken);
 
     /// <summary>Returns replicas, including replicas flagged down or disconnected.</summary>
     public ValueTask<RespireSentinelReplica[]> ReplicasAsync(string name, CancellationToken cancellationToken = default)
-        => ReadAsync(_replicaAlias ? "REPLICAS" : "SLAVES", [Name(name)], SentinelReply.Replicas, cancellationToken);
+        => ReadAsync(_profile.ReplicasCommand, [Name(name)], SentinelReply.Replicas, cancellationToken);
 
     /// <summary>Returns other Sentinels monitoring the named primary.</summary>
     public ValueTask<RespireSentinelPeer[]> SentinelsAsync(string name, CancellationToken cancellationToken = default)
@@ -151,7 +137,7 @@ public sealed class RespireSentinelClient : IAsyncDisposable
         ArgumentOutOfRangeException.ThrowIfNegative(currentEpoch);
         Name(runId);
         if (runId != "*") EnsureAdmin();
-        return ReadAsync(_primaryAliases ? "IS-PRIMARY-DOWN-BY-ADDR" : "IS-MASTER-DOWN-BY-ADDR",
+        return ReadAsync(_profile.DownStateCommand,
             [endpoint.Host, endpoint.Port, currentEpoch, runId], SentinelReply.DownState, cancellationToken);
     }
 
@@ -176,7 +162,7 @@ public sealed class RespireSentinelClient : IAsyncDisposable
     {
         EnsureAdmin();
         var arguments = Options(options);
-        if (arguments.Length > 2 && !_multiOptionConfig)
+        if (arguments.Length > 2 && !_profile.SupportsMultiOptionConfig)
             throw new NotSupportedException("Multiple Sentinel CONFIG SET options require Redis 7.2+ or Valkey 8+.");
         return MutateAsync("CONFIG SET", arguments, cancellationToken);
     }

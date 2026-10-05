@@ -1,4 +1,5 @@
 using System.Text;
+using Respire.Internal;
 using Respire.Protocol;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -8,6 +9,28 @@ namespace Respire.Tests.Networking;
 
 public class SentinelClientTests
 {
+    [Test]
+    [Arguments("", false, false, false)]
+    [Arguments("redis_version:unknown", false, false, false)]
+    [Arguments("redis_version:4.0.14", false, false, false)]
+    [Arguments("redis_version:5.0.0", false, true, false)]
+    [Arguments("redis_version:7.1.9", false, true, false)]
+    [Arguments("redis_version:7.2.0", false, true, true)]
+    [Arguments("redis_version:8.10.0", false, true, true)]
+    [Arguments("valkey_version:8.0.0", true, true, true)]
+    [Arguments("redis_version:7.2.4\r\nvalkey_version:9.0.0", true, true, true)]
+    public async Task ServerProfileCentralizesCompatibilityBoundaries(string info, bool primaryAliases, bool replicas, bool multiOption)
+    {
+        var profile = SentinelServerProfile.FromInfo(info);
+        await Assert.That(profile.PrimaryCommand).IsEqualTo(primaryAliases ? "PRIMARY" : "MASTER");
+        await Assert.That(profile.PrimariesCommand).IsEqualTo(primaryAliases ? "PRIMARIES" : "MASTERS");
+        await Assert.That(profile.DownStateCommand).IsEqualTo(primaryAliases ? "IS-PRIMARY-DOWN-BY-ADDR" : "IS-MASTER-DOWN-BY-ADDR");
+        await Assert.That(profile.ReplicasCommand).IsEqualTo(replicas ? "REPLICAS" : "SLAVES");
+        await Assert.That(profile.SupportsMultiOptionConfig).IsEqualTo(multiOption);
+        if (!primaryAliases && !replicas && !multiOption)
+            await Assert.That(profile).IsEqualTo(SentinelServerProfile.Legacy);
+    }
+
     private static byte[] Bulk(string value) => Encoding.UTF8.GetBytes($"${Encoding.UTF8.GetByteCount(value)}\r\n{value}\r\n");
 
     /// <summary>Checks version-gated multi-option writes and preserves single-option support.</summary>
