@@ -324,15 +324,14 @@ public class ClientSideCacheTests
             HelloReply,
             FakeRespServer.OkReply,
             FakeRespServer.OkReply,
-            ":3\r\n"u8.ToArray(),
             FakeRespServer.OkReply,
             ":4\r\n"u8.ToArray());
-        server.DelayReply(3, 250);
+        var parked = new ParkedReply(server, "STRLEN key");
         await using var client = await ConnectAsync(server);
 
         var read = client.Strings.LengthAsync("key").AsTask();
-        await WaitUntilAsync(() => server.CommandsSeen >= 4);
-        await server.SendRawAsync(">2\r\n+invalidate\r\n*1\r\n$3\r\nkey\r\n"u8.ToArray());
+        // The invalidation must reach the client before the read's reply.
+        await parked.ReleaseAsync(">2\r\n+invalidate\r\n*1\r\n$3\r\nkey\r\n"u8.ToArray(), ":3\r\n"u8.ToArray());
 
         await Assert.That(await read).IsEqualTo(3);
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
@@ -739,15 +738,14 @@ public class ClientSideCacheTests
             HelloReply,
             FakeRespServer.OkReply,
             FakeRespServer.OkReply,
-            "$3\r\nold\r\n"u8.ToArray(),
             FakeRespServer.OkReply,
             "$3\r\nnew\r\n"u8.ToArray());
-        server.DelayReply(3, 250);
+        var parked = new ParkedReply(server, "GET key");
         await using var client = await ConnectAsync(server);
 
         var read = client.GetStringAsync("key");
-        await WaitUntilAsync(() => server.CommandsSeen >= 4);
-        await server.SendRawAsync(">2\r\n+invalidate\r\n*1\r\n$3\r\nkey\r\n"u8.ToArray());
+        // The invalidation must reach the client before the read's reply.
+        await parked.ReleaseAsync(">2\r\n+invalidate\r\n*1\r\n$3\r\nkey\r\n"u8.ToArray(), "$3\r\nold\r\n"u8.ToArray());
 
         await Assert.That(await read).IsEqualTo("old");
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
@@ -808,16 +806,16 @@ public class ClientSideCacheTests
     {
         await using var server = new FakeRespServer(
             HelloReply,
-            FakeRespServer.OkReply,
-            "$3\r\nold\r\n"u8.ToArray());
-        server.DelayReply(2, 250);
+            FakeRespServer.OkReply);
+        var parked = new ParkedReply(server, "GETDEL key");
         await using var client = await ConnectAsync(server);
 
         var mutation = client.Strings.GetAndDeleteAsync("key").AsTask();
-        await WaitUntilAsync(() => server.CommandsSeen >= 3);
+        await parked.WaitAsync();
         var cache = client.Core.ClientCache!;
         InsertCachedValue(cache, "key", "old");
 
+        await parked.ReleaseAsync("$3\r\nold\r\n"u8.ToArray());
         await Assert.That(await mutation).IsEqualTo("old");
         await Assert.That(cache.Count).IsEqualTo(0);
     }
@@ -858,18 +856,18 @@ public class ClientSideCacheTests
             HelloReply,
             FakeRespServer.OkReply,
             FakeRespServer.OkReply,
-            "$3\r\nold\r\n"u8.ToArray(),
-            ":1\r\n"u8.ToArray());
-        server.DelayReply(4, 250);
+            "$3\r\nold\r\n"u8.ToArray());
+        var parked = new ParkedReply(server, "PFCOUNT key");
         await using var client = await ConnectAsync(server);
 
         await client.GetStringAsync("key");
         var count = client.HyperLogLog.CountAsync("key").AsTask();
-        await WaitUntilAsync(() => server.CommandsSeen >= 5);
+        await parked.WaitAsync();
         var cache = client.Core.ClientCache!;
         await Assert.That(cache.Count).IsEqualTo(0);
         InsertCachedValue(cache, "key", "old");
 
+        await parked.ReleaseAsync(":1\r\n"u8.ToArray());
         await Assert.That(await count).IsEqualTo(1);
         await Assert.That(cache.Count).IsEqualTo(0);
     }
@@ -913,19 +911,19 @@ public class ClientSideCacheTests
             HelloReply,
             FakeRespServer.OkReply,
             FakeRespServer.OkReply,
-            "+QUEUED\r\n"u8.ToArray(),
-            "*1\r\n+OK\r\n"u8.ToArray());
-        server.DelayReply(4, 250);
+            "+QUEUED\r\n"u8.ToArray());
+        var parked = new ParkedReply(server, "EXEC");
         await using var client = await ConnectAsync(server);
         await using var transaction = client.CreateTransaction();
         _ = transaction.Strings.Set("key", "new");
 
         var commit = transaction.CommitAsync().AsTask();
-        await WaitUntilAsync(() => server.CommandsSeen >= 5);
+        await parked.WaitAsync();
         var cache = client.Core.ClientCache!;
         InsertCachedValue(cache, "key", "old");
         await Assert.That(cache.Count).IsEqualTo(1);
 
+        await parked.ReleaseAsync("*1\r\n+OK\r\n"u8.ToArray());
         await commit;
 
         await Assert.That(cache.Count).IsEqualTo(0);
@@ -939,20 +937,20 @@ public class ClientSideCacheTests
             FakeRespServer.OkReply,
             FakeRespServer.OkReply,
             "$3\r\nold\r\n"u8.ToArray(),
-            ":1\r\n"u8.ToArray(),
             FakeRespServer.OkReply,
             "$3\r\nnew\r\n"u8.ToArray());
-        server.DelayReply(4, 250);
+        var parked = new ParkedReply(server, "EVAL");
         await using var client = await ConnectAsync(server);
 
         await client.GetStringAsync("key");
         var script = RespireScript.Create("return redis.call('DEL', KEYS[1])");
         var execution = client.Scripts.ExecuteAsync(script, ["key"]).AsTask();
-        await WaitUntilAsync(() => server.CommandsSeen >= 5);
+        await parked.WaitAsync();
         var cache = client.Core.ClientCache!;
         await Assert.That(cache.Count).IsEqualTo(0);
         InsertCachedValue(cache, "key", "old");
 
+        await parked.ReleaseAsync(":1\r\n"u8.ToArray());
         using var result = await execution;
 
         await Assert.That(result.AsInteger()).IsEqualTo(1);
@@ -967,19 +965,19 @@ public class ClientSideCacheTests
             HelloReply,
             FakeRespServer.OkReply,
             FakeRespServer.OkReply,
-            "$3\r\nold\r\n"u8.ToArray(),
-            ":1\r\n"u8.ToArray());
-        server.DelayReply(4, 250);
+            "$3\r\nold\r\n"u8.ToArray());
+        var parked = new ParkedReply(server, "EVAL ");
         await using var client = await ConnectAsync(server);
 
         await client.GetStringAsync("key");
         var execution = client.ExecuteAsync(
             RespireCommands.Scripting.EVAL, ["return redis.call('DEL', KEYS[1])", 1, "key"]).AsTask();
-        await WaitUntilAsync(() => server.CommandsSeen >= 5);
+        await parked.WaitAsync();
         var cache = client.Core.ClientCache!;
         await Assert.That(cache.Count).IsEqualTo(0);
         InsertCachedValue(cache, "key", "old");
 
+        await parked.ReleaseAsync(":1\r\n"u8.ToArray());
         using var result = await execution;
 
         await Assert.That(result.AsInteger()).IsEqualTo(1);
@@ -1204,9 +1202,8 @@ public class ClientSideCacheTests
             FakeRespServer.OkReply,
             "*0\r\n"u8.ToArray(),
             FakeRespServer.OkReply,
-            "$3\r\nold\r\n"u8.ToArray(),
-            FakeRespServer.OkReply);
-        seed.DelayReply(5, 250);
+            "$3\r\nold\r\n"u8.ToArray());
+        var parked = new ParkedReply(seed, "SET key new");
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespProtocol.Resp2,
@@ -1218,11 +1215,12 @@ public class ClientSideCacheTests
         await client.GetStringAsync("key");
         var write = client.ExecuteFireAndForgetAsync(
             RespireCommands.String.SET, "key", "new").AsTask();
-        await WaitUntilAsync(() => seed.CommandsSeen >= 6);
+        await parked.WaitAsync();
         var cache = client.Core.ClientCache!;
         await Assert.That(cache.Count).IsEqualTo(0);
         InsertCachedValue(cache, "key", "old");
 
+        await parked.ReleaseAsync(FakeRespServer.OkReply);
         await write;
 
         await Assert.That(cache.Count).IsEqualTo(0);
@@ -1235,19 +1233,19 @@ public class ClientSideCacheTests
             HelloReply,
             FakeRespServer.OkReply,
             FakeRespServer.OkReply,
-            "$3\r\nold\r\n"u8.ToArray(),
-            FakeRespServer.OkReply);
-        server.DelayReply(4, 250);
+            "$3\r\nold\r\n"u8.ToArray());
+        var parked = new ParkedReply(server, "SET key new");
         await using var client = await ConnectAsync(server);
 
         await client.GetStringAsync("key");
         var write = client.ExecuteFireAndForgetAsync(
             RespireCommands.String.SET, "key", "new").AsTask();
-        await WaitUntilAsync(() => server.CommandsSeen >= 5);
+        await parked.WaitAsync();
         var cache = client.Core.ClientCache!;
         await Assert.That(cache.Count).IsEqualTo(0);
         InsertCachedValue(cache, "key", "old");
 
+        await parked.ReleaseAsync(FakeRespServer.OkReply);
         await write;
 
         await Assert.That(cache.Count).IsEqualTo(0);
@@ -1333,9 +1331,8 @@ public class ClientSideCacheTests
             HelloReply,
             FakeRespServer.OkReply,
             FakeRespServer.OkReply,
-            "$5\r\nvalue\r\n"u8.ToArray(),
-            FakeRespServer.OkReply);
-        target.DelayReply(4, 250);
+            "$5\r\nvalue\r\n"u8.ToArray());
+        var parked = new ParkedReply(target, "SCRIPT FLUSH");
         var topology = Encoding.ASCII.GetBytes(
             $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n");
         await using var seed = new FakeRespServer(
@@ -1352,11 +1349,12 @@ public class ClientSideCacheTests
 
         await client.GetStringAsync("key");
         var flush = client.ExecuteAsync(RespireCommands.Scripting.SCRIPT_FLUSH).AsTask();
-        await WaitUntilAsync(() => target.CommandsSeen >= 5);
+        await parked.WaitAsync();
         var cache = client.Core.ClientCache!;
         await Assert.That(cache.Count).IsEqualTo(0);
         InsertCachedValue(cache, "key", "value");
 
+        await parked.ReleaseAsync(FakeRespServer.OkReply);
         using var result = await flush;
 
         await Assert.That(cache.Count).IsEqualTo(0);
@@ -1723,6 +1721,46 @@ public class ClientSideCacheTests
         var token = cache.BeginRead(in key);
         var response = RespValue.BulkString(Encoding.UTF8.GetBytes(value));
         cache.CompleteRead(in token, in response, allowInsert: true);
+    }
+
+    /// <summary>
+    /// Withholds the reply to the first command starting with a prefix until the test releases
+    /// it, so cache work done "while the command is in flight" cannot race the reply. A fixed
+    /// reply delay is not enough: a busy runner can resume the test after the reply completed
+    /// the command. The parked command consumes no scripted reply.
+    /// </summary>
+    private sealed class ParkedReply
+    {
+        private readonly FakeRespServer _server;
+        private readonly string _prefix;
+        private int _parked;
+
+        internal ParkedReply(FakeRespServer server, string prefix)
+        {
+            _server = server;
+            _prefix = prefix;
+            server.SuppressReply = command =>
+            {
+                if (!command.StartsWith(prefix, StringComparison.Ordinal)
+                    || Interlocked.CompareExchange(ref _parked, 1, 0) != 0) return false;
+                Arrived.TrySetResult();
+                return true;
+            };
+        }
+
+        internal TaskCompletionSource Arrived { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal Task WaitAsync() => Arrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        /// <summary>Sends <paramref name="frames"/> on the connection that received the parked command.</summary>
+        internal async Task ReleaseAsync(params byte[][] frames)
+        {
+            await WaitAsync();
+            var commands = _server.ReceivedCommands;
+            var connections = _server.ReceivedConnectionIds;
+            var index = commands.ToList().FindIndex(command => command.StartsWith(_prefix, StringComparison.Ordinal));
+            foreach (var frame in frames) await _server.SendRawAsync(frame, connections[index]);
+        }
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition)
