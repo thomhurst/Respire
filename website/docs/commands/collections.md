@@ -437,6 +437,33 @@ reference policies, and NOMKSTREAM remain composable. Older servers return their
 errors. The client does not add automatic write retries. Cancellation after dispatch
 cannot prove that a write did not execute; applications must choose any retry policy.
 
+### Stream configuration (Redis 8.6+)
+
+`Streams.ConfigureAsync` changes an existing stream's idempotency settings with
+[XCFGSET](https://redis.io/docs/latest/commands/xcfgset/). Supply at least one setting;
+null preserves the current value. `IdempotencyDurationSeconds` accepts whole seconds
+from 1 through 86400, and `IdempotencyMaxSize` accepts 1 through 10000 identities per
+producer. Redis defaults both values to 100. Capacity eviction can remove identities
+before their retention duration ends.
+
+```csharp
+await redis.Streams.AddAsync("orders", ("status", "created"));
+bool configured = await redis.Streams.ConfigureAsync("orders", new StreamConfigurationOptions
+{
+    IdempotencyDurationSeconds = 300,
+    IdempotencyMaxSize = 1000,
+});
+```
+
+Changing either value clears all producer deduplication records for that stream;
+reapplying unchanged values preserves them. Existing stream entries remain intact.
+Redis does not invalidate `WATCH` for these configuration changes.
+Batches and transactions expose `Streams.Configure` with the same options and a
+`RespirePending<bool>` confirmation. Invalid options fail locally before enqueueing.
+Missing keys, wrong types, and older servers return their normal server errors.
+Only the stream key receives a client key prefix. Cancellation cannot undo a
+configuration change already sent to Redis.
+
 ### Negative acknowledgements (Redis 8.8+)
 
 `NegativeAcknowledgeAsync` runs XNACK, releasing pending entries from their consumers

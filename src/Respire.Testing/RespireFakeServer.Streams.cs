@@ -12,6 +12,57 @@ public sealed partial class RespireFakeServer
         internal SortedDictionary<RespireStreamId, byte[][]> Entries { get; } = [];
         internal Dictionary<byte[], FakeStreamGroup> Groups { get; } = new(BinaryKeyComparer.Instance);
         internal RespireStreamId Last;
+        internal int Duration = 100;
+        internal int MaxSize = 100;
+        internal Dictionary<byte[], List<StreamIdentity>> Producers { get; } = new(BinaryKeyComparer.Instance);
+    }
+
+    private sealed record StreamIdentity(byte[] Identity, string Id, ulong Milliseconds);
+
+    private void ExpireStreamIdentities(FakeStream stream)
+    {
+        if (stream.Producers.Count == 0) return;
+        // Sweep all producers on access, including reads and ordinary appends.
+        var threshold = Now - stream.Duration * 1000L;
+        List<byte[]>? emptyProducers = null;
+        foreach (var (producer, identities) in stream.Producers)
+        {
+            identities.RemoveAll(item => threshold >= 0 && item.Milliseconds <= (ulong)threshold);
+            if (identities.Count == 0) (emptyProducers ??= []).Add(producer);
+        }
+        if (emptyProducers is not null)
+            foreach (var producer in emptyProducers) stream.Producers.Remove(producer);
+    }
+
+    private FakeReply StreamConfigure(byte[][] args)
+    {
+        var stream = Find(args[1])?.Stream;
+        if (stream is null) return FakeReply.Error("ERR no such key");
+        int? duration = null, size = null;
+        for (var index = 2; index < args.Length; index += 2)
+        {
+            var token = Token(args[index]);
+            if (index + 1 == args.Length || token is not ("IDMP-DURATION" or "IDMP-MAXSIZE")) return Syntax("XCFGSET");
+            if (token == "IDMP-DURATION" && duration.HasValue || token == "IDMP-MAXSIZE" && size.HasValue)
+                return FakeReply.Error($"ERR {token} specified multiple times");
+            var value = Integer(args[index + 1]);
+            var maximum = token == "IDMP-DURATION"
+                ? StreamConfigurationOptions.MaximumIdempotencyDurationSeconds
+                : StreamConfigurationOptions.MaximumIdempotencyMaxSize;
+            if (value < 1 || value > maximum)
+                return FakeReply.Error($"ERR {token} must be between 1 and {maximum}");
+            if (token == "IDMP-DURATION") duration = (int)value;
+            else size = (int)value;
+        }
+        if (duration is null && size is null) return FakeReply.Error("ERR At least one parameter must be specified");
+        if (duration is { } seconds && seconds != stream.Duration || size is { } maximumSize && maximumSize != stream.MaxSize)
+        {
+            stream.Duration = duration ?? stream.Duration;
+            stream.MaxSize = size ?? stream.MaxSize;
+            stream.Producers.Clear();
+            // Redis metadata changes do not invalidate WATCH, even when identities are cleared.
+        }
+        return FakeReply.Ok;
     }
 
     private sealed class FakeStreamGroup(RespireStreamId last)
@@ -37,24 +88,61 @@ public sealed partial class RespireFakeServer
 
     private FakeReply StreamAdd(byte[][] args)
     {
-        // Unsupported append options are rejected rather than silently approximated.
-        if (args.Length % 2 == 0) return Syntax("XADD");
-        var stream = Find(args[1])?.Stream ?? new FakeStream();
+        var index = 2;
+        var onlyExisting = false;
+        (byte[] Producer, byte[] Identity)? idempotency = null;
+        while (index < args.Length)
+        {
+            var option = Token(args[index]);
+            if (option == "NOMKSTREAM") { onlyExisting = true; index++; }
+            else if (option == "IDMP" && idempotency is null && index + 2 < args.Length)
+            {
+                var producer = args[index + 1];
+                var identity = args[index + 2];
+                if (producer.Length == 0 || identity.Length == 0) return Syntax("XADD");
+                idempotency = (producer, identity);
+                index += 3;
+            }
+            else break;
+        }
+        if (index >= args.Length || args.Length - index < 3 || (args.Length - index) % 2 == 0)
+            return WrongArity("XADD");
+        var automaticId = Token(args[index]) == "*";
+        // Manual idempotency, like Redis, requires an automatically generated entry ID.
+        if (idempotency is not null && !automaticId) return Syntax("XADD");
+        var explicitId = automaticId ? default : StreamId(args[index]);
+        var entry = Find(args[1]);
+        if (entry is null && onlyExisting) return FakeReply.Null;
+        var stream = entry?.Stream ?? new FakeStream();
+        List<StreamIdentity>? identities = null;
+        if (idempotency is { } lookup && stream.Producers.TryGetValue(lookup.Producer, out identities))
+        {
+            var existing = identities.Find(item => item.Identity.AsSpan().SequenceEqual(lookup.Identity));
+            if (existing is not null) return FakeReply.Text(existing.Id);
+        }
         RespireStreamId id;
-        if (Token(args[2]) == "*")
+        ulong generatedMilliseconds = 0;
+        if (automaticId)
         {
             var parts = stream.Last.ToString().Split('-');
             var lastTime = ulong.Parse(parts[0], CultureInfo.InvariantCulture);
             var time = Math.Max((ulong)Math.Max(0, Now), lastTime);
+            generatedMilliseconds = time;
             var sequence = time == lastTime && parts.Length == 2 ? checked(ulong.Parse(parts[1], CultureInfo.InvariantCulture) + 1) : 0;
             if (time == 0 && sequence == 0) sequence = 1;
             id = new($"{time.ToString(CultureInfo.InvariantCulture)}-{sequence.ToString(CultureInfo.InvariantCulture)}");
         }
-        else id = StreamId(args[2]);
+        else id = explicitId;
         if (id <= stream.Last) return FakeReply.Error("ERR The ID specified in XADD is equal or smaller than the target stream top item");
-        stream.Entries.Add(id, args[3..]);
+        stream.Entries.Add(id, args[(index + 1)..]);
         stream.Last = id;
-        if (Find(args[1]) is null) SetEntry(args[1], new Entry(stream));
+        if (idempotency is { } insert)
+        {
+            if (identities is null) stream.Producers[insert.Producer] = identities = [];
+            identities.Add(new(insert.Identity, id.ToString(), generatedMilliseconds));
+            if (identities.Count > stream.MaxSize) identities.RemoveAt(0);
+        }
+        if (entry is null) SetEntry(args[1], new Entry(stream));
         else TouchWatchedKey(args[1]);
         var changed = _streamChanged;
         _streamChanged = new(TaskCreationOptions.RunContinuationsAsynchronously);

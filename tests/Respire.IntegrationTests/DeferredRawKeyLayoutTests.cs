@@ -53,7 +53,7 @@ public class DeferredRawKeyLayoutTests(RedisTestContainer fixture)
             .ToHashSet(StringComparer.Ordinal);
         var deferredOperations = Respire.Commands.RawCommandKeyLayouts.DeferredOperations.ToArray();
         var unavailable = deferredOperations.Except(serverOperations).ToArray();
-        unavailable.Should().BeSubsetOf(["DELEX", "DELIFEQ", "LMOVEM", "INCREX"]);
+        unavailable.Should().BeSubsetOf(["DELEX", "DELIFEQ", "LMOVEM", "INCREX", "XCFGSET"]);
         verified.Should().BeEquivalentTo(deferredOperations.Except(unavailable));
     }
 
@@ -75,6 +75,13 @@ public class DeferredRawKeyLayoutTests(RedisTestContainer fixture)
         var layout = Respire.Commands.RawCommandKeyLayouts.GetDeferredLayout("LMOVEM",
             ["source", "destination", "LEFT", "RIGHT", "EXACTLY", 2, "BULK"]);
         layout.Should().Be(new Respire.Commands.RawCommandKeyLayouts.KeyLayout(0, 2));
+    }
+
+    [Test]
+    public void StreamConfigurationUsesOnlyItsFirstKey()
+    {
+        var layout = Respire.Commands.RawCommandKeyLayouts.GetDeferredLayout("XCFGSET", ["key", "IDMP-DURATION", 1, "IDMP-MAXSIZE", 2]);
+        layout.Should().Be(new Respire.Commands.RawCommandKeyLayouts.KeyLayout(0, 1));
     }
 
     private static async Task<RespireResult> DiscoverKeys(RespireClient client, string operation, RespireValue[] query)

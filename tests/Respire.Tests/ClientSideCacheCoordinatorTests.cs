@@ -10,6 +10,23 @@ namespace Respire.Tests;
 public class ClientSideCacheCoordinatorTests
 {
     [Test]
+    public async Task StreamConfigurationFencesOnlyTheStreamKey()
+    {
+        var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
+        Insert(cache, "tenant:events", "old");
+        Insert(cache, "unrelated", "retained");
+        var command = new CatalogCommand(RespireCommands.Stream.XCFGSET, ["tenant:events", "IDMP-MAXSIZE", 1]);
+        var fence = cache.BeforeCommand("XCFGSET", in command);
+        await Assert.That(fence.IsRequired).IsTrue();
+        await Assert.That(cache.TryGet(new RespireKey("tenant:events"), out _)).IsFalse();
+        await Assert.That(Read(cache, "unrelated")).IsEqualTo("retained");
+        Insert(cache, "tenant:events", "racing-read");
+        cache.CompleteMutation(in fence);
+        await Assert.That(cache.TryGet(new RespireKey("tenant:events"), out _)).IsFalse();
+        await Assert.That(Read(cache, "unrelated")).IsEqualTo("retained");
+    }
+
+    [Test]
     [Arguments("MSET")]
     [Arguments("MSETNX")]
     [Arguments("DEL")]

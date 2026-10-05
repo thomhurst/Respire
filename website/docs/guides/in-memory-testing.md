@@ -66,7 +66,7 @@ An error consumes exactly one response slot, so later valid commands still work.
 | Sets | `SADD`, `SREM`, `SMEMBERS`, `SCARD`, `SISMEMBER`, `SMISMEMBER`, `SMOVE`, `SINTER`, `SUNION`, `SDIFF`, their `STORE` forms, and `SINTERCARD` with `LIMIT` |
 | Sorted sets | `ZADD` with `NX`, `XX`, `GT`, `LT`, `CH`, `INCR`; `ZINCRBY`, `ZREM`, `ZCARD`, `ZSCORE`, `ZMSCORE`, `ZRANK`, `ZREVRANK`, `ZCOUNT`, `ZLEXCOUNT`; `ZRANGE` with `BYSCORE`/`BYLEX`, `REV`, `LIMIT`, `WITHSCORES`; legacy `ZREVRANGE`, `ZRANGEBYSCORE`, `ZREVRANGEBYSCORE`, `ZRANGEBYLEX`, `ZREVRANGEBYLEX`; `ZPOPMIN`, `ZPOPMAX`; `ZREMRANGEBYRANK`, `ZREMRANGEBYSCORE`, `ZREMRANGEBYLEX`; `ZINTERCARD` with `LIMIT` |
 | Pub/sub | `SUBSCRIBE`, `UNSUBSCRIBE`, `PUBLISH`, with binary channel names and payloads |
-| Streams | Basic `XADD` with numeric IDs or `*`; `XGROUP CREATE` with optional `MKSTREAM`; `XREAD`/`XREADGROUP` with `COUNT`, `MAXCOUNT`, `MAXSIZE`, `BLOCK`; `XACK` |
+| Streams | `XADD` with numeric IDs or `*`, optional `NOMKSTREAM`, and manual `IDMP` with `*`; `XLEN`; `XCFGSET IDMP-DURATION/IDMP-MAXSIZE`; `XGROUP CREATE` with optional `MKSTREAM`; `XREAD`/`XREADGROUP` with `COUNT`, `MAXCOUNT`, `MAXSIZE`, `BLOCK`; `XACK` |
 | Keys | `DEL`, `UNLINK`, `EXISTS`, `TYPE`, `PERSIST` |
 | Expiry | `EXPIRE`, `PEXPIRE`, `EXPIREAT`, `PEXPIREAT` with `NX`, `XX`, `GT`, `LT`; `TTL`, `PTTL`, `EXPIRETIME`, `PEXPIRETIME` |
 | Connection | `HELLO 2/3` without authentication, `PING`, `ECHO`, `SELECT 0`, `CLIENT ID`, `CLIENT GETNAME`, `CLIENT SETNAME` |
@@ -84,6 +84,16 @@ append/read options fail explicitly. Use real Redis tests for those operations.
 including empty values and embedded zero bytes. Multi-key mutations are atomic; integer
 parsing and overflow errors leave the original value unchanged. `UNLINK` removes data
 synchronously because this fake does not model background memory reclamation.
+
+The stream subset supports testing producer configuration and manual deduplication.
+Each producer retains identities up to the configured duration and capacity. Changing
+a setting clears those identities; setting the same value preserves them. Like Redis,
+`XCFGSET` does not invalidate `WATCH`. Stream
+configuration and appends preserve key TTLs. The fake expires identities on access
+using `RespireFakeClock`, including the exact retention boundary. Redis performs
+periodic cleanup, so its expiry may occur later. Configuration preserves existing entries,
+consumer groups, and pending acknowledgements. `IDMPAUTO`, trimming, and range commands
+remain unsupported and fail explicitly.
 
 Hash fields and values preserve binary bytes. `HSET` counts newly added fields, including
 duplicate fields within one command only once; `HMGET` preserves requested field order and
