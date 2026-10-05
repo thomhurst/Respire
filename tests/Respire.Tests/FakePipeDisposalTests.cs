@@ -10,7 +10,9 @@ namespace Respire.Tests;
 
 public class FakePipeDisposalTests
 {
-    private static readonly TimeSpan Limit = TimeSpan.FromSeconds(5);
+    // Hang guards only. The held read/write blocks a pool thread, so a starved pool on a loaded runner
+    // can delay the other side by seconds without anything being wrong.
+    private static readonly TimeSpan Limit = TimeSpan.FromSeconds(30);
 
     [Test]
     public async Task DisposalDoesNotCompleteReaderBeforeItsResultIsAdvanced()
