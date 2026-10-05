@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Globalization;
 using Respire.Protocol;
 
@@ -12,7 +13,7 @@ public sealed record RespireSearchProfileResult<TResult>(TResult Result, Respire
 /// <summary>An owned profile section, iterator, or result processor.</summary>
 /// <param name="Name">The enclosing field name, or the numbered name of a list entry.</param>
 /// <param name="Properties">Every reported field, including unknown fields and nested values.</param>
-/// <param name="Metrics">Numeric fields decoded independently of the RESP protocol.</param>
+/// <param name="Metrics">All finite numeric scalar fields, including numeric strings and unknown names, decoded independently of the RESP protocol.</param>
 /// <param name="Children">Nested profile sections in server order. Raw nested fields remain in Properties.</param>
 public sealed record RespireSearchProfileNode(
     string Name,
@@ -20,6 +21,16 @@ public sealed record RespireSearchProfileNode(
     IReadOnlyDictionary<string, double> Metrics,
     IReadOnlyList<RespireSearchProfileNode> Children)
 {
+    private static readonly FrozenSet<string> ListNodeFields = new[]
+    {
+        "Shards", "Result processors profile", "Child iterators",
+    }.ToFrozenSet(StringComparer.Ordinal);
+
+    private static readonly FrozenSet<string> ObjectNodeFields = new[]
+    {
+        "Coordinator", "Iterators profile", "Child iterator", "SEARCH", "VSIM",
+    }.ToFrozenSet(StringComparer.Ordinal);
+
     /// <summary>Iterator or processor type, when reported by the server.</summary>
     public string? Type => Properties.TryGetValue("Type", out var value) ? value.Scalar : null;
 
@@ -47,25 +58,19 @@ public sealed record RespireSearchProfileNode(
             if (!properties.TryAdd(field, copied))
                 throw Unexpected("a duplicate field name");
 
-            if (!value.IsNull && !RespireSearchReply.IsCollection(value) &&
-                double.TryParse(value.AsString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var number) &&
-                double.IsFinite(number))
+            if (TryReadNumber(value, out var number))
                 metrics.Add(field, number);
             else if (IsMetric(field))
                 throw Unexpected("a non-numeric metric " + field);
 
-            if (field is "Shards" or "Result processors profile" or "Child iterators")
+            if (ListNodeFields.Contains(field))
             {
                 if (value.IsNull || value.Type != RespDataType.Array)
                     throw Unexpected("a non-array " + field);
                 for (var j = 0; j < value.Count; j++)
                     children.Add(Parse(value[j], field + " #" + (j + 1).ToString(CultureInfo.InvariantCulture), copied.Items[j]));
             }
-            else if (field is "Coordinator" or "Iterators profile" or "Child iterator" or "SEARCH" or "VSIM")
-            {
-                children.Add(Parse(value, field, copied));
-            }
-            else if (value.Type == RespDataType.Map)
+            else if (ObjectNodeFields.Contains(field) || value.Type == RespDataType.Map)
             {
                 children.Add(Parse(value, field, copied));
             }
@@ -78,6 +83,31 @@ public sealed record RespireSearchProfileNode(
         "Total profile time" or "Parsing time" or "Workers queue time" or "Pipeline creation time" or
         "Total GIL time" or "Time" or "GIL-Time" or "Number of reading operations" or
         "Estimated number of matches" or "Results processed" or "Internal cursor reads";
+
+    private static bool TryReadNumber(RespireResult value, out double number)
+    {
+        if (value.IsNull || RespireSearchReply.IsCollection(value))
+        {
+            number = default;
+            return false;
+        }
+
+        switch (value.Type)
+        {
+            case RespDataType.Integer:
+                number = value.AsInteger();
+                return true;
+            case RespDataType.Double:
+                number = value.AsDouble();
+                return double.IsFinite(number);
+            case RespDataType.BulkString or RespDataType.SimpleString or RespDataType.BigNumber:
+                return double.TryParse(value.AsString(), NumberStyles.Float, CultureInfo.InvariantCulture, out number)
+                    && double.IsFinite(number);
+            default:
+                number = default;
+                return false;
+        }
+    }
 
     private static bool IsName(RespireResult value) => !value.IsNull &&
         value.Type is RespDataType.BulkString or RespDataType.SimpleString && value.AsString().Length != 0;

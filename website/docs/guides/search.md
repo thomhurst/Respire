@@ -321,8 +321,9 @@ foreach (var shard in profiled.Profile.Children)
 
 `Children` preserves the ordered shard, coordinator, iterator, and processor tree,
 including Hybrid's separate SEARCH and VSIM branches. `Type` identifies iterators
-and processors; `TimeMilliseconds` reads their `Time` metric. `Metrics` also exposes
-reported numeric fields such as `Parsing time`, `Results processed`, and
+and processors; `TimeMilliseconds` reads their `Time` metric. `Metrics` includes all
+finite numeric fields, including numeric strings and unknown field names. Examples
+include `Parsing time`, `Results processed`, and
 `Number of reading operations`. Times use milliseconds; counts are numeric server
 values. `Properties` retains every reported field as an owned `RespireSearchValue`,
 including unknown fields, nested collections, and binary strings. Names and metrics

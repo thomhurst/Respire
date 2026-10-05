@@ -96,6 +96,31 @@ public class SearchProfileTests
     [Test]
     [Arguments(2)]
     [Arguments(3)]
+    public async Task NumericMetricsIgnoreTheCurrentCulture(int protocol)
+    {
+        var previous = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("fr-FR");
+            await using var server = Server(_ => Frame(Envelope(protocol, "SEARCH", Profile(protocol)), protocol));
+            await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+            var result = await client.Search.ProfileSearchAsync("idx", new(All, new() { WithScores = true }));
+            var shard = result.Profile.Children[0];
+            await Assert.That(shard.Metrics["Total profile time"]).IsEqualTo(1.25);
+            await Assert.That(shard.Metrics["Future numeric"]).IsEqualTo(2.75);
+            var iterator = shard.Children.Single(node => node.Name == "Iterators profile");
+            await Assert.That(iterator.Children[0].TimeMilliseconds).IsEqualTo(0.25);
+            await Assert.That(iterator.Children[1].Metrics["Number of reading operations"]).IsEqualTo(3d);
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = previous;
+        }
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
     public async Task HybridKeepsTextAndVectorProfilesAndWarnings(int protocol)
     {
         var profile = Object("Shards", new object[] { Object("SEARCH", Object("Time", 1d), "VSIM", Object("Time", 2d)) },
@@ -255,7 +280,7 @@ public class SearchProfileTests
             {
                 Object("Type", "TEXT", "Term", "hello", "Time", "0.25"),
                 Object("Type", "NUMERIC", "Number of reading operations", 3L),
-            }), "Future bytes", new byte[] { 0, 255, 13, 10 }, "Future list", new object[] { "a", "b", "a", "c" }),
+            }), "Future bytes", new byte[] { 0, 255, 13, 10 }, "Future numeric", "2.75", "Future list", new object[] { "a", "b", "a", "c" }),
     }, "Coordinator", Object());
 
     private static object QueryResult(int protocol, string mode) => mode switch

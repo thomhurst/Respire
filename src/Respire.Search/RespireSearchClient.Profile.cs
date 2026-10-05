@@ -38,7 +38,8 @@ public sealed partial class RespireSearchClient
         ArgumentNullException.ThrowIfNull(query);
         using var reply = await _commands.ProfileAsync(RequireName(index), "HYBRID", ProfileOptions(limited),
             query.ToArguments(), cancellationToken).ConfigureAwait(false);
-        // Redis 8.10 appends the profile to the flat RESP2 hybrid reply, while RESP3 adds a Profile field.
+        // Redis 8.10 RESP2 is [name, value, ..., profile], with exactly one unlabelled profile tail.
+        // RESP3 instead adds a named Profile field to the normal hybrid result map.
         if (reply.Type == RespDataType.Array && (reply.Count & 1) != 0 && reply.Count >= 3)
             return new(RespireSearchResult.ParseHybrid(reply, reply.Count - 1), RespireSearchProfileNode.Parse(reply[^1]));
         if (reply.Type == RespDataType.Map && TryReadProfileField(reply, "Profile", out var profile) &&
