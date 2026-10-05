@@ -46,6 +46,13 @@ flush or payload conversion is needed. The format matches
 Either store can read and evict entries written by the other. Concurrent tag changes and
 eviction are not transactional, matching the Microsoft store's concurrency boundary.
 Respire awaits tag updates and reports failures instead of sending them fire-and-forget.
+As in the Microsoft store, overwriting a key with different tags does not remove its old
+tag memberships. Evicting an old tag can therefore remove the replacement value. Use stable
+tags for a cache key, or include the policy/tag generation in the key when changing tags.
+The shared layout has no reverse key-to-tags index or value generation to identify obsolete
+memberships, and Microsoft writers would not maintain an added index.
+[Generation-aware tag invalidation](https://github.com/thomhurst/Respire/issues/917) tracks
+the stronger opt-in design separately from this interoperable mode.
 Keep participating application clocks synchronized: tag scores use application UTC time,
 while value expiration uses Redis TTLs.
 

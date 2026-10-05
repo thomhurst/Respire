@@ -91,6 +91,36 @@ public class OutputCacheTests(RedisTestContainer fixture)
     }
 
     [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task OverwriteRetainsOldTagMembershipLikeMicrosoft(bool microsoftWrites, bool microsoftEvicts)
+    {
+        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        var prefix = NewPrefix();
+        var respire = new RespireOutputCacheStore(client, new() { InstanceName = prefix });
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddStackExchangeRedisOutputCache(options =>
+        {
+            options.Configuration = fixture.StackExchangeConnectionString;
+            options.InstanceName = prefix;
+        });
+        await using var provider = services.BuildServiceProvider();
+        var microsoft = provider.GetRequiredService<IOutputCacheStore>();
+        IOutputCacheStore writer = microsoftWrites ? microsoft : respire;
+        IOutputCacheStore evictor = microsoftEvicts ? microsoft : respire;
+        await writer.SetAsync("key", [1], ["old"], TimeSpan.FromMinutes(5), default);
+        await writer.SetAsync("key", [2], ["new"], TimeSpan.FromMinutes(5), default);
+        // This awaited read orders Microsoft's fire-and-forget tag writes before cross-client eviction.
+        await Assert.That((await writer.GetAsync("key", default))!.Single()).IsEqualTo((byte)2);
+        await evictor.EvictByTagAsync("old", default);
+        await Assert.That(await evictor.GetAsync("key", default)).IsNull();
+        await Assert.That(await writer.GetAsync("key", default)).IsNull();
+    }
+
+    [Test]
     public async Task MasterScoreNeverShrinksAndEvictionLeavesUnrelatedTags()
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
