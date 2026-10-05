@@ -12,6 +12,75 @@ namespace Respire.Tests;
 [NotInParallel]
 public class RedisMetricSchemaTests
 {
+    /// <summary>Forces a flush between scalar and dependent-query removal for one invalidation.</summary>
+    [Test]
+    public async Task FlushDuringInvalidationCountsEachResponseOnce()
+    {
+        using var capture = new Capture();
+        var cache = new ClientSideCacheCoordinator(new());
+        var key = new RespireKey("racing-hash");
+        Fill(cache, key);
+        var request = new ClientSideCacheCoordinator.QueryRequest(new ClientCacheCommandKey("HGET", "racing-hash", "field"), key);
+        var token = cache.BeginRead("HGET", in request);
+        using var response = RespValue.BulkString("value"u8.ToArray());
+        cache.CompleteRead(in token, in response, allowInsert: true);
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var store = (ClientSideCacheCoordinator.CacheStore)typeof(ClientSideCacheCoordinator).GetField("_store", flags)!.GetValue(cache)!;
+        var dependencies = (Lock)typeof(ClientSideCacheCoordinator.CacheStore).GetField("_dependencyLock", flags)!.GetValue(store)!;
+        var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var holder = Task.Run(() =>
+        {
+            lock (dependencies)
+            {
+                held.TrySetResult();
+                release.Task.GetAwaiter().GetResult();
+            }
+        });
+        Task invalidating = Task.CompletedTask;
+        try
+        {
+            await held.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            invalidating = Task.Run(() => cache.Invalidate(in key, RespireClientCacheInvalidationReason.ServerInvalidation));
+            // The scalar is removed, but dependency removal is blocked on the held gate.
+            await Assert.That(SpinWait.SpinUntil(() => store.Count == 1, TimeSpan.FromSeconds(10))).IsTrue();
+            cache.Clear();
+        }
+        finally
+        {
+            release.TrySetResult();
+            await Task.WhenAll(holder, invalidating).WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        await Assert.That(capture.Items.Where(item => item.Name == "redis.client.csc.evictions").Sum(item => item.Value)).IsEqualTo(2);
+        await Assert.That(cache.Count).IsEqualTo(0);
+    }
+
+    /// <summary>Checks a stale lookup cannot report an expiration already counted by a flush.</summary>
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ExpirationInRetiredStoreDoesNotCountAgain(bool queryEntry)
+    {
+        using var capture = new Capture();
+        var cache = new ClientSideCacheCoordinator(new() { LocalExpiration = TimeSpan.Zero });
+        var key = new RespireKey("retired-expiration");
+        var query = new ClientCacheCommandKey("HGET", "retired-expiration", "field");
+        if (queryEntry)
+        {
+            var request = new ClientSideCacheCoordinator.QueryRequest(query, key);
+            var token = cache.BeginRead("HGET", in request);
+            using var response = RespValue.BulkString("value"u8.ToArray());
+            cache.CompleteRead(in token, in response, allowInsert: true);
+        }
+        else Fill(cache, key);
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var store = (ClientSideCacheCoordinator.CacheStore)typeof(ClientSideCacheCoordinator).GetField("_store", flags)!.GetValue(cache)!;
+        cache.Clear();
+        var found = queryEntry ? store.TryGet(in query, out _) : store.TryGet(in key, out _);
+        await Assert.That(found).IsFalse();
+        await Assert.That(capture.Items.Where(item => item.Name == "redis.client.csc.evictions").Sum(item => item.Value)).IsEqualTo(1);
+    }
+
     [Test]
     public async Task ExpirationAndUnclassifiedFlushUseAccurateReasons()
     {
