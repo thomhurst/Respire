@@ -23,6 +23,8 @@ internal static class RespireTelemetry
 
     public static readonly ActivitySource Source = new(SourceName, Version);
     public static readonly Meter Meter = new(SourceName, Version);
+    private static readonly KeyValuePair<string, object?> LibraryTag = new("redis.client.library", "Respire:" + Version);
+    private static readonly KeyValuePair<string, object?> SystemTag = new("db.system.name", DatabaseSystem);
 
     private static readonly Counter<long> TransactionConflicts = Meter.CreateCounter<long>(
         "respire.transaction.watch.conflicts", "{attempt}", "Watched transaction attempts discarded by Redis.");
@@ -127,7 +129,19 @@ internal static class RespireTelemetry
         "respire.connection.reconnect.delay", unit: "s", description: "Scheduled delay before a configured connection replacement or discovery fallback attempt.");
 
     public static readonly Counter<long> MaintenanceNotifications = Meter.CreateCounter<long>(
-        "respire.maintenance.notifications", unit: "{notification}", description: "Valid maintenance notifications delivered to diagnostics.");
+        "redis.client.maintenance.notifications", unit: "{notification}", description: "Valid maintenance notifications delivered to diagnostics.");
+
+    internal static void RecordMaintenanceNotification(string host, int port, string kind)
+    {
+        if (!MaintenanceNotifications.Enabled) return;
+        TagList tags = default;
+        tags.Add(LibraryTag);
+        tags.Add(SystemTag);
+        tags.Add("server.address", host);
+        tags.Add("server.port", port);
+        tags.Add("redis.client.connection.notification", kind);
+        MaintenanceNotifications.Add(1, tags);
+    }
     public static readonly Counter<long> MaintenanceNotificationsDropped = Meter.CreateCounter<long>(
         "respire.maintenance.notifications.dropped", unit: "{notification}", description: "Maintenance diagnostics dropped while listeners lag; protocol handling is unaffected.");
     public static readonly Counter<long> ClusterSlotMigrationsSkipped = Meter.CreateCounter<long>(
@@ -169,6 +183,8 @@ internal static class RespireTelemetry
 
     public static readonly Counter<long> FailoverSwitches = Meter.CreateCounter<long>(
         "respire.failover.endpoint.switches", unit: "{switch}", description: "Selected deployment changes in failover groups.");
+    private static readonly Counter<long> GeographicFailovers = Meter.CreateCounter<long>(
+        "redis.client.geofailover.failovers", "{failover}", "Automatic switches between distinct, known failover deployments.");
 
     public static readonly Counter<long> FailoverMonitorErrors = Meter.CreateCounter<long>(
         "respire.failover.monitor.errors", unit: "{error}", description: "Unexpected errors while updating failover health.");
@@ -194,6 +210,21 @@ internal static class RespireTelemetry
 
     internal static void RecordFailoverSwitch(RespireEndpoint? previous, RespireEndpoint? current, string reason)
     {
+        if (GeographicFailovers.Enabled && previous is { } from && current is { } to && from != to)
+        {
+            try
+            {
+                TagList tags = default;
+                tags.Add(LibraryTag);
+                tags.Add(SystemTag);
+                tags.Add("db.client.geofailover.reason", "automatic");
+                tags.Add("db.client.geofailover.fail_from", from.ToString());
+                tags.Add("db.client.geofailover.fail_to", to.ToString());
+                GeographicFailovers.Add(1, tags);
+            }
+            catch { /* Metrics listeners must not change health decisions. */ }
+        }
+        if (!FailoverSwitches.Enabled) return;
         try
         {
             FailoverSwitches.Add(1,
@@ -285,15 +316,15 @@ internal static class RespireTelemetry
         unit: "{gap}",
         description: "Observed subscription interruptions and buffer discards; adjacent stream markers may coalesce.");
 
-    public static readonly Counter<long> ClientCacheHits = Meter.CreateCounter<long>(
-        "respire.client_cache.hits",
-        unit: "{read}",
-        description: "Client-side cache reads served locally.");
+    private static readonly Counter<long> ClientCacheRequests = Meter.CreateCounter<long>(
+        "redis.client.csc.requests", "{request}", "Client-side cache lookups by hit or miss result.");
 
-    public static readonly Counter<long> ClientCacheMisses = Meter.CreateCounter<long>(
-        "respire.client_cache.misses",
-        unit: "{read}",
-        description: "Client-side cache reads sent to Redis.");
+    internal static void RecordCacheRequest(bool hit)
+    {
+        if (!ClientCacheRequests.Enabled) return;
+        try { ClientCacheRequests.Add(1, LibraryTag, SystemTag, new("redis.client.csc.result", hit ? "hit" : "miss")); }
+        catch { /* Metrics listeners must not change cache results. */ }
+    }
 
     public static readonly ObservableCounter<long> ClientCacheSharedReadRetirements = Meter.CreateObservableCounter(
         "respire.client_cache.shared_read.retirements", () => ClientSideCacheCoordinator.SharedReadRetirements,
@@ -305,9 +336,18 @@ internal static class RespireTelemetry
         description: "Key invalidations observed by the client-side cache.");
 
     public static readonly Counter<long> ClientCacheEvictions = Meter.CreateCounter<long>(
-        "respire.client_cache.evictions",
-        unit: "{entry}",
-        description: "Client-side cache entries removed by capacity, expiration, or flush.");
+        "redis.client.csc.evictions", "{eviction}", "Cached responses removed, optionally classified by capacity, expiration, or server invalidation.");
+
+    internal static void RecordCacheEvictions(long count, string? reason = null)
+    {
+        if (!ClientCacheEvictions.Enabled || count <= 0) return;
+        try
+        {
+            if (reason is null) ClientCacheEvictions.Add(count, LibraryTag, SystemTag);
+            else ClientCacheEvictions.Add(count, LibraryTag, SystemTag, new("redis.client.csc.reason", reason));
+        }
+        catch { /* Metrics listeners must not interrupt removal or invalidation. */ }
+    }
 
     public static readonly Counter<long> ClientCacheContinuityFlushes = Meter.CreateCounter<long>(
         "respire.client_cache.continuity_flushes",

@@ -1436,7 +1436,7 @@ public class MaintenanceNotificationTests
         await using var source = Server(maxConnections: 2);
         await using var target = Server(maxConnections: 2);
         var published = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var evictions = MeterFor("respire.client_cache.evictions", (value, _) =>
+        using var evictions = MeterFor("redis.client.csc.evictions", (value, _) =>
         {
             if (value == continuityEvictions) published.TrySetResult();
         });
@@ -2157,7 +2157,7 @@ public class MaintenanceNotificationTests
             },
         };
         ActivitySource.AddActivityListener(activities);
-        using var meters = MeterFor("respire.maintenance.notifications", (value, tags) =>
+        using var meters = MeterFor("redis.client.maintenance.notifications", (value, tags) =>
         {
             if (HasTag(tags, "server.address", host)) counted.TrySetResult();
         });
@@ -2192,7 +2192,7 @@ public class MaintenanceNotificationTests
         ActivitySource.AddActivityListener(activities);
         long delivered = 0, dropped = 0;
         var drained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var notifications = MeterFor("respire.maintenance.notifications", (value, tags) =>
+        using var notifications = MeterFor("redis.client.maintenance.notifications", (value, tags) =>
         {
             if (HasTag(tags, "server.address", host) && Interlocked.Add(ref delivered, value) == 257) drained.TrySetResult();
         });
