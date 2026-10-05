@@ -253,6 +253,70 @@ public class StalledDeliveryTests
         await completed.Task.WaitAsync(TimeSpan.FromSeconds(15));
     }
 
+    // The idle connection delivers this reply before it starts its next receive. A command
+    // from another thread must still start that receive while the continuation blocks.
+    [Test]
+    public async Task CommandSentWhileAnIdleReplyContinuationBlocksStillCompletes()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
+        using var release = new ManualResetEventSlim();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var awaiter = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).ConfigureAwait(false).GetAwaiter();
+        awaiter.UnsafeOnCompleted(() =>
+        {
+            using var first = awaiter.GetResult();
+            entered.TrySetResult();
+            release.Wait(TimeSpan.FromSeconds(15));
+        });
+
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            // Delivered by the stall rescue, since the blocked continuation still holds the runner.
+            using var second = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame))
+                .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+            await Assert.That(second.AsString()).IsEqualTo("PONG");
+            await Assert.That(release.IsSet).IsFalse();
+        }
+        finally
+        {
+            release.Set();
+        }
+    }
+
+    // Closing the connection must end the receive loop even while delivery, which runs before
+    // the next receive starts, is blocked in a continuation.
+    [Test]
+    public async Task ReceiveLoopEndsOnCloseWhileAnIdleReplyContinuationBlocks()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
+        using var release = new ManualResetEventSlim();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var awaiter = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).ConfigureAwait(false).GetAwaiter();
+        awaiter.UnsafeOnCompleted(() =>
+        {
+            using var first = awaiter.GetResult();
+            entered.TrySetResult();
+            release.Wait(TimeSpan.FromSeconds(15));
+        });
+
+        Task? dispose = null;
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            dispose = connection.DisposeAsync().AsTask();
+            await connection.Closed.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(release.IsSet).IsFalse();
+        }
+        finally
+        {
+            release.Set();
+            await (dispose ?? connection.DisposeAsync().AsTask()).WaitAsync(TimeSpan.FromSeconds(10));
+        }
+    }
+
     [Test]
     [Arguments(1)]
     [Arguments(200)]
