@@ -61,31 +61,4 @@ internal sealed partial class RespireConnection
         ScheduleFlush(startedBatch);
         return await source.Task.ConfigureAwait(false);
     }
-
-    private bool TryCompleteBytesDirect(
-        ReadOnlySpan<byte> buffer, RespDataType type, long payloadLength, int headerEnd, out int frameEnd)
-    {
-        frameEnd = 0;
-        if (type != RespDataType.BulkString || !_inflight.TryPeek(out var head)
-            || head is not BytesPendingResponseSource source) return false;
-        byte[]? result;
-        if (payloadLength == -1)
-        {
-            result = null;
-            frameEnd = headerEnd;
-        }
-        else
-        {
-            if (payloadLength < 0 || payloadLength > int.MaxValue - 2) return false;
-            var length = (int)payloadLength;
-            if (buffer.Length - headerEnd < length + 2
-                || buffer[headerEnd + length] != RespConstants.CarriageReturn
-                || buffer[headerEnd + length + 1] != RespConstants.LineFeed) return false;
-            result = buffer.Slice(headerEnd, length).ToArray();
-            frameEnd = headerEnd + length + 2;
-        }
-        source.SetDirectResult(result);
-        CompleteDirectResponse(source);
-        return true;
-    }
 }

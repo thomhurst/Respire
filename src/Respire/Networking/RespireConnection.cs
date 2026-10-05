@@ -2299,8 +2299,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                         else
                         {
                             if (hasBulkHeader
-                                && (TryCompleteStringDirect(bufferedData, bulkType, bulkLength, headerEnd, out var frameEnd)
-                                    || TryCompleteBytesDirect(bufferedData, bulkType, bulkLength, headerEnd, out frameEnd)))
+                                && TryCompleteStringDirect(bufferedData, bulkType, bulkLength, headerEnd, out var frameEnd))
                             {
                                 start = frameEnd;
                                 responseBytes = 0;
@@ -2848,18 +2847,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         source.SetDirectResult(result);
-        CompleteDirectResponse(source);
-        return true;
-    }
-
-    // Receive loop only, after a specialized source stores its final result. Use the normal
-    // completion reservation and receive-reference release, including cancellation races.
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private void CompleteDirectResponse(PendingResponse source)
-    {
         _inflight.TryDequeue(out _);
         MarkReplyReceived();
         _completions.Add(source, default);
+        return true;
     }
 
     /// <summary>
