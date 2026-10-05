@@ -78,7 +78,7 @@ jobs:
           TUNIT_DISABLE_HTML_REPORTER: 'true'
         run: |
           dotnet run --project tests/Respire.Tests -c Release -f net10.0 --no-build -- \
-            --treenode-filter '/*/*/HedgedReadTests/*'
+            --treenode-filter '/*/*/(HedgedReadTests)|(BytesResponseTests)/*'
           dotnet run --project tests/Respire.Tests -c Release -f net10.0 --no-build -- \
             --treenode-filter '/*/*/GetStringDirectPathTests/*'
 
@@ -232,6 +232,13 @@ jobs:
         run: |
           dotnet run --project tests/Respire.Tests -c Release -f net8.0 --no-build -- \
             --treenode-filter '/*/*/(Utf8StringTests)|(TlsTests)|(FakeServerTests)|(ConnectionStringParsingTests)/*'
+
+      - name: Run binary GET regressions without operation tracing
+        env:
+          TUNIT_DISABLE_HTML_REPORTER: 'true'
+        run: >-
+          dotnet run --project tests/Respire.Tests -c Release -f net8.0 --no-build --
+          --treenode-filter '/*/*/BytesResponseTests/*'
 
       - name: Run samples
         uses: ./.github/actions/run-samples

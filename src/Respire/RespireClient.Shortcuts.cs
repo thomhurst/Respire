@@ -18,10 +18,7 @@ public sealed partial class RespireClient
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<T?> GetAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
-        => CachedGetAsync(
-            ResolveKey(key),
-            cancellationToken,
-            static (RespireClient client, in Protocol.RespValue value) => client.DeserializeBorrowed<T>(in value));
+        => CachedDeserializeAsync<T>(ResolveKey(key), cancellationToken);
 
     /// <inheritdoc cref="IStringCommands.TryGetAsync{T}"/>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
@@ -34,10 +31,7 @@ public sealed partial class RespireClient
 
     /// <inheritdoc cref="IStringCommands.GetBytesAsync"/>
     public ValueTask<byte[]?> GetBytesAsync(RespireKey key, CancellationToken cancellationToken = default)
-        => CachedGetAsync(
-            ResolveKey(key),
-            cancellationToken,
-            static (RespireClient _, in Protocol.RespValue value) => ResponseReader.BytesOrNull(in value));
+        => CachedGetBytesAsync(ResolveKey(key), cancellationToken);
 
     /// <inheritdoc cref="IStringCommands.SetAsync(RespireKey, RespireValue, RespireExpiry, SetWhen, CancellationToken)"/>
     public ValueTask<bool> SetAsync(
