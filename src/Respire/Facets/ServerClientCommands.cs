@@ -83,7 +83,7 @@ internal sealed partial class ServerCommands
 /// Settings apply only to this ID until changed or disconnected; they are not client-wide defaults.
 /// The handle neither reserves nor reconnects the socket, and must be reacquired after disconnection.
 /// </remarks>
-public sealed class RespireServerClientConnection
+public sealed partial class RespireServerClientConnection
 {
     private readonly RespireClient _client;
     private readonly RespireConnection _connection;

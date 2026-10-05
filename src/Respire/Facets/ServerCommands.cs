@@ -377,7 +377,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IServerComm
         where TCommand : struct, IRespCommand
         => client.ConvertResponseAsync(operation, command, cancellationToken, this, converter);
 
-    private static RespireServerClientInfo[] ParseClientList(in RespValue value)
+    internal static RespireServerClientInfo[] ParseClientList(in RespValue value)
     {
         var text = value.AsString();
         if (string.IsNullOrWhiteSpace(text))
