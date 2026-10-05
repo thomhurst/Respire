@@ -24,20 +24,35 @@ public sealed record RespireSearchSpellCheckOptions
             throw new ArgumentOutOfRangeException(nameof(Distance), Distance, "Distance must be between 1 and 4.");
         if (Dialect is < 1 or > 4)
             throw new ArgumentOutOfRangeException(nameof(Dialect), Dialect, "Dialect must be between 1 and 4.");
-        var arguments = new List<RespireValue>();
-        if (Distance is { } distance) { arguments.Add("DISTANCE"); arguments.Add(distance); }
+        ArgumentNullException.ThrowIfNull(IncludeDictionaries);
+        ArgumentNullException.ThrowIfNull(ExcludeDictionaries);
+        var count = checked(3 * (IncludeDictionaries.Count + ExcludeDictionaries.Count)
+            + (Distance.HasValue ? 2 : 0) + (Dialect.HasValue ? 2 : 0));
+        if (count == 0) return [];
+        var arguments = new RespireValue[count];
+        var offset = 0;
+        if (Distance is { } distance)
+        {
+            arguments[offset++] = "DISTANCE";
+            arguments[offset++] = distance;
+        }
         AddDictionaries(IncludeDictionaries, "INCLUDE", nameof(IncludeDictionaries));
         AddDictionaries(ExcludeDictionaries, "EXCLUDE", nameof(ExcludeDictionaries));
-        if (Dialect is { } dialect) { arguments.Add("DIALECT"); arguments.Add(dialect); }
-        return [.. arguments];
+        if (Dialect is { } dialect)
+        {
+            arguments[offset++] = "DIALECT";
+            arguments[offset] = dialect;
+        }
+        return arguments;
 
         void AddDictionaries(IReadOnlyList<string> dictionaries, string mode, string parameter)
         {
-            ArgumentNullException.ThrowIfNull(dictionaries, parameter);
             foreach (var dictionary in dictionaries)
             {
                 ArgumentException.ThrowIfNullOrWhiteSpace(dictionary, parameter);
-                arguments.Add("TERMS"); arguments.Add(mode); arguments.Add(dictionary);
+                arguments[offset++] = "TERMS";
+                arguments[offset++] = mode;
+                arguments[offset++] = dictionary;
             }
         }
     }
@@ -73,11 +88,7 @@ public sealed partial class RespireSearchClient
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(dictionary);
         using var result = await _commands.DictionaryDumpAsync(dictionary, cancellationToken).ConfigureAwait(false);
-        if (result.IsNull || result.Type is not (RespDataType.Array or RespDataType.Set))
-            throw RespireSearchReply.Unexpected("FT.DICTDUMP", "an array or set was expected");
-        var terms = new string[result.Count];
-        for (var i = 0; i < terms.Length; i++) terms[i] = ReadSpellString(result[i], "FT.DICTDUMP");
-        return terms;
+        return RespireSearchReply.ReadStringCollection(result, "FT.DICTDUMP");
     }
 
     /// <summary>Returns owned spelling corrections with FT.SPELLCHECK (Search 1.4 or later).</summary>
@@ -105,71 +116,74 @@ public sealed partial class RespireSearchClient
     }
 
     private static IReadOnlyList<RespireSearchSpellingCorrection> ParseSpellCheck(RespireResult result)
+        => result.Type == RespDataType.Map ? ParseSpellCheckResp3(result) : ParseSpellCheckResp2(result);
+
+    private static RespireSearchSpellingCorrection[] ParseSpellCheckResp2(RespireResult result)
     {
         const string command = "FT.SPELLCHECK";
-        var resp3 = result.Type == RespDataType.Map;
-        if (resp3)
-        {
-            // Redis 8.10 wraps a term-to-suggestions map in a single "results" member.
-            if (result.Count != 2 || ReadSpellString(result[0], command) != "results")
-                throw RespireSearchReply.Unexpected(command, "a results map was expected");
-            result = result[1];
-            if (result.Type != RespDataType.Map || (result.Count & 1) != 0)
-                throw RespireSearchReply.Unexpected(command, "a term map was expected");
-        }
-        else RequireSpellArray(result, command);
-
-        var corrections = new RespireSearchSpellingCorrection[resp3 ? result.Count / 2 : result.Count];
+        RequireSpellArray(result, command);
+        var corrections = new RespireSearchSpellingCorrection[result.Count];
         for (var i = 0; i < corrections.Length; i++)
         {
-            string term;
-            RespireResult suggestions;
-            if (resp3)
-            {
-                term = ReadSpellString(result[i * 2], command);
-                suggestions = result[i * 2 + 1];
-            }
-            else
-            {
-                var entry = result[i];
-                RequireSpellArray(entry, command);
-                if (entry.Count != 3 || ReadSpellString(entry[0], command) != "TERM")
-                    throw RespireSearchReply.Unexpected(command, "a three-element TERM entry was expected");
-                term = ReadSpellString(entry[1], command);
-                suggestions = entry[2];
-            }
-            RequireSpellArray(suggestions, command);
-            var owned = new RespireSearchSpellingSuggestion[suggestions.Count];
-            for (var j = 0; j < owned.Length; j++)
-            {
-                var pair = suggestions[j];
-                if (pair.Type != (resp3 ? RespDataType.Map : RespDataType.Array) || pair.IsNull || pair.Count != 2)
-                    throw RespireSearchReply.Unexpected(command, "a suggestion/score pair was expected");
-                var text = ReadSpellString(pair[resp3 ? 0 : 1], command);
-                var scoreValue = pair[resp3 ? 1 : 0];
-                double score;
-                if (scoreValue.Type == RespDataType.Double) score = scoreValue.AsDouble();
-                else if (!double.TryParse(ReadSpellString(scoreValue, command), NumberStyles.Float, CultureInfo.InvariantCulture, out score))
-                    throw RespireSearchReply.Unexpected(command, "a numeric score was expected");
-                if (!double.IsFinite(score) || score < 0)
-                    throw RespireSearchReply.Unexpected(command, "a finite nonnegative score was expected");
-                owned[j] = new(text, score);
-            }
-            corrections[i] = new(term, owned);
+            var entry = result[i];
+            RequireSpellArray(entry, command);
+            if (entry.Count != 3 || RespireSearchReply.ReadString(entry[0], command) != "TERM")
+                throw RespireSearchReply.Unexpected(command, "a three-element TERM entry was expected");
+            corrections[i] = new(RespireSearchReply.ReadString(entry[1], command),
+                ReadSpellingSuggestions(entry[2], RespDataType.Array, termIndex: 1, scoreIndex: 0));
         }
         return corrections;
+    }
+
+    private static RespireSearchSpellingCorrection[] ParseSpellCheckResp3(RespireResult result)
+    {
+        const string command = "FT.SPELLCHECK";
+        // Redis 8.10 wraps a term-to-suggestions map in a single "results" member.
+        if (result.Count != 2 || RespireSearchReply.ReadString(result[0], command) != "results")
+            throw RespireSearchReply.Unexpected(command, "a results map was expected");
+        var terms = result[1];
+        if (terms.Type != RespDataType.Map || (terms.Count & 1) != 0)
+            throw RespireSearchReply.Unexpected(command, "a term map was expected");
+        var corrections = new RespireSearchSpellingCorrection[terms.Count / 2];
+        for (var i = 0; i < corrections.Length; i++)
+        {
+            corrections[i] = new(RespireSearchReply.ReadString(terms[i * 2], command),
+                ReadSpellingSuggestions(terms[i * 2 + 1], RespDataType.Map, termIndex: 0, scoreIndex: 1));
+        }
+        return corrections;
+    }
+
+    private static RespireSearchSpellingSuggestion[] ReadSpellingSuggestions(
+        RespireResult result, RespDataType pairType, int termIndex, int scoreIndex)
+    {
+        const string command = "FT.SPELLCHECK";
+        RequireSpellArray(result, command);
+        var suggestions = new RespireSearchSpellingSuggestion[result.Count];
+        for (var i = 0; i < suggestions.Length; i++)
+        {
+            var pair = result[i];
+            if (pair.Type != pairType || pair.IsNull || pair.Count != 2)
+                throw RespireSearchReply.Unexpected(command, "a suggestion/score pair was expected");
+            suggestions[i] = new(RespireSearchReply.ReadString(pair[termIndex], command), ReadSpellingScore(pair[scoreIndex]));
+        }
+        return suggestions;
+    }
+
+    private static double ReadSpellingScore(RespireResult value)
+    {
+        const string command = "FT.SPELLCHECK";
+        double score;
+        if (value.Type == RespDataType.Double) score = value.AsDouble();
+        else if (!double.TryParse(RespireSearchReply.ReadString(value, command), NumberStyles.Float, CultureInfo.InvariantCulture, out score))
+            throw RespireSearchReply.Unexpected(command, "a numeric score was expected");
+        if (!double.IsFinite(score) || score < 0)
+            throw RespireSearchReply.Unexpected(command, "a finite nonnegative score was expected");
+        return score;
     }
 
     private static void RequireSpellArray(RespireResult value, string command)
     {
         if (value.Type != RespDataType.Array || value.IsNull)
             throw RespireSearchReply.Unexpected(command, "an array was expected");
-    }
-
-    private static string ReadSpellString(RespireResult value, string command)
-    {
-        if (value.IsNull || value.Type is not (RespDataType.BulkString or RespDataType.SimpleString))
-            throw RespireSearchReply.Unexpected(command, "a string was expected");
-        return value.AsString();
     }
 }

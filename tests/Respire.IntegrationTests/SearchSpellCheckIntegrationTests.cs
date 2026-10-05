@@ -51,8 +51,11 @@ public class SearchSpellCheckIntegrationTests(ModernRedisTestContainer fixture)
                 .Should().ContainSingle().Which.Suggestions.Should().ContainSingle().Which.Term.Should().Be("help");
             owned.Should().BeEquivalentTo(["hello", "help"]);
 
-            await client.Hashes.SetAsync(index + ":doc:1", ("title", "hello"));
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            // Avoid indexing the fixture twice while FT.CREATE scans the shared keyspace.
+            while ((await search.GetIndexInfoAsync(index, deadline.Token)).Properties["indexing"].Scalar != "0")
+                await Task.Delay(20, deadline.Token);
+            await client.Hashes.SetAsync(index + ":doc:1", ("title", "hello"));
             while ((await search.SearchAsync(index, new(RespireSearchExpression.FromRaw("hello")), deadline.Token)).Total != 1)
                 await Task.Delay(20, deadline.Token);
             (await search.SpellCheckAsync(index, "hello")).Should().BeEmpty();
@@ -71,6 +74,49 @@ public class SearchSpellCheckIntegrationTests(ModernRedisTestContainer fixture)
             await search.DeleteDictionaryTermsAsync(dictionary, ["hello", "help"]);
             await search.DeleteDictionaryTermsAsync(excluded, ["helo"]);
             await search.DropIndexAsync(index, deleteDocuments: true);
+        }
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task MultipleDictionariesContributeAndExcludeEveryTerm(int protocol)
+    {
+        await using var client = await ConnectAsync(protocol);
+        var search = client.Search;
+        var index = "spell:" + Guid.NewGuid().ToString("N");
+        (string Name, string Term)[] dictionaries =
+        [
+            (index + ":words1", "hello"), (index + ":words2", "world"),
+            (index + ":excluded1", "helo"), (index + ":excluded2", "wurld"),
+        ];
+        await search.CreateIndexAsync(index, new()
+        { Prefixes = [index + ":doc:"], Fields = [new("title", RespireSearchFieldType.Text)] });
+        try
+        {
+            foreach (var dictionary in dictionaries)
+                await search.AddDictionaryTermsAsync(dictionary.Name, [dictionary.Term]);
+            var options = new RespireSearchSpellCheckOptions
+            { IncludeDictionaries = [dictionaries[0].Name, dictionaries[1].Name], Dialect = 2 };
+            var corrections = await search.SpellCheckAsync(index, "helo wurld", options);
+            corrections.Select(c => c.Term).Should().BeEquivalentTo(["helo", "wurld"]);
+            corrections.Single(c => c.Term == "helo").Suggestions.Should().Equal(new RespireSearchSpellingSuggestion("hello", 0));
+            corrections.Single(c => c.Term == "wurld").Suggestions.Should().Equal(new RespireSearchSpellingSuggestion("world", 0));
+
+            var excludeFirst = await search.SpellCheckAsync(index, "helo wurld",
+                options with { ExcludeDictionaries = [dictionaries[2].Name] });
+            excludeFirst.Should().ContainSingle().Which.Term.Should().Be("wurld");
+            var excludeSecond = await search.SpellCheckAsync(index, "helo wurld",
+                options with { ExcludeDictionaries = [dictionaries[3].Name] });
+            excludeSecond.Should().ContainSingle().Which.Term.Should().Be("helo");
+            (await search.SpellCheckAsync(index, "helo wurld",
+                options with { ExcludeDictionaries = [dictionaries[2].Name, dictionaries[3].Name] })).Should().BeEmpty();
+        }
+        finally
+        {
+            foreach (var dictionary in dictionaries)
+                await search.DeleteDictionaryTermsAsync(dictionary.Name, [dictionary.Term]);
+            await search.DropIndexAsync(index);
         }
     }
 
