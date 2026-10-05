@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Respire.Protocol;
+using Respire.Serialization;
 
 namespace Respire.Json;
 
@@ -24,8 +25,9 @@ namespace Respire.Json;
 /// </remarks>
 public sealed class RespireJsonClient
 {
-    private readonly IRespireJsonCommands _commands;
-    private readonly IRespireJsonModifierCommands _modifiers;
+    private readonly IRespireJsonCommandsImplementation _commands;
+    private readonly IRespireJsonModifierCommandsImplementation _modifiers;
+    private SerializationBuffer? _availableBuffer;
 
     /// <summary>Creates RedisJSON operations over an existing Respire client.</summary>
     public RespireJsonClient(IRespireClient client)
@@ -45,6 +47,7 @@ public sealed class RespireJsonClient
     /// A null patch itself replaces the target with JSON null; it does not delete the document key.
     /// Argument and serialization failures are reported through the returned task.
     /// </remarks>
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
     public async ValueTask MergeAsync<T>(
         RespireKey key,
         T patch,
@@ -53,8 +56,9 @@ public sealed class RespireJsonClient
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(jsonTypeInfo);
-        var utf8Json = JsonSerializer.SerializeToUtf8Bytes(patch, jsonTypeInfo);
-        using var result = await _commands.MergeAsync(key, path.Value, utf8Json, cancellationToken).ConfigureAwait(false);
+        using var buffer = RentBuffer(jsonTypeInfo.Options);
+        JsonSerializer.Serialize(buffer.Writer, patch, jsonTypeInfo);
+        using var result = await _commands.MergeAsync(key, path.Value, buffer.Bytes.WrittenMemory, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Gets one typed JSON value.</summary>
@@ -126,6 +130,7 @@ public sealed class RespireJsonClient
     /// </remarks>
     /// <returns>False when <see cref="RespireJsonSetCondition.Nx"/> or <see cref="RespireJsonSetCondition.Xx"/> rejected the write.</returns>
     /// <remarks>Argument and serialization failures are reported through the returned task, not thrown synchronously.</remarks>
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     public async ValueTask<bool> SetAsync<T>(
         RespireKey key,
         T value,
@@ -136,8 +141,9 @@ public sealed class RespireJsonClient
     {
         ArgumentNullException.ThrowIfNull(jsonTypeInfo);
         var token = ConditionToken(condition);
-        var utf8Json = JsonSerializer.SerializeToUtf8Bytes(value, jsonTypeInfo);
-        return await SetCoreAsync(key, utf8Json, path, token, cancellationToken).ConfigureAwait(false);
+        using var buffer = RentBuffer(jsonTypeInfo.Options);
+        JsonSerializer.Serialize(buffer.Writer, value, jsonTypeInfo);
+        return await SetCoreAsync(key, buffer.Bytes.WrittenMemory, path, token, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Sets pre-serialized JSON text.</summary>
@@ -214,6 +220,7 @@ public sealed class RespireJsonClient
     /// Every entry is serialized before anything is sent, so a serialization failure writes nothing.
     /// JSON.MSET has no conditional form and replies OK or an error, so the method has no result.
     /// </remarks>
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
     public async ValueTask MultiSetAsync<T>(
         IReadOnlyList<RespireJsonSetEntry<T>> entries,
         JsonTypeInfo<T> jsonTypeInfo,
@@ -223,15 +230,74 @@ public sealed class RespireJsonClient
         ArgumentNullException.ThrowIfNull(jsonTypeInfo);
         if (entries.Count == 0) throw new ArgumentException("At least one entry is required.", nameof(entries));
         var arguments = new RespireValue[checked(entries.Count * 3)];
+        var ends = new int[entries.Count];
+        using var buffer = RentBuffer(jsonTypeInfo.Options);
         for (var index = 0; index < entries.Count; index++)
         {
             var entry = entries[index];
             arguments[index * 3] = entry.Key;
             arguments[index * 3 + 1] = entry.Path.Value;
-            arguments[index * 3 + 2] = JsonSerializer.SerializeToUtf8Bytes(entry.Value, jsonTypeInfo);
+            JsonSerializer.Serialize(buffer.Writer, entry.Value, jsonTypeInfo);
+            buffer.Writer.Flush();
+            ends[index] = buffer.Bytes.WrittenMemory.Length;
+            buffer.Writer.Reset(buffer.Bytes);
+        }
+        // Growth returns previous rentals, so capture slices only after every value is serialized.
+        var start = 0;
+        for (var index = 0; index < ends.Length; index++)
+        {
+            arguments[index * 3 + 2] = buffer.Bytes.WrittenMemory.Slice(start, ends[index] - start);
+            start = ends[index];
         }
         using var result = await _commands.MultiSetAsync(arguments, cancellationToken).ConfigureAwait(false);
     }
+
+    private SerializationBuffer RentBuffer(JsonSerializerOptions options)
+    {
+        var buffer = Interlocked.Exchange(ref _availableBuffer, null);
+        if (buffer is null) return new SerializationBuffer(this, options);
+        if (ReferenceEquals(buffer.Options, options)) return buffer;
+        buffer.Release();
+        return new SerializationBuffer(this, options);
+    }
+
+    // Retain at most one writer per client, with no byte rental retained between operations.
+    // Concurrent calls own different buffers; returns from async continuations use atomic publication.
+    private sealed class SerializationBuffer(RespireJsonClient owner, JsonSerializerOptions options) : IDisposable
+    {
+        internal JsonSerializerOptions Options { get; } = options;
+        internal PooledByteBufferWriter Bytes { get; } = new();
+        private Utf8JsonWriter? _writer;
+        internal Utf8JsonWriter Writer => _writer ??= CreateWriter(Bytes, Options);
+
+        public void Dispose()
+        {
+            _writer?.Reset(Bytes); // Drop uncommitted memory before returning and clearing the rental.
+            Bytes.Reset();
+            if (Interlocked.CompareExchange(ref owner._availableBuffer, this, null) is not null)
+                Release();
+        }
+
+        internal void Release()
+        {
+            _writer?.Dispose();
+            Bytes.Dispose();
+        }
+    }
+
+    private static Utf8JsonWriter CreateWriter(PooledByteBufferWriter buffer, JsonSerializerOptions options)
+        => new(buffer, new JsonWriterOptions
+        {
+            Encoder = options.Encoder,
+            Indented = options.WriteIndented,
+            MaxDepth = options.MaxDepth == 0 ? DefaultMaxDepth : options.MaxDepth,
+            SkipValidation = true,
+#if NET9_0_OR_GREATER
+            IndentCharacter = options.IndentCharacter,
+            IndentSize = options.IndentSize,
+            NewLine = options.NewLine,
+#endif
+        });
 
     /// <summary>Deletes a document or path and returns the number of deleted values.</summary>
     public async ValueTask<long> DeleteAsync(

@@ -24,19 +24,57 @@ public sealed class DeflateValueCodec : RespireValueCodec
     }
 
     /// <inheritdoc/>
-    protected override void Decompress(ReadOnlySpan<byte> payload, Span<byte> destination)
+    protected override unsafe bool TryCompress(ReadOnlySpan<byte> payload, Span<byte> destination, out int bytesWritten)
     {
-        using var input = new MemoryStream(payload.ToArray(), writable: false);
-        using var decoder = new DeflateStream(input, CompressionMode.Decompress);
-        try
+        bytesWritten = 0;
+        if (destination.IsEmpty) return false;
+        fixed (byte* pointer = destination)
         {
-            decoder.ReadExactly(destination);
-            if (decoder.ReadByte() != -1)
-                throw new InvalidDataException("DEFLATE output exceeds its declared decoded length.");
+            using var output = new BoundedWriteStream(pointer, destination.Length);
+            using (var compressor = new DeflateStream(output, _level, leaveOpen: true)) compressor.Write(payload);
+            if (output.Overflowed) return false;
+            bytesWritten = (int)output.Length;
+            return true;
         }
-        catch (EndOfStreamException error)
+    }
+
+    /// <inheritdoc/>
+    protected override unsafe void Decompress(ReadOnlySpan<byte> payload, Span<byte> destination)
+    {
+        if (payload.IsEmpty) throw new InvalidDataException("DEFLATE payload is empty.");
+        fixed (byte* pointer = payload)
         {
-            throw new InvalidDataException("DEFLATE output is shorter than its declared decoded length.", error);
+            using var input = new UnmanagedMemoryStream(pointer, payload.Length);
+            using var decoder = new DeflateStream(input, CompressionMode.Decompress);
+            try
+            {
+                decoder.ReadExactly(destination);
+                if (decoder.ReadByte() != -1)
+                    throw new InvalidDataException("DEFLATE output exceeds its declared decoded length.");
+            }
+            catch (EndOfStreamException error)
+            {
+                throw new InvalidDataException("DEFLATE output is shorter than its declared decoded length.", error);
+            }
+        }
+    }
+
+    // Incompressible output is discarded without exceptions or allocating expansion storage.
+    // The stream and compressor are disposed before the destination leaves its fixed scope.
+    private sealed unsafe class BoundedWriteStream(byte* pointer, int capacity)
+        : UnmanagedMemoryStream(pointer, 0, capacity, FileAccess.Write)
+    {
+        internal bool Overflowed { get; private set; }
+
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            if (Overflowed) return;
+            if (count > Capacity - Position)
+            {
+                Overflowed = true;
+                return;
+            }
+            base.Write(buffer, offset, count);
         }
     }
 }
