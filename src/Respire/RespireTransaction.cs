@@ -21,6 +21,7 @@ namespace Respire;
 public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommandQueue, IPendingSink
 {
     private readonly RespireClient _client;
+    private readonly RespireHashImportSession? _importSession;
     private readonly RespireConnection? _watchConnection;
     private readonly WriteBuffer _buffer = new(1024);
     private readonly List<TxOp> _ops = [];
@@ -44,9 +45,10 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
     private IBatchStreamCommands? _streams;
 
     internal RespireTransactionBase(RespireClient client, RespireConnection? watchConnection,
-        int? watchSlot = null)
+        int? watchSlot = null, RespireHashImportSession? importSession = null)
     {
         _client = client;
+        _importSession = importSession;
         _watchConnection = watchConnection;
         ApplyClusterSlot(watchSlot);
     }
@@ -152,6 +154,8 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
 
     RespireClient IPendingSink.Client => _client;
 
+    RespireHashImportSession? IPendingSink.ImportSession => _importSession;
+
     bool IPendingSink.DefersSerialization => false;
 
     // Multi-key validation is read-only. Add applies the command's representative routing slot
@@ -248,6 +252,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
     private protected async ValueTask<bool> CommitCoreAsync(CancellationToken cancellationToken, bool validateEmptyWatch = false)
     {
         ThrowIfCompleted();
+        using var importUsage = _importSession?.EnterOperation();
         _completed = true;
         var core = _client.Core;
         var telemetryOperation = "MULTI";
@@ -259,8 +264,9 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
             core.Endpoint,
             core.Options.Database,
             out telemetryOperation) : default;
-        RespireConnection? connection = _watchConnection;
+        RespireConnection? connection = _importSession?.Connection ?? _watchConnection;
         Exception? operationError = null;
+        Exception? importError = null;
         var returnWatchConnection = false;
         try
         {
@@ -341,6 +347,13 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
             if (result.IsNull)
             {
                 result.Dispose();
+                if (_importSession is not null)
+                {
+                    var error = new RespireProtocolException("An unwatched hash import EXEC unexpectedly returned a null reply.");
+                    operationError = error;
+                    foreach (var op in _ops) op.Fail(error);
+                    throw error;
+                }
                 foreach (var op in _ops)
                 {
                     op.Abort();
@@ -349,12 +362,31 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
                 return false;
             }
 
+            if (_importSession is not null && result.Type != RespDataType.Array)
+            {
+                var error = new RespireProtocolException("A hash import EXEC must return an array reply.");
+                operationError = error;
+                result.Dispose();
+                foreach (var op in _ops) op.Fail(error);
+                throw error;
+            }
             var elements = result.AsArray();
+            if (_importSession is not null && elements.Length != _ops.Count)
+            {
+                var error = new RespireProtocolException($"EXEC returned {elements.Length} results for {_ops.Count} queued commands.");
+                operationError = error;
+                result.Dispose();
+                foreach (var op in _ops) op.Fail(error);
+                throw error;
+            }
             var completeCount = Math.Min(_ops.Count, elements.Length);
             for (var i = 0; i < completeCount; i++)
             {
                 var itemError = _ops[i].Complete(_client, in elements[i]);
                 operationError ??= itemError;
+                if (_importSession is not null && itemError is not null
+                    && (itemError is not RespireServerException serverError || ClusterRouter.IsRedirect(serverError)))
+                    importError ??= itemError;
             }
 
             if (completeCount < _ops.Count)
@@ -373,6 +405,8 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
         }
         finally
         {
+            if (_importSession is not null && operationError is not null)
+                await _importSession.ExpireIfUncertainAsync(importError ?? operationError).ConfigureAwait(false);
             if (_ops.Count != 0)
             {
                 core.ClientCache?.FlushForUnknownCommand();
@@ -439,7 +473,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
                                 core.Options.CommandTimeout, cancellationToken)
                             .ConfigureAwait(false);
                     }
-                    catch (RespireConnectionRetiredException retirement) when (_watchConnection is null
+                    catch (RespireConnectionRetiredException retirement) when (_watchConnection is null && _importSession is null
                         && cluster is not null && cluster.CanRetryRetirement(attempt, token))
                     {
                         // The transport rejects the complete MULTI/EXEC frame before accepting any part.
@@ -475,6 +509,8 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
                         cluster.LearnWatchedRoute(redirect, connection, slot);
                         throw new RespireTransactionRetryException(redirect);
                     }
+                    if (_importSession is not null)
+                        throw redirect; // Replaying would lose the prepared fieldsets.
                     if (ClusterRouter.IsRedirect(redirect)
                         && !ClusterRouter.TryParseRedirect(redirect, connection.Host, out _, out _))
                     {
@@ -553,6 +589,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
         where TCommand : struct, IRespCommand
     {
         ThrowIfCompleted();
+        _importSession?.ValidateQueuedCommand(operation);
         var bufferMark = _buffer.Count;
         var clusterSlot = _clusterSlot;
         var hasClusterSlot = _hasClusterSlot;
@@ -686,6 +723,11 @@ public sealed class RespireTransaction : RespireTransactionBase
 {
     internal RespireTransaction(RespireClient client)
         : base(client, watchConnection: null)
+    {
+    }
+
+    internal RespireTransaction(RespireClient client, RespireHashImportSession importSession)
+        : base(client, watchConnection: null, watchSlot: importSession.ClusterSlot, importSession: importSession)
     {
     }
 

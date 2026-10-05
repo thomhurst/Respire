@@ -11,6 +11,9 @@ For WAIT or WAITAOF acknowledgements of a batch's writes, use
 [`ExecuteAndWaitForReplicationAsync` or `ExecuteAndWaitForAofAsync`](durability-acknowledgements.md).
 These methods keep the writes and acknowledgement on one dedicated connection.
 
+For Redis 8.10 HIMPORT, create batches or transactions through a
+[hash import session](hash-import.md) to preserve connection-local fieldsets.
+
 ## Batch one flush
 
 ```csharp

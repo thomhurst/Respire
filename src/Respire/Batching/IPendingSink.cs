@@ -12,6 +12,9 @@ internal interface IPendingSink
     /// <summary>The owning client — supplies key prefixing and serialization.</summary>
     RespireClient Client { get; }
 
+    /// <summary>The connection-bound import context, when this queue belongs to one.</summary>
+    RespireHashImportSession? ImportSession => null;
+
     /// <summary>Whether queued commands retain their arguments until later serialization.</summary>
     bool DefersSerialization { get; }
 

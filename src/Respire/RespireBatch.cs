@@ -34,6 +34,7 @@ namespace Respire;
 public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IPendingSink
 {
     private readonly RespireClient _client;
+    private readonly RespireHashImportSession? _importSession;
     private readonly List<Op> _ops = [];
     private bool _disposed;
     private bool _sent;
@@ -54,6 +55,12 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
     private IBatchStreamCommands? _streams;
 
     internal RespireBatch(RespireClient client) => _client = client;
+
+    internal RespireBatch(RespireClient client, RespireHashImportSession importSession)
+    {
+        _client = client;
+        _importSession = importSession;
+    }
 
     /// <summary>Gets whether any batch execution method has started sending this batch.</summary>
     public bool IsSent => _sent;
@@ -159,6 +166,8 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
 
     RespireClient IPendingSink.Client => _client;
 
+    RespireHashImportSession? IPendingSink.ImportSession => _importSession;
+
     bool IPendingSink.DefersSerialization => true;
 
     RespirePending<T> IPendingSink.Add<TCommand, T>(
@@ -218,6 +227,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             throw new InvalidOperationException("This batch has already been sent.");
         }
 
+        using var importUsage = _importSession?.EnterOperation();
         _sent = true;
         var core = _client.Core;
         var telemetryOperation = "PIPELINE";
@@ -253,7 +263,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             cacheToInvalidate = null;
         cacheToInvalidate?.FlushForUnknownCommand();
 
-        if (core.Cluster is not null)
+        if (core.Cluster is not null && _importSession is null)
         {
             var groups = new List<(int? Slot, List<Op> Operations)>();
             var groupIndexes = new Dictionary<int, int>();
@@ -300,7 +310,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         RespireConnection? connection = null;
         try
         {
-            connection = await _client.AcquireConnectionAsync(cancellationToken).ConfigureAwait(false);
+            connection = _importSession?.Connection ?? await _client.AcquireConnectionAsync(cancellationToken).ConfigureAwait(false);
             if (core.Sentinel is not null)
                 telemetry = RespireTelemetry.StartBatchOperation(
                     "PIPELINE", _ops, static op => op.Operation,
@@ -346,6 +356,9 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
 
         var batchFailures = CollectFailures(_ops);
         var batchFirstError = batchFailures is { Length: > 0 } ? batchFailures[0].Error : null;
+        if (_importSession is not null && batchFailures is not null)
+            foreach (var failure in batchFailures)
+                await _importSession.ExpireIfUncertainAsync(failure.Error).ConfigureAwait(false);
         telemetry.Complete(
             core,
             telemetryOperation,
@@ -526,6 +539,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             throw new InvalidOperationException("This batch has already been sent.");
         }
 
+        _importSession?.ValidateQueuedCommand(operation);
         var pending = new RespirePending<T>();
         _ops.Add(new Op<TCommand, T>(operation, command, pending, convert));
         return pending;
