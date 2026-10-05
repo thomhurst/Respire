@@ -74,13 +74,15 @@ jobs:
             --coverage-output coverage.cobertura.xml \
             --coverage-output-format cobertura
 
-      - name: Run hedging regressions without operation tracing
+      - name: Run regressions without operation tracing
         env:
           TUNIT_DISABLE_HTML_REPORTER: 'true'
         run: |
           dotnet run --project tests/Respire.Tests -c Release -f net10.0 --no-build -- \
             --maximum-parallel-tests 4 \
             --treenode-filter '/*/*/HedgedReadTests/*'
+          dotnet run --project tests/Respire.Tests -c Release -f net10.0 --no-build -- \
+            --treenode-filter '/*/*/GetStringDirectPathTests/*'
 
       - name: Run Health Check Tests
         run: dotnet run --project tests/Respire.HealthChecks.Tests -c Release -f net10.0 --no-build -- --maximum-parallel-tests 4

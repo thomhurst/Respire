@@ -12,10 +12,7 @@ public sealed partial class RespireClient
 {
     /// <inheritdoc cref="IStringCommands.GetStringAsync"/>
     public ValueTask<string?> GetStringAsync(RespireKey key, CancellationToken cancellationToken = default)
-        => CachedGetAsync(
-            ResolveKey(key),
-            cancellationToken,
-            static (RespireClient _, in Protocol.RespValue value) => ResponseReader.StringOrNull(in value));
+        => CachedGetStringAsync(ResolveKey(key), cancellationToken);
 
     /// <inheritdoc cref="IStringCommands.GetAsync{T}"/>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]

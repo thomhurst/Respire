@@ -1606,6 +1606,21 @@ public sealed partial class RespireClient : IRespireClient
         return GetAndCacheAsync(resolvedKey, cache, cancellationToken, converter);
     }
 
+    /// <summary>
+    /// GET decoded as a string. Uncached reads take <see cref="StringOrNullAsync{TCommand}"/>,
+    /// which decodes small bulk replies straight from the receive buffer.
+    /// </summary>
+    internal ValueTask<string?> CachedGetStringAsync(RespireKey resolvedKey, CancellationToken cancellationToken)
+    {
+        if (ReadCache is null || (_readFrom != RespireReadFrom.Primary && s_getIsReadOnly))
+            return StringOrNullAsync("GET", new Cmd1(Verbs.Get, resolvedKey.AsValue()), cancellationToken);
+
+        return CachedGetAsync(
+            resolvedKey,
+            cancellationToken,
+            static (RespireClient _, in RespValue value) => ResponseReader.StringOrNull(in value));
+    }
+
     internal ValueTask<TResult[]> CachedGetManyAsync<TResult>(
         ReadOnlySpan<RespireKey> keys,
         CancellationToken cancellationToken,
