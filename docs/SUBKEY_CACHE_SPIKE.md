@@ -90,7 +90,7 @@ and [implementation](../src/Respire/PubSub/SubscriptionHub.ClusterNotifications.
 
 ## Runtime evidence and reproduction
 
-The probe used a disposable `redis:8.8-alpine` container reporting `redis_version:8.8.3`, image
+The probe used a disposable `redis:8.8.3-alpine` container reporting `redis_version:8.8.3`, image
 ID `sha256:0b2b77d3ea5078274795e3177cdbdada8b96316684a38911d528534ed679b5ec`.
 The container was stopped afterward. No shared Redis configuration was changed.
 
@@ -101,12 +101,13 @@ repository root with Python 3.10+ and Docker available:
 python scripts/probes/subkey-notifications.py
 ```
 
-The script starts its own `redis:8.8.3-alpine` container on a dynamically assigned loopback
+The script pins `redis:8.8.3-alpine` to the digest above and starts its own container on a dynamically assigned loopback
 port, asserts the server version, and stops that exact container in `finally`. It requires
-no Python packages and never connects to an existing Redis instance. Run Python without
-`-O`, because assertions verify the observations. It prints the image ID and the actual
-RESP frames for all seven probes, and exits unsuccessfully if an assertion or socket operation
-fails. The reproduced run used the same image ID shown above and passed all seven probes.
+no Python packages and never connects to an existing Redis instance. Explicit checks also
+run under Python's `-O` option. It prints the image ID and the actual RESP frames, labels the
+delayed-fill case as a constructed model, and exits unsuccessfully if a check or socket operation
+fails. On failure it prints container logs before cleanup. The reproduced run used the same
+image ID shown above and passed six server probes and the schedule construction.
 
 The implementation includes a RESP2/RESP3 frame reader, subscription acknowledgement checks,
 the `PING barrier` collection loop, and the explicit held-reply/cache-insertion schedule.
@@ -125,7 +126,7 @@ positive control for notification configuration.
 | `DEL control` | Key event `del`; no subkey event |
 | `JSON.SET document $ '{"field":1}'`, then `JSON.SET document $.field 2` | Each produced key event `json.set`; neither produced a subkey event |
 | Enable RESP3 tracking, read a hash field, then delete the hash from the writer | Tracking push `['invalidate', ['hash']]`; no subkey event |
-| Hold an `HGET` reply, write a new value, consume the event, then inspect the held reply | Held reply remained `before`; a fresh read returned `after` |
+| Modeled delayed fill: hold an `HGET` reply, write a new value, consume the event, then insert the held reply | Constructed schedule inserts `before` after consuming the event; a fresh server read returns `after`. This is a logical cache model, not an observed server ordering failure. |
 | Disconnect subscriber, mutate, reconnect and acknowledge subscription, then `PING barrier` | No replay of the mutation |
 | Set notification flags to the empty string after subscription, then `HSET` | No event and no subscriber disconnect |
 

@@ -7,7 +7,15 @@ Run from the repository root: python scripts/probes/subkey-notifications.py
 import json
 import socket
 import subprocess
+import sys
 import time
+
+IMAGE = "redis:8.8.3-alpine@sha256:0b2b77d3ea5078274795e3177cdbdada8b96316684a38911d528534ed679b5ec"
+
+
+def expect(condition, evidence="Unexpected Redis response"):
+    if not condition:
+        raise AssertionError(evidence)
 
 
 def docker(*arguments):
@@ -48,7 +56,7 @@ class Connection:
             if count == -1:
                 return None
             payload = self.stream.read(count)
-            assert len(payload) == count and self.stream.read(2) == b"\r\n"
+            expect(len(payload) == count and self.stream.read(2) == b"\r\n", "Truncated bulk string")
             return payload.decode()
         if kind in (b"*", b">", b"~"):
             count = int(value)
@@ -62,7 +70,7 @@ class Connection:
         return self.read()
 
     def subscribe(self):
-        assert self.command("PSUBSCRIBE", "__*") == ["psubscribe", "__*", 1]
+        expect(self.command("PSUBSCRIBE", "__*") == ["psubscribe", "__*", 1])
 
     def events(self):
         self.send("PING", "barrier")
@@ -71,17 +79,17 @@ class Connection:
             message = self.read()
             if message == ["pong", "barrier"]:
                 return messages
-            assert message[0] == "pmessage", message
+            expect(message[0] == "pmessage", message)
             messages.append(message)
 
 
 def check_events(messages, event, subkey):
-    assert any(message[2].startswith("__keyspace@") and message[3] == event for message in messages), messages
+    expect(any(message[2].startswith("__keyspace@") and message[3] == event for message in messages), messages)
     subkeys = [message for message in messages if message[2].startswith("__subkey")]
     if subkey:
-        assert any(message[3] == "hset|5:field" for message in subkeys), messages
+        expect(any(message[3] == "hset|5:field" for message in subkeys), messages)
     else:
-        assert not subkeys, messages
+        expect(not subkeys, messages)
 
 
 def report(name, evidence):
@@ -101,24 +109,24 @@ def run(port):
         version = writer.command("INFO", "server")
         version = next(line for line in version.splitlines() if line.startswith("redis_version:"))
         print(version, flush=True)
-        assert version == "redis_version:8.8.3", version
-        assert writer.command("CONFIG", "SET", "notify-keyspace-events", "KSA") == "OK"
+        expect(version == "redis_version:8.8.3", version)
+        expect(writer.command("CONFIG", "SET", "notify-keyspace-events", "KSA") == "OK")
         subscriber = connect()
         subscriber.subscribe()
 
-        assert writer.command("HSET", "control", "field", "value") == 1
+        expect(writer.command("HSET", "control", "field", "value") == 1)
         messages = subscriber.events()
         check_events(messages, "hset", subkey=True)
         report("hash field positive control", messages)
 
-        assert writer.command("DEL", "control") == 1
+        expect(writer.command("DEL", "control") == 1)
         messages = subscriber.events()
         check_events(messages, "del", subkey=False)
         report("whole-key deletion", messages)
 
         json_evidence = []
         for path, value in (("$", '{"field":1}'), ("$.field", "2")):
-            assert writer.command("JSON.SET", "document", path, value) == "OK"
+            expect(writer.command("JSON.SET", "document", path, value) == "OK")
             messages = subscriber.events()
             check_events(messages, "json.set", subkey=False)
             json_evidence.append(messages)
@@ -127,12 +135,12 @@ def run(port):
         writer.command("HSET", "hash", "field", "before")
         subscriber.events()
         tracking = connect()
-        assert tracking.command("HELLO", 3)["proto"] == 3
-        assert tracking.command("CLIENT", "TRACKING", "ON") == "OK"
-        assert tracking.command("HGET", "hash", "field") == "before"
-        assert writer.command("DEL", "hash") == 1
+        expect(tracking.command("HELLO", 3)["proto"] == 3)
+        expect(tracking.command("CLIENT", "TRACKING", "ON") == "OK")
+        expect(tracking.command("HGET", "hash", "field") == "before")
+        expect(writer.command("DEL", "hash") == 1)
         invalidation = tracking.read()
-        assert invalidation == ["invalidate", ["hash"]], invalidation
+        expect(invalidation == ["invalidate", ["hash"]], invalidation)
         messages = subscriber.events()
         check_events(messages, "del", subkey=False)
         report("tracking invalidates deletion", {"tracking": invalidation, "events": messages})
@@ -148,8 +156,8 @@ def run(port):
         cache.pop(("hash", "field"), None)
         cache[("hash", "field")] = held
         fresh = writer.command("HGET", "hash", "field")
-        assert cache[("hash", "field")] == "before" and fresh == "after"
-        report("delayed fill", {"held": held, "fresh": fresh, "events": messages})
+        expect(cache[("hash", "field")] == "before" and fresh == "after")
+        report("modeled delayed fill (constructed schedule)", {"held": held, "fresh": fresh, "events": messages})
 
         subscriber.close()
         connections.remove(subscriber)
@@ -157,13 +165,13 @@ def run(port):
         subscriber = connect()
         subscriber.subscribe()
         messages = subscriber.events()
-        assert messages == [], messages
+        expect(messages == [], messages)
         report("no reconnect replay", messages)
 
-        assert writer.command("CONFIG", "SET", "notify-keyspace-events", "") == "OK"
+        expect(writer.command("CONFIG", "SET", "notify-keyspace-events", "") == "OK")
         writer.command("HSET", "hash", "field", "notifications-disabled")
         messages = subscriber.events()
-        assert messages == [], messages
+        expect(messages == [], messages)
         report("silent notification disabling; PING still succeeds", messages)
     finally:
         for connection in connections:
@@ -171,7 +179,7 @@ def run(port):
 
 
 def main():
-    container = docker("run", "--detach", "--rm", "--publish", "127.0.0.1::6379", "redis:8.8.3-alpine")
+    container = docker("run", "--detach", "--rm", "--publish", "127.0.0.1::6379", IMAGE)
     try:
         print("image:", docker("inspect", "--format", "{{.Image}}", container), flush=True)
         port = int(docker("port", container, "6379/tcp").rsplit(":", 1)[1])
@@ -185,6 +193,10 @@ def main():
                     raise
                 time.sleep(0.1)
         run(port)
+    except Exception:
+        print(f"Probe failed; logs for owned container {container}:", file=sys.stderr)
+        subprocess.run(["docker", "logs", container], check=False)
+        raise
     finally:
         docker("stop", container)
 
