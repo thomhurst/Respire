@@ -8,9 +8,11 @@ namespace Respire.Tests.Networking;
 public class ClientFilterCommandTests
 {
     [Test]
-    [Arguments(true)]
-    [Arguments(false)]
-    public async Task SkipMeAloneFailsSynchronouslyAcrossAllPaths(bool skipMe)
+    [Arguments(0)]
+    [Arguments(1)]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task MatchAllFiltersFailSynchronouslyAcrossAllPaths(int filter)
     {
         await using var server = new FakeRespServer(":7\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
@@ -21,12 +23,18 @@ public class ClientFilterCommandTests
         var handle = await client.Server.GetClientConnectionAsync();
         using var batch = client.CreateBatch();
         await using var tx = client.CreateTransaction();
-        var options = new RespireClientFilterOptions { SkipMe = skipMe };
+        var options = filter switch
+        {
+            0 => new RespireClientFilterOptions { SkipMe = true },
+            1 => new RespireClientFilterOptions { SkipMe = false },
+            2 => new RespireClientFilterOptions { Flags = "" },
+            _ => new RespireClientFilterOptions { Capabilities = "" },
+        };
         await Assert.That(() => { _ = client.Server.KillClientsAsync(options); }).ThrowsExactly<ArgumentException>();
         await Assert.That(() => { _ = handle.KillClientsAsync(options); }).ThrowsExactly<ArgumentException>();
         await Assert.That(() => batch.Server.KillClients(options)).ThrowsExactly<ArgumentException>();
         await Assert.That(() => tx.Server.KillClients(options)).ThrowsExactly<ArgumentException>();
-        var invalid = options with { Ids = [0] };
+        var invalid = new RespireClientFilterOptions { Ids = [0] };
         await Assert.That(() => { _ = client.Server.ClientsAsync(invalid, default); }).ThrowsExactly<ArgumentOutOfRangeException>();
         await Assert.That(() => { _ = client.Server.ClientsOnAllNodesAsync(invalid, default); }).ThrowsExactly<ArgumentOutOfRangeException>();
         await Assert.That(() => { _ = handle.ClientsAsync(invalid); }).ThrowsExactly<ArgumentOutOfRangeException>();

@@ -106,6 +106,10 @@ public class ListMoveManyIntegrationTests(Redis810ListMoveTestContainer fixture)
         cancel.Cancel();
         Func<Task> canceled = async () => await blocked.WaitAsync(deadline.Token);
         await canceled.Should().ThrowAsync<OperationCanceledException>();
+        // Local socket disposal does not acknowledge server-side removal. Wait until Redis
+        // observes the closed lease before pushing data that the old command could consume.
+        while ((await observer.Server.ClientsAsync(deadline.Token)).Any(x => x.Name == name && x.Flags.Contains('b')))
+            await Task.Delay(10, deadline.Token);
         await view.Lists.RightPushAsync("s", "next");
         (await view.Lists.MoveManyAsync("s", "d", waitFor: TimeSpan.FromSeconds(1), cancellationToken: deadline.Token)).Should().Equal("next");
     }

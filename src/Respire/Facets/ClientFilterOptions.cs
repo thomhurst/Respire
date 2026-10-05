@@ -46,7 +46,7 @@ public sealed record RespireClientFilterOptions
     public string? Name { get; init; }
     /// <summary>Match connections idle for at least this many seconds. Requires Valkey 9+.</summary>
     public long? IdleSeconds { get; init; }
-    /// <summary>Match connection flags. Requires Valkey 9+.</summary>
+    /// <summary>Match connection flags. Must be nonempty when specified. Requires Valkey 9+.</summary>
     public string? Flags { get; init; }
     /// <summary>Match the library name. Requires Valkey 9+.</summary>
     public string? LibraryName { get; init; }
@@ -54,7 +54,7 @@ public sealed record RespireClientFilterOptions
     public string? LibraryVersion { get; init; }
     /// <summary>Match the database number. Requires Valkey 9+.</summary>
     public int? Database { get; init; }
-    /// <summary>Match connection capabilities. Requires Valkey 9+.</summary>
+    /// <summary>Match connection capabilities. Must be nonempty when specified. Requires Valkey 9+.</summary>
     public string? Capabilities { get; init; }
     /// <summary>Match the remote IP address. Requires Valkey 9+.</summary>
     public string? Ip { get; init; }
@@ -89,6 +89,8 @@ internal static class ClientFilterArguments
     internal static CmdN Build(RespireClientFilterOptions options, bool kill)
     {
         ArgumentNullException.ThrowIfNull(options);
+        if (options.Flags is "" || options.Capabilities is "")
+            throw new ArgumentException("Flags and Capabilities must be nonempty when specified.", nameof(options));
         var args = new List<RespireValue>();
         AddType("TYPE", options.Type);
         AddIds("ID", options.Ids);
