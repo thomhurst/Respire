@@ -53,7 +53,7 @@ public class DeferredRawKeyLayoutTests(RedisTestContainer fixture)
             .ToHashSet(StringComparer.Ordinal);
         var deferredOperations = Respire.Commands.RawCommandKeyLayouts.DeferredOperations.ToArray();
         var unavailable = deferredOperations.Except(serverOperations).ToArray();
-        unavailable.Should().BeSubsetOf(["DELEX", "DELIFEQ", "LMOVEM"]);
+        unavailable.Should().BeSubsetOf(["DELEX", "DELIFEQ", "LMOVEM", "INCREX"]);
         verified.Should().BeEquivalentTo(deferredOperations.Except(unavailable));
     }
 
@@ -65,6 +65,8 @@ public class DeferredRawKeyLayoutTests(RedisTestContainer fixture)
 
         delex.Should().Be(new Respire.Commands.RawCommandKeyLayouts.KeyLayout(0, 1));
         delifeq.Should().Be(new Respire.Commands.RawCommandKeyLayouts.KeyLayout(0, 1));
+        var increx = Respire.Commands.RawCommandKeyLayouts.GetDeferredLayout("INCREX", ["key", "BYINT", 1, "UBOUND", 5]);
+        increx.Should().Be(new Respire.Commands.RawCommandKeyLayouts.KeyLayout(0, 1));
     }
 
     [Test]

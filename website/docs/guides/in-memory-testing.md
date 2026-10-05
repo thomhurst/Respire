@@ -45,6 +45,12 @@ make future connections throw a historical error.
 
 ## Supported subset
 
+For `INCREX BYFLOAT`, the fake calculates with .NET `double`, while Redis uses
+platform-dependent `long double`. Rounding near bounds can therefore differ.
+Increments, stored values, and results outside the fake's finite `double` range
+fail before mutation; bounds may be infinite.
+Use a real Redis fixture when testing floating-point precision or extreme values.
+
 This is a test double with explicit limits, not a Redis implementation or a compatibility
 oracle. Unsupported commands return server errors containing the command name.
 Unsupported options also fail explicitly instead of silently changing behavior.
@@ -54,6 +60,7 @@ An error consumes exactly one response slot, so later valid commands still work.
 | --- | --- |
 | Strings | `GET`, `SET` with `NX`, `XX`, `GET`, `KEEPTTL`, `EX`, `PX`, `EXAT`, `PXAT`; `MGET`, `MSET`, `MSETNX`, `GETDEL`, `GETSET`, `GETEX`, `STRLEN`, `APPEND` |
 | Integer strings | `INCR`, `DECR`, `INCRBY`, `DECRBY`, with checked signed 64-bit arithmetic |
+| Extended counters | `INCREX` with integer/floating increments, bounds, `SATURATE`, expiry, and `ENX`; integer arithmetic preserves the full signed 64-bit range |
 | Hashes | `HSET`, `HSETNX`, `HMSET`, `HGET`, `HMGET`, `HGETALL`, `HDEL`, `HEXISTS`, `HLEN`, `HKEYS`, `HVALS`, `HSTRLEN`, `HINCRBY` |
 | Lists | `LPUSH`, `RPUSH`, `LPUSHX`, `RPUSHX`, `LPOP`/`RPOP` with optional count, `LLEN`, `LRANGE`, `LINDEX`, `LSET`, `LTRIM`, `LREM`, `LINSERT BEFORE/AFTER`, `LPOS RANK/COUNT/MAXLEN` |
 | Sets | `SADD`, `SREM`, `SMEMBERS`, `SCARD`, `SISMEMBER`, `SMISMEMBER`, `SMOVE`, `SINTER`, `SUNION`, `SDIFF`, their `STORE` forms, and `SINTERCARD` with `LIMIT` |
