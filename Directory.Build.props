@@ -28,6 +28,7 @@
       Respire.Coordination;
       Respire.DataProtection;
       Respire.DependencyInjection;
+      Respire.HealthChecks;
       Respire.Json;
       Respire.Probabilistic;
       Respire.Search;

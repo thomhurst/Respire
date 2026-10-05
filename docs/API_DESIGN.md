@@ -654,8 +654,10 @@ public sealed class CartService([FromKeyedServices("cache")] IRespireClient redi
 - `RespireOptionsBuilder.Endpoints` is a mutable `IList<RespireEndpoint>`; `Endpoints.Add(...)`
   is valid in the action overload. Configuration accepts a connection string, an `Action<RespireOptionsBuilder>`, or a
   service-provider factory returning `RespireOptions`; the package does not bind `IOptions`.
-- Health integrations can inspect `IsConnected` and subscribe to `ConnectionStateChanged`;
-  the package does not register a health check.
+- `Respire.HealthChecks` adds `services.AddHealthChecks().AddRespire()` using the registered
+  client. It probes existing primary or all-node command connections, supports a latency
+  threshold, and includes cache statistics and failover-group state. It does not open probe
+  connections. See [health checks](../website/docs/integrations/health-checks.md).
 
 ## 17. Testing story
 

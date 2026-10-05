@@ -8,6 +8,7 @@ on:
     paths:
       - 'src/**'
       - 'tests/Respire.Tests/**'
+      - 'tests/Respire.HealthChecks.Tests/**'
       - '.github/workflows/unit-tests.yml'
   pull_request:
     branches:
@@ -15,6 +16,7 @@ on:
     paths:
       - 'src/**'
       - 'tests/Respire.Tests/**'
+      - 'tests/Respire.HealthChecks.Tests/**'
       - '.github/workflows/unit-tests.yml'
 
 env:
@@ -68,6 +70,15 @@ jobs:
             --coverage-output coverage.cobertura.xml \
             --coverage-output-format cobertura
       
+      - name: Run health check tests
+        run: |
+          dotnet run --project tests/Respire.HealthChecks.Tests/Respire.HealthChecks.Tests.csproj \
+            -c Release -f ${{ matrix.framework }} --no-build -- \
+            --maximum-parallel-tests 4 \
+            --results-directory "$GITHUB_WORKSPACE/TestResults" \
+            --report-trx \
+            --report-trx-filename "Respire.HealthChecks.Tests-${{ matrix.framework }}.trx"
+
       - name: Run hedging regressions without operation tracing
         env:
           TUNIT_DISABLE_HTML_REPORTER: 'true'
