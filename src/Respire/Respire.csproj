@@ -22,6 +22,8 @@
     <!-- The key repository retains an owned binary list key. -->
     <InternalsVisibleTo Include="Respire.DataProtection" />
     <InternalsVisibleTo Include="Respire.Tests" />
+    <!-- RedisJSON keeps pooled serialization storage alive until command completion. -->
+    <InternalsVisibleTo Include="Respire.Json" />
     <InternalsVisibleTo Include="Respire.IntegrationTests" />
     <InternalsVisibleTo Include="Respire.Benchmarks" />
     <!-- The optional package implements reserved value-codec algorithm ID 3. -->

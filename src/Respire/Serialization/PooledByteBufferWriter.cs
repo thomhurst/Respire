@@ -12,6 +12,7 @@ internal sealed class PooledByteBufferWriter(ArrayPool<byte>? pool = null) : IBu
     private bool _disposed;
 
     internal ReadOnlySpan<byte> WrittenSpan => _buffer.AsSpan(0, _written);
+    internal ReadOnlyMemory<byte> WrittenMemory => _buffer.AsMemory(0, _written);
 
     public void Advance(int count)
     {
@@ -51,7 +52,13 @@ internal sealed class PooledByteBufferWriter(ArrayPool<byte>? pool = null) : IBu
     public void Dispose()
     {
         if (_disposed) return;
+        Reset();
         _disposed = true;
+    }
+
+    internal void Reset()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
         if (_buffer.Length != 0) _pool.Return(_buffer, clearArray: true);
         _buffer = [];
         _written = 0;
