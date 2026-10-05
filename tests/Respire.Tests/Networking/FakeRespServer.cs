@@ -37,6 +37,8 @@ internal sealed class FakeRespServer : IAsyncDisposable
     private int _disposed;
 
     public int Port { get; }
+    /// <summary>Completes after the first socket is recorded, even before a full command arrives.</summary>
+    public Task ConnectionAccepted => _clientSocket.Task;
     /// <summary>Completes on peer EOF or reset, before server teardown.</summary>
     public Task PeerClosed => _peerClosed.Task;
     public int CommandsSeen => Volatile.Read(ref _commandsSeen);

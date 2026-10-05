@@ -25,6 +25,8 @@ namespace Respire.Json;
 /// </remarks>
 public sealed class RespireJsonClient
 {
+    private const int MaxStackAllocatedOffsets = 128;
+
     private readonly IRespireJsonCommandsImplementation _commands;
     private readonly IRespireJsonModifierCommandsImplementation _modifiers;
     private SerializationBuffer? _availableBuffer;
@@ -57,8 +59,8 @@ public sealed class RespireJsonClient
     {
         ArgumentNullException.ThrowIfNull(jsonTypeInfo);
         using var buffer = RentBuffer(jsonTypeInfo.Options);
-        JsonSerializer.Serialize(buffer.Writer, patch, jsonTypeInfo);
-        using var result = await _commands.MergeAsync(key, path.Value, buffer.Bytes.WrittenMemory, cancellationToken).ConfigureAwait(false);
+        var payload = buffer.Serialize(patch, jsonTypeInfo);
+        using var result = await _commands.MergeAsync(key, path.Value, payload, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Gets one typed JSON value.</summary>
@@ -142,8 +144,8 @@ public sealed class RespireJsonClient
         ArgumentNullException.ThrowIfNull(jsonTypeInfo);
         var token = ConditionToken(condition);
         using var buffer = RentBuffer(jsonTypeInfo.Options);
-        JsonSerializer.Serialize(buffer.Writer, value, jsonTypeInfo);
-        return await SetCoreAsync(key, buffer.Bytes.WrittenMemory, path, token, cancellationToken).ConfigureAwait(false);
+        var payload = buffer.Serialize(value, jsonTypeInfo);
+        return await SetCoreAsync(key, payload, path, token, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Sets pre-serialized JSON text.</summary>
@@ -229,27 +231,41 @@ public sealed class RespireJsonClient
         ArgumentNullException.ThrowIfNull(entries);
         ArgumentNullException.ThrowIfNull(jsonTypeInfo);
         if (entries.Count == 0) throw new ArgumentException("At least one entry is required.", nameof(entries));
-        var arguments = new RespireValue[checked(entries.Count * 3)];
-        var ends = new int[entries.Count];
         using var buffer = RentBuffer(jsonTypeInfo.Options);
-        for (var index = 0; index < entries.Count; index++)
-        {
-            var entry = entries[index];
-            arguments[index * 3] = entry.Key;
-            arguments[index * 3 + 1] = entry.Path.Value;
-            JsonSerializer.Serialize(buffer.Writer, entry.Value, jsonTypeInfo);
-            buffer.Writer.Flush();
-            ends[index] = buffer.Bytes.WrittenMemory.Length;
-            buffer.Writer.Reset(buffer.Bytes);
-        }
-        // Growth returns previous rentals, so capture slices only after every value is serialized.
-        var start = 0;
-        for (var index = 0; index < ends.Length; index++)
-        {
-            arguments[index * 3 + 2] = buffer.Bytes.WrittenMemory.Slice(start, ends[index] - start);
-            start = ends[index];
-        }
+        var arguments = SerializeEntries(entries, jsonTypeInfo, buffer);
         using var result = await _commands.MultiSetAsync(arguments, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static RespireValue[] SerializeEntries<T>(
+        IReadOnlyList<RespireJsonSetEntry<T>> entries, JsonTypeInfo<T> jsonTypeInfo, SerializationBuffer buffer)
+    {
+        var count = entries.Count;
+        var arguments = new RespireValue[checked(count * 3)];
+        int[]? rentedEndOffsets = null;
+        Span<int> endOffsets = count <= MaxStackAllocatedOffsets ? stackalloc int[count] : (rentedEndOffsets = ArrayPool<int>.Shared.Rent(count));
+        try
+        {
+            for (var index = 0; index < count; index++)
+            {
+                var entry = entries[index];
+                arguments[index * 3] = entry.Key;
+                arguments[index * 3 + 1] = entry.Path.Value;
+                endOffsets[index] = buffer.Serialize(entry.Value, jsonTypeInfo).Length;
+            }
+            // Growth returns previous rentals, so capture slices only after every value is serialized.
+            var serialized = buffer.Bytes.WrittenMemory;
+            var start = 0;
+            for (var index = 0; index < count; index++)
+            {
+                arguments[index * 3 + 2] = serialized.Slice(start, endOffsets[index] - start);
+                start = endOffsets[index];
+            }
+            return arguments;
+        }
+        finally
+        {
+            if (rentedEndOffsets is not null) ArrayPool<int>.Shared.Return(rentedEndOffsets);
+        }
     }
 
     private SerializationBuffer RentBuffer(JsonSerializerOptions options)
@@ -271,7 +287,15 @@ public sealed class RespireJsonClient
         internal JsonSerializerOptions Options { get; } = options;
         internal PooledByteBufferWriter Bytes { get; } = new();
         private Utf8JsonWriter? _writer;
-        internal Utf8JsonWriter Writer => _writer ??= CreateWriter(Bytes, Options);
+
+        internal ReadOnlyMemory<byte> Serialize<T>(T value, JsonTypeInfo<T> jsonTypeInfo)
+        {
+            var writer = _writer ??= CreateWriter(Bytes, Options);
+            JsonSerializer.Serialize(writer, value, jsonTypeInfo);
+            writer.Flush();
+            writer.Reset(Bytes);
+            return Bytes.WrittenMemory;
+        }
 
         public void Dispose()
         {

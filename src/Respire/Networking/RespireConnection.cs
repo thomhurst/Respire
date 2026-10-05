@@ -144,6 +144,19 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     internal bool DrainedSuccessfully => Volatile.Read(ref _drainedSuccessfully);
 
     /// <summary>
+    /// Sweeps past the oldest command's deadline for tests that hold its transport write.
+    /// The caller must keep that command in flight until this method returns.
+    /// </summary>
+    internal bool ExpireOldestCommandForTesting()
+    {
+        if (_commandTimeout is not { } timeout || !_inflight.TryPeek(out var source) || !source.Deadline.IsSet)
+            return false;
+
+        _inflight.SweepExpired(source.Deadline.Ticks + 1, timeout, this);
+        return true;
+    }
+
+    /// <summary>
     /// Picks the socket that takes a send this socket rejected before admission because a MOVING
     /// handoff retired it, and the deadline the send carries there. Returns false, so the
     /// retirement surfaces to the caller, when the send is pinned to this socket, when a retired
