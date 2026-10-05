@@ -19,9 +19,10 @@ public static class RespireOutputCacheServiceCollectionExtensions
         services.AddLogging();
         services.AddOutputCache();
         services.AddOptions<RespireOutputCacheOptions>()
-            .Validate(options => options.CleanupInterval > TimeSpan.Zero && options.CleanupInterval.TotalMilliseconds <= uint.MaxValue - 1,
-                "CleanupInterval must be positive and fit a timer interval.")
-            .Validate(options => options.TimeProvider is not null, "TimeProvider is required.");
+            .Validate(options => options.CleanupInterval >= TimeSpan.FromMilliseconds(1) && options.CleanupInterval.TotalMilliseconds <= uint.MaxValue - 1,
+                "CleanupInterval must be at least one millisecond and fit a timer interval.")
+            .Validate(options => options.TimeProvider is not null, "TimeProvider is required.")
+            .ValidateOnStart();
         if (configure is not null) services.Configure(configure);
         services.TryAddSingleton(provider => new RespireOutputCacheStore(
             provider.GetRequiredService<IRespireClient>(), provider.GetRequiredService<IOptions<RespireOutputCacheOptions>>().Value));
@@ -36,7 +37,8 @@ internal sealed class OutputCacheCleanupService(RespireOutputCacheStore store,
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(options.Value.CleanupInterval, options.Value.TimeProvider);
+        var settings = options.Value; // Resolve and validate before constructing the timer.
+        using var timer = new PeriodicTimer(settings.CleanupInterval, settings.TimeProvider);
         while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
         {
             try { await store.CollectExpiredTagsAsync(stoppingToken).ConfigureAwait(false); }

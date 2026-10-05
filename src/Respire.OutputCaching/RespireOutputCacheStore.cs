@@ -9,6 +9,7 @@ namespace Respire.OutputCaching;
 /// The supplied client remains owned by the caller. Values are stored unchanged, so instances using
 /// Microsoft.AspNetCore.OutputCaching.StackExchangeRedis can share the same InstanceName.
 /// Tag updates and eviction have the same non-transactional concurrency boundary as that store.
+/// Tagged writes require Redis 6.2+ for a shared absolute value/tag expiry deadline.
 /// </remarks>
 public sealed class RespireOutputCacheStore : IOutputCacheBufferStore
 {
@@ -67,7 +68,8 @@ public sealed class RespireOutputCacheStore : IOutputCacheBufferStore
     public ValueTask SetAsync(string key, byte[] value, string[]? tags, TimeSpan validFor, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(value);
-        return SetAsync(key, new ReadOnlySequence<byte>(value), tags.AsMemory(), validFor, cancellationToken);
+        return SetAsync(key, new ReadOnlySequence<byte>(value),
+            tags is null ? ReadOnlyMemory<string>.Empty : tags.AsMemory(), validFor, cancellationToken);
     }
 
     /// <inheritdoc />
@@ -79,15 +81,11 @@ public sealed class RespireOutputCacheStore : IOutputCacheBufferStore
             throw new ArgumentOutOfRangeException(nameof(validFor), "The lifetime must be at least one millisecond.");
         cancellationToken.ThrowIfCancellationRequested();
         foreach (var tag in tags.Span) ArgumentNullException.ThrowIfNull(tag);
-        // Validate timestamp overflow before writing anything.
-        _ = (_clock.GetUtcNow() + validFor).ToUnixTimeMilliseconds();
-        if (value.IsSingleSegment)
-            await _client.SetAsync(_valuePrefix + key, (RespireValue)value.First, validFor, cancellationToken: cancellationToken).ConfigureAwait(false);
-        else
-            await _client.Strings.SetAsync(_valuePrefix + key, value, validFor, cancellationToken: cancellationToken).ConfigureAwait(false);
-
-        // Taking this after SET avoids discarding tags before a delayed value write expires.
-        var expires = (_clock.GetUtcNow() + validFor).ToUnixTimeMilliseconds();
+        // Register every tag before publishing the value. A failed registration must not publish
+        // a response that its tags cannot invalidate. One absolute deadline keeps a delayed SET
+        // from outliving its tag references; it also validates timestamp overflow before any I/O.
+        var expiresAt = _clock.GetUtcNow() + validFor;
+        var expires = expiresAt.ToUnixTimeMilliseconds();
         for (var index = 0; index < tags.Length; index++)
         {
             var tag = tags.Span[index];
@@ -95,6 +93,11 @@ public sealed class RespireOutputCacheStore : IOutputCacheBufferStore
                 [_tagMaster], [tag, expires], cancellationToken).ConfigureAwait(false);
             await _client.SortedSets.AddAsync(_tagPrefix + tag, (RespireValue)key, expires, cancellationToken).ConfigureAwait(false);
         }
+        var expiry = tags.IsEmpty ? RespireExpiry.In(validFor) : RespireExpiry.At(expiresAt);
+        if (value.IsSingleSegment)
+            await _client.SetAsync(_valuePrefix + key, (RespireValue)value.First, expiry, cancellationToken: cancellationToken).ConfigureAwait(false);
+        else
+            await _client.Strings.SetAsync(_valuePrefix + key, value, expiry, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -103,15 +106,43 @@ public sealed class RespireOutputCacheStore : IOutputCacheBufferStore
         ArgumentNullException.ThrowIfNull(tag);
         cancellationToken.ThrowIfCancellationRequested();
         var tagKey = (RespireKey)(_tagPrefix + tag);
+        List<string> members = new(250);
         await foreach (var entry in _client.SortedSets.ScanAsync(tagKey, cancellationToken: cancellationToken).ConfigureAwait(false))
         {
-            await _client.DeleteAsync([_valuePrefix + entry.Member], cancellationToken).ConfigureAwait(false);
-            await _client.SortedSets.RemoveAsync(tagKey, [entry.Member], cancellationToken).ConfigureAwait(false);
+            members.Add(entry.Member);
+            if (members.Count == 250)
+            {
+                await EvictMembersAsync(tagKey, members, cancellationToken).ConfigureAwait(false);
+                members.Clear();
+            }
         }
+        if (members.Count != 0) await EvictMembersAsync(tagKey, members, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask EvictMembersAsync(RespireKey tagKey, List<string> members, CancellationToken cancellationToken)
+    {
+        if (members.Count == 1)
+        {
+            await _client.DeleteAsync([_valuePrefix + members[0]], cancellationToken).ConfigureAwait(false);
+            await _client.SortedSets.RemoveAsync(tagKey, [members[0]], cancellationToken).ConfigureAwait(false);
+            return;
+        }
+        // Pipeline separate DELs so values in different Cluster slots still work. Only remove
+        // tag memberships after every delete succeeds, leaving failed deletes retryable.
+        using var batch = _client.CreateBatch();
+        var values = new RespireValue[members.Count];
+        for (var index = 0; index < members.Count; index++)
+        {
+            _ = batch.Keys.Delete(_valuePrefix + members[index]);
+            values[index] = members[index];
+        }
+        await batch.ExecuteAsync(cancellationToken).ConfigureAwait(false);
+        await _client.SortedSets.RemoveAsync(tagKey, values, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Removes expired tag references. DI registration runs this periodically in a hosted service.</summary>
-    /// <remarks>Shares the Microsoft store's cleanup lock. Each pass removes only scores at or before its captured cutoff.</remarks>
+    /// <remarks>Shares the Microsoft store's cleanup lock. Each pass removes only scores at or before its captured cutoff.
+    /// Cancellable lock renewal requires Redis CLIENT ID and CLIENT KILL permissions.</remarks>
     public async ValueTask CollectExpiredTagsAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -129,6 +160,8 @@ public sealed class RespireOutputCacheStore : IOutputCacheBufferStore
                 untilRenewal = 250;
             }
         }
+        // Both passes use the same cutoff. Concurrent writes with later deadlines survive the
+        // per-tag removal and increase the master score, so the final purge preserves that tag.
         await _client.SortedSets.RemoveRangeByScoreAsync(_tagMaster, 0, cutoff, cancellationToken).ConfigureAwait(false);
     }
 }

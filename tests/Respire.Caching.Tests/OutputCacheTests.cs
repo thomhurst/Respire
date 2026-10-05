@@ -37,6 +37,9 @@ public class OutputCacheTests(RedisTestContainer fixture)
         {
             using var members = await client.ExecuteAsync("ZRANGE", [prefix + "__MSOCT_" + tag, 0, -1]);
             await Assert.That(members[0].AsString()).IsEqualTo("key");
+            using var deadline = await client.ExecuteAsync("PEXPIRETIME", [prefix + "__MSOCV_key"]);
+            using var score = await client.ExecuteAsync("ZSCORE", [prefix + "__MSOCT_" + tag, "key"]);
+            await Assert.That(score.AsDouble()).IsEqualTo((double)deadline.AsInteger());
         }
     }
 
@@ -140,20 +143,58 @@ public class OutputCacheTests(RedisTestContainer fixture)
     }
 
     [Test]
+    public async Task EvictionSpansSeveralChunksWithoutLosingTheRemainder()
+    {
+        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        var prefix = NewPrefix();
+        var store = new RespireOutputCacheStore(client, new() { InstanceName = prefix });
+        var keys = new RespireValue[601];
+        using (var batch = client.CreateBatch())
+        {
+            for (var index = 0; index < keys.Length; index++)
+            {
+                var member = $"key:{index}";
+                keys[index] = prefix + "__MSOCV_" + member;
+                _ = batch.Set(prefix + "__MSOCV_" + member, "value", TimeSpan.FromMinutes(5));
+                _ = batch.SortedSets.Add(prefix + "__MSOCT_shared", (RespireValue)member,
+                    DateTimeOffset.UtcNow.AddMinutes(5).ToUnixTimeMilliseconds());
+            }
+            await batch.ExecuteAsync();
+        }
+        await store.SetAsync("unrelated", new byte[] { 1 }, ["other"], TimeSpan.FromMinutes(5));
+        await store.EvictByTagAsync("shared");
+        using var remaining = await client.ExecuteAsync("EXISTS", keys);
+        await Assert.That(remaining.AsInteger()).IsEqualTo(0L);
+        await Assert.That(await client.SortedSets.CountAsync(prefix + "__MSOCT_shared")).IsEqualTo(0L);
+        await Assert.That(await store.GetAsync("unrelated")).IsNotNull();
+    }
+
+    [Test]
     public async Task CleanupHonorsMicrosoftLockAndRemovesOnlyExpiredReferences()
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
         var prefix = NewPrefix();
         var store = new RespireOutputCacheStore(client, new() { InstanceName = prefix });
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        await client.SortedSets.AddAsync(prefix + "__MSOCT", (RespireValue)"expired", now - 1);
-        await client.SortedSets.AddAsync(prefix + "__MSOCT_expired", (RespireValue)"old", now - 1);
+        using (var batch = client.CreateBatch())
+        {
+            _ = batch.SortedSets.Add(prefix + "__MSOCT", (RespireValue)"expired", now - 1);
+            _ = batch.SortedSets.Add(prefix + "__MSOCT_expired", (RespireValue)"old", now - 1);
+            // Cross the renewal threshold with a cancellable token, exercising CLIENT permissions.
+            for (var index = 0; index < 250; index++)
+            {
+                _ = batch.SortedSets.Add(prefix + "__MSOCT", (RespireValue)$"expired:{index}", now - 1);
+                _ = batch.SortedSets.Add(prefix + $"__MSOCT_expired:{index}", (RespireValue)"old", now - 1);
+            }
+            await batch.ExecuteAsync();
+        }
         await store.SetAsync("live", new byte[] { 1 }, ["live"], TimeSpan.FromHours(1));
         await client.SetAsync(prefix + "__MSOCTGC", (RespireValue)"Microsoft GC", TimeSpan.FromMinutes(5));
-        await store.CollectExpiredTagsAsync();
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await store.CollectExpiredTagsAsync(cancellation.Token);
         await Assert.That(await client.ExistsAsync(prefix + "__MSOCT_expired")).IsTrue();
         await client.DeleteAsync([prefix + "__MSOCTGC"]);
-        await store.CollectExpiredTagsAsync();
+        await store.CollectExpiredTagsAsync(cancellation.Token);
         await Assert.That(await client.ExistsAsync(prefix + "__MSOCT_expired")).IsFalse();
         await Assert.That(await client.SortedSets.CountAsync(prefix + "__MSOCT")).IsEqualTo(1L);
         await Assert.That(await store.GetAsync("live")).IsNotNull();

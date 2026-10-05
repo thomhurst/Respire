@@ -45,7 +45,14 @@ flush or payload conversion is needed. The format matches
 
 Either store can read and evict entries written by the other. Concurrent tag changes and
 eviction are not transactional, matching the Microsoft store's concurrency boundary.
-Respire awaits tag updates and reports failures instead of sending them fire-and-forget.
+Respire registers all tags before publishing a value and reports registration failures.
+A failed or cancelled registration therefore does not publish the new response; partial
+metadata is harmless and expires through cleanup. Tagged writes use Redis 6.2+
+[`SET PXAT`](https://redis.io/docs/latest/commands/set/) with the same absolute deadline
+as their tag scores, so a delayed value write cannot outlive its references. Time spent
+registering tags counts toward the requested lifetime. Untagged writes retain relative TTLs.
+Set and eviction are still separate operations: a concurrent eviction can race registration
+and publication. This mode does not promise generation-aware or atomic invalidation.
 As in the Microsoft store, overwriting a key with different tags does not remove its old
 tag memberships. Evicting an old tag can therefore remove the replacement value. Use stable
 tags for a cache key, or include the policy/tag generation in the key when changing tags.
@@ -53,8 +60,8 @@ The shared layout has no reverse key-to-tags index or value generation to identi
 memberships, and Microsoft writers would not maintain an added index.
 [Generation-aware tag invalidation](https://github.com/thomhurst/Respire/issues/917) tracks
 the stronger opt-in design separately from this interoperable mode.
-Keep participating application clocks synchronized: tag scores use application UTC time,
-while value expiration uses Redis TTLs.
+Keep participating application and Redis server clocks synchronized: tagged values and tag
+scores share an application UTC deadline, while untagged values use relative Redis TTLs.
 
 The store borrows its client. Disposing a service provider does not dispose an externally
 registered client instance. An additional `WithKeyPrefix` on the client changes the physical
@@ -67,11 +74,19 @@ flush without completing the caller's writer. Single-segment writes use the ordi
 path; multi-segment writes use Respire's streamed SET path without flattening the sequence.
 Keep sequence memory unchanged until `SetAsync` completes.
 
-`CleanupInterval` controls the hosted cleanup period. `TimeProvider` supplies the clock and
-timer. Cleanup errors are logged and retried on the next period. Cleanup removes expired
+`CleanupInterval` controls the hosted cleanup period and must be at least one millisecond
+and fit a timer interval. `TimeProvider` supplies the clock and timer. Invalid options fail
+host startup validation. Cleanup errors are logged and retried on the next period. Cleanup removes expired
 sorted-set references, not cached values, and shares the Microsoft store's cleanup lock.
 The required Redis permissions include string reads/writes/deletion, sorted-set operations,
-and scripting for tag updates and managed-lock fallback operations.
+and scripting for tag updates and managed-lock fallback operations. Cancellable cleanup-lock
+renewals also require `CLIENT ID` and `CLIENT KILL`; hosted cleanup uses a cancellable
+shutdown token and renews after every 250 scanned tags. These permissions are required even
+when small test datasets never reach that threshold.
+
+Tag eviction works in bounded groups: value deletions are pipelined, followed by one bulk
+`ZREM` after every deletion in the group succeeds. Separate pipelined `DEL` commands preserve
+support for values in different Cluster slots; one multi-key `DEL` would reject those keys.
 
 If constructing `RespireOutputCacheStore` directly without a host, schedule
 `CollectExpiredTagsAsync` yourself. Redis still expires values automatically; without tag
