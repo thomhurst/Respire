@@ -11,6 +11,65 @@ public class HashFieldScanTests
     private static readonly byte[] Page = "*2\r\n$20\r\n18446744073709551615\r\n*2\r\n$1\r\na\r\n$1\r\nb\r\n"u8.ToArray();
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task MixedBatchRetryPublishesCursorUnderConfiguredPolicy(bool retire)
+    {
+        await using var first = new FakeRespServer(8, FakeRespServer.OkReply);
+        await using var second = new FakeRespServer(8, FakeRespServer.OkReply);
+        byte[] Topology(int port) => System.Text.Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{port}\r\n");
+        var topology = Topology(first.Port);
+        var slot = ClusterHash.GetSlot("key");
+        first.ReplyOverride = (_, command) =>
+        {
+            if (command == "CLUSTER SLOTS") return topology;
+            if (!command.StartsWith("HSCAN ", StringComparison.Ordinal)) return FakeRespServer.OkReply;
+            topology = Topology(second.Port);
+            return System.Text.Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{second.Port}\r\n");
+        };
+        second.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology
+            : "*2\r\n$1\r\n7\r\n*0\r\n"u8.ToArray();
+        await using var owner = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Endpoints = { new RespireEndpoint("127.0.0.1", first.Port) },
+        });
+        await using var client = owner.WithReadFrom(RespireReadFrom.PrimaryPreferred);
+        var retired = 0;
+        using var listener = new System.Diagnostics.ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "Respire",
+            Sample = (ref System.Diagnostics.ActivityCreationOptions<System.Diagnostics.ActivityContext> _) =>
+                System.Diagnostics.ActivitySamplingResult.AllData,
+            ActivityStarted = activity =>
+            {
+                if (!retire || activity.OperationName != "HSCAN" || activity.GetTagItem("server.port") is not int port
+                    || port != first.Port || Interlocked.CompareExchange(ref retired, 1, 0) != 0) return;
+                topology = Topology(second.Port);
+                var router = owner.Core.Cluster!;
+                router.ApplyTopology([new ClusterTopologyRange(0, 16383, new("127.0.0.1", second.Port), "replacement", [])],
+                    router.TopologyVersion, long.MaxValue);
+            },
+        };
+        System.Diagnostics.ActivitySource.AddActivityListener(listener);
+        using var batch = client.CreateBatch();
+        var write = batch.Strings.Set("key", (RespireValue)"value");
+        var page = batch.Hashes.ScanFieldsPage("key");
+        await batch.ExecuteAsync();
+        await Assert.That(write.Result).IsTrue();
+        await Assert.That(page.Result.Cursor).IsEqualTo(7UL);
+        using var continuation = client.CreateBatch();
+        var next = continuation.Hashes.ScanFieldsPage("key", page.Result.Cursor);
+        await continuation.ExecuteAsync();
+        await Assert.That(next.Result.Cursor).IsEqualTo(7UL);
+        await Assert.That(second.ReceivedCommands.Where(command => command.StartsWith("HSCAN ", StringComparison.Ordinal)))
+            .IsEquivalentTo(["HSCAN key 0 NOVALUES", "HSCAN key 7 NOVALUES"]);
+        await Assert.That(first.ReceivedCommands.Contains("HSCAN key 7 NOVALUES")).IsFalse();
+        await Assert.That(retired).IsEqualTo(retire ? 1 : 0);
+    }
+
+    [Test]
     [Arguments(0)]
     [Arguments(1)]
     [Arguments(2)]

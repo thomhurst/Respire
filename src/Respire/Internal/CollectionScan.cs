@@ -27,6 +27,7 @@ internal static class CollectionScan
         var affinity = new ReadAffinity();
         do
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var args = Arguments(wireKey, cursor, match, countHint, noValues);
             var reply = await client.SendCursorPageAsync(operation, new CmdN(verb, args), affinity, cancellationToken)
                 .ConfigureAwait(false);
@@ -45,6 +46,7 @@ internal static class CollectionScan
 
             foreach (var item in page)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 yield return item;
             }
         }
