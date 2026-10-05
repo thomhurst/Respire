@@ -2,7 +2,9 @@ name: CI
 
 # The single PR test workflow. Each job builds only the projects it runs, for one framework;
 # the Modular Pipeline workflow compiles the whole solution for every framework and verifies the packages.
-#   - net10.0 runs the full suite (RESP3), plus the integration suites again on RESP2.
+#   - net10.0 runs the full suite (RESP3). A second job reruns Respire.IntegrationTests on RESP2 so the
+#     shared typed scenarios parse both reply shapes; tests that pin a protocol already cover the
+#     other suites' protocol-specific behavior, so those suites run once.
 #   - net8.0 runs a smoke set: the framework-conditional code paths, the fake-server
 #     client path, and the public samples, including one against a real Redis container.
 
@@ -103,6 +105,13 @@ jobs:
           dotnet run --project tests/Respire.Caching.Tests -c Release -f net10.0 --no-build
           dotnet run --project tests/Respire.Caching.Hybrid.Tests -c Release -f net10.0 --no-build
 
+      - name: Run Caching Tests on Redis 7.4
+        env:
+          RESPIRE_TEST_REDIS_IMAGE: redis:7.4.11-alpine
+        run: >-
+          dotnet run --project tests/Respire.Caching.Tests -c Release -f net10.0 --no-build --
+          --report-html-filename TestResults/Respire.Caching.Tests-redis7.4-linux-net10.0-report.html
+
       - name: Run samples
         uses: ./.github/actions/run-samples
         with:
@@ -148,7 +157,7 @@ jobs:
   integration-tests-resp2:
     name: Integration Tests (net10.0, RESP2)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     env:
       RESPIRE_TEST_PROTOCOL: '2'
       DOCKER_HOST: unix:///var/run/docker.sock
@@ -161,37 +170,10 @@ jobs:
         uses: ./.github/actions/setup-dotnet
 
       - name: Build
-        run: |
-          for project in \
-            tests/Respire.IntegrationTests \
-            tests/Respire.Coordination.Tests \
-            tests/Respire.DataProtection.Tests \
-            tests/Respire.Caching.Tests \
-            tests/Respire.Caching.Hybrid.Tests
-          do
-            dotnet build "$project" -c Release -f net10.0
-          done
+        run: dotnet build tests/Respire.IntegrationTests -c Release -f net10.0
 
       - name: Run Integration Tests
         run: dotnet run --project tests/Respire.IntegrationTests -c Release -f net10.0 --no-build
-
-      - name: Run Coordination Tests
-        run: dotnet run --project tests/Respire.Coordination.Tests -c Release -f net10.0 --no-build -- --maximum-parallel-tests 4
-
-      - name: Run DataProtection Tests
-        run: dotnet run --project tests/Respire.DataProtection.Tests -c Release -f net10.0 --no-build
-
-      - name: Run Caching Tests
-        run: |
-          dotnet run --project tests/Respire.Caching.Tests -c Release -f net10.0 --no-build
-          dotnet run --project tests/Respire.Caching.Hybrid.Tests -c Release -f net10.0 --no-build
-
-      - name: Run Caching Tests on Redis 7.4
-        env:
-          RESPIRE_TEST_REDIS_IMAGE: redis:7.4.11-alpine
-        run: >-
-          dotnet run --project tests/Respire.Caching.Tests -c Release -f net10.0 --no-build --
-          --report-html-filename TestResults/Respire.Caching.Tests-redis7.4-linux-net10.0-report.html
 
       - name: Upload TUnit HTML reports
         uses: actions/upload-artifact@v7
