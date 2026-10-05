@@ -78,12 +78,14 @@ public class DeferredFacetParityTests
             nameof(IStreamCommands.PendingSummaryAsync), nameof(IStreamCommands.PendingAsync),
             nameof(IStreamCommands.ClaimAsync), nameof(IStreamCommands.ClaimPendingAsync),
             nameof(IStreamCommands.InfoAsync), nameof(IStreamCommands.GroupInfoAsync),
-            nameof(IStreamCommands.ConsumerInfoAsync), nameof(IStreamCommands.ReadGroupAsync),
+            nameof(IStreamCommands.ConsumerInfoAsync),
             nameof(IStreamCommands.ReadAllAsync),
         ];
         var immediate = typeof(IStreamCommands).GetMethods();
         await Assert.That(clientOnly.Except(immediate.Select(method => method.Name)).ToArray()).IsEmpty();
-        var expected = immediate.Where(method => !clientOnly.Contains(method.Name))
+        var expected = immediate.Where(method => !clientOnly.Contains(method.Name)
+                && !(method.Name == nameof(IStreamCommands.ReadGroupAsync)
+                    && method.ReturnType.GetGenericTypeDefinition() == typeof(IAsyncEnumerable<>)))
             .Select(method => Signature(method, immediate: true));
         var actual = typeof(IBatchStreamCommands).GetMethods().Select(method => Signature(method, immediate: false));
         await Assert.That(expected.Except(actual).ToArray()).IsEmpty();
@@ -94,6 +96,8 @@ public class DeferredFacetParityTests
     {
         // Compare generic parameters by position; this shape audit does not compare their constraints.
         var name = immediate ? method.Name[..^"Async".Length] : method.Name;
+        // Single-stream group pages distinguish themselves from existing consumer loops by name.
+        if (immediate && method.Name == nameof(IStreamCommands.ReadGroupOnceAsync)) name = nameof(IBatchStreamCommands.ReadGroup);
         var parameters = method.GetParameters()
             .Where(parameter => !immediate || (parameter.ParameterType != typeof(CancellationToken)
                 && !(parameter.Name == "waitFor" && parameter.ParameterType == typeof(TimeSpan?))))
