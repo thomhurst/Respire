@@ -44,10 +44,12 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           path: baseline
+          persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.sha }}
           path: candidate
+          persist-credentials: false
       - name: Validate both builds and measure baseline, candidate, baseline
         shell: bash
         run: |
@@ -73,7 +75,7 @@ jobs:
           import os
           from pathlib import Path
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
-              summary.write('## Binary GET before/after\n\nPinned base and head run on the same runner. Compare candidate with both controls; unchanged pooled allocations are possible even when copying is reduced.\n')
+              summary.write('## Binary GET before/after\n\nPinned base and event merge commit run on the same runner. Compare candidate with both controls; unchanged pooled allocations are possible even when copying is reduced.\n')
               for phase in ('baseline-validation', 'candidate-validation', 'baseline-a', 'candidate', 'baseline-b'):
                   reports = list(Path('results', phase, 'results').glob('*-report-full-compressed.json'))
                   assert len(reports) == 1, f'Missing report: {phase}'
