@@ -53,7 +53,7 @@ public class DeferredRawKeyLayoutTests(RedisTestContainer fixture)
             .ToHashSet(StringComparer.Ordinal);
         var deferredOperations = Respire.Commands.RawCommandKeyLayouts.DeferredOperations.ToArray();
         var unavailable = deferredOperations.Except(serverOperations).ToArray();
-        unavailable.Should().BeSubsetOf(["DELEX", "DELIFEQ", "LMOVEM", "INCREX", "XCFGSET"]);
+        unavailable.Should().BeSubsetOf(["DELEX", "DELIFEQ", "LMOVEM", "INCREX", "XCFGSET", "SDIFFCARD", "SUNIONCARD"]);
         verified.Should().BeEquivalentTo(deferredOperations.Except(unavailable));
     }
 
@@ -110,7 +110,7 @@ public class DeferredRawKeyLayoutTests(RedisTestContainer fixture)
         "FCALL" or "FCALL_RO" => ["function-name", "2", "key-a", "key-b", "argument"],
         "LMPOP" => ["2", "key-a", "key-b", "LEFT", "COUNT", "3"],
         "ZMPOP" => ["2", "key-a", "key-b", "MIN", "COUNT", "3"],
-        "SINTERCARD" or "ZINTERCARD" => ["2", "key-a", "key-b", "LIMIT", "3"],
+        "SINTERCARD" or "ZINTERCARD" or "SDIFFCARD" or "SUNIONCARD" => ["2", "key-a", "key-b", "LIMIT", "3"],
         "ZDIFF" or "ZINTER" or "ZUNION" => ["2", "key-a", "key-b", "WITHSCORES"],
         "ZDIFFSTORE" => ["destination", "2", "key-a", "key-b"],
         "ZINTERSTORE" or "ZUNIONSTORE" => ["destination", "2", "key-a", "key-b", "WEIGHTS", "2", "3"],
