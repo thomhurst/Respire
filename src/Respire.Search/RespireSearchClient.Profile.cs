@@ -30,7 +30,7 @@ public sealed partial class RespireSearchClient
         return new(RespireSearchAggregateResult.Parse(parts.Result), parts.Profile);
     }
 
-    /// <summary>Runs HYBRID with profiling. Requires Redis 8.4 or later with Search.</summary>
+    /// <summary>Runs HYBRID with profiling. Requires Redis 8.8 or later with Search.</summary>
     /// <remarks>Uses the existing hybrid encoding. Unsupported commands and other server errors pass through unchanged.</remarks>
     public async ValueTask<RespireSearchProfileResult<RespireSearchResult>> ProfileHybridSearchAsync(
         string index, RespireHybridSearchQuery query, bool limited = false, CancellationToken cancellationToken = default)
@@ -58,7 +58,8 @@ public sealed partial class RespireSearchClient
         if (reply.Type == RespDataType.Map && TryReadProfileField(reply, "Results", out var result) &&
             TryReadProfileField(reply, "Profile", out var profile))
             return (result, RespireSearchProfileNode.Parse(profile));
-        throw RespireSearchReply.Unexpected("FT.PROFILE", "an invalid result/profile envelope");
+        throw RespireSearchReply.Unexpected("FT.PROFILE",
+            $"an invalid result/profile envelope (type {reply.Type}, element count {reply.Count})");
     }
 
     private static bool TryReadProfileField(RespireResult reply, string name, out RespireResult value)

@@ -298,7 +298,7 @@ Legacy [FT.CONFIG SET](https://redis.io/docs/latest/commands/ft.config-set/) cha
 query result in `Result`, together with an owned profile tree in `Profile`. They reuse the
 same query options and encoders as the corresponding unprofiled methods. Profiling
 aggregation does not create a cursor. Search and Aggregate profiling require Search
-2.2 or later; Hybrid profiling requires Redis 8.4 or later with Search. All three forms
+2.2 or later; Hybrid profiling requires [Redis 8.8 or later](https://redis.io/docs/latest/develop/whats-new/8-8/#ftprofile-hybrid) with Search. All three forms
 are tested against Redis 8.10 over RESP2 and RESP3. Server errors pass through unchanged,
 including errors from older servers that do not support the selected profile form.
 The typed profile reader targets the Redis 8.10 field/value layouts; incompatible

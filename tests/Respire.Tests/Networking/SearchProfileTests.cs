@@ -194,6 +194,35 @@ public class SearchProfileTests
     }
 
     [Test]
+    [Arguments(2, "scalar")]
+    [Arguments(3, "scalar")]
+    [Arguments(2, "missing-profile")]
+    [Arguments(3, "missing-profile")]
+    [Arguments(2, "extra-tail")]
+    [Arguments(3, "extra-tail")]
+    public async Task UnknownHybridEnvelopeReportsObservedShape(int protocol, string kind)
+    {
+        object envelope = kind switch
+        {
+            "scalar" => "bad",
+            "missing-profile" => Object("total_results", 0L, "results", Array.Empty<object>()),
+            _ => new object[] { "total_results", 0L, Object(), Object() },
+        };
+        var type = (kind, protocol) switch
+        {
+            ("scalar", _) => RespDataType.BulkString,
+            ("missing-profile", 3) => RespDataType.Map,
+            _ => RespDataType.Array,
+        };
+        var count = kind == "scalar" ? 0 : 4;
+        await using var server = Server(_ => Frame(envelope, protocol));
+        await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+        var error = await Assert.That(async () => await client.Search.ProfileHybridSearchAsync("idx", Hybrid()))
+            .Throws<InvalidOperationException>();
+        await Assert.That(error!.Message).Contains($"type {type}, element count {count}");
+    }
+
+    [Test]
     [Arguments(2)]
     [Arguments(3)]
     public async Task ValidationCancellationAndPrefixesSendNoProfileCommand(int protocol)
