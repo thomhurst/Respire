@@ -1,6 +1,6 @@
 """Reproduce the subkey-cache spike against an owned, disposable Redis container.
 
-Requires Python 3.10+ and Docker. No Python packages are required.
+Requires Python 3.10+ and a Linux amd64/arm64 Docker daemon. No Python packages are required.
 Run from the repository root: python scripts/probes/subkey-notifications.py
 """
 
@@ -9,6 +9,7 @@ import socket
 import subprocess
 import sys
 import time
+import uuid
 
 IMAGE = "redis:8.8.3-alpine@sha256:0b2b77d3ea5078274795e3177cdbdada8b96316684a38911d528534ed679b5ec"
 
@@ -18,8 +19,21 @@ def expect(condition, evidence="Unexpected Redis response"):
         raise AssertionError(evidence)
 
 
-def docker(*arguments):
-    return subprocess.check_output(["docker", *arguments], text=True).strip()
+def docker(*arguments, timeout=300):
+    return subprocess.check_output(["docker", *arguments], text=True, timeout=timeout).strip()
+
+
+def verify_platform():
+    platform = docker("info", "--format", "{{.OSType}}/{{.Architecture}}")
+    supported = {
+        "linux/amd64": "linux/amd64", "linux/x86_64": "linux/amd64",
+        "linux/arm64": "linux/arm64", "linux/aarch64": "linux/arm64",
+    }
+    if platform not in supported:
+        raise RuntimeError(
+            f"The RedisJSON probe requires a Linux amd64/arm64 Docker daemon; got {platform!r}."
+        )
+    return supported[platform]
 
 
 class Connection:
@@ -198,8 +212,12 @@ def wait_for_redis(port):
 
 
 def main():
-    container = docker("run", "--detach", "--rm", "--publish", "127.0.0.1::6379", IMAGE)
+    platform = verify_platform()
+    # Know the owned container's identity even if docker run times out after creating it.
+    container = "respire-subkey-probe-" + uuid.uuid4().hex
     try:
+        docker("run", "--name", container, "--platform", platform,
+               "--detach", "--rm", "--publish", "127.0.0.1::6379", IMAGE)
         print("registry image pin:", IMAGE, flush=True)
         print("local image ID:", docker("inspect", "--format", "{{.Image}}", container), flush=True)
         print("registry digests:", docker("image", "inspect", "--format", "{{json .RepoDigests}}", IMAGE), flush=True)
@@ -208,13 +226,16 @@ def main():
         run(port)
     except Exception:
         print(f"Probe failed; logs for owned container {container}:", file=sys.stderr)
-        subprocess.run(["docker", "logs", container], check=False)
+        try:
+            subprocess.run(["docker", "logs", container], check=False, timeout=30)
+        except (OSError, subprocess.SubprocessError) as diagnostics_failure:
+            print(f"Container logs also failed: {diagnostics_failure}", file=sys.stderr)
         raise
     finally:
         probe_failure = sys.exc_info()[1]
         try:
-            docker("stop", container)
-        except (OSError, subprocess.CalledProcessError) as cleanup_failure:
+            docker("stop", container, timeout=30)
+        except (OSError, subprocess.SubprocessError) as cleanup_failure:
             if probe_failure is None:
                 raise
             print(f"Container cleanup also failed: {cleanup_failure}", file=sys.stderr)
