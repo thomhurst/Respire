@@ -9,6 +9,39 @@ namespace Respire.Tests.Networking;
 public class ServerClientCommandTests
 {
     [Test]
+    [NotInParallel]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task RetiredHandleNeverListsOrKillsOnAnotherSocket(bool kill, bool telemetry)
+    {
+        using var listener = new System.Diagnostics.ActivityListener
+        {
+            ShouldListenTo = source => telemetry && source.Name == "Respire",
+            Sample = (ref System.Diagnostics.ActivityCreationOptions<System.Diagnostics.ActivityContext> _) =>
+                System.Diagnostics.ActivitySamplingResult.AllData,
+        };
+        System.Diagnostics.ActivitySource.AddActivityListener(listener);
+        await using var server = new FakeRespServer(2, Integer(0));
+        await using var client = await RespireClient.ConnectAsync(Options(server.Port) with { Connections = 2 });
+        var original = client.Core.Multiplexer.GetConnection();
+        var handle = new RespireServerClientConnection(client, original, 42);
+        await original.RetireAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+        await Assert.That(async () =>
+        {
+            if (kill) await handle.KillClientsAsync(new() { Ids = [43] });
+            else await handle.ClientsAsync(new() { Ids = [43] });
+        }).ThrowsExactly<Respire.Networking.RespireConnectionRetiredException>();
+        await Assert.That(server.CommandsSeen).IsEqualTo(0);
+
+        // A healthy sibling remains available, so success cannot be explained by no reroute target.
+        await Assert.That(await client.Server.KillClientsAsync(new() { Ids = [43] })).IsEqualTo(0);
+        await Assert.That(server.CommandsSeen).IsEqualTo(1);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task CommandsUsePinnedConnectionAndReturnOwnedData(bool resp3)

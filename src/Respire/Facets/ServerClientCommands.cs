@@ -56,7 +56,7 @@ internal sealed partial class ServerCommands
     {
         cancellationToken.ThrowIfCancellationRequested();
         var connection = await client.AcquireConnectionAsync(cancellationToken).ConfigureAwait(false);
-        using var reply = await client.SendOnConnectionAsync("CLIENT ID", connection, new Cmd(ClientIdVerb), cancellationToken).ConfigureAwait(false);
+        using var reply = await client.SendOnPinnedConnectionAsync("CLIENT ID", connection, new Cmd(ClientIdVerb), cancellationToken).ConfigureAwait(false);
         if (reply.Type != RespDataType.Integer || reply.AsInteger() <= 0)
             throw new RespireProtocolException("CLIENT ID must return a positive integer.");
         return new RespireServerClientConnection(client, connection, reply.AsInteger());
@@ -229,7 +229,7 @@ public sealed partial class RespireServerClientConnection
     {
         ObjectDisposedException.ThrowIf(_client.Core.Disposed, _client);
         cancellationToken.ThrowIfCancellationRequested();
-        return _client.SendOnConnectionAsync(operation, _connection, command, cancellationToken);
+        return _client.SendOnPinnedConnectionAsync(operation, _connection, command, cancellationToken);
     }
 
     private async ValueTask OkAsync<TCommand>(string operation, TCommand command, CancellationToken cancellationToken)

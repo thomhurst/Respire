@@ -897,10 +897,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         CommandDeadline commandDeadline = default,
         bool allowStreamingConnectionReroute = true,
         DedicatedStreamRoute streamingRoute = default,
-        string? preferredZone = null)
+        string? preferredZone = null,
+        bool pinToConnection = false)
         where TCommand : struct, IRespCommand
         => SendCoreAsync(
             in command, discardRepliesBefore: 0, throwOnError: true, cancellationToken, commandName,
+            pinToConnection: pinToConnection,
             commandDeadline: commandDeadline, allowStreamingConnectionReroute: allowStreamingConnectionReroute,
             streamingRoute: streamingRoute, preferredZone: preferredZone);
 
