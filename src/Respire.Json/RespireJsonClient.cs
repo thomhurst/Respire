@@ -25,6 +25,8 @@ namespace Respire.Json;
 /// </remarks>
 public sealed class RespireJsonClient
 {
+    private const int MaxStackAllocatedOffsets = 128;
+
     private readonly IRespireJsonCommandsImplementation _commands;
     private readonly IRespireJsonModifierCommandsImplementation _modifiers;
     private SerializationBuffer? _availableBuffer;
@@ -240,7 +242,7 @@ public sealed class RespireJsonClient
         var count = entries.Count;
         var arguments = new RespireValue[checked(count * 3)];
         int[]? rentedEnds = null;
-        Span<int> ends = count <= 128 ? stackalloc int[count] : (rentedEnds = ArrayPool<int>.Shared.Rent(count));
+        Span<int> ends = count <= MaxStackAllocatedOffsets ? stackalloc int[count] : (rentedEnds = ArrayPool<int>.Shared.Rent(count));
         try
         {
             for (var index = 0; index < count; index++)
