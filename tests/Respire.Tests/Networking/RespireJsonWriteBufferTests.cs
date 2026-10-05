@@ -1,9 +1,11 @@
 using System.Text;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Respire.Json;
+using Respire.Networking;
 using Respire.Protocol;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -29,7 +31,7 @@ public partial class RespireJsonClientTests
             Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
-            CommandTimeout = expire ? TimeSpan.FromSeconds(2) : null,
+            CommandTimeout = expire ? TimeSpan.FromMinutes(1) : null,
             TestingStreamFactory = async (host, port, token) =>
             {
                 var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
@@ -54,7 +56,15 @@ public partial class RespireJsonClientTests
         {
             await transport.WriteStarted.Task.WaitAsync(timeout.Token);
             if (expire)
+            {
+                var connection = client.Core.Multiplexer.GetConnection();
+                var ring = (InflightRing)typeof(RespireConnection).GetField("_inflight",
+                    BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(connection)!;
+                await Assert.That(ring.TryPeek(out var source)).IsTrue();
+                // Expire only after the transport holds the frame, without waiting on a timer.
+                ring.SweepExpired(source.Deadline.Ticks + 1, TimeSpan.FromMinutes(1), connection);
                 await Assert.That(async () => await pending.WaitAsync(timeout.Token)).Throws<RespireTimeoutException>();
+            }
             else
             {
                 cancellation.Cancel();
@@ -125,7 +135,9 @@ public partial class RespireJsonClientTests
             await paused.WriteStarted.Task.WaitAsync(deadline.Token);
             var originalFrame = paused.PendingWrite.ToArray();
             await Assert.That(originalFrame.AsSpan().IndexOf(JsonSerializer.SerializeToUtf8Bytes(first, info)) >= 0).IsTrue();
-            server.CloseConnections();
+            await server.ConnectionAccepted.WaitAsync(deadline.Token);
+            // Explicitly reset this socket: a graceful close can wait on the unfinished frame.
+            server.CloseConnection(0);
             await Assert.That(async () => await pending.WaitAsync(deadline.Token)).Throws<RespireConnectionException>();
             // Serialize through the same client after its first rental was cleared. The canceled
             // token prevents sending on the dead connection, but serialization still precedes dispatch.
