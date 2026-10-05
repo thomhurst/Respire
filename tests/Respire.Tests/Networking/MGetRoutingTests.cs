@@ -26,6 +26,8 @@ public class MGetRoutingTests
                 ? "-ERR MGET reached the wrong slot owner\r\n"u8.ToArray() : SetupReply(command),
         };
         var slot = ClusterHash.GetSlot("tenant:{route}a");
+        await Assert.That(slot).IsGreaterThan(0);
+        await Assert.That(slot).IsLessThan(16383);
         // Only the exact validated slot belongs to target. Any other retained slot
         // reaches otherOwner and fails instead of silently returning the expected values.
         var topology = Encoding.ASCII.GetBytes("*3\r\n"
@@ -53,6 +55,35 @@ public class MGetRoutingTests
         await Assert.That(otherOwner.ReceivedCommands.Any(command => command.StartsWith("MGET ", StringComparison.Ordinal))).IsFalse();
         await Assert.That(async () => await client.Strings.GetManyAsync("{first}a", "{second}b"))
             .ThrowsExactly<RespireServerException>().WithMessage("CROSSSLOT Keys in request don't hash to the same slot");
+    }
+
+    [Test]
+    public async Task MGetRemainsEligibleForHedging()
+    {
+        await using var primary = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("MGET ", StringComparison.Ordinal)
+                ? "*2\r\n$1\r\na\r\n$1\r\nb\r\n"u8.ToArray() : SetupReply(command),
+        };
+        await using var replica = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "ROLE"
+                ? "*5\r\n$5\r\nslave\r\n$9\r\n127.0.0.1\r\n:6379\r\n$9\r\nconnected\r\n:0\r\n"u8.ToArray() : SetupReply(command),
+            SuppressReply = command => command.StartsWith("MGET ", StringComparison.Ordinal),
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+            ReadFrom = RespireReadFrom.ReplicaPreferred,
+            HedgedReads = new() { Delay = TimeSpan.FromMilliseconds(10), MaximumExtraLoadPercent = 100 },
+        });
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await Assert.That(await client.Strings.GetManyAsync(["one", "two"], deadline.Token))
+            .IsEquivalentTo(new string?[] { "a", "b" }, CollectionOrdering.Matching);
+        await Assert.That(replica.ReceivedCommands.Contains("MGET one two")).IsTrue();
+        await Assert.That(primary.ReceivedCommands.Contains("MGET one two")).IsTrue();
     }
 
     private static string SlotRange(int first, int last, int port, string node)
