@@ -428,12 +428,12 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             lock (_queryLock)
             {
                 Interlocked.Increment(ref _queryEpoch);
-                removed = Volatile.Read(ref _store).Remove(in key, CacheRemoval.Invalidation);
+                removed = Volatile.Read(ref _store).Invalidate(in key);
             }
         }
         finally { EndSharedReadInvalidation(); }
-        RespireTelemetry.RecordCacheEvictions(removed,
-            reason == RespireClientCacheInvalidationReason.ServerInvalidation ? "invalidation" : null);
+        if (reason == RespireClientCacheInvalidationReason.ServerInvalidation)
+            RespireTelemetry.RecordCacheEvictions(removed, "invalidation");
         Interlocked.Increment(ref _invalidations);
         PublishInvalidation(in key, reason);
         RespireTelemetry.ClientCacheInvalidations.Add(1);
@@ -661,7 +661,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
 
     private static void PublishFlushMetrics(int removed, bool continuityLost, string? reason = null)
     {
-        if (removed > 0)
+        if (removed > 0 && reason is not null)
         {
             RespireTelemetry.RecordCacheEvictions(removed, reason);
         }
@@ -1083,7 +1083,9 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                 : now + (long)duration;
         }
 
-        public int Remove(in RespireKey key, CacheRemoval reason)
+        // Key invalidation returns its claimed response count to the coordinator, which
+        // publishes telemetry after this method releases all cache locks.
+        public int Invalidate(in RespireKey key)
         {
             var removed = 0;
             CacheEntry? entry;
@@ -1091,11 +1093,11 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             lock (_removalLock)
             {
                 _entries.TryRemove(key, out entry);
+                if (entry is not null) Interlocked.Add(ref _sizeBytes, -entry.Size);
                 reportRemoval = !_retired;
             }
             if (entry is not null)
             {
-                RecordRemoval(entry.Size, reason, reportRemoval);
                 if (reportRemoval) removed++;
             }
 
@@ -1112,12 +1114,12 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                     lock (_removalLock)
                     {
                         _queries.TryRemove(query, out queryEntry);
+                        if (queryEntry is not null) Interlocked.Add(ref _sizeBytes, -queryEntry.Size);
                         reportRemoval = !_retired;
                     }
                     if (queryEntry is not null)
                     {
                         RemoveDependencies(in query, queryEntry.Dependencies);
-                        RecordRemoval(queryEntry.Size, reason, reportRemoval);
                         if (reportRemoval) removed++;
                     }
                 }
@@ -1136,15 +1138,15 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                     return false;
                 }
                 reportRemoval = !_retired;
+                Interlocked.Add(ref _sizeBytes, -expected.Size);
             }
 
-            RecordRemoval(expected.Size, reason, reportRemoval);
+            RecordRemoval(reason, reportRemoval);
             return true;
         }
 
-        private void RecordRemoval(long size, CacheRemoval reason, bool reportRemoval)
+        private void RecordRemoval(CacheRemoval reason, bool reportRemoval)
         {
-            Interlocked.Add(ref _sizeBytes, -size);
             if (reportRemoval && reason is (CacheRemoval.Capacity or CacheRemoval.Expiration)) _recordRemoval(reason);
         }
 
@@ -1164,11 +1166,13 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                         return false;
                     }
                     reportRemoval = !_retired;
+                    // Account for removal before another publication can trim against the old size.
+                    Interlocked.Add(ref _sizeBytes, -expected.Size);
                 }
 
                 RemoveDependencies(in query, expected.Dependencies);
             }
-            RecordRemoval(expected.Size, reason, reportRemoval);
+            RecordRemoval(reason, reportRemoval);
             return true;
         }
 
@@ -1287,7 +1291,6 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
 
     internal enum CacheRemoval
     {
-        Invalidation,
         Capacity,
         Expiration,
     }

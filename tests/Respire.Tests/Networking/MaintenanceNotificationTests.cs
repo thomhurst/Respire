@@ -1429,23 +1429,23 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
+    [NotInParallel]
     public async Task FailingRetirementCacheFenceObserverDoesNotFailPublishedHandoff()
     {
-        // A distinctive count identifies this test's continuity flush among process-wide metrics.
-        const int continuityEvictions = 7919;
+        // Isolate the process-wide continuity metric from other handoffs.
         await using var source = Server(maxConnections: 2);
         await using var target = Server(maxConnections: 2);
         var published = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var evictions = MeterFor("redis.client.csc.evictions", (value, _) =>
+        using var continuity = MeterFor("respire.client_cache.continuity_flushes", (value, _) =>
         {
-            if (value == continuityEvictions) published.TrySetResult();
+            if (value == 1) published.TrySetResult();
         });
         var logger = new HandoffFailureLogger();
         await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
             logger: logger,
             options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true) with
             {
-                CredentialCacheInvalidation = () => continuityEvictions,
+                CredentialCacheInvalidation = () => 1,
                 CredentialCacheRetirementFence = () => throw new InvalidOperationException("Metrics observer failure."),
             });
 

@@ -338,7 +338,7 @@ internal static class RespireTelemetry
         description: "Key invalidations observed by the client-side cache.");
 
     public static readonly Counter<long> ClientCacheEvictions = Meter.CreateCounter<long>(
-        "redis.client.csc.evictions", "{eviction}", "Cached responses removed, optionally classified by capacity, expiration, or server invalidation.");
+        "redis.client.csc.evictions", "{eviction}", "Cached responses removed by capacity limits, expiration, or server invalidation.");
 
     internal static void RecordCacheEvictions(long count, string? reason = null)
     {

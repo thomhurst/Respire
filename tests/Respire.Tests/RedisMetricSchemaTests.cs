@@ -42,6 +42,7 @@ public class RedisMetricSchemaTests
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await Assert.That(store.SizeBytes).IsEqualTo(capacity ? 100L : 0L);
             publication = Task.Run(() =>
             {
                 var next = new ClientCacheCommandKey("HGET", "query-callback", "next");
@@ -89,7 +90,8 @@ public class RedisMetricSchemaTests
             invalidating = Task.Run(() => cache.Invalidate(in key, RespireClientCacheInvalidationReason.ServerInvalidation));
             // The scalar is removed, but dependency removal is blocked on the held gate.
             await Assert.That(SpinWait.SpinUntil(() => store.Count == 1, TimeSpan.FromSeconds(10))).IsTrue();
-            cache.Clear();
+            using var flush = RespValue.Array(RespValue.SimpleString("invalidate"u8.ToArray()), RespValue.Null);
+            cache.HandlePush(in flush);
         }
         finally
         {
@@ -120,14 +122,15 @@ public class RedisMetricSchemaTests
         else Fill(cache, key);
         const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         var store = (ClientSideCacheCoordinator.CacheStore)typeof(ClientSideCacheCoordinator).GetField("_store", flags)!.GetValue(cache)!;
-        cache.Clear();
+        using var flush = RespValue.Array(RespValue.SimpleString("invalidate"u8.ToArray()), RespValue.Null);
+        cache.HandlePush(in flush);
         var found = queryEntry ? store.TryGet(in query, out _) : store.TryGet(in key, out _);
         await Assert.That(found).IsFalse();
         await Assert.That(capture.Items.Where(item => item.Name == "redis.client.csc.evictions").Sum(item => item.Value)).IsEqualTo(1);
     }
 
     [Test]
-    public async Task ExpirationAndUnclassifiedFlushUseAccurateReasons()
+    public async Task ExpirationUsesTtlReason()
     {
         using var capture = new Capture();
         var cache = new ClientSideCacheCoordinator(new() { LocalExpiration = TimeSpan.Zero });
@@ -136,13 +139,34 @@ public class RedisMetricSchemaTests
         await Assert.That(cache.TryGet(in key, out _)).IsFalse();
         var expired = capture.Items.Single(item => item.Name == "redis.client.csc.evictions");
         await Assert.That(expired.Tags["redis.client.csc.reason"]).IsEqualTo("ttl");
-        var unexpired = new ClientSideCacheCoordinator(new());
-        Fill(unexpired, new("flush-one"));
-        Fill(unexpired, new("flush-two"));
-        unexpired.Clear();
-        var flushed = capture.Items.Last(item => item.Name == "redis.client.csc.evictions");
-        await Assert.That(flushed.Value).IsEqualTo(2);
-        await Assert.That(flushed.Tags.ContainsKey("redis.client.csc.reason")).IsFalse();
+    }
+
+    [Test]
+    [Arguments("clear")]
+    [Arguments("mutation")]
+    [Arguments("unknown")]
+    [Arguments("continuity")]
+    [Arguments("deferred-continuity")]
+    [Arguments("moving")]
+    public async Task LocalRemovalsDoNotCountAsStandardEvictions(string operation)
+    {
+        using var capture = new Capture();
+        var cache = new ClientSideCacheCoordinator(new());
+        var key = new RespireKey("local-removal");
+        Fill(cache, key);
+        switch (operation)
+        {
+            case "clear": cache.Clear(); break;
+            case "mutation": cache.Invalidate(in key); break;
+            case "unknown": cache.FlushForUnknownCommand(); break;
+            case "continuity": cache.FlushForContinuityLoss(); break;
+            case "deferred-continuity":
+                ClientSideCacheCoordinator.PublishContinuityFlushMetrics(cache.FlushForContinuityLossWithoutMetrics());
+                break;
+            case "moving": cache.FlushForMovingRetirementFence(); break;
+        }
+        await Assert.That(cache.Count).IsEqualTo(0);
+        await Assert.That(capture.Items.Any(item => item.Name == "redis.client.csc.evictions")).IsFalse();
     }
 
     [Test]

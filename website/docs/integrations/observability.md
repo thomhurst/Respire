@@ -40,8 +40,9 @@ The meter name remains `Respire`.
 The four standardized counters carry `redis.client.library=Respire:<version>` and
 `db.system.name=redis`. Keys, command values, and credentials are never metric labels.
 An invalidated key can remove several responses or none; eviction counts reflect actual
-removals. Local mutation, explicit clearing, and continuity flushes omit the optional
-eviction reason instead of claiming they received server invalidations.
+removals caused by capacity limits, local expiration, or server invalidation. Local
+mutation, explicit clearing, and continuity flushes do not increment this standardized
+counter. Respire-specific invalidation and continuity-flush instruments remain available.
 
 This prerelease replaces the old cache and maintenance names without legacy aliases or
 dual emission. Update exporter filters and dashboards when upgrading. The broader
