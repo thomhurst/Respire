@@ -4,6 +4,7 @@ using Respire.Protocol;
 namespace Respire.Search;
 
 /// <summary>Options for FT.SPELLCHECK.</summary>
+/// <remarks>Callers must prevent concurrent mutation of dictionary lists while invoking SpellCheckAsync. Each call captures options before its first asynchronous wait.</remarks>
 public sealed record RespireSearchSpellCheckOptions
 {
     /// <summary>Maximum Levenshtein distance, from 1 through 4. Null uses the server default (1).</summary>
@@ -66,6 +67,8 @@ public sealed record RespireSearchSpellingCorrection(string Term, IReadOnlyList<
 
 public sealed partial class RespireSearchClient
 {
+    private const string SpellCheckCommand = "FT.SPELLCHECK";
+
     /// <summary>Adds dictionary terms with FT.DICTADD and returns the number newly inserted.</summary>
     /// <remarks>Search 1.4 or later. Dictionaries are independent of indexes; commands route by dictionary name without fan-out.</remarks>
     public async ValueTask<long> AddDictionaryTermsAsync(string dictionary, IReadOnlyList<string> terms, CancellationToken cancellationToken = default)
@@ -120,16 +123,15 @@ public sealed partial class RespireSearchClient
 
     private static RespireSearchSpellingCorrection[] ParseSpellCheckResp2(RespireResult result)
     {
-        const string command = "FT.SPELLCHECK";
-        RequireSpellArray(result, command);
+        RequireSpellArray(result);
         var corrections = new RespireSearchSpellingCorrection[result.Count];
         for (var i = 0; i < corrections.Length; i++)
         {
             var entry = result[i];
-            RequireSpellArray(entry, command);
-            if (entry.Count != 3 || RespireSearchReply.ReadString(entry[0], command) != "TERM")
-                throw RespireSearchReply.Unexpected(command, "a three-element TERM entry was expected");
-            corrections[i] = new(RespireSearchReply.ReadString(entry[1], command),
+            RequireSpellArray(entry);
+            if (entry.Count != 3 || RespireSearchReply.ReadString(entry[0], SpellCheckCommand) != "TERM")
+                throw RespireSearchReply.Unexpected(SpellCheckCommand, "a three-element TERM entry was expected");
+            corrections[i] = new(RespireSearchReply.ReadString(entry[1], SpellCheckCommand),
                 ReadSpellingSuggestions(entry[2], RespDataType.Array, termIndex: 1, scoreIndex: 0));
         }
         return corrections;
@@ -137,17 +139,16 @@ public sealed partial class RespireSearchClient
 
     private static RespireSearchSpellingCorrection[] ParseSpellCheckResp3(RespireResult result)
     {
-        const string command = "FT.SPELLCHECK";
         // Redis 8.10 wraps a term-to-suggestions map in a single "results" member.
-        if (result.Count != 2 || RespireSearchReply.ReadString(result[0], command) != "results")
-            throw RespireSearchReply.Unexpected(command, "a results map was expected");
+        if (result.Count != 2 || RespireSearchReply.ReadString(result[0], SpellCheckCommand) != "results")
+            throw RespireSearchReply.Unexpected(SpellCheckCommand, "a results map was expected");
         var terms = result[1];
         if (terms.Type != RespDataType.Map || (terms.Count & 1) != 0)
-            throw RespireSearchReply.Unexpected(command, "a term map was expected");
+            throw RespireSearchReply.Unexpected(SpellCheckCommand, "a term map was expected");
         var corrections = new RespireSearchSpellingCorrection[terms.Count / 2];
         for (var i = 0; i < corrections.Length; i++)
         {
-            corrections[i] = new(RespireSearchReply.ReadString(terms[i * 2], command),
+            corrections[i] = new(RespireSearchReply.ReadString(terms[i * 2], SpellCheckCommand),
                 ReadSpellingSuggestions(terms[i * 2 + 1], RespDataType.Map, termIndex: 0, scoreIndex: 1));
         }
         return corrections;
@@ -156,34 +157,32 @@ public sealed partial class RespireSearchClient
     private static RespireSearchSpellingSuggestion[] ReadSpellingSuggestions(
         RespireResult result, RespDataType pairType, int termIndex, int scoreIndex)
     {
-        const string command = "FT.SPELLCHECK";
-        RequireSpellArray(result, command);
+        RequireSpellArray(result);
         var suggestions = new RespireSearchSpellingSuggestion[result.Count];
         for (var i = 0; i < suggestions.Length; i++)
         {
             var pair = result[i];
             if (pair.Type != pairType || pair.IsNull || pair.Count != 2)
-                throw RespireSearchReply.Unexpected(command, "a suggestion/score pair was expected");
-            suggestions[i] = new(RespireSearchReply.ReadString(pair[termIndex], command), ReadSpellingScore(pair[scoreIndex]));
+                throw RespireSearchReply.Unexpected(SpellCheckCommand, "a suggestion/score pair was expected");
+            suggestions[i] = new(RespireSearchReply.ReadString(pair[termIndex], SpellCheckCommand), ReadSpellingScore(pair[scoreIndex]));
         }
         return suggestions;
     }
 
     private static double ReadSpellingScore(RespireResult value)
     {
-        const string command = "FT.SPELLCHECK";
         double score;
         if (value.Type == RespDataType.Double) score = value.AsDouble();
-        else if (!double.TryParse(RespireSearchReply.ReadString(value, command), NumberStyles.Float, CultureInfo.InvariantCulture, out score))
-            throw RespireSearchReply.Unexpected(command, "a numeric score was expected");
+        else if (!double.TryParse(RespireSearchReply.ReadString(value, SpellCheckCommand), NumberStyles.Float, CultureInfo.InvariantCulture, out score))
+            throw RespireSearchReply.Unexpected(SpellCheckCommand, "a numeric score was expected");
         if (!double.IsFinite(score) || score < 0)
-            throw RespireSearchReply.Unexpected(command, "a finite nonnegative score was expected");
+            throw RespireSearchReply.Unexpected(SpellCheckCommand, "a finite nonnegative score was expected");
         return score;
     }
 
-    private static void RequireSpellArray(RespireResult value, string command)
+    private static void RequireSpellArray(RespireResult value)
     {
         if (value.Type != RespDataType.Array || value.IsNull)
-            throw RespireSearchReply.Unexpected(command, "an array was expected");
+            throw RespireSearchReply.Unexpected(SpellCheckCommand, "an array was expected");
     }
 }
