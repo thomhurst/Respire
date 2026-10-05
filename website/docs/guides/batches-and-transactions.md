@@ -126,7 +126,7 @@ await transaction.CommitAsync();
 Execution remains specific to the concrete type: batches call `ExecuteAsync`; transactions call
 `CommitAsync`.
 
-Blocking variants (a `waitFor` argument, i.e. `BLPOP` / `BLMOVE`) and streaming operations (`Keys.ScanAsync`, `Strings.GetLeaseAsync`) have no deferred form — a queue cannot block, and a lease borrows reply memory that is released once the batch completes. `Locks` and server administration other than the flush commands below remain client-only. Streams expose the non-blocking subset below; blocking reads, consumer loops, and group administration remain immediate operations.
+Blocking variants (a `waitFor` argument, i.e. `BLPOP` / `BLMOVE`) and streaming operations (`Keys.ScanAsync`, `Strings.GetLeaseAsync`) have no deferred form — a queue cannot block, and a lease borrows reply memory that is released once the batch completes. `Locks` and server administration other than flushes and filtered CLIENT LIST/KILL remain client-only. Streams expose the non-blocking subset below; blocking reads, consumer loops, and group administration remain immediate operations.
 
 ## Deferred server flushes
 
@@ -144,6 +144,12 @@ primaries; that fan-out is not atomic across the Cluster.
 
 The raw `Execute` queue method supports known nonblocking command forms; see
 [deferred raw commands](./deferred-raw-commands.md).
+
+`Server.Clients(filter)` and `Server.KillClients(filter)` queue typed CLIENT LIST/KILL
+operations on the execution node. Filters and client IDs are server-local; a key prefix
+does not restrict them. KILL requires `AllowAdmin` and returns the number closed. See
+[client filters](./client-administration.md#filtering-and-closing-clients) for connection
+scope, snapshots, and Redis/Valkey version requirements.
 
 ## Deferred Streams
 

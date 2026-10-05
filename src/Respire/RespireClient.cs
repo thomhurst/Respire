@@ -3163,13 +3163,15 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken,
         bool sendAsking = false,
         CommandDeadline commandDeadline = default,
-        bool allowStreamingConnectionReroute = true)
+        bool allowStreamingConnectionReroute = true,
+        bool pinToConnection = false)
         where TCommand : struct, IRespCommand
         => sendAsking
             ? ClusterRouter.SendAskingAsync(connection, in command, cancellationToken, operation,
                 commandDeadline, allowStreamingConnectionReroute, preferredZone: GetTransportReadZone(in command))
             : connection.SendCheckedAsync(in command, cancellationToken, operation,
-                commandDeadline, allowStreamingConnectionReroute, preferredZone: GetTransportReadZone(in command));
+                commandDeadline, allowStreamingConnectionReroute, preferredZone: GetTransportReadZone(in command),
+                pinToConnection: pinToConnection);
 
     /// <summary>Sends a streaming GET through the current standalone or Cluster route.</summary>
     internal ValueTask<Stream?> SendBulkStreamAsync<TCommand>(
@@ -3405,6 +3407,18 @@ public sealed partial class RespireClient : IRespireClient
         finally { discovery?.Finish(); }
     }
 
+    // Physical handles cannot follow transport retirement to a replacement socket. Keep the
+    // same telemetry/error path, but expose no ASKING route on this pinned entry point.
+    internal ValueTask<RespValue> SendOnPinnedConnectionAsync<TCommand>(
+        string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+        => RespireTelemetry.IsEnabled
+            ? SendOnConnectionInstrumentedAsync(operation, connection, command, cancellationToken,
+                storedProcedureName: null, sendAsking: false, commandDeadline: default,
+                allowStreamingConnectionReroute: false, pinToConnection: true)
+            : SendOnConnectionCoreAsync(operation, connection, command, cancellationToken,
+                allowStreamingConnectionReroute: false, pinToConnection: true);
+
     internal ValueTask<RespValue> SendOnConnectionAsync<TCommand>(
         string operation,
         RespireConnection connection,
@@ -3433,7 +3447,8 @@ public sealed partial class RespireClient : IRespireClient
         string? storedProcedureName,
         bool sendAsking,
         CommandDeadline commandDeadline,
-        bool allowStreamingConnectionReroute)
+        bool allowStreamingConnectionReroute,
+        bool pinToConnection = false)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
@@ -3447,7 +3462,7 @@ public sealed partial class RespireClient : IRespireClient
         {
             var response = await SendOnConnectionCoreAsync(
                     operation, connection, command, cancellationToken, sendAsking,
-                    commandDeadline, allowStreamingConnectionReroute)
+                    commandDeadline, allowStreamingConnectionReroute, pinToConnection)
                 .ConfigureAwait(false);
             telemetry.Complete(
                 operation,

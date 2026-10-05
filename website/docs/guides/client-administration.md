@@ -23,7 +23,8 @@ For a specific endpoint, create a standalone client for that endpoint.
 `IsConnected` is a point-in-time observation. After socket loss or parent disposal,
 operations fail on the original socket. Acquire a new handle when ready to inspect a
 replacement; settings are not replayed after reconnect and do not become client-wide
-connection defaults. Commands remain immediate and are not exposed in deferred queues.
+connection defaults. Connection settings remain immediate. CLIENT LIST/KILL also have
+deferred forms with execution-node scope, described below.
 
 ## Connection settings
 
@@ -97,6 +98,91 @@ concurrency, temporary connections, and cancellation behavior. A temporary inspe
 connection may appear in CLIENT LIST. Results are neither aggregated nor atomic across
 nodes. Discovery errors throw; after discovery, inspect every result's `IsSuccess` or
 `Error`, including cancellation failures, before using its `Value`.
+
+## Filtering and closing clients
+
+`RespireClientFilterOptions` combines supplied filters with logical AND. Multiple `Ids`
+match any ID in the list; `ExcludedIds` excludes every listed ID. ID collections are
+snapshotted when calling or queueing the command. No filter value is key-prefixed.
+
+```csharp
+var filter = new RespireClientFilterOptions
+{
+    Ids = [123, 456],
+};
+RespireServerClientInfo[] matches = await redis.Server.ClientsAsync(filter, cancellationToken);
+var endpoint = await redis.Server.GetClientConnectionAsync();
+long closed = await endpoint.KillClientsAsync(new RespireClientFilterOptions
+{
+    Ids = [123],
+    User = "worker",
+    SkipMe = true,
+}, cancellationToken);
+```
+
+IDs belong to one server. The connection handle runs filters on its known endpoint and
+never switches sockets. The immediate `Server` forms use one normally selected execution
+node. `ClientsOnAllNodesAsync(filter, cancellationToken)` evaluates filters independently
+on every discovered node and returns endpoint-tagged results; there is no KILL fan-out.
+The filtered `Server.ClientsAsync` and `ClientsOnAllNodesAsync` overloads require the token
+argument (use `default` if unused), preserving existing calls such as `ClientsAsync(default)`.
+
+`KillClientsAsync` returns the number closed, including zero, and requires `AllowAdmin`.
+The existing `KillClientAsync(id, ...)` overload retains its boolean return and behavior.
+An empty or `SkipMe`-only KILL filter is rejected unless `AllowUnfilteredKill = true`
+explicitly opts into closing all matching connections. With that opt-in and no `SkipMe`
+value, the command uses `SKIPME yes`. `SkipMe` does not protect other sockets
+owned by the same client. A null value preserves the server default: true for KILL and
+false for LIST. Killing the handle's socket invalidates that handle. Cancellation cannot
+undo connections already closed by the server.
+
+**Exclusion-only filters can close almost every connection on a node.** They count as
+selectors: `ExcludedType = RespireClientType.PubSub`, for example, permits KILL without
+`AllowUnfilteredKill` and selects every non-pub/sub connection except the executing socket
+when `SkipMe` is true. Prefer a positive selector such as an owned client ID when possible.
+`SkipMe` protects only the executing socket, including when the caller owns other pooled
+or multiplexed connections.
+
+Empty excluded addresses, IPs, names, library names, and library versions are rejected
+before sending or queueing because those values can exclude no connections. Empty
+`ExcludedFlags` and `ExcludedCapabilities` instead exclude every connection and select
+none; they remain valid. Null means that the corresponding filter is omitted.
+
+Both batches and transactions expose `Server.Clients(filter)` and `Server.KillClients(filter)`.
+They return owned typed rows and a count respectively. These commands are supported inside
+MULTI/EXEC; their filters run when EXEC executes. A queue targets its execution node, not a
+previously observed client ID's endpoint. In Cluster, keyless batch commands form their own
+routing group; a transaction uses its selected node. For a specific server, use a standalone
+client configured for that endpoint. Queueing never reserves a connection handle's socket.
+
+| Filter | Availability |
+| --- | --- |
+| LIST `Type` / `Ids` | Redis 5 / 6.2 and Valkey |
+| KILL `Type`, single `Ids`, `User`, `Address`, `SkipMe` | Redis and Valkey |
+| KILL `LocalAddress` | Redis 6.2+ and Valkey |
+| KILL `MaximumAgeSeconds` | Redis 7.4+ and Valkey 8+ |
+| KILL multiple `Ids`; LIST `User`, `Address`, `LocalAddress`, `SkipMe`, `MaximumAgeSeconds` | Valkey 8.1+ |
+| `Name`, `IdleSeconds`, `Flags`, `LibraryName`, `LibraryVersion`, `Database`, `Capabilities`, `Ip`, all `Excluded...` filters | Valkey 9+ |
+
+`MaximumAgeSeconds` selects connections at least that old; `IdleSeconds` selects connections
+idle at least that long. Both require positive whole seconds. Database numbers must be
+nonnegative and IDs positive. Unsupported filters remain server errors; Respire does not
+silently remove them or emulate selection with a separate LIST followed by KILL.
+Valkey 9 uses seconds for MAXAGE on both LIST and KILL. Its
+[shared filter implementation](https://github.com/valkey-io/valkey/blob/9.0.0/src/networking.c#L4765)
+compares whole-second connection ages, despite the CLIENT LIST reference's milliseconds wording.
+`RespireClientType.Primary` uses the compatible `MASTER` wire token. For KILL,
+`Replica` uses `SLAVE`, supported before Redis 5 as well as by current Redis/Valkey.
+All typed filter paths, including pinned handles and queues, validate and snapshot options
+synchronously before returning. Invalid options throw immediately, before any command is sent or queued.
+
+Redis through 8.10 accepts LIST `Type` or `Ids` separately, but rejects their combination
+with a syntax error. Valkey 8.1+ supports combined LIST filters. KILL supports combined
+common filters on both servers. Respire preserves these server differences.
+
+Sources: [Redis CLIENT LIST](https://redis.io/docs/latest/commands/client-list/),
+[Redis CLIENT KILL](https://redis.io/docs/latest/commands/client-kill/), and
+[Valkey CLIENT KILL](https://valkey.io/commands/client-kill/).
 
 ## Compatibility
 

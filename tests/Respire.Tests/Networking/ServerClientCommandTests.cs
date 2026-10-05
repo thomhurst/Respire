@@ -9,6 +9,39 @@ namespace Respire.Tests.Networking;
 public class ServerClientCommandTests
 {
     [Test]
+    [NotInParallel]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task RetiredHandleNeverListsOrKillsOnAnotherSocket(bool kill, bool telemetry)
+    {
+        using var listener = new System.Diagnostics.ActivityListener
+        {
+            ShouldListenTo = source => telemetry && source.Name == "Respire",
+            Sample = (ref System.Diagnostics.ActivityCreationOptions<System.Diagnostics.ActivityContext> _) =>
+                System.Diagnostics.ActivitySamplingResult.AllData,
+        };
+        System.Diagnostics.ActivitySource.AddActivityListener(listener);
+        await using var server = new FakeRespServer(2, Integer(0));
+        await using var client = await RespireClient.ConnectAsync(Options(server.Port) with { Connections = 2 });
+        var original = client.Core.Multiplexer.GetConnection();
+        var handle = new RespireServerClientConnection(client, original, 42);
+        await original.RetireAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+        await Assert.That(async () =>
+        {
+            if (kill) await handle.KillClientsAsync(new() { Ids = [43] });
+            else await handle.ClientsAsync(new() { Ids = [43] });
+        }).ThrowsExactly<Respire.Networking.RespireConnectionRetiredException>();
+        await Assert.That(server.CommandsSeen).IsEqualTo(0);
+
+        // A healthy sibling remains available, so success cannot be explained by no reroute target.
+        await Assert.That(await client.Server.KillClientsAsync(new() { Ids = [43] })).IsEqualTo(0);
+        await Assert.That(server.CommandsSeen).IsEqualTo(1);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task CommandsUsePinnedConnectionAndReturnOwnedData(bool resp3)
@@ -163,9 +196,11 @@ public class ServerClientCommandTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task ClusterClientListsKeepEndpointSuccessAndFailure(bool verbatim)
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task ClusterClientListsKeepEndpointSuccessAndFailure(bool verbatim, bool filtered)
     {
         await using var replica = new FakeRespServer("-NOPERM CLIENT LIST denied\r\n"u8.ToArray());
         await using var seed = new FakeRespServer(2, Bulk("id=7 addr=a name= db=0 flags=N cmd=client|list age=0 idle=0\n"));
@@ -180,21 +215,32 @@ public class ServerClientCommandTests
             return true;
         };
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with { UseCluster = true });
-        var results = await client.Server.ClientsOnAllNodesAsync();
+        var results = filtered
+            ? await client.Server.ClientsOnAllNodesAsync(new() { Type = RespireClientType.Normal, Ids = [7] }, default)
+            : await client.Server.ClientsOnAllNodesAsync();
         await Assert.That(results.Length).IsEqualTo(2);
         await Assert.That(results.Single(row => row.Endpoint.Port == seed.Port).Value[0].Id).IsEqualTo(7);
         await Assert.That(results.Single(row => row.Endpoint.Port == replica.Port).Error).IsTypeOf<RespireServerException>();
+        var expected = filtered ? "CLIENT LIST TYPE normal ID 7" : "CLIENT LIST";
+        await Assert.That(seed.ReceivedCommands.Contains(expected)).IsTrue();
+        await Assert.That(replica.ReceivedCommands.Contains(expected)).IsTrue();
     }
 
     [Test]
-    public async Task PinnedClusterControlsNeverFollowRedirects()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task PinnedClusterControlsNeverFollowRedirects(bool kill)
     {
         await using var target = new FakeRespServer(FakeRespServer.OkReply);
         await using var seed = new FakeRespServer("*0\r\n"u8.ToArray(), Integer(1),
             Encoding.ASCII.GetBytes($"-MOVED 0 127.0.0.1:{target.Port}\r\n"));
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with { UseCluster = true });
         var connection = await client.Server.GetClientConnectionAsync();
-        var error = await Assert.That(async () => await connection.PauseClientsAsync(TimeSpan.Zero)).ThrowsExactly<RespireServerException>();
+        var error = await Assert.That(async () =>
+        {
+            if (kill) await connection.KillClientsAsync(new() { Ids = [42] });
+            else await connection.PauseClientsAsync(TimeSpan.Zero);
+        }).ThrowsExactly<RespireServerException>();
         await Assert.That(error!.Code).IsEqualTo("MOVED");
         await Assert.That(connection.Endpoint.Port).IsEqualTo(seed.Port);
         await Assert.That(target.CommandsSeen).IsEqualTo(0);
