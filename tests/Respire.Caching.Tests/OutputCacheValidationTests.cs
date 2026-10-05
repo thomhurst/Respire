@@ -11,6 +11,45 @@ namespace Respire.Caching.Tests;
 public class OutputCacheValidationTests
 {
     [Test]
+    public async Task GenerationNamespacesAndUnknownModesFailBeforeConnectingAndAtStartup()
+    {
+        await using var server = new FakeRespServer();
+        await using var client = RespireClient.Create(new RespireOptions { Endpoints = [new("127.0.0.1", server.Port)] });
+        foreach (var prefix in new string?[] { null, "", "plain:", "{}:", "{}{valid}:", "{unclosed:" })
+        {
+            await Assert.That(() => new RespireOutputCacheStore(client, new()
+            { InstanceName = prefix, TaggingMode = RespireOutputCacheTaggingMode.GenerationAware })).Throws<ArgumentException>();
+            var services = new ServiceCollection();
+            services.AddRespireOutputCache(options =>
+            { options.InstanceName = prefix; options.TaggingMode = RespireOutputCacheTaggingMode.GenerationAware; });
+            await using var provider = services.BuildServiceProvider();
+            await Assert.That(() => provider.GetRequiredService<IStartupValidator>().Validate()).ThrowsExactly<OptionsValidationException>();
+        }
+        await Assert.That(() => new RespireOutputCacheStore(client, new() { TaggingMode = (RespireOutputCacheTaggingMode)999 }))
+            .ThrowsExactly<ArgumentOutOfRangeException>();
+        var invalidModeServices = new ServiceCollection();
+        invalidModeServices.AddRespireOutputCache(options => options.TaggingMode = (RespireOutputCacheTaggingMode)999);
+        await using var invalidModeProvider = invalidModeServices.BuildServiceProvider();
+        await Assert.That(() => invalidModeProvider.GetRequiredService<IStartupValidator>().Validate()).ThrowsExactly<OptionsValidationException>();
+        await Assert.That(server.CommandsSeen).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task GenerationCancellationAndLifetimeOverflowDoNotSend()
+    {
+        await using var server = new FakeRespServer();
+        await using var client = RespireClient.Create(new RespireOptions { Endpoints = [new("127.0.0.1", server.Port)] });
+        var store = new RespireOutputCacheStore(client, new()
+        { InstanceName = "{output}:", TaggingMode = RespireOutputCacheTaggingMode.GenerationAware });
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        await Assert.That(async () => await store.SetAsync("key", [], ["tag"], TimeSpan.FromMinutes(1), cancellation.Token))
+            .Throws<OperationCanceledException>();
+        await Assert.That(async () => await store.SetAsync("key", [], ["tag"], TimeSpan.MaxValue)).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(server.CommandsSeen).IsEqualTo(0);
+    }
+
+    [Test]
     [Arguments("one")]
     [Arguments("two")]
     [Arguments("last")]

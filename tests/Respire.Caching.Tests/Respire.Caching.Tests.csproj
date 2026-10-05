@@ -28,6 +28,7 @@
 
     <ItemGroup>
         <Compile Include="..\RedisTestContainer.cs" Link="RedisTestContainer.cs" />
+        <Compile Include="..\Respire.IntegrationTests\RedisClusterTestContainer.cs" Link="RedisClusterTestContainer.cs" />
         <Compile Include="..\Respire.Tests\Networking\FakeRespServer.cs" Link="FakeRespServer.cs" />
         <Using Include="Respire.Testing" />
     </ItemGroup>

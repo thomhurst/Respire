@@ -22,6 +22,8 @@ public static class RespireOutputCacheServiceCollectionExtensions
             .Validate(options => options.CleanupInterval >= TimeSpan.FromMilliseconds(1) && options.CleanupInterval.TotalMilliseconds <= uint.MaxValue - 1,
                 "CleanupInterval must be at least one millisecond and fit a timer interval.")
             .Validate(options => options.TimeProvider is not null, "TimeProvider is required.")
+            .Validate(options => options.HasValidTaggingMode, "TaggingMode must be a defined value.")
+            .Validate(options => options.HasValidGenerationNamespace, "GenerationAware tagging requires a nonempty Redis hash tag in InstanceName.")
             .ValidateOnStart();
         if (configure is not null) services.Configure(configure);
         services.TryAddSingleton(provider => new RespireOutputCacheStore(

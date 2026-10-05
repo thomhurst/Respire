@@ -6,14 +6,16 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Respire.OutputCaching;
 
-/// <summary>Output cache using the Microsoft Redis output cache's value and tag storage format.</summary>
+/// <summary>Output cache with Microsoft-compatible storage or opt-in generation-aware tagging.</summary>
 /// <remarks>
 /// The supplied client remains owned by the caller. Values are stored unchanged, so instances using
-/// Microsoft.AspNetCore.OutputCaching.StackExchangeRedis can share the same InstanceName.
-/// Tag updates and eviction have the same non-transactional concurrency boundary as that store.
-/// Tagged writes require Redis 6.2+ for a shared absolute value/tag expiry deadline.
+/// Microsoft.AspNetCore.OutputCaching.StackExchangeRedis can share the same InstanceName in MicrosoftCompatible mode.
+/// That mode has the Microsoft store's non-transactional tagging boundary. GenerationAware uses a separate
+/// hash format and compares generations atomically before deleting a value; it does not interoperate with Microsoft writers.
+/// MicrosoftCompatible tagged writes require Redis 6.2+ for a shared absolute value/tag expiry deadline.
+/// GenerationAware requires Redis 7+ and an InstanceName with a nonempty Redis hash tag.
 /// </remarks>
-public sealed class RespireOutputCacheStore : IOutputCacheBufferStore
+public sealed partial class RespireOutputCacheStore : IOutputCacheBufferStore
 {
     private static readonly RespireScript RecordTagExpiry = RespireScript.Create("""
         local previous = redis.call('ZSCORE', KEYS[1], ARGV[1])
@@ -30,6 +32,7 @@ public sealed class RespireOutputCacheStore : IOutputCacheBufferStore
     private readonly RespireKey _cleanupLock;
     private readonly TimeProvider _clock;
     private readonly ILogger<RespireOutputCacheStore> _logger;
+    private readonly bool _generationAware;
 
     /// <summary>Creates a store over an existing client without taking ownership of it.</summary>
     public RespireOutputCacheStore(IRespireClient client, RespireOutputCacheOptions? options = null,
@@ -38,11 +41,15 @@ public sealed class RespireOutputCacheStore : IOutputCacheBufferStore
         ArgumentNullException.ThrowIfNull(client);
         options ??= new();
         ArgumentNullException.ThrowIfNull(options.TimeProvider);
+        if (!options.HasValidTaggingMode) throw new ArgumentOutOfRangeException(nameof(options), "TaggingMode must be a defined value.");
+        if (!options.HasValidGenerationNamespace)
+            throw new ArgumentException("GenerationAware tagging requires a nonempty Redis hash tag in InstanceName.", nameof(options));
         _client = client;
-        _valuePrefix = options.InstanceName + "__MSOCV_";
-        _tagPrefix = options.InstanceName + "__MSOCT_";
-        _tagMaster = options.InstanceName + "__MSOCT";
-        _cleanupLock = options.InstanceName + "__MSOCTGC";
+        _generationAware = options.TaggingMode == RespireOutputCacheTaggingMode.GenerationAware;
+        _valuePrefix = options.InstanceName + (_generationAware ? "__RPOCV2_" : "__MSOCV_");
+        _tagPrefix = options.InstanceName + (_generationAware ? "__RPOCT2_" : "__MSOCT_");
+        _tagMaster = options.InstanceName + (_generationAware ? "__RPOCT2" : "__MSOCT");
+        _cleanupLock = options.InstanceName + (_generationAware ? "__RPOCT2GC" : "__MSOCTGC");
         _clock = options.TimeProvider;
         _logger = logger ?? NullLogger<RespireOutputCacheStore>.Instance;
     }
@@ -52,7 +59,9 @@ public sealed class RespireOutputCacheStore : IOutputCacheBufferStore
     {
         ArgumentNullException.ThrowIfNull(key);
         cancellationToken.ThrowIfCancellationRequested();
-        return _client.GetBytesAsync(_valuePrefix + key, cancellationToken);
+        return _generationAware
+            ? _client.Hashes.GetBytesAsync(_valuePrefix + key, PayloadField, cancellationToken)
+            : _client.GetBytesAsync(_valuePrefix + key, cancellationToken);
     }
 
     /// <inheritdoc />
@@ -61,9 +70,18 @@ public sealed class RespireOutputCacheStore : IOutputCacheBufferStore
         ArgumentNullException.ThrowIfNull(key);
         ArgumentNullException.ThrowIfNull(destination);
         cancellationToken.ThrowIfCancellationRequested();
-        using var lease = await _client.Strings.GetLeaseAsync(_valuePrefix + key, cancellationToken).ConfigureAwait(false);
-        if (lease.IsNull) return false;
-        destination.Write(lease.Span);
+        if (_generationAware)
+        {
+            var bytes = await _client.Hashes.GetBytesAsync(_valuePrefix + key, PayloadField, cancellationToken).ConfigureAwait(false);
+            if (bytes is null) return false;
+            destination.Write(bytes);
+        }
+        else
+        {
+            using var lease = await _client.Strings.GetLeaseAsync(_valuePrefix + key, cancellationToken).ConfigureAwait(false);
+            if (lease.IsNull) return false;
+            destination.Write(lease.Span);
+        }
         var flush = await destination.FlushAsync(cancellationToken).ConfigureAwait(false);
         if (flush.IsCanceled) throw new OperationCanceledException(cancellationToken);
         return true;
@@ -91,6 +109,11 @@ public sealed class RespireOutputCacheStore : IOutputCacheBufferStore
         // from outliving its tag references; it also validates timestamp overflow before any I/O.
         var expiresAt = _clock.GetUtcNow() + validFor;
         var expires = expiresAt.ToUnixTimeMilliseconds();
+        if (_generationAware)
+        {
+            await SetGenerationAsync(key, value, tags, expires, cancellationToken).ConfigureAwait(false);
+            return;
+        }
         for (var start = 0; start < tags.Length;)
         {
             using var batch = _client.CreateBatch();
@@ -135,6 +158,11 @@ public sealed class RespireOutputCacheStore : IOutputCacheBufferStore
 
     private async ValueTask EvictMembersAsync(RespireKey tagKey, List<string> members, CancellationToken cancellationToken)
     {
+        if (_generationAware)
+        {
+            await EvictGenerationsAsync(tagKey, members, cancellationToken).ConfigureAwait(false);
+            return;
+        }
         if (members.Count == 1)
         {
             await _client.DeleteAsync([_valuePrefix + members[0]], cancellationToken).ConfigureAwait(false);
@@ -155,7 +183,8 @@ public sealed class RespireOutputCacheStore : IOutputCacheBufferStore
     }
 
     /// <summary>Removes expired tag references. DI registration runs this periodically in a hosted service.</summary>
-    /// <remarks>Shares the Microsoft store's cleanup lock. Each pass removes only scores at or before its captured cutoff.
+    /// <remarks>MicrosoftCompatible shares the Microsoft store's cleanup lock; GenerationAware uses an isolated lock.
+    /// Each pass removes only scores at or before its captured cutoff.
     /// Cancellable lock renewal requires Redis CLIENT ID and CLIENT KILL permissions.</remarks>
     public async ValueTask CollectExpiredTagsAsync(CancellationToken cancellationToken = default)
     {
