@@ -168,6 +168,7 @@ using Respire.Search;
 await using var client = await RespireClient.ConnectAsync("localhost:6379");
 var search = client.Search;
 
+// Create books-v1 and verify its indexing is complete before adding the alias.
 await search.AddAliasAsync("books-live", "books-v1");
 // Build books-v2 and verify its indexing is complete before switching.
 await search.UpdateAliasAsync("books-live", "books-v2");
