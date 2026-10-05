@@ -176,6 +176,17 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             .Distinct().ToArray();
     }
 
+    // A keyless write still needs a primary. Refresh before choosing a representative slot,
+    // so a replica seed or a seed demoted since the previous map is never the default target.
+    internal async ValueTask<int> GetPrimaryRoutingSlotAsync(CancellationToken cancellationToken)
+    {
+        _ = await GetPrimaryEndpointsAsync(cancellationToken).ConfigureAwait(false);
+        var snapshot = RoutingSnapshot;
+        for (var slot = 0; slot < ClusterHash.SlotCount; slot++)
+            if (snapshot[slot].Primary is not null) return slot;
+        throw new RespireConnectionException("No slot-owning primary is available for the keyless write.");
+    }
+
     // Slot-owning primaries of the cached complete map, or null when the map is incomplete or
     // names a retired primary.
     private RespireEndpoint[]? TryGetCachedPrimaryEndpoints()

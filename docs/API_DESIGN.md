@@ -286,6 +286,10 @@ Blocking reads, consumer loops, and group administration remain client-only. See
 [deferred Streams guide](../website/docs/guides/batches-and-transactions.md#deferred-streams).
 Custom `IRespireCommandQueue` implementations must provide the added `Streams` property.
 
+The `Server` facet queues `FlushDatabase` and `FlushAll` with explicit memory-reclamation
+modes and `AllowAdmin` checks. Queued flushes affect only their execution node; immediate
+Cluster flushes visit all discovered primaries. See [server flush modes](SERVER_FLUSH.md).
+
 `Keys.RenameAsync`, `Lists.TrimAsync`, `HyperLogLog.MergeAsync`, and `Strings.SetManyAsync`
 return `ValueTask<bool>`, matching the `RespirePending<bool>` result of their batch and transaction
 counterparts. Each returns `true` only after an `OK` confirmation; an unexpected reply or Redis

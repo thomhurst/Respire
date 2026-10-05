@@ -126,7 +126,21 @@ await transaction.CommitAsync();
 Execution remains specific to the concrete type: batches call `ExecuteAsync`; transactions call
 `CommitAsync`.
 
-Blocking variants (a `waitFor` argument, i.e. `BLPOP` / `BLMOVE`) and streaming operations (`Keys.ScanAsync`, `Strings.GetLeaseAsync`) have no deferred form — a queue cannot block, and a lease borrows reply memory that is released once the batch completes. `Server` and `Locks` remain client-only. Streams expose the non-blocking subset below; blocking reads, consumer loops, and group administration remain immediate operations.
+Blocking variants (a `waitFor` argument, i.e. `BLPOP` / `BLMOVE`) and streaming operations (`Keys.ScanAsync`, `Strings.GetLeaseAsync`) have no deferred form — a queue cannot block, and a lease borrows reply memory that is released once the batch completes. `Locks` and server administration other than the flush commands below remain client-only. Streams expose the non-blocking subset below; blocking reads, consumer loops, and group administration remain immediate operations.
+
+## Deferred server flushes
+
+Both queues expose `Server.FlushDatabase(mode)` and `Server.FlushAll(mode)`, returning
+`RespirePending<bool>` (`true` for an OK reply). `ServerFlushMode.Default` uses the server's
+configured behavior; `Sync` and `Async` explicitly select memory reclamation. All modes remove
+keys logically before replying. `RespireOptions.AllowAdmin` must be enabled before enqueueing.
+A client key prefix does not restrict either command's database-wide or server-wide scope.
+
+Queued flushes affect only their execution node. In Cluster batches, keyless flushes form
+a separate routing group with no ordering guarantee relative to keyed groups. Transactions
+flush their selected node, including when keys queued later select that node. Use immediate
+`redis.Server.FlushDatabaseAsync(mode, cancellationToken)` or `FlushAllAsync(mode, cancellationToken)` to visit all discovered
+primaries; that fan-out is not atomic across the Cluster.
 
 The raw `Execute` queue method supports known nonblocking command forms; see
 [deferred raw commands](./deferred-raw-commands.md).

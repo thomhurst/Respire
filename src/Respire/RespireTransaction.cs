@@ -30,6 +30,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
 
     private IBatchStringCommands? _strings;
     private IBatchKeyCommands? _keys;
+    private IBatchServerCommands? _server;
     private IBatchHashCommands? _hashes;
     private IBatchListCommands? _lists;
     private IBatchSetCommands? _sets;
@@ -61,6 +62,9 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
 
     /// <summary>Generic key management commands. Redis: DEL, EXPIRE, TYPE, …</summary>
     public IBatchKeyCommands Keys => _keys ??= new BatchKeyCommands(this);
+
+    /// <summary>Server flush commands affecting only this transaction's node.</summary>
+    public IBatchServerCommands Server => _server ??= new BatchServerCommands(this);
 
     /// <summary>Hash (field → value map) commands. Redis: HSET, HGET, HGETALL, …</summary>
     public IBatchHashCommands Hashes => _hashes ??= new BatchHashCommands(this);
@@ -412,6 +416,9 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
         async ValueTask<RespValue> SendAsync(CancellationToken token)
         {
             var slot = _hasClusterSlot ? _clusterSlot : (int?)null;
+            if (slot is null && core.Cluster is { } flushCluster
+                && _ops.Exists(static operation => operation.Operation is "FLUSHDB" or "FLUSHALL"))
+                slot = await flushCluster.GetPrimaryRoutingSlotAsync(token).ConfigureAwait(false);
             ClusterRouter.DiscoveryRound? discovery = null;
             var discoveryPending = false;
             try

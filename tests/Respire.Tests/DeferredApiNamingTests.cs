@@ -72,6 +72,7 @@ public class DeferredApiNamingTests
             "Keys",
             "Lists",
             "Scripts",
+            "Server",
             "Sets",
             "SortedSets",
             "Strings",

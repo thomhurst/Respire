@@ -1245,7 +1245,10 @@ public class ClientSideCacheTests
     }
 
     [Test]
-    public async Task ClusterFlush_FencesCacheThroughCompletion()
+    [Arguments(ServerFlushMode.Default, "")]
+    [Arguments(ServerFlushMode.Sync, " SYNC")]
+    [Arguments(ServerFlushMode.Async, " ASYNC")]
+    public async Task ClusterFlush_FencesCacheThroughCompletion(ServerFlushMode mode, string suffix)
     {
         var arrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var target = new FakeRespServer(
@@ -1257,7 +1260,7 @@ public class ClientSideCacheTests
         {
             SuppressReply = command =>
             {
-                if (command != "FLUSHDB") return false;
+                if (command != "FLUSHDB" + suffix) return false;
                 arrived.TrySetResult();
                 return true;
             },
@@ -1280,7 +1283,7 @@ public class ClientSideCacheTests
         await client.GetStringAsync("key");
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
 
-        var flush = client.Server.FlushDatabaseAsync().AsTask();
+        var flush = client.Server.FlushDatabaseAsync(mode, default).AsTask();
         await arrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(client.ClientSideCache.Count).IsEqualTo(0);
         InsertCachedValue(client.Core.ClientCache!, "key", "value");
@@ -1289,7 +1292,7 @@ public class ClientSideCacheTests
         await flush;
 
         await Assert.That(client.ClientSideCache.Count).IsEqualTo(0);
-        await Assert.That(target.ReceivedCommands[^1]).IsEqualTo("FLUSHDB");
+        await Assert.That(target.ReceivedCommands[^1]).IsEqualTo("FLUSHDB" + suffix);
     }
 
     [Test]
@@ -1598,6 +1601,51 @@ public class ClientSideCacheTests
         await server.SendRawAsync(reply);
         await Assert.That(await pending).IsEqualTo(applied);
         await Assert.That(cache.Count).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments(0, ServerFlushMode.Default)]
+    [Arguments(0, ServerFlushMode.Sync)]
+    [Arguments(0, ServerFlushMode.Async)]
+    [Arguments(1, ServerFlushMode.Default)]
+    [Arguments(1, ServerFlushMode.Sync)]
+    [Arguments(1, ServerFlushMode.Async)]
+    [Arguments(2, ServerFlushMode.Default)]
+    [Arguments(2, ServerFlushMode.Sync)]
+    [Arguments(2, ServerFlushMode.Async)]
+    public async Task ServerFlushModesInvalidateCachedValues(int execution, ServerFlushMode mode)
+    {
+        await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                var hello when hello.StartsWith("HELLO", StringComparison.Ordinal) => HelloReply,
+                "EXEC" => "*1\r\n+OK\r\n"u8.ToArray(),
+                var flush when execution == 2 && flush.StartsWith("FLUSH", StringComparison.Ordinal)
+                    => "+QUEUED\r\n"u8.ToArray(),
+                _ => FakeRespServer.OkReply,
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, AllowAdmin = true, Connections = 1,
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            ClientSideCache = new(),
+        });
+        InsertCachedValue(client.Core.ClientCache!, "key", "old");
+        if (execution == 0)
+            await client.Server.FlushAllAsync(mode, default);
+        else
+        {
+            using var batch = client.CreateBatch();
+            await using var tx = client.CreateTransaction();
+            IRespireCommandQueue queue = execution == 2 ? tx : batch;
+            var flush = queue.Server.FlushAll(mode);
+            await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
+            if (execution == 2) await tx.CommitAsync(); else await batch.ExecuteAsync();
+            await Assert.That(flush.Result).IsTrue();
+        }
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
     }
 
     private static ValueTask<RespireClient> ConnectAsync(FakeRespServer server)

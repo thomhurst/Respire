@@ -3940,7 +3940,10 @@ public class ClusterTests
     }
 
     [Test]
-    public async Task ClusterWideServerCommands_VisitEveryMaster()
+    [Arguments(ServerFlushMode.Default, "")]
+    [Arguments(ServerFlushMode.Sync, " SYNC")]
+    [Arguments(ServerFlushMode.Async, " ASYNC")]
+    public async Task ClusterWideServerCommands_VisitEveryMaster(ServerFlushMode mode, string suffix)
     {
         await using var firstNode = new FakeRespServer(
             ":2\r\n"u8.ToArray(), FakeRespServer.OkReply, FakeRespServer.OkReply);
@@ -3960,10 +3963,10 @@ public class ClusterTests
         });
 
         await Assert.That(await client.Server.DatabaseSizeAsync()).IsEqualTo(5);
-        await client.Server.FlushDatabaseAsync();
-        await client.Server.FlushAllAsync();
+        await client.Server.FlushDatabaseAsync(mode, default);
+        await client.Server.FlushAllAsync(mode, default);
 
-        var expected = new[] { "DBSIZE", "FLUSHDB", "FLUSHALL" };
+        var expected = new[] { "DBSIZE", "FLUSHDB" + suffix, "FLUSHALL" + suffix };
         await Assert.That(firstNode.ReceivedCommands).IsEquivalentTo(expected);
         await Assert.That(secondNode.ReceivedCommands).IsEquivalentTo(expected);
     }
