@@ -291,6 +291,53 @@ Configuration belongs to one node. Each call selects one node and never fans out
 
 Legacy [FT.CONFIG SET](https://redis.io/docs/latest/commands/ft.config-set/) changes do not persist across restarts. Use the deployment's configuration mechanism or standard `CONFIG REWRITE` where supported to persist modern configuration. Not every option can change at runtime.
 
+## Profiling Search, Aggregate, and Hybrid queries
+
+`ProfileSearchAsync`, `ProfileAggregateAsync`, and `ProfileHybridSearchAsync` execute
+[FT.PROFILE](https://redis.io/docs/latest/commands/ft.profile/) and return the normal typed
+query result in `Result`, together with an owned profile tree in `Profile`. They reuse the
+same query options and encoders as the corresponding unprofiled methods. Profiling
+aggregation does not create a cursor. Search and Aggregate profiling require Search
+2.2 or later; Hybrid profiling requires Redis 8.4 or later with Search. All three forms
+are tested against Redis 8.10 over RESP2 and RESP3. Server errors pass through unchanged,
+including errors from older servers that do not support the selected profile form.
+The typed profile reader targets the Redis 8.10 field/value layouts; incompatible
+older profile layouts raise `InvalidOperationException` rather than dropping fields.
+
+```csharp
+await using var client = await RespireClient.ConnectAsync("redis://localhost:6379");
+var expression = Respire.Search.RespireSearchExpression.FromRaw("hello");
+var query = new Respire.Search.RespireSearchQuery(expression,
+    new() { ReturnFields = ["title"], WithScores = true });
+var search = new Respire.Search.RespireSearchClient(client);
+var profiled = await search.ProfileSearchAsync("documents", query, limited: true);
+Console.WriteLine($"Matches: {profiled.Result.Total}");
+foreach (var shard in profiled.Profile.Children)
+{
+    if (shard.Metrics.TryGetValue("Total profile time", out var milliseconds))
+        Console.WriteLine($"{shard.Name}: {milliseconds} ms");
+}
+```
+
+`Children` preserves the ordered shard, coordinator, iterator, and processor tree,
+including Hybrid's separate SEARCH and VSIM branches. `Type` identifies iterators
+and processors; `TimeMilliseconds` reads their `Time` metric. `Metrics` also exposes
+reported numeric fields such as `Parsing time`, `Results processed`, and
+`Number of reading operations`. Times use milliseconds; counts are numeric server
+values. `Properties` retains every reported field as an owned `RespireSearchValue`,
+including unknown fields, nested collections, and binary strings. Names and metrics
+can change between server versions. The tree owns its data after the pooled reply
+is disposed; collections follow the package's owned-snapshot contract.
+
+Profiling adds execution and measurement work, and large trees increase reply size.
+Use it for diagnosis rather than every production request. `limited: true` asks Redis
+to omit reader details within built-in unions; it does not skip query execution.
+Normal `NoContent` or `Limit = (0, 0)` Search options can reduce returned documents.
+Cancellation abandons the wait; it does not stop a query already accepted by Redis.
+Profiling preserves the local client cache, rejects prefix views, and uses the same
+index/coordinator routing as the corresponding query. Profile times describe the
+selected server deployment, not the client's network latency.
+
 ## Routing, caching, and ownership
 
 Index commands carry an index name instead of keys. On a Redis Cluster, Respire routes each index command, including cursor reads, to the node that owns the index name's hash slot. Configuration commands follow the node-local scope described above. Respire does not fan out queries or merge shard results. Cross-shard search relies on the server's search coordinator, so check that your cluster deployment provides one. Without it, for example in plain Redis Open Source cluster mode, a query only sees the documents on the node that receives it, and Respire cannot tell that the result is partial. Standalone and Sentinel deployments need no special handling.

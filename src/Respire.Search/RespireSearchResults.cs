@@ -79,13 +79,16 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
 
     // FT.HYBRID returns the same key/value layout on both protocols: a flat array on RESP2 and a
     // map on RESP3, with total_results, results, warnings, and execution_time entries.
-    internal static RespireSearchResult ParseHybrid(RespireResult result)
+    internal static RespireSearchResult ParseHybrid(RespireResult result, int? fieldCount = null)
     {
-        RespireSearchReply.RequirePairs(result, "FT.HYBRID");
+        if (fieldCount is null) RespireSearchReply.RequirePairs(result, "FT.HYBRID");
+        var count = fieldCount ?? result.Count;
+        if (fieldCount is not null && (result.Type != RespDataType.Array || count < 0 || count >= result.Count || (count & 1) != 0))
+            throw RespireSearchReply.Unexpected("FT.HYBRID", "an invalid field/value reply");
         long total = 0;
         var documents = new List<RespireSearchDocument>();
         var warnings = new List<string>();
-        for (var i = 0; i < result.Count; i += 2)
+        for (var i = 0; i < count; i += 2)
         {
             var key = result[i].AsString();
             var value = result[i + 1];
