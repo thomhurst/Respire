@@ -497,6 +497,92 @@ public class MetricSelectionTests
     }
 
     [Test]
+    [Arguments("PIPELINE")]
+    [Arguments("MULTI")]
+    [Arguments("WAIT")]
+    [Arguments("WAITAOF")]
+    public async Task UnfilteredBatchSelectionDoesNotReadMemberNames(string prefix)
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Command });
+        using var capture = new Capture();
+        var reads = 0;
+        var started = RespireTelemetry.CaptureBatchStart(prefix, new[] { "GET", "SET" }, command =>
+        {
+            reads++;
+            return command;
+        });
+        await Assert.That(started.MetricEnabled).IsTrue();
+        await Assert.That(reads).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task ClusterScriptSamplingUsesTheAcquiredEndpoint(bool tracked, bool failHandshake)
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.None });
+        await using var server = new FakeRespServer(3, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "CLIENT SETNAME script-sampling" when failHandshake => "-ERR handshake failed\r\n"u8.ToArray(),
+                "CLUSTER SLOTS" => "*0\r\n"u8.ToArray(),
+                _ when command.StartsWith("EVALSHA ", StringComparison.Ordinal) => "-NOSCRIPT absent\r\n"u8.ToArray(),
+                _ when command.StartsWith("EVAL ", StringComparison.Ordinal) => ":1\r\n"u8.ToArray(),
+                _ => FakeRespServer.OkReply,
+            },
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)], ClientName = "script-sampling",
+        });
+        var sampled = new ConcurrentQueue<Dictionary<string, object?>>();
+        var completed = new ConcurrentQueue<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = static source => source.Name == "Respire",
+            Sample = (ref ActivityCreationOptions<ActivityContext> options) =>
+            {
+                sampled.Enqueue(options.Tags!.ToDictionary(pair => pair.Key, pair => pair.Value));
+                return ActivitySamplingResult.AllDataAndRecorded;
+            },
+            ActivityStopped = completed.Enqueue,
+        };
+        ActivitySource.AddActivityListener(listener);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        if (failHandshake) await Assert.That(Execute).Throws<RespireConnectionException>();
+        else await Execute();
+        await Assert.That(sampled.Count).IsEqualTo(1);
+        await Assert.That(completed.Count).IsEqualTo(1);
+        var tags = sampled.Single();
+        await Assert.That(tags["db.operation.name"]).IsEqualTo("EVALSHA");
+        await Assert.That(tags.ContainsKey("server.address")).IsEqualTo(!failHandshake);
+        await Assert.That(tags.ContainsKey("server.port")).IsEqualTo(!failHandshake);
+        if (!failHandshake)
+        {
+            await Assert.That(tags["server.address"]).IsEqualTo("127.0.0.1");
+            await Assert.That(tags["server.port"]).IsEqualTo(server.Port);
+        }
+        await Assert.That(completed.Single().Status == ActivityStatusCode.Error).IsEqualTo(failHandshake);
+
+        async Task Execute()
+        {
+            var script = RespireScript.Create("return 1");
+            if (tracked)
+            {
+                var execution = await client.StartTrackedScriptExecutionAsync(script, [], [], deadline.Token,
+                    captureSendTimestampOnly: true);
+                using var result = await execution.Response;
+            }
+            else
+                using (await client.Scripts.ExecuteAsync(script, cancellationToken: deadline.Token)) { }
+        }
+    }
+
+    [Test]
     public async Task RawCommandLabelBudgetIsBoundedWithoutChangingTraces()
     {
         var names = new MetricOperationNames(2);

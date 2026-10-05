@@ -54,12 +54,19 @@ RespireMetrics.Configure(new RespireMetricsOptions
 
 Configure before creating clients or attaching exporters. Respire validates and copies
 both lists; mutating the supplied collections or `RespireMetrics.Configuration` cannot
-alter the active selection. A replacement is atomic and affects newly started telemetry.
+alter the active selection. `Configure` is process-wide and last-writer-wins: the last atomic
+replacement becomes the active policy for every client. Prefer one configuration call in
+application startup rather than competing calls from individual components. A replacement
+affects newly started telemetry.
 An operation retains its selection when telemetry starts. Paths that capture selection before
 connection acquisition retain it through the wait and through acquisition failure. An already
 selected operation can finish after replacement. Configuration does not
 create or own an OpenTelemetry provider, meter listener, exporter, or tracing listener.
 There is no client-specific override because the meter is shared by the process.
+
+The option lists are `IReadOnlyCollection<string>` inputs, not immutable value objects.
+Record `with` expressions share those input collections, and record equality does not compare
+their contents. `Configure` copies and validates the collections before publishing the policy.
 
 | Flag | Redis group | Currently selected standard measurements |
 | --- | --- | --- |

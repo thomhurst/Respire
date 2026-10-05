@@ -387,6 +387,7 @@ internal static class RespireTelemetry
     {
         var selection = RespireMetrics.Current;
         if (!selection.Includes(RespireMetricGroups.Command) || !OperationDuration.Enabled) return false;
+        if (!selection.HasCommandFilters) return true;
         if ((prefix is "WAIT" or "WAITAOF") && !selection.IncludesCommand(prefix)) return false;
         // One measurement covers the whole pipeline/transaction: suppress it if any member is excluded.
         for (var i = 0; i < operations.Count; i++)

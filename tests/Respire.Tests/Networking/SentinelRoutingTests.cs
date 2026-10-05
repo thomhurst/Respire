@@ -4082,6 +4082,7 @@ public partial class SentinelRoutingTests
     [Arguments("script", false)]
     [Arguments("blocking-rental", true)]
     [Arguments("blocking-rental", false)]
+    [NotInParallel] // Configures process-wide metric selection.
     public async Task FailedDiscoveryRetainsTelemetryWithoutInventingAPrimary(string kind, bool trace)
     {
         using var metrics = new MetricConfigurationScope();

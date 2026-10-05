@@ -35,14 +35,15 @@ public sealed record RespireMetricsOptions
     public RespireMetricGroups Groups { get; init; } = RespireMetricGroups.Default;
 
     /// <summary>Allowed command names, case insensitive. Empty allows all commands. Collections are copied on configuration.</summary>
-    public IEnumerable<string> CommandAllowList { get; init; } = [];
+    public IReadOnlyCollection<string> CommandAllowList { get; init; } = [];
 
-    /// <summary>Blocked command names, case insensitive. Blocking takes precedence over allowing.</summary>
-    public IEnumerable<string> CommandBlockList { get; init; } = [];
+    /// <summary>Blocked command names, case insensitive. Blocking takes precedence over allowing. Collections are copied on configuration.</summary>
+    public IReadOnlyCollection<string> CommandBlockList { get; init; } = [];
 }
 
 /// <summary>Selects Redis metrics for every Respire client in the process, independently of tracing.</summary>
-/// <remarks>Respire does not create or own an OpenTelemetry provider. Configure is atomic; in-flight
+/// <remarks>Respire does not create or own an OpenTelemetry provider. Configure is atomic and
+/// last-writer-wins across the process; configure once in application startup when possible. In-flight
 /// operations retain their selection when telemetry starts, including selection captured before
 /// connection acquisition. Respire-specific instruments are unaffected.</remarks>
 public static class RespireMetrics
@@ -65,6 +66,7 @@ public static class RespireMetrics
     internal sealed class Selection
     {
         internal readonly RespireMetricGroups Groups;
+        internal readonly bool HasCommandFilters;
         private readonly FrozenSet<string> _allow;
         private readonly FrozenSet<string> _block;
 
@@ -75,6 +77,7 @@ public static class RespireMetrics
             Groups = options.Groups;
             _allow = CopyCommands(options.CommandAllowList, nameof(options.CommandAllowList));
             _block = CopyCommands(options.CommandBlockList, nameof(options.CommandBlockList));
+            HasCommandFilters = _allow.Count != 0 || _block.Count != 0;
         }
 
         internal bool Includes(RespireMetricGroups group) => (Groups & group) == group;
