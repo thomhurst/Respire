@@ -24,6 +24,23 @@ internal static class RespireTelemetry
     public static readonly ActivitySource Source = new(SourceName, Version);
     public static readonly Meter Meter = new(SourceName, Version);
 
+    private static readonly Counter<long> TransactionConflicts = Meter.CreateCounter<long>(
+        "respire.transaction.watch.conflicts", "{attempt}", "Watched transaction attempts discarded by Redis.");
+    private static readonly Counter<long> TransactionRetries = Meter.CreateCounter<long>(
+        "respire.transaction.watch.retries", "{attempt}", "Additional watched transaction attempts started after conflicts.");
+
+    internal static void RecordTransactionConflict()
+    {
+        try { TransactionConflicts.Add(1); }
+        catch (Exception) { /* Diagnostics must not change transaction outcomes. */ }
+    }
+
+    internal static void RecordTransactionRetry()
+    {
+        try { TransactionRetries.Add(1); }
+        catch (Exception) { /* Diagnostics must not prevent transaction retries. */ }
+    }
+
     private static readonly Counter<long> HedgesSent = Meter.CreateCounter<long>(
         "respire.read.hedge.sent", "{request}", "Additional idempotent read requests dispatched by hedging.");
     private static readonly Counter<long> HedgesWon = Meter.CreateCounter<long>(

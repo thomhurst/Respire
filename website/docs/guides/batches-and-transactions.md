@@ -234,6 +234,49 @@ When client-side caching is enabled, a successful WATCH invalidates the watched 
 and prevents earlier reads from restoring cached values. Reads started after transaction creation
 therefore fetch fresh state even if tracking invalidations from earlier writes are still in transit.
 
+## Automatic WATCH conflict retries
+
+`RunTransactionAsync` creates a fresh watched transaction for every attempt and retries only
+when `EXEC` reports a WATCH conflict. The callback reads inputs and queues writes; the helper
+commits and disposes the transaction. `MaxAttempts` includes the first attempt and defaults
+to five. Exhaustion throws `RespireTransactionConflictException` with its `Attempts` count.
+
+```csharp
+var reads = redis.WithReadFrom(RespireReadFrom.Primary).WithoutClientCache();
+long updated = await redis.RunTransactionAsync(
+    ["balance"],
+    async (transaction, token) =>
+    {
+        var current = long.Parse(await reads.GetStringAsync("balance", token) ?? "0");
+        transaction.Set("balance", current - 100);
+        return current - 100;
+    },
+    new RespireTransactionRetryOptions
+    {
+        MaxAttempts = 5,
+        Backoff = attempt => TimeSpan.FromMilliseconds(attempt * 10),
+    },
+    cancellationToken);
+```
+
+Read again inside every callback using the primary and bypassing local caches. Do not commit
+or dispose the supplied transaction. A callback may run multiple times, so keep external
+side effects outside it. The generic overload returns only the successful attempt's result;
+queued pending values cannot be inspected until after commit. The non-generic overload
+accepts a callback without a result. WATCH key arrays and binary key storage are copied before
+the first await, so later caller changes cannot change the keys being watched on a retry.
+
+Backoff receives the one-based failed attempt number and returns a nonnegative delay of at
+most 2,147,483,647 milliseconds. The failed transaction is disposed before the delay; caller
+cancellation interrupts delays and subsequent attempts. Invalid delays and backoff exceptions
+propagate. Callback exceptions, network failures, timeouts, cancellation, Redis errors, and
+Cluster routing rejections are not retried. A lost commit reply remains ambiguous and may
+represent an executed transaction. Errors in an executed result array remain on its pendings.
+
+The `Respire` meter emits `respire.transaction.watch.conflicts` for each discarded attempt
+and `respire.transaction.watch.retries` for additional attempts started after conflicts.
+Diagnostics listener failures do not interrupt the operation.
+
 ## Cluster WATCH transactions
 
 Use matching hash tags for every watched and queued key, such as `{account:42}:balance`
