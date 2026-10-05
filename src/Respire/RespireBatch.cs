@@ -391,7 +391,25 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         {
             if (slot is null && operations.Exists(static operation => operation.Operation is "FLUSHDB" or "FLUSHALL"))
                 slot = await _client.Core.Cluster!.GetPrimaryRoutingSlotAsync(cancellationToken).ConfigureAwait(false);
-            connection = await _client.AcquireConnectionAsync(slot, cancellationToken, readFrom).ConfigureAwait(false);
+            var hasCursor = false;
+            var isContinuation = false;
+            var configuredReadFrom = _client.GetBatchReadFromPolicy();
+            if (configuredReadFrom != RespireReadFrom.Primary)
+            {
+                foreach (var operation in operations)
+                {
+                    if (operation.IsCursorContinuation is not { } continuation) continue;
+                    hasCursor = true;
+                    isContinuation |= continuation;
+                }
+            }
+            if (isContinuation && readFrom != configuredReadFrom)
+                throw new NotSupportedException("A cursor continuation cannot share a replica-routed batch group with writes. Keep cursor pages in a read-only group.");
+            // Cursor pages must return to their issuing replica across separate batches.
+            connection = hasCursor && slot is { } cursorSlot && readFrom != RespireReadFrom.Primary
+                ? await _client.Core.ReadRouter.Cursors.GetClusterConnectionAsync(
+                    _client.Core.Cluster!, cursorSlot, readFrom, affinity: null, isContinuation, cancellationToken).ConfigureAwait(false)
+                : await _client.AcquireConnectionAsync(slot, cancellationToken, readFrom).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -501,6 +519,8 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
 
         public abstract bool TryGetClusterSlot(out int slot);
 
+        public abstract bool? IsCursorContinuation { get; }
+
         public abstract ValueTask<RespValue> StartClusterSend(
             RespireClient client,
             RespireConnection connection,
@@ -528,6 +548,9 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         public override bool IsCompleted => pending.IsCompleted;
 
         public override bool IsReadOnly => command.ReadKind != ReadCommandKind.None;
+
+        public override bool? IsCursorContinuation => command.ReadKind == ReadCommandKind.CursorRead
+            ? CursorCommandMetadata.IsCursorContinuation(in command) : null;
 
         public override void Fail(Exception error) => pending.Fail(error);
 

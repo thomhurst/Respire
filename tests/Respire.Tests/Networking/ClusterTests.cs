@@ -235,10 +235,11 @@ public class ClusterTests
     }
 
     [Test]
-    [Arguments("HSCAN")]
-    [Arguments("SSCAN")]
-    [Arguments("ZSCAN")]
-    public async Task ReadFrom_FreshRawCursorRevalidatesButContinuationKeepsAffinity(string operation)
+    [Arguments("HSCAN", false)]
+    [Arguments("SSCAN", false)]
+    [Arguments("ZSCAN", false)]
+    [Arguments("HSCAN", true)]
+    public async Task ReadFrom_FreshRawCursorRevalidatesButContinuationKeepsAffinity(string operation, bool typedBatch)
     {
         byte[]? topology = null;
         await using var replica = new FakeRespServer(8, FakeRespServer.OkReply)
@@ -262,12 +263,26 @@ public class ClusterTests
             "SSCAN" => RespireCommands.Set.SSCAN,
             _ => RespireCommands.SortedSet.ZSCAN,
         };
-        using (await reads.ExecuteAsync(descriptor, "key", "0")) { }
+        async Task ReadPageAsync(ulong cursor)
+        {
+            if (typedBatch)
+            {
+                using var batch = reads.CreateBatch();
+                var page = batch.Hashes.ScanFieldsPage("key", cursor);
+                await batch.ExecuteAsync();
+                _ = page.Result;
+            }
+            else
+            {
+                using var result = await reads.ExecuteAsync(descriptor, "key", cursor);
+            }
+        }
+        await ReadPageAsync(0);
         ReplicaRoutes(client)[ClusterHash.GetSlot("key")]!.MarkValidated(TimeSpan.Zero);
         Volatile.Write(ref topology, ClusterTopologyWithoutReplicas(replica.Port));
-        using (await reads.ExecuteAsync(descriptor, "key", "7")) { }
+        await ReadPageAsync(7);
         await Assert.That(replica.ReceivedCommands.Contains("CLUSTER SLOTS")).IsFalse();
-        await Assert.That(async () => { using var reply = await reads.ExecuteAsync(descriptor, "key", "0"); })
+        await Assert.That(async () => await ReadPageAsync(0))
             .Throws<RespireConnectionException>();
         await Assert.That(replica.ReceivedCommands).Contains("CLUSTER SLOTS");
         await Assert.That(replica.ReceivedCommands.Count(command => command.StartsWith(operation))).IsEqualTo(2);

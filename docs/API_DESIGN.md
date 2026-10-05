@@ -259,6 +259,13 @@ the input checkpoint, and missing topology is an explicit failure, never a parti
 
 ## 5. Batching (explicit pipeline)
 
+Hash field-only scans expose `Hashes.ScanFieldsAsync` and the queueable
+`Hashes.ScanFieldsPageAsync` / `Hashes.ScanFieldsPage` pair. See
+[hash scan pagination](../website/docs/commands/collections.md#hashes) for Redis version,
+cursor affinity, and consistency semantics.
+Custom `IHashCommands` implementations must implement both new methods; custom
+`IBatchHashCommands` implementations must implement `ScanFieldsPage`.
+
 Auto-pipelining already happens under concurrency; `CreateBatch` exists for the
 sequential-code case where you want N commands in one flush:
 

@@ -16,7 +16,8 @@ internal static class CollectionScan
         string? match,
         int countHint,
         ScanPageParser<T> parsePage,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
+        [EnumeratorCancellation] CancellationToken cancellationToken,
+        bool noValues = false)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(countHint);
 
@@ -26,9 +27,7 @@ internal static class CollectionScan
         var affinity = new ReadAffinity();
         do
         {
-            var args = match is null
-                ? new RespireValue[] { wireKey, cursor, "COUNT", countHint }
-                : new RespireValue[] { wireKey, cursor, "MATCH", match, "COUNT", countHint };
+            var args = Arguments(wireKey, cursor, match, countHint, noValues);
             var reply = await client.SendCursorPageAsync(operation, new CmdN(verb, args), affinity, cancellationToken)
                 .ConfigureAwait(false);
 
@@ -50,5 +49,27 @@ internal static class CollectionScan
             }
         }
         while (cursor != "0");
+    }
+
+    internal static RespireValue[] Arguments(
+        RespireValue key, RespireValue cursor, string? match, int? countHint, bool noValues)
+    {
+        if (countHint is { } count) ArgumentOutOfRangeException.ThrowIfNegativeOrZero(count, nameof(countHint));
+        var args = new RespireValue[2 + (match is null ? 0 : 2) + (countHint.HasValue ? 2 : 0) + (noValues ? 1 : 0)];
+        args[0] = key;
+        args[1] = cursor;
+        var index = 2;
+        if (match is not null)
+        {
+            args[index++] = "MATCH";
+            args[index++] = match;
+        }
+        if (countHint.HasValue)
+        {
+            args[index++] = "COUNT";
+            args[index++] = countHint.Value;
+        }
+        if (noValues) args[index] = "NOVALUES";
+        return args;
     }
 }
