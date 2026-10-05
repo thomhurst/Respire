@@ -83,7 +83,7 @@ public class RedlockTests(RedlockRedisCluster fixture)
         var clients = Array.Empty<IRespireClient>();
         try
         {
-            foreach (var container in containers) await container.StartAsync();
+            await Task.WhenAll(containers.Select(container => container.StartAsync()));
             clients = containers.Select(container => (IRespireClient)RespireClient.Create(new RespireOptions
             {
                 Endpoints = [new(container.Hostname, container.GetMappedPublicPort(6379))],
@@ -116,12 +116,9 @@ public sealed class RedlockRedisCluster : IAsyncInitializer, IAsyncDisposable
 
     public async Task InitializeAsync()
     {
-        for (var i = 0; i < 3; i++)
-        {
-            var container = new RedisBuilder("redis:7.0.15").Build();
-            await container.StartAsync();
-            _containers.Add(container);
-        }
+        // Standalone containers publish random host ports, so they can start concurrently.
+        for (var i = 0; i < 3; i++) _containers.Add(new RedisBuilder("redis:7.0.15").Build());
+        await Task.WhenAll(_containers.Select(container => container.StartAsync()));
     }
 
     public IRespireClient[] CreateClients() => _containers.Select(container =>

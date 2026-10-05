@@ -3,7 +3,6 @@ using System.Text;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
-using Respire.Testing.Containers;
 using Respire.Tests.Networking;
 
 namespace Respire.Coordination.Tests;
@@ -11,6 +10,9 @@ namespace Respire.Coordination.Tests;
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
 public class CountdownLatchTests(RedisTestContainer fixture)
 {
+    [ClassDataSource<SharedRedis74Cluster>(Shared = SharedType.PerTestSession)]
+    public required SharedRedis74Cluster Cluster { get; init; }
+
     [Test]
     public async Task ConcurrentSignalsReleaseWaitersExactlyAtZero()
     {
@@ -108,16 +110,17 @@ public class CountdownLatchTests(RedisTestContainer fixture)
     [Test]
     [Arguments(2)]
     [Arguments(3)]
+    // The SUBSCRIBE listener matches the shared cluster's ports, so no other test may subscribe there meanwhile.
+    [NotInParallel(SharedClusterSubscriptions.Key)]
     public async Task ClusterRunsLatchScriptsOnTaggedKey(int protocol)
     {
-        await using var cluster = await RespireContainerFixture.StartAsync(new() { Topology = RespireContainerTopology.Cluster });
-        var options = cluster.CreateOptions() with
+        var options = Cluster.CreateOptions() with
         {
             Protocol = (RespProtocol)protocol,
             Connections = 1,
         };
         await using var client = await RespireClient.ConnectAsync(options);
-        var coordination = new RespireCoordination(client.WithKeyPrefix("coord:"));
+        var coordination = new RespireCoordination(client.WithKeyPrefix(SharedRespireContainer.Prefix("coord")));
         var latch = await coordination.CreateCountdownLatchAsync("{batch}:latch", 1);
         var subscribeReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var listener = SubscribeConfirmationListener(

@@ -8,16 +8,25 @@ using TUnit.Core;
 
 namespace Respire.Coordination.Tests;
 
-[NotInParallel]
+// Standalone cases share session containers and isolate themselves by unique keys.
 public class RedisRateLimiterTests
 {
+    [ClassDataSource<SharedRedis74>(Shared = SharedType.PerTestSession)]
+    public required SharedRedis74 Redis74 { get; init; }
+
+    [ClassDataSource<SharedRedis810>(Shared = SharedType.PerTestSession)]
+    public required SharedRedis810 Redis810 { get; init; }
+
+    [ClassDataSource<SharedRedis74Cluster>(Shared = SharedType.PerTestSession)]
+    public required SharedRedis74Cluster Cluster { get; init; }
+
     [Test]
     public async Task FixedWindowUsesIncrexOnRedis88AndLimitsPermits()
     {
-        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:8.10-alpine" });
+        var fixture = Redis810;
         await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions());
         await using var limiter = new RespireCoordination(client).RateLimiters.FixedWindow(
-            "fixed", permitLimit: 2, TimeSpan.FromSeconds(5));
+            SharedRespireContainer.Key("fixed"), permitLimit: 2, TimeSpan.FromSeconds(5));
 
         using var acquired = await limiter.AcquireAsync(2);
         await Assert.That(acquired.IsAcquired).IsTrue();
@@ -38,10 +47,10 @@ public class RedisRateLimiterTests
     [Test]
     public async Task FixedWindowIncrexDenialDoesNotConsumePartialPermits()
     {
-        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:8.10-alpine" });
+        var fixture = Redis810;
         await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions());
         await using var limiter = new RespireCoordination(client).RateLimiters.FixedWindow(
-            "fixed-bulk", permitLimit: 3, TimeSpan.FromSeconds(30));
+            SharedRespireContainer.Key("fixed-bulk"), permitLimit: 3, TimeSpan.FromSeconds(30));
 
         using var first = await limiter.AcquireAsync(1);
         await Assert.That(first.IsAcquired).IsTrue();
@@ -56,10 +65,10 @@ public class RedisRateLimiterTests
     [Test]
     public async Task SynchronousAttemptAcquireDefersToAsynchronousAcquisition()
     {
-        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:8.10-alpine" });
+        var fixture = Redis810;
         await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions());
         await using var limiter = new RespireCoordination(client).RateLimiters.FixedWindow(
-            "sync", permitLimit: 1, TimeSpan.FromSeconds(5));
+            SharedRespireContainer.Key("sync"), permitLimit: 1, TimeSpan.FromSeconds(5));
 
         // ASP.NET Core middleware and chained limiters probe synchronously first, then await AcquireAsync.
         using var probe = limiter.AttemptAcquire();
@@ -91,13 +100,13 @@ public class RedisRateLimiterTests
     [Test]
     public async Task FixedWindowFallsBackOnRedis74AndExpiresWindow()
     {
-        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });
+        var fixture = Redis74;
         await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions());
         var coordination = new RespireCoordination(client);
         await using var limiter = coordination.RateLimiters.FixedWindow(
-            "fixed", permitLimit: 1, TimeSpan.FromSeconds(2));
+            SharedRespireContainer.Key("fixed"), permitLimit: 1, TimeSpan.FromSeconds(2));
         await using var partition = coordination.RateLimiters.FixedWindow(
-            "fixed-partition", permitLimit: 1, TimeSpan.FromSeconds(2));
+            SharedRespireContainer.Key("fixed-partition"), permitLimit: 1, TimeSpan.FromSeconds(2));
         await Assert.That(((RedisRateLimiter)partition).IncrexUnsupported).IsFalse();
 
         using var recovered = await limiter.AcquireAsync(1);
@@ -109,7 +118,8 @@ public class RedisRateLimiterTests
         await Assert.That(partitionLease.IsAcquired).IsTrue();
         using var denied = await limiter.AcquireAsync(1);
         await Assert.That(denied.IsAcquired).IsFalse();
-        await Task.Delay(2100);
+        // The Docker VM clock can lag the host under load, so wait well past the 2 s window.
+        await Task.Delay(2600);
         using var acquired = await limiter.AcquireAsync(1);
         await Assert.That(acquired.IsAcquired).IsTrue();
     }
@@ -117,13 +127,14 @@ public class RedisRateLimiterTests
     [Test]
     public async Task FixedWindowSerializesContentionAcrossPrefixedClientsAndBinaryKey()
     {
-        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });
+        var fixture = Redis74;
         await using var firstClient = await RespireClient.ConnectAsync(fixture.CreateOptions());
         await using var secondClient = await RespireClient.ConnectAsync(fixture.CreateOptions());
         RespireKey key = new byte[] { 0xff, 0x00, 0x42 };
-        await using var first = new RespireCoordination(firstClient.WithKeyPrefix("tenant:")).RateLimiters.FixedWindow(
+        var prefix = SharedRespireContainer.Prefix("tenant");
+        await using var first = new RespireCoordination(firstClient.WithKeyPrefix(prefix)).RateLimiters.FixedWindow(
             key, permitLimit: 3, TimeSpan.FromSeconds(10));
-        await using var second = new RespireCoordination(secondClient.WithKeyPrefix("tenant:")).RateLimiters.FixedWindow(
+        await using var second = new RespireCoordination(secondClient.WithKeyPrefix(prefix)).RateLimiters.FixedWindow(
             key, permitLimit: 3, TimeSpan.FromSeconds(10));
 
         var acquisitions = Enumerable.Range(0, 20).Select(async index =>
@@ -138,14 +149,13 @@ public class RedisRateLimiterTests
     [Test]
     public async Task TokenBucketRunsAtomicallyOnClusterSlotOwner()
     {
-        await using var fixture = await RespireContainerFixture.StartAsync(new() { Topology = RespireContainerTopology.Cluster });
-        await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions() with
+        await using var client = await RespireClient.ConnectAsync(Cluster.CreateOptions() with
         {
             Protocol = RespProtocol.Resp3,
             Connections = 1,
         });
         await using var limiter = new RespireCoordination(client).RateLimiters.TokenBucket(
-            "{rate-limit}:bucket", tokenLimit: 1, tokensPerPeriod: 1,
+            $"{{rate-limit}}:{SharedRespireContainer.Key("bucket")}", tokenLimit: 1, tokensPerPeriod: 1,
             replenishmentPeriod: TimeSpan.FromMilliseconds(250));
 
         using var first = await limiter.AcquireAsync(1);
@@ -156,6 +166,7 @@ public class RedisRateLimiterTests
     }
 
     [Test]
+    [ParallelLimiter<ContainerTopology>] // Dedicated: this test fails the primary over.
     public async Task FixedWindowStateSurvivesSentinelPrimaryFailover()
     {
         await using var fixture = await RespireContainerFixture.StartAsync(new() { Topology = RespireContainerTopology.Sentinel });
@@ -166,7 +177,7 @@ public class RedisRateLimiterTests
             Protocol = RespProtocol.Resp2,
         });
         await using var limiter = new RespireCoordination(client).RateLimiters.FixedWindow(
-            "failover", permitLimit: 1, TimeSpan.FromSeconds(15));
+            "failover", permitLimit: 1, TimeSpan.FromSeconds(90));
         using var acquired = await limiter.AcquireAsync(1);
         await Assert.That(acquired.IsAcquired).IsTrue();
 
@@ -179,7 +190,8 @@ public class RedisRateLimiterTests
             await Assert.That(failover.AsString()).IsEqualTo("OK");
         var oldPort = fixture.DataEndpoints[0].Port;
         var newPort = oldPort;
-        for (var attempt = 0; attempt < 100 && newPort == oldPort; attempt++)
+        // Under load a forced failover can time out once (10 s) and retry; allow for that retry.
+        for (var attempt = 0; attempt < 450 && newPort == oldPort; attempt++)
         {
             await Task.Delay(100);
             using var response = await sentinel.ExecuteAsync(
@@ -191,7 +203,7 @@ public class RedisRateLimiterTests
 
         await using var afterFailover = await RespireClient.ConnectAsync(fixture.CreateOptions());
         await using var limiterAfterFailover = new RespireCoordination(afterFailover).RateLimiters.FixedWindow(
-            "failover", permitLimit: 1, TimeSpan.FromSeconds(15));
+            "failover", permitLimit: 1, TimeSpan.FromSeconds(90));
         using var denied = await limiterAfterFailover.AcquireAsync(1);
         await Assert.That(denied.IsAcquired).IsFalse();
     }
@@ -199,10 +211,10 @@ public class RedisRateLimiterTests
     [Test]
     public async Task SlidingWindowExpiresOldestSegmentAndHonorsQueueCancellation()
     {
-        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });
+        var fixture = Redis74;
         await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions());
         await using var limiter = new RespireCoordination(client).RateLimiters.SlidingWindow(
-            "sliding", permitLimit: 1, TimeSpan.FromMilliseconds(200), segments: 2,
+            SharedRespireContainer.Key("sliding"), permitLimit: 1, TimeSpan.FromMilliseconds(200), segments: 2,
             queueLimit: 1, QueueProcessingOrder.OldestFirst);
 
         using var acquired = await limiter.AcquireAsync(1);
@@ -215,35 +227,38 @@ public class RedisRateLimiterTests
     }
 
     [Test]
+    [ParallelLimiter<TimingSensitive>] // Asserts against Redis clock phases.
     public async Task SlidingWindowDoesNotExpirePermitsBeforeAFullWindow()
     {
-        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });
+        var fixture = Redis74;
         await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions());
         const int widthMs = 800;
         await WaitForRedisWindowPhaseAsync(client, widthMs, 300, 350);
         await using var limiter = new RespireCoordination(client).RateLimiters.SlidingWindow(
-            "sliding-safe-expiry", permitLimit: 1, TimeSpan.FromMilliseconds(widthMs), segments: 1);
+            SharedRespireContainer.Key("sliding-safe-expiry"), permitLimit: 1, TimeSpan.FromMilliseconds(widthMs), segments: 1);
 
         using var acquired = await limiter.AcquireAsync(1);
         await Assert.That(acquired.IsAcquired).IsTrue();
         await Task.Delay(600);
         using var tooEarly = await limiter.AcquireAsync(1);
         await Assert.That(tooEarly.IsAcquired).IsFalse();
-        await Task.Delay(800);
+        // The permit expires at its segment end plus a full window, 1250-1300 ms after acquisition.
+        await Task.Delay(1100);
         using var expired = await limiter.AcquireAsync(1);
         await Assert.That(expired.IsAcquired).IsTrue();
     }
 
     [Test]
+    [ParallelLimiter<TimingSensitive>] // Asserts against Redis clock phases.
     public async Task SlidingWindowBulkRetryWaitsForEnoughSegments()
     {
-        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });
+        var fixture = Redis74;
         await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions());
         const int segmentMs = 2_000;
         await WaitForRedisSegmentPhaseAsync(client, segmentMs, segmentChanged: false, previousSegment: 0);
         var firstSegment = (await client.Server.TimeAsync()).ToUnixTimeMilliseconds() / segmentMs;
         await using var limiter = new RespireCoordination(client).RateLimiters.SlidingWindow(
-            "sliding-bulk-retry", permitLimit: 2, TimeSpan.FromSeconds(4), segments: 2);
+            SharedRespireContainer.Key("sliding-bulk-retry"), permitLimit: 2, TimeSpan.FromSeconds(4), segments: 2);
 
         using var first = await limiter.AcquireAsync(1);
         await Assert.That(first.IsAcquired).IsTrue();
@@ -263,10 +278,10 @@ public class RedisRateLimiterTests
     [Test]
     public async Task QueueRejectionDoesNotExposeSyntheticRetryDelay()
     {
-        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });
+        var fixture = Redis74;
         await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions());
         await using var limiter = new RespireCoordination(client).RateLimiters.FixedWindow(
-            "queue-no-synthetic-retry", permitLimit: 1, TimeSpan.FromSeconds(30), queueLimit: 1);
+            SharedRespireContainer.Key("queue-no-synthetic-retry"), permitLimit: 1, TimeSpan.FromSeconds(30), queueLimit: 1);
 
         using var initial = await limiter.AcquireAsync(1);
         using var cancellation = new CancellationTokenSource();
@@ -282,10 +297,10 @@ public class RedisRateLimiterTests
     [Test]
     public async Task SlidingWindowAggregatesLargeBulkAcquisitions()
     {
-        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });
+        var fixture = Redis74;
         await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions());
         await using var limiter = new RespireCoordination(client).RateLimiters.SlidingWindow(
-            "sliding-bulk", permitLimit: 1_000_000, TimeSpan.FromMinutes(1), segments: 60);
+            SharedRespireContainer.Key("sliding-bulk"), permitLimit: 1_000_000, TimeSpan.FromMinutes(1), segments: 60);
 
         using var lease = await limiter.AcquireAsync(1_000_000).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(lease.IsAcquired).IsTrue();
@@ -294,19 +309,20 @@ public class RedisRateLimiterTests
     [Test]
     public async Task TokenBucketPreservesElapsedRefillAfterSuccessfulAcquisition()
     {
-        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });
+        var fixture = Redis74;
         await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions());
         await using var limiter = new RespireCoordination(client).RateLimiters.TokenBucket(
-            "bucket-refill-boundary", tokenLimit: 2, tokensPerPeriod: 1, TimeSpan.FromSeconds(5));
+            SharedRespireContainer.Key("bucket-refill-boundary"), tokenLimit: 2, tokensPerPeriod: 1, TimeSpan.FromSeconds(10));
 
         using var first = await limiter.AcquireAsync(1);
-        await Task.Delay(4000);
+        // Two seconds short of a refill leaves headroom for a lagging Docker VM clock.
+        await Task.Delay(8000);
         using var second = await limiter.AcquireAsync(1);
         await Assert.That(second.IsAcquired).IsTrue();
         using var denied = await limiter.AcquireAsync(1);
         await Assert.That(denied.IsAcquired).IsFalse();
         await Assert.That(denied.TryGetMetadata(MetadataName.RetryAfter, out TimeSpan retry)).IsTrue();
-        await Assert.That(retry < TimeSpan.FromSeconds(2)).IsTrue();
+        await Assert.That(retry < TimeSpan.FromSeconds(4)).IsTrue();
     }
 
     [Test]
@@ -325,10 +341,10 @@ public class RedisRateLimiterTests
     [Test]
     public async Task TokenBucketClampsRetryToTimeSpanRange()
     {
-        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });
+        var fixture = Redis74;
         await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions());
         await using var limiter = new RespireCoordination(client).RateLimiters.TokenBucket(
-            "bucket-long-retry", tokenLimit: int.MaxValue, tokensPerPeriod: 1, TimeSpan.FromHours(1));
+            SharedRespireContainer.Key("bucket-long-retry"), tokenLimit: int.MaxValue, tokensPerPeriod: 1, TimeSpan.FromHours(1));
 
         using var depleted = await limiter.AcquireAsync(int.MaxValue);
         using var denied = await limiter.AcquireAsync(int.MaxValue);
@@ -341,10 +357,10 @@ public class RedisRateLimiterTests
     [Test]
     public async Task QueueChangesDoNotRestartHeadRetryDelay()
     {
-        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });
+        var fixture = Redis74;
         await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions());
         await using var limiter = new RespireCoordination(client).RateLimiters.FixedWindow(
-            "queue-deadline", permitLimit: 1, TimeSpan.FromSeconds(4), queueLimit: 2);
+            SharedRespireContainer.Key("queue-deadline"), permitLimit: 1, TimeSpan.FromSeconds(4), queueLimit: 2);
 
         using var initial = await limiter.AcquireAsync(1);
         using var cancelSecond = new CancellationTokenSource();
@@ -377,10 +393,10 @@ public class RedisRateLimiterTests
     [Arguments(QueueProcessingOrder.NewestFirst)]
     public async Task QueueAccountingHandlesLargePermitCounts(QueueProcessingOrder order)
     {
-        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });
+        var fixture = Redis74;
         await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions());
         await using var limiter = new RespireCoordination(client).RateLimiters.FixedWindow(
-            "queue-large-count", permitLimit: int.MaxValue, TimeSpan.FromSeconds(30),
+            SharedRespireContainer.Key("queue-large-count"), permitLimit: int.MaxValue, TimeSpan.FromSeconds(30),
             queueLimit: int.MaxValue, queueProcessingOrder: order);
 
         using var initial = await limiter.AcquireAsync(int.MaxValue);
@@ -406,10 +422,10 @@ public class RedisRateLimiterTests
     [Test]
     public async Task TokenBucketRefillsFromRedisTimeAndWaitsForQueuedPermit()
     {
-        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });
+        var fixture = Redis74;
         await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions());
         await using var limiter = new RespireCoordination(client).RateLimiters.TokenBucket(
-            "bucket", tokenLimit: 2, tokensPerPeriod: 1, TimeSpan.FromMilliseconds(100), queueLimit: 1);
+            SharedRespireContainer.Key("bucket"), tokenLimit: 2, tokensPerPeriod: 1, TimeSpan.FromMilliseconds(100), queueLimit: 1);
 
         using var acquired = await limiter.AcquireAsync(2);
         await Assert.That(acquired.IsAcquired).IsTrue();
@@ -421,10 +437,10 @@ public class RedisRateLimiterTests
     [Test]
     public async Task NewestFirstQueueDropsOldestWaiter()
     {
-        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });
+        var fixture = Redis74;
         await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions());
         await using var limiter = new RespireCoordination(client).RateLimiters.FixedWindow(
-            "newest", permitLimit: 1, window: TimeSpan.FromSeconds(2), queueLimit: 1,
+            SharedRespireContainer.Key("newest"), permitLimit: 1, window: TimeSpan.FromSeconds(2), queueLimit: 1,
             queueProcessingOrder: QueueProcessingOrder.NewestFirst);
         using var initial = await limiter.AcquireAsync(1);
         await Assert.That(initial.IsAcquired).IsTrue();
@@ -442,10 +458,10 @@ public class RedisRateLimiterTests
     [Test]
     public async Task DisposingLimiterFailsQueuedAcquisition()
     {
-        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });
+        var fixture = Redis74;
         await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions());
         var limiter = new RespireCoordination(client).RateLimiters.FixedWindow(
-            "dispose", permitLimit: 1, window: TimeSpan.FromSeconds(10), queueLimit: 1);
+            SharedRespireContainer.Key("dispose"), permitLimit: 1, window: TimeSpan.FromSeconds(10), queueLimit: 1);
         using var initial = await limiter.AcquireAsync(1);
         var queued = limiter.AcquireAsync(1).AsTask();
 
