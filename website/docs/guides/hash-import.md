@@ -57,8 +57,11 @@ Console.WriteLine(imported.Result);
 
 Batches pipeline commands in order. Transactions use `MULTI`/`EXEC` on the same connection;
 the session confirms `MULTI` before sending any imports. A rejected `MULTI` leaves prepared
-fieldsets usable. A rejected `EXEC` closes the session because Redis may still be in transaction
-mode. Transactions require one in-flight slot per queued command plus one for `EXEC`;
+fieldsets usable. Queue-time errors, such as a denied HIMPORT subcommand, preserve the session
+and its fieldsets when the drained `EXEC` confirms that Redis discarded the transaction.
+The original queue error still faults the commit and every queued pending. A rejected `EXEC`
+closes the session because Redis may still be in transaction mode.
+Transactions require one in-flight slot per queued command plus one for `EXEC`;
 exceeding `MaxInflightCommands` fails before `MULTI` and preserves prepared fieldsets.
 Credential renewal waits outside the complete `MULTI`/`EXEC` sequence. Credential expiry and
 renewal deadlines still apply; a transaction cannot extend the connection's authentication lifetime.

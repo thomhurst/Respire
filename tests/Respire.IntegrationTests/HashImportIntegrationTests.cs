@@ -76,6 +76,42 @@ public class HashImportIntegrationTests(Redis810HashImportTestContainer fixture)
     }
 
     [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task QueueTimeAclFailurePreservesPreparedFieldsets(int protocol)
+    {
+        var options = Options(null, protocol);
+        await using var admin = await TestRespSession.ConnectAsync(options);
+        var username = $"import-queue-acl:{Guid.NewGuid():N}";
+        var key = username + ":key";
+        using (var created = await admin.CommandAsync("ACL", "SETUSER", username, "on", ">import-test",
+                   "~*", "+@all", "-himport|set"))
+            created.AsString().Should().Be("OK");
+        try
+        {
+            await using var client = await RespireClient.ConnectAsync(options with { Username = username, Password = "import-test" });
+            await using var session = await client.Hashes.CreateImportSessionAsync();
+            await session.PrepareAsync("schema", "field");
+            await using var transaction = session.CreateTransaction();
+            var pending = transaction.Hashes.Import(key, "schema", "value");
+            Func<Task> commit = async () => await transaction.CommitAsync();
+            (await commit.Should().ThrowAsync<RespireServerException>()).Which.Code.Should().Be("NOPERM");
+            pending.Status.Should().Be(RespirePendingStatus.Faulted);
+            using (var exists = await admin.CommandAsync("EXISTS", key)) exists.AsInteger().Should().Be(0);
+            using (var restored = await admin.CommandAsync("ACL", "SETUSER", username, "+himport|set"))
+                restored.AsString().Should().Be("OK");
+            (await session.SetAsync(key, "schema", "retained")).Should().BeTrue();
+            using var imported = await admin.CommandAsync("HGET", key, "field");
+            imported.AsString().Should().Be("retained");
+        }
+        finally
+        {
+            using var deleted = await admin.CommandAsync("ACL", "DELUSER", username);
+            using var cleared = await admin.CommandAsync("DEL", key);
+        }
+    }
+
+    [Test]
     [Arguments(false, 2)]
     [Arguments(false, 3)]
     [Arguments(true, 2)]

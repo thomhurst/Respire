@@ -496,7 +496,8 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
                         reply = await connection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count, token,
                                 core.Options.CommandTimeout, cancellationToken, includeMulti: _importSession is null)
                             .ConfigureAwait(false);
-                        if (_importSession is not null && (reply.Type == RespDataType.Array || reply.IsNull))
+                        if (_importSession is not null && (reply.Type == RespDataType.Array || reply.IsNull
+                            || reply.TransactionStateCleared))
                             importTransactionStarted = false;
                     }
                     catch (RespireConnectionRetiredException retirement) when (_watchConnection is null && _importSession is null

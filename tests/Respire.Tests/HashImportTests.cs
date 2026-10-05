@@ -213,6 +213,49 @@ public class HashImportTests
     }
 
     [Test]
+    [Arguments(2, "aborted")]
+    [Arguments(3, "aborted")]
+    [Arguments(2, "denied")]
+    [Arguments(3, "denied")]
+    [Arguments(2, "scalar")]
+    [Arguments(3, "scalar")]
+    public async Task QueueTimeErrorsPreserveSessionsOnlyAfterConfirmedExecAbort(int protocol, string outcome)
+    {
+        await using var server = new FakeRespServer(20, FakeRespServer.OkReply);
+        var inMulti = false;
+        server.ReplyOverride = (_, command) =>
+        {
+            if (command.StartsWith("HELLO ", StringComparison.Ordinal))
+                return "%1\r\n+proto\r\n:3\r\n"u8.ToArray();
+            if (command == "MULTI") { inMulti = true; return FakeRespServer.OkReply; }
+            if (command == "EXEC")
+            {
+                inMulti = false;
+                return outcome switch
+                {
+                    "aborted" => "-EXECABORT Transaction discarded because of previous errors.\r\n"u8.ToArray(),
+                    "denied" => "-EXECABORT Transaction discarded because of: NOPERM EXEC denied\r\n"u8.ToArray(),
+                    _ => "+OK\r\n"u8.ToArray(),
+                };
+            }
+            return inMulti ? "-NOPERM HIMPORT SET denied\r\n"u8.ToArray() : FakeRespServer.OkReply;
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+            { Protocol = (RespProtocol)protocol, Endpoints = [new("127.0.0.1", server.Port)] });
+        await using var session = await client.Hashes.CreateImportSessionAsync();
+        await session.PrepareAsync("schema", "field");
+        await using var transaction = session.CreateTransaction();
+        var pending = transaction.Hashes.Import("key", "schema", "value");
+        var error = await Assert.That(async () => await transaction.CommitAsync()).Throws<RespireServerException>();
+        await Assert.That(error?.Code).IsEqualTo("NOPERM");
+        await Assert.That(pending.Status).IsEqualTo(RespirePendingStatus.Faulted);
+        if (outcome == "aborted")
+            await Assert.That(await session.SetAsync("later", "schema", "retained")).IsTrue();
+        else
+            await Assert.That(async () => await session.SetAsync("later", "schema", "retained")).Throws<ObjectDisposedException>();
+    }
+
+    [Test]
     public async Task OversizedTransactionPreservesPreparedFieldsets()
     {
         await using var server = new RespireFakeServer();
