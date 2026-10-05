@@ -394,6 +394,18 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
             ? GetSingleConnection()
             : GetConnection(Interlocked.Increment(ref _next));
 
+    // Diagnostics must not schedule reconnects or initialize an unused connection slot.
+    internal RespireConnection? GetExistingHealthConnection()
+    {
+        if (!IsOperational) return null;
+        for (var index = 0; index < _connections.Length; index++)
+        {
+            var slot = Volatile.Read(ref _connections[index]);
+            if (slot is { IsAcceptingCommands: true }) return slot;
+        }
+        return null;
+    }
+
     /// <summary>
     /// Returns a stable healthy connection for an affinity value, probing replacements in a
     /// deterministic order when its preferred connection is unavailable.

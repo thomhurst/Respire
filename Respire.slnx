@@ -22,6 +22,7 @@
     <Project Path="src/Respire.Caching/Respire.Caching.csproj" />
     <Project Path="src/Respire.DependencyInjection/Respire.DependencyInjection.csproj" />
     <Project Path="src/Respire.DataProtection/Respire.DataProtection.csproj" />
+    <Project Path="src/Respire.HealthChecks/Respire.HealthChecks.csproj" />
     <Project Path="src/Respire.Json/Respire.Json.csproj" />
     <Project Path="src/Respire.Search/Respire.Search.csproj" />
     <Project Path="src/Respire.TimeSeries/Respire.TimeSeries.csproj" />
@@ -33,6 +34,7 @@
     <Project Path="src/Respire.Testing/Respire.Testing.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Respire.HealthChecks.Tests/Respire.HealthChecks.Tests.csproj" />
     <Project Path="tests/Respire.Azure.Tests/Respire.Azure.Tests.csproj" />
     <Project Path="tests/Respire.Analyzers.Tests/Respire.Analyzers.Tests.csproj" />
     <Project Path="tests/Respire.Caching.Hybrid.Tests/Respire.Caching.Hybrid.Tests.csproj" />
