@@ -129,8 +129,9 @@ public class HashFieldScanTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         await Assert.That(async () => await client.Hashes.ScanFieldsPageAsync("hash", countHint: 0))
             .ThrowsExactly<ArgumentOutOfRangeException>();
-        await Assert.That(async () => await client.Hashes.ScanFieldsPageAsync("hash", cancellationToken: new(true)))
-            .Throws<OperationCanceledException>();
+        var canceled = client.Hashes.ScanFieldsPageAsync("hash", countHint: 0, cancellationToken: new(true));
+        await Assert.That(canceled.IsCanceled).IsTrue();
+        await Assert.That(async () => await canceled).Throws<OperationCanceledException>();
         using var batch = client.CreateBatch();
         await using var tx = client.CreateTransaction();
         foreach (IRespireCommandQueue queue in new IRespireCommandQueue[] { batch, tx })
@@ -208,6 +209,8 @@ public class HashFieldScanTests
             await Assert.That(async () => await batch.ExecuteAsync()).ThrowsExactly<NotSupportedException>();
             await Assert.That(() => page.Result).ThrowsExactly<NotSupportedException>();
             await Assert.That(() => write.Result).ThrowsExactly<NotSupportedException>();
+            await Assert.That(page.Error!.Message.Contains("HSCAN", StringComparison.Ordinal)).IsTrue();
+            await Assert.That(page.Error.Message.Contains("SET", StringComparison.Ordinal)).IsTrue();
             await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("HSCAN", StringComparison.Ordinal)
                 || command.StartsWith("SET ", StringComparison.Ordinal))).IsFalse();
             await Assert.That(replica.ReceivedCommands.Count(command => command.StartsWith("HSCAN ", StringComparison.Ordinal))).IsEqualTo(1);

@@ -465,7 +465,10 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             var primary = await _client.AcquireConnectionAsync(slot, cancellationToken, RespireReadFrom.Primary).ConfigureAwait(false);
             if (!ReferenceEquals(connection.Multiplexer, primary.Multiplexer)
                 || (continuationConnection is not null && !ReferenceEquals(continuationConnection.Multiplexer, primary.Multiplexer)))
-                throw new NotSupportedException("A cursor page pinned to a replica cannot share its batch group with writes. Keep cursor pages in a read-only group.");
+            {
+                var names = string.Join(", ", operations.Select(static operation => operation.Operation).Distinct());
+                throw new NotSupportedException($"A cursor page pinned to a replica cannot share its batch group with writes. Operations: {names}. Keep cursor pages in a read-only group.");
+            }
         }
         return (connection, continuationConnection);
     }

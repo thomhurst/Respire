@@ -5,7 +5,9 @@ using Respire.Protocol;
 namespace Respire;
 
 /// <summary>An owned HSCAN NOVALUES page. Cursor zero marks completion; an empty page need not be complete.</summary>
-/// <remarks>Record equality compares the Fields array by reference, not by its contents.</remarks>
+/// <remarks>Record equality compares the Fields array by reference, not by its contents.
+/// Page APIs omit COUNT by default and use the server's default; ScanFieldsAsync uses a count hint of 250.
+/// COUNT is a hint, not a guaranteed page size.</remarks>
 public readonly record struct RespireHashScanPage(ulong Cursor, string[] Fields)
 {
     /// <summary>Whether this page completes the scan.</summary>
@@ -21,7 +23,8 @@ public partial interface IHashCommands
 
     /// <summary>Reads one HSCAN NOVALUES page. Start with cursor zero; pass the returned cursor to continue.</summary>
     /// <remarks>Requires Redis 7.4. Keep the same key, server, and read policy across pages; restart after topology changes.
-    /// A null countHint omits COUNT and uses the server's default; ScanFieldsAsync defaults to a hint of 250.</remarks>
+    /// A null countHint omits COUNT and uses the server's default; ScanFieldsAsync defaults to a hint of 250.
+    /// An already-canceled token returns a canceled ValueTask before validating arguments or sending a command.</remarks>
     ValueTask<RespireHashScanPage> ScanFieldsPageAsync(
         RespireKey key, ulong cursor = 0, string? match = null, int? countHint = null, CancellationToken cancellationToken = default);
 }
@@ -36,7 +39,8 @@ internal sealed partial class HashCommands
     public ValueTask<RespireHashScanPage> ScanFieldsPageAsync(
         RespireKey key, ulong cursor = 0, string? match = null, int? countHint = null, CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
+        if (cancellationToken.IsCancellationRequested)
+            return ValueTask.FromCanceled<RespireHashScanPage>(cancellationToken);
         return client.ConvertResponseAsync("HSCAN", ScanFieldsCommand(client, key, cursor, match, countHint), cancellationToken,
             client, static (RespireClient _, in RespValue reply) => ParseFieldsPage(in reply));
     }
