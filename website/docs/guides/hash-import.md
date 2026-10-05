@@ -35,6 +35,7 @@ Create queues through the session. Ordinary client queues reject these connectio
 Session queues accept only the four HIMPORT operations.
 
 ```csharp
+await using var imports = await redis.Hashes.CreateImportSessionAsync();
 using var batch = imports.CreateBatch();
 var prepared = batch.Hashes.PrepareImport("person", "name", "city");
 var imported = batch.Hashes.Import("person:3", "person", "Katherine", "Hampton");
@@ -45,6 +46,7 @@ Console.WriteLine(imported.Result);
 ```
 
 ```csharp
+await using var imports = await redis.Hashes.CreateImportSessionAsync();
 await using var transaction = imports.CreateTransaction();
 var prepared = transaction.Hashes.PrepareImport("person", "name", "city");
 var imported = transaction.Hashes.Import("person:4", "person", "Dorothy", "Hampton");
@@ -83,6 +85,8 @@ replayed onto another connection. Create a new session and prepare its fieldsets
 Always use `await using`. Disposal closes the dedicated connection rather than returning its
 fieldsets to another caller. Connection closure or Redis RESET drops all fieldsets; they have
 no independent expiry timer. Disposing the parent client also invalidates the session.
+Disposal does not wait for an in-flight operation: it closes the connection, causing that
+operation to fail without replay.
 
 A server error with a valid response leaves the session usable. Cancellation before an
 immediate send leaves its fieldsets intact. After an uncertain send, some imports may have

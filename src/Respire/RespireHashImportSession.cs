@@ -11,13 +11,18 @@ namespace Respire;
 /// fieldsets. Connection loss or an uncertain send invalidates the session without replay.
 /// Operations are sequential; await each operation or queue a session batch/transaction.
 /// Cluster sessions accept only keys in the routing key's effective slot.
+/// Disposal closes the connection without waiting for an in-flight operation; that operation fails without replay.
 /// </remarks>
 public sealed class RespireHashImportSession : IAsyncDisposable
 {
     // Connection-local names are not routing keys. Catalog verbs default to argument zero.
-    private static readonly Verb PrepareVerb = new(-1, "HIMPORT PREPARE");
-    private static readonly Verb DiscardVerb = new(-1, "HIMPORT DISCARD");
-    private static readonly Verb DiscardAllVerb = new(-1, "HIMPORT DISCARDALL");
+    internal const string PrepareOperation = "HIMPORT PREPARE";
+    internal const string SetOperation = "HIMPORT SET";
+    internal const string DiscardOperation = "HIMPORT DISCARD";
+    internal const string DiscardAllOperation = "HIMPORT DISCARDALL";
+    private static readonly Verb PrepareVerb = new(-1, PrepareOperation);
+    private static readonly Verb DiscardVerb = new(-1, DiscardOperation);
+    private static readonly Verb DiscardAllVerb = new(-1, DiscardAllOperation);
     private readonly RespireClient _client;
     private readonly DedicatedConnectionPool _pool;
     private readonly RespireConnection _connection;
@@ -78,7 +83,7 @@ public sealed class RespireHashImportSession : IAsyncDisposable
 
     /// <summary>Defines or replaces a connection-local fieldset with cancellation. Redis: HIMPORT PREPARE.</summary>
     public ValueTask<bool> PrepareAsync(RespireValue name, ReadOnlySpan<RespireValue> fields, CancellationToken cancellationToken)
-        => SendAsync("HIMPORT PREPARE", PrepareCommand(name, fields), static value => ResponseReader.Ok(in value), cancellationToken);
+        => SendAsync(PrepareOperation, PrepareCommand(name, fields), static value => ResponseReader.Ok(in value), cancellationToken);
 
     /// <summary>Creates or overwrites a hash from values in the prepared field order. Redis: HIMPORT SET.</summary>
     public ValueTask<bool> SetAsync(RespireKey key, RespireValue name, params ReadOnlySpan<RespireValue> values)
@@ -86,15 +91,15 @@ public sealed class RespireHashImportSession : IAsyncDisposable
 
     /// <summary>Creates or overwrites a hash with cancellation. Redis: HIMPORT SET.</summary>
     public ValueTask<bool> SetAsync(RespireKey key, RespireValue name, ReadOnlySpan<RespireValue> values, CancellationToken cancellationToken)
-        => SendAsync("HIMPORT SET", SetCommand(key, name, values), static value => ResponseReader.Ok(in value), cancellationToken);
+        => SendAsync(SetOperation, SetCommand(key, name, values), static value => ResponseReader.Ok(in value), cancellationToken);
 
     /// <summary>Removes a fieldset; returns whether it existed. Redis: HIMPORT DISCARD.</summary>
     public ValueTask<bool> DiscardAsync(RespireValue name, CancellationToken cancellationToken = default)
-        => SendAsync("HIMPORT DISCARD", DiscardCommand(name), static value => ReadDiscard(in value), cancellationToken);
+        => SendAsync(DiscardOperation, DiscardCommand(name), static value => ReadDiscard(in value), cancellationToken);
 
     /// <summary>Removes every fieldset on this session; returns how many existed. Redis: HIMPORT DISCARDALL.</summary>
     public ValueTask<long> DiscardAllAsync(CancellationToken cancellationToken = default)
-        => SendAsync("HIMPORT DISCARDALL", DiscardAllCommand(), static value => ReadDiscardAll(in value), cancellationToken);
+        => SendAsync(DiscardAllOperation, DiscardAllCommand(), static value => ReadDiscardAll(in value), cancellationToken);
 
     internal static bool ReadDiscard(in RespValue value)
     {
@@ -182,7 +187,7 @@ public sealed class RespireHashImportSession : IAsyncDisposable
     internal void ValidateQueuedCommand(string operation)
     {
         CheckUsable();
-        if (operation is not ("HIMPORT PREPARE" or "HIMPORT SET" or "HIMPORT DISCARD" or "HIMPORT DISCARDALL"))
+        if (operation is not (PrepareOperation or SetOperation or DiscardOperation or DiscardAllOperation))
             throw new NotSupportedException("Hash import session queues accept only HIMPORT commands.");
     }
 
@@ -191,7 +196,7 @@ public sealed class RespireHashImportSession : IAsyncDisposable
     {
         cancellationToken.ThrowIfCancellationRequested();
         using var usage = EnterOperation();
-        var cache = operation == "HIMPORT SET" ? _client.Core.ClientCache : null;
+        var cache = operation == SetOperation ? _client.Core.ClientCache : null;
         var fence = cache is null ? default : cache.BeforeCommand(operation, in command);
         try
         {
