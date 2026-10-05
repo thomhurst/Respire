@@ -9,11 +9,11 @@ public static class RespireDataProtectionBuilderExtensions
 {
     /// <summary>Persists keys using a client resolved from the application's service provider.</summary>
     /// <param name="builder">The DataProtection builder.</param>
-    /// <param name="clientFactory">Resolves a caller-owned client from the root provider for each repository operation.</param>
+    /// <param name="clientFactory">Resolves a client from the root provider for each repository operation. Ownership remains with its registrant or the DI container; the repository never disposes it.</param>
     /// <param name="key">The Redis list key shared by application instances. Its bytes are copied during registration.</param>
     /// <returns>The builder, for further configuration.</returns>
     /// <remarks>The factory must be cheap and thread-safe. Resolve a singleton client rather than a scoped service.</remarks>
-    public static IDataProtectionBuilder PersistKeysToRespire(
+    public static IDataProtectionBuilder PersistKeysToRespireFromServices(
         this IDataProtectionBuilder builder, Func<IServiceProvider, IRespireClient> clientFactory, RespireKey key)
     {
         ArgumentNullException.ThrowIfNull(builder);

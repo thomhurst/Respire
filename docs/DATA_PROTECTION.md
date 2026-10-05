@@ -31,8 +31,8 @@ return an existing client, not open a new connection. The repository never dispo
 the client. An externally supplied singleton remains caller-owned; a client created
 by the DI container follows normal container ownership and disposal rules.
 If the client is registered as a singleton in dependency injection, use
-`PersistKeysToRespire(provider => provider.GetRequiredService<IRespireClient>(), "DataProtection-Keys")`
-instead. This overload resolves the client lazily from the root service provider;
+`PersistKeysToRespireFromServices(provider => provider.GetRequiredService<IRespireClient>(), "DataProtection-Keys")`
+instead. This method resolves the client lazily from the root service provider;
 do not resolve a scoped client or build a second service provider during registration.
 DataProtection's `IXmlRepository` API is synchronous, so repository calls block
 until the underlying Respire command finishes or fails.

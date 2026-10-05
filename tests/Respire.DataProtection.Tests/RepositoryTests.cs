@@ -229,7 +229,7 @@ public class RepositoryTests(RedisTestContainer fixture)
         var services = new ServiceCollection();
         services.AddSingleton<IRespireClient>(client);
         var builder = services.AddDataProtection();
-        var result = builder.PersistKeysToRespire(provider =>
+        var result = builder.PersistKeysToRespireFromServices(provider =>
         {
             calls++;
             return provider.GetRequiredService<IRespireClient>();
@@ -246,5 +246,25 @@ public class RepositoryTests(RedisTestContainer fixture)
         }
         // Externally supplied singleton instances remain caller-owned after provider disposal.
         await Assert.That((await client.Lists.RangeAsync(keyName)).Length).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task ContainerCreatedSingletonIsDisposedWithProvider()
+    {
+        RespireClient? client = null;
+        var key = $"keys:{Guid.NewGuid():N}";
+        var services = new ServiceCollection();
+        services.AddSingleton<IRespireClient>(_ => client = RespireClient.Create(RespireOptions.Parse(fixture.ConnectionString)));
+        services.AddDataProtection().PersistKeysToRespireFromServices(
+            provider => provider.GetRequiredService<IRespireClient>(), key);
+        await using (var provider = services.BuildServiceProvider())
+        {
+            var repository = provider.GetRequiredService<IOptions<KeyManagementOptions>>().Value.XmlRepository!;
+            await Assert.That(client).IsNull();
+            repository.StoreElement(new XElement("key"), "one");
+            await Assert.That(client).IsNotNull();
+            await Assert.That(repository.GetAllElements().Count).IsEqualTo(1);
+        }
+        await Assert.That(async () => await client!.Lists.RangeAsync(key)).Throws<ObjectDisposedException>();
     }
 }
