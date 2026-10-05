@@ -37,6 +37,20 @@ internal interface IRespireSearchCommands
     /// <summary>Reads the distinct values indexed in a TAG field.</summary>
     [RespireCommand("FT.TAGVALS", Mutation = RespireCacheMutation.ReadOnly)]
     ValueTask<RespireResult> GetTagValuesAsync(string index, string field, CancellationToken cancellationToken = default);
+    [RespireCommand("FT._LIST", Mutation = RespireCacheMutation.ReadOnly)]
+    ValueTask<RespireResult> ListIndexesAsync(CancellationToken cancellationToken = default);
+
+    [RespireCommand("FT.ALIASADD")]
+    ValueTask<RespireResult> AddAliasAsync(string alias, string index, CancellationToken cancellationToken = default);
+
+    [RespireCommand("FT.ALIASDEL")]
+    ValueTask<RespireResult> DeleteAliasAsync(string alias, CancellationToken cancellationToken = default);
+
+    [RespireCommand("FT.ALIASUPDATE")]
+    ValueTask<RespireResult> UpdateAliasAsync(string alias, string index, CancellationToken cancellationToken = default);
+
+    [RespireCommand("FT.ALIASLIST", Mutation = RespireCacheMutation.ReadOnly)]
+    ValueTask<RespireResult> ListAliasesAsync(string index, CancellationToken cancellationToken = default);
 
     /// <summary>Creates an index from command arguments.</summary>
     [RespireCommand("FT.CREATE")]

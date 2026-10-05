@@ -18,6 +18,48 @@ public class SearchIntegrationTests(ModernRedisTestContainer fixture)
     [Test]
     [Arguments(2)]
     [Arguments(3)]
+    public async Task IndexInventoryAndAliasSwapUseRealServerReplies(int protocol)
+    {
+        await using var client = await ConnectAsync(protocol);
+        var search = client.Search;
+        var first = NewIndex();
+        var second = NewIndex();
+        var alias = first + ":alias";
+        try
+        {
+            await CreateDocumentsAsync(client, search, first);
+            await CreateDocumentsAsync(client, search, second);
+            (await search.ListIndexesAsync()).Should().Contain([first, second]);
+            (await search.ListAliasesAsync(first)).Should().BeEmpty();
+            await search.AddAliasAsync(alias, first);
+            (await search.ListAliasesAsync(first)).Should().ContainSingle().Which.Should().Be(alias);
+            var original = await search.SearchAsync(alias, new(All));
+            original.Total.Should().Be(3);
+            original.Documents.Should().OnlyContain(d => d.Id.StartsWith(first, StringComparison.Ordinal));
+            await search.Awaiting(s => s.AddAliasAsync(alias, second).AsTask()).Should().ThrowAsync<RespireServerException>();
+            await search.UpdateAliasAsync(alias, second);
+            (await search.ListAliasesAsync(first)).Should().BeEmpty();
+            (await search.ListAliasesAsync(second)).Should().ContainSingle().Which.Should().Be(alias);
+            var swapped = await search.SearchAsync(alias, new(All));
+            swapped.Total.Should().Be(3);
+            swapped.Documents.Should().OnlyContain(d => d.Id.StartsWith(second, StringComparison.Ordinal));
+            await search.DeleteAliasAsync(alias);
+            (await search.ListAliasesAsync(second)).Should().BeEmpty();
+            await search.Awaiting(s => s.SearchAsync(alias, new(All)).AsTask()).Should().ThrowAsync<RespireServerException>();
+            (await search.GetIndexInfoAsync(second)).DocumentCount.Should().Be(3);
+            await search.UpdateAliasAsync(alias, first);
+            (await search.ListAliasesAsync(first)).Should().Contain(alias);
+        }
+        finally
+        {
+            try { await DropIndexIfPresentAsync(search, first); }
+            finally { await DropIndexIfPresentAsync(search, second); }
+        }
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
     public async Task TypedQueriesAggregationVectorsAndHybridUseRealServerReplies(int protocol)
     {
         await using var client = await ConnectAsync(protocol);
@@ -88,8 +130,28 @@ public class SearchIntegrationTests(ModernRedisTestContainer fixture)
             await prefixed.Awaiting(s => s.DropIndexAsync(index, deleteDocuments: true).AsTask())
                 .Should().ThrowAsync<NotSupportedException>();
 
+            Func<RespireSearchClient, CancellationToken, Task>[] aliasOperations =
+            [
+                (s, token) => s.ListIndexesAsync(token).AsTask(),
+                (s, token) => s.ListAliasesAsync(index, token).AsTask(),
+                (s, token) => s.AddAliasAsync(index + ":alias", index, token).AsTask(),
+                (s, token) => s.UpdateAliasAsync(index + ":alias", index, token).AsTask(),
+                (s, token) => s.DeleteAliasAsync(index + ":alias", token).AsTask(),
+            ];
+            foreach (var operation in aliasOperations)
+            {
+                Func<Task> prefixedOperation = () => operation(prefixed, default);
+                await prefixedOperation.Should().ThrowAsync<NotSupportedException>();
+            }
+
             using var canceled = new CancellationTokenSource();
             canceled.Cancel();
+            foreach (var operation in aliasOperations)
+            {
+                Func<Task> canceledOperation = () => operation(search, canceled.Token);
+                var error = await canceledOperation.Should().ThrowAsync<OperationCanceledException>();
+                error.Which.CancellationToken.Should().Be(canceled.Token);
+            }
             Func<Task>[] operations =
             [
                 () => search.DropIndexAsync(index, true, canceled.Token).AsTask(),
@@ -130,6 +192,8 @@ public class SearchIntegrationTests(ModernRedisTestContainer fixture)
             client.ClientSideCache.GetStatistics().Hits.Should().Be(creationHits);
             Func<Task>[] reads =
             [
+                () => search.ListIndexesAsync().AsTask(),
+                () => search.ListAliasesAsync(index).AsTask(),
                 () => search.SearchAsync(index, new(All)).AsTask(),
                 () => search.GetIndexInfoAsync(index).AsTask(),
                 () => search.ExplainAsync(index, All).AsTask(),
@@ -139,6 +203,21 @@ public class SearchIntegrationTests(ModernRedisTestContainer fixture)
             ];
             foreach (var read in reads)
                 await AssertCacheRetainedAsync(client, key, read);
+
+            Func<Task>[] aliasMutations =
+            [
+                () => search.AddAliasAsync(index + ":alias", index).AsTask(),
+                () => search.UpdateAliasAsync(index + ":alias", index).AsTask(),
+                () => search.DeleteAliasAsync(index + ":alias").AsTask(),
+            ];
+            foreach (var mutation in aliasMutations)
+            {
+                await client.GetStringAsync(key);
+                var beforeMutation = client.ClientSideCache!.GetStatistics().Hits;
+                await mutation();
+                (await client.GetStringAsync(key)).Should().Be("cached");
+                client.ClientSideCache.GetStatistics().Hits.Should().Be(beforeMutation);
+            }
 
             var page = await search.AggregateWithCursorAsync(index, All,
                 new() { Stages = [RespireSearchAggregateStage.Load("@title")] }, new() { Count = 1 });

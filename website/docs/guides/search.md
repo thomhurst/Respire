@@ -150,10 +150,39 @@ as deprecated, but Redis 8.10 supports it. Synonym dumps and tag-value reads ret
 the client cache; synonym updates conservatively invalidate it. All three commands
 retain Search's prefix restrictions and index/coordinator routing, without client
 fan-out or merged shard results.
+## Index inventory and aliases
+
+`ListIndexesAsync()` sends `FT._LIST`. `ListAliasesAsync(index)` sends
+`FT.ALIASLIST index` and requires Redis 8.10 or later. Both return owned name
+collections that remain valid after later commands. Alias listing is per index,
+not a global alias-to-index map.
+
+Use `AddAliasAsync`, `UpdateAliasAsync`, and `DeleteAliasAsync` for
+`FT.ALIASADD`, `FT.ALIASUPDATE`, and `FT.ALIASDEL`. After preparing and verifying a
+replacement index, atomically switch the alias without interrupting callers:
+
+```csharp
+await search.AddAliasAsync("books-live", "books-v1");
+// Build books-v2 and verify its indexing is complete before switching.
+await search.UpdateAliasAsync("books-live", "books-v2");
+var current = await search.SearchAsync("books-live", new(RespireSearchExpression.FromRaw("*")));
+await search.DropIndexAsync("books-v1"); // Keep the indexed documents.
+```
+
+`UpdateAliasAsync` also creates an absent alias. Deleting an alias leaves its
+index and documents intact. Alias mutations conservatively invalidate the local
+client cache; inventory and alias listing leave it intact. Prefixed views reject
+all these commands, as they do other Search commands.
+
+Respire sends inventory to the selected node without cluster fan-out. Alias
+mutations route by alias name, and alias listing routes by index name. These
+names must resolve to the appropriate node or server-side Search coordinator;
+Respire does not synchronize aliases or merge inventory across shards. On a
+cluster without a Search coordinator, results describe only the selected node.
 
 ## Queries
 
-Supported index commands are `FT.CREATE`, `FT.ALTER`, `FT.DROPINDEX`, and `FT.INFO`. `GetIndexInfoAsync` returns a parsed `RespireSearchIndexInfo` with the index name, document count, schema attributes, and every reported property as a copied value. Query methods use `FT.SEARCH`, `FT.EXPLAIN`, and `FT.EXPLAINCLI`; `ExplainAsync` takes `RespireSearchExplainOptions` to select CLI output or a dialect.
+Other index operations use `FT.CREATE`, `FT.ALTER`, `FT.DROPINDEX`, and `FT.INFO`. `GetIndexInfoAsync` returns a parsed `RespireSearchIndexInfo` with the index name, document count, schema attributes, and every reported property as a copied value. Query methods use `FT.SEARCH`, `FT.EXPLAIN`, and `FT.EXPLAINCLI`; `ExplainAsync` takes `RespireSearchExplainOptions` to select CLI output or a dialect.
 
 `RespireSearchQueryOptions` supports projections, scores, sorting, limits, named parameters, timeout, and dialect. Named parameters need an explicit dialect of 2 or later. `RespireSearchResult` contains the total count, document IDs, fields, scores, and any warnings the server returns.
 

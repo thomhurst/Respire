@@ -6,9 +6,10 @@ namespace Respire.Search;
 /// <summary>Typed Redis Search index, query, aggregation, vector, hybrid, and configuration operations.</summary>
 /// <remarks>
 /// <para>
-/// Index operations carry an index name rather than keys. Respire routes them like other module
+/// Index and alias operations carry names rather than keys. Respire routes them like other module
 /// commands: on a cluster, a command goes to the node that owns the index name's hash slot, and
-/// cursor reads follow the same index name. Respire does not fan out queries or merge shard
+/// cursor reads follow the same index name. Alias mutations route by alias; FT._LIST has no routing
+/// key and lists indexes on the selected node. Respire does not fan out queries or merge shard
 /// results; cross-shard search relies on the server's search coordinator. On a cluster without
 /// one (for example, plain Redis Open Source cluster mode), each command sees only the documents
 /// on the node that receives it, and Respire cannot detect the partial result. Suggestion operations
@@ -17,7 +18,8 @@ namespace Respire.Search;
 /// <para>FT.CONFIG reads and writes are node-local. They use one selected node and never fan out.</para>
 /// <para>
 /// With client-side caching, read-only Search commands leave the local cache intact; FT.CREATE,
-/// FT.ALTER, FT.DROPINDEX, FT.SUGADD, FT.SUGDEL, and FT.SYNUPDATE invalidate it conservatively. Key-prefixed views reject Search
+/// FT.ALTER, FT.DROPINDEX, FT.SUGADD, FT.SUGDEL, FT.SYNUPDATE, and alias mutations invalidate it conservatively.
+/// Key-prefixed views reject Search
 /// commands, so include prefixes in index definitions. Each query method builds one argument list
 /// per call; this package does not target the zero-allocation hot path.
 /// </para>
@@ -39,6 +41,59 @@ public sealed partial class RespireSearchClient
         ArgumentNullException.ThrowIfNull(client);
         _client = client;
         _commands = new IRespireSearchCommandsImplementation(client);
+    }
+
+    /// <summary>Returns owned index names from FT._LIST on the selected node, without cluster fan-out.</summary>
+    public async ValueTask<IReadOnlyList<string>> ListIndexesAsync(CancellationToken cancellationToken = default)
+    {
+        using var result = await _commands.ListIndexesAsync(cancellationToken).ConfigureAwait(false);
+        return ReadNames(result, "FT._LIST");
+    }
+
+    /// <summary>Creates an alias for an existing index with FT.ALIASADD.</summary>
+    public async ValueTask AddAliasAsync(string alias, string index, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(alias);
+        ArgumentException.ThrowIfNullOrWhiteSpace(index);
+        using var result = await _commands.AddAliasAsync(alias, index, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Deletes an alias with FT.ALIASDEL, leaving the index and its documents intact.</summary>
+    public async ValueTask DeleteAliasAsync(string alias, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(alias);
+        using var result = await _commands.DeleteAliasAsync(alias, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Atomically points an alias at an existing index with FT.ALIASUPDATE, creating the alias if absent.</summary>
+    public async ValueTask UpdateAliasAsync(string alias, string index, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(alias);
+        ArgumentException.ThrowIfNullOrWhiteSpace(index);
+        using var result = await _commands.UpdateAliasAsync(alias, index, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Returns owned alias names for one index with FT.ALIASLIST. Requires Redis 8.10 or later.</summary>
+    public async ValueTask<IReadOnlyList<string>> ListAliasesAsync(string index, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(index);
+        using var result = await _commands.ListAliasesAsync(index, cancellationToken).ConfigureAwait(false);
+        return ReadNames(result, "FT.ALIASLIST");
+    }
+
+    private static string[] ReadNames(RespireResult result, string command)
+    {
+        if (result.Type is not (RespDataType.Array or RespDataType.Set) || result.IsNull)
+            throw RespireSearchReply.Unexpected(command, "an index or alias name collection was expected");
+        var names = new string[result.Count];
+        for (var i = 0; i < names.Length; i++)
+        {
+            var value = result[i];
+            if (value.Type is not (RespDataType.BulkString or RespDataType.SimpleString) || value.IsNull)
+                throw RespireSearchReply.Unexpected(command, "a non-string index or alias name");
+            names[i] = value.AsString();
+        }
+        return names;
     }
 
     /// <summary>Creates a search index.</summary>
