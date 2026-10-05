@@ -101,6 +101,7 @@ public class BytesResponseTests
     }
 
     [Test]
+    [NotInParallel] // Source selection depends on process-wide telemetry listeners.
     [Arguments(0, false)]
     [Arguments(1, false)]
     [Arguments(2, false)]

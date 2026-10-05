@@ -84,10 +84,8 @@ internal sealed partial class RespireConnection
             result = buffer.Slice(headerEnd, length).ToArray();
             frameEnd = headerEnd + length + 2;
         }
-        _inflight.TryDequeue(out _);
-        MarkReplyReceived();
         source.SetDirectResult(result);
-        _completions.Add(source, default);
+        CompleteDirectResponse(source);
         return true;
     }
 }

@@ -2847,11 +2847,19 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             frameEnd = headerEnd + length + 2;
         }
 
+        source.SetDirectResult(result);
+        CompleteDirectResponse(source);
+        return true;
+    }
+
+    // Receive loop only, after a specialized source stores its final result. Use the normal
+    // completion reservation and receive-reference release, including cancellation races.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void CompleteDirectResponse(PendingResponse source)
+    {
         _inflight.TryDequeue(out _);
         MarkReplyReceived();
-        source.SetDirectResult(result);
         _completions.Add(source, default);
-        return true;
     }
 
     /// <summary>
