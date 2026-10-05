@@ -43,15 +43,10 @@ public sealed partial class RespireSearchClient
         if (double.IsNaN(score)) throw new ArgumentOutOfRangeException(nameof(score), "A suggestion score cannot be NaN.");
         var increment = options?.Increment == true;
         var payload = options?.Payload;
-        var count = (increment ? 1 : 0) + (payload.HasValue ? 2 : 0);
-        RespireValue[] arguments = count == 0 ? [] : new RespireValue[count];
-        var offset = 0;
-        if (increment) arguments[offset++] = "INCR";
-        if (payload is { } bytes)
-        {
-            arguments[offset++] = "PAYLOAD";
-            arguments[offset] = bytes;
-        }
+        var arguments = CreateSuggestionArguments([
+            increment ? (RespireValue?)"INCR" : null,
+            payload.HasValue ? (RespireValue?)"PAYLOAD" : null,
+            payload is { } bytes ? (RespireValue?)bytes : null]);
         using var result = await _commands.AddSuggestionAsync(key, suggestion, score, arguments, cancellationToken).ConfigureAwait(false);
         return ReadSuggestionCount(result, "FT.SUGADD");
     }
@@ -86,17 +81,12 @@ public sealed partial class RespireSearchClient
         var withScores = options?.WithScores == true;
         var withPayloads = options?.WithPayloads == true;
         var fuzzy = options?.Fuzzy == true;
-        var count = (fuzzy ? 1 : 0) + (withScores ? 1 : 0) + (withPayloads ? 1 : 0) + (options?.Max is not null ? 2 : 0);
-        RespireValue[] arguments = count == 0 ? [] : new RespireValue[count];
-        var argumentOffset = 0;
-        if (fuzzy) arguments[argumentOffset++] = "FUZZY";
-        if (withScores) arguments[argumentOffset++] = "WITHSCORES";
-        if (withPayloads) arguments[argumentOffset++] = "WITHPAYLOADS";
-        if (options?.Max is { } max)
-        {
-            arguments[argumentOffset++] = "MAX";
-            arguments[argumentOffset] = max;
-        }
+        var arguments = CreateSuggestionArguments([
+            fuzzy ? (RespireValue?)"FUZZY" : null,
+            withScores ? (RespireValue?)"WITHSCORES" : null,
+            withPayloads ? (RespireValue?)"WITHPAYLOADS" : null,
+            options?.Max is not null ? (RespireValue?)"MAX" : null,
+            options?.Max is { } max ? (RespireValue?)max : null]);
         using var result = await _commands.GetSuggestionsAsync(key, prefix, arguments, cancellationToken).ConfigureAwait(false);
         if (result.Type != RespDataType.Array || result.IsNull)
             throw RespireSearchReply.Unexpected("FT.SUGGET", "an array was expected");
@@ -115,6 +105,19 @@ public sealed partial class RespireSearchClient
             suggestions[i] = new(text, score, payload);
         }
         return suggestions;
+    }
+
+    private static RespireValue[] CreateSuggestionArguments(ReadOnlySpan<RespireValue?> candidates)
+    {
+        var count = 0;
+        foreach (var candidate in candidates)
+            if (candidate.HasValue) count++;
+        if (count == 0) return [];
+        var arguments = new RespireValue[count];
+        var offset = 0;
+        foreach (var candidate in candidates)
+            if (candidate is { } value) arguments[offset++] = value;
+        return arguments;
     }
 
     private static long ReadSuggestionCount(RespireResult result, string command)
@@ -138,6 +141,7 @@ public sealed partial class RespireSearchClient
     {
         if (result.Type == RespDataType.Double) return result.AsDouble();
         var text = ReadSuggestionString(result).AsString();
+        // Redis uses inf tokens, which invariant double.TryParse does not accept as Infinity.
         if (text.Equals("inf", StringComparison.OrdinalIgnoreCase) || text.Equals("+inf", StringComparison.OrdinalIgnoreCase))
             return double.PositiveInfinity;
         if (text.Equals("-inf", StringComparison.OrdinalIgnoreCase)) return double.NegativeInfinity;
