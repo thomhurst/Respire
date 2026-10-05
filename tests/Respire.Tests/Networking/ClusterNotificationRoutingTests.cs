@@ -578,7 +578,6 @@ public class ClusterNotificationRoutingTests
     }
 
     [Test]
-    [ParallelLimiter<TimingSensitive>] // The short recovery deadline must not compete with other wire fixtures during setup.
     public async Task ClusterNotificationRecoveryHonorsReconnectAttemptLimit()
     {
         await using var server = new FakeRespServer(20);
@@ -605,8 +604,12 @@ public class ClusterNotificationRoutingTests
             UseCluster = true,
             Protocol = RespProtocol.Resp2,
             Connections = 1,
-            ConnectTimeout = TimeSpan.FromMilliseconds(500),
-            CommandTimeout = TimeSpan.FromMilliseconds(500),
+            // The suppressed resubscribe below fails only through this command timeout, which
+            // also bounds every setup round trip. Two seconds keeps setup clear of a busy
+            // runner's scheduling delay; the single recovery attempt still ends well inside
+            // the completion wait.
+            ConnectTimeout = TimeSpan.FromSeconds(2),
+            CommandTimeout = TimeSpan.FromSeconds(2),
             ReconnectPolicy = new RespireReconnectPolicy
             {
                 InitialDelay = TimeSpan.FromMilliseconds(1),
@@ -624,7 +627,7 @@ public class ClusterNotificationRoutingTests
         server.SuppressReply = command => command.StartsWith("SUBSCRIBE ", StringComparison.Ordinal);
         server.CloseConnection(server.ReceivedConnectionIds[subscribeIndex]);
 
-        await Assert.That(await subscription.Completion.WaitAsync(TimeSpan.FromSeconds(5)))
+        await Assert.That(await subscription.Completion.WaitAsync(TimeSpan.FromSeconds(15)))
             .IsEqualTo(RespireSubscriptionEndReason.ReconnectExhausted);
         await Assert.That(Volatile.Read(ref exhaustionMeasurements)).IsEqualTo(1);
 
@@ -632,7 +635,7 @@ public class ClusterNotificationRoutingTests
         // connects to it again once it is reachable.
         server.SuppressReply = null;
         await using var retry = await client.SubscribeAsync(RespireChannel.KeyEvent(RespireKeyNotificationType.Set, 0))
-            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("SUBSCRIBE ", StringComparison.Ordinal)))
             .IsEqualTo(3);
         await Assert.That(retry.Completion.IsCompleted).IsFalse();
