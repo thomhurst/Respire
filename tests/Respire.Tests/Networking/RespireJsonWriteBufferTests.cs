@@ -14,10 +14,13 @@ namespace Respire.Tests.Networking;
 public partial class RespireJsonClientTests
 {
     [Test]
-    [Arguments("SET")]
-    [Arguments("MERGE")]
-    [Arguments("MSET")]
-    public async Task CancelledJsonWriteKeepsItsFrameWhileSerializationBufferIsReused(string operation)
+    [Arguments("SET", false)]
+    [Arguments("MERGE", false)]
+    [Arguments("MSET", false)]
+    [Arguments("SET", true)]
+    [Arguments("MERGE", true)]
+    [Arguments("MSET", true)]
+    public async Task AbandonedJsonWriteKeepsItsFrameWhileSerializationBufferIsReused(string operation, bool expire)
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         PausedJsonWriteStream? transport = null;
@@ -26,6 +29,7 @@ public partial class RespireJsonClientTests
             Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
+            CommandTimeout = expire ? TimeSpan.FromSeconds(2) : null,
             TestingStreamFactory = async (host, port, token) =>
             {
                 var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
@@ -49,8 +53,13 @@ public partial class RespireJsonClientTests
         try
         {
             await transport.WriteStarted.Task.WaitAsync(timeout.Token);
-            cancellation.Cancel();
-            await Assert.That(async () => await pending.WaitAsync(timeout.Token)).Throws<OperationCanceledException>();
+            if (expire)
+                await Assert.That(async () => await pending.WaitAsync(timeout.Token)).Throws<RespireTimeoutException>();
+            else
+            {
+                cancellation.Cancel();
+                await Assert.That(async () => await pending.WaitAsync(timeout.Token)).Throws<OperationCanceledException>();
+            }
             // The first using scope has cleared and returned its bytes. Serialize another value
             // before allowing either frame onto the socket, exercising the same client's reuse.
             next = Write(replacement, timeout.Token);
@@ -80,9 +89,66 @@ public partial class RespireJsonClientTests
         };
     }
 
+    [Test]
+    [Arguments("SET")]
+    [Arguments("MERGE")]
+    [Arguments("MSET")]
+    public async Task ConnectionFaultKeepsInProgressJsonFrameUntilTransportCompletes(string operation)
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        PausedJsonWriteStream? transport = null;
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, CommandTimeout = null,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            TestingStreamFactory = async (host, port, token) =>
+            {
+                var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+                try
+                {
+                    await socket.ConnectAsync(host, port, token);
+                    return transport = new PausedJsonWriteStream(new NetworkStream(socket, ownsSocket: true));
+                }
+                catch { socket.Dispose(); throw; }
+            },
+        });
+        var json = new RespireJsonClient(client);
+        var info = JsonWriteContext.Default.TextDocument;
+        var first = new TextDocument(new string('a', 32768));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var paused = transport!;
+        paused.PauseWrites = true;
+        paused.HoldAfterConnectionFault = true;
+        var pending = Write(first, deadline.Token);
+        try
+        {
+            await paused.WriteStarted.Task.WaitAsync(deadline.Token);
+            var originalFrame = paused.PendingWrite.ToArray();
+            await Assert.That(originalFrame.AsSpan().IndexOf(JsonSerializer.SerializeToUtf8Bytes(first, info)) >= 0).IsTrue();
+            server.CloseConnections();
+            await Assert.That(async () => await pending.WaitAsync(deadline.Token)).Throws<RespireConnectionException>();
+            // Serialize through the same client after its first rental was cleared. The canceled
+            // token prevents sending on the dead connection, but serialization still precedes dispatch.
+            await Assert.That(async () => await Write(new TextDocument(new string('b', 32768)), new CancellationToken(true)))
+                .Throws<OperationCanceledException>();
+            await Assert.That(paused.PendingWrite.Span.SequenceEqual(originalFrame)).IsTrue();
+        }
+        finally { paused.ResumeWrites.TrySetResult(); }
+
+        Task Write(TextDocument value, CancellationToken token) => operation switch
+        {
+            "SET" => json.SetAsync("{same}:first", value, info, cancellationToken: token).AsTask(),
+            "MERGE" => json.MergeAsync("{same}:first", value, info, cancellationToken: token).AsTask(),
+            "MSET" => json.MultiSetAsync([new("{same}:first", value), new("{same}:second", value)], info, token).AsTask(),
+            _ => throw new ArgumentOutOfRangeException(nameof(operation)),
+        };
+    }
+
     private sealed class PausedJsonWriteStream(Stream inner) : Stream
     {
         internal bool PauseWrites { get; set; }
+        internal bool HoldAfterConnectionFault { get; set; }
+        internal ReadOnlyMemory<byte> PendingWrite { get; private set; }
         internal TaskCompletionSource WriteStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal TaskCompletionSource ResumeWrites { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public override bool CanRead => true;
@@ -101,8 +167,17 @@ public partial class RespireJsonClientTests
         {
             if (PauseWrites)
             {
+                if (HoldAfterConnectionFault)
+                {
+                    // Send a partial frame, then model an I/O operation that still owns its
+                    // remaining memory while receive-side failure completes the response wait.
+                    await inner.WriteAsync(buffer[..17], cancellationToken);
+                    buffer = buffer[17..];
+                }
+                PendingWrite = buffer;
                 WriteStarted.TrySetResult();
-                await ResumeWrites.Task.WaitAsync(cancellationToken);
+                if (HoldAfterConnectionFault) await ResumeWrites.Task;
+                else await ResumeWrites.Task.WaitAsync(cancellationToken);
             }
             await inner.WriteAsync(buffer, cancellationToken);
         }
@@ -114,9 +189,11 @@ public partial class RespireJsonClientTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task PooledWritesPreserveMetadataWriterOptionsAndGrowth(bool indented)
+    [Arguments(false, 4)]
+    [Arguments(true, 4)]
+    [Arguments(false, 129)]
+    [Arguments(true, 129)]
+    public async Task PooledWritesPreserveMetadataWriterOptionsAndGrowth(bool indented, int batchLength)
     {
         var options = new JsonSerializerOptions
         {
@@ -137,14 +214,15 @@ public partial class RespireJsonClientTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         await client.Json.SetAsync("set", values[1], info);
         await client.Json.MergeAsync("merge", values[0], info);
-        var entries = values.Select((value, index) => new RespireJsonSetEntry<TextDocument>($"{{same}}:{index}", value)).ToArray();
+        var entries = Enumerable.Range(0, batchLength)
+            .Select(index => new RespireJsonSetEntry<TextDocument>($"{{same}}:{index}", values[Math.Min(index, values.Length - 1)])).ToArray();
         await client.Json.MultiSetAsync(entries, info);
         var frames = server.ReceivedArguments.Where(frame => Encoding.UTF8.GetString(frame[0]).StartsWith("JSON.", StringComparison.Ordinal)).ToArray();
         await Assert.That(frames.Length).IsEqualTo(3);
         await Assert.That(frames[0][3]).IsEquivalentTo(expected[1]);
         await Assert.That(frames[1][3]).IsEquivalentTo(expected[0]);
-        for (var index = 0; index < values.Length; index++)
-            await Assert.That(frames[2][index * 3 + 3]).IsEquivalentTo(expected[index]);
+        for (var index = 0; index < entries.Length; index++)
+            await Assert.That(frames[2][index * 3 + 3]).IsEquivalentTo(expected[Math.Min(index, expected.Length - 1)]);
     }
 
     [Test]
