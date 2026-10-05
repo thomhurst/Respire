@@ -6,6 +6,18 @@ namespace Respire.Search;
 [RespireCommands]
 internal interface IRespireSearchCommands
 {
+    [RespireCommand("FT.DICTADD")]
+    ValueTask<RespireResult> DictionaryAddAsync(string dictionary, string[] terms, CancellationToken cancellationToken = default);
+
+    [RespireCommand("FT.DICTDEL")]
+    ValueTask<RespireResult> DictionaryDeleteAsync(string dictionary, string[] terms, CancellationToken cancellationToken = default);
+
+    [RespireCommand("FT.DICTDUMP", Mutation = RespireCacheMutation.ReadOnly)]
+    ValueTask<RespireResult> DictionaryDumpAsync(string dictionary, CancellationToken cancellationToken = default);
+
+    [RespireCommand("FT.SPELLCHECK", Mutation = RespireCacheMutation.ReadOnly)]
+    ValueTask<RespireResult> SpellCheckAsync(string index, string query, RespireValue[] options, CancellationToken cancellationToken = default);
+
     [RespireCommand("FT.SUGADD")]
     ValueTask<RespireResult> AddSuggestionAsync(RespireKey key, string suggestion, double score, RespireValue[] options, CancellationToken cancellationToken = default);
 

@@ -18,8 +18,8 @@ namespace Respire.Search;
 /// <para>FT.CONFIG reads and writes are node-local. They use one selected node and never fan out.</para>
 /// <para>
 /// With client-side caching, read-only Search commands leave the local cache intact; FT.CREATE,
-/// FT.ALTER, FT.DROPINDEX, FT.SUGADD, FT.SUGDEL, FT.SYNUPDATE, and alias mutations invalidate it conservatively.
-/// Key-prefixed views reject Search
+/// FT.ALTER, FT.DROPINDEX, FT.SUGADD, FT.SUGDEL, FT.SYNUPDATE, FT.DICTADD, FT.DICTDEL, and alias mutations
+/// invalidate it conservatively. Key-prefixed views reject Search
 /// commands, so include prefixes in index definitions. Each query method builds one argument list
 /// per call; this package does not target the zero-allocation hot path.
 /// </para>
