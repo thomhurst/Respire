@@ -326,7 +326,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         return GetConnectionWithDiscoveryAsync(slot, cancellationToken, discovery);
     }
 
-    private RespireConnection? TryGetReadyConnection(int? slot, bool? correctionIdentity = null)
+    internal RespireConnection? TryGetReadyConnection(int? slot, bool? correctionIdentity = null)
     {
         var node = slot is { } value ? RoutingSnapshot[value].Primary : TryGetConnectedNode();
         if (node is not { IsConnected: true, IsRetired: false }) return null;

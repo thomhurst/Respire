@@ -1182,13 +1182,15 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// </summary>
     public ValueTask<RespValue> SendTransactionAsync(
         ReadOnlyMemory<byte> serializedCommands, int commandCount, CancellationToken cancellationToken = default,
-        TimeSpan? cancellationTimeout = null, CancellationToken callerCancellationToken = default, bool includeMulti = true)
+        TimeSpan? cancellationTimeout = null, CancellationToken callerCancellationToken = default, bool includeMulti = true,
+        CommandDeadline commandDeadline = default)
     {
         ValidateTransactionCapacity(commandCount, includeMulti);
         var prefixReplies = includeMulti ? 1 : 0;
         return SendMultiReplyCoreAsync(
             new TransactionCommand(serializedCommands, includeMulti), repliesBeforeFinal: commandCount + prefixReplies,
-            firstQueueReply: prefixReplies, cancellationToken, commandName: "MULTI/EXEC", cancellationTimeout, callerCancellationToken);
+            firstQueueReply: prefixReplies, cancellationToken, commandName: "MULTI/EXEC", cancellationTimeout, callerCancellationToken,
+            commandDeadline);
     }
 
     internal void ValidateTransactionCapacity(int commandCount, bool includeMulti = true)

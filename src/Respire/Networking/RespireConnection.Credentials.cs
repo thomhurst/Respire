@@ -31,6 +31,20 @@ internal sealed partial class RespireConnection
         public void Dispose() => gate?.Release();
     }
 
+    // A ready transaction needs no deadline timer for the credential sequence gate.
+    internal bool TryAcquireCredentialSequence(CancellationToken cancellationToken, out CredentialSequenceLease lease)
+    {
+        var gate = _credentialSequenceGate;
+        lease = default;
+        try
+        {
+            if (gate is not null && !gate.Wait(0, cancellationToken)) return false;
+        }
+        catch (OperationCanceledException error) { throw new RespireCommandNotSubmittedException(error); }
+        lease = new(gate);
+        return true;
+    }
+
     private readonly struct CredentialRenewalAuthCommand(RespireCredentials credentials) : IRespCommand
     {
         public ReadCommandKind ReadKind => ReadCommandKind.None;

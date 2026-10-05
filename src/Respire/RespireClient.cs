@@ -3826,6 +3826,23 @@ public sealed partial class RespireClient : IRespireClient
     internal ValueTask<RespireConnection> AcquireConnectionAsync(CancellationToken cancellationToken)
         => AcquireConnectionAsync(slot: null, cancellationToken);
 
+    // Transactions arm an acquisition timer only when connection discovery can suspend.
+    internal RespireConnection? TryAcquireReadyConnection(int? slot, CancellationToken cancellationToken)
+    {
+        ObjectDisposedException.ThrowIf(_core.Disposed, this);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_core.Cluster is { } cluster)
+            return cluster.TryGetReadyConnection(slot);
+
+        var multiplexer = _core.Multiplexer;
+        if (_core.Sentinel is { } sentinel)
+        {
+            if (sentinel.Current is not { IsRetired: false } generation) return null;
+            multiplexer = generation.Multiplexer;
+        }
+        return multiplexer is { IsConnected: true } ? multiplexer.GetConnection() : null;
+    }
+
     internal ValueTask<RespireConnection> AcquireConnectionAsync(
         int? slot, CancellationToken cancellationToken, RespireReadFrom readFrom)
         => _core.Cluster is { } cluster
