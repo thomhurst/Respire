@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using Respire.Commands;
 using Respire.Internal;
 using Respire.Networking;
 using Respire.Protocol;
@@ -253,6 +254,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
     {
         ThrowIfCompleted();
         using var importUsage = _importSession?.EnterOperation();
+        _importSession?.Connection.ValidateTransactionCapacity(_ops.Count, includeMulti: false);
         _completed = true;
         var core = _client.Core;
         var telemetryOperation = "MULTI";
@@ -267,6 +269,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
         RespireConnection? connection = _importSession?.Connection ?? _watchConnection;
         Exception? operationError = null;
         Exception? importError = null;
+        var importTransactionStarted = false;
         var returnWatchConnection = false;
         try
         {
@@ -406,7 +409,12 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
         finally
         {
             if (_importSession is not null && operationError is not null)
-                await _importSession.ExpireIfUncertainAsync(importError ?? operationError).ConfigureAwait(false);
+            {
+                if (importTransactionStarted)
+                    await _importSession.ExpireAsync(importError ?? operationError).ConfigureAwait(false);
+                else
+                    await _importSession.ExpireIfUncertainAsync(importError ?? operationError).ConfigureAwait(false);
+            }
             if (_ops.Count != 0)
             {
                 core.ClientCache?.FlushForUnknownCommand();
@@ -469,9 +477,21 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
                     RespValue reply;
                     try
                     {
+                        if (_importSession is not null)
+                        {
+                            // This lease is exclusive: confirm MULTI before any import can
+                            // reach Redis, including when ACLs allow HIMPORT but deny MULTI.
+                            using var multi = await _client.SendOnConnectionAsync("MULTI", connection,
+                                new Cmd(RespireCommands.Transaction.MULTI.Verb), token,
+                                allowStreamingConnectionReroute: false).ConfigureAwait(false);
+                            ResponseReader.ExpectOk(in multi);
+                            importTransactionStarted = true;
+                        }
                         reply = await connection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count, token,
-                                core.Options.CommandTimeout, cancellationToken)
+                                core.Options.CommandTimeout, cancellationToken, includeMulti: _importSession is null)
                             .ConfigureAwait(false);
+                        if (_importSession is not null && (reply.Type == RespDataType.Array || reply.IsNull))
+                            importTransactionStarted = false;
                     }
                     catch (RespireConnectionRetiredException retirement) when (_watchConnection is null && _importSession is null
                         && cluster is not null && cluster.CanRetryRetirement(attempt, token))

@@ -235,9 +235,11 @@ public sealed class RespireHashImportSession : IAsyncDisposable
         => error is not RespireServerException server || ClusterRouter.IsRedirect(server)
             || server.Code == RespireErrorCodes.ReadOnly;
 
-    internal async ValueTask ExpireIfUncertainAsync(Exception error)
+    internal ValueTask ExpireIfUncertainAsync(Exception error)
+        => RequiresExpiration(error) ? ExpireAsync(error) : ValueTask.CompletedTask;
+
+    internal async ValueTask ExpireAsync(Exception error)
     {
-        if (!RequiresExpiration(error)) return;
         if (error is RespireServerException server)
         {
             _client.Core.Cluster?.LearnWatchedRoute(server, _connection, ClusterSlot);

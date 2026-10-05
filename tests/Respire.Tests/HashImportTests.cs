@@ -178,6 +178,114 @@ public class HashImportTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task TransactionPermissionFailuresDoNotEscapeTransaction(bool denyExec)
+    {
+        await using var server = new FakeRespServer(20, FakeRespServer.OkReply);
+        var inMulti = false;
+        server.ReplyOverride = (_, command) =>
+        {
+            if (command == "MULTI")
+            {
+                if (!denyExec) return "-NOPERM MULTI denied\r\n"u8.ToArray();
+                inMulti = true;
+                return FakeRespServer.OkReply;
+            }
+            if (command == "EXEC") return "-NOPERM EXEC denied\r\n"u8.ToArray();
+            return inMulti ? "+QUEUED\r\n"u8.ToArray() : FakeRespServer.OkReply;
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await using var session = await client.Hashes.CreateImportSessionAsync();
+        await session.PrepareAsync("schema", "field");
+        await using var transaction = session.CreateTransaction();
+        var pending = transaction.Hashes.Import("key", "schema", "value");
+        await Assert.That(async () => await transaction.CommitAsync()).Throws<RespireServerException>();
+        await Assert.That(pending.Status).IsEqualTo(RespirePendingStatus.Faulted);
+        if (denyExec)
+            await Assert.That(async () => await session.PrepareAsync("later", "field")).Throws<ObjectDisposedException>();
+        else
+        {
+            await Assert.That(server.ReceivedCommands.Contains("HIMPORT SET key schema value")).IsFalse();
+            await Assert.That(server.ReceivedCommands.Contains("EXEC")).IsFalse();
+            await Assert.That(await session.PrepareAsync("later", "field")).IsTrue();
+        }
+    }
+
+    [Test]
+    public async Task OversizedTransactionPreservesPreparedFieldsets()
+    {
+        await using var server = new RespireFakeServer();
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { MaxInflightCommands = 2 });
+        await using var session = await client.Hashes.CreateImportSessionAsync();
+        await session.PrepareAsync("schema", "field");
+        await using var transaction = session.CreateTransaction();
+        _ = transaction.Hashes.Import("first", "schema", "one");
+        _ = transaction.Hashes.Import("second", "schema", "two");
+        await Assert.That(async () => await transaction.CommitAsync()).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(await client.ExistsAsync("first")).IsFalse();
+        await Assert.That(await client.ExistsAsync("second")).IsFalse();
+        await session.SetAsync("after", "schema", "retained");
+        await Assert.That(await client.Hashes.GetStringAsync("after", "field")).IsEqualTo("retained");
+    }
+
+    [Test]
+    public async Task CredentialRenewalPreservesBatchAdmissionOrder()
+    {
+        var clock = new Respire.Testing.CredentialTestClock();
+        var provider = new ImportCredentials(new("user", "first", clock.GetUtcNow().AddSeconds(30)));
+        await using var server = new FakeRespServer(256, FakeRespServer.OkReply);
+        server.SuppressReply = command => command == "AUTH user second";
+        server.ReplyOverride = (_, command) => command.StartsWith("HIMPORT DISCARD", StringComparison.Ordinal)
+            ? ":1\r\n"u8.ToArray() : FakeRespServer.OkReply;
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, MaxInflightCommands = 128,
+            Endpoints = [new("127.0.0.1", server.Port)], CredentialProvider = provider,
+            CredentialTimeProvider = clock, CredentialRefreshBeforeExpiry = TimeSpan.FromSeconds(10),
+        });
+        await using var session = await client.Hashes.CreateImportSessionAsync();
+        await session.PrepareAsync("bootstrap", "field");
+        var commands = server.ReceivedCommands.ToArray();
+        var connectionId = server.ReceivedConnectionIds[Array.IndexOf(commands, "HIMPORT PREPARE bootstrap field")];
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while (!clock.HasDelay(TimeSpan.FromSeconds(20))) await Task.Delay(5, deadline.Token);
+        provider.Current = new("user", "second", clock.GetUtcNow().AddSeconds(60));
+        clock.Advance(TimeSpan.FromSeconds(20));
+        while (true)
+        {
+            commands = server.ReceivedCommands.ToArray();
+            if (commands.Select((command, index) => (command, index)).Any(item => item.command == "AUTH user second"
+                && server.ReceivedConnectionIds[item.index] == connectionId)) break;
+            await Task.Delay(5, deadline.Token);
+        }
+        using var batch = session.CreateBatch();
+        var expected = new List<string> { "HIMPORT PREPARE bootstrap field" };
+        for (var index = 0; index < 32; index++)
+        {
+            _ = batch.Hashes.PrepareImport($"schema:{index}", "field");
+            _ = batch.Hashes.Import($"key:{index}", $"schema:{index}", "value");
+            _ = batch.Hashes.DiscardImport($"schema:{index}");
+            expected.Add($"HIMPORT PREPARE schema:{index} field");
+            expected.Add($"HIMPORT SET key:{index} schema:{index} value");
+            expected.Add($"HIMPORT DISCARD schema:{index}");
+        }
+        var execute = batch.ExecuteAsync(deadline.Token).AsTask();
+        await Assert.That(execute.IsCompleted).IsFalse();
+        await server.SendRawAsync(FakeRespServer.OkReply, connectionId);
+        await execute.WaitAsync(deadline.Token);
+        var actual = server.ReceivedCommands.Where(command => command.StartsWith("HIMPORT ", StringComparison.Ordinal));
+        await Assert.That(string.Join('|', actual)).IsEqualTo(string.Join('|', expected));
+    }
+
+    private sealed class ImportCredentials(RespireCredentials current) : IRespireCredentialProvider
+    {
+        public RespireCredentials Current = current;
+        public ValueTask<RespireCredentials> GetCredentialsAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(Current);
+    }
+
+    [Test]
     public async Task OrdinaryQueuesRejectConnectionLocalImports()
     {
         await using var server = new RespireFakeServer();

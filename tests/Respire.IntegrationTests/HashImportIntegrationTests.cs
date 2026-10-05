@@ -174,6 +174,51 @@ public class HashImportIntegrationTests(Redis810HashImportTestContainer fixture)
         => (fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString)) with { Protocol = (RespProtocol)protocol };
 
     [Test]
+    [Arguments(2, false)]
+    [Arguments(3, false)]
+    [Arguments(2, true)]
+    [Arguments(3, true)]
+    public async Task TransactionAclFailureDoesNotImportOutsideMulti(int protocol, bool denyExec)
+    {
+        var options = Options(null, protocol);
+        await using var admin = await TestRespSession.ConnectAsync(options);
+        var username = $"import-acl:{Guid.NewGuid():N}";
+        var key = username + ":key";
+        using (var created = await admin.CommandAsync("ACL", "SETUSER", username, "on", ">import-test",
+                   "~*", "+@all", denyExec ? "-exec" : "-multi"))
+            created.AsString().Should().Be("OK");
+        try
+        {
+            await using var client = await RespireClient.ConnectAsync(options with { Username = username, Password = "import-test" });
+            await using var session = await client.Hashes.CreateImportSessionAsync();
+            await session.PrepareAsync("schema", "field");
+            await using var transaction = session.CreateTransaction();
+            var pending = transaction.Hashes.Import(key, "schema", "value");
+            Func<Task> commit = async () => await transaction.CommitAsync();
+            // Redis 8.10 wraps a denied EXEC in EXECABORT; a denied MULTI returns NOPERM directly.
+            (await commit.Should().ThrowAsync<RespireServerException>()).Which.Code.Should().Be(denyExec ? "EXECABORT" : "NOPERM");
+            pending.Status.Should().Be(RespirePendingStatus.Faulted);
+            using (var exists = await admin.CommandAsync("EXISTS", key)) exists.AsInteger().Should().Be(0);
+            if (denyExec)
+            {
+                Func<Task> reuse = async () => await session.PrepareAsync("later", "field");
+                await reuse.Should().ThrowAsync<ObjectDisposedException>();
+            }
+            else
+            {
+                (await session.SetAsync(key, "schema", "retained")).Should().BeTrue();
+                using var imported = await admin.CommandAsync("HGET", key, "field");
+                imported.AsString().Should().Be("retained");
+            }
+        }
+        finally
+        {
+            using var deleted = await admin.CommandAsync("ACL", "DELUSER", username);
+            using var cleared = await admin.CommandAsync("DEL", key);
+        }
+    }
+
+    [Test]
     [Arguments(false, 2)]
     [Arguments(false, 3)]
     [Arguments(true, 2)]

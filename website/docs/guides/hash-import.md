@@ -56,7 +56,11 @@ Console.WriteLine(imported.Result);
 ```
 
 Batches pipeline commands in order. Transactions use `MULTI`/`EXEC` on the same connection;
-execution errors fault the affected pending and do not roll back other commands. Session
+the session confirms `MULTI` before sending any imports. A rejected `MULTI` leaves prepared
+fieldsets usable. A rejected `EXEC` closes the session because Redis may still be in transaction
+mode. Transactions require one in-flight slot per queued command plus one for `EXEC`;
+exceeding `MaxInflightCommands` fails before `MULTI` and preserves prepared fieldsets.
+Execution errors fault the affected pending and do not roll back other commands. Session
 transactions do not provide WATCH. `ExecuteAndWaitForReplicationAsync` and
 `ExecuteAndWaitForAofAsync` reject session batches because their execution contract creates a
 fresh connection. Await each operation or queue execution before starting another operation.
@@ -88,7 +92,8 @@ no independent expiry timer. Disposing the parent client also invalidates the se
 Disposal does not wait for an in-flight operation: it closes the connection, causing that
 operation to fail without replay.
 
-A server error with a valid response leaves the session usable. Cancellation before an
+Ordinary command errors leave the session usable. Routing errors, `READONLY`, and errors
+that leave transaction state uncertain invalidate it. Cancellation before an
 immediate send leaves its fieldsets intact. After an uncertain send, some imports may have
 executed; inspect application data before retrying. Disposing a queue before execution does
 not dispose the session or discard fieldsets prepared earlier.

@@ -371,14 +371,14 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
 
     private async Task RunImportBatchAsync(RespireConnection connection, CancellationToken cancellationToken)
     {
-        // The session exclusively owns this connection. Fill at most one ring's worth of
-        // commands, then drain it before admitting more; capacity waiters are not FIFO.
+        // Bound retained reply tasks, and await each admission before starting the next.
+        // Even an empty ring may be fenced by credential renewal; its waiters are not FIFO.
         var tasks = new Task<Exception?>[Math.Min(_ops.Count, _client.Core.Options.MaxInflightCommands)];
         for (var offset = 0; offset < _ops.Count;)
         {
             var count = Math.Min(tasks.Length, _ops.Count - offset);
             for (var index = 0; index < count; index++)
-                tasks[index] = _ops[offset + index].RunAsync(_client, connection, cancellationToken);
+                tasks[index] = await _ops[offset + index].StartImportAsync(_client, connection, cancellationToken).ConfigureAwait(false);
             // Slots beyond count still contain completed tasks from the preceding chunk.
             await Task.WhenAll(tasks).ConfigureAwait(false);
             offset += count;
@@ -584,6 +584,9 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         public abstract Task<Exception?> RunAsync(
             RespireClient client, RespireConnection connection, CancellationToken cancellationToken);
 
+        public abstract ValueTask<Task<Exception?>> StartImportAsync(
+            RespireClient client, RespireConnection connection, CancellationToken cancellationToken);
+
         public abstract bool TryGetClusterSlot(out int slot);
 
         public abstract bool? IsCursorContinuation { get; }
@@ -675,14 +678,40 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             }
         }
 
-        public override async Task<Exception?> RunAsync(
+        public override async ValueTask<Task<Exception?>> StartImportAsync(
             RespireClient client, RespireConnection connection, CancellationToken cancellationToken)
         {
             try
             {
-                var value = await connection.SendAsync(in command, cancellationToken, commandName: Operation)
-                    .ConfigureAwait(false);
-                return Complete(client, value);
+                var reply = await connection.EnqueuePinnedAsync(command, cancellationToken, Operation).ConfigureAwait(false);
+                return CompleteReplyAsync(client, reply);
+            }
+            catch (Exception ex)
+            {
+                pending.Fail(ex);
+                return Task.FromResult<Exception?>(ex);
+            }
+        }
+
+        public override Task<Exception?> RunAsync(
+            RespireClient client, RespireConnection connection, CancellationToken cancellationToken)
+        {
+            try
+            {
+                return CompleteReplyAsync(client, connection.SendAsync(in command, cancellationToken, commandName: Operation));
+            }
+            catch (Exception ex)
+            {
+                pending.Fail(ex);
+                return Task.FromResult<Exception?>(ex);
+            }
+        }
+
+        private async Task<Exception?> CompleteReplyAsync(RespireClient client, ValueTask<RespValue> reply)
+        {
+            try
+            {
+                return Complete(client, await reply.ConfigureAwait(false));
             }
             catch (Exception ex)
             {

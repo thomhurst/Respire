@@ -845,6 +845,33 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             commandName, armCommandDeadline, pinToConnection: pinToConnection,
             streamingRoute: DedicatedStreamRoute.None, preferredZone: preferredZone);
 
+    /// <summary>Waits for admission on this exact connection, then returns the separately awaitable reply.
+    /// Exclusive pipelines use this boundary to retain order across capacity and credential-renewal waits.</summary>
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    internal async ValueTask<ValueTask<RespValue>> EnqueuePinnedAsync<TCommand>(
+        TCommand command, CancellationToken cancellationToken, string commandName)
+        where TCommand : struct, IRespCommand
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (command is IStreamingRespCommand)
+            throw new NotSupportedException("Ordered admission does not support streaming command payloads.");
+        var deadline = CommandDeadline.After(_commandTimeoutMilliseconds);
+        var source = _sourcePool.Rent(throwOnError: false, commandName);
+        bool enqueued;
+        bool startedBatch;
+        try { enqueued = TryEnqueue(in command, source, out startedBatch); }
+        catch { ReclaimUnpublished(source); throw; }
+        if (enqueued) ClampDeadline(source, deadline);
+        else
+            startedBatch = await WaitForInflightCapacityAsync(command, source, discardRepliesBefore: 0,
+                cancellationToken, commandDeadline: deadline).ConfigureAwait(false);
+        source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
+        ScheduleFlush(startedBatch);
+        return source.Task;
+    }
+
     /// <summary>Sends an intentionally blocking command without applying the receive watchdog
     /// or the command deadline (a BLPOP-style wait may legitimately outlast both).</summary>
     internal async ValueTask<RespValue> SendWithoutResponseTimeoutAsync<TCommand>(
@@ -1148,27 +1175,32 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// and each queue reply are drained; the returned task completes with the first queue
     /// error when present, otherwise EXEC's reply. Retaining queue errors is required because
     /// Redis Cluster can report MOVED/ASK there and then return only EXECABORT from EXEC.
+    /// An exclusive caller that already confirmed MULTI may omit that prefix.
     /// </summary>
     public ValueTask<RespValue> SendTransactionAsync(
         ReadOnlyMemory<byte> serializedCommands, int commandCount, CancellationToken cancellationToken = default,
-        TimeSpan? cancellationTimeout = null, CancellationToken callerCancellationToken = default)
+        TimeSpan? cancellationTimeout = null, CancellationToken callerCancellationToken = default, bool includeMulti = true)
+    {
+        ValidateTransactionCapacity(commandCount, includeMulti);
+        var prefixReplies = includeMulti ? 1 : 0;
+        return SendMultiReplyCoreAsync(
+            new TransactionCommand(serializedCommands, includeMulti), repliesBeforeFinal: commandCount + prefixReplies,
+            firstQueueReply: prefixReplies, cancellationToken, commandName: "MULTI/EXEC", cancellationTimeout, callerCancellationToken);
+    }
+
+    internal void ValidateTransactionCapacity(int commandCount, bool includeMulti = true)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(commandCount);
 
-        // MULTI's +OK plus one +QUEUED per command precede the EXEC reply. A transaction
-        // needing more slots than the ring holds could never enqueue and would spin in the
-        // slow path forever — reject it up front.
-        var slotsNeeded = commandCount + 2;
+        // An exclusive caller may have already confirmed MULTI separately. Validate before
+        // entering that state so an oversized body cannot strand the connection in MULTI.
+        var slotsNeeded = (long)commandCount + (includeMulti ? 2 : 1);
         if (slotsNeeded > _inflight.Capacity)
         {
             throw new ArgumentOutOfRangeException(
                 nameof(commandCount),
                 $"A transaction with {commandCount} commands needs {slotsNeeded} in-flight slots, but this connection allows {_inflight.Capacity} (see {nameof(RespireConnectionOptions)}.{nameof(RespireConnectionOptions.MaxInflightCommands)}).");
         }
-
-        return SendMultiReplyCoreAsync(
-            new TransactionCommand(serializedCommands), repliesBeforeFinal: commandCount + 1,
-            firstQueueReply: 1, cancellationToken, commandName: "MULTI/EXEC", cancellationTimeout, callerCancellationToken);
     }
 
     /// <summary>
@@ -3051,14 +3083,15 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
     }
 
-    /// <summary>Writes MULTI + a pre-serialized command block + EXEC as one frame sequence.</summary>
-    private readonly struct TransactionCommand(ReadOnlyMemory<byte> serializedCommands) : IRespCommand
+    /// <summary>Writes an optional MULTI, a pre-serialized command block, and EXEC.
+    /// Only an exclusive caller that already confirmed MULTI may omit it.</summary>
+    private readonly struct TransactionCommand(ReadOnlyMemory<byte> serializedCommands, bool includeMulti) : IRespCommand
     {
         public ReadCommandKind ReadKind => ReadCommandKind.None;
 
         public void Write(ref RespWriter writer)
         {
-            writer.WriteRaw(RespCommands.Multi);
+            if (includeMulti) writer.WriteRaw(RespCommands.Multi);
             writer.WriteRaw(serializedCommands.Span);
             writer.WriteRaw(RespCommands.Exec);
         }
