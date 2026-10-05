@@ -561,14 +561,9 @@ public sealed record RespireOptions
 
     private void ValidateUnixEndpoint(RespireEndpoint endpoint, string optionName)
     {
-        if (!RespireEndpoint.IsValidUnixPath(endpoint.Host))
-            throw new RespireConfigurationException($"RespireOptions.{optionName} with port zero requires an absolute Unix socket path.");
+        UnixSocketConfiguration.Validate(endpoint.Host, UseTls, MaintenanceNotifications, $"RespireOptions.{optionName}");
         if (UseCluster || !string.IsNullOrWhiteSpace(SentinelPrimaryName))
             throw new RespireConfigurationException("Unix socket endpoints cannot be mixed with Cluster or Sentinel discovery, which advertises TCP endpoints.");
-        if (UseTls)
-            throw new RespireConfigurationException("Redis Unix sockets do not use TLS. Configure filesystem access controls instead.");
-        if (MaintenanceNotifications == RespireMaintenanceNotificationMode.Enabled)
-            throw new RespireConfigurationException("Unix sockets cannot use maintenance handoffs to advertised TCP endpoints.");
     }
 
     private static void Require(bool condition, string optionName, string requirement)

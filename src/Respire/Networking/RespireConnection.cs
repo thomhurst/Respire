@@ -283,11 +283,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         var isUnixSocket = port == 0;
         if (isUnixSocket)
         {
-            if (!RespireEndpoint.IsValidUnixPath(host))
-                throw new ArgumentException("A Unix socket requires an absolute filesystem path.", nameof(host));
-            if (options.UseTls || options.MaintenanceNotifications == RespireMaintenanceNotificationMode.Enabled)
-                throw new RespireConfigurationException("Unix sockets do not support Redis TLS or TCP maintenance handoffs.");
+            UnixSocketConfiguration.Validate(host, options.UseTls, options.MaintenanceNotifications, nameof(host));
             // Redis advertises TCP targets for handoffs, never local filesystem paths.
+            // Normalize per physical connection: a standalone replica set may mix TCP and Unix endpoints.
             options = options with { MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled };
         }
         else

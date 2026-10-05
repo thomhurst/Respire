@@ -1,4 +1,5 @@
 using Respire.Internal;
+using Respire.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -83,6 +84,30 @@ public class UnixSocketOptionsTests
             .Throws<RespireConfigurationException>();
         await Assert.That(() => RespireClient.Create(options with { MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled }))
             .Throws<RespireConfigurationException>();
+    }
+
+    [Test]
+    public async Task ZeroTcpPortExplainsHowToConfigureBothTransports()
+    {
+        var error = await Assert.That(() => RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("localhost", 0)],
+        })).ThrowsExactly<RespireConfigurationException>();
+        await Assert.That(error!.Message).Contains("RespireOptions.Endpoints");
+        await Assert.That(error.Message).Contains("TCP ports must be between 1 and 65535");
+        await Assert.That(error.Message).Contains("RespireEndpoint.UnixSocket(path)");
+    }
+
+    [Test]
+    public async Task PhysicalConnectionsUseTheSameTransportValidationBeforeIo()
+    {
+        await Assert.That(async () => await RespireConnection.ConnectAsync("localhost", 0))
+            .ThrowsExactly<RespireConfigurationException>();
+        await Assert.That(async () => await RespireConnection.ConnectAsync("/tmp/redis.sock", 0,
+            new RespireConnectionOptions { UseTls = true })).ThrowsExactly<RespireConfigurationException>();
+        await Assert.That(async () => await RespireConnection.ConnectAsync("/tmp/redis.sock", 0,
+            new RespireConnectionOptions { MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled }))
+            .ThrowsExactly<RespireConfigurationException>();
     }
 
     [Test]

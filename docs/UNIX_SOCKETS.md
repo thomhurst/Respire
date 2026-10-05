@@ -25,7 +25,8 @@ against the current directory when called. Linux abstract socket names are not s
 
 `RespireEndpoint.Host` holds the socket path and `Port` is zero for these endpoints.
 `IsUnixSocket` identifies that representation, including endpoints reported in
-connection events and credential-provider contexts. `ToString()` emits the `!path`
+connection events. Credential providers receive only a cancellation token, not an
+endpoint context. `ToString()` emits the `!path`
 form. Socket paths are compared case-sensitively; DNS host names retain their
 case-insensitive comparison.
 
