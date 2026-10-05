@@ -241,8 +241,8 @@ public sealed class RespireJsonClient
     {
         var count = entries.Count;
         var arguments = new RespireValue[checked(count * 3)];
-        int[]? rentedEnds = null;
-        Span<int> ends = count <= MaxStackAllocatedOffsets ? stackalloc int[count] : (rentedEnds = ArrayPool<int>.Shared.Rent(count));
+        int[]? rentedEndOffsets = null;
+        Span<int> endOffsets = count <= MaxStackAllocatedOffsets ? stackalloc int[count] : (rentedEndOffsets = ArrayPool<int>.Shared.Rent(count));
         try
         {
             for (var index = 0; index < count; index++)
@@ -250,21 +250,21 @@ public sealed class RespireJsonClient
                 var entry = entries[index];
                 arguments[index * 3] = entry.Key;
                 arguments[index * 3 + 1] = entry.Path.Value;
-                ends[index] = buffer.Serialize(entry.Value, jsonTypeInfo).Length;
+                endOffsets[index] = buffer.Serialize(entry.Value, jsonTypeInfo).Length;
             }
             // Growth returns previous rentals, so capture slices only after every value is serialized.
             var serialized = buffer.Bytes.WrittenMemory;
             var start = 0;
             for (var index = 0; index < count; index++)
             {
-                arguments[index * 3 + 2] = serialized.Slice(start, ends[index] - start);
-                start = ends[index];
+                arguments[index * 3 + 2] = serialized.Slice(start, endOffsets[index] - start);
+                start = endOffsets[index];
             }
             return arguments;
         }
         finally
         {
-            if (rentedEnds is not null) ArrayPool<int>.Shared.Return(rentedEnds);
+            if (rentedEndOffsets is not null) ArrayPool<int>.Shared.Return(rentedEndOffsets);
         }
     }
 
