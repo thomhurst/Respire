@@ -88,6 +88,16 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private readonly AsyncCapacitySignal _capacitySignal = new();
     private readonly CompletionScheduler _completions = new();
 
+    // Delivery before the next receive on an idle connection (see DeliverThenReceive).
+    // _receiveDeferred is set under the write gate while the receive loop delivers with no
+    // receive outstanding; the flush loop reads it under the same gate before every send.
+    private bool _receiveDeferred;
+    // 0 while a deferred receive waits to start, otherwise 1. Whoever swaps in 1 starts it.
+    private int _deferredReceiveClaim = 1;
+    private Action? _deferredReceiveContinuation;
+    private Memory<byte> _deferredReceiveBuffer;
+    private ValueTask<int> _deferredReceive;
+
     private WriteBuffer _activeBuffer;
     private WriteBuffer _spareBuffer;
     private int _activeReplyCount;
@@ -2079,6 +2089,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 while (true)
                 {
                     int sendingReplyCount;
+                    bool receiveDeferred;
                     lock (_writeGate)
                     {
                         if (_dead)
@@ -2091,12 +2102,21 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                             break;
                         }
 
+                        receiveDeferred = _receiveDeferred;
+
                         Volatile.Write(ref _sending, true);
                         sending = _activeBuffer;
                         _activeBuffer = _spareBuffer;
                         _spareBuffer = sending;
                         sendingReplyCount = _activeReplyCount;
                         _activeReplyCount = 0;
+                    }
+
+                    // These commands' replies need a receive. A continuation delivered ahead of
+                    // it may be the sender, and may block until its reply arrives.
+                    if (receiveDeferred)
+                    {
+                        TryStartDeferredReceive();
                     }
 
                     // Never cancelled: a partial RESP frame on the wire is unrecoverable.
@@ -2381,9 +2401,17 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     _completions.Flush();
                     received = await ReceiveAsync(buffer.AsMemory(end)).ConfigureAwait(false);
                 }
-                else
+                else if (_pushHandler is null)
                 {
                     // Every reply is in and this loop owns the runner for the drained batch.
+                    // Deliver it before starting the next receive, so the caller does not wait
+                    // behind that socket call.
+                    received = await new DeliverThenReceive(this, buffer.AsMemory(end));
+                }
+                else
+                {
+                    // A subscriber connection: pushes can arrive at any time, so keep the receive
+                    // outstanding while the drained replies are delivered.
                     ValueTask<int> receive;
                     try
                     {
@@ -2800,6 +2828,112 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         source.SetDirectResult(result);
         _completions.Add(source, default);
         return true;
+    }
+
+    /// <summary>
+    /// Delivers the drained replies on the receive loop's thread, then starts the loop's next
+    /// receive. Starting the receive first would put a socket call between each reply and its
+    /// caller.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The receive loop has already suspended when <see cref="DeliverThenReceiveCore"/> runs.
+    /// Whichever thread starts the receive hands it the loop's continuation, and the loop
+    /// resumes when that receive completes.
+    /// </para>
+    /// <para>
+    /// While delivery runs, the connection has nothing in flight and no receive outstanding. A
+    /// continuation that sends a command and then blocks until the reply arrives would wait
+    /// forever, so the flush loop starts the deferred receive before it sends anything.
+    /// <see cref="Abort"/> also starts it, so a closed connection still ends the loop. Until one
+    /// of these happens, only what the server sends unprompted waits: a maintenance
+    /// notification, or the server closing the connection, goes unread while a caller blocks
+    /// inside a continuation. Subscriber connections, where pushes are the main traffic, keep
+    /// the receive outstanding instead.
+    /// </para>
+    /// </remarks>
+    private readonly struct DeliverThenReceive(RespireConnection connection, Memory<byte> buffer)
+        : ICriticalNotifyCompletion
+    {
+        public DeliverThenReceive GetAwaiter() => this;
+
+        // Always suspend: completing synchronously would skip delivery.
+        public bool IsCompleted => false;
+
+        public int GetResult()
+        {
+            var receive = connection._deferredReceive;
+            connection._deferredReceive = default;
+            return receive.GetAwaiter().GetResult();
+        }
+
+        public void OnCompleted(Action continuation) => connection.DeliverThenReceiveCore(continuation, buffer);
+
+        public void UnsafeOnCompleted(Action continuation) => connection.DeliverThenReceiveCore(continuation, buffer);
+    }
+
+    private void DeliverThenReceiveCore(Action continuation, Memory<byte> buffer)
+    {
+        _deferredReceiveContinuation = continuation;
+        _deferredReceiveBuffer = buffer;
+        // Publishes the fields above to whichever thread claims the start.
+        Volatile.Write(ref _deferredReceiveClaim, 0);
+        bool deferred;
+        lock (_writeGate)
+        {
+            // A command enqueued since the drain may already be on the wire, and a dead
+            // connection must not wait for delivery to observe its close.
+            deferred = _inflight.Count == 0 && !_dead;
+            _receiveDeferred = deferred;
+        }
+
+        if (!deferred)
+        {
+            TryStartDeferredReceive();
+            _completions.Execute();
+            return;
+        }
+
+        try
+        {
+            _completions.Execute();
+        }
+        finally
+        {
+            Volatile.Write(ref _receiveDeferred, false);
+            TryStartDeferredReceive();
+        }
+    }
+
+    /// <summary>
+    /// Starts the receive that <see cref="DeliverThenReceiveCore"/> deferred, unless another
+    /// thread already has. Callable from any thread.
+    /// </summary>
+    private void TryStartDeferredReceive()
+    {
+        if (Interlocked.Exchange(ref _deferredReceiveClaim, 1) != 0)
+        {
+            return;
+        }
+
+        var continuation = _deferredReceiveContinuation!;
+        var buffer = _deferredReceiveBuffer;
+        _deferredReceiveContinuation = null;
+        _deferredReceiveBuffer = default;
+        ValueTask<int> receive;
+        try
+        {
+            receive = ReceiveAsync(buffer);
+        }
+        catch (Exception ex)
+        {
+            receive = ValueTask.FromException<int>(ex);
+        }
+
+        _deferredReceive = receive;
+        // A receive that has already completed queues the continuation to the pool instead of
+        // running it on this stack.
+        receive.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(continuation);
     }
 
     private void MarkReplyReceived()
@@ -3285,6 +3419,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             // Already closed.
         }
 
+        // A receive loop delivering ahead of its next receive must still observe the close.
+        TryStartDeferredReceive();
         // Wake the parked flush loop so it can observe the dead flag and exit.
         _flushSignal.Signal();
         try { ObserveCancellationCallbacks(_closedCancellation.CancelAsync()); }
