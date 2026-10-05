@@ -9,5 +9,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Respire\Respire.csproj" />
     <PackageReference Include="ZstdSharp.Port" />
+    <PackageReference Include="Reservoir" />
+    <InternalsVisibleTo Include="Respire.Tests" />
   </ItemGroup>
 </Project>

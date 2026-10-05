@@ -9,6 +9,7 @@ namespace Respire.Tests.Networking;
 
 public class MGetRoutingTests
 {
+    /// <summary>Uses distinct slot owners to detect misrouting across uncached, cached, and coalesced reads.</summary>
     [Test]
     [Arguments(0)]
     [Arguments(1)]
@@ -57,6 +58,7 @@ public class MGetRoutingTests
             .ThrowsExactly<RespireServerException>().WithMessage("CROSSSLOT Keys in request don't hash to the same slot");
     }
 
+    /// <summary>Exercises MGetCommand through a cache-enabled replica policy and completes via a primary hedge.</summary>
     [Test]
     public async Task MGetRemainsEligibleForHedging()
     {
@@ -87,9 +89,11 @@ public class MGetRoutingTests
         await Assert.That(primary.ReceivedCommands.Contains("MGET one two")).IsTrue();
     }
 
+    /// <summary>Encodes one owner range in the fake CLUSTER SLOTS response.</summary>
     private static string SlotRange(int first, int last, int port, string node)
         => $"*3\r\n:{first}\r\n:{last}\r\n*3\r\n$9\r\n127.0.0.1\r\n:{port}\r\n${node.Length}\r\n{node}\r\n";
 
+    /// <summary>Supplies protocol negotiation and an empty topology for non-cluster fixture commands.</summary>
     private static byte[] SetupReply(string command) => command.StartsWith("HELLO", StringComparison.Ordinal)
         ? "%1\r\n+proto\r\n:3\r\n"u8.ToArray()
         : command == "CLUSTER SLOTS" ? "*0\r\n"u8.ToArray() : FakeRespServer.OkReply;

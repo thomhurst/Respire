@@ -89,14 +89,6 @@ internal static class ClientFilterArguments
     internal static CmdN Build(RespireClientFilterOptions options, bool kill)
     {
         ArgumentNullException.ThrowIfNull(options);
-        if (options.Flags is "" || options.Capabilities is "")
-            throw new ArgumentException("Flags and Capabilities must be nonempty when specified.", nameof(options));
-        // Empty address/metadata exclusions can exclude nobody, bypassing the unfiltered-kill guard.
-        // Empty excluded flag/capability sets instead exclude everybody, so remain valid.
-        if (options.ExcludedAddress is "" || options.ExcludedLocalAddress is "" || options.ExcludedIp is "")
-            throw new ArgumentException("ExcludedAddress, ExcludedLocalAddress and ExcludedIp must be nonempty when specified.", nameof(options));
-        if (options.ExcludedName is "" || options.ExcludedLibraryName is "" || options.ExcludedLibraryVersion is "")
-            throw new ArgumentException("ExcludedName, ExcludedLibraryName and ExcludedLibraryVersion must be nonempty when specified.", nameof(options));
         var args = new List<RespireValue>();
         var hasSelector = false;
         AddType("TYPE", options.Type, nameof(options.Type));
@@ -108,24 +100,26 @@ internal static class ClientFilterArguments
         AddNumber("MAXAGE", options.MaximumAgeSeconds, nameof(options.MaximumAgeSeconds), positive: true);
         Add("NAME", options.Name);
         AddNumber("IDLE", options.IdleSeconds, nameof(options.IdleSeconds), positive: true);
-        Add("FLAGS", options.Flags);
+        AddNonEmpty("FLAGS", options.Flags, nameof(options.Flags));
         Add("LIB-NAME", options.LibraryName);
         Add("LIB-VER", options.LibraryVersion);
         AddNumber("DB", options.Database, nameof(options.Database));
-        Add("CAPA", options.Capabilities);
+        AddNonEmpty("CAPA", options.Capabilities, nameof(options.Capabilities));
         Add("IP", options.Ip);
         AddType("NOT-TYPE", options.ExcludedType, nameof(options.ExcludedType));
         AddIds("NOT-ID", options.ExcludedIds, nameof(options.ExcludedIds));
         Add("NOT-USER", options.ExcludedUser);
-        Add("NOT-ADDR", options.ExcludedAddress);
-        Add("NOT-LADDR", options.ExcludedLocalAddress);
-        Add("NOT-NAME", options.ExcludedName);
+        // Empty address/metadata exclusions can exclude nobody, bypassing the unfiltered-kill guard.
+        // Empty excluded flag/capability sets instead exclude everybody, so remain valid.
+        AddNonEmpty("NOT-ADDR", options.ExcludedAddress, nameof(options.ExcludedAddress));
+        AddNonEmpty("NOT-LADDR", options.ExcludedLocalAddress, nameof(options.ExcludedLocalAddress));
+        AddNonEmpty("NOT-NAME", options.ExcludedName, nameof(options.ExcludedName));
         Add("NOT-FLAGS", options.ExcludedFlags);
-        Add("NOT-LIB-NAME", options.ExcludedLibraryName);
-        Add("NOT-LIB-VER", options.ExcludedLibraryVersion);
+        AddNonEmpty("NOT-LIB-NAME", options.ExcludedLibraryName, nameof(options.ExcludedLibraryName));
+        AddNonEmpty("NOT-LIB-VER", options.ExcludedLibraryVersion, nameof(options.ExcludedLibraryVersion));
         AddNumber("NOT-DB", options.ExcludedDatabase, nameof(options.ExcludedDatabase));
         Add("NOT-CAPA", options.ExcludedCapabilities);
-        Add("NOT-IP", options.ExcludedIp);
+        AddNonEmpty("NOT-IP", options.ExcludedIp, nameof(options.ExcludedIp));
         if (kill && !hasSelector)
         {
             if (!options.AllowUnfilteredKill)
@@ -140,6 +134,13 @@ internal static class ClientFilterArguments
             args.Add(token);
             args.Add(value);
             hasSelector |= isSelector;
+        }
+
+        void AddNonEmpty(string token, string? value, string propertyName)
+        {
+            if (value is "")
+                throw new ArgumentException($"{propertyName} must be nonempty when specified.", nameof(options));
+            Add(token, value);
         }
 
         void AddNumber(string token, long? value, string propertyName, bool positive = false)

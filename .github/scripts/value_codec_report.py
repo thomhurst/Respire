@@ -59,8 +59,8 @@ def generate(root, phase, direction):
                          AllocatedBytes=allocated)
         if key == (16384, "RepeatedText", 1024, "Brotli"):
             representative_filter = case["FullName"]
-    if phase != "representative" and len(expected) != 40:
-        raise ValueError(f"Expected metadata for 40 cases in {phase}, got {len(expected)}")
+    if phase != "representative" and len(expected) != 60:
+        raise ValueError(f"Expected metadata for 60 cases in {phase}, got {len(expected)}")
     if rows.keys() != expected:
         raise ValueError(f"Incomplete benchmark matrix: missing={expected - rows.keys()}, extra={rows.keys() - expected}")
     if phase == "validation":

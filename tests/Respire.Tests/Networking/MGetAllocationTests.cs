@@ -8,6 +8,7 @@ namespace Respire.Tests.Networking;
 
 public class MGetAllocationTests
 {
+    /// <summary>Compares fully cached MGET allocations with the required result array and a detectable positive control.</summary>
     [Test]
     [NotInParallel]
     [Arguments(false)]
@@ -45,6 +46,7 @@ public class MGetAllocationTests
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("MGET", StringComparison.Ordinal))).IsFalse();
     }
 
+    /// <summary>Measures warmed reads or control allocations inside the caller's concurrent-GC exclusion.</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static long Measure(RespireClient client, RespireKey[] keys, bool baseline, bool positiveControl)
     {

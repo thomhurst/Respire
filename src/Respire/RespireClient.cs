@@ -1647,6 +1647,7 @@ public sealed partial class RespireClient : IRespireClient
     private static async ValueTask<T?> CastBytesAsync<T>(ValueTask<byte[]?> response)
         => (T?)(object?)await response.ConfigureAwait(false);
 
+    /// <summary>Resolves and validates the complete MGET key set before combining cached and server values.</summary>
     internal ValueTask<TResult[]> CachedGetManyAsync<TResult>(
         ReadOnlySpan<RespireKey> keys,
         CancellationToken cancellationToken,
@@ -1867,6 +1868,7 @@ public sealed partial class RespireClient : IRespireClient
         }
     }
 
+    /// <summary>Fills missing result positions and retries if the Sentinel cache generation changes.</summary>
     private async ValueTask<TResult[]> GetManyAndCacheAsync<TResult>(
         RespireKey[] missingKeys,
         TResult[] result,
@@ -1925,6 +1927,7 @@ public sealed partial class RespireClient : IRespireClient
         }
     }
 
+    /// <summary>Coalesces matching MGET misses while preserving the original validated slot and each caller's result array.</summary>
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
@@ -1949,6 +1952,7 @@ public sealed partial class RespireClient : IRespireClient
         return result;
     }
 
+    /// <summary>Tracks cache misses, sends them using their validated slot, and converts or transfers the owned reply.</summary>
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
