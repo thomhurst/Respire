@@ -308,10 +308,7 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<T?> GetAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
-        => client.CachedGetAsync(
-            client.ResolveKey(key),
-            cancellationToken,
-            static (RespireClient state, in Protocol.RespValue value) => state.DeserializeBorrowed<T>(in value));
+        => client.CachedDeserializeAsync<T>(client.ResolveKey(key), cancellationToken);
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
@@ -322,10 +319,7 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
             static (RespireClient state, in Protocol.RespValue value) => state.TryDeserializeBorrowed<T>(in value));
 
     public ValueTask<byte[]?> GetBytesAsync(RespireKey key, CancellationToken cancellationToken = default)
-        => client.CachedGetAsync(
-            client.ResolveKey(key),
-            cancellationToken,
-            static (RespireClient _, in Protocol.RespValue value) => ResponseReader.BytesOrNull(in value));
+        => client.CachedGetBytesAsync(client.ResolveKey(key), cancellationToken);
 
     public ValueTask<Stream?> GetStreamAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.SendBulkStreamAsync(

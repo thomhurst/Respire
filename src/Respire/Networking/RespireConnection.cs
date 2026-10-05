@@ -2299,7 +2299,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                         else
                         {
                             if (hasBulkHeader
-                                && TryCompleteStringDirect(bufferedData, bulkType, bulkLength, headerEnd, out var frameEnd))
+                                && (TryCompleteStringDirect(bufferedData, bulkType, bulkLength, headerEnd, out var frameEnd)
+                                    || TryCompleteBytesDirect(bufferedData, bulkType, bulkLength, headerEnd, out frameEnd)))
                             {
                                 start = frameEnd;
                                 responseBytes = 0;
@@ -2353,8 +2354,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                             // Flush before awaiting so already-parsed replies don't wait on
                             // the rest of a large frame.
                             _completions.Flush();
+                            var bytesSource = parser.IsIdle && directFill.Type == RespDataType.BulkString
+                                && _inflight.TryPeek(out var directHead) ? directHead as BytesPendingResponseSource : null;
                             var filled = await ReceiveLargeBulkAsync(
-                                    buffer, start, end, directFill.Type, directFill.PayloadLength)
+                                    buffer, start, end, directFill.Type, directFill.PayloadLength, bytesSource)
                                 .ConfigureAwait(false);
                             start = filled.Start;
                             end = filled.End;
@@ -2668,7 +2671,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     }
 
     /// <summary>
-    /// Receives a large bulk payload straight into its pooled array — one user-space copy for
+    /// Receives a large bulk payload straight into its pooled or caller-owned array — one user-space copy for
     /// the part already buffered, zero for the remainder. Returns the new cursors and value;
     /// the resumable parser decides whether it completes a top-level or nested aggregate.
     /// </summary>
@@ -2676,9 +2679,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
     private async ValueTask<(int Start, int End, RespValue Value)> ReceiveLargeBulkAsync(
-        byte[] buffer, int start, int end, RespDataType type, int payloadLength)
+        byte[] buffer, int start, int end, RespDataType type, int payloadLength,
+        BytesPendingResponseSource? bytesSource = null)
     {
-        var payload = RespirePools.ResponsePayloads.Rent(payloadLength);
+        var payload = bytesSource is null
+            ? RespirePools.ResponsePayloads.Rent(payloadLength)
+            : GC.AllocateUninitializedArray<byte>(payloadLength);
         try
         {
             var buffered = Math.Min(payloadLength, end - start);
@@ -2730,13 +2736,18 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
             start += 2;
 
+            if (bytesSource is not null)
+            {
+                bytesSource.SetDirectResult(payload);
+                return (start, end, default);
+            }
             var value = RespValue.PooledString(type, payload, payloadLength);
             payload = null;
             return (start, end, value);
         }
         finally
         {
-            if (payload is not null)
+            if (payload is not null && bytesSource is null)
             {
                 RespirePools.ResponsePayloads.Return(payload);
             }

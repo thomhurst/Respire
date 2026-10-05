@@ -1622,6 +1622,26 @@ public sealed partial class RespireClient : IRespireClient
             static (RespireClient _, in RespValue value) => ResponseReader.StringOrNull(in value));
     }
 
+    internal ValueTask<byte[]?> CachedGetBytesAsync(RespireKey resolvedKey, CancellationToken cancellationToken)
+        => GetReadCache is null
+            ? BytesOrNullAsync("GET", new Cmd1(Verbs.Get, resolvedKey.AsValue()), cancellationToken)
+            : CachedGetAsync(resolvedKey, cancellationToken,
+                static (RespireClient _, in RespValue value) => ResponseReader.BytesOrNull(in value));
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    internal ValueTask<T?> CachedDeserializeAsync<T>(RespireKey resolvedKey, CancellationToken cancellationToken)
+        => typeof(T) == typeof(byte[])
+            ? CastBytesAsync<T>(CachedGetBytesAsync(resolvedKey, cancellationToken))
+            : CachedGetAsync(resolvedKey, cancellationToken,
+                static (RespireClient client, in RespValue value) => client.DeserializeBorrowed<T>(in value));
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private static async ValueTask<T?> CastBytesAsync<T>(ValueTask<byte[]?> response)
+        => (T?)(object?)await response.ConfigureAwait(false);
+
     internal ValueTask<TResult[]> CachedGetManyAsync<TResult>(
         ReadOnlySpan<RespireKey> keys,
         CancellationToken cancellationToken,
@@ -4972,9 +4992,24 @@ public sealed partial class RespireClient : IRespireClient
 
     internal ValueTask<byte[]?> BytesOrNullAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
-        => ConvertAsync(
+    {
+        var core = _core;
+        ObjectDisposedException.ThrowIf(core.Disposed, this);
+        if (!RespireTelemetry.IsEnabled && core.Cluster is null && core.Sentinel is null
+            && (_readFrom == RespireReadFrom.Primary || command.ReadKind == ReadCommandKind.None)
+            && core.Multiplexer.IsInitialized && command is not IStreamingRespCommand
+            && (ReadCache is null || !ClientSideCacheCoordinator.CanCacheOperation(operation)))
+        {
+            var cache = core.ClientCache;
+            var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
+            var connection = core.Multiplexer.GetConnection();
+            var response = connection.SendBytesAsync(in command, ct, operation);
+            return mutationFence.IsRequired ? CompleteMutationAsync(response, cache!, mutationFence) : response;
+        }
+        return ConvertAsync(
             operation, command, ct,
             static (RespireClient _, in RespValue value) => ResponseReader.BytesOrNull(in value));
+    }
 
     internal ValueTask<double> DoubleAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
