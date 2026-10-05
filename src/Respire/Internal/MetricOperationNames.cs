@@ -12,7 +12,7 @@ internal sealed class MetricOperationNames(int maximumNames = 1024)
     {
         if (operation.Length is 0 or > 80) return "OTHER";
         foreach (var character in operation)
-            if (!(char.IsAsciiLetterOrDigit(character) || character is ' ' or '.' or '_' or '-')) return "OTHER";
+            if (!CommandNameRules.IsValidCharacter(character)) return "OTHER";
         if (_names.TryGetValue(operation, out var name)) return name;
         lock (_gate)
         {

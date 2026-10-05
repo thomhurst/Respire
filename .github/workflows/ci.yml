@@ -253,7 +253,7 @@ jobs:
           TUNIT_DISABLE_HTML_REPORTER: 'true'
         run: |
           dotnet run --project tests/Respire.Tests -c Release -f net8.0 --no-build -- \
-            --treenode-filter '/*/*/(MetricSelectionTests|TelemetryTests|RedisMetricSchemaTests)/*'
+            --treenode-filter '/*/*/(MetricSelectionTests)|(TelemetryTests)|(RedisMetricSchemaTests)/*'
 
       - name: Run samples
         uses: ./.github/actions/run-samples

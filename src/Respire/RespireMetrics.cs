@@ -1,4 +1,5 @@
 using System.Collections.Frozen;
+using Respire.Internal;
 
 namespace Respire;
 
@@ -110,7 +111,7 @@ public static class RespireMetrics
                     }
                     else
                     {
-                        if (!(char.IsAsciiLetterOrDigit(character) || character is '.' or '_' or '-'))
+                        if (!CommandNameRules.IsValidCharacter(character))
                             throw new ArgumentException("Command names must use ASCII letters, digits, '.', '_', '-', or single spaces.", parameter);
                         previousSpace = false;
                     }

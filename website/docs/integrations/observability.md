@@ -103,7 +103,11 @@ Metric labels never include keys, raw channel or stream names, command arguments
 or credentials. Script digests and function names remain trace attributes and are omitted
 from metrics to avoid per-script series growth. Command metric labels retain at most 1,024
 distinct names across the process lifetime, case insensitive; additional names share
-`OTHER`. Empty, non-ASCII, or names longer than 80 characters also use `OTHER`. The limit
+`OTHER`. Filters always match the original operation name, before label normalization or
+the cardinality limit. An allowed command first encountered after the limit therefore still
+emits a measurement labeled `OTHER`; allowing or blocking `OTHER` does not select or suppress
+other commands that receive that label. Allow-list entries do not reserve label capacity.
+Empty, non-ASCII, or names longer than 80 characters also use `OTHER`. The limit
 includes compound labels and does not reset when configuration changes. Other standard
 attributes still identify configured endpoints, database numbers, batch sizes, and errors.
 Metric selection and the label limit do not alter trace names or existing span attributes.

@@ -365,6 +365,8 @@ internal static class RespireTelemetry
     internal static bool IsOperationEnabled(string operation)
         => Source.HasListeners() || IsCommandMetricEnabled(operation);
 
+    // Dispatch gates select a path only. Once captured, OperationStart is authoritative
+    // through acquisition and completion; do not re-check the current policy after awaits.
     private static bool IsCommandMetricEnabled(string operation)
     {
         var selection = RespireMetrics.Current;

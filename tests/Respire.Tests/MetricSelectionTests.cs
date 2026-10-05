@@ -144,6 +144,25 @@ public class MetricSelectionTests
     }
 
     [Test]
+    [Arguments("GET")]
+    [Arguments("get")]
+    [Arguments("CLIENT LIST")]
+    [Arguments("CUSTOM.COMMAND")]
+    [Arguments("CUSTOM_COMMAND")]
+    [Arguments("CUSTOM-COMMAND")]
+    [Arguments("COMMAND42")]
+    [Arguments("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")]
+    public async Task AcceptedFiltersRetainCanonicalMetricLabels(string operation)
+    {
+        using var configuration = new MetricConfigurationScope(new()
+            { Groups = RespireMetricGroups.Command, CommandAllowList = [operation] });
+        using var capture = new Capture();
+        var names = new MetricOperationNames();
+        await Assert.That(RespireTelemetry.CaptureOperationStart(operation).MetricEnabled).IsTrue();
+        await Assert.That(names.GetName(operation)).IsEqualTo(operation.ToUpperInvariant());
+    }
+
+    [Test]
     public async Task ConfigurationOwnsListsAndBlockListWins()
     {
         var allow = new List<string> { "get", "SET", "CLIENT LIST" };
