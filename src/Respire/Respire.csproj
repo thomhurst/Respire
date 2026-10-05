@@ -19,6 +19,8 @@
     <!-- Reuse owned binary keys and the managed lock's cancellation-safe renewal lifecycle. -->
     <InternalsVisibleTo Include="Respire.Coordination" />
     <InternalsVisibleTo Include="Respire.Coordination.Tests" />
+    <!-- The key repository retains an owned binary list key. -->
+    <InternalsVisibleTo Include="Respire.DataProtection" />
     <InternalsVisibleTo Include="Respire.Tests" />
     <InternalsVisibleTo Include="Respire.IntegrationTests" />
     <InternalsVisibleTo Include="Respire.Benchmarks" />

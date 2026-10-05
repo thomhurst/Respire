@@ -134,6 +134,13 @@ jobs:
           dotnet run --project tests/Respire.Azure.Tests/Respire.Azure.Tests.csproj \
             -c Release -f ${{ matrix.framework }} --no-build
 
+      - name: Run DataProtection Tests
+        run: |
+          dotnet run --project tests/Respire.DataProtection.Tests/Respire.DataProtection.Tests.csproj \
+            -c Release -f ${{ matrix.framework }} --no-build
+        env:
+          DOCKER_HOST: unix:///var/run/docker.sock
+
       - name: Run Caching Tests
         run: |
           dotnet run --project tests/Respire.Caching.Tests/Respire.Caching.Tests.csproj \
