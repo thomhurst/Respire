@@ -18,6 +18,10 @@ namespace Respire.Tests.Networking;
 /// </summary>
 public class StringFastPathWireTests
 {
+    // Long enough that two thread-pool hops on a loaded runner fit before the first reply
+    // byte, short enough that a stall of a few multiples proves the watchdog would fire.
+    private static readonly TimeSpan ResponseWatchdogTimeout = TimeSpan.FromMilliseconds(250);
+
     [Test]
     public async Task Get_SmallBulkReply_ReturnsValue()
     {
@@ -474,42 +478,46 @@ public class StringFastPathWireTests
     [Test]
     public async Task GetStream_AskPrefixAndBulkReplyInSameRead()
     {
+        // The server answers both commands with one write as soon as it has parsed them. A
+        // test-thread poll before injecting the reply would sit inside the armed watchdog
+        // window, so a delayed continuation could close the connection first.
         await using var server = new FakeRespServer("$-1\r\n"u8.ToArray())
         {
-            SuppressReply = static command => command == "GET key",
+            ReplyOverride = static (_, command) => command switch
+            {
+                "ASKING" => [],
+                "GET key" => "+OK\r\n$5\r\nhello\r\n"u8.ToArray(),
+                _ => null,
+            },
             MinimumCommandsBeforeReply = 2
         };
         await using var connection = await RespireConnection.ConnectAsync(
             "127.0.0.1", server.Port,
-            new RespireConnectionOptions { ResponseTimeout = TimeSpan.FromMilliseconds(100) });
+            new RespireConnectionOptions { ResponseTimeout = ResponseWatchdogTimeout });
         var command = new Cmd1(Verbs.Get, "key");
         var pending = ClusterRouter.SendAskingBulkStreamAsync(connection, in command, default, "GET");
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (server.CommandsSeen < 2) await Task.Delay(10, timeout.Token);
-        await server.SendRawAsync("+OK\r\n$5\r\nhello\r\n"u8.ToArray());
 
         await using var stream = await pending.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         using var reader = new StreamReader(stream!);
         await Assert.That(await reader.ReadToEndAsync()).IsEqualTo("hello");
-        await Task.Delay(250);
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { "ASKING", "GET key" });
+        // Both replies are accounted for, so the watchdog must stay disarmed past its timeout.
+        await Task.Delay(ResponseWatchdogTimeout * 2.5);
         await Assert.That(connection.IsConnected).IsTrue();
     }
 
     [Test]
     public async Task GetStream_PartialPayloadKeepsResponseWatchdogArmed()
     {
-        await using var server = new FakeRespServer("$-1\r\n"u8.ToArray())
-        {
-            SuppressReply = static command => command == "GET key"
-        };
+        // The server sends only the header from its own receive loop. The watchdog is armed
+        // from the send, so a header injected after a test-thread poll could arrive too late
+        // and fail the pending stream instead of truncating its payload.
+        await using var server = new FakeRespServer("$10\r\n"u8.ToArray());
         await using var connection = await RespireConnection.ConnectAsync(
             "127.0.0.1", server.Port,
-            new RespireConnectionOptions { ResponseTimeout = TimeSpan.FromMilliseconds(100) });
+            new RespireConnectionOptions { ResponseTimeout = ResponseWatchdogTimeout });
         var command = new Cmd1(Verbs.Get, "key");
         var pending = connection.SendBulkStreamAsync(in command, commandName: "GET");
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (server.CommandsSeen == 0) await Task.Delay(10, timeout.Token);
-        await server.SendRawAsync("$10\r\n"u8.ToArray());
 
         await using var stream = await pending.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         await connection.Closed.WaitAsync(TimeSpan.FromSeconds(5));
@@ -523,31 +531,29 @@ public class StringFastPathWireTests
     public async Task GetStream_SlowConsumerDoesNotTripResponseWatchdog()
     {
         const int payloadLength = 256 * 1024;
-        await using var server = new FakeRespServer("$-1\r\n"u8.ToArray())
-        {
-            SuppressReply = static command => command == "GET key"
-        };
+        // The server writes the whole frame from its own receive loop as soon as GET arrives.
+        // Injecting it from the test thread after polling CommandsSeen left the armed watchdog
+        // waiting on test-thread scheduling, which a loaded runner can delay past the timeout.
+        // The receive pipe stops draining before the full payload fits, so this one send runs
+        // alongside the consumer instead of requiring socket buffering.
+        byte[] frame = [.. Encoding.ASCII.GetBytes($"${payloadLength}\r\n"), .. new byte[payloadLength], (byte)'\r', (byte)'\n'];
+        await using var server = new FakeRespServer(frame);
         await using var connection = await RespireConnection.ConnectAsync(
             "127.0.0.1", server.Port,
-            new RespireConnectionOptions { ResponseTimeout = TimeSpan.FromMilliseconds(100) });
+            new RespireConnectionOptions { ResponseTimeout = ResponseWatchdogTimeout });
         var command = new Cmd1(Verbs.Get, "key");
         var pending = connection.SendBulkStreamAsync(in command, commandName: "GET");
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (server.CommandsSeen == 0) await Task.Delay(10, timeout.Token);
-        await server.SendRawAsync(Encoding.ASCII.GetBytes($"${payloadLength}\r\n"));
-        // The receive pipe deliberately stops draining before the full payload fits. Let
-        // the server write run alongside the consumer instead of requiring socket buffering.
-        var sending = server.SendRawAsync([.. new byte[payloadLength], (byte)'\r', (byte)'\n']);
         await using var stream = await pending.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
 
-        // The receive loop now waits on the full 64 KiB pipe, not on the server.
-        await Task.Delay(500);
+        // The receive loop now waits on the full 64 KiB pipe, not on the server. Stall for
+        // several watchdog timeouts: only the backpressure suppression keeps the connection.
+        await Task.Delay(ResponseWatchdogTimeout * 4);
         await Assert.That(connection.IsConnected).IsTrue();
 
         var copy = new MemoryStream();
         await stream!.CopyToAsync(copy).WaitAsync(TimeSpan.FromSeconds(5));
-        await sending.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(copy.Length).IsEqualTo(payloadLength);
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { "GET key" });
         await Assert.That(connection.IsConnected).IsTrue();
     }
 

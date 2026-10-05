@@ -65,12 +65,9 @@ jobs:
             dotnet build "$project" -c Release -f net10.0
           done
 
-      # Timing-sensitive tests carry their own limiters; the cap still guards scattered fake-server
-      # timing races that surface on a 4-core runner without it.
       - name: Run Unit Tests
         run: |
           dotnet run --project tests/Respire.Tests -c Release -f net10.0 --no-build -- \
-            --maximum-parallel-tests 8 \
             --results-directory "$GITHUB_WORKSPACE/TestResults" \
             --coverage \
             --coverage-output coverage.cobertura.xml \

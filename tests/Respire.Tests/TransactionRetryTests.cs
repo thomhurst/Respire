@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Globalization;
 using Respire.Testing;
@@ -10,6 +11,16 @@ namespace Respire.Tests;
 
 public class TransactionRetryTests
 {
+    // The transaction counters are process-wide and concurrent tests also run transactions.
+    // Measurement callbacks run on the recording thread inside the caller's async flow, so a
+    // fresh ambient trace marks the measurements a test caused.
+    private static Activity StartTestTrace()
+        => new Activity("respire-transaction-retry-test")
+            .SetParentId(ActivityTraceId.CreateRandom(), ActivitySpanId.CreateRandom())
+            .Start();
+
+    private static bool IsInTrace(Activity trace) => Activity.Current?.TraceId == trace.TraceId;
+
     [Test]
     [Arguments(2)]
     [Arguments(3)]
@@ -181,12 +192,12 @@ public class TransactionRetryTests
     }
 
     [Test]
-    [NotInParallel]
     [Arguments(false)]
     [Arguments(true)]
     public async Task ConflictsAndStartedRetriesEmitCounters(bool throwingListener)
     {
         var measurements = new ConcurrentDictionary<string, long>();
+        using var trace = StartTestTrace();
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, owner) =>
         {
@@ -195,6 +206,7 @@ public class TransactionRetryTests
         };
         listener.SetMeasurementEventCallback<long>((instrument, value, _, _) =>
         {
+            if (!IsInTrace(trace)) return;
             measurements.AddOrUpdate(instrument.Name, value, (_, previous) => previous + value);
             if (throwingListener) throw new InvalidOperationException("listener failed");
         });
@@ -242,19 +254,22 @@ public class TransactionRetryTests
     }
 
     [Test]
-    [NotInParallel]
     [Arguments(false)]
     [Arguments(true)]
     public async Task FailedRetryAcquisitionDoesNotEmitRetryCounter(bool cancel)
     {
         long retries = 0;
+        using var trace = StartTestTrace();
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, owner) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.transaction.watch.retries")
                 owner.EnableMeasurementEvents(instrument);
         };
-        listener.SetMeasurementEventCallback<long>((_, value, _, _) => Interlocked.Add(ref retries, value));
+        listener.SetMeasurementEventCallback<long>((_, value, _, _) =>
+        {
+            if (IsInTrace(trace)) Interlocked.Add(ref retries, value);
+        });
         listener.Start();
         await using var server = new RespireFakeServer();
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());

@@ -2175,12 +2175,12 @@ public partial class SentinelRoutingTests
     }
 
     [Test]
-    [NotInParallel]
     [Arguments(false)]
     [Arguments(true)]
     public async Task LoggerFailureMetricsCannotInterruptSentinelRecovery(bool throwingListener)
     {
         var failures = 0L;
+        var logger = new RediscoveryLogger { ThrowOnSentinelLog = true };
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, owner) =>
         {
@@ -2189,6 +2189,8 @@ public partial class SentinelRoutingTests
         };
         listener.SetMeasurementEventCallback<long>((_, value, _, _) =>
         {
+            // The counter is process-wide and untagged. Count only failures this logger has just thrown.
+            if (!logger.ConsumeThrowOnCurrentThread()) return;
             Interlocked.Add(ref failures, value);
             if (throwingListener) throw new InvalidOperationException("Metrics listener failed");
         });
@@ -2197,7 +2199,6 @@ public partial class SentinelRoutingTests
         await using var promoted = Primary();
         var port = original.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
-        var logger = new RediscoveryLogger { ThrowOnSentinelLog = true };
         await using var client = RespireClient.Create(Options(sentinel.Port) with { LoggerFactory = logger });
         await client.PingAsync().AsTask().WaitAsync(Limit);
         await WaitForInitialSentinelValidationAsync(client, sentinel);
@@ -2214,11 +2215,21 @@ public partial class SentinelRoutingTests
 
     private sealed class RediscoveryLogger : Microsoft.Extensions.Logging.ILoggerFactory, Microsoft.Extensions.Logging.ILogger
     {
+        // Guarded logging records its failure metric synchronously on the throwing thread.
+        [ThreadStatic] private static RediscoveryLogger? t_thrower;
         private int _recoveries;
         internal Action? OnRecovery { get; set; }
         internal bool ThrowOnSentinelLog { get; init; }
         internal ConcurrentQueue<Microsoft.Extensions.Logging.LogLevel> Failures { get; } = new();
         internal int Recoveries => Volatile.Read(ref _recoveries);
+
+        internal bool ConsumeThrowOnCurrentThread()
+        {
+            if (!ReferenceEquals(t_thrower, this)) return false;
+            t_thrower = null;
+            return true;
+        }
+
         public Microsoft.Extensions.Logging.ILogger CreateLogger(string categoryName) => this;
         public void AddProvider(Microsoft.Extensions.Logging.ILoggerProvider provider) { }
         public void Dispose() { }
@@ -2229,7 +2240,10 @@ public partial class SentinelRoutingTests
         {
             var message = formatter(state, exception);
             if (ThrowOnSentinelLog && message.StartsWith("Sentinel ", StringComparison.Ordinal))
+            {
+                t_thrower = this;
                 throw new InvalidOperationException("Sentinel logger failed");
+            }
             if (message.StartsWith("Sentinel notification-triggered primary discovery failed", StringComparison.Ordinal))
                 Failures.Enqueue(level);
             else if (message.StartsWith("Sentinel notification-triggered primary discovery succeeded after", StringComparison.Ordinal))
@@ -2244,8 +2258,11 @@ public partial class SentinelRoutingTests
     public async Task NotificationReconciliationCannotOverwriteInterveningPublication()
     {
         await using var original = Primary();
-        var ready = false;
-        await using var promoted = Primary((_, command) => command == "ROLE" && !Volatile.Read(ref ready)
+        var logger = new RediscoveryLogger();
+        // The worker logs a failed attempt before it starts the next one, so the first logged
+        // failure promotes the target deterministically. Waiting for the test to observe it let
+        // retries open a new ROLE connection each and exhaust the server's accepted connections.
+        await using var promoted = Primary((_, command) => command == "ROLE" && logger.Failures.IsEmpty
             ? "*1\r\n$5\r\nslave\r\n"u8.ToArray() : null);
         var freshPort = original.Port;
         var stalePort = original.Port;
@@ -2258,7 +2275,6 @@ public partial class SentinelRoutingTests
             sentinel.ReplyOverride = (id, command) => command == "SENTINEL MASTER mymaster"
                 ? "-NOPERM metadata unavailable\r\n"u8.ToArray() : reply(id, command);
         }
-        var logger = new RediscoveryLogger();
         await using var client = RespireClient.Create(Options(fresh.Port) with
         {
             Endpoints = [new("127.0.0.1", fresh.Port), new("127.0.0.1", stale.Port), new("127.0.0.1", alternate.Port)],
@@ -2286,9 +2302,8 @@ public partial class SentinelRoutingTests
         try
         {
             using var deadline = new CancellationTokenSource(Limit);
-            while (logger.Failures.IsEmpty) await Task.Delay(5, deadline.Token);
-            Volatile.Write(ref ready, true);
             await revalidated.Task.WaitAsync(Limit);
+            await Assert.That(logger.Failures.IsEmpty).IsFalse();
             Volatile.Write(ref freshPort, original.Port);
             var failback = await router.GetGenerationAsync(deadline.Token, forceDiscovery: true);
             await Assert.That(failback.Endpoint.Port).IsEqualTo(original.Port);
@@ -4051,7 +4066,6 @@ public partial class SentinelRoutingTests
     }
 
     [Test]
-    [NotInParallel]
     [Arguments("batch", true)]
     [Arguments("durability", true)]
     [Arguments("transaction", true)]
@@ -4088,15 +4102,21 @@ public partial class SentinelRoutingTests
             },
         };
         await using var client = RespireClient.Create(Options(sentinel.Port));
-        var activities = new List<Activity>();
+        // A failed discovery has no endpoint tags to filter on. Listeners are process-wide, so
+        // observe only telemetry recorded in this test's execution context.
+        var observed = new AsyncLocal<bool>();
+        var activities = new ConcurrentQueue<Activity>();
         using var activityListener = new ActivityListener
         {
             ShouldListenTo = source => trace && source.Name == "Respire",
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
-            ActivityStopped = activity => { if (Equals(activity.GetTagItem("db.operation.name"), operation)) activities.Add(activity); },
+            ActivityStopped = activity =>
+            {
+                if (observed.Value && Equals(activity.GetTagItem("db.operation.name"), operation)) activities.Enqueue(activity);
+            },
         };
         ActivitySource.AddActivityListener(activityListener);
-        var measurements = new List<(double Duration, Dictionary<string, object?> Tags)>();
+        var measurements = new ConcurrentQueue<(double Duration, Dictionary<string, object?> Tags)>();
         using var meterListener = new MeterListener();
         meterListener.InstrumentPublished = (instrument, listener) =>
         {
@@ -4105,14 +4125,16 @@ public partial class SentinelRoutingTests
         };
         meterListener.SetMeasurementEventCallback<double>((_, duration, tags, _) =>
         {
+            if (!observed.Value) return;
             var captured = tags.ToArray().ToDictionary(pair => pair.Key, pair => pair.Value);
-            if (Equals(captured["db.operation.name"], operation)) measurements.Add((duration, captured));
+            if (Equals(captured.GetValueOrDefault("db.operation.name"), operation)) measurements.Enqueue((duration, captured));
         });
         meterListener.Start();
         using var batch = client.CreateBatch();
         await using var transaction = client.CreateTransaction();
         _ = batch.Set("key", "value");
         _ = transaction.Set("key", "value");
+        observed.Value = true;
         Task execution = kind switch
         {
             "blocking" or "blocking-rental" => client.Lists.LeftPopAsync("key", waitFor: Timeout.InfiniteTimeSpan).AsTask(),
@@ -4126,17 +4148,19 @@ public partial class SentinelRoutingTests
         if (rental) await primary.SendRawAsync("*0\r\n"u8.ToArray(), connectionId: 1);
         else await sentinel.SendRawAsync("$-1\r\n"u8.ToArray());
         await Assert.That(async () => await execution.WaitAsync(Limit)).Throws<RespireConnectionException>();
-        await Assert.That(measurements.Count).IsEqualTo(1);
-        await Assert.That(measurements[0].Duration).IsGreaterThan(0);
-        await Assert.That(measurements[0].Tags.ContainsKey("error.type")).IsTrue();
-        await Assert.That(measurements[0].Tags.ContainsKey("server.address")).IsFalse();
-        await Assert.That(measurements[0].Tags.ContainsKey("server.port")).IsFalse();
-        await Assert.That(activities.Count).IsEqualTo(trace ? 1 : 0);
+        var measured = measurements.ToArray();
+        await Assert.That(measured.Length).IsEqualTo(1);
+        await Assert.That(measured[0].Duration).IsGreaterThan(0);
+        await Assert.That(measured[0].Tags.ContainsKey("error.type")).IsTrue();
+        await Assert.That(measured[0].Tags.ContainsKey("server.address")).IsFalse();
+        await Assert.That(measured[0].Tags.ContainsKey("server.port")).IsFalse();
+        var traced = activities.ToArray();
+        await Assert.That(traced.Length).IsEqualTo(trace ? 1 : 0);
         if (trace)
         {
-            await Assert.That(activities[0].Status).IsEqualTo(ActivityStatusCode.Error);
-            await Assert.That(activities[0].StartTimeUtc <= releaseTime).IsTrue();
-            await Assert.That(activities[0].GetTagItem("server.address")).IsNull();
+            await Assert.That(traced[0].Status).IsEqualTo(ActivityStatusCode.Error);
+            await Assert.That(traced[0].StartTimeUtc <= releaseTime).IsTrue();
+            await Assert.That(traced[0].GetTagItem("server.address")).IsNull();
         }
     }
 
@@ -4705,7 +4729,6 @@ public partial class SentinelRoutingTests
     [Arguments("transaction", true)]
     [Arguments("identity", false)]
     [Arguments("identity", true)]
-    [ParallelLimiter<TimingSensitive>] // The real 3-second command timeout must expire in the connecting stage.
     public async Task OtherSentinelAcquisitionTimeoutsDoNotReportDiscoveryPeers(string kind, bool rediscovery)
     {
         await using var primary = Primary();

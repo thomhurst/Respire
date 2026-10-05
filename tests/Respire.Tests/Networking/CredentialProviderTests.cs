@@ -447,7 +447,9 @@ public class CredentialProviderTests
         var provider = ExpiringProvider(clock);
         await using var server = Server();
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
-            Options(server, provider, clock) with { CommandTimeout = TimeSpan.FromMilliseconds(200) });
+            // The command timeout also bounds the connect handshake, so it must survive a loaded runner;
+            // the fenced send still has to time out well inside Limit.
+            Options(server, provider, clock) with { CommandTimeout = TimeSpan.FromSeconds(2) });
         await UntilAsync(() => clock.HasDelay(TimeSpan.FromSeconds(20)));
         server.SuppressReply = command => command == "AUTH user second";
         provider.Current = new("user", "second", clock.GetUtcNow().AddSeconds(60));
