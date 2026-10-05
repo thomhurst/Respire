@@ -143,6 +143,35 @@ public class HashFieldScanTests
     }
 
     [Test]
+    public async Task EnumerationPreservesUnsignedCursorRange()
+    {
+        await using var server = new FakeRespServer(Page, "*2\r\n$1\r\n0\r\n*0\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var fields = new List<string>();
+        await foreach (var field in client.Hashes.ScanFieldsAsync("hash")) fields.Add(field);
+        await Assert.That(fields).IsEquivalentTo(new[] { "a", "b" });
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
+        {
+            "HSCAN hash 0 COUNT 250 NOVALUES", "HSCAN hash 18446744073709551615 COUNT 250 NOVALUES",
+        });
+    }
+
+    [Test]
+    [Arguments("*2\r\n$2\r\n-1\r\n*0\r\n")]
+    [Arguments("*2\r\n$20\r\n18446744073709551616\r\n*0\r\n")]
+    [Arguments("*0\r\n")]
+    public async Task EnumerationAndPagesRejectMalformedCursors(string reply)
+    {
+        var bytes = System.Text.Encoding.ASCII.GetBytes(reply);
+        await using var server = new FakeRespServer(bytes, bytes, "*2\r\n$1\r\n0\r\n*0\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await using var scan = client.Hashes.ScanFieldsAsync("hash").GetAsyncEnumerator();
+        await Assert.That(async () => await scan.MoveNextAsync()).Throws<RespireProtocolException>();
+        await Assert.That(async () => await client.Hashes.ScanFieldsPageAsync("hash")).Throws<RespireProtocolException>();
+        await Assert.That((await client.Hashes.ScanFieldsPageAsync("hash")).IsComplete).IsTrue();
+    }
+
+    [Test]
     [Arguments(RespireReadFrom.Replica, 0)]
     [Arguments(RespireReadFrom.Replica, 7)]
     [Arguments(RespireReadFrom.PrimaryPreferred, 0)]

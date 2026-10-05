@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Protocol;
@@ -22,7 +23,7 @@ internal static class CollectionScan
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(countHint);
 
         var wireKey = client.Key(in key);
-        var cursor = "0";
+        ulong cursor = 0;
         // Every page of this enumeration returns to the server that issued its cursor.
         var affinity = new ReadAffinity();
         do
@@ -35,8 +36,8 @@ internal static class CollectionScan
             T[] page;
             try
             {
+                cursor = ParseCursor(in reply, operation);
                 var elements = reply.AsArray();
-                cursor = elements[0].AsString();
                 page = parsePage(in elements[1]);
             }
             finally
@@ -50,7 +51,16 @@ internal static class CollectionScan
                 yield return item;
             }
         }
-        while (cursor != "0");
+        while (cursor != 0);
+    }
+
+    internal static ulong ParseCursor(in RespValue reply, string operation)
+    {
+        var parts = reply.AsArray();
+        if (reply.Type != RespDataType.Array || parts.Length != 2
+            || !ulong.TryParse(parts[0].AsString(), NumberStyles.None, CultureInfo.InvariantCulture, out var cursor))
+            throw new RespireProtocolException($"{operation} must return an unsigned cursor and an item array.");
+        return cursor;
     }
 
     internal static RespireValue[] Arguments(

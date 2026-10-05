@@ -5,7 +5,8 @@ namespace Respire;
 public partial interface IBatchHashCommands
 {
     /// <summary>Queues one HSCAN NOVALUES page. Requires Redis 7.4; results own their field names.</summary>
-    /// <remarks>Continue only after reading the previous cursor. Use a stable server and read policy across pages.</remarks>
+    /// <remarks>Continue only after reading the previous cursor. Use a stable server and read policy across pages.
+    /// A null countHint omits COUNT and uses the server's default.</remarks>
     RespirePending<RespireHashScanPage> ScanFieldsPage(
         RespireKey key, ulong cursor = 0, string? match = null, int? countHint = null);
 }

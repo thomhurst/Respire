@@ -1,4 +1,3 @@
-using System.Globalization;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Protocol;
@@ -6,6 +5,7 @@ using Respire.Protocol;
 namespace Respire;
 
 /// <summary>An owned HSCAN NOVALUES page. Cursor zero marks completion; an empty page need not be complete.</summary>
+/// <remarks>Record equality compares the Fields array by reference, not by its contents.</remarks>
 public readonly record struct RespireHashScanPage(ulong Cursor, string[] Fields)
 {
     /// <summary>Whether this page completes the scan.</summary>
@@ -20,7 +20,8 @@ public partial interface IHashCommands
         RespireKey key, string? match = null, int countHint = 250, CancellationToken cancellationToken = default);
 
     /// <summary>Reads one HSCAN NOVALUES page. Start with cursor zero; pass the returned cursor to continue.</summary>
-    /// <remarks>Requires Redis 7.4. Keep the same key, server, and read policy across pages; restart after topology changes.</remarks>
+    /// <remarks>Requires Redis 7.4. Keep the same key, server, and read policy across pages; restart after topology changes.
+    /// A null countHint omits COUNT and uses the server's default; ScanFieldsAsync defaults to a hint of 250.</remarks>
     ValueTask<RespireHashScanPage> ScanFieldsPageAsync(
         RespireKey key, ulong cursor = 0, string? match = null, int? countHint = null, CancellationToken cancellationToken = default);
 }
@@ -34,8 +35,11 @@ internal sealed partial class HashCommands
 
     public ValueTask<RespireHashScanPage> ScanFieldsPageAsync(
         RespireKey key, ulong cursor = 0, string? match = null, int? countHint = null, CancellationToken cancellationToken = default)
-        => client.ConvertResponseAsync("HSCAN", ScanFieldsCommand(client, key, cursor, match, countHint), cancellationToken,
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return client.ConvertResponseAsync("HSCAN", ScanFieldsCommand(client, key, cursor, match, countHint), cancellationToken,
             client, static (RespireClient _, in RespValue reply) => ParseFieldsPage(in reply));
+    }
 
     internal static CmdN ScanFieldsCommand(RespireClient client, RespireKey key, ulong cursor, string? match, int? countHint)
         => new(RespireCommands.Hash.HSCAN.Verb,
@@ -43,9 +47,8 @@ internal sealed partial class HashCommands
 
     internal static RespireHashScanPage ParseFieldsPage(in RespValue reply)
     {
+        var cursor = CollectionScan.ParseCursor(in reply, "HSCAN");
         var parts = reply.AsArray();
-        if (parts.Length != 2 || !ulong.TryParse(parts[0].AsString(), NumberStyles.None, CultureInfo.InvariantCulture, out var cursor))
-            throw new RespireProtocolException("HSCAN must return a cursor and field array.");
         return new(cursor, ResponseReader.StringArray(in parts[1]));
     }
 }
