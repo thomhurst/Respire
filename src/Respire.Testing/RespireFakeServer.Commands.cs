@@ -8,6 +8,11 @@ public sealed partial class RespireFakeServer
 
     private static readonly Dictionary<string, Command> Commands = new(StringComparer.Ordinal)
     {
+        ["XADD"] = new(5, int.MaxValue, static (server, _, args) => server.StreamAdd(args)),
+        ["XGROUP"] = new(5, 6, static (server, _, args) => server.StreamCreateGroup(args)),
+        ["XREAD"] = new(4, int.MaxValue, static (server, connection, args) => server.StreamRead(connection, args)),
+        ["XREADGROUP"] = new(7, int.MaxValue, static (server, connection, args) => server.StreamRead(connection, args)),
+        ["XACK"] = new(4, int.MaxValue, static (server, _, args) => server.StreamAcknowledge(args)),
         ["HELLO"] = new(1, int.MaxValue, static (_, connection, args) => Hello(connection, args)),
         ["PING"] = new(1, 2, static (_, connection, args) => Ping(connection, args)),
         ["SUBSCRIBE"] = new(2, int.MaxValue, static (server, connection, args) => server.Subscribe(connection, args)),

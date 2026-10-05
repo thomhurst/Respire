@@ -97,9 +97,12 @@ public sealed partial class RespireFakeServer
             await ApplyWaitAsync(connection, scope).ConfigureAwait(false);
         }
         connection.Lifetime.Token.ThrowIfCancellationRequested();
-        var reply = Token(arguments[0]) == "BLMOVEM"
-            ? await ExecuteBlockingListMoveAsync(connection, arguments, scope).ConfigureAwait(false)
-            : ExecuteLocked(connection, arguments, scope, out _);
+        var reply = Token(arguments[0]) switch
+        {
+            "BLMOVEM" => await ExecuteBlockingListMoveAsync(connection, arguments, scope).ConfigureAwait(false),
+            "XREAD" or "XREADGROUP" => await ExecuteStreamReadAsync(connection, arguments, scope).ConfigureAwait(false),
+            _ => ExecuteLocked(connection, arguments, scope, out _),
+        };
         if (reply is null) return null;
         if (fault is { AfterExecution: true })
         {

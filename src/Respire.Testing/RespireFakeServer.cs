@@ -395,6 +395,7 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
         internal HashSet<byte[]> Set => Data as HashSet<byte[]> ?? throw new WrongTypeException();
         internal List<byte[]> List => Data as List<byte[]> ?? throw new WrongTypeException();
         internal Dictionary<byte[], double> SortedSet => Data as Dictionary<byte[], double> ?? throw new WrongTypeException();
+        internal FakeStream Stream => Data as FakeStream ?? throw new WrongTypeException();
         internal string Type => Data switch
         {
             byte[] => "string",
@@ -402,6 +403,7 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
             HashSet<byte[]> => "set",
             List<byte[]> => "list",
             Dictionary<byte[], double> => "zset",
+            FakeStream => "stream",
             _ => throw new InvalidOperationException("Unknown fake entry type."),
         };
         internal long? ExpiresAt { get; set; } = expiresAt;

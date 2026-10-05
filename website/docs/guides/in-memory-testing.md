@@ -59,10 +59,19 @@ An error consumes exactly one response slot, so later valid commands still work.
 | Sets | `SADD`, `SREM`, `SMEMBERS`, `SCARD`, `SISMEMBER`, `SMISMEMBER`, `SMOVE`, `SINTER`, `SUNION`, `SDIFF`, their `STORE` forms, and `SINTERCARD` with `LIMIT` |
 | Sorted sets | `ZADD` with `NX`, `XX`, `GT`, `LT`, `CH`, `INCR`; `ZINCRBY`, `ZREM`, `ZCARD`, `ZSCORE`, `ZMSCORE`, `ZRANK`, `ZREVRANK`, `ZCOUNT`, `ZLEXCOUNT`; `ZRANGE` with `BYSCORE`/`BYLEX`, `REV`, `LIMIT`, `WITHSCORES`; legacy `ZREVRANGE`, `ZRANGEBYSCORE`, `ZREVRANGEBYSCORE`, `ZRANGEBYLEX`, `ZREVRANGEBYLEX`; `ZPOPMIN`, `ZPOPMAX`; `ZREMRANGEBYRANK`, `ZREMRANGEBYSCORE`, `ZREMRANGEBYLEX`; `ZINTERCARD` with `LIMIT` |
 | Pub/sub | `SUBSCRIBE`, `UNSUBSCRIBE`, `PUBLISH`, with binary channel names and payloads |
+| Streams | Basic `XADD` with numeric IDs or `*`; `XGROUP CREATE` with optional `MKSTREAM`; `XREAD`/`XREADGROUP` with `COUNT`, `MAXCOUNT`, `MAXSIZE`, `BLOCK`; `XACK` |
 | Keys | `DEL`, `UNLINK`, `EXISTS`, `TYPE`, `PERSIST` |
 | Expiry | `EXPIRE`, `PEXPIRE`, `EXPIREAT`, `PEXPIREAT` with `NX`, `XX`, `GT`, `LT`; `TTL`, `PTTL`, `EXPIRETIME`, `PEXPIRETIME` |
 | Connection | `HELLO 2/3` without authentication, `PING`, `ECHO`, `SELECT 0`, `CLIENT ID`, `CLIENT GETNAME`, `CLIENT SETNAME` |
 | Transactions | `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH` with connection-owned queues and optimistic concurrency |
+
+Stream reads support multiple keys, new group entries, pending history, acknowledgements,
+and cumulative Redis 8.10 count/byte budgets. Blocking reads wake after appends, resolve `$`
+once, and release on connection cancellation. Blocking timeouts use wall-clock time rather
+than `RespireFakeClock`. Transactions execute stream reads without blocking, as Redis does.
+The fake does not implement trimming, deletion of individual entries, automatic claiming,
+`NOACK`, `CLAIM`, stream metadata, or other group-administration commands. Unsupported
+append/read options fail explicitly. Use real Redis tests for those operations.
 
 `GETEX` supports its expiry options and `PERSIST`. Binary keys and values are preserved,
 including empty values and embedded zero bytes. Multi-key mutations are atomic; integer

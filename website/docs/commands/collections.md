@@ -547,6 +547,39 @@ await foreach (var item in redis.Streams.ReadAllAsync(
 ```
 
 `ReadAsync` implements [XREAD](https://redis.io/docs/latest/commands/xread/) (Redis 5.0+).
+
+Redis 8.10 adds cumulative reply limits to `XREAD` and `XREADGROUP`. Pass
+`StreamReadOptions` to the options-first `ReadAsync` overload or queued `Read` overload:
+
+```csharp
+var page = await redis.Streams.ReadAsync(
+    new StreamReadOptions { Count = 50, MaxCount = 80, MaxSize = 65_536 },
+    [("{events}:one", "0"), ("{events}:two", "0")]);
+```
+
+`Count` limits entries per stream. `MaxCount` limits the total across streams and must
+be positive and at least `Count` when both are set. `MaxSize` is a positive byte budget
+for the total reply; Redis still returns the first available entry even if it exceeds
+that budget. When both cumulative limits are set, the first reached limit wins. Streams
+are visited in request order for nonblocking reads, so earlier streams can consume the
+whole budget. These are server-side limits, not client-side truncation.
+
+`WaitFor` uses the dedicated blocking pool, including when cumulative limits are set.
+Queued reads in batches and transactions are nonblocking and reject `WaitFor` locally.
+Omitting `MaxCount` and `MaxSize` keeps the existing server requirements.
+
+For consumer groups, `ReadGroupOnceAsync(key, group, consumer, options)` reads one page.
+The multi-stream `ReadGroupAsync(streams, group, consumer, options)` also reads one page;
+use `>` cursors for new entries or numeric cursors for that consumer's pending entries.
+Both forms return entries with `AckAsync` support. `queue.Streams.ReadGroup` provides the
+same nonblocking operations in batches and transactions. All multi-stream keys must share
+a Cluster hash slot, including after prefixing. Limits also apply to pending history and
+after blocking reads wake; entries excluded by the byte budget are not added to the PEL.
+
+The existing single-stream consumer loops remain available. Their options-first overload
+accepts the same reply limits; new-entry loops default to a five-second blocking interval
+when `WaitFor` is omitted, while explicit pending cursors replay without blocking until empty.
+See [XREADGROUP](https://redis.io/docs/latest/commands/xreadgroup/) for server semantics.
 The default start id is `0`; only entries newer than each supplied id are returned. `count`
 limits entries **per stream**. Missing/empty streams are omitted from multi-stream results;
 an empty or timed-out response returns an empty array. Keys, ids, field names, and binary

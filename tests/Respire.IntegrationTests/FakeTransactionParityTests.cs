@@ -116,6 +116,22 @@ public class FakeTransactionParityTests(RedisTestContainer fixture)
         await using var writer = await TestRespSession.ConnectAsync(options);
         var scenarios = new WatchCase[]
         {
+            new([], ["XADD", "key", "1-0", "f", "value"], true),
+            new([ ["XADD", "key", "1-0", "f", "value"] ], ["XADD", "key", "1-0", "f", "duplicate"], false, Error: true),
+            new([ ["XADD", "key", "1-0", "f", "value"] ], ["XGROUP", "CREATE", "key", "g", "0"], false),
+            new([], ["XGROUP", "CREATE", "key", "g", "0", "MKSTREAM"], true),
+            new([ ["XGROUP", "CREATE", "key", "g", "0", "MKSTREAM"] ], ["XGROUP", "CREATE", "key", "g", "0"], false, Error: true),
+            new([ ["XADD", "key", "1-0", "f", "value"] ], ["XREAD", "STREAMS", "key", "0"], false),
+            new([ ["XADD", "key", "1-0", "f", "value"], ["XGROUP", "CREATE", "key", "g", "0"] ],
+                ["XREADGROUP", "GROUP", "g", "c", "STREAMS", "key", ">"], false),
+            new([ ["XGROUP", "CREATE", "key", "g", "0", "MKSTREAM"] ],
+                ["XREADGROUP", "GROUP", "g", "c", "STREAMS", "key", ">"], false),
+            new([ ["XADD", "key", "1-0", "f", "value"], ["XGROUP", "CREATE", "key", "g", "0"],
+                ["XREADGROUP", "GROUP", "g", "c", "STREAMS", "key", ">"] ], ["XACK", "key", "g", "1-0"], false),
+            new([ ["XADD", "key", "1-0", "f", "value"], ["XGROUP", "CREATE", "key", "g", "0"],
+                ["XREADGROUP", "GROUP", "g", "c", "STREAMS", "key", ">"] ],
+                ["XREADGROUP", "GROUP", "g", "c", "STREAMS", "key", "0"], false),
+            new([ ["XGROUP", "CREATE", "key", "g", "0", "MKSTREAM"] ], ["XACK", "key", "g", "1-0"], false),
             new([ ["SET", "key", "value"] ], ["SET", "key", "value"], true),
             new([ ["SET", "key", "value"] ], ["SET", "key", "new", "NX"], false),
             new([], ["SET", "key", "new", "XX"], false),
@@ -276,10 +292,12 @@ public class FakeTransactionParityTests(RedisTestContainer fixture)
     {
         // Every new fake command must be classified here or gain a successful WATCH
         // invalidation case above. Real Redis runs the same vectors to check semantics.
-        string[] nonMutatingCommands =
+        string[] nonInvalidatingCommands =
         [
             "HELLO", "MULTI", "EXEC", "DISCARD", "WATCH", "UNWATCH", "PING", "ECHO",
-            "SUBSCRIBE", "UNSUBSCRIBE", "PUBLISH",
+            "SUBSCRIBE", "UNSUBSCRIBE", "PUBLISH", "XREAD",
+            // Group cursor/PEL changes do not invalidate WATCH, unlike XGROUP CREATE ... MKSTREAM.
+            "XREADGROUP", "XACK",
             "SELECT", "CLIENT", "GET", "MGET", "EXISTS", "TYPE", "STRLEN", "TTL",
             "PTTL", "EXPIRETIME", "PEXPIRETIME", "HGET", "HMGET", "HGETALL", "HEXISTS", "HLEN",
             "HKEYS", "HVALS", "HSTRLEN", "SMEMBERS", "SCARD", "SISMEMBER", "SMISMEMBER", "SINTER",
@@ -292,8 +310,8 @@ public class FakeTransactionParityTests(RedisTestContainer fixture)
             .GetValue(null)!;
         var covered = scenarios.Where(scenario => scenario.Changes && !scenario.Error)
             .Select(scenario => scenario.Mutation[0]).Distinct();
-        commands.Keys.Cast<string>().Except(nonMutatingCommands).Should().BeEquivalentTo(covered,
-            "every mutating fake command needs a successful WATCH invalidation parity case");
+        commands.Keys.Cast<string>().Except(nonInvalidatingCommands).Should().BeEquivalentTo(covered,
+            "every WATCH-invalidating fake command needs a successful invalidation parity case");
     }
 
     private sealed record WatchCase(string[][] Setup, string[] Mutation, bool Changes, bool Error = false);
