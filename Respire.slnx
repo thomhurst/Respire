@@ -23,6 +23,7 @@
     <Project Path="src/Respire.DependencyInjection/Respire.DependencyInjection.csproj" />
     <Project Path="src/Respire.DataProtection/Respire.DataProtection.csproj" />
     <Project Path="src/Respire.Json/Respire.Json.csproj" />
+    <Project Path="src/Respire.OutputCaching/Respire.OutputCaching.csproj" />
     <Project Path="src/Respire.Search/Respire.Search.csproj" />
     <Project Path="src/Respire.TimeSeries/Respire.TimeSeries.csproj" />
     <Project Path="src/Respire.Testing.Containers/Respire.Testing.Containers.csproj" />

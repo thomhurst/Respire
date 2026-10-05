@@ -29,6 +29,7 @@
       Respire.DataProtection;
       Respire.DependencyInjection;
       Respire.Json;
+      Respire.OutputCaching;
       Respire.Probabilistic;
       Respire.Search;
       Respire.TimeSeries;
