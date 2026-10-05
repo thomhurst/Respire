@@ -104,10 +104,13 @@ repository root with Python 3.10+ and Docker available:
 python scripts/probes/subkey-notifications.py
 ```
 
-The script requires a Linux amd64 or arm64 Docker daemon, checked before container creation:
-the official Redis image omits RedisJSON on other architectures. Docker's server architecture
-is checked even when using a remote daemon, and the supported native platform is selected
-explicitly. A unique container name permits cleanup even if startup times out after creation.
+The script requires a local Linux amd64 or arm64 Docker daemon, checked before container creation:
+the official Redis image omits RedisJSON on other architectures. The effective Docker endpoint
+must be a local Unix socket or named pipe; SSH, TCP, and remote named pipes are rejected because
+the probe connects to the published port through local loopback. Endpoint selection honors
+[`DOCKER_CONTEXT` precedence over `DOCKER_HOST`](https://docs.docker.com/reference/cli/docker/#environment-variables).
+The supported native platform is selected explicitly. A unique container name permits cleanup
+even if startup times out after creation.
 Docker commands have a 300-second timeout;
 diagnostics and cleanup have 30-second timeouts and preserve the original probe failure.
 The script pins `redis:8.8.3-alpine` to the digest above and starts its own container on a dynamically assigned loopback

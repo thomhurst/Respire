@@ -1,10 +1,11 @@
 """Reproduce the subkey-cache spike against an owned, disposable Redis container.
 
-Requires Python 3.10+ and a Linux amd64/arm64 Docker daemon. No Python packages are required.
+Requires Python 3.10+ and a local Linux amd64/arm64 Docker daemon. No Python packages are required.
 Run from the repository root: python scripts/probes/subkey-notifications.py
 """
 
 import json
+import os
 import socket
 import subprocess
 import sys
@@ -34,6 +35,22 @@ def verify_platform():
             f"The RedisJSON probe requires a Linux amd64/arm64 Docker daemon; got {platform!r}."
         )
     return supported[platform]
+
+
+def verify_local_daemon():
+    """Reject endpoints whose published loopback ports are not known to be locally reachable."""
+    # DOCKER_CONTEXT takes precedence over DOCKER_HOST, just as it does in the Docker CLI.
+    context = os.environ.get("DOCKER_CONTEXT")
+    endpoint = os.environ.get("DOCKER_HOST") if not context else None
+    if not endpoint:
+        context = context or docker("context", "show")
+        endpoint = docker("context", "inspect", context, "--format", "{{.Endpoints.docker.Host}}")
+    normalized = endpoint.replace("\\", "/").lower()
+    if not (normalized.startswith("unix:///") or normalized.startswith("npipe:////./pipe/")):
+        raise RuntimeError(
+            f"The probe requires a local Docker Unix socket or named pipe; got {endpoint!r}. "
+            "Remote and TCP endpoints cannot guarantee access to the published loopback port."
+        )
 
 
 class Connection:
@@ -212,6 +229,7 @@ def wait_for_redis(port):
 
 
 def main():
+    verify_local_daemon()
     platform = verify_platform()
     # Know the owned container's identity even if docker run times out after creating it.
     container = "respire-subkey-probe-" + uuid.uuid4().hex
