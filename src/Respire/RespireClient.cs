@@ -1583,15 +1583,16 @@ public sealed partial class RespireClient : IRespireClient
         return _core.Options.Serializer.Deserialize<T>(value.AsSpan());
     }
 
+    private ClientSideCacheCoordinator? GetReadCache
+        => _readFrom != RespireReadFrom.Primary && s_getIsReadOnly ? null : ReadCache;
+
     internal ValueTask<TResult> CachedGetAsync<TResult>(
         RespireKey resolvedKey,
         CancellationToken cancellationToken,
         ResponseConverter<RespireClient, TResult> converter)
     {
-        var cache = ReadCache;
+        var cache = GetReadCache;
         var command = new Cmd1(Verbs.Get, resolvedKey.AsValue());
-        if (_readFrom != RespireReadFrom.Primary && s_getIsReadOnly)
-            return ConvertResponseAsync("GET", command, cancellationToken, this, converter);
         if (cache is null)
         {
             return ConvertResponseAsync("GET", command, cancellationToken, this, converter);
@@ -1612,7 +1613,7 @@ public sealed partial class RespireClient : IRespireClient
     /// </summary>
     internal ValueTask<string?> CachedGetStringAsync(RespireKey resolvedKey, CancellationToken cancellationToken)
     {
-        if (ReadCache is null || (_readFrom != RespireReadFrom.Primary && s_getIsReadOnly))
+        if (GetReadCache is null)
             return StringOrNullAsync("GET", new Cmd1(Verbs.Get, resolvedKey.AsValue()), cancellationToken);
 
         return CachedGetAsync(
