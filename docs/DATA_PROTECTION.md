@@ -35,6 +35,8 @@ your deployment because slow Redis operations block the calling thread during
 key-ring loading and rotation. Respire has no synchronous command API.
 Reads always use the primary, even when the supplied client uses replica routing;
 the primary view preserves any key prefix and shares the existing connections.
+Reads bypass the client-side cache so delayed invalidations cannot hide newly
+generated keys or revocations when DataProtection refreshes its key ring.
 The repository copies binary keys at construction or registration so callers can
 reuse their original buffers safely.
 

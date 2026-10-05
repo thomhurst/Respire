@@ -29,6 +29,39 @@ public class RepositoryTests(RedisTestContainer fixture)
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RepositoryBypassesClientSideCache(bool useKeyPrefix)
+    {
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new(fixture.Host, fixture.Port)],
+            Database = fixture.Database,
+            Protocol = RespProtocol.Resp3,
+            ClientSideCache = new(),
+        });
+        var view = useKeyPrefix ? client.WithKeyPrefix("app:") : client;
+        var key = $"keys:{Guid.NewGuid():N}";
+        var repository = new RespireXmlRepository(() => view, key);
+        var element = new XElement("key", new XAttribute("id", "uncached"));
+        repository.StoreElement(element, "uncached");
+
+        // Positive control: LRANGE on the supplied view really uses the local cache.
+        await view.Lists.RangeAsync(key);
+        var beforeCachedRead = client.ClientSideCache!.GetStatistics();
+        await view.Lists.RangeAsync(key);
+        var warmed = client.ClientSideCache.GetStatistics();
+        await Assert.That(warmed.Hits).IsEqualTo(beforeCachedRead.Hits + 1);
+
+        await Assert.That(XNode.DeepEquals(element, repository.GetAllElements().Single())).IsTrue();
+        await Assert.That(XNode.DeepEquals(element, repository.GetAllElements().Single())).IsTrue();
+        var afterRepositoryReads = client.ClientSideCache.GetStatistics();
+        await Assert.That(afterRepositoryReads.Hits).IsEqualTo(warmed.Hits);
+        await Assert.That(afterRepositoryReads.Misses).IsEqualTo(warmed.Misses);
+        await client.PingAsync();
+    }
+
+    [Test]
     public async Task RepositoryReadsPrimaryEvenWhenFactoryUsesReplicaRouting()
     {
         await using var client = await RespireClient.ConnectAsync(new RespireOptions

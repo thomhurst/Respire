@@ -8,6 +8,7 @@ namespace Respire.DataProtection;
 /// The factory returns an existing client owned by the caller. This repository never disposes it.
 /// The synchronous DataProtection contract waits for Respire operations to complete.
 /// Stored XML is not encrypted by this repository; configure DataProtection key encryption separately.
+/// Reads use the primary and bypass the client-side cache so delayed invalidations cannot hide key-ring changes.
 /// </remarks>
 public sealed class RespireXmlRepository : IXmlRepository
 {
@@ -25,7 +26,7 @@ public sealed class RespireXmlRepository : IXmlRepository
     /// <inheritdoc />
     public IReadOnlyCollection<XElement> GetAllElements()
     {
-        var values = GetClient().WithReadFrom(RespireReadFrom.Primary)
+        var values = GetClient().WithReadFrom(RespireReadFrom.Primary).WithoutClientCache()
             .Lists.RangeAsync(_key).AsTask().GetAwaiter().GetResult();
         var elements = new XElement[values.Length];
         for (var i = 0; i < values.Length; i++)
