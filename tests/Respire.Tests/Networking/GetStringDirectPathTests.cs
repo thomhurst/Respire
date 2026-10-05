@@ -30,17 +30,28 @@ public class GetStringDirectPathTests
         var connection = client.Core.Multiplexer.GetConnection();
         var commandsBefore = server.CommandsSeen;
 
-        var pending = viaFacet ? client.Strings.GetStringAsync("key") : client.GetStringAsync("key");
+        var pending = (viaFacet ? client.Strings.GetStringAsync("key") : client.GetStringAsync("key")).AsTask();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (server.CommandsSeen == commandsBefore)
         {
-            await Task.Delay(1);
+            if (pending.IsCompleted)
+            {
+                await pending;
+                throw new InvalidOperationException("GET completed before the fake server received it.");
+            }
+            try { await Task.Delay(1, timeout.Token); }
+            catch (OperationCanceledException error) when (timeout.IsCancellationRequested)
+            {
+                if (pending.IsCompleted) await pending;
+                throw new TimeoutException("The fake server did not receive GET within five seconds.", error);
+            }
         }
 
         await Assert.That(Inflight(connection).TryPeek(out var source)).IsTrue();
         await Assert.That(source).IsTypeOf<StringPendingResponseSource>();
 
         await server.SendRawAsync("$5\r\nhello\r\n"u8.ToArray());
-        await Assert.That(await pending).IsEqualTo("hello");
+        await Assert.That(await pending.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo("hello");
         await Assert.That(server.ReceivedCommands[^1]).IsEqualTo("GET key");
     }
 }
