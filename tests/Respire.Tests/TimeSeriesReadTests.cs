@@ -1,0 +1,126 @@
+using Respire.TimeSeries;
+using Respire.Commands;
+using Respire.Tests.Networking;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+
+namespace Respire.Tests;
+
+public class TimeSeriesReadTests
+{
+    [Test]
+    [Arguments("TS.NRANGE")]
+    [Arguments("TS.NREVRANGE")]
+    public async Task ExplicitRangeLayoutRoutesEveryKeyAndRejectsCrossSlot(string operation)
+    {
+        RespireValue[] arguments = [2, "{series}:a", "{series}:b", 0, 100];
+        await Assert.That(RawCommandKeyLayouts.TryGetPrefixableLayout(operation, arguments, out var layout)).IsTrue();
+        await Assert.That(layout.Start).IsEqualTo(1);
+        await Assert.That(layout.Count).IsEqualTo(2);
+        await Assert.That(RawCommandKeyLayouts.ValidateClusterKeys(operation, arguments).Index).IsEqualTo(1);
+        await Assert.That(() => RawCommandKeyLayouts.ValidateClusterKeys(operation, [2, "{a}:one", "{b}:two", 0, 100]))
+            .ThrowsExactly<RespireServerException>();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ExplicitRangesPreserveColumnsAndPrefixOnlyKeys(bool reverse)
+    {
+        await using var server = new FakeRespServer("*1\r\n*2\r\n:10\r\n*3\r\n+1.5\r\n+nan\r\n+3\r\n"u8.ToArray());
+        await using var owner = await FakeRespServer.ConnectClientAsync(server.Port);
+        var timeSeries = new RespireTimeSeriesClient(owner.WithKeyPrefix("p:"));
+        var options = new RespireTimeSeriesKeyRangeOptions
+        {
+            Latest = true, Count = 3, FilterByTimestamps = [10], FilterByValue = (0, 10),
+            Aggregators = [[RespireTimeSeriesAggregation.Min, RespireTimeSeriesAggregation.Max], [RespireTimeSeriesAggregation.Sum]],
+            BucketMilliseconds = 10, Align = 0, BucketTimestamp = RespireTimeSeriesBucketTimestamp.End, Empty = true,
+        };
+        var result = reverse
+            ? await timeSeries.ReverseRangeKeysAsync(["a", "a"], new(0, 100), options)
+            : await timeSeries.RangeKeysAsync(["a", "a"], new(0, 100), options);
+        await Assert.That(result[0].Timestamp).IsEqualTo(10);
+        await Assert.That(result[0].Values[0]).IsEqualTo(1.5);
+        await Assert.That(double.IsNaN(result[0].Values[1])).IsTrue();
+        await Assert.That(result[0].Values[2]).IsEqualTo(3);
+        var verb = reverse ? "TS.NREVRANGE" : "TS.NRANGE";
+        await Assert.That(server.ReceivedCommands.Single()).IsEqualTo(
+            $"{verb} 2 p:a p:a 0 100 LATEST FILTER_BY_TS 10 FILTER_BY_VALUE 0 10 COUNT 3 ALIGN 0 AGGREGATION MIN,MAX SUM 10 BUCKETTIMESTAMP + EMPTY");
+    }
+
+    [Test]
+    public async Task LabelQueriesHaveOptionalFiltersAndRejectPrefixedViews()
+    {
+        await using var server = new FakeRespServer("*1\r\n$4\r\nroom\r\n"u8.ToArray(), "*1\r\n$7\r\nkitchen\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var timeSeries = new RespireTimeSeriesClient(client);
+        await Assert.That(await timeSeries.QueryLabelsAsync()).IsEquivalentTo(["room"]);
+        await Assert.That(await timeSeries.QueryLabelValuesAsync("room", ["type=temperature"])).IsEquivalentTo(["kitchen"]);
+        var prefixed = new RespireTimeSeriesClient(client.WithKeyPrefix("p:"));
+        await Assert.That(async () => await prefixed.QueryLabelsAsync()).ThrowsExactly<NotSupportedException>();
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(["TS.QUERYLABELS LABELS", "TS.QUERYLABELS VALUES room FILTER type=temperature"]);
+    }
+
+    [Test]
+    public async Task ReadBlocksOnDedicatedConnectionAndDoesNotTreatKeyAsOption()
+    {
+        await using var server = new FakeRespServer(2, "*0\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, _) => "*0\r\n"u8.ToArray(),
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var timeSeries = new RespireTimeSeriesClient(client);
+        await timeSeries.ReadAsync("BLOCK", 0);
+        await timeSeries.ReadAsync("series", RespireTimeSeriesTimestamp.New,
+            new RespireTimeSeriesReadOptions { BlockMilliseconds = 10, MinimumCount = 2, MaximumCount = 3 });
+        await timeSeries.ReadAsync("BLOCK", 0);
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo([
+            "TS.READ BLOCK 0", "TS.READ series $ BLOCK 10 2 MAX_COUNT 3", "TS.READ BLOCK 0",
+        ]);
+        var ids = server.ReceivedConnectionIds;
+        await Assert.That(ids[0]).IsEqualTo(ids[2]);
+        await Assert.That(ids[1]).IsNotEqualTo(ids[0]);
+    }
+
+    [Test]
+    public async Task FollowAdvancesInclusiveCursorAndStopsAtMaximumTimestamp()
+    {
+        await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command.Contains(" $ ", StringComparison.Ordinal)
+                ? "*2\r\n*2\r\n:10\r\n+1\r\n*2\r\n:20\r\n+2\r\n"u8.ToArray()
+                : "*1\r\n*2\r\n:9223372036854775807\r\n+3\r\n"u8.ToArray(),
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var samples = new List<long>();
+        await foreach (var sample in new RespireTimeSeriesClient(client).FollowAsync("series", RespireTimeSeriesTimestamp.New, batchSize: 2))
+            samples.Add(sample.Timestamp);
+        await Assert.That(samples).IsEquivalentTo([10L, 20L, long.MaxValue]);
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo([
+            "TS.READ series $ BLOCK 0 1 MAX_COUNT 2", "TS.READ series 21 BLOCK 0 1 MAX_COUNT 2",
+        ]);
+    }
+
+    [Test]
+    public async Task InvalidOptionsAndCancellationSendNothing()
+    {
+        await using var server = new FakeRespServer();
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var timeSeries = new RespireTimeSeriesClient(client);
+        await Assert.That(async () => await timeSeries.RangeKeysAsync([], new(0, 10))).ThrowsExactly<ArgumentException>();
+        await Assert.That(async () => await timeSeries.RangeKeysAsync(["a"], new(0, 10), new()
+        {
+            Aggregators = [], BucketMilliseconds = 10,
+        })).ThrowsExactly<ArgumentException>();
+        await Assert.That(async () => await timeSeries.ReadAsync("a", RespireTimeSeriesTimestamp.Now)).ThrowsExactly<ArgumentException>();
+        await Assert.That(async () => await timeSeries.ReadAsync("a", 0, new()
+        {
+            BlockMilliseconds = 0, MinimumCount = 3, MaximumCount = 2,
+        })).ThrowsExactly<ArgumentException>();
+        await Assert.That(async () => await timeSeries.ReadAsync("a", 0, cancellationToken: new(true))).Throws<OperationCanceledException>();
+        await using var iterator = timeSeries.FollowAsync("a", 0, cancellationToken: new(true)).GetAsyncEnumerator();
+        await Assert.That(async () => await iterator.MoveNextAsync()).Throws<OperationCanceledException>();
+        await Assert.That(server.ReceivedCommands).IsEmpty();
+    }
+}

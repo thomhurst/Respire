@@ -4,6 +4,22 @@ namespace Respire.TimeSeries;
 [RespireCommands]
 internal interface IRespireTimeSeriesCommands
 {
+    /// <summary>Reads timestamp-aligned rows from explicit keys.</summary>
+    [RespireCommand("TS.NRANGE", Mutation = RespireCacheMutation.ReadOnly)]
+    ValueTask<RespireResult> RangeKeysAsync(RespireValue[] arguments, CancellationToken cancellationToken = default);
+
+    /// <summary>Reads timestamp-aligned rows in reverse order.</summary>
+    [RespireCommand("TS.NREVRANGE", Mutation = RespireCacheMutation.ReadOnly)]
+    ValueTask<RespireResult> ReverseRangeKeysAsync(RespireValue[] arguments, CancellationToken cancellationToken = default);
+
+    /// <summary>Lists distinct label names or values.</summary>
+    [RespireCommand("TS.QUERYLABELS", Mutation = RespireCacheMutation.ReadOnly)]
+    ValueTask<RespireResult> QueryLabelsAsync(RespireValue[] arguments, CancellationToken cancellationToken = default);
+
+    /// <summary>Reads samples, optionally waiting for new samples through the blocking pool.</summary>
+    [RespireCommand("TS.READ", Mutation = RespireCacheMutation.ReadOnly)]
+    ValueTask<RespireResult> ReadAsync(RespireKey key, string timestamp, RespireValue[] options, CancellationToken cancellationToken = default);
+
     /// <summary>Creates a time series.</summary>
     [RespireCommand("TS.CREATE", Mutation = RespireCacheMutation.SingleKey)]
     ValueTask<RespireResult> CreateAsync(RespireKey key, RespireValue[] options, CancellationToken cancellationToken = default);

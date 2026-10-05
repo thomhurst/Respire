@@ -19,6 +19,8 @@ public readonly record struct RespireTimeSeriesTimestamp(string Value)
     public static RespireTimeSeriesTimestamp Maximum => new("+");
     /// <summary>Server clock marker (<c>*</c>). Valid for writes only; range commands reject it.</summary>
     public static RespireTimeSeriesTimestamp Now => new("*");
+    /// <summary>Only samples newer than the latest existing sample (<c>$</c>). Valid for TS.READ only.</summary>
+    public static RespireTimeSeriesTimestamp New => new("$");
     /// <summary>Creates a millisecond timestamp. Negative values are rejected when the timestamp is used.</summary>
     public static implicit operator RespireTimeSeriesTimestamp(long value) => new(value.ToString(CultureInfo.InvariantCulture));
     /// <summary>Converts to the Redis timestamp token.</summary>
@@ -49,6 +51,8 @@ public readonly record struct RespireTimeSeriesTimestamp(string Value)
         }
         return RequireMilliseconds(parameterName);
     }
+
+    internal string RequireRead(string parameterName) => Value == "$" ? Value : RequireRange(parameterName);
 
     private string RequireMilliseconds(string parameterName)
     {
@@ -352,6 +356,10 @@ public enum RespireTimeSeriesAggregation
     VarS,
     /// <summary>Time-weighted average. Requires RedisTimeSeries 1.8 or later.</summary>
     Twa,
+    /// <summary>Number of NaN values. Requires Redis 8.10.</summary>
+    CountNaN,
+    /// <summary>Number of all values, including NaN. Requires Redis 8.10.</summary>
+    CountAll,
 }
 
 /// <summary>Timestamp assigned to an aggregation bucket.</summary>
@@ -400,7 +408,7 @@ public sealed record RespireTimeSeriesRangeOptions
     /// <summary>Group matching series by this label and reduce each group with the reducer, such as <c>max</c>. Multi-series ranges only.</summary>
     public (string Label, string Reducer)? GroupBy { get; init; }
 
-    internal RespireValue[] ToArguments(bool multiSeries)
+    internal RespireValue[] ToArguments(bool multiSeries, string[]? perKeyAggregators = null)
     {
         ArgumentNullException.ThrowIfNull(FilterByTimestamps, nameof(FilterByTimestamps));
         ArgumentNullException.ThrowIfNull(SelectedLabels, nameof(SelectedLabels));
@@ -445,7 +453,8 @@ public sealed record RespireTimeSeriesRangeOptions
                 args.Add(align.RequireRange(nameof(Align)));
             }
             args.Add("AGGREGATION");
-            args.Add(ToAggregationName(aggregation.Aggregation));
+            if (perKeyAggregators is null) args.Add(ToAggregationName(aggregation.Aggregation));
+            else foreach (var aggregators in perKeyAggregators) args.Add(aggregators);
             args.Add(aggregation.BucketMilliseconds);
             if (BucketTimestamp is { } bucketTimestamp)
             {
@@ -530,6 +539,8 @@ public sealed record RespireTimeSeriesRangeOptions
         RespireTimeSeriesAggregation.VarP => "VAR.P",
         RespireTimeSeriesAggregation.VarS => "VAR.S",
         RespireTimeSeriesAggregation.Twa => "TWA",
+        RespireTimeSeriesAggregation.CountNaN => "COUNTNAN",
+        RespireTimeSeriesAggregation.CountAll => "COUNTALL",
         _ => throw new ArgumentOutOfRangeException(nameof(aggregation)),
     };
 }

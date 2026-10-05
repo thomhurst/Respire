@@ -112,7 +112,8 @@ internal static class RawCommandKeyLayouts
         AddImmediate(LayoutKind.StreamGroupRead, "XREADGROUP");
         AddImmediate(LayoutKind.Migrate, "MIGRATE");
         AddPrefixable(LayoutKind.First,
-            "TS.GET", "TS.RANGE", "TS.REVRANGE", "TS.INFO");
+            "TS.GET", "TS.RANGE", "TS.REVRANGE", "TS.INFO", "TS.READ");
+        AddPrefixable(LayoutKind.Counted, "TS.NRANGE", "TS.NREVRANGE");
         AddMutation(LayoutKind.First, MutationKind.LayoutKeys, ["TS.CREATE", "TS.ALTER"], deferred: false, prefixable: true);
         // Sample writes can update compaction destinations absent from the argument list. Never infer them.
         AddMutation(LayoutKind.First, MutationKind.IndirectKeys,
@@ -121,7 +122,7 @@ internal static class RawCommandKeyLayouts
         AddMutation(LayoutKind.Triples, MutationKind.IndirectKeys, ["TS.MADD"], deferred: false, prefixable: true);
         // Label-filter queries name no keys and return series from every key namespace, so they are
         // routed keylessly and are not prefixable.
-        AddImmediate(LayoutKind.None, "TS.MGET", "TS.MRANGE", "TS.MREVRANGE", "TS.QUERYINDEX");
+        AddImmediate(LayoutKind.None, "TS.MGET", "TS.MRANGE", "TS.MREVRANGE", "TS.QUERYINDEX", "TS.QUERYLABELS");
         // Probabilistic layouts name every key, including both sides of a merge, so they are prefixable.
         AddPrefixable(LayoutKind.First,
             "BF.RESERVE", "BF.ADD", "BF.EXISTS", "BF.MADD", "BF.MEXISTS", "BF.INSERT", "BF.INFO", "BF.CARD", "BF.SCANDUMP", "BF.LOADCHUNK",

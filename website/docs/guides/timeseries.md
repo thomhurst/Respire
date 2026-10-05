@@ -81,6 +81,41 @@ When client-side caching is enabled, each `AddAsync`, `IncrementByAsync`, `Decre
 
 `MultiGetAsync`, `MultiRangeAsync`, and `MultiReverseRangeAsync` select series through label filters such as `sensor=temperature`. They also accept `WITHLABELS` or `SELECTED_LABELS`, and the multi-series ranges accept `GROUPBY`/`REDUCE`. Single-series ranges reject these options locally. `QueryIndexAsync` returns matching keys as `RespireKey` values, preserving arbitrary key bytes. Multi-series results expose the lossless key in `KeyValue`, and `Key` is its display string.
 
+## Redis 8.10 reads
+
+`RangeKeysAsync` (`TS.NRANGE`) and `ReverseRangeKeysAsync` (`TS.NREVRANGE`) combine explicit series into timestamp rows. `RespireTimeSeriesRow.Values` follows key order, including duplicate keys. Missing values are `double.NaN`, which the server cannot distinguish from stored or aggregated NaN values. All keys must share a Cluster hash slot; Respire preserves key prefixes and binary key bytes.
+
+```csharp
+var rows = await timeSeries.RangeKeysAsync(
+    ["{weather}:temperature", "{weather}:humidity"],
+    new(0, RespireTimeSeriesTimestamp.Maximum),
+    new RespireTimeSeriesKeyRangeOptions
+    {
+        Aggregators = [[RespireTimeSeriesAggregation.Min, RespireTimeSeriesAggregation.Max],
+                      [RespireTimeSeriesAggregation.Avg]],
+        BucketMilliseconds = 60_000,
+    });
+```
+
+With aggregation, each key contributes its requested aggregators in order. Here each row has temperature minimum, temperature maximum, then humidity average. Options also support `LATEST`, exact timestamps, value bounds, `COUNT`, alignment, bucket timestamps, and empty buckets. `COUNT` limits combined timestamp rows.
+
+`QueryLabelsAsync(filters)` returns distinct label names; `QueryLabelValuesAsync(label, filters)` returns distinct values. Omit filters to query all indexed series. Results have no defined order. These keyless queries reject prefixed client views and use the same Cluster limitations as other label queries.
+
+`ReadAsync` (`TS.READ`) returns samples at or after an inclusive timestamp. `RespireTimeSeriesReadOptions` sets `MaximumCount` and optional `BlockMilliseconds`/`MinimumCount`. Zero milliseconds waits indefinitely. Timeout returns available samples, possibly none; deletion while blocked returns an empty list. Blocking calls use the dedicated pool, leaving ordinary commands responsive.
+
+```csharp
+await foreach (var sample in timeSeries.FollowAsync(
+    "sensor:temperature", RespireTimeSeriesTimestamp.New,
+    batchSize: 256, cancellationToken: cancellationToken))
+{
+    Console.WriteLine($"{sample.Timestamp}: {sample.Value}");
+}
+```
+
+`FollowAsync` blocks between samples and advances to the last emitted timestamp plus one. Choose `Minimum` for history, `Maximum` to include the latest existing sample, or `New` (`$`) for future samples only. Sentinels resolve on the server. Cancellation stops the reader and releases its blocking connection. Backfills and updates at already emitted timestamps are not replayed. If deletion returns no samples before a sentinel has produced its first result, retrying resolves that sentinel again. Enumeration ends after `long.MaxValue`; transport failures propagate so callers can choose a restart policy.
+
+See Redis's [explicit-key range semantics](https://redis.io/docs/latest/commands/ts.nrange/) and [blocking read semantics](https://redis.io/docs/latest/commands/ts.read/).
+
 ## Compaction rules and metadata
 
 `CreateRuleAsync` creates a compaction rule from a source series into an existing destination series, with an optional alignment timestamp. The bucket duration is given in milliseconds or as a `TimeSpan`. An integer argument always means milliseconds, so `CreateRuleAsync(source, destination, RespireTimeSeriesAggregation.Avg, 5)` makes 5 ms buckets; pass `TimeSpan.FromMinutes(5)` for minutes. `DeleteRuleAsync` removes the rule between a source and a destination.
@@ -90,7 +125,7 @@ When client-side caching is enabled, each `AddAsync`, `IncrementByAsync`, `Decre
 ## Key prefixes and Cluster
 
 :::warning Label-filter queries in Redis Cluster
-`MultiGetAsync`, `MultiRangeAsync`, `MultiReverseRangeAsync`, and `QueryIndexAsync` name no keys, so in Redis Cluster Respire sends each call to one node. Whether the result covers every shard depends on the server's RedisTimeSeries cluster support. Without that support, you only see the series stored on the node that answered.
+`MultiGetAsync`, `MultiRangeAsync`, `MultiReverseRangeAsync`, `QueryIndexAsync`, `QueryLabelsAsync`, and `QueryLabelValuesAsync` name no keys, so in Redis Cluster Respire sends each call to one node. Whether the result covers every shard depends on the server's RedisTimeSeries cluster support. Without that support, you only see the series stored on the node that answered. [Redis 8.4 documents partial results or duplicates](https://redis.io/docs/latest/develop/whats-new/8-4/#known-limitations) from `TS.MGET`, `TS.MRANGE`, `TS.MREVRANGE`, and `TS.QUERYINDEX` during atomic slot migration. Do not treat a successful reply as a complete cluster-wide snapshot during migration.
 :::
 
 The package uses Respire's generated command infrastructure and does not use reflection. On a `WithKeyPrefix` view, every series key is prefixed, including both keys of a compaction rule and every key passed to `MultiAddAsync`. Label-filter queries (`MultiGetAsync`, `MultiRangeAsync`, `MultiReverseRangeAsync`, and `QueryIndexAsync`) name no keys and would return series outside the prefix. A prefixed view therefore rejects them with `NotSupportedException`. Run them through an unprefixed client instead.

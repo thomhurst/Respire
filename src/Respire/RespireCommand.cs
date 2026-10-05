@@ -154,7 +154,7 @@ public readonly struct RespireCommand
             return false;
         }
 
-        var firstOptionIndex = name == "XREADGROUP" ? 3 : 0;
+        var firstOptionIndex = name switch { "XREADGROUP" => 3, "TS.READ" => 2, _ => 0 };
         var stopsAtStreams = name is "XREAD" or "XREADGROUP";
         var index = 0;
         foreach (var argument in inlineArguments)

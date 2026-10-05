@@ -6,13 +6,14 @@ namespace Respire.TimeSeries;
 /// <summary>Typed RedisTimeSeries operations over a caller-owned Respire client.</summary>
 /// <remarks>
 /// Key-prefixed views prefix every series key. Label-filter queries (<see cref="MultiGetAsync"/>,
-/// <see cref="MultiRangeAsync"/>, <see cref="MultiReverseRangeAsync"/>, and <see cref="QueryIndexAsync"/>)
+/// <see cref="MultiRangeAsync"/>, <see cref="MultiReverseRangeAsync"/>, <see cref="QueryIndexAsync"/>,
+/// <see cref="QueryLabelsAsync"/>, and <see cref="QueryLabelValuesAsync"/>)
 /// name no keys and would return series outside the prefix, so prefixed views reject them with
 /// <see cref="NotSupportedException"/>; run them through an unprefixed client. In Redis Cluster those
 /// queries are sent to one node; whether they cover every shard depends on the server's RedisTimeSeries
 /// cluster support.
 /// </remarks>
-public sealed class RespireTimeSeriesClient
+public sealed partial class RespireTimeSeriesClient
 {
     private static readonly string[] LatestOption = ["LATEST"];
     private static readonly string[] DebugOption = ["DEBUG"];
