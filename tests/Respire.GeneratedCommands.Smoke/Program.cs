@@ -153,6 +153,7 @@ foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
         if (!document.Found || document.Value != new SmokeDocument("generated", 1))
             throw new InvalidOperationException("Respire.Json GET failed.");
         await json.MultiSetAsync([new("doc", new SmokeDocument("multi", 2))], SmokeJsonContext.Default.SmokeDocument);
+        await json.MergeAsync("doc", new SmokeDocument("multi", 2), SmokeJsonContext.Default.SmokeDocument);
         var documents = await json.MultiGetAsync(["doc", "missing"], SmokeJsonContext.Default.SmokeDocument);
         if (documents[0]?[0].Value?.Count != 2 || documents[1] is not null)
             throw new InvalidOperationException("Respire.Json MGET failed.");

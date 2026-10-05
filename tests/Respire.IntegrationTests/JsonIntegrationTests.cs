@@ -99,6 +99,9 @@ public partial class JsonIntegrationTests(ModernRedisTestContainer fixture)
         using (await json.Commands.NumberIncrementByAsync(prefix + "one", "$.Age", 10)) { }
         (await json.GetAsync(prefix + "one", info)).Value!.Age.Should().Be(11);
 
+        await json.MergeAsync(prefix + "one", new Customer("Ada", 12), info);
+        (await json.GetAsync(prefix + "one", info)).Value!.Age.Should().Be(12);
+
         (await json.MultiGetAsync([prefix + "one", prefix + "two"], info)).Should().HaveCount(2);
         await json.MultiSetAsync(
             [new(prefix + "one", new Customer("Ada", 21)), new(prefix + "two", new Customer("Grace", 22))], info);
