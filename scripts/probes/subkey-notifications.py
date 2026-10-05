@@ -132,7 +132,7 @@ def run(port):
             json_evidence.append(messages)
         report("JSON root and path writes", json_evidence)
 
-        writer.command("HSET", "hash", "field", "before")
+        expect(writer.command("HSET", "hash", "field", "before") == 1)
         subscriber.events()
         tracking = connect()
         expect(tracking.command("HELLO", 3)["proto"] == 3)
@@ -145,13 +145,14 @@ def run(port):
         check_events(messages, "del", subkey=False)
         report("tracking invalidates deletion", {"tracking": invalidation, "events": messages})
 
-        writer.command("HSET", "hash", "field", "before")
+        expect(writer.command("HSET", "hash", "field", "before") == 1)
         subscriber.events()
         held = writer.command("HGET", "hash", "field")
-        writer.command("HSET", "hash", "field", "after")
+        expect(writer.command("HSET", "hash", "field", "after") == 0)
         messages = subscriber.events()
         check_events(messages, "hset", subkey=True)
         # Model delivery to the cache after the subscriber has consumed the invalidation.
+        # This constructed schedule proves nothing about server ordering.
         cache = {}
         cache.pop(("hash", "field"), None)
         cache[("hash", "field")] = held
@@ -161,7 +162,7 @@ def run(port):
 
         subscriber.close()
         connections.remove(subscriber)
-        writer.command("HSET", "hash", "field", "while-disconnected")
+        expect(writer.command("HSET", "hash", "field", "while-disconnected") == 0)
         subscriber = connect()
         subscriber.subscribe()
         messages = subscriber.events()
@@ -169,7 +170,7 @@ def run(port):
         report("no reconnect replay", messages)
 
         expect(writer.command("CONFIG", "SET", "notify-keyspace-events", "") == "OK")
-        writer.command("HSET", "hash", "field", "notifications-disabled")
+        expect(writer.command("HSET", "hash", "field", "notifications-disabled") == 0)
         messages = subscriber.events()
         expect(messages == [], messages)
         report("silent notification disabling; PING still succeeds", messages)
@@ -210,7 +211,13 @@ def main():
         subprocess.run(["docker", "logs", container], check=False)
         raise
     finally:
-        docker("stop", container)
+        probe_failure = sys.exc_info()[1]
+        try:
+            docker("stop", container)
+        except (OSError, subprocess.CalledProcessError) as cleanup_failure:
+            if probe_failure is None:
+                raise
+            print(f"Container cleanup also failed: {cleanup_failure}", file=sys.stderr)
 
 
 if __name__ == "__main__":
