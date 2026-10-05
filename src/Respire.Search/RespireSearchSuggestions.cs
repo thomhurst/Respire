@@ -35,7 +35,7 @@ public sealed record RespireSearchSuggestion(string Text, double? Score, ReadOnl
 public sealed partial class RespireSearchClient
 {
     /// <summary>Adds or updates a suggestion with FT.SUGADD and returns the dictionary's current entry count.</summary>
-    /// <remarks>The dictionary is a Redis key, independent of Search indexes. The caller must keep payload memory unchanged until completion.</remarks>
+    /// <remarks>The dictionary is a Redis key, independent of Search indexes. NaN is rejected; infinite weights are passed to the server. The caller must keep payload memory unchanged until completion.</remarks>
     public async ValueTask<long> AddSuggestionAsync(RespireKey key, string suggestion, double score,
         RespireSearchSuggestionAddOptions? options = null, CancellationToken cancellationToken = default)
     {
@@ -78,7 +78,7 @@ public sealed partial class RespireSearchClient
         RespireSearchSuggestionOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(prefix);
-        if (options?.Max is <= 0) throw new ArgumentOutOfRangeException(nameof(options), "Max must be positive.");
+        if (options?.Max is <= 0) throw new ArgumentOutOfRangeException(nameof(options), options.Max, "Max must be positive.");
         var withScores = options?.WithScores == true;
         var withPayloads = options?.WithPayloads == true;
         var arguments = new List<RespireValue>(5);
@@ -128,13 +128,12 @@ public sealed partial class RespireSearchClient
     {
         if (result.Type == RespDataType.Double) return result.AsDouble();
         var text = ReadSuggestionString(result).AsString();
-        return text switch
-        {
-            "inf" => double.PositiveInfinity,
-            "-inf" => double.NegativeInfinity,
-            "nan" => double.NaN,
-            _ when double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value) => value,
-            _ => throw RespireSearchReply.Unexpected("FT.SUGGET", "a numeric score was expected"),
-        };
+        if (text.Equals("inf", StringComparison.OrdinalIgnoreCase) || text.Equals("+inf", StringComparison.OrdinalIgnoreCase))
+            return double.PositiveInfinity;
+        if (text.Equals("-inf", StringComparison.OrdinalIgnoreCase)) return double.NegativeInfinity;
+        if (text.Equals("nan", StringComparison.OrdinalIgnoreCase)) return double.NaN;
+        return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
+            ? value
+            : throw RespireSearchReply.Unexpected("FT.SUGGET", "a numeric score was expected");
     }
 }

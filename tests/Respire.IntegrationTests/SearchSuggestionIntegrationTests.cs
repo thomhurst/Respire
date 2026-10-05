@@ -131,6 +131,24 @@ public class SearchSuggestionIntegrationTests(ModernRedisTestContainer fixture)
         finally { await client.Keys.DeleteAsync(key, cached); }
     }
 
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task InfiniteWeightsAreAcceptedByRedis(int protocol)
+    {
+        await using var client = await ConnectAsync(protocol);
+        var key = "suggest:" + Guid.NewGuid().ToString("N");
+        try
+        {
+            (await client.Search.AddSuggestionAsync(key, "positive", double.PositiveInfinity)).Should().Be(1);
+            (await client.Search.AddSuggestionAsync(key, "negative", double.NegativeInfinity)).Should().Be(2);
+            (await client.Search.GetSuggestionCountAsync(key)).Should().Be(2);
+            var positive = await client.Search.GetSuggestionsAsync(key, "pos", new() { WithScores = true });
+            positive.Should().ContainSingle().Which.Score.Should().Be(double.PositiveInfinity);
+        }
+        finally { await client.Keys.DeleteAsync(key); }
+    }
+
     private ValueTask<RespireClient> ConnectAsync(int protocol, bool cache = false, StandaloneRedisTestContainer? server = null)
         => RespireClient.ConnectAsync(RespireOptions.Parse((server ?? fixture).ConnectionString) with
         { Protocol = (RespProtocol)protocol, ClientSideCache = cache ? new() : null });

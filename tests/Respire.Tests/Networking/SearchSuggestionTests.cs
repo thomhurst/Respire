@@ -136,6 +136,40 @@ public class SearchSuggestionTests
         await Assert.That(async () => await client.Search.DeleteSuggestionAsync("key", "text")).Throws<InvalidOperationException>();
     }
 
+    [Test]
+    [Arguments("inf", double.PositiveInfinity)]
+    [Arguments("INF", double.PositiveInfinity)]
+    [Arguments("+inf", double.PositiveInfinity)]
+    [Arguments("+InF", double.PositiveInfinity)]
+    [Arguments("-inf", double.NegativeInfinity)]
+    [Arguments("-INF", double.NegativeInfinity)]
+    [Arguments("Infinity", double.PositiveInfinity)]
+    [Arguments("-Infinity", double.NegativeInfinity)]
+    [Arguments("nan", double.NaN)]
+    [Arguments("NaN", double.NaN)]
+    public async Task SpecialScoreTokensAcceptServerCaseVariations(string token, double expected)
+    {
+        var reply = Encoding.UTF8.GetBytes("*2\r\n$1\r\nx\r\n$" + token.Length + "\r\n" + token + "\r\n");
+        await using var server = Server(_ => reply);
+        await using var client = await RespireClient.ConnectAsync(Options(server, 2));
+        var result = await client.Search.GetSuggestionsAsync("key", "x", new() { WithScores = true });
+        var score = result[0].Score!.Value;
+        if (double.IsNaN(expected)) await Assert.That(double.IsNaN(score)).IsTrue();
+        else await Assert.That(score).IsEqualTo(expected);
+    }
+
+    [Test]
+    public async Task InvalidMaxNamesThePropertyAndIncludesItsValue()
+    {
+        await using var server = Server(_ => "*0\r\n"u8.ToArray());
+        await using var client = await RespireClient.ConnectAsync(Options(server, 3));
+        var error = await Assert.That(async () => await client.Search.GetSuggestionsAsync("key", "x", new() { Max = -1 }))
+            .Throws<ArgumentOutOfRangeException>();
+        await Assert.That(error!.ParamName).IsEqualTo("options");
+        await Assert.That(error.ActualValue).IsEqualTo(-1);
+        await Assert.That(error.Message).Contains("Max");
+    }
+
     private static FakeRespServer Server(Func<string, byte[]> reply) => new(1, FakeRespServer.PongReply)
     {
         ReplyOverride = (_, command) => command == "HELLO 3" ? "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray()
