@@ -26,7 +26,6 @@ public class StackExchangeInteropTests(RedisTestContainer fixture)
     public async Task InitializeAsync()
     {
         _client = await RespireClient.ConnectAsync(fixture.ConnectionString);
-        (await _client.ExecuteAsync("FLUSHDB")).Dispose();
         _respireCache = new RespireDistributedCache(_client, new RespireCacheOptions { InstanceName = InstanceName });
         _microsoftCache = new RedisCache(new RedisCacheOptions
         {

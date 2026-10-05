@@ -21,8 +21,6 @@ public class GetSetOperationsTests(RedisTestContainer fixture)
         _stackExchangeMultiplexer = await ConnectionMultiplexer.ConnectAsync(_fixture.StackExchangeConnectionString);
         _stackExchangeDb = _stackExchangeMultiplexer.GetDatabase();
 
-        // Clean up before each test
-        await _stackExchangeDb.ExecuteAsync("FLUSHDB");
     }
 
     [After(Test)]
