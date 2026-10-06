@@ -28,12 +28,25 @@ public readonly struct RespireValue : IEquatable<RespireValue>
         Single,
         Double,
         Boolean,
+        Prefixed,
     }
 
     private readonly Kind _kind;
     private readonly string? _string;
     private readonly ReadOnlyMemory<byte> _bytes;
     private readonly long _number;
+    private readonly KeyPrefix? _prefix;
+
+    internal static RespireValue Prefixed(KeyPrefix prefix, string? text, ReadOnlyMemory<byte> bytes)
+        => new(prefix, text, bytes);
+
+    private RespireValue(KeyPrefix prefix, string? text, ReadOnlyMemory<byte> bytes)
+    {
+        _kind = Kind.Prefixed;
+        _prefix = prefix;
+        _string = text;
+        _bytes = bytes;
+    }
 
     private RespireValue(Kind kind, string? s = null, ReadOnlyMemory<byte> bytes = default, long number = 0)
     {
@@ -176,6 +189,9 @@ public readonly struct RespireValue : IEquatable<RespireValue>
             case Kind.Bytes:
                 writer.WriteBulkString(_bytes.Span);
                 break;
+            case Kind.Prefixed:
+                writer.WritePrefixedKey(_prefix!, _string, _bytes);
+                break;
             case Kind.Integer:
                 writer.WriteBulkInteger(_number);
                 break;
@@ -204,6 +220,11 @@ public readonly struct RespireValue : IEquatable<RespireValue>
 
     internal bool TryGetClusterSlot(out int slot)
     {
+        if (_kind == Kind.Prefixed)
+        {
+            slot = GetPrefixedClusterSlot();
+            return true;
+        }
         if (_kind == Kind.String)
         {
             slot = ClusterHash.GetSlot(_string!);
@@ -218,6 +239,23 @@ public readonly struct RespireValue : IEquatable<RespireValue>
 
         slot = GetScalarClusterSlot();
         return true;
+    }
+
+    internal int GetPrefixedClusterSlot()
+    {
+        var length = GetWireLength();
+        byte[]? rented = null;
+        Span<byte> payload = length <= StackallocThreshold ? stackalloc byte[length]
+            : (rented = ArrayPool<byte>.Shared.Rent(length));
+        try
+        {
+            WriteWirePayload(payload);
+            return ClusterHash.GetSlot(payload[..length]);
+        }
+        finally
+        {
+            if (rented is not null) ArrayPool<byte>.Shared.Return(rented, clearArray: true);
+        }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -271,6 +309,8 @@ public readonly struct RespireValue : IEquatable<RespireValue>
             case Kind.Boolean:
                 value = _number;
                 return true;
+            case Kind.Prefixed:
+                return TryGetPrefixedInt64(out value);
             default:
                 value = 0;
                 return false;
@@ -279,6 +319,9 @@ public readonly struct RespireValue : IEquatable<RespireValue>
 
     internal bool EqualsAsciiIgnoreCase(string value)
     {
+        if (_kind == Kind.Prefixed)
+            return _string is not null ? AsKey().ToString().Equals(value, StringComparison.OrdinalIgnoreCase)
+                : PrefixedBytesEqualAsciiIgnoreCase(value);
         if (_kind == Kind.String)
         {
             return string.Equals(_string, value, StringComparison.OrdinalIgnoreCase);
@@ -289,7 +332,11 @@ public readonly struct RespireValue : IEquatable<RespireValue>
             return false;
         }
 
-        var bytes = _bytes.Span;
+        return BytesEqualAsciiIgnoreCase(_bytes.Span, value);
+    }
+
+    private static bool BytesEqualAsciiIgnoreCase(ReadOnlySpan<byte> bytes, string value)
+    {
         for (var i = 0; i < bytes.Length; i++)
         {
             var actual = bytes[i];
@@ -313,6 +360,24 @@ public readonly struct RespireValue : IEquatable<RespireValue>
         return true;
     }
 
+    private bool PrefixedBytesEqualAsciiIgnoreCase(string value)
+    {
+        var length = GetWireLength();
+        if (length != value.Length) return false;
+        byte[]? rented = null;
+        Span<byte> payload = length <= StackallocThreshold ? stackalloc byte[length]
+            : (rented = ArrayPool<byte>.Shared.Rent(length));
+        try
+        {
+            WriteWirePayload(payload);
+            return BytesEqualAsciiIgnoreCase(payload[..length], value);
+        }
+        finally
+        {
+            if (rented is not null) ArrayPool<byte>.Shared.Return(rented, clearArray: true);
+        }
+    }
+
     internal bool IsEmpty
         => _kind switch
         {
@@ -324,7 +389,11 @@ public readonly struct RespireValue : IEquatable<RespireValue>
 
     /// <summary>Returns a value whose binary storage cannot be changed by the original caller.</summary>
     internal RespireValue Snapshot()
-        => _kind == Kind.Bytes ? new RespireValue(_bytes.ToArray()) : this;
+    {
+        if (_kind == Kind.Bytes) return new RespireValue(_bytes.ToArray());
+        if (_kind == Kind.Prefixed && _string is null) return Prefixed(_prefix!, null, _bytes.ToArray());
+        return this;
+    }
 
     /// <summary>
     /// Compares the exact bulk-string payload written to Redis, so equivalent text, binary, and
@@ -332,6 +401,8 @@ public readonly struct RespireValue : IEquatable<RespireValue>
     /// </summary>
     public bool Equals(RespireValue other)
     {
+        if (_kind == Kind.Prefixed || other._kind == Kind.Prefixed)
+            return EqualsPayload(other);
         if (_kind == Kind.Null || other._kind == Kind.Null)
         {
             return _kind == other._kind;
@@ -368,6 +439,46 @@ public readonly struct RespireValue : IEquatable<RespireValue>
 
     /// <inheritdoc/>
     public override bool Equals(object? obj) => obj is RespireValue other && Equals(other);
+
+    private bool EqualsPayload(RespireValue other)
+    {
+        if (_kind == Kind.Null || other._kind == Kind.Null) return false;
+        var length = GetWireLength();
+        if (length != other.GetWireLength()) return false;
+        byte[]? rented = null;
+        var total = checked(length * 2);
+        Span<byte> payload = total <= StackallocThreshold ? stackalloc byte[total]
+            : (rented = ArrayPool<byte>.Shared.Rent(total));
+        try
+        {
+            WriteWirePayload(payload[..length]);
+            other.WriteWirePayload(payload[length..]);
+            return payload[..length].SequenceEqual(payload.Slice(length, length));
+        }
+        finally
+        {
+            if (rented is not null) ArrayPool<byte>.Shared.Return(rented, clearArray: true);
+        }
+    }
+
+    private bool TryGetPrefixedInt64(out long value)
+    {
+        var length = GetWireLength();
+        byte[]? rented = null;
+        Span<byte> payload = length <= StackallocThreshold ? stackalloc byte[length]
+            : (rented = ArrayPool<byte>.Shared.Rent(length));
+        try
+        {
+            WriteWirePayload(payload);
+            if (_string is not null)
+                return long.TryParse(payload[..length], NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
+            return Utf8Parser.TryParse(payload[..length], out value, out var consumed) && consumed == length;
+        }
+        finally
+        {
+            if (rented is not null) ArrayPool<byte>.Shared.Return(rented, clearArray: true);
+        }
+    }
 
     /// <inheritdoc/>
     public override int GetHashCode()
@@ -522,6 +633,7 @@ public readonly struct RespireValue : IEquatable<RespireValue>
 
     internal int GetWireLength()
     {
+        if (_kind == Kind.Prefixed) return _prefix!.GetWireLength(_string, _bytes);
         if (_kind == Kind.String)
         {
             return Encoding.UTF8.GetByteCount(_string!);
@@ -538,6 +650,7 @@ public readonly struct RespireValue : IEquatable<RespireValue>
 
     internal RespireKey AsKey()
     {
+        if (_kind == Kind.Prefixed) return new RespireKey(_prefix!, _string, _bytes);
         if (_kind == Kind.String)
         {
             return new RespireKey(_string!);
@@ -557,6 +670,8 @@ public readonly struct RespireValue : IEquatable<RespireValue>
     {
         switch (_kind)
         {
+            case Kind.Prefixed:
+                return _prefix!.WritePayload(_string, _bytes, destination);
             case Kind.String:
                 return Encoding.UTF8.GetBytes(_string!, destination);
             case Kind.Bytes:
@@ -586,6 +701,7 @@ public readonly struct RespireValue : IEquatable<RespireValue>
     public override string ToString()
         => _kind switch
         {
+            Kind.Prefixed => AsKey().ToString(),
             Kind.String => _string!,
             Kind.Bytes => Internal.Utf8String.GetString(_bytes),
             Kind.Integer => _number.ToString(CultureInfo.InvariantCulture),

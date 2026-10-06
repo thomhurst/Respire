@@ -55,6 +55,18 @@ internal ref struct RespWriter
         _buffer.Advance(2);
     }
 
+    /// <summary>Writes a resolved key directly into the coalescing buffer without concatenating its storage.</summary>
+    internal void WritePrefixedKey(KeyPrefix prefix, string? text, ReadOnlyMemory<byte> bytes)
+    {
+        var length = prefix.GetWireLength(text, bytes);
+        WriteBulkStringHeader(length);
+        var payload = _buffer.GetSpan(checked(length + 2));
+        prefix.WritePayload(text, bytes, payload);
+        payload[length] = RespConstants.CarriageReturn;
+        payload[length + 1] = RespConstants.LineFeed;
+        _buffer.Advance(length + 2);
+    }
+
     /// <summary>Writes FP32 components in little-endian order without a temporary vector buffer.</summary>
     public void WriteBulkFloat32(scoped ReadOnlySpan<float> values)
     {
