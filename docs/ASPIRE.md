@@ -72,6 +72,15 @@ global arrays. Client-side cache key prefixes are strings. Time spans use the
 invariant .NET format; an empty string explicitly clears a nullable time span or
 integer (for example, `CommandTimeout: ""` disables its cap).
 
+An explicit empty JSON array (`[]`) clears the corresponding global endpoint,
+replica endpoint, or client-cache prefix array. An absent named array inherits the
+global value. Clearing all primary endpoints still requires an options callback
+that supplies usable endpoints before the client is resolved.
+
+The returned client builder's `Settings` property provides a detached snapshot
+of the values applied during registration. Mutating that copy, or a settings object
+retained from the callback, does not change the registered client or its integration flags.
+
 Service objects, serializers, binary key prefixes, certificate objects, and TLS
 callbacks are configured in code. Use the immutable options callback to preserve
 parsed and bound values while resolving services:
@@ -114,8 +123,9 @@ Metrics add meter `Respire`. Configure exporters in the application, for example
 The integration does not change process-wide metric group selection. To export
 command duration, configure `RespireMetricsOptions.Groups` to include
 `RespireMetricGroups.Command` before registering providers or creating clients.
-Repeated client registrations are safe: OpenTelemetry deduplicates source and meter
-names, and uses one provider of each kind per host.
+Repeated client registrations share one telemetry builder per host. The integration
+adds each source or meter only when first enabled; a later client can enable a signal
+disabled by earlier clients. OpenTelemetry uses one provider of each kind per host.
 
 Tracing and metrics flags disable this integration's automatic provider wiring.
 They do not suppress listeners registered elsewhere in the same process, and a
@@ -147,6 +157,11 @@ the existing store's validation and hosted tag cleanup. `IDistributedCache`,
 `HybridCache`, and `IOutputCacheStore` remain ordinary unkeyed application services;
 choose one application backend for each. The base client package has no ASP.NET
 Core framework dependency.
+
+Repeated `AddDistributedCache` calls follow ordinary unkeyed DI registration rules:
+resolving a single `IDistributedCache` selects the last registration. Its options and
+selected client win together. This also applies when `AddHybridCache` registers its
+distributed backend. Keyed client registrations do not make the cache service keyed.
 
 ## Azure Managed Redis with Microsoft Entra
 

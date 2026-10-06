@@ -2,6 +2,7 @@ using Aspire.Respire;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
 using global::Respire;
@@ -75,12 +76,38 @@ public static class AspireRespireExtensions
             builder.Services.AddHealthChecks().AddRespire(name: $"respire_{(serviceKey is null ? "default" : "keyed")}_{connectionName}", tags: ["ready"],
                 clientFactory: clientBuilder.GetClient);
         if (!settings.DisableTracing || !settings.DisableMetrics)
-        {
-            var telemetry = builder.Services.AddOpenTelemetry();
-            if (!settings.DisableTracing) telemetry.WithTracing(tracing => tracing.AddSource("Respire"));
-            if (!settings.DisableMetrics) telemetry.WithMetrics(metrics => metrics.AddMeter("Respire"));
-        }
+            AddTelemetry(builder.Services, settings);
         return clientBuilder;
+    }
+
+    /// <summary>Registers one builder per host and adds each signal when first enabled by a client.</summary>
+    private static void AddTelemetry(IServiceCollection services, RespireClientSettings settings)
+    {
+        var registration = services.FirstOrDefault(static descriptor => descriptor.ServiceType == typeof(TelemetryRegistration))
+            ?.ImplementationInstance as TelemetryRegistration;
+        if (registration is null)
+        {
+            registration = new TelemetryRegistration(services.AddOpenTelemetry());
+            services.AddSingleton(registration);
+        }
+        if (!settings.DisableTracing && !registration.Tracing)
+        {
+            registration.Builder.WithTracing(tracing => tracing.AddSource("Respire"));
+            registration.Tracing = true;
+        }
+        if (!settings.DisableMetrics && !registration.Metrics)
+        {
+            registration.Builder.WithMetrics(metrics => metrics.AddMeter("Respire"));
+            registration.Metrics = true;
+        }
+    }
+
+    /// <summary>Retains registration-time telemetry state in the host's own service collection.</summary>
+    private sealed class TelemetryRegistration(OpenTelemetryBuilder builder)
+    {
+        internal OpenTelemetryBuilder Builder { get; } = builder;
+        internal bool Tracing { get; set; }
+        internal bool Metrics { get; set; }
     }
 
     /// <summary>Reports missing endpoints without opening a connection or invoking a deferred callback.</summary>

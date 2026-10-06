@@ -17,4 +17,14 @@ public sealed class RespireClientSettings
 
     /// <summary>Uses a null logger factory, including when the host registers its own logger factory.</summary>
     public bool DisableLogging { get; set; }
+
+    /// <summary>Copies registration values without retaining a caller-owned mutable settings object.</summary>
+    internal RespireClientSettings Copy() => new()
+    {
+        ConnectionString = ConnectionString,
+        DisableHealthChecks = DisableHealthChecks,
+        DisableTracing = DisableTracing,
+        DisableMetrics = DisableMetrics,
+        DisableLogging = DisableLogging,
+    };
 }

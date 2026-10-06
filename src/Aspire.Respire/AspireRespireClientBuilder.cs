@@ -7,18 +7,22 @@ namespace Aspire.Respire;
 /// <summary>A registered Respire client and its host context, used by the companion cache integrations.</summary>
 public sealed class AspireRespireClientBuilder
 {
+    private readonly RespireClientSettings _settings;
+
     internal AspireRespireClientBuilder(IHostApplicationBuilder hostBuilder, RespireClientSettings settings, string? serviceKey)
     {
         HostBuilder = hostBuilder;
-        Settings = settings;
+        _settings = settings.Copy();
         ServiceKey = serviceKey;
     }
 
     /// <summary>The host that owns the client.</summary>
     public IHostApplicationBuilder HostBuilder { get; }
 
-    /// <summary>Settings applied during registration. Configure flags through the registration callback.</summary>
-    public RespireClientSettings Settings { get; }
+    /// <summary>Returns a detached snapshot of settings applied during registration.</summary>
+    /// <remarks>Changing the returned copy does not reconfigure the client or host integrations.
+    /// Configure settings through the registration callback.</remarks>
+    public RespireClientSettings Settings => _settings.Copy();
 
     /// <summary>The keyed service name, or null for the default client.</summary>
     public string? ServiceKey { get; }

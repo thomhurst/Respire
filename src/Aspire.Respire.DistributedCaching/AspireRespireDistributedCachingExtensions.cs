@@ -9,6 +9,8 @@ namespace Microsoft.Extensions.Hosting;
 public static class AspireRespireDistributedCachingExtensions
 {
     /// <summary>Registers the selected client as the distributed cache backend without transferring client ownership.</summary>
+    /// <remarks>The cache is an unkeyed application service. Choose one backend per host;
+    /// if registered repeatedly, resolving a single cache selects the last registration.</remarks>
     public static AspireRespireClientBuilder AddDistributedCache(this AspireRespireClientBuilder builder,
         Action<RespireCacheOptions>? configure = null)
     {
