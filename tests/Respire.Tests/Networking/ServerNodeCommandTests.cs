@@ -153,15 +153,9 @@ public class ServerNodeCommandTests
             Endpoints = [new("127.0.0.1", 6379)], AllowAdmin = true,
             TestingStreamFactory = async (host, port, token) =>
             {
-                var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
-                try
-                {
-                    await socket.ConnectAsync(host, port, token);
-                    var stream = new GatedWriteStream(socket);
-                    opened.TrySetResult(stream);
-                    return stream;
-                }
-                catch { socket.Dispose(); throw; }
+                var stream = await GatedWriteStream.ConnectAsync(host, port, received.Task, token);
+                opened.TrySetResult(stream);
+                return stream;
             },
         });
         var pending = client.Server.OnNode(new("127.0.0.1", target.Port)).SendShutdownAsync().AsTask();
@@ -487,15 +481,54 @@ public class ServerNodeCommandTests
     [Test]
     public async Task ShutdownCompletesAfterWriteWithoutReplyAndUsesControlGrammar()
     {
-        await using var seed = Server(1);
         await using var target = Server(1);
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         target.SuppressReply = _ => { received.TrySetResult(); return true; };
-        await using var client = await Connect(seed.Port, 3, admin: true);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", target.Port)], Protocol = RespProtocol.Resp3, AllowAdmin = true,
+            TestingStreamFactory = async (host, port, token) =>
+            {
+                var stream = await GatedWriteStream.ConnectAsync(host, port, received.Task, token);
+                stream.ReleaseWrite.TrySetResult();
+                return stream;
+            },
+        });
         await client.Server.OnNode(new("127.0.0.1", target.Port)).SendShutdownAsync(new()
         { SaveMode = RespireShutdownSaveMode.NoSave, Now = true, Force = true }).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
-        await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(target.ReceivedCommands).IsEquivalentTo(["SHUTDOWN NOSAVE NOW FORCE"]);
+        await target.PeerClosed.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Test]
+    public async Task ShutdownLocalWriteCanCompleteBeforePeerReceivesCommand()
+    {
+        await using var target = Server(1);
+        var releaseRead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        target.SuppressReply = command =>
+        {
+            if (command == "AUTH password")
+            {
+                target.ReadGate = releaseRead.Task;
+                return false;
+            }
+            received.TrySetResult();
+            return true;
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", target.Port)], Protocol = RespProtocol.Resp3,
+            AllowAdmin = true, Password = "password",
+        });
+        try
+        {
+            await client.Server.OnNode(new("127.0.0.1", target.Port)).SendShutdownAsync(new()
+            { SaveMode = RespireShutdownSaveMode.NoSave, Now = true, Force = true }).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(received.Task.IsCompleted).IsFalse();
+            await Assert.That(target.ReceivedCommands).IsEquivalentTo(["AUTH password"]);
+        }
+        finally { releaseRead.TrySetResult(); }
         await target.PeerClosed.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
@@ -594,17 +627,32 @@ public class ServerNodeCommandTests
             => Messages.Enqueue(formatter(state, exception) + exception?.ToString());
     }
 
-    private sealed class GatedWriteStream(Socket socket) : NetworkStream(socket, ownsSocket: true)
+    // Single-command test connections only: no AUTH or HELLO setup writes before the observed command.
+    private sealed class GatedWriteStream(Socket socket, Task received) : NetworkStream(socket, ownsSocket: true)
     {
         internal TaskCompletionSource WriteStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal TaskCompletionSource ReleaseWrite { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal bool Disposed { get; private set; }
+
+        internal static async Task<GatedWriteStream> ConnectAsync(string host, int port, Task received, CancellationToken token)
+        {
+            var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+            try
+            {
+                await socket.ConnectAsync(host, port, token);
+                return new GatedWriteStream(socket, received);
+            }
+            catch { socket.Dispose(); throw; }
+        }
 
         public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
         {
             WriteStarted.TrySetResult();
             await ReleaseWrite.Task.WaitAsync(cancellationToken);
             await base.WriteAsync(buffer, cancellationToken);
+            // Keep this test transport alive until the peer records the bytes, without requiring a reply.
+            // Production promises only local write completion; it does not provide this synchronization.
+            await received.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
         }
 
         protected override void Dispose(bool disposing)
