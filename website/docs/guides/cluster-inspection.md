@@ -25,6 +25,9 @@ against Redis 7.0. Standalone tests cover preserved server errors.
 
 ```csharp
 RespireClusterInfo info = await redis.Server.ClusterInfoAsync();
+ulong? currentEpoch = info.CurrentEpoch;
+ulong? localEpoch = info.MyEpoch;
+Console.WriteLine($"Current epoch: {currentEpoch}; local epoch: {localEpoch}");
 RespireClusterShard[] shards = await redis.Server.ClusterShardsAsync();
 foreach (var shard in shards)
 {
@@ -40,6 +43,14 @@ foreach (var shard in shards)
 timing/epoch counters, link state, inclusive slot ranges, and importing/migrating slot
 annotations. Unknown trailing tokens remain in `AdditionalTokens`. An address such as
 `:0@0` is retained for inspection even when it cannot be used for a connection.
+
+`RespireClusterInfo.CurrentEpoch` and `MyEpoch` are `ulong?` and preserve the full
+unsigned 64-bit epoch range, including values above `long.MaxValue`. Missing epoch
+fields remain null. This corrects their earlier `long?` type: callers that store or
+construct these values using signed locals must migrate those locals to `ulong?`.
+The other INFO counters remain nonnegative `long?` values; their signed limits do
+not change. `Attributes` retains the original text of known and unknown fields.
+See the [Redis Cluster epoch specification](https://redis.io/docs/latest/operate/oss_and_stack/reference/cluster-spec/#cluster-current-epoch).
 
 Shard models contain slot ranges and member nodes. Endpoint, IP, hostname, plain port,
 and TLS port remain distinct. Null, empty, and `?` endpoints are preserved; a zero port
