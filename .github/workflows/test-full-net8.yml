@@ -29,7 +29,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: ./.github/actions/setup-dotnet
       # CI's required net8 job is a smoke set. This opt-in job covers every
-      # multi-targeted test project; pipeline and packed-package smoke projects are net10-only.
+      # multi-targeted test project; analyzer, pipeline and packed-package smoke projects are net10-only.
       - name: Build and run every .NET 8 test project
         shell: bash
         run: |
@@ -37,7 +37,6 @@ jobs:
           for project in \
             tests/Respire.Tests \
             tests/Respire.HealthChecks.Tests \
-            tests/Respire.Analyzers.Tests \
             tests/Respire.IntegrationTests \
             tests/Respire.Coordination.Tests \
             tests/Respire.Azure.Tests \
