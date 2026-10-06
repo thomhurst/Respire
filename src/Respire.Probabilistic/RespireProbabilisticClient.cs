@@ -5,7 +5,7 @@ namespace Respire.Probabilistic;
 /// <summary>Typed operations for Redis Bloom, Cuckoo, Count-Min, Top-K, and t-digest structures.</summary>
 public sealed class RespireProbabilisticClient
 {
-    private readonly IRespireProbabilisticCommands _commands;
+    private readonly IRespireProbabilisticCommandsImplementation _commands;
 
     /// <summary>Creates probabilistic operations over a caller-owned Respire client.</summary>
     public RespireProbabilisticClient(IRespireClient client)
@@ -354,7 +354,7 @@ public sealed class RespireProbabilisticClient
     public ValueTask<RespireResult> TDigestInfoAsync(RespireKey key, CancellationToken cancellationToken = default)
         => _commands.TDigestInfoAsync(key, cancellationToken);
 
-    private async ValueTask<double[]> TDigestValuesAsync(RespireKey key, IReadOnlyList<double> values, Action<IReadOnlyList<double>> validate, Func<RespireKey, RespireValue[], CancellationToken, ValueTask<RespireResult>> execute, CancellationToken cancellationToken)
+    private static async ValueTask<double[]> TDigestValuesAsync(RespireKey key, IReadOnlyList<double> values, Action<IReadOnlyList<double>> validate, Func<RespireKey, RespireValue[], CancellationToken, ValueTask<RespireResult>> execute, CancellationToken cancellationToken)
     {
         validate(values);
         using var result = await execute(key, values.Select(static value => (RespireValue)value).ToArray(), cancellationToken).ConfigureAwait(false);
@@ -363,14 +363,14 @@ public sealed class RespireProbabilisticClient
         return output;
     }
 
-    private async ValueTask<long[]> TDigestIntegerValuesAsync(RespireKey key, IReadOnlyList<double> values, Action<IReadOnlyList<double>> validate, Func<RespireKey, RespireValue[], CancellationToken, ValueTask<RespireResult>> execute, CancellationToken cancellationToken)
+    private static async ValueTask<long[]> TDigestIntegerValuesAsync(RespireKey key, IReadOnlyList<double> values, Action<IReadOnlyList<double>> validate, Func<RespireKey, RespireValue[], CancellationToken, ValueTask<RespireResult>> execute, CancellationToken cancellationToken)
     {
         validate(values);
         using var result = await execute(key, values.Select(static value => (RespireValue)value).ToArray(), cancellationToken).ConfigureAwait(false);
         return ReadIntegers(result);
     }
 
-    private async ValueTask<double[]> TDigestRankValuesAsync(RespireKey key, IReadOnlyList<long> ranks, Func<RespireKey, RespireValue[], CancellationToken, ValueTask<RespireResult>> execute, CancellationToken cancellationToken)
+    private static async ValueTask<double[]> TDigestRankValuesAsync(RespireKey key, IReadOnlyList<long> ranks, Func<RespireKey, RespireValue[], CancellationToken, ValueTask<RespireResult>> execute, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(ranks);
         if (ranks.Count == 0 || ranks.Any(static rank => rank < 0)) throw new ArgumentOutOfRangeException(nameof(ranks));

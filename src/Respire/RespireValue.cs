@@ -56,7 +56,7 @@ public readonly struct RespireValue : IEquatable<RespireValue>
     /// <summary>
     /// Represents an absent optional argument. A null value cannot be serialized onto the Redis wire.
     /// </summary>
-    public static readonly RespireValue Null = default;
+    public static readonly RespireValue Null;
 
     /// <summary>Whether this is the absent <see cref="Null"/> sentinel.</summary>
     public bool IsNull => _kind == Kind.Null;

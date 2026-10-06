@@ -67,8 +67,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     //   notification's own receive-time token, so FIFO chains (A->B then B->C) both apply while
     //   a callback overtaken by a later owner change is rejected.
     // ClusterSlotFences documents when a dependent migration may cross its fence.
-    private readonly long[] _slotMutationVersions = new long[ClusterHash.SlotCount];
-    private readonly ClusterSlotFences _slotFences = new();    private int _disposed;
+    private readonly ClusterSlotFences _slotFences = new();
+    private int _disposed;
     private readonly TimeProvider _topologyRefreshClock;
     private readonly ClusterTopologyRefreshScheduler _topologyRefresh;
 
@@ -432,7 +432,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
     private static RespireEndpoint Endpoint(RespireConnectionMultiplexer node) => new(node.Host, node.Port);
 
-    private async ValueTask EnsureRouteNodeConnectedAsync(
+    private static async ValueTask EnsureRouteNodeConnectedAsync(
         RespireConnectionMultiplexer node, CancellationToken cancellationToken, DiscoveryRound? discovery)
     {
         if (discovery is not null) await discovery.BeforeCandidateAsync(Endpoint(node), cancellationToken).ConfigureAwait(false);
@@ -898,7 +898,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     internal RespireConnectionMultiplexer GetMultiplexer(RespireEndpoint endpoint)
         => GetOrCreateNode(endpoint);
 
-    internal bool HasReliableCorrectionOrdering(RespireConnection connection)
+    internal static bool HasReliableCorrectionOrdering(RespireConnection connection)
         => connection.Multiplexer?.HasReliableCorrectionOrdering == true;
 
     // Learn routing for a new attempt without sending any part of the rejected watched transaction.

@@ -41,7 +41,7 @@ public readonly struct RespireExpiry : IEquatable<RespireExpiry>
     }
 
     /// <summary>No expiry option — Redis applies its default (SET clears any existing TTL). The default value.</summary>
-    public static readonly RespireExpiry None = default;
+    public static readonly RespireExpiry None;
 
     /// <summary>Retains the TTL the key already has. Redis: KEEPTTL.</summary>
     public static readonly RespireExpiry Keep = new(RespireExpiryKind.Keep, 0);

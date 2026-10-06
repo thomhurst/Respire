@@ -21,7 +21,7 @@ public readonly struct RespireKey : IEquatable<RespireKey>
     public RespireKey(ReadOnlyMemory<byte> key) => _bytes = key;
 
     /// <summary>An empty Redis key. The default value.</summary>
-    public static readonly RespireKey Empty = default;
+    public static readonly RespireKey Empty;
 
     /// <summary>Whether this key has zero bytes.</summary>
     public bool IsEmpty => _string is null or "" && _bytes.IsEmpty;

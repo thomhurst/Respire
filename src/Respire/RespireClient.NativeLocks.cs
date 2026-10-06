@@ -184,7 +184,7 @@ public sealed partial class RespireClient
                     {
                         connection = await GetTrackedReplacementConnectionAsync(
                             cluster, source, slot, !allowUnfencedFallback, cancellationToken, discovery).ConfigureAwait(false);
-                        if (RequiresStrictIdentityRetry(cluster, connection, allowUnfencedFallback))
+                        if (RequiresStrictIdentityRetry(connection, allowUnfencedFallback))
                         {
                             connection = await GetTrackedReplacementConnectionAsync(
                                 cluster, source, slot, true, cancellationToken, discovery).ConfigureAwait(false);
@@ -193,7 +193,7 @@ public sealed partial class RespireClient
 
                     discoveryPending = false;
                     execution.ConnectionIdentity = GetTrackedConnectionIdentity(
-                        connection, IsFenceable(cluster, connection, requireIdentity, allowUnfencedFallback), sendAsking);
+                        connection, IsFenceable(connection, requireIdentity, allowUnfencedFallback), sendAsking);
                 }
                 catch (RespireServerException error) when (
                     _core.Cluster is { } cluster && attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
@@ -213,7 +213,7 @@ public sealed partial class RespireClient
                         connection = await GetTrackedRedirectConnectionAsync(
                                 cluster, error, source, !allowUnfencedFallback, cancellationToken, slot, discovery)
                             .ConfigureAwait(false);
-                        if (RequiresStrictIdentityRetry(cluster, connection, allowUnfencedFallback))
+                        if (RequiresStrictIdentityRetry(connection, allowUnfencedFallback))
                         {
                             connection = await GetTrackedRedirectConnectionAsync(
                                     cluster, error, source, true, cancellationToken, slot, discovery)
@@ -225,7 +225,7 @@ public sealed partial class RespireClient
                     sendAsking = error.Code == RespireErrorCodes.Ask;
                     // Publish the identity before any write on the redirected connection can be sent.
                     execution.ConnectionIdentity = GetTrackedConnectionIdentity(
-                        connection, IsFenceable(cluster, connection, requireIdentity, allowUnfencedFallback), sendAsking);
+                        connection, IsFenceable(connection, requireIdentity, allowUnfencedFallback), sendAsking);
                 }
                 catch (Exception error) when (LockCommands.IsUnsubmitted(error))
                 {
@@ -252,9 +252,9 @@ public sealed partial class RespireClient
     /// identity required, so that failure surfaces exactly as it did before.
     /// </summary>
     private bool RequiresStrictIdentityRetry(
-        ClusterRouter cluster, RespireConnection connection, bool allowUnfencedFallback)
+        RespireConnection connection, bool allowUnfencedFallback)
     {
-        if (!allowUnfencedFallback || cluster.HasReliableCorrectionOrdering(connection))
+        if (!allowUnfencedFallback || ClusterRouter.HasReliableCorrectionOrdering(connection))
         {
             return false;
         }
@@ -269,8 +269,8 @@ public sealed partial class RespireClient
     }
 
     private static bool IsFenceable(
-        ClusterRouter cluster, RespireConnection connection, bool requireIdentity, bool allowUnfencedFallback)
-        => requireIdentity && (!allowUnfencedFallback || cluster.HasReliableCorrectionOrdering(connection));
+        RespireConnection connection, bool requireIdentity, bool allowUnfencedFallback)
+        => requireIdentity && (!allowUnfencedFallback || ClusterRouter.HasReliableCorrectionOrdering(connection));
 
     private async ValueTask<bool> ExecuteCompatibleLockAsync(
         RespireConnection connection, RespireValue key, RespireValue token, long? milliseconds,

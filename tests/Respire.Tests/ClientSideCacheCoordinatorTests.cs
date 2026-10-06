@@ -553,7 +553,7 @@ public class ClientSideCacheCoordinatorTests
         var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
         Insert(cache, "unrelated", "retained");
         var read = new Cmd1(Verbs.LLen, "list");
-        await Assert.That(cache.TryCreateQuery("LLEN", in read, out var request)).IsTrue();
+        await Assert.That(ClientSideCacheCoordinator.TryCreateQuery("LLEN", in read, out var request)).IsTrue();
         CacheLength();
         await Assert.That(cache.Count).IsEqualTo(2);
         var verb = operation == "LPUSHX" ? RespireCommands.List.LPUSHX.Verb : RespireCommands.List.RPUSHX.Verb;
@@ -692,7 +692,7 @@ public class ClientSideCacheCoordinatorTests
     {
         var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
         var command = new Cmd1(Verbs.StrLen, "key");
-        await Assert.That(cache.TryCreateQuery("STRLEN", in command, out var request)).IsTrue();
+        await Assert.That(ClientSideCacheCoordinator.TryCreateQuery("STRLEN", in command, out var request)).IsTrue();
         var response = RespValue.Integer(3);
         var successfulToken = cache.BeginRead("STRLEN", in request);
         cache.CompleteRead(in successfulToken, in response, allowInsert: true);
@@ -792,7 +792,7 @@ public class ClientSideCacheCoordinatorTests
         var command = new CatalogCommand(
             RespireCommands.Json.JSON_MGET,
             ["first", "second", "$"]);
-        await Assert.That(cache.TryCreateQuery("JSON.MGET", in command, out var request)).IsTrue();
+        await Assert.That(ClientSideCacheCoordinator.TryCreateQuery("JSON.MGET", in command, out var request)).IsTrue();
         var token = cache.BeginRead("JSON.MGET", in request);
         var response = RespValue.Array([]);
         cache.CompleteRead(in token, in response, allowInsert: true);
@@ -863,8 +863,8 @@ public class ClientSideCacheCoordinatorTests
             RespireCommands.Geo.GEOSEARCH,
             ["places", "FROMMEMBER", "origin", "BYRADIUS", 1, "m", "COUNT", 1, "ANY"]);
 
-        await Assert.That(cache.TryCreateQuery("GEOSEARCH", in deterministic, out _)).IsTrue();
-        await Assert.That(cache.TryCreateQuery("GEOSEARCH", in any, out _)).IsFalse();
+        await Assert.That(ClientSideCacheCoordinator.TryCreateQuery("GEOSEARCH", in deterministic, out _)).IsTrue();
+        await Assert.That(ClientSideCacheCoordinator.TryCreateQuery("GEOSEARCH", in any, out _)).IsFalse();
     }
 
     [Test]
@@ -877,9 +877,9 @@ public class ClientSideCacheCoordinatorTests
         var exact = new CatalogCommand(
             RespireCommands.Server.MEMORY_USAGE, ["key", "SAMPLES", 0]);
 
-        await Assert.That(cache.TryCreateQuery("MEMORY USAGE", in defaultSampling, out _)).IsFalse();
-        await Assert.That(cache.TryCreateQuery("MEMORY USAGE", in sampled, out _)).IsFalse();
-        await Assert.That(cache.TryCreateQuery("MEMORY USAGE", in exact, out _)).IsTrue();
+        await Assert.That(ClientSideCacheCoordinator.TryCreateQuery("MEMORY USAGE", in defaultSampling, out _)).IsFalse();
+        await Assert.That(ClientSideCacheCoordinator.TryCreateQuery("MEMORY USAGE", in sampled, out _)).IsFalse();
+        await Assert.That(ClientSideCacheCoordinator.TryCreateQuery("MEMORY USAGE", in exact, out _)).IsTrue();
     }
 
     [Test]
@@ -889,8 +889,8 @@ public class ClientSideCacheCoordinatorTests
         var selfContained = new CatalogCommand(RespireCommands.Key.SORT_RO, ["key", "ALPHA"]);
         var external = new CatalogCommand(RespireCommands.Key.SORT_RO, ["key", "BY", "weight_*"]);
 
-        await Assert.That(cache.TryCreateQuery("SORT_RO", in selfContained, out _)).IsTrue();
-        await Assert.That(cache.TryCreateQuery("SORT_RO", in external, out _)).IsFalse();
+        await Assert.That(ClientSideCacheCoordinator.TryCreateQuery("SORT_RO", in selfContained, out _)).IsTrue();
+        await Assert.That(ClientSideCacheCoordinator.TryCreateQuery("SORT_RO", in external, out _)).IsFalse();
     }
 
     private static void Insert(ClientSideCacheCoordinator cache, string key, string value)
@@ -919,7 +919,7 @@ public class ClientSideCacheCoordinatorTests
         RespValue response)
     {
         var command = new Cmd1(Verbs.StrLen, key);
-        if (!cache.TryCreateQuery("STRLEN", in command, out var request))
+        if (!ClientSideCacheCoordinator.TryCreateQuery("STRLEN", in command, out var request))
         {
             throw new InvalidOperationException("Expected a cacheable query.");
         }

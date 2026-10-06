@@ -1,0 +1,8 @@
+# Source projects enforce these performance rules independently of test/sample policy.
+# Other Performance rules are tracked by #979 and its remaining prerequisites.
+[*.cs]
+dotnet_diagnostic.CA1805.severity = error
+dotnet_diagnostic.CA1822.severity = error
+dotnet_diagnostic.CA1823.severity = error
+dotnet_diagnostic.CA1841.severity = error
+dotnet_diagnostic.CA1859.severity = error

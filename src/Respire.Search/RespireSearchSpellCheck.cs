@@ -67,6 +67,8 @@ public sealed record RespireSearchSpellCheckOptions
         }
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1859",
+        Justification = "Empty input reuses an empty array; nonempty input uses an owned read-only wrapper. The common interface avoids allocating a wrapper for empty input.")]
     private static IReadOnlyList<string> CopyDictionaries(IReadOnlyList<string> dictionaries, string parameter)
     {
         ArgumentNullException.ThrowIfNull(dictionaries, parameter);
@@ -133,7 +135,7 @@ public sealed partial class RespireSearchClient
         return copy;
     }
 
-    private static IReadOnlyList<RespireSearchSpellingCorrection> ParseSpellCheck(RespireResult result)
+    private static RespireSearchSpellingCorrection[] ParseSpellCheck(RespireResult result)
         => result.Type == RespDataType.Map ? ParseSpellCheckResp3(result) : ParseSpellCheckResp2(result);
 
     private static RespireSearchSpellingCorrection[] ParseSpellCheckResp2(RespireResult result)

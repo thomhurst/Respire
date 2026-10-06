@@ -45,6 +45,11 @@
     <RespireNonPackageProjects>;Respire.Analyzers;</RespireNonPackageProjects>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(IsRespirePackageProject)' == 'true' Or '$(MSBuildProjectName)' == 'Respire.Analyzers'">
+    <!-- Includes the netstandard analyzer assembly, where SDK analyzers are not enabled by default. -->
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+  </PropertyGroup>
+
   <!-- Runs once, in the core project, so a typo in the package list cannot silently make a project unpackable. -->
   <Target Name="_RespireValidatePackageProjectList" BeforeTargets="Build" Condition="'$(MSBuildProjectName)' == 'Respire'">
     <ItemGroup>

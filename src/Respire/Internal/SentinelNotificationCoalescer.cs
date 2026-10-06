@@ -4,7 +4,7 @@ namespace Respire.Internal;
 // synchronization and I/O. Compatibility methods also expose those transitions to tests.
 internal sealed class SentinelNotificationCoalescer
 {
-    internal SentinelNotificationState State { get; private set; } = new();
+    internal SentinelNotificationState State { get; private set; }
     internal SentinelHint? Active => State.Active;
     internal SentinelHintKey? ActiveKey => Active?.Key;
     internal SentinelHint? Pending => State.Pending;

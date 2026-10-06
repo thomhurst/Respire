@@ -234,7 +234,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         return Volatile.Read(ref _store).TryGet(in query, out value);
     }
 
-    internal bool TryCreateQuery<TCommand>(
+    internal static bool TryCreateQuery<TCommand>(
         string operation,
         in TCommand command,
         out QueryRequest request)

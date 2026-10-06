@@ -586,10 +586,10 @@ internal sealed partial class ServerCommands(RespireClient client) : IServerComm
         return result;
     }
 
-    private static string? ReadAttributeString(IReadOnlyDictionary<string, string> attributes, string name)
+    private static string? ReadAttributeString(Dictionary<string, string> attributes, string name)
         => attributes.TryGetValue(name, out var value) && value.Length > 0 ? value : null;
 
-    private static long ReadAttributeInt64(IReadOnlyDictionary<string, string> attributes, string name)
+    private static long ReadAttributeInt64(Dictionary<string, string> attributes, string name)
         => attributes.TryGetValue(name, out var value)
            && long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
             ? parsed

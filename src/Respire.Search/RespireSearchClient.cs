@@ -30,7 +30,7 @@ public sealed partial class RespireSearchClient
     private static readonly string[] NoOptions = [];
 
     private readonly IRespireClient _client;
-    private readonly IRespireSearchCommands _commands;
+    private readonly IRespireSearchCommandsImplementation _commands;
     // Set once a COMMAND INFO probe has shown that the server knows FT.HYBRID, so later
     // FT.HYBRID errors are passed through without probing again.
     private volatile bool _hybridConfirmed;

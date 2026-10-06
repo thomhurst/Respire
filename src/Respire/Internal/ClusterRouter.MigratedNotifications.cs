@@ -167,7 +167,7 @@ internal sealed partial class ClusterRouter
     }
 
     // Test seam: stamps a notification as received now.
-    internal QueuedSmigratedNotification CaptureSmigratedNotification(
+    internal static QueuedSmigratedNotification CaptureSmigratedNotification(
         RespireConnectionMultiplexer sender, object sequenceScope, MaintenanceNotification notification)
         => new(sender, sequenceScope, notification, ClusterSlotMutationClock.Next());
 
