@@ -14,6 +14,30 @@ public class StandaloneStartupRetryTests
     internal const string BindFailure = "failed to set up container networking: driver failed programming external connectivity on endpoint fixture (abc123): failed to bind host port for 127.0.0.1::172.17.0.8:6379/tcp: address already in use";
 
     [Test]
+    [Arguments(1)]
+    [Arguments(2)]
+    public async Task SuccessfulStartEndsCollisionRetries(int collisions)
+    {
+        var probes = new List<ContainerProbe>();
+        var initialized = new InvalidOperationException("Reached fixture initialization after successful start.");
+        Func<Task> start = async () => await RespireContainerFixture.StartAsync(new(), default, (_, _) =>
+        {
+            probes.Should().OnlyContain(probe => probe.DisposeCount == 1);
+            var container = ContainerProbe.Create(probes.Count < collisions
+                ? _ => Task.FromException(ApiError(BindFailure))
+                : _ => Task.CompletedTask);
+            var probe = (ContainerProbe)container;
+            // Stop at initialization so no real Docker port collision can affect the count.
+            probe.HostnameError = initialized;
+            probes.Add(probe);
+            return Task.FromResult(container);
+        });
+        (await start.Should().ThrowAsync<InvalidOperationException>()).Which.Should().BeSameAs(initialized);
+        probes.Should().HaveCount(collisions + 1)
+            .And.OnlyContain(probe => probe.StartCount == 1 && probe.DisposeCount == 1);
+    }
+
+    [Test]
     public async Task ExhaustionRemovesThreeFreshContainersAndRetainsFailures()
     {
         var probes = new List<ContainerProbe>();

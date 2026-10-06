@@ -227,7 +227,9 @@ public class ContainerFixtureIntegrationTests
             container.Created += (_, _) => createdIds.Add(container.Id);
             return container;
         });
-        attempts.Should().Be(2);
+        // Docker can hit a real second collision after the injected first failure.
+        // Exact retry counts are covered by StandaloneStartupRetryTests with controlled starts.
+        attempts.Should().BeInRange(2, 3);
         createdIds.Should().HaveCount(attempts - 1);
         await using (var client = await RespireClient.ConnectAsync(fixture.CreateOptions()))
         {
