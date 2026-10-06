@@ -405,4 +405,4 @@ Index commands carry an index name instead of keys. On a Redis Cluster, Respire 
 
 With client-side caching enabled, read-only Search commands leave the local cache intact, while index changes invalidate it conservatively. Key-prefixed views reject Search commands, so include prefixes in the indexed keyspace and use keys in the format your index expects. Search methods build one argument list per call and are not part of Respire's zero-allocation hot path. The caller owns the underlying client.
 
-The package reuses Respire's generated command infrastructure, and a Native AOT smoke app covers it against Redis 8.4 over RESP2 and RESP3.
+The package reuses Respire's generated command infrastructure, and a Native AOT smoke app covers it against Redis 8.10 over RESP2 and RESP3.
