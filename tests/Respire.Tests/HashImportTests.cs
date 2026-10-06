@@ -42,7 +42,7 @@ public class HashImportTests
             session.Connection.SendAsync(ping, armCommandDeadline: false).AsTask(),
         };
         await pause.Matched.WaitAsync(limit);
-        await Assert.That(session.Connection.Inflight.Count).IsEqualTo(2);
+        await Assert.That(session.Connection.InspectForTests().Inflight.Count).IsEqualTo(2);
         using var caller = new CancellationTokenSource();
         try
         {
