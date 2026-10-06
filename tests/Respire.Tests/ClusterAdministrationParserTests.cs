@@ -9,6 +9,47 @@ namespace Respire.Tests;
 public class ClusterAdministrationParserTests
 {
     [Test]
+    [Arguments("0")]
+    [Arguments("9223372036854775807")]
+    [Arguments("9223372036854775808")]
+    [Arguments("18446744073709551615")]
+    public async Task ReplicaEpochPreservesEntireUnsignedRange(string epoch)
+    {
+        using var reply = RespValue.Array(RespValue.BulkString($"replica host:6379 slave primary 0 0 {epoch} connected"));
+        var node = ClusterAdministrationParser.Replicas(in reply).Single();
+        await Assert.That(node.ConfigurationEpoch.ToString(System.Globalization.CultureInfo.InvariantCulture)).IsEqualTo(epoch);
+    }
+
+    [Test]
+    [Arguments("-1")]
+    [Arguments("+1")]
+    [Arguments("18446744073709551616")]
+    [Arguments("invalid")]
+    public async Task InvalidReplicaEpochRemainsAProtocolError(string epoch)
+    {
+        using var reply = RespValue.Array(RespValue.BulkString($"replica host:6379 slave primary 0 0 {epoch} connected"));
+        await Assert.That(() => ClusterAdministrationParser.Replicas(in reply)).ThrowsExactly<RespireProtocolException>();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task MalformedSecondRowReportsItsIndex(bool replicas)
+    {
+        using var reply = replicas
+            ? RespValue.Array(RespValue.BulkString("replica host:6379 slave primary 0 0 1 connected"), RespValue.Integer(9))
+            : RespValue.Array(RespValue.Array(RespValue.Integer(0), RespValue.Integer(1),
+                RespValue.Array(RespValue.BulkString("host"), RespValue.Integer(6379))), RespValue.Integer(9));
+        var error = await Assert.That(() =>
+        {
+            if (replicas) _ = ClusterAdministrationParser.Replicas(in reply);
+            else _ = ClusterAdministrationParser.Slots(in reply);
+        }).ThrowsExactly<RespireProtocolException>();
+        await Assert.That(error!.Message).Contains("row 1");
+        await Assert.That(error.InnerException).IsTypeOf<RespireProtocolException>();
+    }
+
+    [Test]
     [Arguments(false)] [Arguments(true)]
     public async Task SlotResultsOwnOptionalAndFutureFields(bool resp3)
     {

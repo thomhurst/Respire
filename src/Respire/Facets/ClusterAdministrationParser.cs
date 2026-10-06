@@ -26,9 +26,16 @@ internal static class ClusterAdministrationParser
         var result = new RespireClusterNode[rows.Length];
         for (var index = 0; index < rows.Length; index++)
         {
-            var nodes = ClusterInspectionParser.Nodes(in rows[index]);
-            if (nodes.Length != 1) throw new RespireProtocolException("CLUSTER REPLICAS requires one node per row.");
-            result[index] = nodes[0];
+            try
+            {
+                var nodes = ClusterInspectionParser.Nodes(in rows[index]);
+                if (nodes.Length != 1) throw new RespireProtocolException("CLUSTER REPLICAS requires one node per row.");
+                result[index] = nodes[0];
+            }
+            catch (RespireProtocolException error)
+            {
+                throw new RespireProtocolException($"CLUSTER REPLICAS row {index}: {error.Message}", error);
+            }
         }
         return result;
     }
@@ -39,15 +46,22 @@ internal static class ClusterAdministrationParser
         var result = new RespireClusterSlotMapping[rows.Length];
         for (var index = 0; index < rows.Length; index++)
         {
-            var row = Array(in rows[index]);
-            if (row.Length < 3) throw new RespireProtocolException("CLUSTER SLOTS requires a range and primary.");
-            var start = ClusterInspectionParser.Slot(in row[0]);
-            var end = ClusterInspectionParser.Slot(in row[1]);
-            if (start > end) throw new RespireProtocolException("CLUSTER SLOTS range must not be reversed.");
-            var primary = Node(in row[2]);
-            var replicas = new RespireClusterSlotNode[row.Length - 3];
-            for (var member = 0; member < replicas.Length; member++) replicas[member] = Node(in row[member + 3]);
-            result[index] = new(new(start, end), primary, replicas);
+            try
+            {
+                var row = Array(in rows[index]);
+                if (row.Length < 3) throw new RespireProtocolException("CLUSTER SLOTS requires a range and primary.");
+                var start = ClusterInspectionParser.Slot(in row[0]);
+                var end = ClusterInspectionParser.Slot(in row[1]);
+                if (start > end) throw new RespireProtocolException("CLUSTER SLOTS range must not be reversed.");
+                var primary = Node(in row[2]);
+                var replicas = new RespireClusterSlotNode[row.Length - 3];
+                for (var member = 0; member < replicas.Length; member++) replicas[member] = Node(in row[member + 3]);
+                result[index] = new(new(start, end), primary, replicas);
+            }
+            catch (RespireProtocolException error)
+            {
+                throw new RespireProtocolException($"CLUSTER SLOTS row {index}: {error.Message}", error);
+            }
         }
         return result;
     }

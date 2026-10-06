@@ -20,10 +20,7 @@ public class ClusterAdministrationIntegrationTests
     {
         // Every test owns both nodes. Advertised ports are container-local because only the
         // servers use them; the client deliberately targets each mapped endpoint directly.
-        await using var container = new ContainerBuilder(image).WithEntrypoint("sh", "-c")
-            .WithCommand($"for port in 7000 7001; do mkdir -p /data/$port; {server} --port $port --dir /data/$port --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 1000 --cluster-announce-ip 127.0.0.1 --appendonly no --save '' --protected-mode no & done; wait")
-            .WithPortBinding(7000, true).WithPortBinding(7001, true)
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(7000).UntilInternalTcpPortIsAvailable(7001)).Build();
+        await using var container = OwnedNodes(image, server);
         await container.StartAsync();
         await using var first = Client(7000);
         await using var second = Client(7001);
@@ -95,6 +92,51 @@ public class ClusterAdministrationIntegrationTests
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
     }
+
+    [Test]
+    [Arguments("redis:8.4-alpine", "redis-server", 2)]
+    [Arguments("redis:8.4-alpine", "redis-server", 3)]
+    [Arguments("valkey/valkey:9-alpine", "valkey-server", 2)]
+    [Arguments("valkey/valkey:9-alpine", "valkey-server", 3)]
+    public async Task ReplicaRowsPreserveEpochAfterBumpingPastSignedLimit(string image, string server, int protocol)
+    {
+        await using var container = OwnedNodes(image, server);
+        await container.StartAsync();
+        await using var first = Client(7000);
+        await using var second = Client(7001);
+        var primary = first.Server.OnNode(Endpoint(7000));
+        var replica = second.Server.OnNode(Endpoint(7001));
+        var firstId = await first.Server.ClusterMyIdAsync();
+        var secondId = await second.Server.ClusterMyIdAsync();
+        await replica.ClusterSetConfigEpochAsync(long.MaxValue);
+        await primary.ClusterMeetAsync(new("127.0.0.1", 7001), 17001);
+        await Until(async () => (await first.Server.ClusterNodesAsync())
+            .Any(node => node.Id == secondId && node.ConfigurationEpoch == (ulong)long.MaxValue)
+            && (await second.Server.ClusterNodesAsync()).Any(node => node.Id == firstId));
+        var bumped = await primary.ClusterBumpEpochAsync();
+        bumped.Bumped.Should().BeTrue();
+        bumped.Epoch.Should().Be((ulong)long.MaxValue + 1);
+        await replica.ClusterReplicateAsync(firstId);
+        await Until(async () => (await primary.ClusterReplicasAsync(firstId))
+            .Any(node => node.Id == secondId && node.ConfigurationEpoch == bumped.Epoch));
+        var nodes = await primary.ClusterReplicasAsync(firstId);
+        await first.DisposeAsync();
+        nodes.Single().ConfigurationEpoch.Should().Be(bumped.Epoch);
+
+        RespireEndpoint Endpoint(int port) => new(container.Hostname, container.GetMappedPublicPort(port));
+        RespireClient Client(int port) => RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [Endpoint(port)], Connections = 1, AllowAdmin = true,
+            Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
+        });
+    }
+
+    private static IContainer OwnedNodes(string image, string server)
+        => new ContainerBuilder(image).WithEntrypoint("sh", "-c")
+            .WithCommand($"for port in 7000 7001; do mkdir -p /data/$port; {server} --port $port --dir /data/$port --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 1000 --cluster-announce-ip 127.0.0.1 --appendonly no --save '' --protected-mode no & done; wait")
+            .WithPortBinding(7000, true).WithPortBinding(7001, true)
+            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(7000).UntilInternalTcpPortIsAvailable(7001)).Build();
 
     private static async Task Until(Func<Task<bool>> condition)
     {

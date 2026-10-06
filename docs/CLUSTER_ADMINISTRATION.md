@@ -9,7 +9,12 @@ follows MOVED/ASK, substitutes another node, or replays a failed administrative 
 ```csharp
 var node = redis.Server.OnNode(new RespireEndpoint("127.0.0.1", 7000));
 var topology = await node.ClusterSlotsAsync(cancellationToken);
+var primaryId = topology[0].Primary.NodeId
+    ?? throw new InvalidOperationException("The server did not report a primary node ID.");
 var replicas = await node.ClusterReplicasAsync(primaryId, cancellationToken);
+
+// Replace this example with the destination's actual ID from CLUSTER NODES.
+var destinationId = "0123456789abcdef0123456789abcdef01234567";
 
 // The client must have AllowAdmin = true. These operations change this node only.
 await node.ClusterAddSlotsRangeAsync([new(0, 5460)], cancellationToken);
@@ -50,6 +55,11 @@ they are not resolved against the queried endpoint. Port zero remains zero. REPL
 returns the same owned node-row model as CLUSTER NODES, preserving unknown flags and
 annotations. Arrays are caller-owned and mutable. Unknown metadata recursively owns
 its bytes and remains valid after the reply or client is disposed.
+
+`RespireClusterNode.ConfigurationEpoch` uses `ulong` to preserve Redis's full unsigned
+64-bit epoch range, including epochs returned after BUMPEPOCH crosses `long.MaxValue`.
+Code storing this property in a signed `long` must use `ulong` instead. Node IDs may use
+future formats, but embedded whitespace is rejected before connecting.
 
 Classic commands require Redis 3.0 or later unless noted: REPLICAS requires 5.0,
 MEET's optional bus port requires 4.0, and ADDSLOTSRANGE/DELSLOTSRANGE require 7.0.

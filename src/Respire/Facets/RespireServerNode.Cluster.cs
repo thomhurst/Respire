@@ -38,7 +38,7 @@ public sealed partial class RespireServerNode
             RespireClusterFailoverMode.Normal => [],
             RespireClusterFailoverMode.Force => ["FORCE"],
             RespireClusterFailoverMode.Takeover => ["TAKEOVER"],
-            _ => throw new ArgumentOutOfRangeException(nameof(mode)),
+            _ => [InvalidClusterOption(nameof(mode))],
         }, cancellationToken);
 
     /// <summary>Forgets a node in this node's topology. Requires AllowAdmin.</summary>
@@ -77,7 +77,7 @@ public sealed partial class RespireServerNode
         {
             RespireClusterResetMode.Soft => ["SOFT"],
             RespireClusterResetMode.Hard => ["HARD"],
-            _ => throw new ArgumentOutOfRangeException(nameof(mode)),
+            _ => [InvalidClusterOption(nameof(mode))],
         }, cancellationToken);
 
     /// <summary>Persists this node's Cluster configuration. Requires AllowAdmin.</summary>
@@ -102,7 +102,7 @@ public sealed partial class RespireServerNode
             RespireClusterSlotState.Migrating => "MIGRATING",
             RespireClusterSlotState.Node => "NODE",
             RespireClusterSlotState.Stable => "STABLE",
-            _ => throw new ArgumentOutOfRangeException(nameof(state)),
+            _ => InvalidClusterOption(nameof(state)),
         };
         if (state != RespireClusterSlotState.Stable)
             return MutationAsync("CLUSTER SETSLOT", [slot, token, ClusterNodeId(nodeId)], cancellationToken);
@@ -117,8 +117,14 @@ public sealed partial class RespireServerNode
     private static string ClusterNodeId(string? nodeId)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(nodeId);
+        foreach (var character in nodeId)
+            if (char.IsWhiteSpace(character))
+                throw new ArgumentException("Node ID must not contain whitespace.", nameof(nodeId));
         return nodeId;
     }
+
+    private static string InvalidClusterOption(string parameterName)
+        => throw new ArgumentOutOfRangeException(parameterName);
 
     private static void ValidateClusterSlot(int slot)
     {

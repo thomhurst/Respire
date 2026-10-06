@@ -90,6 +90,27 @@ public class ClusterScanTests
     }
 
     [Test]
+    [Arguments(9223372036854775807UL)]
+    [Arguments(18446744073709551614UL)]
+    public async Task UnsignedEpochChangesRestartNodeCursor(ulong epoch)
+    {
+        await using var cluster = new ScanCluster();
+        cluster.First.Epoch = epoch;
+        var firstPass = true;
+        cluster.First.Scan = _ => firstPass ? Page("17") : Page("0", KeyInSlot(0));
+        await using var client = await cluster.ConnectAsync();
+        var first = await client.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start);
+        var checkpoint = RespireClusterScanCursor.Parse(first.Cursor.ToString());
+        await Assert.That(checkpoint.State!.Epoch).IsEqualTo(epoch);
+        firstPass = false;
+        cluster.First.Epoch++;
+        var second = await client.Keys.ScanClusterPageAsync(checkpoint);
+        await Assert.That(second.Keys).IsEquivalentTo([KeyInSlot(0)]);
+        await Assert.That(cluster.First.Server.ReceivedCommands.Where(command => command.StartsWith("SCAN ")))
+            .IsEquivalentTo(["SCAN 0 COUNT 250", "SCAN 0 COUNT 250"]);
+    }
+
+    [Test]
     public async Task InProgressMigrationCannotCompleteItsSlot()
     {
         await using var cluster = new ScanCluster();
@@ -540,7 +561,7 @@ public class ClusterScanTests
         internal Action? BeforeMetadata;
         internal string Slots = slots;
         internal string Transitions = "";
-        internal long Epoch = 1;
+        internal ulong Epoch = 1;
         internal string RunId = id + "-run";
         internal FakeRespServer Server { get; } = new(8, FakeRespServer.PongReply);
         internal Func<string, byte[]> Scan = _ => Page("0");

@@ -134,6 +134,27 @@ public class ServerClusterAdministrationCommandTests
     }
 
     [Test]
+    [Arguments("node id")]
+    [Arguments("node\tid")]
+    [Arguments("node\nid")]
+    public async Task EmbeddedNodeIdWhitespaceFailsBeforeConnecting(string nodeId)
+    {
+        await using var target = Server(1);
+        await using var client = Client(target.Port, 2, true);
+        var node = client.Server.OnNode(new("127.0.0.1", target.Port));
+        Func<Task>[] commands =
+        [
+            () => node.ClusterCountFailureReportsAsync(nodeId).AsTask(),
+            () => node.ClusterForgetAsync(nodeId).AsTask(),
+            () => node.ClusterReplicasAsync(nodeId).AsTask(),
+            () => node.ClusterReplicateAsync(nodeId).AsTask(),
+            () => node.ClusterSetSlotAsync(0, RespireClusterSlotState.Node, nodeId).AsTask(),
+        ];
+        foreach (var command in commands) await Assert.That(command).Throws<ArgumentException>();
+        await Assert.That(target.ConnectionAccepted.IsCompleted).IsFalse();
+    }
+
+    [Test]
     [Arguments(false)] [Arguments(true)]
     public async Task CancellationAndLifetimeApplyToReadsAndMutations(bool read)
     {
