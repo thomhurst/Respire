@@ -1,0 +1,61 @@
+using Respire.Networking;
+
+namespace Respire.Internal;
+
+// Investigation-only prototype. Never ship: retains a lease while its consumer pauses.
+internal sealed class Issue944LeaseScope : IDisposable
+{
+    private static readonly AsyncLocal<Issue944LeaseScope?> Slot = new();
+    internal static Issue944LeaseScope? Current => Slot.Value;
+    private readonly Issue944LeaseScope? _previous = Slot.Value;
+    private DedicatedConnectionPool? _pool;
+    private RespireConnection? _connection;
+    internal Issue944LeaseScope() => Slot.Value = this;
+
+    internal RespireConnection? TryRent(DedicatedConnectionPool pool, bool reuseIdle,
+        string? preferredZone, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_connection is null) return null;
+        if (reuseIdle && ReferenceEquals(pool, _pool) && !pool.IsStopping
+            && pool.IsMovingPublicationCurrent && _connection.IsConnected
+            && (preferredZone is null || ReadFallbackPolicy.IsSameZone(_connection, preferredZone)))
+            return _connection;
+        Release();
+        return null;
+    }
+
+    internal bool TryRetain(DedicatedConnectionPool pool, RespireConnection connection)
+    {
+        if (!connection.IsConnected || pool.IsStopping || !pool.IsMovingPublicationCurrent) return false;
+        if (_connection is not null && !ReferenceEquals(_connection, connection)) Release();
+        _pool = pool;
+        _connection = connection;
+        return true;
+    }
+
+    internal void Forget(RespireConnection connection)
+    {
+        if (!ReferenceEquals(connection, _connection)) return;
+        _connection = null;
+        _pool = null;
+    }
+
+    private void Release()
+    {
+        var connection = _connection;
+        var pool = _pool;
+        _connection = null;
+        _pool = null;
+        var active = Slot.Value;
+        Slot.Value = null;
+        try { if (connection is not null) pool!.Return(connection); }
+        finally { Slot.Value = active; }
+    }
+
+    public void Dispose()
+    {
+        Release();
+        Slot.Value = _previous;
+    }
+}

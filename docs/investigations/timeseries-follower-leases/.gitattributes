@@ -1,0 +1,3 @@
+# Preserve the exact bytes of frozen investigation inputs and outputs.
+# Raw reports include CRLF and intentional trailing spaces; do not rewrite them.
+* -text whitespace=cr-at-eol,-blank-at-eol,-blank-at-eof
