@@ -146,6 +146,26 @@ decoding the same member. No assertion is relaxed.
 
 New allocation tests must use `AllocationMeasurement.WithoutConcurrentGc` from the start.
 
+## Dispatched flush wakes
+
+Thread-pool growth can allocate a worker and its startup state on the signaling
+thread, even inside a no-GC region. Warmup alone does not prevent later capacity
+growth. The dispatched-wake allocation control therefore runs in a bounded child
+process with exactly two warmed workers and a two-worker maximum. The test runner's
+pool settings remain unchanged.
+
+Both non-pool and pool producers measure 200 actual dispatched continuations using
+the existing warmed no-inline methods, `WithoutConcurrentGc`, an exact zero-byte
+assertion, and an escaping allocation positive control. Worker counts and collection
+deltas are checked outside the measured interval. Startup, warmup, completion, and
+child cleanup are bounded. A dedicated consumer would bypass the dispatch contract
+being tested; increasing the allowed byte count would hide production allocations.
+
+The parent remains an unkeyed `NotInParallel` test. The child enters through an
+explicit environment mode before the test runner starts, and warms module-owned
+initialization before scheduling measured work. Preserve the environment and child
+coverage configuration when running this control under a coverage collector.
+
 ## Unknown-slot Cluster replica discovery
 
 `ClusterReplicaDiscoveryTests` compares the previous per-slot
