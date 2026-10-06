@@ -4,6 +4,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using Respire.Commands;
+using Respire.Infrastructure;
 using Respire.Internal;
 using Respire.Networking;
 using Respire.Protocol;
@@ -2344,14 +2345,13 @@ public sealed partial class RespireClient : IRespireClient
                 allowReadFrom: allowReadFrom,
                 cursorAffinity: cursorAffinity);
         }
-        else if (core.Sentinel is not null || !core.Multiplexer.IsInitialized)
+        else if (core.TryGetReadyPrimaryMultiplexer(out var readyMultiplexer))
         {
-            response = SendAfterConnectAsync(operation, command, cancellationToken);
+            response = SendOnReadyPrimaryAsync(operation, readyMultiplexer, command, cancellationToken);
         }
         else
         {
-            var connection = core.Multiplexer.GetConnection();
-            response = SendOnConnectionAsync(operation, connection, command, cancellationToken);
+            response = SendAfterConnectAsync(operation, command, cancellationToken);
         }
 
         return mutationFence.IsRequired
@@ -2519,6 +2519,28 @@ public sealed partial class RespireClient : IRespireClient
         return await SendOnConnectionAsync(operation, connection, command, cancellationToken)
             .ConfigureAwait(false);
     }
+
+    private ValueTask<RespValue> SendOnReadyPrimaryAsync<TCommand>(
+        string operation, RespireConnectionMultiplexer multiplexer, TCommand command,
+        CancellationToken cancellationToken) where TCommand : struct, IRespCommand
+    {
+        try
+        {
+            return SendOnConnectionAsync(operation, multiplexer.GetConnection(), command, cancellationToken);
+        }
+        catch (Exception error) when (_core.Sentinel is not null)
+        {
+            return ReadySendFailureAsync<RespValue>(error);
+        }
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private static async ValueTask<TResult> ReadySendFailureAsync<TResult>(Exception error)
+        // Keep the former async Sentinel path's cancellation status and original exception/token,
+        // including OperationCanceledException carrying an uncanceled token. Only failures use this.
+        => await ValueTask.FromException<TResult>(error).ConfigureAwait(false);
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
@@ -4995,21 +5017,28 @@ public sealed partial class RespireClient : IRespireClient
             && (_readFrom == RespireReadFrom.Primary || command.ReadKind == ReadCommandKind.None)
             && command is not IStreamingRespCommand
             && core.Cluster is null
-            && core.Sentinel is null
-            && core.Multiplexer.IsInitialized
             && (ReadCache is null
-                || !ClientSideCacheCoordinator.CanCacheOperation(operation)))
+                || !ClientSideCacheCoordinator.CanCacheOperation(operation))
+            && core.TryGetReadyPrimaryMultiplexer(out var readyMultiplexer))
         {
             // CommandTimeout is enforced by the connection's deadline sweep and covers the
             // Redis response, not user converter work (conversion runs at the caller).
             var cache = core.ClientCache;
             var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
-            var connection = core.Multiplexer.GetConnection();
-            var response = connection.SendConvertedAsync(
-                in command, state, converter, transferOwnership, ct, operation);
-            return mutationFence.IsRequired
-                ? CompleteMutationAsync(response, cache!, mutationFence)
-                : response;
+            try
+            {
+                var connection = readyMultiplexer.GetConnection();
+                var response = connection.SendConvertedAsync(
+                    in command, state, converter, transferOwnership, ct, operation);
+                return mutationFence.IsRequired
+                    ? CompleteMutationAsync(response, cache!, mutationFence)
+                    : response;
+            }
+            catch (Exception error) when (core.Sentinel is not null)
+            {
+                if (mutationFence.IsRequired) cache!.CompleteMutation(in mutationFence);
+                return ReadySendFailureAsync<TResult>(error);
+            }
         }
 
         return PooledResponseSource<TState, TResult>.Create(
@@ -5095,22 +5124,29 @@ public sealed partial class RespireClient : IRespireClient
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         if (!RespireTelemetry.IsOperationEnabled(operation)
             && core.Cluster is null
-            && core.Sentinel is null
             && (_readFrom == RespireReadFrom.Primary || command.ReadKind == ReadCommandKind.None)
-            && core.Multiplexer.IsInitialized
             && (ReadCache is null
-                || !ClientSideCacheCoordinator.CanCacheOperation(operation)))
+                || !ClientSideCacheCoordinator.CanCacheOperation(operation))
+            && core.TryGetReadyPrimaryMultiplexer(out var readyMultiplexer))
         {
             // Specialized bulk-string source: small buffered replies decode straight from the
             // receive buffer instead of round-tripping through a pooled RespValue payload.
             // CommandTimeout is enforced by the connection's deadline sweep.
             var cache = core.ClientCache;
             var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
-            var connection = core.Multiplexer.GetConnection();
-            var response = connection.SendStringAsync(in command, ct, operation);
-            return mutationFence.IsRequired
-                ? CompleteMutationAsync(response, cache!, mutationFence)
-                : response;
+            try
+            {
+                var connection = readyMultiplexer.GetConnection();
+                var response = connection.SendStringAsync(in command, ct, operation);
+                return mutationFence.IsRequired
+                    ? CompleteMutationAsync(response, cache!, mutationFence)
+                    : response;
+            }
+            catch (Exception error) when (core.Sentinel is not null)
+            {
+                if (mutationFence.IsRequired) cache!.CompleteMutation(in mutationFence);
+                return ReadySendFailureAsync<string?>(error);
+            }
         }
 
         return PooledResponseSource<RespireClient, string?>.Create(
@@ -5124,16 +5160,25 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
-        if (!RespireTelemetry.IsOperationEnabled(operation) && core.Cluster is null && core.Sentinel is null
+        if (!RespireTelemetry.IsOperationEnabled(operation) && core.Cluster is null
             && (_readFrom == RespireReadFrom.Primary || command.ReadKind == ReadCommandKind.None)
-            && core.Multiplexer.IsInitialized && command is not IStreamingRespCommand
-            && (ReadCache is null || !ClientSideCacheCoordinator.CanCacheOperation(operation)))
+            && command is not IStreamingRespCommand
+            && (ReadCache is null || !ClientSideCacheCoordinator.CanCacheOperation(operation))
+            && core.TryGetReadyPrimaryMultiplexer(out var readyMultiplexer))
         {
             var cache = core.ClientCache;
             var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
-            var connection = core.Multiplexer.GetConnection();
-            var response = connection.SendBytesAsync(in command, ct, operation);
-            return mutationFence.IsRequired ? CompleteMutationAsync(response, cache!, mutationFence) : response;
+            try
+            {
+                var connection = readyMultiplexer.GetConnection();
+                var response = connection.SendBytesAsync(in command, ct, operation);
+                return mutationFence.IsRequired ? CompleteMutationAsync(response, cache!, mutationFence) : response;
+            }
+            catch (Exception error) when (core.Sentinel is not null)
+            {
+                if (mutationFence.IsRequired) cache!.CompleteMutation(in mutationFence);
+                return ReadySendFailureAsync<byte[]?>(error);
+            }
         }
         return ConvertAsync(
             operation, command, ct,
