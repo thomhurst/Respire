@@ -39,8 +39,23 @@ internal static class RespParser
     /// On <see cref="RespParseStatus.Done"/>, <paramref name="pos"/> is advanced past the value.
     /// On any other status, <paramref name="pos"/> is unchanged and no storage is retained.
     /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static RespParseStatus TryParseValue(ReadOnlySpan<byte> buffer, ref int pos, out RespValue value)
     {
+        value = default;
+        if (pos >= buffer.Length)
+            return RespParseStatus.NeedMoreData;
+
+        // Scalar replies need neither aggregate depth nor a storage budget.
+        if (buffer[pos] is not ((byte)'*' or (byte)'~' or (byte)'>' or (byte)'%' or (byte)'|'))
+        {
+            var cursor = pos;
+            var status = TryParseScalar(buffer, ref cursor, out value);
+            if (status == RespParseStatus.Done)
+                pos = cursor;
+            return status;
+        }
+
         // Even the shortest RESP value takes three bytes. Share this rent budget across
         // nested aggregates and attributes, rather than trusting each declared count.
         var remainingElements = (buffer.Length - pos) / 3;
@@ -168,8 +183,7 @@ internal static class RespParser
         return RespParseStatus.Done;
     }
 
-    internal static RespParseStatus TryParseCore(
-        ReadOnlySpan<byte> buffer, ref int cursor, out RespValue value, ref int remainingElements, int depth = 0)
+    internal static RespParseStatus TryParseScalar(ReadOnlySpan<byte> buffer, ref int cursor, out RespValue value)
     {
         value = default;
         var typeByte = buffer[cursor];
@@ -196,6 +210,16 @@ internal static class RespParser
                 return TryParseBulk(buffer, ref cursor, RespDataType.VerbatimString, out value);
             case (byte)'!':
                 return TryParseBulk(buffer, ref cursor, RespDataType.BulkError, out value);
+            default:
+                return RespParseStatus.InvalidData;
+        }
+    }
+
+    private static RespParseStatus TryParseCore(
+        ReadOnlySpan<byte> buffer, ref int cursor, out RespValue value, ref int remainingElements, int depth)
+    {
+        switch (buffer[cursor])
+        {
             case (byte)'*':
                 return TryParseAggregate(buffer, ref cursor, RespDataType.Array, pairCount: false, out value, depth, ref remainingElements);
             case (byte)'~':
@@ -207,7 +231,7 @@ internal static class RespParser
             case (byte)'|':
                 return TryParseValue(buffer, ref cursor, out value, depth, ref remainingElements);
             default:
-                return RespParseStatus.InvalidData;
+                return TryParseScalar(buffer, ref cursor, out value);
         }
     }
 

@@ -159,9 +159,8 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
             }
 
             var cursor = pos;
-            // Aggregate markers were handled above; this call only parses a scalar.
-            var unusedElementBudget = 0;
-            var scalarStatus = RespParser.TryParseCore(buffer, ref cursor, out var scalar, ref unusedElementBudget);
+            // Aggregate markers were handled above; scalar parsing needs no storage budget.
+            var scalarStatus = RespParser.TryParseScalar(buffer, ref cursor, out var scalar);
             if (scalarStatus != RespParseStatus.Done)
             {
                 return scalarStatus;
