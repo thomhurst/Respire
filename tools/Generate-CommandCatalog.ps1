@@ -41,8 +41,9 @@ $cacheMutationOverrides = @('DELEX', 'DELIFEQ')
 $cacheUnknownOverrides = @('PFCOUNT')
 
 # Replica routing is stricter than cache invalidation. TOUCH is READONLY in provider
-# flags, but its purpose is updating access metadata on the primary. ARSCAN is a cursor
-# command without a supported cursor-affinity layout, so it keeps index -1.
+# flags, but its purpose is updating access metadata on the primary. ARSCAN uses index
+# ranges rather than SCAN cursors. Preserve its conservative CursorRead classification
+# with index -1; the standard cursor-continuation layout does not apply to it.
 $primaryOnlyReadOverrides = @('TOUCH')
 $cursorArgumentIndices = @{ SCAN = 0; HSCAN = 1; SSCAN = 1; ZSCAN = 1; ARSCAN = -1 }
 

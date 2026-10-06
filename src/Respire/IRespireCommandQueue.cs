@@ -38,6 +38,9 @@ public interface IRespireCommandQueue
     /// <summary>List commands.</summary>
     IBatchListCommands Lists { get; }
 
+    /// <summary>Redis sparse array commands.</summary>
+    IBatchArrayCommands Arrays { get; }
+
     /// <summary>Set (unordered, unique members) commands.</summary>
     IBatchSetCommands Sets { get; }
 

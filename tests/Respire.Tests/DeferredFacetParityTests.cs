@@ -10,6 +10,8 @@ public class DeferredFacetParityTests
 {
     private static readonly HashSet<MethodInfo> ImmediateOnlyMethods =
     [
+        // Array scans page by index while streaming; only individual pages can be queued.
+        .. typeof(IArrayCommands).GetMethods().Where(method => method.Name == nameof(IArrayCommands.ScanAsync)),
         // Opening an import session acquires a connection and owns its lifetime; it is not a queued command.
         typeof(IHashCommands).GetMethod(nameof(IHashCommands.CreateImportSessionAsync),
             [typeof(CancellationToken)])!,
@@ -54,6 +56,7 @@ public class DeferredFacetParityTests
     [Arguments("Keys")]
     [Arguments("Hashes")]
     [Arguments("Lists")]
+    [Arguments("Arrays")]
     [Arguments("Sets")]
     [Arguments("SortedSets")]
     [Arguments("Bitmaps")]

@@ -17,7 +17,7 @@ const sidebars = {
     {
       type: 'category',
       label: 'Commands',
-      items: ['commands/strings-and-keys', 'commands/collections'],
+      items: ['commands/strings-and-keys', 'commands/collections', 'commands/arrays'],
     },
     {
       type: 'category',

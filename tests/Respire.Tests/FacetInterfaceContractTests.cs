@@ -22,6 +22,8 @@ public class FacetInterfaceContractTests
     [Arguments(typeof(IServerCommands))]
     [Arguments(typeof(IBatchServerCommands))]
     [Arguments(typeof(IHashCommands))]
+    [Arguments(typeof(IArrayCommands))]
+    [Arguments(typeof(IBatchArrayCommands))]
     [Arguments(typeof(IBatchHashCommands))]
     [Arguments(typeof(ISortedSetCommands))]
     [Arguments(typeof(IBatchSortedSetCommands))]

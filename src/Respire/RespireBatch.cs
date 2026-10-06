@@ -45,6 +45,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
     private IBatchServerCommands? _server;
     private IBatchHashCommands? _hashes;
     private IBatchListCommands? _lists;
+    private IBatchArrayCommands? _arrays;
     private IBatchSetCommands? _sets;
     private IBatchSortedSetCommands? _sortedSets;
     private IBatchBitmapCommands? _bitmaps;
@@ -86,6 +87,9 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
 
     /// <summary>List commands. Redis: LPUSH, RPUSH, LRANGE, …</summary>
     public IBatchListCommands Lists => _lists ??= new BatchListCommands(this);
+
+    /// <summary>Redis sparse array commands.</summary>
+    public IBatchArrayCommands Arrays => _arrays ??= new BatchArrayCommands(this);
 
     /// <summary>Set (unordered, unique members) commands. Redis: SADD, SMEMBERS, …</summary>
     public IBatchSetCommands Sets => _sets ??= new BatchSetCommands(this);

@@ -36,6 +36,9 @@ public interface IRespireClient : IAsyncDisposable
     IHashCommands Hashes { get; }
     /// <summary>List commands.</summary>
     IListCommands Lists { get; }
+
+    /// <summary>Redis sparse array commands.</summary>
+    IArrayCommands Arrays { get; }
     /// <summary>Set commands.</summary>
     ISetCommands Sets { get; }
     /// <summary>Sorted-set commands.</summary>
