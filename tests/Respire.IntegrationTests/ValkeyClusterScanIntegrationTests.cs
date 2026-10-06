@@ -110,6 +110,71 @@ public class ValkeyClusterScanIntegrationTests
     private static string Tag(int slot) => Enumerable.Range(0, 1_000_000).Select(index => $"valkey-scan-{index}")
         .First(tag => ClusterHash.GetSlot(tag) == slot);
 
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task SurrogateNamespaceRoundTripsOwnedBinaryKeysAndDeferredPages(int protocol)
+    {
+        await using var cluster = await OwnedCluster.StartAsync("valkey/valkey:9.1-alpine");
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        var token = deadline.Token;
+        var options = new RespireOptions
+        {
+            UseCluster = true, Database = 1, Connections = 1, Endpoints = [cluster.Endpoint(0)],
+            Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3,
+        };
+        await using var client = await RespireClient.ConnectAsync(options, token);
+        var prefix = $"{{{Tag(0)}}}:tenant*\uD83D";
+        var view = client.WithKeyPrefix(prefix);
+        await view.SetAsync("\uDE00:joined", "joined", cancellationToken: token);
+        await view.SetAsync((byte[])[255, 0], "binary", cancellationToken: token);
+        byte[] foreign = [.. Encoding.UTF8.GetBytes(prefix + "\uDE01"), 255, 0];
+        await client.SetAsync(foreign, "foreign", cancellationToken: token);
+        await client.SetAsync(prefix[..^1] + "\uD840\uDC00:outside", "outside", cancellationToken: token);
+        var found = new List<RespireKey>();
+        var cursor = "0";
+        do
+        {
+            var page = await view.Keys.ScanValkeyClusterPageAsync(cursor, countHint: 1, cancellationToken: token);
+            found.AddRange(page.Keys);
+            cursor = page.Cursor;
+        } while (cursor != "0");
+        found.Should().HaveCount(3);
+        var values = new List<string?>();
+        foreach (var key in found) values.Add(await view.GetStringAsync(key, token));
+        values.Should().BeEquivalentTo(["joined", "binary", "foreign"]);
+
+        var batchKeys = new List<RespireKey>();
+        cursor = "0";
+        do
+        {
+            using var batch = view.CreateBatch();
+            var page = batch.Keys.ScanValkeyClusterPage(cursor, match: "*joined", countHint: 1000, slot: 0);
+            await batch.ExecuteAsync(token);
+            batchKeys.AddRange(page.Result.Keys);
+            cursor = page.Result.Cursor;
+        } while (cursor != "0");
+        batchKeys.Should().ContainSingle();
+        (await view.GetStringAsync(batchKeys[0], token)).Should().Be("joined");
+        var transactionKeys = new List<RespireKey>();
+        cursor = "0";
+        do
+        {
+            var transaction = view.CreateTransaction();
+            var deferred = transaction.Keys.ScanValkeyClusterPage(cursor, match: "*joined", countHint: 1000, slot: 0);
+            await transaction.CommitAsync(token);
+            transactionKeys.AddRange(deferred.Result.Keys);
+            cursor = deferred.Result.Cursor;
+        } while (cursor != "0");
+        transactionKeys.Should().ContainSingle();
+        (await view.GetStringAsync(transactionKeys[0], token)).Should().Be("joined");
+        await client.DisposeAsync();
+        await using var resumed = await RespireClient.ConnectAsync(options, token);
+        var resumedView = resumed.WithKeyPrefix(prefix);
+        foreach (var key in found)
+            (await resumedView.GetStringAsync(key, token)).Should().NotBeNull();
+    }
+
     private sealed class OwnedCluster(IContainer container) : IAsyncDisposable
     {
         internal RespireEndpoint Endpoint(int index) => new(container.Hostname, container.GetMappedPublicPort(7000 + index));

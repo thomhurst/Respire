@@ -476,6 +476,11 @@ It returns an owned `RespireValkeyClusterScanPage` containing an opaque string c
 binary-safe `RespireKey` values. Start with `"0"` and pass each returned cursor unchanged:
 
 ```csharp
+await using var cluster = await RespireClient.ConnectAsync(new RespireOptions
+{
+    UseCluster = true,
+    Endpoints = [new("localhost", 6379)],
+}, cancellationToken);
 string cursor = "0";
 do
 {
@@ -483,7 +488,7 @@ do
         cursor, match: "user:*", type: RespireKeyType.String, countHint: 250,
         cancellationToken: cancellationToken);
     foreach (RespireKey key in page.Keys)
-        await ProcessKeyAsync(key);
+        Console.WriteLine(await cluster.GetStringAsync(key, cancellationToken));
 
     cursor = page.Cursor; // Persist only after processing this page.
 }
@@ -507,6 +512,21 @@ scan to a physical slot from 0 through 16383. A prefixed view escapes its litera
 in `MATCH`, filters returned physical keys, and removes that prefix. Pass returned keys
 directly back to the same view; converting arbitrary binary keys to strings can lose data.
 Page keys and cursor remain valid after the reply or client is disposed.
+
+When a string prefix ends with a high UTF-16 surrogate, string keys can join it
+to a leading low surrogate while binary keys use the prefix's replacement-byte
+encoding. This namespace has no single literal UTF-8 prefix. These pages omit the
+server `MATCH` filter and apply namespace and bytewise glob filtering locally to
+the logical suffix. `COUNT`, `TYPE`, `SLOT`, cursor routing, and cancellation retain
+their normal behavior; sparse filtered pages can be empty before completion.
+Returned keys retain the boundary information needed to round-trip even binary
+tails through a view with the same prefix, including on a new client.
+
+One page can also be queued with `batch.Keys.ScanValkeyClusterPage(...)` or
+`transaction.Keys.ScanValkeyClusterPage(...)`. Execute or commit before reading
+the pending result. The next page needs the preceding result's cursor, so a whole
+cursor walk cannot be queued in advance. Ordinary Cluster batch and transaction
+slot constraints apply, and results own their keys after completion.
 
 This explicit API retains unsupported-command and permission errors from older servers.
 It does not change `ScanClusterPageAsync`, its `RespireClusterScanCursor` checkpoints, or

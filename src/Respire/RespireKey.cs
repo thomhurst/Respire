@@ -114,6 +114,8 @@ public readonly struct RespireKey : IEquatable<RespireKey>
     /// <summary>Returns a copy of this key with <paramref name="prefix"/> prepended.</summary>
     internal RespireKey Prepend(Internal.KeyPrefix prefix, bool snapshotBinaryKeys = false)
     {
+        if (_prefix is not null && _prefix.TryComposeScanKey(prefix, _bytes, snapshotBinaryKeys, out var scanKey))
+            return scanKey;
         // Reapplying a prefix to an already resolved key preserves the original text/binary semantics.
         // ToBytes owns a fresh snapshot; copying that storage again would allocate unnecessarily.
         if (_prefix is not null)

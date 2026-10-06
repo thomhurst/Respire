@@ -59,6 +59,86 @@ public class ValkeyClusterScanCommandTests
     }
 
     [Test]
+    [Arguments(2, false)]
+    [Arguments(3, false)]
+    [Arguments(2, true)]
+    [Arguments(3, true)]
+    public async Task SurrogatePrefixReturnsOwnedJoinedAndBinaryKeys(int protocol, bool binaryTail)
+    {
+        await using var cluster = new ScanCluster();
+        var prefix = $"{{{Tag(0)}}}:tenant*\uD83D";
+        byte[] tail = binaryTail ? [255, 0] : ":joined"u8.ToArray();
+        byte[] joined = [.. Encoding.UTF8.GetBytes(prefix + "\uDE00"), .. tail];
+        byte[] binary = [.. Encoding.UTF8.GetBytes(prefix), .. "binary"u8];
+        byte[] outside = Encoding.UTF8.GetBytes(prefix[..^1] + "\uD840\uDC00:outside");
+        cluster.Scan = _ => Page("0", joined, binary, outside);
+        await using var client = await cluster.ConnectAsync(protocol);
+        var view = client.WithKeyPrefix(prefix);
+        var page = await view.Keys.ScanValkeyClusterPageAsync();
+        await Assert.That(page.Keys.Count).IsEqualTo(2);
+        foreach (var key in page.Keys)
+            await view.GetStringAsync(key);
+        var gets = cluster.First.ReceivedArguments.Where(row => Encoding.UTF8.GetString(row[0]) == "GET").ToArray();
+        await Assert.That(gets[0][1]).IsEquivalentTo(joined);
+        await Assert.That(gets[1][1]).IsEquivalentTo(binary);
+        await client.DisposeAsync();
+        joined.AsSpan().Clear();
+        binary.AsSpan().Clear();
+        byte[] logicalJoined = [.. Encoding.UTF8.GetBytes("\uDE00"), .. tail];
+        await Assert.That(page.Keys[0]).IsEqualTo(new RespireKey(logicalJoined));
+        await Assert.That(page.Keys[1]).IsEqualTo(new RespireKey("binary"));
+    }
+
+    [Test]
+    [Arguments(2, false, false)]
+    [Arguments(3, false, false)]
+    [Arguments(2, true, false)]
+    [Arguments(3, true, false)]
+    [Arguments(2, false, true)]
+    [Arguments(3, false, true)]
+    [Arguments(2, true, true)]
+    [Arguments(3, true, true)]
+    public async Task DeferredPageRoutesAndOwnsPrefixResults(int protocol, bool transaction, bool surrogate)
+    {
+        await using var cluster = new ScanCluster();
+        cluster.QueueTransaction = transaction;
+        var prefix = $"{{{Tag(0)}}}:tenant*" + (surrogate ? "\uD83D" : ":");
+        var suffix = surrogate ? "\uDE00:tail" : "tail";
+        var physical = Encoding.UTF8.GetBytes(prefix + suffix);
+        cluster.Scan = _ => Page("0", physical);
+        await using var client = await cluster.ConnectAsync(protocol);
+        var view = client.WithKeyPrefix(prefix).WithReadFrom(RespireReadFrom.Replica);
+        var cursor = $"future-{{{Tag(9000)}}}-99";
+        RespireValkeyClusterScanPage page;
+        if (transaction)
+        {
+            var queue = view.CreateTransaction();
+            var pending = queue.Keys.ScanValkeyClusterPage(cursor, "*tail", RespireKeyType.String, 7);
+            await queue.CommitAsync();
+            page = pending.Result;
+        }
+        else
+        {
+            using var queue = view.CreateBatch();
+            var pending = queue.Keys.ScanValkeyClusterPage(cursor, "*tail", RespireKeyType.String, 7);
+            await queue.ExecuteAsync();
+            page = pending.Result;
+        }
+        await Assert.That(Scans(cluster.First)).IsEmpty();
+        var match = surrogate ? "" : $" MATCH {prefix.Replace("*", "\\*", StringComparison.Ordinal)}*tail";
+        await Assert.That(Scans(cluster.Second).Single()).IsEqualTo($"CLUSTERSCAN {cursor}{match} COUNT 7 TYPE string");
+        await Assert.That(page.Keys.Count).IsEqualTo(1);
+        await Assert.That(cluster.Replica.ConnectionAccepted.IsCompleted).IsFalse();
+        await Assert.That(await view.WithReadFrom(RespireReadFrom.Primary).GetStringAsync(page.Keys[0])).IsEqualTo("value");
+        var get = cluster.First.ReceivedArguments.Single(row => Encoding.UTF8.GetString(row[0]) == "GET");
+        await Assert.That(get[1]).IsEquivalentTo(physical);
+        await client.DisposeAsync();
+        physical.AsSpan().Clear();
+        await Assert.That(page.Keys[0]).IsEqualTo(new RespireKey(suffix));
+        await Assert.That(cluster.Replica.ConnectionAccepted.IsCompleted).IsFalse();
+    }
+
+    [Test]
     [Arguments("null")]
     [Arguments("empty")]
     [Arguments("zero-count")]
@@ -157,6 +237,7 @@ public class ValkeyClusterScanCommandTests
         internal FakeRespServer Second { get; } = new(8, FakeRespServer.OkReply);
         internal FakeRespServer Replica { get; } = new(8, FakeRespServer.OkReply);
         internal Func<FakeRespServer, byte[]> Scan = _ => Page("0");
+        internal bool QueueTransaction;
 
         internal ScanCluster()
         {
@@ -165,7 +246,9 @@ public class ValkeyClusterScanCommandTests
                 {
                     "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
                     "CLUSTER SLOTS" => Slots(),
-                    _ when command.StartsWith("CLUSTERSCAN ", StringComparison.Ordinal) => Scan(server),
+                    "EXEC" when QueueTransaction => [.. "*1\r\n"u8, .. Scan(server)],
+                    _ when command.StartsWith("CLUSTERSCAN ", StringComparison.Ordinal) =>
+                        QueueTransaction ? "+QUEUED\r\n"u8.ToArray() : Scan(server),
                     _ when command.StartsWith("GET ", StringComparison.Ordinal) => Bulk("value"u8.ToArray()),
                     _ => FakeRespServer.OkReply,
                 };
