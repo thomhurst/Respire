@@ -1,0 +1,154 @@
+name: Sentinel ready routing benchmarks
+
+on:
+  pull_request:
+    types: [labeled, synchronize]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    if: >-
+      (github.event.action == 'labeled' && github.event.label.name == 'run-sentinel-benchmarks') ||
+      (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-sentinel-benchmarks'))
+    name: Sentinel ready routing (${{ matrix.framework }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: [net8.0, net10.0]
+    services:
+      redis:
+        image: redis:8.10@sha256:8aee6591ee8c2b26e9e01ad4913fbc804ea6b79a9bc675ee1824d80ea5dd9856
+        ports: [6379:6379, 26379:26379]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      FRAMEWORK: ${{ matrix.framework }}
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: 6379
+      SENTINEL_PORT: 26379
+      EXPECTED_MERGE_SHA: ${{ github.sha }}
+      EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: candidate
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Pin the merge snapshot and its actual baseline
+        id: revisions
+        shell: python
+        run: |
+          import os
+          import subprocess
+          from pathlib import Path
+
+          def git(*arguments):
+              return subprocess.check_output(['git', '-C', 'candidate', *arguments], text=True).strip()
+
+          merge = git('rev-parse', 'HEAD')
+          parents = git('show', '-s', '--format=%P', 'HEAD').split()
+          if merge != os.environ['EXPECTED_MERGE_SHA']:
+              raise SystemExit(f'Candidate merge changed: {merge}')
+          if len(parents) != 2 or parents[1] != os.environ['EXPECTED_HEAD_SHA']:
+              raise SystemExit(f'Candidate does not merge the expected PR head: {parents}')
+          # The payload base can lag main; use the immutable merge's actual first parent.
+          # This keeps both sources aligned even when the PR merge ref moves during the run.
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'baseline_sha={parents[0]}\n')
+          Path(os.environ['GITHUB_WORKSPACE'], 'comparison-revisions.txt').write_text(
+              f'merge={merge}\nbaseline={parents[0]}\nhead={parents[1]}\n'
+              f'event_base={os.environ["EVENT_BASE_SHA"]}\n')
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.revisions.outputs.baseline_sha }}
+          path: baseline
+          persist-credentials: false
+      - name: Start Sentinel beside the shared primary
+        shell: bash
+        env:
+          REDIS_CONTAINER: ${{ job.services.redis.id }}
+        run: |
+          set -euo pipefail
+          docker exec -i "$REDIS_CONTAINER" sh -c 'cat > /tmp/sentinel.conf' <<'CONF'
+          port 26379
+          protected-mode no
+          sentinel monitor mymaster 127.0.0.1 6379 1
+          sentinel down-after-milliseconds mymaster 30000
+          CONF
+          docker exec "$REDIS_CONTAINER" redis-server /tmp/sentinel.conf --sentinel --daemonize yes
+          for attempt in {1..30}; do
+            if docker exec "$REDIS_CONTAINER" redis-cli -p 26379 ping | grep -qx PONG; then exit 0; fi
+            sleep 1
+          done
+          echo 'Sentinel did not become ready.' >&2
+          exit 1
+      - name: Validate both builds and measure baseline, candidate, baseline
+        shell: bash
+        env:
+          EXPECTED_BASE_SHA: ${{ steps.revisions.outputs.baseline_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git -C baseline rev-parse HEAD)" = "$EXPECTED_BASE_SHA"
+          test "$(git -C candidate rev-parse HEAD)" = "$EXPECTED_MERGE_SHA"
+          test "$(git -C candidate rev-parse HEAD^1)" = "$EXPECTED_BASE_SHA"
+          test "$(git -C candidate rev-parse HEAD^2)" = "$EXPECTED_HEAD_SHA"
+          cp candidate/benchmarks/Respire.Benchmarks/SentinelReadyRoutingBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
+          for phase in baseline-validation candidate-validation baseline-a candidate baseline-b; do
+            source=baseline
+            job=Medium
+            if [[ "$phase" == candidate* ]]; then source=candidate; fi
+            if [[ "$phase" == *validation ]]; then job=Dry; fi
+            (
+              cd "$source"
+              git rev-parse HEAD
+              dotnet run --project benchmarks/Respire.Benchmarks -c Release -f "$FRAMEWORK" -- \
+                --filter '*SentinelReadyRoutingBenchmarks*' --job "$job" --exporters json markdown \
+                --artifacts "$GITHUB_WORKSPACE/results/$phase"
+            ) > "$GITHUB_WORKSPACE/$phase.log" 2>&1
+          done
+      - name: Require all paired cases and publish reports
+        shell: python
+        run: |
+          import json
+          import os
+          from pathlib import Path
+          expected = {f'{route}{shape}' for route in ('Standalone', 'Sentinel') for shape in ('Ping', 'String', 'Integer', 'Bytes')}
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write('## Stable Sentinel routing before/after\n\nPinned base and matching merge candidate use the same primary. Assess paired Sentinel/standalone ratios, absolute latency, confidence intervals, allocations, and both baseline controls. A material regression blocks the change.\n')
+              summary.write('\nCandidate merge and its base/head parents:\n\n' + Path('comparison-revisions.txt').read_text() + '\n')
+              for phase in ('baseline-validation', 'candidate-validation', 'baseline-a', 'candidate', 'baseline-b'):
+                  reports = list(Path('results', phase, 'results').glob('*-report-full-compressed.json'))
+                  assert len(reports) == 1, f'Missing report: {phase}'
+                  cases = json.loads(reports[0].read_text())['Benchmarks']
+                  assert len(cases) == 8 and {case['Method'] for case in cases} == expected, f'Missing paired cases: {phase}'
+                  assert all(case.get('Statistics') and case['Statistics']['Mean'] > 0 for case in cases), phase
+                  if 'validation' not in phase:
+                      summary.write(f'\n### {phase}\n\n')
+                      summary.write(next(Path('results', phase, 'results').glob('*-report-github.md')).read_text())
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: sentinel-ready-routing-${{ matrix.framework }}
+          path: |
+            results/
+            *.log
+            comparison-revisions.txt
+          retention-days: 30

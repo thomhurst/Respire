@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
 using Respire.Infrastructure;
 using Respire.Networking;
@@ -115,6 +116,33 @@ internal sealed class ClientCore : IAsyncDisposable
             : Cluster is { } cluster
             ? cluster.EnsureConnectedAsync(cancellationToken, discovery: null)
             : Multiplexer.EnsureConnectedAsync(cancellationToken);
+
+    /// <summary>Captures an initialized primary route without starting discovery or reconnecting.</summary>
+    /// <remarks>
+    /// Readiness is an observation, not a lease. Connection selection or admission can still
+    /// throw if socket loss, retirement, or disposal races this check.
+    /// </remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal bool TryGetReadyPrimaryMultiplexer(out RespireConnectionMultiplexer multiplexer)
+    {
+        if (Sentinel is null)
+        {
+            multiplexer = _multiplexer;
+            return multiplexer.IsInitialized;
+        }
+
+        var generation = Sentinel.Current;
+        if (generation is not null && generation.Multiplexer.IsInitialized
+            && generation.Multiplexer.IsConnected && !generation.IsRetired)
+        {
+            // Keep selection on this validated generation. Admission checks retirement again.
+            multiplexer = generation.Multiplexer;
+            return true;
+        }
+
+        multiplexer = null!;
+        return false;
+    }
 
     private async ValueTask EnsureSentinelConnectedAsync(CancellationToken cancellationToken)
         => await Sentinel!.GetGenerationAsync(cancellationToken).ConfigureAwait(false);
