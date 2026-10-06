@@ -63,22 +63,33 @@ jobs:
         run: |
           set -euo pipefail
           dotnet samples/Respire.Samples.AspNetCore/bin/Release/${{ matrix.framework }}/Respire.Samples.AspNetCore.dll \
-            --urls http://127.0.0.1:5084 > aspnet-sample.log 2>&1 &
+            --urls http://127.0.0.1:0 > aspnet-sample.log 2>&1 &
           sample_pid=$!
           cleanup() { kill "$sample_pid" 2>/dev/null || true; wait "$sample_pid" 2>/dev/null || true; }
           trap cleanup EXIT
           ready=false
           for attempt in {1..60}; do
-            if curl --max-time 5 --fail --silent http://127.0.0.1:5084/health > /dev/null; then ready=true; break; fi
+            base_url=$(sed -nE 's/.*Now listening on: (http:\/\/127\.0\.0\.1:[0-9]+).*/\1/p' aspnet-sample.log | head -n 1)
+            if [[ -n "$base_url" ]] && curl --max-time 5 --fail --silent "$base_url/health" > /dev/null; then ready=true; break; fi
             kill -0 "$sample_pid" || { cat aspnet-sample.log; exit 1; }
             sleep 1
           done
           if [[ "$ready" != true ]]; then cat aspnet-sample.log; exit 1; fi
           # An unrelated, older demonstration entry must not make a smoke run fail.
-          curl --max-time 5 --fail --silent http://127.0.0.1:5084/hybrid > /dev/null
-          test "$(docker exec "$REDIS_CONTAINER" redis-cli PEXPIRE respire:ci:aspnet:cache:hybrid-time 1000)" = 1
-          pwsh -NoProfile -File samples/Respire.Samples.AspNetCore/Smoke.ps1
-          pwsh -NoProfile -File samples/Respire.Samples.AspNetCore/Smoke.ps1
+          curl --max-time 5 --fail --silent "$base_url/hybrid" > /dev/null
+          # HybridCache can finish HTTP generation before its background L2 write reaches Redis.
+          # PEXPIRE both observes the entry and expires it atomically, avoiding an EXISTS race.
+          expired=false
+          deadline=$((SECONDS + 15))
+          while (( SECONDS < deadline )); do
+            result=$(timeout 5s docker exec "$REDIS_CONTAINER" redis-cli PEXPIRE respire:ci:aspnet:cache:hybrid-time 1000)
+            if [[ "$result" == 1 ]]; then expired=true; break; fi
+            sleep 0.1
+          done
+          if [[ "$expired" != true ]]; then echo 'HybridCache entry did not reach Redis within 15 seconds.'; cat aspnet-sample.log; exit 1; fi
+          pwsh -NoProfile -File samples/Respire.Samples.AspNetCore/Smoke.ps1 -BaseUrl "$base_url"
+          pwsh -NoProfile -File samples/Respire.Samples.AspNetCore/Smoke.ps1 -BaseUrl "$base_url"
+          # Each smoke waits six seconds for L1 expiry; the console metric exporter runs every second.
           grep -q 'Metric Name: db.client.operation.duration' aspnet-sample.log
           grep -q 'Activity.DisplayName:' aspnet-sample.log
       - uses: actions/upload-artifact@v7
