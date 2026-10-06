@@ -87,6 +87,8 @@ jobs:
       - name: Compare ten single operations against bracketing baseline controls
         shell: bash
         env:
+          # Keep runtime JIT output for code-generation evidence. The net8 baseline
+          # crashed after measurement with BDN disassembly enabled (#1035).
           DOTNET_JitDisasm: Respire.Internal.Utf8String:GetString Respire.Benchmarks.ProtocolBenchmarks:*UnicodeBulkString
           DOTNET_JitDisasmDiffable: '1'
         run: |
@@ -106,7 +108,7 @@ jobs:
                 '*ProtocolBenchmarks.FormatUnicodeBulkString' \
                 '*ProtocolBenchmarks.FormatLargeUnicodeBulkString' \
                 '*ProtocolBenchmarks.BuildGetCommand' '*ProtocolBenchmarks.BuildSetCommand' \
-                --job "$job" --exporters json markdown --disasm --disasmDepth 3 \
+                --job "$job" --exporters json markdown \
                 --artifacts "$GITHUB_WORKSPACE/results/$phase"
             ) > "$GITHUB_WORKSPACE/$phase.log" 2>&1
           done
