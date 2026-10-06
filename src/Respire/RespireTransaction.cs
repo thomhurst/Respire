@@ -20,13 +20,11 @@ namespace Respire;
 /// <see cref="RespireTransaction"/> cannot abort, while <see cref="RespireWatchedTransaction"/>
 /// reports a WATCH abort.
 /// </remarks>
-public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommandQueue, IPendingSink
+public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespireCommandQueue, IPendingSink
 {
     private readonly RespireClient _client;
     private readonly RespireHashImportSession? _importSession;
     private readonly RespireConnection? _watchConnection;
-    // Friend-test inspection of the pinned connection; ownership remains with the transaction.
-    internal RespireConnection? WatchConnection => _watchConnection;
     private readonly WriteBuffer _buffer = new(1024);
     private readonly List<TxOp> _ops = [];
     private int _clusterSlot;

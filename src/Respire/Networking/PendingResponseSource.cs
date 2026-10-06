@@ -15,11 +15,9 @@ namespace Respire.Networking;
 /// returns to pool only after caller consumes completion and receive loop dequeues its FIFO slot;
 /// otherwise a cancelled source could be reused and a stale reply could answer another command.
 /// </remarks>
-internal abstract class PendingResponse
+internal abstract partial class PendingResponse
 {
     private CancellationTokenRegistration _cancellationRegistration;
-    // Friend-test inspection of admission cancellation; not a production coordination API.
-    internal CancellationToken RegisteredCancellationToken => _cancellationRegistration.Token;
 
     // Low bit: completed. Upper bits: reuse epoch, bumped every time the source goes back to
     // its pool. Completion is a CAS on the whole word so the deadline sweep — which peeks

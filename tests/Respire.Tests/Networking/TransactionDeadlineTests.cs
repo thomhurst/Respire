@@ -49,7 +49,7 @@ public class TransactionDeadlineTests
             ? await client.CreateTransactionAsync(["k"]) : client.CreateTransaction();
         var pending = transaction.Set("k", "v");
         var connection = watched
-            ? transaction.WatchConnection!
+            ? transaction.InspectForTests().WatchConnection!
             : await client.AcquireConnectionAsync(cluster ? ClusterHash.GetSlot("k") : null, default);
         var earliest = Environment.TickCount64;
         var commit = transaction is RespireWatchedTransaction watch
@@ -66,7 +66,7 @@ public class TransactionDeadlineTests
             == RespireCommandStage.AwaitingReply);
         await Assert.That(source.CommandName).IsEqualTo("MULTI/EXEC");
         await Assert.That(source.Deadline.Ticks).IsGreaterThanOrEqualTo(earliest + (long)Timeout.TotalMilliseconds);
-        await Assert.That(source.RegisteredCancellationToken.CanBeCanceled).IsFalse();
+        await Assert.That(source.InspectForTests().RegisteredCancellationToken.CanBeCanceled).IsFalse();
         await Assert.That(commit.IsCompleted).IsFalse();
 
         // Advance the sweep's observation directly; no wall-clock timeout or competing timer.
@@ -169,7 +169,7 @@ public class TransactionDeadlineTests
         await WaitUntilAsync(() => ring.Count == 1);
         await Assert.That(ring.TryPeek(out var source)).IsTrue();
         await Assert.That(source.Deadline.Ticks).IsLessThanOrEqualTo(startedBy + (long)Timeout.TotalMilliseconds);
-        await Assert.That(source.RegisteredCancellationToken.CanBeCanceled).IsFalse();
+        await Assert.That(source.InspectForTests().RegisteredCancellationToken.CanBeCanceled).IsFalse();
         await server.SendRawAsync(Committed);
         await commit.WaitAsync(Limit);
     }
@@ -212,7 +212,7 @@ public class TransactionDeadlineTests
         await WaitUntilAsync(() => ring.Count == 1);
         await Assert.That(ring.TryPeek(out var source)).IsTrue();
         await Assert.That(source.Deadline.Ticks).IsLessThanOrEqualTo(startedBy + (long)Timeout.TotalMilliseconds);
-        await Assert.That(source.RegisteredCancellationToken.CanBeCanceled).IsFalse();
+        await Assert.That(source.InspectForTests().RegisteredCancellationToken.CanBeCanceled).IsFalse();
         ring.SweepExpired(source.Deadline.Ticks + 1, Timeout, connection);
         var error = await Assert.That(async () => await commit.WaitAsync(Limit)).ThrowsExactly<RespireTimeoutException>();
         await Assert.That(error!.CommandName).IsEqualTo(stopAtMulti ? "MULTI" : "MULTI/EXEC");
@@ -296,7 +296,7 @@ public class TransactionDeadlineTests
             try { started.TrySetResult(transaction.CommitAsync(caller.Token).AsTask()); }
             catch (Exception error) { started.TrySetException(error); }
         }) { IsBackground = true };
-        using (client.Core.ClientCache!.SharedReadGate.EnterScope())
+        using (client.Core.ClientCache!.InspectForTests().SharedReadGate.EnterScope())
         {
             worker.Start();
             if (!SpinWait.SpinUntil(() => (worker.ThreadState & ThreadState.WaitSleepJoin) != 0, Limit))
@@ -504,7 +504,7 @@ public class TransactionDeadlineTests
     }
 
     private static InflightRing GetRing(RespireConnection connection)
-        => connection.Inflight;
+        => connection.InspectForTests().Inflight;
 
     private static async Task<bool> CommitAsync(RespireTransaction transaction)
     {
