@@ -220,6 +220,24 @@ await using var redis = await RespireClient.ConnectAsync(options);
 
 Omitting `Connections` uses one multiplexed connection, the default. The value must be at least one; raise the fixed pool size only when profiling shows one socket is saturated.
 
+An independent TCP/TLS `ConnectTimeout` throws `RespireTimeoutException` with
+`CommandName = "CONNECT"` and diagnostics at the `Connecting` stage, including during
+dedicated connection acquisition. Caller cancellation remains `OperationCanceledException`
+with the caller's token. Pool retirement keeps its separate cancellation identity so routing
+can select a replacement. Redis handshake replies retain their command timeout behavior.
+
+This changes the exception type for independent connect deadlines that previously surfaced
+as `OperationCanceledException`. Catch `RespireTimeoutException` for connect timeouts;
+a catch for `OperationCanceledException` alone no longer handles those deadlines.
+If caller cancellation and the deadline have both fired when classified, caller cancellation wins.
+Routing samples pool retirement when handling the failure. A CONNECT timeout can therefore
+trigger reselection even if the timeout preceded retirement; this never replays an
+admitted application command. Cluster routes enforce their retirement retry limit. Standalone
+and Sentinel dedicated rentals have no retirement attempt limit: repeated pool replacement can
+continue until acquisition succeeds, cancellation or disposal occurs, or a terminal failure is
+encountered. `ConnectTimeout` bounds each connection attempt, not the entire rental across
+replacements. Active-pool and Redis handshake timeouts remain failures.
+
 `AllowAdmin = false` is the default safety setting. Set it to `true` only for callers that are allowed to run high-risk server administration commands such as `FLUSHDB`, `FLUSHALL`, and `CONFIG SET`.
 
 For expiring passwords or access tokens, use a caller-owned

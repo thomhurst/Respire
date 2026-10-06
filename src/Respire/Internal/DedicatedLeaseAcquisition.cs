@@ -38,7 +38,7 @@ internal static class DedicatedLeaseAcquisition
                     return (pool, connection);
                 }
                 catch (Exception error) when (!cancellationToken.IsCancellationRequested && pool.IsStopping
-                    && error is ObjectDisposedException or OperationCanceledException
+                    && DedicatedConnectionPool.IsRetirementFailure(error)
                     && route.CanRetry(retirements, cancellationToken))
                 {
                     route.RecordRetirement(error, retirements++);

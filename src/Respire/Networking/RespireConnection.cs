@@ -331,9 +331,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             if (!isUnixSocket) ApplyTcpKeepAlive(socket, options);
 
-            using var timeoutCts = CommandTimeoutCancellation.Create(
-                cancellationToken,
-                options.ConnectTimeout);
+            using var timeoutCts = CreateConnectTimeout(options, cancellationToken);
             try
             {
                 if (isUnixSocket)
@@ -358,12 +356,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     await tlsStream.AuthenticateAsClientAsync(tlsOptions, timeoutCts.Token).ConfigureAwait(false);
                 }
             }
-            catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(
-                error, cancellationToken, timeoutCts.Token))
+            catch (OperationCanceledException error) when (
+                error.CancellationToken == timeoutCts.Token && timeoutCts.IsCancellationRequested)
             {
-                // Preserve the initiating token across our private connect-timeout link.
-                // An independent connect timeout or unrelated cancellation keeps its own token.
-                throw new OperationCanceledException(error.Message, error, cancellationToken);
+                throw TranslateConnectCancellation(error, cancellationToken, options, host, port);
             }
         }
         catch
@@ -400,7 +396,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         CancellationToken cancellationToken, bool armHandshakeDeadline)
     {
         if (options.UseTls) throw new NotSupportedException("In-memory testing connections do not support TLS.");
-        using var timeout = CommandTimeoutCancellation.Create(cancellationToken, options.ConnectTimeout);
+        using var timeout = CreateConnectTimeout(options, cancellationToken);
         Stream? stream = null;
         try
         {
@@ -410,9 +406,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 // A factory can return after cancellation instead of observing its token.
                 timeout.Token.ThrowIfCancellationRequested();
             }
-            catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(error, cancellationToken, timeout.Token))
+            catch (OperationCanceledException error) when (
+                error.CancellationToken == timeout.Token && timeout.IsCancellationRequested)
             {
-                throw new OperationCanceledException(error.Message, error, cancellationToken);
+                throw TranslateConnectCancellation(error, cancellationToken, options, host, port);
             }
         }
         catch
@@ -439,6 +436,28 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             catch { /* Preserve the original handshake or validation failure. */ }
             throw;
         }
+    }
+
+    /// <summary>Creates the owned connect deadline, using the controlled factory in friend tests.</summary>
+    private static CancellationTokenSource CreateConnectTimeout(
+        RespireConnectionOptions options, CancellationToken cancellationToken)
+        => options.TestingConnectTimeoutFactory is { } factory
+            ? factory(cancellationToken, options.ConnectTimeout)
+            : CommandTimeoutCancellation.Create(cancellationToken, options.ConnectTimeout);
+
+    /// <summary>Preserves initiating cancellation or reports an independent transport deadline.</summary>
+    private static Exception TranslateConnectCancellation(
+        OperationCanceledException error, CancellationToken cancellationToken,
+        RespireConnectionOptions options, string host, int port)
+    {
+        // Only cancellation from our canceled source reaches this boundary. Caller/pool
+        // cancellation keeps its initiating token; an independent transport deadline is a
+        // connect timeout, even when TCP completed just before that deadline fired.
+        // If both sources have fired by classification, the initiating token takes precedence.
+        if (cancellationToken.IsCancellationRequested)
+            return new OperationCanceledException(error.Message, error, cancellationToken);
+        return new RespireTimeoutException("CONNECT", options.ConnectTimeout, error,
+            RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting, new(host, port)));
     }
 
     internal static SslClientAuthenticationOptions CreateTlsOptions(
@@ -3775,6 +3794,13 @@ internal sealed record RespireConnectionOptions
     internal IConnectionGeneration? Generation { get; init; }
 
     internal Func<string, int, CancellationToken, ValueTask<Stream>>? TestingStreamFactory { get; init; }
+    /// <summary>
+    /// Lets friend tests expire the owned source at a controlled transport boundary. The factory
+    /// must link the initiating token, with caller-cancellation controls in the fixture proving
+    /// that contract; CancellationTokenSource does not expose its links for inspection.
+    /// ConnectAsync owns disposal, just as for the ordinary source.
+    /// </summary>
+    internal Func<CancellationToken, TimeSpan, CancellationTokenSource>? TestingConnectTimeoutFactory { get; init; }
     internal ArrayPool<byte>? StreamPayloadPool { get; init; }
 
     internal RespireReconnectPolicy? ReconnectPolicy { get; init; }

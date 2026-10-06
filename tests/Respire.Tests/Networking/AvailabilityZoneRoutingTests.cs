@@ -959,7 +959,12 @@ public class AvailabilityZoneRoutingTests
         }
         if (policy == RespireReadFrom.Primary || policy == RespireReadFrom.Replica && onlyReplicaFails)
         {
-            await Assert.That(async () => await read).Throws<OperationCanceledException>();
+            var error = await Assert.That(async () => await read).Throws<RespireTimeoutException>();
+            await Assert.That(error!.CommandName).IsEqualTo("CONNECT");
+            await Assert.That(error.Timeout).IsEqualTo(TimeSpan.FromSeconds(2));
+            await Assert.That(error.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Connecting);
+            await Assert.That(error.Diagnostics.Endpoint).IsEqualTo(new RespireEndpoint("127.0.0.1", failedPort));
+            await Assert.That(error.InnerException is OperationCanceledException).IsTrue();
             await Assert.That(caller.IsCancellationRequested).IsFalse();
             await Assert.That(primary.ReceivedCommands.Concat(first.ReceivedCommands).Concat(second.ReceivedCommands)
                 .Any(command => command.StartsWith("XREAD "))).IsFalse();
@@ -1090,8 +1095,13 @@ public class AvailabilityZoneRoutingTests
             Protocol = RespProtocol.Resp3, TestingStreamFactory = OpenStreamAsync,
             ClusterTopologyRefreshInterval = null,
         });
-        await Assert.That(async () => await client.ExecuteAsync(RespireCommands.Stream.XREAD,
-            ["BLOCK", 1, "STREAMS", "key", "0"]).AsTask()).Throws<OperationCanceledException>();
+        var error = await Assert.That(async () => await client.ExecuteAsync(RespireCommands.Stream.XREAD,
+            ["BLOCK", 1, "STREAMS", "key", "0"]).AsTask()).Throws<RespireTimeoutException>();
+        await Assert.That(error!.CommandName).IsEqualTo("CONNECT");
+        await Assert.That(error.Timeout).IsEqualTo(TimeSpan.FromSeconds(2));
+        await Assert.That(error.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Connecting);
+        await Assert.That(error.Diagnostics.Endpoint).IsEqualTo(new RespireEndpoint("127.0.0.1", importing.Port));
+        await Assert.That(error.InnerException is OperationCanceledException).IsTrue();
         await Assert.That(replica.ReceivedCommands.Count(command => command.StartsWith("XREAD "))).IsEqualTo(1);
         await Assert.That(primary.ReceivedCommands.Concat(importing.ReceivedCommands)
             .Any(command => command.StartsWith("XREAD "))).IsFalse();
