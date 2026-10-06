@@ -13,4 +13,37 @@
             <_InspectionConfiguration Include="$(TargetFramework)|$(DefineConstants.Replace(';', ','))" />
         </ItemGroup>
     </Target>
+
+    <Target Name="GetStackAllocationConfigurations" Returns="@(_StackAllocationConfiguration)">
+        <ItemGroup>
+            <_StackAllocationFramework Include="$(TargetFrameworks)" Condition="'$(TargetFrameworks)' != ''" />
+            <_StackAllocationFramework Include="$(TargetFramework)" Condition="'$(TargetFrameworks)' == ''" />
+            <_StackAllocationPolyfill Include="@(PackageReference)" Condition="'%(PackageReference.Identity)' == 'Polyfill'" />
+        </ItemGroup>
+        <PropertyGroup>
+            <_StackAllocationFeatureTargets Condition="'@(_StackAllocationPolyfill)' != ''">PolyfillResolveFeatures</_StackAllocationFeatureTargets>
+        </PropertyGroup>
+        <Error Condition="'@(_StackAllocationFramework)' == ''" Text="No package frameworks to audit." />
+        <MSBuild Projects="$(MSBuildProjectFullPath)" Targets="GetStackAllocationConfiguration"
+                 RemoveProperties="TargetFrameworks"
+                 Properties="TargetFramework=%(_StackAllocationFramework.Identity);BuildProjectReferences=false;StackAllocationFeatureTargets=$(_StackAllocationFeatureTargets);CustomAfterMicrosoftCommonTargets=$(MSBuildThisFileFullPath)">
+            <Output TaskParameter="TargetOutputs" ItemName="_StackAllocationConfiguration" />
+        </MSBuild>
+    </Target>
+
+    <Target Name="GetStackAllocationConfiguration" DependsOnTargets="ResolveReferences;AddImplicitDefineConstants;$(StackAllocationFeatureTargets)" Returns="@(_StackAllocationConfiguration);@(_StackAllocationImportedSource)">
+        <ItemGroup>
+            <_StackAllocationConfiguration Include="$(MSBuildProjectName)|$(TargetFramework)|$(DefineConstants.Replace(';', ','))">
+                <AuditKind>Configuration</AuditKind>
+            </_StackAllocationConfiguration>
+            <!-- NuGet content sources compile into the consuming module and inherit its policy. -->
+            <_StackAllocationImportedCompile Include="@(Compile)" Condition="'%(Compile.NuGetPackageId)' != ''" />
+        </ItemGroup>
+        <ItemGroup Condition="'@(_StackAllocationImportedCompile)' != ''">
+            <_StackAllocationImportedSource Include="ImportedSource/$(MSBuildProjectName)/$(TargetFramework)/nuget/$([MSBuild]::MakeRelative('$(NuGetPackageRoot)', '%(_StackAllocationImportedCompile.FullPath)'))">
+                <AuditKind>Source</AuditKind>
+                <SourcePath>%(_StackAllocationImportedCompile.FullPath)</SourcePath>
+            </_StackAllocationImportedSource>
+        </ItemGroup>
+    </Target>
 </Project>

@@ -23,6 +23,7 @@
     </ItemGroup>
 
     <ItemGroup>
+        <EmbeddedResource Include="../../docs/STACKALLOC_AUDIT.md" LogicalName="StackAllocationAudit.md" />
         <EmbeddedResource Include="TestInspectionOwnerSurface.txt" LogicalName="TestInspectionOwnerSurface.txt" />
         <!-- Test the exact library source without depending on a checkout at test runtime. -->
         <EmbeddedResource Include="../../src/**/*.cs" Exclude="../../src/**/bin/**;../../src/**/obj/**"
@@ -48,6 +49,39 @@
         <ItemGroup>
             <EmbeddedResource Include="$(_InspectionResource)" LogicalName="TestInspectionConfigurations.txt" />
             <FileWrites Include="$(_InspectionResource)" />
+        </ItemGroup>
+    </Target>
+
+    <Target Name="EmbedStackAllocationConfigurations" BeforeTargets="AssignTargetPaths">
+        <PropertyGroup>
+            <_StackAllocationImport>$(MSBuildThisFileDirectory)TestInspectionConfiguration.targets</_StackAllocationImport>
+            <_StackAllocationResource>$(IntermediateOutputPath)StackAllocationConfigurations.txt</_StackAllocationResource>
+        </PropertyGroup>
+        <ItemGroup>
+            <_StackAllocationPackage Include="$(RespirePackageProjects)" />
+        </ItemGroup>
+        <MSBuild Projects="../../src/%(_StackAllocationPackage.Identity)/%(_StackAllocationPackage.Identity).csproj"
+                 Targets="GetStackAllocationConfigurations" RemoveProperties="TargetFramework;TargetFrameworks"
+                 Properties="Configuration=Release;CustomAfterMicrosoftCommonCrossTargetingTargets=$(_StackAllocationImport);CustomAfterMicrosoftCommonTargets=$(_StackAllocationImport)">
+            <Output TaskParameter="TargetOutputs" ItemName="_StackAllocationInputs" />
+        </MSBuild>
+        <MSBuild Projects="../../src/%(_StackAllocationPackage.Identity)/%(_StackAllocationPackage.Identity).csproj"
+                 Targets="GetStackAllocationConfigurations" RemoveProperties="TargetFramework;TargetFrameworks"
+                 Properties="Configuration=Debug;CustomAfterMicrosoftCommonCrossTargetingTargets=$(_StackAllocationImport);CustomAfterMicrosoftCommonTargets=$(_StackAllocationImport)">
+            <Output TaskParameter="TargetOutputs" ItemName="_StackAllocationInputs" />
+        </MSBuild>
+        <ItemGroup>
+            <_StackAllocationConfiguration Include="@(_StackAllocationInputs)" Condition="'%(_StackAllocationInputs.AuditKind)' == 'Configuration'" />
+            <_StackAllocationImportedSource Include="@(_StackAllocationInputs)" Condition="'%(_StackAllocationInputs.AuditKind)' == 'Source'" />
+        </ItemGroup>
+        <RemoveDuplicates Inputs="@(_StackAllocationImportedSource)">
+            <Output TaskParameter="Filtered" ItemName="_StackAllocationUniqueSource" />
+        </RemoveDuplicates>
+        <WriteLinesToFile File="$(_StackAllocationResource)" Lines="@(_StackAllocationConfiguration)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+        <ItemGroup>
+            <EmbeddedResource Include="%(_StackAllocationUniqueSource.SourcePath)" LogicalName="%(_StackAllocationUniqueSource.Identity)" />
+            <EmbeddedResource Include="$(_StackAllocationResource)" LogicalName="StackAllocationConfigurations.txt" />
+            <FileWrites Include="$(_StackAllocationResource)" />
         </ItemGroup>
     </Target>
 

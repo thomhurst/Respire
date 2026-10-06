@@ -101,6 +101,13 @@
   </PropertyGroup>
 
   <ItemGroup Condition="'$(IsRespirePackageProject)' == 'true'">
+    <!-- Every stack allocation is reviewed individually in docs/STACKALLOC_AUDIT.md. -->
+    <Compile Include="$(RepositoryRoot)src/Shared/SkipLocalsInit.cs" Link="SkipLocalsInit.cs" />
     <None Include="$(RepositoryRoot)README.md" Pack="true" PackagePath="/" />
   </ItemGroup>
+
+  <PropertyGroup Condition="'$(IsRespirePackageProject)' == 'true'">
+    <!-- Required by the compiler for the module attribute, even without pointer code. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
 </Project>

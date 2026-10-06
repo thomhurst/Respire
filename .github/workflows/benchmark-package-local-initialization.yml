@@ -1,0 +1,122 @@
+name: Package local initialization benchmarks
+
+on:
+  pull_request:
+    paths:
+      - 'Directory.Build.props'
+      - 'src/Shared/SkipLocalsInit.cs'
+      - 'docs/STACKALLOC_AUDIT.md'
+      - 'benchmarks/Respire.Benchmarks/ProtocolBenchmarks.cs'
+      - '.github/workflows/benchmark-package-local-initialization.yml'
+      - 'scripts/Check-LocalInitializationBenchmarks.py'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-local-initialization-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    name: Attribute-only single operations (${{ matrix.framework }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: [net8.0, net10.0]
+    env:
+      FRAMEWORK: ${{ matrix.framework }}
+    steps:
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      # Both checkouts use the same pinned head. Baselines disable only the attribute.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: baseline
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: candidate
+          persist-credentials: false
+      - name: Derive the attribute-only comparison and record exact sources
+        shell: python
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          import hashlib
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+          head = os.environ['HEAD_SHA']
+          for source in ('baseline', 'candidate'):
+              assert subprocess.check_output(['git', '-C', source, 'rev-parse', 'HEAD'], text=True).strip() == head
+              assert not subprocess.check_output(['git', '-C', source, 'status', '--porcelain']).strip()
+          module = 'src/Shared/SkipLocalsInit.cs'
+          decoder = 'src/Respire/Internal/Utf8String.cs'
+          fixture = 'benchmarks/Respire.Benchmarks/ProtocolBenchmarks.cs'
+          assert Path('candidate', module).read_text().strip() == 'using System.Runtime.CompilerServices;\n\n[module: SkipLocalsInit]'
+          Path('baseline', module).write_text('// Bracketing control: retain implicit local initialization.\n')
+          text = Path('candidate', fixture).read_text()
+          job = '[SimpleJob(warmupCount: 3, iterationCount: 10)]'
+          assert text.count(job) == 1, 'Review fixture jobs before modifying the comparison'
+          for source in ('baseline', 'candidate'):
+              Path(source, fixture).write_text(text.replace(job, ''))
+          tracked = subprocess.check_output(['git', '-C', 'candidate', 'ls-files', '-z'], text=True).split('\0')
+          differences = [path for path in tracked if path and Path('candidate', path).is_file()
+                         and Path('baseline', path).read_bytes() != Path('candidate', path).read_bytes()]
+          assert differences == [module], differences
+          manifest = {'head_sha': head, 'only_source_difference': module, 'sources': {}}
+          for source in ('baseline', 'candidate'):
+              patch = subprocess.check_output(['git', '-C', source, 'diff', '--binary'])
+              Path(f'{source}.patch').write_bytes(patch)
+              manifest['sources'][source] = {
+                  'patch_sha256': hashlib.sha256(patch).hexdigest(),
+                  'files': {path: hashlib.sha256(Path(source, path).read_bytes()).hexdigest()
+                            for path in (module, decoder, fixture)}}
+          Path('source-manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+      - name: Measure ten operations with bracketing controls
+        shell: bash
+        env:
+          # Runtime listings avoid the net8 BDN disassembly crash previously seen in #1035.
+          DOTNET_JitDisasm: Respire.Internal.Utf8String:* Respire.Protocol.RespWriter:* Respire.RespireValue:WriteTo Respire.Benchmarks.ProtocolBenchmarks:*
+          DOTNET_JitDisasmDiffable: '1'
+        run: |
+          set -euo pipefail
+          for phase in baseline-validation candidate-validation baseline-a candidate baseline-b; do
+            source=baseline
+            job=Default
+            if [[ "$phase" == candidate* ]]; then source=candidate; fi
+            if [[ "$phase" == *validation ]]; then job=Dry; fi
+            (
+              cd "$source"
+              git rev-parse HEAD
+              dotnet run --project benchmarks/Respire.Benchmarks -c Release -f "$FRAMEWORK" -- \
+                --filter '*ProtocolBenchmarks.DecodeAsciiBulkString' '*ProtocolBenchmarks.ReadAsciiBulkString' \
+                '*ProtocolBenchmarks.DecodeUnicodeBulkString' '*ProtocolBenchmarks.ReadUnicodeBulkString' \
+                '*ProtocolBenchmarks.FormatAsciiBulkString' '*ProtocolBenchmarks.FormatLargeAsciiBulkString' \
+                '*ProtocolBenchmarks.FormatUnicodeBulkString' '*ProtocolBenchmarks.FormatLargeUnicodeBulkString' \
+                '*ProtocolBenchmarks.BuildGetCommand' '*ProtocolBenchmarks.BuildSetCommand' \
+                --job "$job" --exporters json markdown \
+                --artifacts "$GITHUB_WORKSPACE/results/$phase"
+            ) > "$GITHUB_WORKSPACE/$phase.log" 2>&1
+          done
+      - name: Verify provenance, measurements, allocations, and regression intervals
+        run: python3 candidate/scripts/Check-LocalInitializationBenchmarks.py
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: package-local-initialization-${{ matrix.framework }}
+          path: |
+            results/
+            *.log
+            *.patch
+            source-manifest.json
+          retention-days: 30

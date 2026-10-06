@@ -54,6 +54,17 @@ jobs:
           PUBLISH_PACKAGES: ${{ inputs.publish-packages }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Verify compiled package local initialization policy
+        shell: pwsh
+        run: ./scripts/Verify-PackageLocalInitialization.ps1 -ReportPath artifacts/local-initialization-policy.json
+
+      - name: Upload compiled initialization policy
+        uses: actions/upload-artifact@v7
+        with:
+          name: package-local-initialization-policy
+          path: artifacts/local-initialization-policy.json
+          retention-days: 14
+
       # The pipeline already packed every package, so the package checks consume those
       # rather than packing a second time in CI.
       - name: Locate packed version
