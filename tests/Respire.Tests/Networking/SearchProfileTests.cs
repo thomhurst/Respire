@@ -119,6 +119,60 @@ public class SearchProfileTests
     }
 
     [Test]
+    [Arguments(2, "SEARCH")]
+    [Arguments(3, "SEARCH")]
+    [Arguments(2, "AGGREGATE")]
+    [Arguments(3, "AGGREGATE")]
+    [Arguments(2, "HYBRID")]
+    [Arguments(3, "HYBRID")]
+    public async Task LabeledShardProfilesExposeOrderedOwnedDescendants(int protocol, string mode)
+    {
+        object Shard(int number) => Object("Shard ID", "node-" + number,
+            "Total profile time", number + 0.25,
+            "Iterators profile", Object("Type", "TEXT", "Time", number + 0.125),
+            "Result processors profile", new object[] { Object("Type", "Index", "Results processed", (long)number) },
+            "Future bytes", new byte[] { 0, 255, 13, 10 });
+        var profile = Object("Shards", new object[]
+        {
+            Object("Shard #2", Shard(2), "Shard #future", new object[] { "raw", "future" }),
+            Object("Shard #1", Shard(1), "Shard #0", new object[] { "raw", "zero" },
+                "Shard #+1", new object[] { "raw", "signed" }),
+        }, "Coordinator", Object("Time", 3d));
+        await using var server = Server(_ => Frame(Envelope(protocol, mode, profile), protocol));
+        await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+        async Task<RespireSearchProfileNode> ReadAsync()
+            => mode switch
+            {
+                "SEARCH" => (await client.Search.ProfileSearchAsync("idx", new(All, new() { WithScores = true }))).Profile,
+                "AGGREGATE" => (await client.Search.ProfileAggregateAsync("idx", All)).Profile,
+                _ => (await client.Search.ProfileHybridSearchAsync("idx", Hybrid())).Profile,
+            };
+        var tree = await ReadAsync();
+        var wrappers = tree.Children.Take(2).ToArray();
+        await Assert.That(wrappers.Select(wrapper => wrapper.Children.Single().Name).ToArray())
+            .IsEquivalentTo(["Shard #2", "Shard #1"], CollectionOrdering.Matching);
+        for (var i = 0; i < wrappers.Length; i++)
+        {
+            var number = 2 - i;
+            var shard = wrappers[i].Children.Single();
+            await Assert.That(shard.Properties["Shard ID"].Scalar).IsEqualTo("node-" + number);
+            await Assert.That(shard.Metrics["Total profile time"]).IsEqualTo(number + 0.25);
+            await Assert.That(shard.Children.Select(child => child.Type!).ToArray())
+                .IsEquivalentTo(["TEXT", "Index"], CollectionOrdering.Matching);
+            await Assert.That(shard.Children[0].TimeMilliseconds).IsEqualTo(number + 0.125);
+            await Assert.That(shard.Children[1].Metrics["Results processed"]).IsEqualTo((double)number);
+            await Assert.That(ReferenceEquals(shard.Properties["Iterators profile"].Items[1],
+                shard.Children[0].Properties["Type"])).IsTrue();
+        }
+        await Assert.That(wrappers[0].Properties["Shard #future"].Items[1].Scalar).IsEqualTo("future");
+        await Assert.That(wrappers[1].Properties["Shard #0"].Items[1].Scalar).IsEqualTo("zero");
+        await Assert.That(wrappers[1].Properties["Shard #+1"].Items[1].Scalar).IsEqualTo("signed");
+        await ReadAsync();
+        await Assert.That(wrappers[0].Children.Single().Properties["Future bytes"].Bytes!.Value.Span
+            .SequenceEqual(new byte[] { 0, 255, 13, 10 })).IsTrue();
+    }
+
+    [Test]
     [Arguments(2)]
     [Arguments(3)]
     public async Task HybridKeepsTextAndVectorProfilesAndWarnings(int protocol)

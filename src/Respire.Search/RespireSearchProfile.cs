@@ -116,7 +116,13 @@ public sealed record RespireSearchProfileNode(
             }.ToFrozenDictionary(StringComparer.Ordinal);
 
         internal static ProfileFieldKind GetKind(string field)
-            => Fields.TryGetValue(field, out var kind) ? kind : ProfileFieldKind.Unknown;
+        {
+            if (Fields.TryGetValue(field, out var kind)) return kind;
+            // Multi-shard RESP2 profiles wrap each shard in a labeled field/value array.
+            return field.StartsWith("Shard #", StringComparison.Ordinal)
+                && int.TryParse(field.AsSpan(7), NumberStyles.None, CultureInfo.InvariantCulture, out var shardNumber)
+                && shardNumber > 0 ? ProfileFieldKind.ObjectNode : ProfileFieldKind.Unknown;
+        }
     }
 
     private static bool TryReadNumber(RespireResult value, out double number)
