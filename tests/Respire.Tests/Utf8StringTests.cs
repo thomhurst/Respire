@@ -1,5 +1,7 @@
 using System.Text;
+using System.Runtime.CompilerServices;
 using Respire.Internal;
+using Respire.Json;
 using Respire.Protocol;
 using TUnit.Core;
 using TUnit.Assertions;
@@ -108,9 +110,10 @@ public class Utf8StringTests
     }
 
     [Test]
-    public async Task CoreStackWriterOmitsLocalZeroInitialization()
+    [Arguments(typeof(RespWriter))]
+    [Arguments(typeof(RespireJsonClient))]
+    public async Task PackageModulesDeclareSkippedLocalInitialization(Type packageType)
     {
-        var method = typeof(RespWriter).GetMethod(nameof(RespWriter.WriteBulkInteger))!;
-        await Assert.That(method.GetMethodBody()!.InitLocals).IsFalse();
+        await Assert.That(packageType.Module.IsDefined(typeof(SkipLocalsInitAttribute), inherit: false)).IsTrue();
     }
 }
