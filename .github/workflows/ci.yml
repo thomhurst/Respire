@@ -31,6 +31,27 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  aspire-integration:
+    name: Aspire Redis and Valkey integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TUNIT_DISABLE_HTML_REPORTER: 'true'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-dotnet
+      - name: Build Aspire test host
+        run: dotnet build tests/Aspire.Respire.IntegrationTests -c Release
+      - name: Verify injected clients and HTTP caches
+        run: >-
+          dotnet run --project tests/Aspire.Respire.IntegrationTests -c Release --no-build --
+          --minimum-expected-tests 1 --report-trx --results-directory TestResults/aspire
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: aspire-integration
+          path: TestResults/aspire
+
   aspnet-sample:
     name: ASP.NET Core sample (${{ matrix.framework }})
     runs-on: ubuntu-latest
@@ -117,6 +138,7 @@ jobs:
       - name: Build
         run: |
           for project in \
+            tests/Aspire.Respire.Tests \
             tests/Respire.Tests \
             tests/Respire.HealthChecks.Tests \
             tests/Respire.Analyzers.Tests \
@@ -161,6 +183,11 @@ jobs:
 
       - name: Run Health Check Tests
         run: dotnet run --project tests/Respire.HealthChecks.Tests -c Release -f net10.0 --no-build
+
+      - name: Run Aspire Client Tests
+        env:
+          TUNIT_DISABLE_HTML_REPORTER: 'true'
+        run: dotnet run --project tests/Aspire.Respire.Tests -c Release -f net10.0 --no-build -- --minimum-expected-tests 20
 
       - name: Run Analyzer Tests
         run: dotnet run --project tests/Respire.Analyzers.Tests -c Release -f net10.0 --no-build
@@ -304,6 +331,7 @@ jobs:
       - name: Build
         run: |
           for project in \
+            tests/Aspire.Respire.Tests \
             tests/Respire.Tests \
             samples/Respire.Samples.Testing \
             samples/Respire.Samples.Cluster \
@@ -312,6 +340,11 @@ jobs:
           do
             dotnet build "$project" -c Release -f net8.0
           done
+
+      - name: Run Aspire Client Tests
+        env:
+          TUNIT_DISABLE_HTML_REPORTER: 'true'
+        run: dotnet run --project tests/Aspire.Respire.Tests -c Release -f net8.0 --no-build -- --minimum-expected-tests 20
 
       # Utf8StringTests and TlsTests cover the code behind #if NET9_0_OR_GREATER / NET10_0_OR_GREATER;
       # FakeServerTests and ConnectionStringParsingTests exercise the client end to end.

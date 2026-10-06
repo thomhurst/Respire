@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsTestProject>true</IsTestProject>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Aspire.Respire.HybridCaching/Aspire.Respire.HybridCaching.csproj" />
+    <ProjectReference Include="../../src/Aspire.Respire.OutputCaching/Aspire.Respire.OutputCaching.csproj" />
+    <ProjectReference Include="../../src/Respire.Azure/Respire.Azure.csproj" />
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="Microsoft.Testing.Extensions.HangDump" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <PackageReference Include="OpenTelemetry.Exporter.InMemory" />
+    <Compile Include="../Respire.Tests/Networking/FakeRespServer.cs" Link="FakeRespServer.cs" />
+  </ItemGroup>
+</Project>

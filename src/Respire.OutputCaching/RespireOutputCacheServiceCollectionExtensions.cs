@@ -15,8 +15,15 @@ public static class RespireOutputCacheServiceCollectionExtensions
     /// <remarks>Register IRespireClient before resolving the store. Client lifetime stays with its existing registration.</remarks>
     public static IServiceCollection AddRespireOutputCache(this IServiceCollection services,
         Action<RespireOutputCacheOptions>? configure = null)
+        => services.AddRespireOutputCache(configure, static provider => provider.GetRequiredService<IRespireClient>());
+
+    /// <summary>Registers output caching on an existing client selected by the factory, including a keyed client.</summary>
+    /// <remarks>The store does not own the selected client. Both arguments are required to preserve existing overload resolution.</remarks>
+    public static IServiceCollection AddRespireOutputCache(this IServiceCollection services,
+        Action<RespireOutputCacheOptions>? configure, Func<IServiceProvider, IRespireClient> clientFactory)
     {
         ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(clientFactory);
         services.AddLogging();
         services.AddOutputCache();
         services.AddOptions<RespireOutputCacheOptions>()
@@ -28,7 +35,7 @@ public static class RespireOutputCacheServiceCollectionExtensions
             .ValidateOnStart();
         if (configure is not null) services.Configure(configure);
         services.TryAddSingleton(provider => new RespireOutputCacheStore(
-            provider.GetRequiredService<IRespireClient>(), provider.GetRequiredService<IOptions<RespireOutputCacheOptions>>().Value,
+            clientFactory(provider), provider.GetRequiredService<IOptions<RespireOutputCacheOptions>>().Value,
             provider.GetRequiredService<ILogger<RespireOutputCacheStore>>()));
         services.Replace(ServiceDescriptor.Singleton<IOutputCacheStore>(provider => provider.GetRequiredService<RespireOutputCacheStore>()));
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, OutputCacheCleanupService>());

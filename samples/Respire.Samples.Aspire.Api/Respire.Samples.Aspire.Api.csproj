@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFrameworks />
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Aspire.Respire.HybridCaching/Aspire.Respire.HybridCaching.csproj" />
+    <ProjectReference Include="../../src/Aspire.Respire.OutputCaching/Aspire.Respire.OutputCaching.csproj" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Aspire.Respire</PackageId>
+    <Description>Respire client registration, configuration, health checks and telemetry for .NET Aspire.</Description>
+    <EnableConfigurationBindingGenerator>true</EnableConfigurationBindingGenerator>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Respire.DependencyInjection/Respire.DependencyInjection.csproj" />
+    <ProjectReference Include="../Respire.HealthChecks/Respire.HealthChecks.csproj" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+  </ItemGroup>
+</Project>

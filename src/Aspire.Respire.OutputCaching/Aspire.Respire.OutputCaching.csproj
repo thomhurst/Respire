@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Aspire.Respire.OutputCaching</PackageId>
+    <Description>ASP.NET Core output caching on an existing default or keyed Aspire Respire client.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Aspire.Respire/Aspire.Respire.csproj" />
+    <ProjectReference Include="../Respire.OutputCaching/Respire.OutputCaching.csproj" />
+  </ItemGroup>
+</Project>
