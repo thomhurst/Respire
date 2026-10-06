@@ -15,9 +15,11 @@ public class ClusterWatchedTransactionTests
     private static readonly byte[] Committed = "*1\r\n+OK\r\n"u8.ToArray();
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task WatchInvalidatesCachedValuesAndFencesEarlierReads(bool cluster)
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task WatchInvalidatesCachedValuesAndFencesEarlierReads(bool cluster, bool binaryPrefix)
     {
         byte[] hello = "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray();
         await using var owner = new FakeRespServer(2, hello, FakeRespServer.OkReply,
@@ -30,14 +32,15 @@ public class ClusterWatchedTransactionTests
             UseCluster = cluster, Connections = 1, ClientSideCache = new(),
             Endpoints = [new("127.0.0.1", cluster ? seed.Port : owner.Port)],
         });
-        var view = client.WithKeyPrefix("tenant:");
+        var view = binaryPrefix ? client.WithKeyPrefix((RespireKey)new byte[] { 255, 0, (byte)':' })
+            : client.WithKeyPrefix("tenant:");
         await Assert.That(await view.GetStringAsync("{a}:watched")).IsEqualTo("old");
         await Assert.That(await view.GetStringAsync("{a}:watched")).IsEqualTo("old");
         var cache = client.Core.ClientCache!;
-        var other = cache.BeginRead("tenant:{a}:other");
+        var other = cache.BeginRead(view.ResolveKey("{a}:other"));
         using var untouched = RespValue.BulkString("untouched"u8.ToArray());
         cache.CompleteRead(other, untouched, allowInsert: true);
-        var earlierRead = cache.BeginRead("tenant:{a}:watched");
+        var earlierRead = cache.BeginRead(view.ResolveKey("{a}:watched"));
 
         // No tracking invalidation is sent: a pre-WATCH write's push can still be delayed.
         await using var transaction = await view.CreateTransactionAsync(["{a}:watched"]);
@@ -47,9 +50,12 @@ public class ClusterWatchedTransactionTests
         await Assert.That(cache.Count).IsEqualTo(1);
         await Assert.That(await view.GetStringAsync("{a}:watched")).IsEqualTo("fresh");
         await Assert.That(await view.GetStringAsync("{a}:other")).IsEqualTo("untouched");
-        await Assert.That(owner.ReceivedCommands.Count(command => command == "GET tenant:{a}:watched"))
+        var physical = view.ResolveKey("{a}:watched").ToBytes();
+        await Assert.That(owner.ReceivedArguments.Count(command => command[0].AsSpan().SequenceEqual("GET"u8)
+            && command[1].SequenceEqual(physical)))
             .IsEqualTo(2);
-        await Assert.That(owner.ReceivedCommands).Contains("WATCH tenant:{a}:watched");
+        await Assert.That(owner.ReceivedArguments.Any(command => command[0].AsSpan().SequenceEqual("WATCH"u8)
+            && command[1].SequenceEqual(physical))).IsTrue();
     }
 
     [Test]

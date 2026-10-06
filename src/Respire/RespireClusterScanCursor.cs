@@ -11,6 +11,7 @@ namespace Respire;
 public sealed class RespireClusterScanCursor
 {
     private const int FormatMagic = 0x31435352; // RSC1
+    private const int BinaryPrefixFormatMagic = 0x32435352; // RSC2
     private const int MaximumEncodedLength = 6 * 1024 * 1024;
     internal ClusterScanState? State { get; }
     internal RespireClusterScanCursor(ClusterScanState? state)
@@ -31,13 +32,18 @@ public sealed class RespireClusterScanCursor
     {
         using var stream = new MemoryStream();
         using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
-        writer.Write(FormatMagic);
+        writer.Write(State?.BinaryPrefix is null ? FormatMagic : BinaryPrefixFormatMagic);
         writer.Write(State is not null);
         if (State is { } state)
         {
             WriteText(writer, state.Match);
             WriteText(writer, state.Type);
             WriteText(writer, state.Prefix);
+            if (state.BinaryPrefix is { } prefix)
+            {
+                writer.Write(prefix.Length);
+                writer.Write(prefix);
+            }
             var identities = state.Owners.Distinct(StringComparer.Ordinal).ToArray();
             writer.Write(identities.Length);
             foreach (var identity in identities) writer.Write(identity);
@@ -74,13 +80,23 @@ public sealed class RespireClusterScanCursor
         {
             using var stream = new MemoryStream(Convert.FromBase64String(value), writable: false);
             using var reader = new BinaryReader(stream, new UTF8Encoding(false, true));
-            if (reader.ReadInt32() != FormatMagic) throw new FormatException("Unsupported Cluster scan cursor version.");
+            var format = reader.ReadInt32();
+            if (format is not FormatMagic and not BinaryPrefixFormatMagic)
+                throw new FormatException("Unsupported Cluster scan cursor version.");
             if (!reader.ReadBoolean())
             {
+                if (format == BinaryPrefixFormatMagic) throw new FormatException("Binary Cluster scan cursors require scan state.");
                 if (stream.Position != stream.Length) throw new FormatException("Unexpected cursor data.");
                 return Start;
             }
             var state = new ClusterScanState(ReadText(reader), ReadText(reader), ReadText(reader));
+            if (format == BinaryPrefixFormatMagic)
+            {
+                var prefixLength = reader.ReadInt32();
+                if (state.Prefix is not null || prefixLength <= 0 || prefixLength > stream.Length - stream.Position)
+                    throw new FormatException("Invalid binary Cluster scan prefix.");
+                state.BinaryPrefix = reader.ReadBytes(prefixLength);
+            }
             var count = reader.ReadInt32();
             if (count is < 1 or > ClusterHash.SlotCount) throw new FormatException("Invalid cursor node count.");
             var identities = new string[count];
@@ -176,6 +192,7 @@ internal sealed class ClusterScanState(string? match, string? type, string? pref
     internal string? Match { get; } = match;
     internal string? Type { get; } = type;
     internal string? Prefix { get; } = prefix;
+    internal byte[]? BinaryPrefix;
     internal string[] Owners { get; } = new string[ClusterHash.SlotCount];
     internal bool[] Completed { get; } = new bool[ClusterHash.SlotCount];
     internal bool[] PassSlots { get; } = new bool[ClusterHash.SlotCount];
@@ -188,7 +205,7 @@ internal sealed class ClusterScanState(string? match, string? type, string? pref
     {
         var copy = new ClusterScanState(Match, Type, Prefix)
         {
-            ActiveNode = ActiveNode, RunId = RunId, Epoch = Epoch, Cursor = Cursor,
+            ActiveNode = ActiveNode, RunId = RunId, Epoch = Epoch, Cursor = Cursor, BinaryPrefix = BinaryPrefix,
         };
         Owners.CopyTo(copy.Owners, 0);
         Completed.CopyTo(copy.Completed, 0);

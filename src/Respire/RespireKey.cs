@@ -87,6 +87,16 @@ public readonly struct RespireKey : IEquatable<RespireKey>
         return _prefix.Materialize(_string, _bytes);
     }
 
+    /// <summary>Returns text only when every component originated as text.</summary>
+    internal string? Text
+    {
+        get
+        {
+            if (_prefix is null) return _string;
+            return _prefix.Text is not null && _string is not null ? _prefix.Text + _string : null;
+        }
+    }
+
     internal int WireLength
     {
         get
@@ -121,7 +131,7 @@ public readonly struct RespireKey : IEquatable<RespireKey>
         // Reapplying a prefix to an already resolved key preserves the original text/binary semantics.
         // ToBytes owns a fresh snapshot; copying that storage again would allocate unnecessarily.
         if (_prefix is not null)
-            return (_string is not null ? new RespireKey(ToString()) : new RespireKey(ToBytes()))
+            return (_string is not null && _prefix.Text is not null ? new RespireKey(ToString()) : new RespireKey(ToBytes()))
                 .Prepend(prefix, snapshotBinaryKeys: false);
         return new RespireKey(prefix, _string,
             _string is null && snapshotBinaryKeys ? _bytes.ToArray() : _bytes);

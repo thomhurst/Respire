@@ -69,7 +69,7 @@ public sealed record RespireClientSideCacheOptions
     /// the whole reply uncached and leaves the command untracked. In
     /// <see cref="RespireClientTrackingMode.Broadcast"/> mode the prefixes are also sent to Redis as
     /// BCAST PREFIX arguments. Prefixes are binary-safe, must not overlap or repeat, and are matched
-    /// against physical keys: include any <see cref="IRespireClient.WithKeyPrefix"/> prefix.
+    /// against physical keys: include any <see cref="IRespireClient.WithKeyPrefix(string)"/> prefix.
     /// The client snapshots this collection and its bytes.
     /// </remarks>
     public IReadOnlyList<RespireKey> KeyPrefixes { get; init; } = [];

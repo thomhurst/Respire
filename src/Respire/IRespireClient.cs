@@ -335,6 +335,16 @@ public interface IRespireClient : IAsyncDisposable
     /// <summary>A view that prepends a prefix to every key; shares this client's connections.</summary>
     IRespireClient WithKeyPrefix(string prefix);
 
+    /// <summary>A view that prepends an owned, binary-safe prefix to every key.</summary>
+    /// <remarks>Empty prefixes are rejected. Channels are unchanged. Custom implementations must
+    /// override this overload to support binary prefixes; text prefixes delegate to the string overload.</remarks>
+    IRespireClient WithKeyPrefix(RespireKey prefix)
+    {
+        if (prefix.IsEmpty) throw new ArgumentException("A key prefix cannot be empty.", nameof(prefix));
+        return prefix.Text is { } text ? WithKeyPrefix(text)
+            : throw new NotSupportedException("This client does not support binary key-prefix views.");
+    }
+
     /// <summary>Returns a view that applies a read-routing policy to metadata-confirmed read-only commands.</summary>
     /// <remarks>
     /// The view shares this client's connections. Only commands whose <see cref="RespireCommand.IsReadOnly"/>
