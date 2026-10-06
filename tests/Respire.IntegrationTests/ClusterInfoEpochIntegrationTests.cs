@@ -23,14 +23,21 @@ public class ClusterInfoEpochIntegrationTests
             .WithPortBinding(7000, true)
             .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(7000).UntilInternalTcpPortIsAvailable(7001)).Build();
         await container.StartAsync();
-        (await Command(7001, "CLUSTER", "SET-CONFIG-EPOCH", long.MaxValue.ToString(CultureInfo.InvariantCulture))).Trim().Should().Be("OK");
-        (await Command(7000, "CLUSTER", "MEET", "127.0.0.1", "7001", "17001")).Trim().Should().Be("OK");
+        (await Command(7001, ["CLUSTER", "SET-CONFIG-EPOCH", long.MaxValue.ToString(CultureInfo.InvariantCulture)])).Trim().Should().Be("OK");
+        (await Command(7000, ["CLUSTER", "MEET", "127.0.0.1", "7001", "17001"])).Trim().Should().Be("OK");
         using var convergence = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-        while (!(await Command(7000, "CLUSTER", "INFO"))
-            .Contains("cluster_current_epoch:9223372036854775807", StringComparison.Ordinal))
-            await Task.Delay(50, convergence.Token);
+        try
+        {
+            while (!(await Command(7000, ["CLUSTER", "INFO"], convergence.Token))
+                .Contains("cluster_current_epoch:9223372036854775807", StringComparison.Ordinal))
+                await Task.Delay(50, convergence.Token);
+        }
+        catch (OperationCanceledException error) when (convergence.IsCancellationRequested)
+        {
+            throw new TimeoutException("Owned Cluster did not observe the peer epoch within the 20-second convergence deadline.", error);
+        }
         // BUMPEPOCH increments only when this node does not already own the maximum.
-        (await Command(7000, "CLUSTER", "BUMPEPOCH")).Trim().Should().Be("BUMPED 9223372036854775808");
+        (await Command(7000, ["CLUSTER", "BUMPEPOCH"])).Trim().Should().Be("BUMPED 9223372036854775808");
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new(container.Hostname, container.GetMappedPublicPort(7000))], Connections = 1,
@@ -46,9 +53,9 @@ public class ClusterInfoEpochIntegrationTests
         info.Attributes["cluster_my_epoch"].Should().Be(expected.ToString(CultureInfo.InvariantCulture));
         info.KnownNodes.Should().Be(2);
 
-        async Task<string> Command(int port, params string[] arguments)
+        async Task<string> Command(int port, string[] arguments, CancellationToken cancellationToken = default)
         {
-            var result = await container.ExecAsync([cli, "-e", "-p", port.ToString(CultureInfo.InvariantCulture), "--raw", .. arguments]);
+            var result = await container.ExecAsync([cli, "-e", "-p", port.ToString(CultureInfo.InvariantCulture), "--raw", .. arguments], cancellationToken);
             result.ExitCode.Should().Be(0, result.Stderr);
             return result.Stdout;
         }
