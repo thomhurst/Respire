@@ -36,12 +36,14 @@ internal static class ConnectionTelemetry
     }
 
     internal static void ClosedBeforeHandshake(string host, int port, RespireConnectionOptions options,
-        Exception error, CancellationToken callerToken)
+        Exception error, CancellationToken callerToken, bool peerClosed)
     {
         if (RespireTelemetry.IsMetricEnabled(RespireMetricGroups.ConnectionAdvanced, RespireTelemetry.ConnectionsClosed))
         {
-            var canceled = IsCallerCancellation(error, callerToken);
-            RecordClosed(ForConnection(host, port, options), canceled ? "application_close" : "error", canceled ? null : error);
+            var reason = "error";
+            if (peerClosed) reason = "server_close";
+            else if (IsCallerCancellation(error, callerToken)) reason = "application_close";
+            RecordClosed(ForConnection(host, port, options), reason, reason == "error" ? error : null);
         }
     }
 
@@ -57,6 +59,20 @@ internal static class ConnectionTelemetry
             if (error is SocketException { SocketErrorCode: SocketError.ConnectionReset } or EndOfStreamException)
                 return true;
         return false;
+    }
+
+    internal static bool IsHandshakePeerClose(Socket socket, Exception error)
+    {
+        if (IsPeerReset(error)) return true;
+        if (error is not IOException) return false;
+        try
+        {
+            // SslStream reports handshake EOF as an IOException without an inner cause.
+            // A readable socket with no bytes confirms FIN without matching exception text.
+            return socket.Poll(0, SelectMode.SelectRead) && socket.Available == 0;
+        }
+        catch (SocketException socketError) { return IsPeerReset(socketError); }
+        catch (ObjectDisposedException) { return false; }
     }
 
     internal static IEnumerable<Measurement<long>> ObserveConnections()
@@ -252,7 +268,7 @@ internal static class ConnectionTelemetry
         private const int MaximumPoolNames = 64;
         private const int MaximumPoolNameLength = 256;
         private readonly Lock _gate = new();
-        private readonly Dictionary<(string Name, bool PubSub), Pool> _pools = [];
+        private readonly Dictionary<string, Pool> _pools = new(StringComparer.Ordinal);
         private Pool[] _snapshot = [];
         private Pool? _ordinaryOverflow;
         private Pool? _pubsubOverflow;
@@ -263,7 +279,7 @@ internal static class ConnectionTelemetry
             _ = RespireTelemetry.Meter;
             lock (_gate)
             {
-                if (_pools.TryGetValue((name, pubsub), out var existing)) return existing;
+                if (_pools.TryGetValue(name, out var existing)) return existing;
                 Pool pool;
                 if (name.Length > MaximumPoolNameLength || _pools.Count >= MaximumPoolNames)
                 {
@@ -274,7 +290,7 @@ internal static class ConnectionTelemetry
                 else
                 {
                     pool = new Pool(name, pubsub);
-                    _pools.Add((name, pubsub), pool);
+                    _pools.Add(name, pool);
                 }
                 Volatile.Write(ref _snapshot, [.. _snapshot, pool]);
                 return pool;

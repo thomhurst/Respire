@@ -387,11 +387,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
         catch (Exception error)
         {
+            var peerClosed = physicalConnected && !isUnixSocket
+                && ConnectionTelemetry.IsHandshakePeerClose(socket, error);
             try { if (tlsStream is not null) await tlsStream.DisposeAsync().ConfigureAwait(false); }
             catch { /* Preserve the original connection failure. */ }
             finally { socket.Dispose(); }
             if (physicalConnected && !isUnixSocket)
-                ConnectionTelemetry.ClosedBeforeHandshake(host, port, options, error, cancellationToken);
+                ConnectionTelemetry.ClosedBeforeHandshake(host, port, options, error, cancellationToken, peerClosed);
             throw;
         }
 

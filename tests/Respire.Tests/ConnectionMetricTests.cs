@@ -254,6 +254,31 @@ public class ConnectionMetricTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
+    public async Task PeerDisconnectDuringTlsSetupIsAServerClose(bool reset)
+    {
+        using var configuration = new MetricConfigurationScope();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        using var capture = new Capture(port);
+        var connect = RespireConnection.ConnectAsync("127.0.0.1", port,
+            new() { Protocol = RespProtocol.Resp2, UseTls = true }, cancellationToken: deadline.Token);
+        using var peer = await listener.AcceptSocketAsync(deadline.Token);
+        using var stream = new NetworkStream(peer, ownsSocket: false);
+        await Assert.That(await stream.ReadAsync(new byte[4096], deadline.Token)).IsGreaterThan(0);
+        if (reset) peer.LingerState = new LingerOption(true, 0);
+        else peer.Shutdown(SocketShutdown.Send);
+        if (reset) peer.Dispose();
+        await Assert.That(async () => await connect.WaitAsync(deadline.Token)).Throws<IOException>();
+        var closed = capture.Events.Single(item => item.Name == "redis.client.connection.closed");
+        await Assert.That(closed.Tags["redis.client.connection.close.reason"]).IsEqualTo("server_close");
+        await Assert.That(closed.Tags.ContainsKey("error.type")).IsFalse();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
     public async Task StreamedReplyStaysPendingUntilItsFrameDrains(bool discard)
     {
         using var configuration = new MetricConfigurationScope();
