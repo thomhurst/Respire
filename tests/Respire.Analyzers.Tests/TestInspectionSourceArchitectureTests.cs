@@ -16,6 +16,91 @@ public class TestInspectionSourceArchitectureTests
         "Respire.ClientSideCacheCoordinator", "Respire.RespireTransactionBase"];
 
     [Test]
+    [Arguments("new RespireConnection.TestInspection(owner)")]
+    [Arguments("new global::Respire.Networking.RespireConnection.TestInspection(owner)")]
+    [Arguments("new View(owner)")]
+    [Arguments("new(owner)")]
+    public async Task DirectViewConstructionCannotBypassFactoryGuard(string expression)
+    {
+        var source = """
+            using View = Respire.Networking.RespireConnection.TestInspection;
+            namespace Respire.Networking;
+            internal class RespireConnection
+            {
+                internal readonly ref struct TestInspection(RespireConnection owner) { }
+                internal TestInspection InspectForTests() => new(this);
+            }
+            internal class Consumer
+            {
+                internal static RespireConnection.TestInspection Create(RespireConnection owner) => EXPRESSION;
+            }
+            """.Replace("EXPRESSION", expression);
+        var root = Parse(source, false);
+        var compilation = CreateCompilation([root.SyntaxTree]);
+        await Assert.That(compilation.GetDiagnostics().Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error)).IsEmpty();
+        await Assert.That(FindFactoryUses(root)).Count().IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments("ref struct")]
+    [Arguments("readonly struct")]
+    [Arguments("struct")]
+    public async Task InventoryDetectsRemovedViewLifetimeModifiers(string replacement)
+    {
+        const string original = "namespace Respire.Networking; class RespireConnection { internal readonly ref struct TestInspection { } }";
+        var changed = original.Replace("readonly ref struct", replacement);
+        await Assert.That(FindOwnerSurface(Parse(changed, false))
+            .Except(FindOwnerSurface(Parse(original, false))).Count()).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments("struct")]
+    [Arguments("record")]
+    [Arguments("record struct")]
+    [Arguments("interface")]
+    public async Task InventoryRejectsUnsupportedOwnerKinds(string kind)
+    {
+        var root = Parse($"namespace Respire.Networking; {kind} RespireConnection {{ }}", false);
+        await Assert.That(() => FindOwnerSurface(root)).Throws<InvalidOperationException>();
+    }
+
+    [Test]
+    public async Task OwnerDiscoveryRequiresEveryQualifiedOwner()
+    {
+        var roots = Owners.Select(name => Parse($"namespace {name[..name.LastIndexOf('.')]} {{ class {name[(name.LastIndexOf('.') + 1)..]} {{ }} }}", false)).ToArray();
+        await Assert.That(FindMissingOwners(roots)).IsEmpty();
+        var omitted = roots[0];
+        await Assert.That(FindMissingOwners(roots.Skip(1))).IsEquivalentTo(
+            FindOwnerDeclarations(omitted).Select(owner => owner.Name));
+        await Assert.That(FindMissingOwners([Parse("namespace Other; class RespireConnection { }", false)]))
+            .IsEquivalentTo(Owners);
+    }
+
+    [Test]
+    public async Task ConstructionGuardPermitsDesignatedFactoriesAndUnrelatedViews()
+    {
+        const string source = """
+            namespace Respire.Networking
+            {
+                internal class RespireConnection
+                {
+                    internal readonly ref struct TestInspection(RespireConnection owner) { }
+                    internal TestInspection InspectForTests() => new(this);
+                }
+            }
+            namespace Other
+            {
+                internal class TestInspection { }
+                internal class Consumer { object Create() => new TestInspection(); }
+            }
+            """;
+        var root = Parse(source, false);
+        await Assert.That(CreateCompilation([root.SyntaxTree]).GetDiagnostics()
+            .Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error)).IsEmpty();
+        await Assert.That(FindFactoryUses(root)).IsEmpty();
+    }
+
+    [Test]
     [Arguments("")]
     [Arguments("internal")]
     [Arguments("public")]
@@ -150,7 +235,9 @@ public class TestInspectionSourceArchitectureTests
     [Arguments(true)]
     public async Task OwnerSurfaceMatchesReviewedInventory(bool net10)
     {
-        var actual = ReadLibrarySources().SelectMany(source => FindOwnerSurface(Parse(source.Text, net10)))
+        var roots = ReadLibrarySources().Select(source => Parse(source.Text, net10)).ToArray();
+        await Assert.That(FindMissingOwners(roots)).IsEmpty();
+        var actual = roots.SelectMany(FindOwnerSurface)
             .Order(StringComparer.Ordinal).ToArray();
         using var stream = OpenResource("TestInspectionOwnerSurface.txt");
         using var reader = new StreamReader(stream);
@@ -307,13 +394,10 @@ public class TestInspectionSourceArchitectureTests
     private static string[] FindOwnerSurface(SyntaxNode root)
     {
         var members = new List<string>();
-        foreach (var owner in root.DescendantNodes().OfType<ClassDeclarationSyntax>())
+        foreach (var (declaration, name) in FindOwnerDeclarations(root))
         {
-            if (owner.Ancestors().OfType<TypeDeclarationSyntax>().Any()) continue;
-            var namespaces = owner.Ancestors().OfType<BaseNamespaceDeclarationSyntax>().Reverse()
-                .Select(space => string.Concat(space.Name.DescendantTokens().Select(token => token.ValueText)));
-            var name = string.Join('.', namespaces.Append(owner.Identifier.ValueText));
-            if (!Owners.Contains(name)) continue;
+            if (declaration is not ClassDeclarationSyntax owner)
+                throw new InvalidOperationException($"Unsupported inspection owner kind: {name} ({declaration.Kind()})");
             if (owner.ParameterList is { } primaryConstructor)
                 members.Add($"{name} | constructor {owner.Identifier.ValueText}({Parameters(primaryConstructor)})");
             foreach (var member in owner.Members)
@@ -328,6 +412,21 @@ public class TestInspectionSourceArchitectureTests
         return members.ToArray();
     }
 
+    private static IEnumerable<(BaseTypeDeclarationSyntax Declaration, string Name)> FindOwnerDeclarations(SyntaxNode root)
+    {
+        foreach (var declaration in root.DescendantNodes().OfType<BaseTypeDeclarationSyntax>())
+        {
+            if (declaration.Ancestors().OfType<TypeDeclarationSyntax>().Any()) continue;
+            var namespaces = declaration.Ancestors().OfType<BaseNamespaceDeclarationSyntax>().Reverse()
+                .Select(space => string.Concat(space.Name.DescendantTokens().Select(token => token.ValueText)));
+            var name = string.Join('.', namespaces.Append(declaration.Identifier.ValueText));
+            if (Owners.Contains(name)) yield return (declaration, name);
+        }
+    }
+
+    private static string[] FindMissingOwners(IEnumerable<SyntaxNode> roots)
+        => Owners.Except(roots.SelectMany(FindOwnerDeclarations).Select(owner => owner.Name), StringComparer.Ordinal).ToArray();
+
     private static CSharpCompilation CreateCompilation(IEnumerable<SyntaxTree> trees)
         => CSharpCompilation.Create("InspectionGuard", trees,
             [MetadataReference.CreateFromFile(typeof(object).Assembly.Location)],
@@ -336,12 +435,24 @@ public class TestInspectionSourceArchitectureTests
     private static string[] FindFactoryUses(SyntaxNode root, SemanticModel? semanticModel = null)
     {
         semanticModel ??= CreateCompilation([root.SyntaxTree]).GetSemanticModel(root.SyntaxTree);
-        return root.DescendantNodes().OfType<SimpleNameSyntax>()
+        var factoryUses = root.DescendantNodes().OfType<SimpleNameSyntax>()
             .Where(name => name.Identifier.ValueText == FactoryName && !name.Ancestors()
                 .OfType<InvocationExpressionSyntax>().Any(call => call.Expression is IdentifierNameSyntax
                     { Identifier.Text: "nameof" } && semanticModel.GetOperation(call) is INameOfOperation))
-            .Select(name => $"line {name.GetLocation().GetLineSpan().StartLinePosition.Line + 1}: {name.Parent}")
-            .ToArray();
+            .Select(name => $"line {name.GetLocation().GetLineSpan().StartLinePosition.Line + 1}: {name.Parent}");
+        var constructions = root.DescendantNodes().OfType<BaseObjectCreationExpressionSyntax>()
+            .Where(creation => IsForbiddenViewConstruction(creation, semanticModel))
+            .Select(creation => $"line {creation.GetLocation().GetLineSpan().StartLinePosition.Line + 1}: {creation}");
+        return factoryUses.Concat(constructions).ToArray();
+    }
+
+    private static bool IsForbiddenViewConstruction(BaseObjectCreationExpressionSyntax creation, SemanticModel semanticModel)
+    {
+        if (semanticModel.GetTypeInfo(creation).Type is not INamedTypeSymbol
+            { Name: "TestInspection", ContainingType: { } owner } || !Owners.Contains(owner.ToDisplayString())) return false;
+        var method = creation.Ancestors().OfType<MethodDeclarationSyntax>().FirstOrDefault();
+        return method is null || semanticModel.GetDeclaredSymbol(method) is not { Name: FactoryName } factory
+            || !SymbolEqualityComparer.Default.Equals(factory.ContainingType, owner);
     }
 
     private static ExplicitInterfaceSpecifierSyntax? ExplicitInterface(MemberDeclarationSyntax member)
@@ -382,6 +493,8 @@ public class TestInspectionSourceArchitectureTests
                 var kind = type.Keyword.ValueText;
                 if (type is RecordDeclarationSyntax record)
                     kind = record.ClassOrStructKeyword.IsKind(SyntaxKind.StructKeyword) ? "record struct" : "record class";
+                kind = (type.Modifiers.Any(SyntaxKind.ReadOnlyKeyword) ? "readonly " : "")
+                    + (type.Modifiers.Any(SyntaxKind.RefKeyword) ? "ref " : "") + kind;
                 yield return $"{kind} {type.Identifier.ValueText}{Arity(type.TypeParameterList)}({Parameters(type.ParameterList)})";
                 break;
             case EnumDeclarationSyntax enumeration:

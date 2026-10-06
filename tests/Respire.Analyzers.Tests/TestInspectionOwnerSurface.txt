@@ -44,12 +44,12 @@ Respire.ClientSideCacheCoordinator | property Count : int
 Respire.ClientSideCacheCoordinator | property ReuseHashFields : bool
 Respire.ClientSideCacheCoordinator | property SharedReadRetirements : long
 Respire.ClientSideCacheCoordinator | property SizeBytes : long
-Respire.ClientSideCacheCoordinator | record struct QueryReadToken(ClientCacheCommandKey, RespireKey[], long, long, CacheStore, bool)
-Respire.ClientSideCacheCoordinator | record struct QueryRequest(ClientCacheCommandKey, RespireKey)
-Respire.ClientSideCacheCoordinator | record struct ReadToken(InflightRead, long, long, CacheStore)
-Respire.ClientSideCacheCoordinator | struct MutationFence()
+Respire.ClientSideCacheCoordinator | readonly record struct QueryReadToken(ClientCacheCommandKey, RespireKey[], long, long, CacheStore, bool)
+Respire.ClientSideCacheCoordinator | readonly record struct QueryRequest(ClientCacheCommandKey, RespireKey)
+Respire.ClientSideCacheCoordinator | readonly record struct ReadToken(InflightRead, long, long, CacheStore)
+Respire.ClientSideCacheCoordinator | readonly struct MutationFence()
 # Designated borrowed test-inspection view; compiled metadata tests enforce readonly ref struct.
-Respire.ClientSideCacheCoordinator | struct TestInspection(ClientSideCacheCoordinator)
+Respire.ClientSideCacheCoordinator | readonly ref struct TestInspection(ClientSideCacheCoordinator)
 Respire.Networking.PendingResponse | field WriteEnd : long
 Respire.Networking.PendingResponse | field WriteStart : long
 Respire.Networking.PendingResponse | method CompleteReservedResult(in RespValue) : bool
@@ -73,7 +73,7 @@ Respire.Networking.PendingResponse | property CommandName : string?
 Respire.Networking.PendingResponse | property Deadline : CommandDeadline
 Respire.Networking.PendingResponse | property State : long
 # Designated borrowed test-inspection view; compiled metadata tests enforce readonly ref struct.
-Respire.Networking.PendingResponse | struct TestInspection(PendingResponse)
+Respire.Networking.PendingResponse | readonly ref struct TestInspection(PendingResponse)
 Respire.Networking.RespireConnection | event MovingNotification : Action<Respire.Infrastructure.MovingAnnouncement>?
 Respire.Networking.RespireConnection | event PendingCommandsFailing : Action?
 Respire.Networking.RespireConnection | field LastQueuedMovingSequence : long
@@ -147,9 +147,9 @@ Respire.Networking.RespireConnection | property Port : int
 Respire.Networking.RespireConnection | property ServerClientId : long
 Respire.Networking.RespireConnection | property UndeliveredReplyCount : int
 Respire.Networking.RespireConnection | property WriteBufferCapacity : int
-Respire.Networking.RespireConnection | struct CredentialSequenceLease(SemaphoreSlim?)
+Respire.Networking.RespireConnection | readonly struct CredentialSequenceLease(SemaphoreSlim?)
 # Designated borrowed test-inspection view; compiled metadata tests enforce readonly ref struct.
-Respire.Networking.RespireConnection | struct TestInspection(RespireConnection)
+Respire.Networking.RespireConnection | readonly ref struct TestInspection(RespireConnection)
 Respire.RespireTransactionBase | constructor RespireTransactionBase(RespireClient, RespireConnection?, int?, RespireHashImportSession?)
 Respire.RespireTransactionBase | method CommitCoreAsync(CancellationToken, bool) : ValueTask<bool>
 Respire.RespireTransactionBase | method Decrement(RespireKey, long) : RespirePending<long>
@@ -193,4 +193,4 @@ Respire.RespireTransactionBase | property Strings : IBatchStringCommands
 Respire.RespireTransactionBase | property VectorSets : IBatchVectorSetCommands
 Respire.RespireTransactionBase | property WatchPool : DedicatedConnectionPool?
 # Designated borrowed test-inspection view; compiled metadata tests enforce readonly ref struct.
-Respire.RespireTransactionBase | struct TestInspection(RespireTransactionBase)
+Respire.RespireTransactionBase | readonly ref struct TestInspection(RespireTransactionBase)
