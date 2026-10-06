@@ -103,7 +103,7 @@ public class AsyncFlushSignalTests
         await RunProbeAsync(start, TimeSpan.FromSeconds(30));
     }
 
-    private static ProcessStartInfo CreateProbeStartInfo(string? processPath, string? dotnetHostPath, string assemblyPath)
+    internal static ProcessStartInfo CreateProbeStartInfo(string? processPath, string? dotnetHostPath, string assemblyPath)
     {
         var processName = Path.GetFileName(processPath);
         // Unix apphosts have no executable suffix; dots in the assembly name are significant.
@@ -165,7 +165,7 @@ public class AsyncFlushSignalTests
         else await Assert.That(error.Message).Contains("code 17");
     }
 
-    private static async Task RunProbeAsync(ProcessStartInfo start, TimeSpan timeout)
+    internal static async Task RunProbeAsync(ProcessStartInfo start, TimeSpan timeout)
     {
         using var process = Process.Start(start)!;
         using var readDeadline = new CancellationTokenSource();
@@ -196,9 +196,9 @@ public class AsyncFlushSignalTests
         catch (Exception error) { failure = failure is null ? error : new AggregateException(failure, error); }
         var diagnostics = $"stdout: {(output.IsCompletedSuccessfully ? output.Result : "<unavailable>")}"
             + $"{Environment.NewLine}stderr: {(errors.IsCompletedSuccessfully ? errors.Result : "<unavailable>")}";
-        if (failure is not null) throw new InvalidOperationException($"Allocation probe failed. {diagnostics}", failure);
+        if (failure is not null) throw new InvalidOperationException($"Isolated probe failed. {diagnostics}", failure);
         if (process.ExitCode != 0)
-            throw new InvalidOperationException($"Allocation probe exited with code {process.ExitCode}. {diagnostics}");
+            throw new InvalidOperationException($"Isolated probe exited with code {process.ExitCode}. {diagnostics}");
     }
 
     internal static int? RunIsolatedAllocationProbe()

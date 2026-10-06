@@ -13,6 +13,108 @@ namespace Respire.Tests;
 [NotInParallel]
 public class ConnectionMetricCleanupTests
 {
+    private const string QueuedSelectionProbe = "RESPIRE_TEST_METRIC_QUEUED_SELECTION";
+
+    [Test]
+    public async Task QueuedLifecycleDeliveryRetainsEventTimeGroupSelection()
+    {
+        // Constrain only a fresh child process, never the parallel test runner.
+        var start = AsyncFlushSignalTests.CreateProbeStartInfo(Environment.ProcessPath,
+            Environment.GetEnvironmentVariable("DOTNET_HOST_PATH"), typeof(ConnectionMetricCleanupTests).Assembly.Location);
+        start.Environment[QueuedSelectionProbe] = Environment.Version.ToString();
+        await AsyncFlushSignalTests.RunProbeAsync(start, TimeSpan.FromSeconds(30));
+    }
+
+    internal static int? RunIsolatedQueuedSelectionProbe()
+    {
+        var expectedRuntime = Environment.GetEnvironmentVariable(QueuedSelectionProbe);
+        if (expectedRuntime is null) return null;
+        try
+        {
+            Require(expectedRuntime == Environment.Version.ToString(), "Probe runtime differs from the parent.");
+            RunQueuedSelectionProbe();
+            return 0;
+        }
+        catch (Exception error) { Console.Error.WriteLine(error); return 1; }
+    }
+
+    private static void RunQueuedSelectionProbe()
+    {
+        RespireMetrics.Configure(new() { Groups = RespireMetricGroups.All });
+        var server = new FakeRespServer(1, FakeRespServer.PongReply);
+        RespireConnection? connection = null;
+        try
+        {
+            connection = RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+                new() { Protocol = RespProtocol.Resp2 }).GetAwaiter().GetResult();
+            using var listener = new MeterListener();
+            var deliveries = 0;
+            listener.InstrumentPublished = (instrument, current) =>
+            {
+                if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.connection.wait_time")
+                    current.EnableMeasurementEvents(instrument);
+            };
+            listener.SetMeasurementEventCallback<double>((_, _, _, _) => Interlocked.Increment(ref deliveries));
+            listener.Start();
+            var droppedBefore = ConnectionTelemetry.DroppedMeasurements;
+            ThreadPool.GetMinThreads(out var minWorkers, out var minIo);
+            ThreadPool.GetMaxThreads(out var maxWorkers, out var maxIo);
+            using var entered = new ManualResetEventSlim();
+            using var release = new ManualResetEventSlim();
+            using var finished = new ManualResetEventSlim();
+            var gateQueued = false;
+            try
+            {
+                Require(ThreadPool.SetMinThreads(1, minIo) && ThreadPool.SetMaxThreads(1, maxIo),
+                    "Could not configure the isolated one-worker pool.");
+                gateQueued = ThreadPool.UnsafeQueueUserWorkItem(_ =>
+                {
+                    entered.Set();
+                    // Only the test releases this gate; the parent bounds the child lifetime.
+                    release.Wait();
+                    finished.Set();
+                }, 0, preferLocal: false);
+                Require(gateQueued, "Could not queue the worker gate.");
+                Require(entered.Wait(TimeSpan.FromSeconds(5)), "Worker gate did not start.");
+                connection.RecordConnectionWait(System.Diagnostics.Stopwatch.GetTimestamp());
+                Require(ConnectionTelemetry.PendingMeasurements == 1, "Expected one accepted measurement.");
+                Require(Volatile.Read(ref deliveries) == 0 && !finished.IsSet,
+                    "Measurement callback must remain queued before groups change.");
+                RespireMetrics.Configure(new() { Groups = RespireMetricGroups.None });
+                release.Set();
+                Require(SpinWait.SpinUntil(() => ConnectionTelemetry.PendingMeasurements == 0,
+                    TimeSpan.FromSeconds(5)), "Queued measurement did not drain.");
+                Require(Volatile.Read(ref deliveries) == 1, "Group change discarded the queued measurement.");
+                connection.RecordConnectionWait(System.Diagnostics.Stopwatch.GetTimestamp());
+                Require(ConnectionTelemetry.PendingMeasurements == 0 && Volatile.Read(ref deliveries) == 1,
+                    "Disabled groups selected a new measurement.");
+                Require(ConnectionTelemetry.DroppedMeasurements == droppedBefore, "Probe dropped a measurement.");
+            }
+            finally
+            {
+                release.Set();
+                ThreadPool.SetMaxThreads(maxWorkers, maxIo);
+                ThreadPool.SetMinThreads(minWorkers, minIo);
+                if (gateQueued)
+                    Require(finished.Wait(TimeSpan.FromSeconds(5)), "Worker gate did not finish.");
+            }
+        }
+        finally
+        {
+            try
+            {
+                if (connection is not null)
+                    connection.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+            }
+            finally { server.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult(); }
+        }
+    }
+
+    private static void Require(bool condition, string message)
+    {
+        if (!condition) throw new InvalidOperationException(message);
+    }
+
     [Test]
     public async Task BlockedLifecycleDeliveriesAreBoundedAndResumeAfterDrain()
     {
@@ -42,6 +144,9 @@ public class ConnectionMetricCleanupTests
                 connection.RecordConnectionWait(System.Diagnostics.Stopwatch.GetTimestamp());
             pendingWhileBlocked = ConnectionTelemetry.PendingMeasurements;
             drops.RecordObservableInstruments();
+            // Accepted measurements retain selection; the isolated probe separately
+            // guarantees that a callback has not started before the group change.
+            RespireMetrics.Configure(new() { Groups = RespireMetricGroups.None });
         }
         finally { listener.Release(); }
 
@@ -51,10 +156,88 @@ public class ConnectionMetricCleanupTests
         await Assert.That(ConnectionTelemetry.DroppedMeasurements - droppedBefore).IsEqualTo(193L);
         await Assert.That(exportedWhileBlocked - droppedBefore).IsEqualTo(193L);
 
+        RespireMetrics.Configure(new() { Groups = RespireMetricGroups.All });
         connection.RecordConnectionWait(System.Diagnostics.Stopwatch.GetTimestamp());
         await WaitForDeliveries();
         await Assert.That(listener.Deliveries).IsEqualTo(65);
         await Assert.That(ConnectionTelemetry.DroppedMeasurements - droppedBefore).IsEqualTo(193L);
+    }
+
+    [Test]
+    public async Task BlockedPoolListenersDoNotSerializeOtherPoolDelivery()
+    {
+        using var configuration = new MetricConfigurationScope();
+        await using var server = new FakeRespServer(1, FakeRespServer.PongReply);
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+            new() { Protocol = RespProtocol.Resp2 });
+        var blocked = new ConnectionTelemetry.State(connection, new("blocked", false), true);
+        var available = new ConnectionTelemetry.State(connection, new("available", false), true);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var delivered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var blockedCount = 0;
+        var droppedBefore = ConnectionTelemetry.DroppedMeasurements;
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, current) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.connection.wait_time")
+                current.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<double>((_, _, tags, _) =>
+        {
+            foreach (var tag in tags)
+            {
+                if (tag.Key != "db.client.connection.pool.name") continue;
+                if (Equals(tag.Value, "available")) { delivered.TrySetResult(); return; }
+                if (!Equals(tag.Value, "blocked")) continue;
+                if (Interlocked.Increment(ref blockedCount) == 4) entered.TrySetResult();
+                release.Task.GetAwaiter().GetResult();
+            }
+        });
+        listener.Start();
+        try
+        {
+            for (var i = 0; i < 4; i++) blocked.Waited(System.Diagnostics.Stopwatch.GetTimestamp());
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            available.Waited(System.Diagnostics.Stopwatch.GetTimestamp());
+            await delivered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(ConnectionTelemetry.DroppedMeasurements).IsEqualTo(droppedBefore);
+        }
+        finally
+        {
+            release.TrySetResult();
+            await WaitForDeliveries();
+        }
+    }
+
+    [Test]
+    public async Task ThrowingLifecycleListenersReleaseDeliveryCapacity()
+    {
+        using var configuration = new MetricConfigurationScope();
+        await using var server = new FakeRespServer(1, FakeRespServer.PongReply);
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+            new() { Protocol = RespProtocol.Resp2 });
+        var delivered = 0;
+        var droppedBefore = ConnectionTelemetry.DroppedMeasurements;
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, current) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.connection.wait_time")
+                current.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<double>((_, _, _, _) =>
+        {
+            Interlocked.Increment(ref delivered);
+            throw new InvalidOperationException("Listener failure.");
+        });
+        listener.Start();
+        for (var burst = 0; burst < 2; burst++)
+        {
+            for (var i = 0; i < 64; i++) connection.RecordConnectionWait(System.Diagnostics.Stopwatch.GetTimestamp());
+            await WaitForDeliveries();
+        }
+        await Assert.That(delivered).IsEqualTo(128);
+        await Assert.That(ConnectionTelemetry.DroppedMeasurements).IsEqualTo(droppedBefore);
     }
 
     private static async Task WaitForDeliveries()
