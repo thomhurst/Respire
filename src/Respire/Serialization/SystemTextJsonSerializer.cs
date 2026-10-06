@@ -41,13 +41,15 @@ public sealed class SystemTextJsonSerializer : IRespireSerializer
     public void Serialize<T>(IBufferWriter<byte> destination, T value)
     {
         var writer = RentWriter(destination);
+        var completed = false;
         try
         {
             JsonSerializer.Serialize(writer, value, GetTypeInfo<T>());
+            completed = true;
         }
         finally
         {
-            ReturnWriter(writer);
+            ReturnWriter(writer, completed);
         }
     }
 
@@ -64,19 +66,22 @@ public sealed class SystemTextJsonSerializer : IRespireSerializer
     {
         ArgumentNullException.ThrowIfNull(type);
         var writer = RentWriter(destination);
+        var completed = false;
         try
         {
             if (_context is not null)
             {
                 JsonSerializer.Serialize(writer, value, type, _context);
-                return;
             }
-
-            JsonSerializer.Serialize(writer, value, type, _options);
+            else
+            {
+                JsonSerializer.Serialize(writer, value, type, _options);
+            }
+            completed = true;
         }
         finally
         {
-            ReturnWriter(writer);
+            ReturnWriter(writer, completed);
         }
     }
 
@@ -94,7 +99,13 @@ public sealed class SystemTextJsonSerializer : IRespireSerializer
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     private JsonTypeInfo<T> GetTypeInfo<T>()
-        => TypeInfoCache<T>.Values.GetValue(this, static serializer => serializer.ResolveTypeInfo<T>());
+    {
+        return TypeInfoCache<T>.Values.GetValue(this, Resolve);
+
+        [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+        [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+        static JsonTypeInfo<T> Resolve(SystemTextJsonSerializer serializer) => serializer.ResolveTypeInfo<T>();
+    }
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
@@ -126,13 +137,25 @@ public sealed class SystemTextJsonSerializer : IRespireSerializer
         return writer;
     }
 
-    private static void ReturnWriter(Utf8JsonWriter writer)
+    private static void ReturnWriter(Utf8JsonWriter writer, bool completed)
     {
-        // Preserve Dispose's flush behavior on converter failure, then detach caller-owned memory.
-        // If Flush throws, this writer is discarded rather than retained in thread-local storage.
-        writer.Flush();
-        writer.Reset(DetachedDestination);
-        if (s_writer is null) s_writer = writer;
-        else writer.Dispose();
+        var flushed = false;
+        try
+        {
+            // Preserve partial-output flushing on converter failure without masking its exception.
+            writer.Flush();
+            flushed = true;
+        }
+        catch when (!completed)
+        {
+            // The serialization exception is already propagating. Discard this writer below.
+        }
+        finally
+        {
+            // Detach even on flush failure, so disposal cannot retry a broken caller destination.
+            writer.Reset(DetachedDestination);
+            if (flushed && s_writer is null) s_writer = writer;
+            else writer.Dispose();
+        }
     }
 }

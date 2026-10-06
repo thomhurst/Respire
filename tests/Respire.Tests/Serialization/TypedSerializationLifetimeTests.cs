@@ -87,6 +87,66 @@ public class TypedSerializationLifetimeTests
     }
 
     private sealed record TextPayload(string Text);
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DestinationFailureDoesNotMaskConverterFailure(bool typeBased)
+    {
+        var options = new JsonSerializerOptions();
+        options.Converters.Add(new NestedConverter());
+        var serializer = new SystemTextJsonSerializer(options);
+        var destination = new FailingDestination();
+        Exception? failure = null;
+        try
+        {
+            if (typeBased) serializer.Serialize(destination, typeof(Outer), new Outer(-1));
+            else serializer.Serialize(destination, new Outer(-1));
+        }
+        catch (Exception exception) { failure = exception; }
+
+        await Assert.That(failure?.Message).IsEqualTo("Converter failed after writing a prefix.");
+        await Assert.That(destination.AdvanceCalls).IsEqualTo(1);
+        var healthy = new ArrayBufferWriter<byte>();
+        serializer.Serialize(healthy, 42);
+        await Assert.That(Encoding.UTF8.GetString(healthy.WrittenSpan)).IsEqualTo("42");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DestinationFailureStillPropagatesWithoutConverterFailure(bool typeBased)
+    {
+        var serializer = new SystemTextJsonSerializer();
+        var destination = new FailingDestination();
+        Exception? failure = null;
+        try
+        {
+            if (typeBased) serializer.Serialize(destination, typeof(int), 42);
+            else serializer.Serialize(destination, 42);
+        }
+        catch (Exception exception) { failure = exception; }
+
+        await Assert.That(failure).IsSameReferenceAs(destination.Failure);
+        var healthy = new ArrayBufferWriter<byte>();
+        serializer.Serialize(healthy, 43);
+        await Assert.That(Encoding.UTF8.GetString(healthy.WrittenSpan)).IsEqualTo("43");
+    }
+
+    private sealed class FailingDestination : IBufferWriter<byte>
+    {
+        private readonly ArrayBufferWriter<byte> _buffer = new();
+        internal readonly IOException Failure = new("Destination failed.");
+        internal int AdvanceCalls;
+        public void Advance(int count)
+        {
+            AdvanceCalls++;
+            throw Failure;
+        }
+        public Memory<byte> GetMemory(int sizeHint = 0) => _buffer.GetMemory(sizeHint);
+        public Span<byte> GetSpan(int sizeHint = 0) => _buffer.GetSpan(sizeHint);
+    }
+
     private sealed record Outer(int Value);
 
     private sealed class NestedConverter : JsonConverter<Outer>
