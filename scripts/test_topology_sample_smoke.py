@@ -192,9 +192,11 @@ class LifecycleContracts(unittest.TestCase):
     def test_existing_image_prevents_cleanup_ownership(self):
         with tempfile.TemporaryDirectory() as folder:
             smoke = self.smoke(folder)
-            smoke.run = lambda command, name: "existing-image-id" if name == "existing-image" else ""
+            smoke.run = Mock(side_effect=lambda command, name: "existing-image-id" if name == "existing-image" else "")
             with self.assertRaisesRegex(RuntimeError, "image already exists"):
                 smoke.execute()
+            smoke.run.assert_any_call(
+                ["docker", "image", "ls", "--format", "{{.ID}}", "controlled-smoke-cluster:latest"], "existing-image")
             self.assertFalse(smoke.owned)
             self.assertFalse((Path(folder) / "owned-project.txt").exists())
 

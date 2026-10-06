@@ -74,4 +74,5 @@ another sample project or stops shared Redis services.
 
 If the Docker daemon itself is unavailable during cleanup, the run fails and
 retains `owned-project.txt` and cleanup logs. Once Docker recovers, use the exact
-recorded project with the matching sample Compose file and `down --volumes`.
+recorded project with the matching sample Compose file and
+`down --volumes --remove-orphans --rmi local --timeout 10`.

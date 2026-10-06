@@ -200,6 +200,7 @@ class Smoke:
         print(f"PASS: {self.args.sample} {self.args.framework} smoke", flush=True)
 
     def cleanup(self):
+        # Signals stay ignored only through the bounded process stop and Compose commands below.
         previous = {kind: signal.signal(kind, signal.SIG_IGN) for kind in (signal.SIGINT, signal.SIGTERM)}
         try:
             try:
