@@ -18,7 +18,10 @@ public class ClusterMigrationCommandTests
         await using var target = Server(6);
         await using var client = RespireClient.Create(Options(seed.Port, protocol));
         var node = client.WithKeyPrefix("ignored:").Server.OnNode(new("127.0.0.1", target.Port));
-        await Assert.That(await node.ClusterMigrationImportAsync([new(20, 30), new(0, 10), new(16383, 16383)])).IsEqualTo("task");
+        RespireClusterSlotRange[] ranges = [new(20, 30), new(0, 10), new(16383, 16383)];
+        await Assert.That(await node.ClusterMigrationImportAsync(ranges)).IsEqualTo("task");
+        await Assert.That(ranges).IsEquivalentTo(
+            [new RespireClusterSlotRange(20, 30), new(0, 10), new(16383, 16383)], CollectionOrdering.Matching);
         await Assert.That(await node.ClusterMigrationCancelAsync("task id")).IsEqualTo(1L);
         await Assert.That(await node.ClusterMigrationCancelAllAsync()).IsEqualTo(1L);
         await Assert.That(await node.ClusterMigrationStatusAsync()).IsEmpty();
@@ -26,7 +29,7 @@ public class ClusterMigrationCommandTests
         await Assert.That(await node.ClusterMigrationStatusAsync(RespireClusterMigrationStatusScope.Default)).IsEmpty();
         string[][] expected =
         [
-            ["CLUSTER", "MIGRATION", "IMPORT", "20", "30", "0", "10", "16383", "16383"],
+            ["CLUSTER", "MIGRATION", "IMPORT", "0", "10", "20", "30", "16383", "16383"],
             ["CLUSTER", "MIGRATION", "CANCEL", "ID", "task id"],
             ["CLUSTER", "MIGRATION", "CANCEL", "ALL"],
             ["CLUSTER", "MIGRATION", "STATUS", "ALL"],
@@ -38,6 +41,21 @@ public class ClusterMigrationCommandTests
         for (var index = 0; index < actual.Length; index++)
             await Assert.That(actual[index].Select(bytes => Encoding.UTF8.GetString(bytes))).IsEquivalentTo(expected[index], CollectionOrdering.Matching);
         await Assert.That(seed.ConnectionAccepted.IsCompleted).IsFalse();
+    }
+
+    [Test]
+    [Arguments(1)]
+    [Arguments(16383)]
+    public async Task ValidRangeCountsReachSelectedNode(int count)
+    {
+        await using var target = Server(1);
+        await using var client = RespireClient.Create(Options(target.Port, 2));
+        var node = client.Server.OnNode(new("127.0.0.1", target.Port));
+        RespireClusterSlotRange[] ranges = count == 1
+            ? [new(0, 16383)]
+            : Enumerable.Range(0, count).Select(slot => new RespireClusterSlotRange(slot, slot)).ToArray();
+        await Assert.That(await node.ClusterMigrationImportAsync(ranges)).IsEqualTo("task");
+        await Assert.That(target.ReceivedArguments.Single().Length).IsEqualTo(count * 2 + 3);
     }
 
     [Test]
@@ -67,7 +85,7 @@ public class ClusterMigrationCommandTests
                     {
                         "empty" => [], "negative" => [new(-1, 0)], "large" => [new(0, 16384)],
                         "reverse" => [new(2, 1)], "overlap" => [new(0, 2), new(2, 3)],
-                        _ => new RespireClusterSlotRange[16384],
+                        _ => Enumerable.Range(0, 16384).Select(slot => new RespireClusterSlotRange(slot, slot)).ToArray(),
                     };
                     await node.ClusterMigrationImportAsync(ranges); break;
             }

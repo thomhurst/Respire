@@ -31,12 +31,14 @@ public sealed partial class RespireServerNode
 {
     /// <summary>Starts atomic import of inclusive slot ranges into this destination primary. Requires AllowAdmin and Redis 8.4+.</summary>
     /// <remarks>Returns an owned task ID, not completion. Ranges must be non-overlapping and within 0–16383.
+    /// Ranges are copied and sent in ascending slot order without changing the caller's input.
     /// Uses only this endpoint and never replays. Cancellation or connection loss can leave a running task.
     /// Poll status and reconcile topology independently; this call does not refresh the client's routing table.</remarks>
     public ValueTask<string> ClusterMigrationImportAsync(ReadOnlySpan<RespireClusterSlotRange> ranges,
         CancellationToken cancellationToken = default)
     {
         if (ranges.IsEmpty) throw new ArgumentException("At least one slot range is required.", nameof(ranges));
+        // Redis 8.4/8.10 slotRangeArrayNormalizeAndValidate rejects 16384 ranges before merging them.
         if (ranges.Length >= 16384) throw new ArgumentOutOfRangeException(nameof(ranges), "Redis accepts fewer than 16384 ranges.");
         var ordered = ranges.ToArray();
         Array.Sort(ordered, static (left, right) => left.Start.CompareTo(right.Start));
@@ -50,8 +52,8 @@ public sealed partial class RespireServerNode
             if (range.Start <= previousEnd)
                 throw new ArgumentException("Slot ranges must be non-overlapping.", nameof(ranges));
             previousEnd = range.End;
-            arguments[index * 2] = ranges[index].Start;
-            arguments[index * 2 + 1] = ranges[index].End;
+            arguments[index * 2] = range.Start;
+            arguments[index * 2 + 1] = range.End;
         }
         return ExecuteAsync("CLUSTER MIGRATION IMPORT", arguments, ClusterMigrationParser.TaskId,
             cancellationToken, NodeCallKind.Mutation);
