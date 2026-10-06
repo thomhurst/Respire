@@ -1,2 +1,3 @@
 # Git patch syntax requires LF even when source files use CRLF on Windows.
 scripts/benchmarks/ReadySendStrategy.patch text eol=lf
+samples/**/*.sh text eol=lf

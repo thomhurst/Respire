@@ -1,0 +1,16 @@
+services:
+  cluster:
+    build: .
+    init: true
+    tmpfs:
+      - /data
+    ports:
+      - "127.0.0.1:7000:7000"
+      - "127.0.0.1:7001:7001"
+      - "127.0.0.1:7002:7002"
+    healthcheck:
+      test: ["CMD-SHELL", "for port in 7000 7001 7002; do redis-cli -p $$port CLUSTER INFO | grep -q 'cluster_state:ok' || exit 1; done"]
+      interval: 1s
+      timeout: 3s
+      retries: 45
+    stop_grace_period: 5s

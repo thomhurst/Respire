@@ -60,6 +60,8 @@ jobs:
             tests/Respire.Caching.Tests \
             tests/Respire.Caching.Hybrid.Tests \
             samples/Respire.Samples.Testing \
+            samples/Respire.Samples.Cluster \
+            samples/Respire.Samples.Sentinel \
             samples/Respire.Samples.Azure
           do
             dotnet build "$project" -c Release -f net10.0
@@ -229,6 +231,8 @@ jobs:
           for project in \
             tests/Respire.Tests \
             samples/Respire.Samples.Testing \
+            samples/Respire.Samples.Cluster \
+            samples/Respire.Samples.Sentinel \
             samples/Respire.Samples.Azure
           do
             dotnet build "$project" -c Release -f net8.0
