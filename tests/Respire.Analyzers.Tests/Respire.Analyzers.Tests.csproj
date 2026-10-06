@@ -23,6 +23,7 @@
     </ItemGroup>
 
     <ItemGroup>
+        <EmbeddedResource Include="TestInspectionOwnerSurface.txt" LogicalName="TestInspectionOwnerSurface.txt" />
         <!-- Test the exact library source without depending on a checkout at test runtime. -->
         <EmbeddedResource Include="../../src/**/*.cs" Exclude="../../src/**/bin/**;../../src/**/obj/**"
                           LogicalName="LibrarySource/%(RecursiveDir)%(Filename)%(Extension)" />

@@ -1,0 +1,179 @@
+# Reviewed operational and inspection declaration headers for the four owners.
+Respire.ClientSideCacheCoordinator | internal MutationFence BeforeCommand<TCommand>(string operation, in TCommand command) where TCommand : struct, IRespCommand
+Respire.ClientSideCacheCoordinator | internal MutationFence BeginUnknownMutation()
+Respire.ClientSideCacheCoordinator | internal QueryReadToken BeginRead(string operation, in QueryRequest request)
+Respire.ClientSideCacheCoordinator | internal QueryReadToken RebaseRead(in QueryReadToken token);
+Respire.ClientSideCacheCoordinator | internal ReadToken BeginRead(in RespireKey key)
+Respire.ClientSideCacheCoordinator | internal ReadToken RebaseRead(in ReadToken token)
+Respire.ClientSideCacheCoordinator | internal TestInspection InspectForTests();
+Respire.ClientSideCacheCoordinator | internal ValueTask<RespValue> CoalesceReadAsync<TState>(ClientCacheCommandKey identity, TState state, Func<TState, CancellationToken, ValueTask<RespValue>> read, CancellationToken cancellationToken)
+Respire.ClientSideCacheCoordinator | internal bool CanTrack(in RespireKey key);
+Respire.ClientSideCacheCoordinator | internal bool CoalesceConcurrentMisses;
+Respire.ClientSideCacheCoordinator | internal bool ReuseHashFields;
+Respire.ClientSideCacheCoordinator | internal bool TryGet(in QueryRequest request, out RespValue value)
+Respire.ClientSideCacheCoordinator | internal bool TryGet(in RespireKey key, out RespValue value)
+Respire.ClientSideCacheCoordinator | internal bool TryPeek(in QueryRequest request, out RespValue value)
+Respire.ClientSideCacheCoordinator | internal bool TryPeek(in RespireKey key, out RespValue value)
+Respire.ClientSideCacheCoordinator | internal enum CacheRemoval { }
+Respire.ClientSideCacheCoordinator | internal enum MutationFenceKind : byte { }
+Respire.ClientSideCacheCoordinator | internal int ActiveSharedReadCount { get }
+Respire.ClientSideCacheCoordinator | internal int FlushForContinuityLossWithoutMetrics();
+Respire.ClientSideCacheCoordinator | internal readonly record struct QueryReadToken(ClientCacheCommandKey Query, RespireKey[] Dependencies, long QueryEpoch, long ContinuityEpoch, CacheStore Store, bool CanCache);
+Respire.ClientSideCacheCoordinator | internal readonly record struct QueryRequest(ClientCacheCommandKey Query, RespireKey PrimaryKey);
+Respire.ClientSideCacheCoordinator | internal readonly record struct ReadToken(InflightRead State, long Generation, long ContinuityEpoch, CacheStore Store);
+Respire.ClientSideCacheCoordinator | internal readonly ref struct TestInspection(ClientSideCacheCoordinator owner) { }
+Respire.ClientSideCacheCoordinator | internal readonly struct MutationFence { }
+Respire.ClientSideCacheCoordinator | internal sealed class CacheEntry(byte[]? payload, long size, long expiresAt) { }
+Respire.ClientSideCacheCoordinator | internal sealed class CacheStore { }
+Respire.ClientSideCacheCoordinator | internal sealed class InflightRead(RespireKey key, bool canCache) { }
+Respire.ClientSideCacheCoordinator | internal sealed class QueryCacheEntry(RespValue value, RespireKey[] dependencies, long size, long expiresAt) { }
+Respire.ClientSideCacheCoordinator | internal static bool CanCacheOperation(string operation);
+Respire.ClientSideCacheCoordinator | internal static bool TryCreateQuery<TCommand>(string operation, in TCommand command, out QueryRequest request) where TCommand : struct, IRespCommand
+Respire.ClientSideCacheCoordinator | internal static long SharedReadRetirements;
+Respire.ClientSideCacheCoordinator | internal static void PublishContinuityFlushMetrics(int removed);
+Respire.ClientSideCacheCoordinator | internal void CompleteMutation(in MutationFence fence)
+Respire.ClientSideCacheCoordinator | internal void CompleteRead(in QueryReadToken token, in RespValue response, bool allowInsert)
+Respire.ClientSideCacheCoordinator | internal void CompleteRead(in ReadToken token, in RespValue response, bool allowInsert)
+Respire.ClientSideCacheCoordinator | internal void FlushForContinuityLoss();
+Respire.ClientSideCacheCoordinator | internal void FlushForMovingRetirementFence()
+Respire.ClientSideCacheCoordinator | internal void FlushForUnknownCommand();
+Respire.ClientSideCacheCoordinator | internal void HandlePush(in RespValue push)
+Respire.ClientSideCacheCoordinator | internal void Invalidate(in RespireKey key, RespireClientCacheInvalidationReason reason)
+Respire.ClientSideCacheCoordinator | internal void RemoveInvalidationObserver(RespireClientCacheInvalidationSubscription subscription)
+Respire.ClientSideCacheCoordinator | internal void StopInvalidationObservers()
+Respire.ClientSideCacheCoordinator | internal void StopSharedReads()
+Respire.ClientSideCacheCoordinator | public ClientSideCacheCoordinator(RespireClientSideCacheOptions options)
+Respire.ClientSideCacheCoordinator | public IRespireClientCacheInvalidationSubscription SubscribeInvalidations(RespireKey key, Action<RespireClientCacheInvalidation> observer, CancellationToken cancellationToken)
+Respire.ClientSideCacheCoordinator | public RespireClientSideCacheStatistics GetStatistics()
+Respire.ClientSideCacheCoordinator | public int Count;
+Respire.ClientSideCacheCoordinator | public long SizeBytes;
+Respire.ClientSideCacheCoordinator | public void Clear();
+Respire.Networking.PendingResponse | [MethodImpl(MethodImplOptions.AggressiveInlining)] internal void RegisterCancellation(CancellationToken cancellationToken)
+Respire.Networking.PendingResponse | internal CommandDeadline Deadline { get; set; }
+Respire.Networking.PendingResponse | internal TestInspection InspectForTests();
+Respire.Networking.PendingResponse | internal bool TrySetTimedOut(long observedState, TimeSpan timeout, ref RespireTimeoutDiagnostics? diagnostics, RespireConnection? connection)
+Respire.Networking.PendingResponse | internal long State;
+Respire.Networking.PendingResponse | internal long WriteEnd;
+Respire.Networking.PendingResponse | internal long WriteStart;
+Respire.Networking.PendingResponse | internal readonly ref struct TestInspection(PendingResponse owner) { }
+Respire.Networking.PendingResponse | internal static bool IsCompleted(long state);
+Respire.Networking.PendingResponse | internal virtual bool CompleteReservedResult(in RespValue result)
+Respire.Networking.PendingResponse | internal virtual bool TryReserveResult();
+Respire.Networking.PendingResponse | internal virtual string? CommandName;
+Respire.Networking.PendingResponse | internal void PrepareForUse(int receiveReferences);
+Respire.Networking.PendingResponse | internal void ReleaseRef()
+Respire.Networking.PendingResponse | protected abstract void ResetAndReturn();
+Respire.Networking.PendingResponse | protected abstract void SetExceptionCore(Exception exception);
+Respire.Networking.PendingResponse | protected abstract void SetResultCore(in RespValue result);
+Respire.Networking.PendingResponse | protected virtual Exception PrepareException(Exception exception);
+Respire.Networking.PendingResponse | protected void ReleaseCallerRef()
+Respire.Networking.PendingResponse | public bool TrySetCanceled(CancellationToken cancellationToken)
+Respire.Networking.PendingResponse | public bool TrySetException(Exception exception)
+Respire.Networking.PendingResponse | public virtual bool TrySetResult(in RespValue result)
+Respire.Networking.RespireConnection | [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))] internal async ValueTask<CredentialSequenceLease> AcquireCredentialSequenceAsync(CancellationToken cancellationToken)
+Respire.Networking.RespireConnection | [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))] internal async ValueTask<ValueTask<RespValue>> EnqueuePinnedAsync<TCommand>(TCommand command, CancellationToken cancellationToken, string commandName) where TCommand : struct, IRespCommand
+Respire.Networking.RespireConnection | internal (string Host, int Port) PeerKey;
+Respire.Networking.RespireConnection | internal CommandDeadline GetReroutedCommandDeadline(CommandDeadline deadline)
+Respire.Networking.RespireConnection | internal Exception? CloseError;
+Respire.Networking.RespireConnection | internal Respire.Infrastructure.MovingAnnouncement? LastMovingAnnouncement;
+Respire.Networking.RespireConnection | internal Respire.Infrastructure.RespireConnectionMultiplexer? Multiplexer { get; set; }
+Respire.Networking.RespireConnection | internal RespireTimeoutDiagnostics CaptureDedicatedTimeoutDiagnostics()
+Respire.Networking.RespireConnection | internal RespireTimeoutDiagnostics CaptureTimeoutDiagnostics(long writeStart, long writeEnd, RespireCommandStage stage)
+Respire.Networking.RespireConnection | internal Task Closed;
+Respire.Networking.RespireConnection | internal Task RetireAsync()
+Respire.Networking.RespireConnection | internal Task? CredentialRefreshCompletion;
+Respire.Networking.RespireConnection | internal TestInspection InspectForTests();
+Respire.Networking.RespireConnection | internal ValueTask<RespValue> SendAskingStreamedSetAsync(in RawCommand asking, StreamedSetCommand command, CancellationToken cancellationToken, CommandDeadline commandDeadline, DedicatedStreamRoute streamingRoute);
+Respire.Networking.RespireConnection | internal ValueTask<RespValue> SendCheckedAsync<TCommand>(in TCommand command, CancellationToken cancellationToken, string? commandName, CommandDeadline commandDeadline, bool allowStreamingConnectionReroute, DedicatedStreamRoute streamingRoute, string? preferredZone, bool pinToConnection) where TCommand : struct, IRespCommand;
+Respire.Networking.RespireConnection | internal ValueTask<RespValue> SendPrefixedAsync<TPrefix, TCommand>(in TPrefix prefix, in TCommand command, bool throwOnError, CancellationToken cancellationToken, string? commandName, bool armCommandDeadline, bool pinToConnection, CommandDeadline commandDeadline, bool allowStreamingConnectionReroute, string? preferredZone) where TPrefix : struct, IRespCommand where TCommand : struct, IRespCommand
+Respire.Networking.RespireConnection | internal ValueTask<RespValue> SendPrefixedCheckedAsync<TPrefix, TCommand>(in TPrefix prefix, in TCommand command, CancellationToken cancellationToken, string? commandName, CommandDeadline commandDeadline, bool allowStreamingConnectionReroute, string? preferredZone) where TPrefix : struct, IRespCommand where TCommand : struct, IRespCommand;
+Respire.Networking.RespireConnection | internal ValueTask<RespValue> SendValidatedPrefixedAsync<TFirstPrefix, TSecondPrefix, TCommand>(in TFirstPrefix firstPrefix, in TSecondPrefix secondPrefix, in TCommand command, CancellationToken cancellationToken, string commandName, string? preferredZone) where TFirstPrefix : struct, IRespCommand where TSecondPrefix : struct, IRespCommand where TCommand : struct, IRespCommand
+Respire.Networking.RespireConnection | internal ValueTask<RespValue> SendValidatedPrefixedAsync<TPrefix, TCommand>(in TPrefix prefix, in TCommand command, CancellationToken cancellationToken, string commandName, string? preferredZone) where TPrefix : struct, IRespCommand where TCommand : struct, IRespCommand
+Respire.Networking.RespireConnection | internal ValueTask<Stream?> SendBulkStreamAsync<TCommand>(in TCommand command, CancellationToken cancellationToken, string? commandName, Action<Exception?>? onFrameCompleted, string? preferredZone) where TCommand : struct, IRespCommand;
+Respire.Networking.RespireConnection | internal ValueTask<Stream?> SendPrefixedBulkStreamAsync<TPrefix, TCommand>(in TPrefix prefix, in TCommand command, CancellationToken cancellationToken, string? commandName, Action<Exception?>? onFrameCompleted, string? preferredZone) where TPrefix : struct, IRespCommand where TCommand : struct, IRespCommand;
+Respire.Networking.RespireConnection | internal ValueTask<TResult> SendConvertedAsync<TCommand, TState, TResult>(in TCommand command, TState state, ResponseConverter<TState, TResult> converter, bool transferOwnership, CancellationToken cancellationToken, string? commandName, CommandDeadline commandDeadline) where TCommand : struct, IRespCommand
+Respire.Networking.RespireConnection | internal ValueTask<byte[]?> SendBytesAsync<TCommand>(in TCommand command, CancellationToken cancellationToken, string? commandName, CommandDeadline commandDeadline) where TCommand : struct, IRespCommand
+Respire.Networking.RespireConnection | internal ValueTask<string?> SendStringAsync<TCommand>(in TCommand command, CancellationToken cancellationToken, string? commandName, CommandDeadline commandDeadline) where TCommand : struct, IRespCommand
+Respire.Networking.RespireConnection | internal async Task DrainPendingMaintenanceNotificationsAsync(CancellationToken cancellationToken)
+Respire.Networking.RespireConnection | internal async Task WaitForOtherCommandsToCompleteAsync(CancellationToken cancellationToken)
+Respire.Networking.RespireConnection | internal async Task<bool> WaitForActiveBulkStreamToCompleteAsync(TimeSpan idleTimeout, CancellationToken cancellationToken)
+Respire.Networking.RespireConnection | internal async ValueTask<RespValue> SendPrefixedWithoutResponseTimeoutAsync<TPrefix, TCommand>(TPrefix prefix, TCommand command, bool throwOnError, CancellationToken cancellationToken) where TPrefix : struct, IRespCommand where TCommand : struct, IRespCommand
+Respire.Networking.RespireConnection | internal async ValueTask<RespValue> SendWithoutResponseTimeoutAsync<TCommand>(TCommand command, CancellationToken cancellationToken) where TCommand : struct, IRespCommand
+Respire.Networking.RespireConnection | internal async ValueTask<long> EnsureServerClientIdAsync(CancellationToken cancellationToken)
+Respire.Networking.RespireConnection | internal bool DrainedSuccessfully;
+Respire.Networking.RespireConnection | internal bool ExpireOldestCommandForTesting()
+Respire.Networking.RespireConnection | internal bool HasActiveBulkStream;
+Respire.Networking.RespireConnection | internal bool HasMaintenanceWindow;
+Respire.Networking.RespireConnection | internal bool HasOtherIncompleteCommandThanMaintenanceBarrier;
+Respire.Networking.RespireConnection | internal bool HasOutstandingMaintenanceBarrier;
+Respire.Networking.RespireConnection | internal bool HasStalledBulkStream(TimeSpan idle)
+Respire.Networking.RespireConnection | internal bool HasUndeliveredReplies;
+Respire.Networking.RespireConnection | internal bool IsAcceptingCommands;
+Respire.Networking.RespireConnection | internal bool IsFlushLoopWaiting;
+Respire.Networking.RespireConnection | internal bool IsStreamingWriteActive { get }
+Respire.Networking.RespireConnection | internal bool TryAcquireCredentialSequence(CancellationToken cancellationToken, out CredentialSequenceLease lease)
+Respire.Networking.RespireConnection | internal const int StreamChunkSize;
+Respire.Networking.RespireConnection | internal event Action<Respire.Infrastructure.MovingAnnouncement>? MovingNotification;
+Respire.Networking.RespireConnection | internal event Action? PendingCommandsFailing;
+Respire.Networking.RespireConnection | internal int MultiplexerSlot { get; set; }
+Respire.Networking.RespireConnection | internal int UndeliveredReplyCount;
+Respire.Networking.RespireConnection | internal int WriteBufferCapacity;
+Respire.Networking.RespireConnection | internal int? NetworkPeerPort;
+Respire.Networking.RespireConnection | internal long LastQueuedMovingSequence;
+Respire.Networking.RespireConnection | internal long MovingPublicationGeneration;
+Respire.Networking.RespireConnection | internal long ServerClientId;
+Respire.Networking.RespireConnection | internal readonly ref struct TestInspection(RespireConnection owner) { }
+Respire.Networking.RespireConnection | internal readonly struct CredentialSequenceLease(SemaphoreSlim? gate) : IDisposable { }
+Respire.Networking.RespireConnection | internal static SslClientAuthenticationOptions CreateTlsOptions(SslClientAuthenticationOptions? configured, string host, bool overrideTargetHost)
+Respire.Networking.RespireConnection | internal static TimeSpan GetWatchdogDelay(TimeSpan timeout, TimeSpan elapsed);
+Respire.Networking.RespireConnection | internal static async ValueTask WaitForFinalFrameWriteAsync(Task finalWrite, CancellationToken cancellationToken)
+Respire.Networking.RespireConnection | internal static bool IsDeadlineCancellation(OperationCanceledException error, CancellationToken deadlineToken, CancellationToken callerToken);
+Respire.Networking.RespireConnection | internal static void ApplyTcpKeepAlive(Socket socket, RespireConnectionOptions options)
+Respire.Networking.RespireConnection | internal static void ValidateBulkResponseSize(long consumedBytes, long payloadLength)
+Respire.Networking.RespireConnection | internal string? AvailabilityZone { get; private set; }
+Respire.Networking.RespireConnection | internal string? NetworkPeerAddress;
+Respire.Networking.RespireConnection | internal void ReplayUnpublishedMigrations()
+Respire.Networking.RespireConnection | internal void StopAcceptingCommands()
+Respire.Networking.RespireConnection | internal void ValidateTransactionCapacity(int commandCount, bool includeMulti)
+Respire.Networking.RespireConnection | public ValueTask DisposeAsync()
+Respire.Networking.RespireConnection | public ValueTask SendFireAndForgetAsync<TCommand>(in TCommand command, CancellationToken cancellationToken, string? commandName, CommandDeadline capacityDeadline, string? preferredZone) where TCommand : struct, IRespCommand
+Respire.Networking.RespireConnection | public ValueTask<RespValue> SendAsync<TCommand>(in TCommand command, CancellationToken cancellationToken, bool armCommandDeadline, string? commandName, bool pinToConnection, string? preferredZone) where TCommand : struct, IRespCommand;
+Respire.Networking.RespireConnection | public ValueTask<RespValue> SendTransactionAsync(ReadOnlyMemory<byte> serializedCommands, int commandCount, CancellationToken cancellationToken, TimeSpan? cancellationTimeout, CancellationToken callerCancellationToken, bool includeMulti, CommandDeadline commandDeadline)
+Respire.Networking.RespireConnection | public bool IsConnected;
+Respire.Networking.RespireConnection | public int Port { get; }
+Respire.Networking.RespireConnection | public static async Task<RespireConnection> ConnectAsync(string host, int port, RespireConnectionOptions? options, ILogger? logger, CancellationToken cancellationToken, bool armHandshakeDeadline)
+Respire.Networking.RespireConnection | public string Host { get; }
+Respire.RespireTransactionBase | [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))] private protected async ValueTask<bool> CommitCoreAsync(CancellationToken cancellationToken, bool validateEmptyWatch)
+Respire.RespireTransactionBase | [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)] [RequiresDynamicCode(SerializationWarnings.DynamicCode)] public RespirePending<RespireGet<T>> TryGet<T>(RespireKey key);
+Respire.RespireTransactionBase | [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)] [RequiresDynamicCode(SerializationWarnings.DynamicCode)] public RespirePending<T?> Get<T>(RespireKey key);
+Respire.RespireTransactionBase | [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)] [RequiresDynamicCode(SerializationWarnings.DynamicCode)] public RespirePending<bool> Set<T>(RespireKey key, T value, RespireExpiry expiry, SetWhen when);
+Respire.RespireTransactionBase | internal RespireTransactionBase(RespireClient client, RespireConnection? watchConnection, int? watchSlot, RespireHashImportSession? importSession)
+Respire.RespireTransactionBase | internal TestInspection InspectForTests();
+Respire.RespireTransactionBase | internal readonly ref struct TestInspection(RespireTransactionBase owner) { }
+Respire.RespireTransactionBase | internal static void ValidateClusterSlot(int slot, ref int? candidate)
+Respire.RespireTransactionBase | private protected virtual DedicatedConnectionPool? WatchPool;
+Respire.RespireTransactionBase | public IBatchBitmapCommands Bitmaps;
+Respire.RespireTransactionBase | public IBatchFunctionCommands Functions;
+Respire.RespireTransactionBase | public IBatchGeoCommands Geo;
+Respire.RespireTransactionBase | public IBatchHashCommands Hashes;
+Respire.RespireTransactionBase | public IBatchHyperLogLogCommands HyperLogLog;
+Respire.RespireTransactionBase | public IBatchKeyCommands Keys;
+Respire.RespireTransactionBase | public IBatchListCommands Lists;
+Respire.RespireTransactionBase | public IBatchScriptCommands Scripts;
+Respire.RespireTransactionBase | public IBatchServerCommands Server;
+Respire.RespireTransactionBase | public IBatchSetCommands Sets;
+Respire.RespireTransactionBase | public IBatchSortedSetCommands SortedSets;
+Respire.RespireTransactionBase | public IBatchStreamCommands Streams;
+Respire.RespireTransactionBase | public IBatchStringCommands Strings;
+Respire.RespireTransactionBase | public IBatchVectorSetCommands VectorSets;
+Respire.RespireTransactionBase | public RespirePending<RespireResult> Execute(RespireCommand command, params RespireValue[] args);
+Respire.RespireTransactionBase | public RespirePending<bool> Exists(RespireKey key);
+Respire.RespireTransactionBase | public RespirePending<bool> Expire(RespireKey key, RespireExpiry expiry, ExpireWhen when);
+Respire.RespireTransactionBase | public RespirePending<bool> Set(RespireKey key, RespireValue value, RespireExpiry expiry, SetWhen when);
+Respire.RespireTransactionBase | public RespirePending<byte[]?> GetBytes(RespireKey key);
+Respire.RespireTransactionBase | public RespirePending<long> Decrement(RespireKey key, long by);
+Respire.RespireTransactionBase | public RespirePending<long> Delete(params ReadOnlySpan<RespireKey> keys);
+Respire.RespireTransactionBase | public RespirePending<long> Increment(RespireKey key, long by);
+Respire.RespireTransactionBase | public RespirePending<string?> GetString(RespireKey key);
+Respire.RespireTransactionBase | public async ValueTask DisposeAsync()
+Respire.RespireTransactionBase | public int Count;

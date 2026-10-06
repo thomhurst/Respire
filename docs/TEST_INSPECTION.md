@@ -21,8 +21,35 @@ The table lists every current state consumer of these views. Update it when addi
 one; put new inspection members in the owner's view and document their boundaries.
 Preserve the tests' barriers, deadlines, cancellation, import, and FIFO assertions.
 
-`TestInspectionArchitectureTests` checks factory/view metadata and rejects the four
-legacy names, with a synthetic positive control. It cannot detect differently named
-accessors or enforce returned-reference lifetimes. Ordinary operational members
-remain valid. Broader static enforcement is tracked in
-[#1045](https://github.com/thomhurst/Respire/issues/1045).
+`TestInspectionArchitectureTests` checks compiled factory/view metadata and rejects
+the four legacy names on both supported frameworks. The single-target analyzer-test
+host adds `TestInspectionSourceArchitectureTests`, reading embedded production
+source with the net8.0 and net10.0 preprocessor symbols:
+
+- `TestInspectionOwnerSurface.txt` is an explicitly reviewed inventory of directly
+  declared public, internal, and protected member headers on the four owners. A new
+  accessor or overload fails the inventory comparison regardless of its name.
+  Existing operational members remain permitted. When adding or changing an
+  operational declaration, review and update its inventory entry deliberately;
+  do not accept a new test-only accessor into that inventory. Put inspection state
+  in the designated nested view instead. Implementation bodies, initializers, and
+  private-only helpers are not inventoried.
+- `InspectForTests` is a reserved factory name throughout production source. Its
+  identifier references, including direct calls, conditional calls, and method
+  groups, are forbidden there. Declarations and deliberate `nameof` metadata
+  references remain permitted. Friend-test source is outside the production
+  resource set and may call the factories. The rule uses this exact reserved name,
+  not guesses about names that sound like testing or inspection.
+
+Positive controls cover a renamed accessor, a new operational overload, production
+calls, and a method group. Negative controls cover reviewed operations, private
+implementation changes, another type with the same simple owner name, friend-test
+consumption, metadata references, comments, and string literals.
+
+These are architecture checks, not a lifetime or ownership analysis. They cannot
+detect repurposing an existing inventoried member, reflection-based state access,
+or code hidden behind other preprocessor configurations. Nested implementation
+member bodies are not part of the owner-header inventory. Returned references and
+copies still require the boundaries in the consumer table above. Update that table
+when adding consumers or inspection members; passing a guard does not establish
+quiescence, source lifetime, or ownership.
