@@ -10,11 +10,13 @@ namespace Respire.Tests.Networking;
 public class ClusterNotificationRoutingTests
 {
     private static readonly byte[] Hello = "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray();
-    [Test]
+    [Test, NotInParallel]
     [Arguments(false)]
     [Arguments(true)]
     public async Task AllPrimariesPatternWaitsForEveryAckAndMergesMessages(bool resp3)
     {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.PubSub });
+        using var capture = new MessageMetricsTests.Capture();
         await using var first = new FakeRespServer(20);
         await using var second = new FakeRespServer(20);
         await using var third = new FakeRespServer(20);
@@ -66,6 +68,11 @@ public class ClusterNotificationRoutingTests
             await Assert.That(reader.Current.TryParseKeyNotification(out var notification)).IsTrue();
             await Assert.That(notification.Type).IsEqualTo(RespireKeyNotificationType.Set);
         }
+        await capture.WaitForCountAsync(3);
+        await Assert.That(capture.Items.Count).IsEqualTo(3);
+        await Assert.That(capture.Items.All(item => item.Value == 1
+            && (string)item.Tags["redis.client.pubsub.message.direction"]! == "in"
+            && !(bool)item.Tags["redis.client.pubsub.sharded"]!)).IsTrue();
     }
 
     [Test]

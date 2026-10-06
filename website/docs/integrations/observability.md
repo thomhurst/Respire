@@ -75,8 +75,8 @@ their contents. `Configure` copies and validates the collections before publishi
 | `ConnectionAdvanced` | `connection-advanced` | Reserved for detailed connection measurements in #928 |
 | `Command` | `command` | Logical operation duration, including Redis commands used for pub/sub and streams |
 | `ClientSideCaching` | `client-side-caching` | Cache requests and evictions |
-| `PubSub` | `pubsub` | Reserved for pub/sub processing measurements in #928 |
-| `Streaming` | `streaming` | Reserved for stream processing measurements in #928 |
+| `PubSub` | `pubsub` | Confirmed publications and received messages |
+| `Streaming` | `streaming` | Stream lag reported explicitly when application processing starts |
 
 `None` suppresses these standard measurements. Existing `respire.*` diagnostics remain
 available independently, including pub/sub gaps, cache invalidations, reconnects, and
@@ -130,8 +130,10 @@ The meter name remains `Respire`.
 | `respire.maintenance.notifications` | `redis.client.maintenance.notifications` | `{notification}` | `redis.client.connection.notification` identifies the notification; `server.address` and `server.port` identify its source |
 | Deployment switches between known endpoints | `redis.client.geofailover.failovers` | `{failover}` | `db.client.geofailover.reason=automatic`, `db.client.geofailover.fail_from`, and `db.client.geofailover.fail_to` |
 | `db.client.operation.duration` | Unchanged | `s` | Existing logical operation latency and database attributes |
+| New measurement | `redis.client.pubsub.messages` | `{message}` | One message per confirmed publication or accepted incoming frame; direction `out`/`in` and sharded boolean |
+| New measurement | `redis.client.stream.lag` | `s` | Entry timestamp to explicit application processing start |
 
-The four standardized counters carry `redis.client.library=Respire:<version>` and
+The standardized counters and stream-lag histogram carry `redis.client.library=Respire:<version>` and
 `db.system.name=redis`. Keys, command values, and credentials are never metric labels.
 An invalidated key can remove several responses or none; eviction counts reflect actual
 removals caused by capacity limits, local expiration, or server invalidation. Local
@@ -149,8 +151,68 @@ Respire-specific instruments remain available for hedging, availability zones, t
 health, coordination, Sentinel recovery, cache invalidation notifications, continuity
 flushes, and pub/sub delivery gaps. Mapping existing signals does not imply that every
 instrument or configuration group in the Redis specification is implemented. Additional
-connection, error, pub/sub, streaming, and dashboard coverage is tracked
+connection, error, and dashboard coverage is tracked
 by [#866](https://github.com/thomhurst/Respire/issues/866).
+
+## Pub/sub messages and stream lag
+
+Enable `PubSub` and/or `Streaming` in `RespireMetricsOptions.Groups`. Command filters
+do not filter these observations. Channel, pattern, stream, group, consumer names,
+entry IDs, and payloads are never labels; there is no name-disclosure option.
+
+`redis.client.pubsub.messages` counts an `out` message when Respire processes a
+successful integer reply to `PUBLISH` or `SPUBLISH`. A subscriber count of zero or
+many still represents one publication. Typed, raw, and fire-and-forget publication
+paths use this boundary. A canceled caller can still contribute if its successful
+reply arrives later. Server errors, lost replies, and publications inside arbitrary
+server-side scripts cannot establish another confirmed publication. Deferred raw
+queues do not currently accept `PUBLISH`/`SPUBLISH`.
+
+An `in` message is one accepted incoming channel, pattern, or sharded frame on a
+current subscription connection. Local fan-out to several subscriptions counts
+once, even if their buffers drop messages. Two distinct server frames, such as
+channel and pattern deliveries of the same publication, count twice. Reconnect
+markers and rejected stale routes do not count. Existing drop and gap instruments
+remain separate. Metric callbacks run outside subscription routing/buffer locks;
+listeners must remain short and non-blocking.
+
+Both directions include `redis.client.pubsub.sharded`. Selection is checked when
+the message observation occurs. Fire-and-forget commands retain their operation
+metadata only when publication collection is enabled at enqueue (or existing
+Sentinel bookkeeping already requires it); enabling collection cannot reconstruct
+missing metadata for an earlier discarded reply.
+
+The stream histogram requires an explicit application boundary:
+
+```csharp
+RespireMetrics.Configure(new RespireMetricsOptions
+{
+    Groups = RespireMetricGroups.Default | RespireMetricGroups.Streaming,
+});
+
+await foreach (var entry in redis.Streams.ReadGroupAsync(
+    "events", group: "processors", consumer: "worker", cancellationToken: stoppingToken))
+{
+    entry.RecordProcessingStart();
+    await HandleAsync(entry.GetString("type"));
+    await entry.AckAsync();
+}
+```
+
+Call `RecordProcessingStart()` once when each processing attempt actually begins,
+including after any application queueing. Reads, iterator delivery, claims, and
+acknowledgements do not automatically emit lag and do not prove handler completion.
+Repeated calls intentionally produce repeated observations; the method does not
+acknowledge, mutate, or deduplicate an entry.
+
+Lag uses the millisecond portion of a complete `milliseconds-sequence` ID and the
+client's UTC clock. Use it only when IDs represent creation time, normally IDs
+generated by Redis. Numeric custom IDs cannot be distinguished from timestamps;
+do not report them unless their timestamp meaning is known. Clock skew affects the
+result; future timestamps and malformed/sentinel IDs are skipped rather than
+reported as negative or fabricated zero lag. With the group or listener disabled,
+the method performs no timestamp read, ID parsing, or allocation. Listener failures
+cannot change publication, subscription, or application processing outcomes.
 
 ## Reads by availability zone
 

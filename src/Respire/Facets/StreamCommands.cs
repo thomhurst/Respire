@@ -174,6 +174,16 @@ public readonly record struct RespireStreamEntry
     public string? GetString(string field)
         => this[field] is { } bytes ? Internal.Utf8String.GetString(bytes) : null;
 
+    /// <summary>Reports stream lag when the application starts processing this entry.</summary>
+    /// <remarks>
+    /// Call once per processing attempt, only when the ID's milliseconds represent creation time.
+    /// Numeric custom IDs cannot be distinguished from timestamps. Client/server clock skew affects
+    /// the result; future timestamps and malformed IDs are ignored. Requires the Streaming metric
+    /// group and an enabled listener. Does not acknowledge the entry or report processing completion.
+    /// Repeated calls record repeated observations. No stream, group, consumer, or ID labels are emitted.
+    /// </remarks>
+    public void RecordProcessingStart() => Internal.RespireTelemetry.RecordStreamProcessingStart(Id);
+
     /// <summary>
     /// Acknowledges this entry to its consumer group; returns false when it was already
     /// acknowledged. Only available on entries from a group read. Redis: XACK.

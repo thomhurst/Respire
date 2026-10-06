@@ -777,6 +777,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
             }
         }
         // User handlers and metric callbacks never run under the routing/buffer gates.
+        RespireTelemetry.RecordReceivedMessage(kind == SubscriptionKind.Sharded);
         if (drops is not null)
         {
             foreach (var (subscription, gap) in drops) subscription.NotifyDrop(gap);

@@ -498,6 +498,7 @@ internal sealed partial class SubscriptionHub
             foreach (var target in targets)
                 if (target.Buffer.Write(message) is { } gap) (drops ??= []).Add((target, gap));
         }
+        RespireTelemetry.RecordReceivedMessage(sharded: false);
         if (drops is not null)
             foreach (var (subscription, gap) in drops) subscription.NotifyDrop(gap);
     }

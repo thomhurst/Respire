@@ -1553,7 +1553,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             out startedBatch,
             out var trackedWrite,
             trackWrite: true,
-            discardedOperation: _generation is null ? null : commandName);
+            discardedOperation: _generation is not null || RespireTelemetry.ShouldRetainPublication(commandName) ? commandName : null);
         writeTask = trackedWrite ?? Task.CompletedTask;
         return enqueued;
     }
@@ -2809,11 +2809,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             return;
         }
 
-        string? discardedOperation = null;
-        PendingResponse source;
-        var dequeued = _generation is null
-            ? _inflight.TryDequeue(out source)
-            : _inflight.TryDequeue(out source, out discardedOperation);
+        // Always consume retained metadata, even if collection was disabled after enqueue.
+        var dequeued = _inflight.TryDequeue(out var source, out var discardedOperation);
         if (!dequeued)
         {
             value.Dispose();
@@ -2833,6 +2830,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             ObserveMaintenanceAcknowledgement(in value);
         }
+
+        RespireTelemetry.RecordPublication(discardedOperation ?? source.CommandName, in value);
 
         if (ReferenceEquals(source, InflightRing.DiscardSentinel))
         {

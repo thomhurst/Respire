@@ -14,6 +14,27 @@ public class ClusterShardedPubSubTests
 {
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(15);
 
+    [Test, NotInParallel]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task MetricsCountShardedFramesOnceAcrossPrimariesAndLocalSubscribers(int protocol)
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.PubSub });
+        await using var cluster = new Cluster(protocol);
+        await using var client = cluster.CreateClient();
+        using var capture = new MessageMetricsTests.Capture();
+        await using var subscription = await client.SubscribeShardedAsync(["bar", "foo"]);
+        await using var duplicate = await client.SubscribeShardedAsync("bar");
+        await cluster.SendAsync(cluster.First, "bar", "one");
+        await cluster.SendAsync(cluster.Second, "foo", "two");
+        await capture.WaitForCountAsync(2);
+        await Assert.That(await client.PublishShardedAsync("foo", "payload")).IsEqualTo(1L);
+        await Assert.That(capture.Items.Count).IsEqualTo(3);
+        await Assert.That(capture.Items.Count(item => (string)item.Tags["redis.client.pubsub.message.direction"]! == "in")).IsEqualTo(2);
+        await Assert.That(capture.Items.Count(item => (string)item.Tags["redis.client.pubsub.message.direction"]! == "out")).IsEqualTo(1);
+        await Assert.That(capture.Items.All(item => item.Value == 1 && (bool)item.Tags["redis.client.pubsub.sharded"]!)).IsTrue();
+    }
+
     [Test]
     public async Task ShardedSubscriptionRequiresResp3ForRenewableCredentials()
     {
