@@ -18,15 +18,17 @@ concurrency:
 
 jobs:
   compare:
-    name: Single operations (${{ matrix.framework }})
+    name: Single operations (${{ matrix.framework }}, ${{ matrix.variant }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         framework: [net8.0, net10.0]
+        variant: [combined, decoder-only, locals-only]
     env:
       FRAMEWORK: ${{ matrix.framework }}
+      VARIANT: ${{ matrix.variant }}
     steps:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
@@ -74,6 +76,35 @@ jobs:
           Path("source-shas.json").write_text(json.dumps(manifest, indent=2) + "\n")
           print(json.dumps(manifest, indent=2))
           PY
+      - name: Derive independently measurable optimization variants
+        shell: python
+        run: |
+          import hashlib
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+          variant = os.environ['VARIANT']
+          assert variant in ('combined', 'decoder-only', 'locals-only'), variant
+          paths = ('src/Shared/SkipLocalsInit.cs', 'src/Respire/Internal/Utf8String.cs')
+          assert not subprocess.check_output(['git', '-C', 'candidate', 'diff', '--name-only']).strip()
+          if variant == 'decoder-only':
+              module = Path('candidate', paths[0])
+              assert module.read_text().strip() == 'using System.Runtime.CompilerServices;\n\n[module: SkipLocalsInit]'
+              module.write_text('// Diagnostic variant: retain normal local initialization.\n')
+          elif variant == 'locals-only':
+              Path('candidate', paths[1]).write_bytes(Path('baseline', paths[1]).read_bytes())
+          changed = subprocess.check_output(['git', '-C', 'candidate', 'diff', '--name-only'], text=True).splitlines()
+          expected = {'combined': [], 'decoder-only': [paths[0]], 'locals-only': [paths[1]]}[variant]
+          assert changed == expected, (variant, changed)
+          patch = subprocess.check_output(['git', '-C', 'candidate', 'diff', '--binary'])
+          Path('candidate-variant.patch').write_bytes(patch)
+          manifest = json.loads(Path('source-shas.json').read_text())
+          manifest['variant'] = variant
+          manifest['candidate_patch_sha256'] = hashlib.sha256(patch).hexdigest()
+          manifest['candidate_source_sha256'] = {
+              path: hashlib.sha256(Path('candidate', path).read_bytes()).hexdigest() for path in paths}
+          Path('source-shas.json').write_text(json.dumps(manifest, indent=2) + '\n')
       - name: Use identical fixtures with jobs controlled by the command line
         shell: python
         run: |
@@ -89,7 +120,7 @@ jobs:
         env:
           # Keep runtime JIT output for code-generation evidence. The net8 baseline
           # crashed after measurement with BDN disassembly enabled (#1035).
-          DOTNET_JitDisasm: Respire.Internal.Utf8String:GetString Respire.Benchmarks.ProtocolBenchmarks:*UnicodeBulkString
+          DOTNET_JitDisasm: Respire.Internal.Utf8String:GetString Respire.Benchmarks.ProtocolBenchmarks:*UnicodeBulkString Respire.Benchmarks.ProtocolBenchmarks:Build*Command
           DOTNET_JitDisasmDiffable: '1'
         run: |
           set -euo pipefail
@@ -116,15 +147,21 @@ jobs:
         shell: python
         run: |
           import json
+          import hashlib
           import os
           from pathlib import Path
           sources = json.loads(Path('source-shas.json').read_text())
+          assert sources['variant'] == os.environ['VARIANT']
+          assert hashlib.sha256(Path('candidate-variant.patch').read_bytes()).hexdigest() == sources['candidate_patch_sha256']
+          for path, expected_hash in sources['candidate_source_sha256'].items():
+              assert hashlib.sha256(Path('candidate', path).read_bytes()).hexdigest() == expected_hash, path
           expected = {'DecodeAsciiBulkString', 'ReadAsciiBulkString', 'DecodeUnicodeBulkString',
                       'ReadUnicodeBulkString', 'BuildGetCommand', 'BuildSetCommand',
                       'FormatAsciiBulkString', 'FormatLargeAsciiBulkString', 'FormatUnicodeBulkString',
                       'FormatLargeUnicodeBulkString'}
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
-              summary.write('## Single operations before/after\n\nThe candidate is the pinned PR head, excluding the synthetic merge commit. Both controls use its common ancestor with the fetched target branch, so intervening main changes are present in both builds or excluded from both. Compare latency, dispersion, allocations, and JIT output before merge. These ten local protocol operations do not measure network throughput.\n')
+              summary.write('## Single operations before/after\n\nThe combined candidate is the pinned PR head, excluding the synthetic merge commit. Diagnostic variants disable only the module attribute (decoder-only), or restore only the common-base decoder (locals-only). The manifest and candidate patch record those derivations; they are not unmodified PR-head builds. Each variant has its own bracketing common-base controls on the same runner. Compare each candidate with its own controls, not raw timings across jobs. Combined performance acceptance remains mandatory; component results diagnose attribution and do not replace it. These ten local protocol operations do not measure network throughput.\n')
+              summary.write(f"\nVariant: {sources['variant']}. Candidate patch SHA256: {sources['candidate_patch_sha256']}.\n")
               summary.write(f"\nComparison base: {sources['comparison_base_sha']}. PR head: {sources['head_sha']}.\n")
               for phase in ('baseline-validation', 'candidate-validation', 'baseline-a', 'candidate', 'baseline-b'):
                   expected_sha = sources['head_sha'] if phase.startswith('candidate') else sources['comparison_base_sha']
@@ -140,10 +177,11 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
-          name: local-initialization-${{ matrix.framework }}
+          name: local-initialization-${{ matrix.framework }}-${{ matrix.variant }}
           path: |
             results/
             *.log
             source-shas.json
             comparison-source.patch
+            candidate-variant.patch
           retention-days: 30
