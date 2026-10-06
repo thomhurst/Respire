@@ -3,6 +3,12 @@ using Respire.Networking;
 namespace Respire.Internal;
 
 /// <summary>Owns cancellation only while an absolute-deadline command waits for admission.</summary>
+/// <remarks>
+/// This mutable value has a single owner. Pass it by reference to helpers; do not copy or box
+/// an initialized scope. Call Dispose directly on that owner to release its current timer.
+/// Disposal preserves the caller token and absolute deadline: a later Token access can create
+/// another cancellation source using only the remaining admission budget.
+/// </remarks>
 internal struct CommandAcquisitionScope(
     CancellationToken callerToken, CommandDeadline deadline, TimeSpan? timeout) : IDisposable
 {
