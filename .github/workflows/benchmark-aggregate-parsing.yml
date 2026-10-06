@@ -36,7 +36,7 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
           path: candidate
           persist-credentials: false
       - name: Validate both builds and measure baseline, candidate, baseline
@@ -64,7 +64,7 @@ jobs:
           import os
           from pathlib import Path
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
-              summary.write('## Aggregate parsing before/after\n\nPinned base and event merge commit run on the same runner. Compare candidate with both controls; growth can add copying even when pooled allocations are unchanged.\n')
+              summary.write('## Aggregate parsing before/after\n\nPinned base and pull request head run on the same runner. Compare candidate with both controls; growth can add copying even when pooled allocations are unchanged.\n')
               for phase in ('baseline-validation', 'candidate-validation', 'baseline-a', 'candidate', 'baseline-b'):
                   reports = list(Path('results', phase, 'results').glob('*-report-full-compressed.json'))
                   assert len(reports) == 1, f'Missing report: {phase}'
