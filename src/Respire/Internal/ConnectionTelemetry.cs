@@ -12,10 +12,18 @@ namespace Respire.Internal;
 internal static class ConnectionTelemetry
 {
     private static readonly Registry Pools = new();
-    private static int _pendingCloseMeasurements;
+    private static int _pendingMeasurements;
 
     // Diagnostic delivery has its own lifetime; transport disposal never waits for it.
-    internal static int PendingCloseMeasurements => Volatile.Read(ref _pendingCloseMeasurements);
+    internal static int PendingMeasurements => Volatile.Read(ref _pendingMeasurements);
+
+    internal static class CloseReason
+    {
+        internal const string Application = "application_close";
+        internal const string Server = "server_close";
+        internal const string Error = "error";
+        internal const string IdleEviction = "pool_eviction_idle";
+    }
 
     internal static State Attach(RespireConnection connection, RespireConnectionOptions options)
     {
@@ -44,10 +52,10 @@ internal static class ConnectionTelemetry
     {
         if (RespireTelemetry.IsMetricEnabled(RespireMetricGroups.ConnectionAdvanced, RespireTelemetry.ConnectionsClosed))
         {
-            var reason = "error";
-            if (peerClosed) reason = "server_close";
-            else if (IsCallerCancellation(error, callerToken)) reason = "application_close";
-            QueueClosed(ForConnection(host, port, options), reason, reason == "error" ? error : null);
+            var reason = CloseReason.Error;
+            if (peerClosed) reason = CloseReason.Server;
+            else if (IsCallerCancellation(error, callerToken)) reason = CloseReason.Application;
+            QueueClosed(ForConnection(host, port, options), reason, reason == CloseReason.Error ? error : null);
         }
     }
 
@@ -127,8 +135,7 @@ internal static class ConnectionTelemetry
             if (Volatile.Read(ref _closed) != 0) return;
             Volatile.Write(ref _ready, 1);
             if (!RespireTelemetry.IsMetricEnabled(RespireMetricGroups.ConnectionBasic, RespireTelemetry.ConnectionCreateTime)) return;
-            try { RespireTelemetry.ConnectionCreateTime.Record(Stopwatch.GetElapsedTime(started).TotalSeconds, _pool.Tags); }
-            catch { /* Listener failures must not prevent connection publication. */ }
+            QueueDuration(RespireTelemetry.ConnectionCreateTime, _pool, started);
         }
 
         internal void SetRented(bool rented) => Volatile.Write(ref _rented, rented ? 1 : 0);
@@ -139,15 +146,13 @@ internal static class ConnectionTelemetry
         internal void Waited(long started)
         {
             if (!RespireTelemetry.IsMetricEnabled(RespireMetricGroups.ConnectionAdvanced, RespireTelemetry.ConnectionWaitTime)) return;
-            try { RespireTelemetry.ConnectionWaitTime.Record(Stopwatch.GetElapsedTime(started).TotalSeconds, _pool.Tags); }
-            catch { /* A listener cannot fail an acquired lease. */ }
+            QueueDuration(RespireTelemetry.ConnectionWaitTime, _pool, started);
         }
 
         internal void HandedOff()
         {
             if (!RespireTelemetry.IsMetricEnabled(RespireMetricGroups.ConnectionBasic, RespireTelemetry.ConnectionHandoffs)) return;
-            try { RespireTelemetry.ConnectionHandoffs.Add(1, _pool.Tags); }
-            catch { /* A listener cannot undo a published handoff. */ }
+            Queue(static pool => RespireTelemetry.ConnectionHandoffs.Add(1, pool.Tags), _pool);
         }
 
         internal bool HasRelaxedTimeout => Volatile.Read(ref _ready) != 0 && Volatile.Read(ref _closed) == 0
@@ -158,12 +163,12 @@ internal static class ConnectionTelemetry
             if (Interlocked.Exchange(ref _closed, 1) != 0) return;
             _pool.Remove(this);
             if (!RespireTelemetry.IsMetricEnabled(RespireMetricGroups.ConnectionAdvanced, RespireTelemetry.ConnectionsClosed)) return;
-            var reason = "error";
-            if (peerClosed || IsPeerReset(error)) reason = "server_close";
+            var reason = CloseReason.Error;
+            if (peerClosed || IsPeerReset(error)) reason = CloseReason.Server;
             else if (error is null or RespireConnectionRetiredException
-                || error is OperationCanceledException && Volatile.Read(ref _requestedCloseReason) == "application_close")
-                reason = Volatile.Read(ref _requestedCloseReason) ?? "application_close";
-            QueueClosed(_pool, reason, reason == "error" ? error : null);
+                || error is OperationCanceledException && Volatile.Read(ref _requestedCloseReason) == CloseReason.Application)
+                reason = Volatile.Read(ref _requestedCloseReason) ?? CloseReason.Application;
+            QueueClosed(_pool, reason, reason == CloseReason.Error ? error : null);
         }
 
         internal bool TryRead(out bool used, out int pending)
@@ -178,22 +183,30 @@ internal static class ConnectionTelemetry
         }
     }
 
+    private static void QueueDuration(Histogram<double> instrument, Pool pool, long started)
+        => Queue(static state => state.Instrument.Record(state.Seconds, state.Pool.Tags),
+            (Instrument: instrument, Pool: pool, Seconds: Stopwatch.GetElapsedTime(started).TotalSeconds));
+
     private static void QueueClosed(Pool pool, string reason, Exception? error)
+        => Queue(static state => RecordClosed(state.Pool, state.Reason, state.Error),
+            (Pool: pool, Reason: reason, Error: error));
+
+    private static void Queue<T>(Action<T> record, T value)
     {
-        // Membership and the reason are committed synchronously. Delivery is independent
-        // of receive/disposal tasks: a blocking listener must not hold pending failures,
-        // pool cleanup, or registration of a MOVING drain deadline behind Counter.Add.
-        Interlocked.Increment(ref _pendingCloseMeasurements);
+        // Enablement, duration and ownership are captured before queueing. Delivery must
+        // not retain an acquisition reservation or hold up transport cleanup/retirement.
+        Interlocked.Increment(ref _pendingMeasurements);
         try
         {
             if (ThreadPool.UnsafeQueueUserWorkItem(static state =>
             {
-                try { RecordClosed(state.Pool, state.Reason, state.Error); }
-                finally { Interlocked.Decrement(ref _pendingCloseMeasurements); }
-            }, (Pool: pool, Reason: reason, Error: error), preferLocal: false)) return;
+                try { state.Record(state.Value); }
+                catch { /* Listener failures must not replace connection outcomes. */ }
+                finally { Interlocked.Decrement(ref _pendingMeasurements); }
+            }, (Record: record, Value: value), preferLocal: false)) return;
         }
         catch { /* A failed diagnostic enqueue must not replace transport or disposal outcomes. */ }
-        Interlocked.Decrement(ref _pendingCloseMeasurements);
+        Interlocked.Decrement(ref _pendingMeasurements);
     }
 
     private static void RecordClosed(Pool pool, string reason, Exception? error)

@@ -274,13 +274,17 @@ not emit `healthcheck_failed`. Close events do not count unsuccessful TCP connec
 Connection instrumentation adds no metric callbacks to command submission. Listener callbacks
 run outside transport and dedicated-pool locks; listener exceptions cannot replace connection,
 lease or disposal outcomes.
-Close counts are queued for delivery on the thread pool after the close reason and live pool
-membership are committed. If enqueueing fails, the close event is dropped and cleanup continues.
-Disposal does not wait for this delivery. A blocking close listener
-therefore cannot stop pending replies from failing, pool cleanup, or retirement scheduling.
-An exporter can observe the live count change before the close event arrives; listeners should
-remain enabled until queued events have been collected. MOVING applies its retirement cache
-fence before invoking handoff listeners.
+Creation/wait durations, handoff counts and close counts are queued for delivery on the thread
+pool. Durations and metric enablement are captured at the event, before queueing; scheduling
+delay does not inflate the measured duration. Close reasons and live membership changes also
+commit synchronously. If enqueueing fails, the measurement is dropped and cleanup continues.
+Acquisition and disposal do not wait for delivery. A blocking lifecycle listener therefore cannot
+stop a rental from completing, pending replies from failing, pool cleanup, or retirement scheduling.
+An exporter can observe live state changes before the corresponding events arrive, and queued
+events can arrive out of order. Listeners should remain enabled until queued events have been
+collected. MOVING applies its retirement cache fence and notifies dedicated connection owners
+before queueing shared handoff measurements; dedicated retirement snapshots its live sockets
+and starts idle cleanup before queueing its own handoff measurements.
 
 ## Reads by availability zone
 

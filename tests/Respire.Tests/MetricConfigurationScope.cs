@@ -14,12 +14,12 @@ internal sealed class MetricConfigurationScope : IDisposable
     {
         try
         {
-            // Close events can outlive socket disposal. Do not let them reach the next
+            // Lifecycle events can outlive socket disposal. Do not let them reach the next
             // test's listener, especially when pool identities share the overflow series.
             // Blocking-listener tests release their callbacks before this outer scope ends.
-            if (!SpinWait.SpinUntil(() => ConnectionTelemetry.PendingCloseMeasurements == 0,
+            if (!SpinWait.SpinUntil(() => ConnectionTelemetry.PendingMeasurements == 0,
                 TimeSpan.FromSeconds(5)))
-                throw new TimeoutException("Close metric delivery did not drain before restoring metric configuration.");
+                throw new TimeoutException("Connection metric delivery did not drain before restoring metric configuration.");
         }
         finally { RespireMetrics.Configure(_previous); }
     }

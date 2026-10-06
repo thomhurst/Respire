@@ -282,11 +282,11 @@ internal sealed partial class RespireConnectionMultiplexer
         try { _options.CredentialCacheRetirementFence?.Invoke(); }
         catch (Exception error) { _logger?.MovingCacheFenceObserverFailed(error); }
 
+        // Dedicated owners must snapshot their live sockets and stop admission before
+        // publishing the shared handoff measurements. No lifecycle locks are held here.
+        MovingHandoffPublished?.Invoke();
         if (handedOff is not null)
             foreach (var connection in handedOff) connection.RecordConnectionHandoff();
-
-        // Notify other connection owners and metrics listeners outside the lifecycle locks.
-        MovingHandoffPublished?.Invoke();
         if (cacheEvictions is { } removed)
         {
             try { ClientSideCacheCoordinator.PublishContinuityFlushMetrics(removed); }

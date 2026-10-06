@@ -14,6 +14,36 @@ namespace Respire.Tests;
 public class ConnectionMetricCleanupTests
 {
     [Test]
+    [Arguments("db.client.connection.create_time")]
+    [Arguments("db.client.connection.wait_time")]
+    public async Task AcquisitionListenerCannotDelayRentalOrPoolDisposal(string instrument)
+    {
+        using var configuration = new MetricConfigurationScope();
+        await using var server = new FakeRespServer(1, FakeRespServer.PongReply);
+        await using var pool = new DedicatedConnectionPool("127.0.0.1", server.Port,
+            new() { Protocol = RespProtocol.Resp2 }, null);
+        using var listener = new BlockingListener(instrument);
+        var rental = Task.Run(async () => await pool.RentAsync(default));
+        Task? cleanup = null;
+        try
+        {
+            await listener.Entered.WaitAsync(TimeSpan.FromSeconds(5));
+            var connection = await rental.WaitAsync(TimeSpan.FromSeconds(5));
+            cleanup = Task.Run(async () => await pool.DisposeAsync());
+            await cleanup.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(connection.IsConnected).IsFalse();
+            await server.PeerClosed.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            listener.Release();
+            var connection = await rental.WaitAsync(TimeSpan.FromSeconds(5));
+            pool.Return(connection);
+            if (cleanup is not null) await cleanup.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [Test]
     public async Task HandoffListenerRunsAfterRetirementCacheFence()
     {
         using var configuration = new MetricConfigurationScope();
@@ -90,7 +120,7 @@ public class ConnectionMetricCleanupTests
             await Assert.That(first.IsConnected || second.IsConnected).IsFalse();
             // Both physical closes finish while their selected metric deliveries remain
             // outstanding. The outer configuration scope must drain them after release.
-            await Assert.That(ConnectionTelemetry.PendingCloseMeasurements).IsEqualTo(2);
+            await Assert.That(ConnectionTelemetry.PendingMeasurements).IsEqualTo(2);
         }
         finally
         {
@@ -134,7 +164,7 @@ public class ConnectionMetricCleanupTests
             : command == "CLIENT MAINT_NOTIFICATIONS ON" ? FakeRespServer.OkReply : null,
     };
 
-    private sealed class BlockingListener : IDisposable
+    internal sealed class BlockingListener : IDisposable
     {
         private readonly MeterListener _listener = new();
         private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -149,6 +179,11 @@ public class ConnectionMetricCleanupTests
                     current.EnableMeasurementEvents(instrument);
             };
             _listener.SetMeasurementEventCallback<long>((_, _, _, _) =>
+            {
+                _entered.TrySetResult();
+                _release.Task.GetAwaiter().GetResult();
+            });
+            _listener.SetMeasurementEventCallback<double>((_, _, _, _) =>
             {
                 _entered.TrySetResult();
                 _release.Task.GetAwaiter().GetResult();

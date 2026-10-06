@@ -131,6 +131,7 @@ public class ConnectionMetricTests
         server.DelayCommand("HELLO 3", 100);
         using var capture = new Capture(server.Port);
         await using var client = await RespireClient.ConnectAsync(Options(server) with { Protocol = RespProtocol.Resp3 });
+        await WaitUntil(() => capture.Events.Any(item => item.Name == "db.client.connection.create_time"));
         var created = capture.Events.Single(item => item.Name == "db.client.connection.create_time");
         await Assert.That(created.Value).IsGreaterThanOrEqualTo(0.09);
         await Assert.That(created.Unit).IsEqualTo("s");
@@ -169,6 +170,7 @@ public class ConnectionMetricTests
         await Assert.That(ReferenceEquals(connection, reused)).IsTrue();
         capture.Observe();
         await Assert.That(capture.Current("db.client.connection.count", "used")).IsEqualTo(1d);
+        await WaitUntil(() => ConnectionTelemetry.PendingMeasurements == 0);
         var waits = capture.Events.Where(item => item.Name == "db.client.connection.wait_time").ToArray();
         await Assert.That(waits.Length).IsEqualTo(1);
         await Assert.That(waits[0].Unit).IsEqualTo("s");
@@ -611,11 +613,15 @@ public class ConnectionMetricTests
         pool.Return(idle);
         using var capture = new Capture(source.Port);
         var expectedHandoffs = pool.MovingOwner!.ConnectionCount + 3;
+        using var listener = new ConnectionMetricCleanupTests.BlockingListener("redis.client.connection.handoff");
         var moving = Encoding.UTF8.GetBytes($">4\r\n+MOVING\r\n:1\r\n:5\r\n+127.0.0.1:{target.Port}\r\n");
         try
         {
             await source.SendRawAsync(moving.Concat(moving).ToArray());
+            await listener.Entered.WaitAsync(TimeSpan.FromSeconds(5));
             await WaitUntil(() => pool.IsStopping);
+            await WaitUntil(() => !idle.IsConnected);
+            listener.Release();
             await WaitUntil(() => capture.Events.Count(item => item.Name == "redis.client.connection.handoff") == expectedHandoffs);
             await Assert.That(borrowed.IsConnected).IsTrue();
             await Assert.That(streaming.IsConnected).IsTrue();
@@ -633,6 +639,7 @@ public class ConnectionMetricTests
         }
         finally
         {
+            listener.Release();
             pool.Return(borrowed);
             pool.Return(streaming);
         }
@@ -683,6 +690,7 @@ public class ConnectionMetricTests
             pool.Return(dead);
             // Repeated calls cannot emit more handoffs, even while the first callback blocks.
             await pool.RetireAsync(moving).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            await retirement.WaitAsync(TimeSpan.FromSeconds(5));
         }
         finally
         {
@@ -691,6 +699,7 @@ public class ConnectionMetricTests
             pool.Return(dead);
             await retirement.WaitAsync(TimeSpan.FromSeconds(5));
         }
+        await WaitUntil(() => ConnectionTelemetry.PendingMeasurements == 0);
         var handoffs = capture.Events.Where(item => item.Name == "redis.client.connection.handoff").ToArray();
         await Assert.That(handoffs.Length).IsEqualTo(moving ? 2 : 0);
     }

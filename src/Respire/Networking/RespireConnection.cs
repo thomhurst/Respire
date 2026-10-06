@@ -412,7 +412,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         catch (Exception error)
         {
             if (ConnectionTelemetry.IsCallerCancellation(error, cancellationToken))
-                connection.RequestMetricCloseReason("application_close");
+                connection.RequestMetricCloseReason(ConnectionTelemetry.CloseReason.Application);
             connection.Abort(error);
             try { await connection.DisposeAsync().ConfigureAwait(false); }
             catch { /* Preserve the original handshake or validation failure. */ }

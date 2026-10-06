@@ -237,7 +237,7 @@ internal sealed partial class DedicatedConnectionPool(
                         Debug.Assert(other < _idle.Count,
                             "A full pool below this kind's reserved share must contain another lease kind.");
                         closing = _idle[other];
-                        closing.Connection.RequestMetricCloseReason("pool_eviction_idle");
+                        closing.Connection.RequestMetricCloseReason(ConnectionTelemetry.CloseReason.IdleEviction);
                         _idle.RemoveAt(other);
                         BeginCloseLocked(closing);
                     }
@@ -251,7 +251,7 @@ internal sealed partial class DedicatedConnectionPool(
                 else
                 {
                     closing = entry;
-                    connection.RequestMetricCloseReason("pool_eviction_idle");
+                    connection.RequestMetricCloseReason(ConnectionTelemetry.CloseReason.IdleEviction);
                 }
             }
             else closing = entry;
