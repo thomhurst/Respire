@@ -277,7 +277,7 @@ public class FakeTransactionParityTests(RedisTestContainer fixture)
             }
             if (requireArrays)
                 unsupported.Where(command => command.StartsWith("AR", StringComparison.Ordinal)).Should().BeEmpty(
-                    "the Redis 8.10 acceptance server must execute every array WATCH parity vector");
+                    "the acceptance server must execute every array WATCH parity vector");
         }
         foreach (var scenario in scenarios)
         {

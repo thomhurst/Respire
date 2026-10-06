@@ -89,9 +89,11 @@ public interface IBatchArrayCommands
     RespirePending<bool> Seek(RespireKey key, ulong index);
 
     /// <summary>Recent positions, retaining holes; oldest first unless reverse. Nonpositive count returns empty. Redis: ARLASTITEMS.</summary>
+    /// <remarks>Zero and negative counts produce an empty result, matching Redis rather than throwing a range exception.</remarks>
     RespirePending<string?[]> LastItems(RespireKey key, long count, bool reverse = false);
 
     /// <summary>Deserialized recent positions. Use nullable value types to retain holes. Redis: ARLASTITEMS.</summary>
+    /// <remarks>Zero and negative counts produce an empty result, matching Redis rather than throwing a range exception.</remarks>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     RespirePending<T?[]> LastItems<T>(RespireKey key, long count, bool reverse = false);

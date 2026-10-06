@@ -1,11 +1,11 @@
 ---
 title: Sparse arrays
-description: Redis 8.10 sparse arrays, range scans, aggregation, and ring buffers.
+description: Redis 8.8+ sparse arrays, range scans, aggregation, and ring buffers.
 ---
 
 # Sparse arrays
 
-`redis.Arrays` exposes all 18 Redis array commands. The complete family requires Redis 8.10; older servers report their usual unknown-command error for unavailable operations. Arrays store values at unsigned indexes without shifting other positions when slots are deleted.
+`redis.Arrays` exposes all 18 Redis array commands, available since Redis Open Source 8.8.0 (see the [Redis array command reference](https://redis.io/docs/latest/commands/arscan/)). Older servers report their usual unknown-command error for unavailable operations. Arrays store values at unsigned indexes without shifting other positions when slots are deleted.
 
 Indexes use `ulong`, including positions beyond `long.MaxValue`. Redis reserves `ulong.MaxValue` for normal slot operations. `SeekAsync` also accepts that value to exhaust the insertion cursor.
 

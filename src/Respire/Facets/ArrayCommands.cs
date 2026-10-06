@@ -7,7 +7,7 @@ using Respire.Serialization;
 
 namespace Respire;
 
-/// <summary>Redis 8.10 sparse arrays with unsigned indexes. Reads preserve holes; generic value types require nullable T or TryGet to distinguish absent slots.</summary>
+/// <summary>Redis 8.8+ sparse arrays with unsigned indexes. Reads preserve holes; generic value types require nullable T or TryGet to distinguish absent slots.</summary>
 public interface IArrayCommands
 {
     /// <summary>Matching indexes with default OR options. Redis: ARGREP.</summary>
@@ -126,9 +126,11 @@ public interface IArrayCommands
     ValueTask<bool> SeekAsync(RespireKey key, ulong index, CancellationToken cancellationToken = default);
 
     /// <summary>Recent positions, retaining holes; oldest first unless reverse. Nonpositive count returns empty. Redis: ARLASTITEMS.</summary>
+    /// <remarks>Zero and negative counts return an empty array, matching Redis rather than throwing a range exception.</remarks>
     ValueTask<string?[]> LastItemsAsync(RespireKey key, long count, bool reverse = false, CancellationToken cancellationToken = default);
 
     /// <summary>Deserialized recent positions. Use nullable value types to retain holes. Redis: ARLASTITEMS.</summary>
+    /// <remarks>Zero and negative counts return an empty array, matching Redis rather than throwing a range exception.</remarks>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     ValueTask<T?[]> LastItemsAsync<T>(RespireKey key, long count, bool reverse = false, CancellationToken cancellationToken = default);

@@ -6,7 +6,8 @@ internal static class ArrayCommandArguments
     private const int MaximumGrepPredicates = 250;
     internal static void ValidateIndex(ulong index)
     {
-        if (index == ulong.MaxValue) throw new ArgumentOutOfRangeException(nameof(index), "UInt64.MaxValue is reserved by Redis.");
+        if (index == ulong.MaxValue)
+            throw new ArgumentOutOfRangeException(nameof(index), "UInt64.MaxValue is reserved by Redis.");
     }
 
     internal static RespireValue[] Range(ulong start, ulong end, long? limit = null)
@@ -21,7 +22,11 @@ internal static class ArrayCommandArguments
     {
         RequireItems(indexes.Length);
         var args = new RespireValue[indexes.Length];
-        for (var i = 0; i < indexes.Length; i++) { ValidateIndex(indexes[i]); args[i] = indexes[i]; }
+        for (var i = 0; i < indexes.Length; i++)
+        {
+            ValidateIndex(indexes[i]);
+            args[i] = indexes[i];
+        }
         return args;
     }
 
@@ -43,7 +48,8 @@ internal static class ArrayCommandArguments
     {
         ValidateIndex(index);
         RequireItems(values.Length);
-        if ((ulong)(values.Length - 1) >= ulong.MaxValue - index) throw new ArgumentOutOfRangeException(nameof(values), "Array index overflow.");
+        if ((ulong)(values.Length - 1) >= ulong.MaxValue - index)
+            throw new ArgumentOutOfRangeException(nameof(values), "Array index overflow.");
         return Prefix(index, values);
     }
 
@@ -127,7 +133,11 @@ internal static class ArrayCommandArguments
         }
         if (options.MatchAll) args[index++] = "AND";
         if (options.IgnoreCase) args[index++] = "NOCASE";
-        if (options.Limit is { } limit) { args[index++] = "LIMIT"; args[index++] = limit; }
+        if (options.Limit is { } limit)
+        {
+            args[index++] = "LIMIT";
+            args[index++] = limit;
+        }
         if (withValues) args[index] = "WITHVALUES";
         return args;
     }

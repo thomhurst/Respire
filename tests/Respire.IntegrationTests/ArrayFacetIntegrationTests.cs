@@ -10,13 +10,15 @@ namespace Respire.IntegrationTests;
 public class ArrayFacetIntegrationTests(VersionedServerFixture servers)
 {
     [Test]
-    [Arguments(2)]
-    [Arguments(3)]
-    public async Task InfoPopulatesEveryReleasedField(int protocol)
+    [Arguments(2, "redis:8.10-alpine")]
+    [Arguments(3, "redis:8.10-alpine")]
+    [Arguments(2, "redis:8.8.3-alpine")]
+    [Arguments(3, "redis:8.8.3-alpine")]
+    public async Task InfoPopulatesEveryReleasedField(int protocol, string image)
     {
-        var lease = await servers.LeaseAsync("redis:8.10-alpine");
+        var lease = await servers.LeaseAsync(image);
         await using var client = await RespireClient.ConnectAsync(lease.ConnectionString(protocol));
-        await RequireArrayCommandsAsync(client, "redis:8.10-alpine");
+        await RequireArrayCommandsAsync(client, image);
         await client.Arrays.InsertAsync("info", "first", "second", "third");
         var info = await client.Arrays.InfoAsync("info", full: true);
         using var raw = await client.ExecuteAsync(RespireCommands.Array.ARINFO, "info", "FULL");
@@ -41,36 +43,44 @@ public class ArrayFacetIntegrationTests(VersionedServerFixture servers)
     }
 
     [Test]
-    [Arguments(2)]
-    [Arguments(3)]
-    public async Task ArrayMutationsAndReadsHaveWatchParity(int protocol)
+    [Arguments(2, "redis:8.10-alpine")]
+    [Arguments(3, "redis:8.10-alpine")]
+    [Arguments(2, "redis:8.8.3-alpine")]
+    [Arguments(3, "redis:8.8.3-alpine")]
+    public async Task ArrayMutationsAndReadsHaveWatchParity(int protocol, string image)
     {
-        var lease = await servers.LeaseAsync("redis:8.10-alpine");
+        var lease = await servers.LeaseAsync(image);
         await FakeTransactionParityTests.AssertWatchTracksMutationsAsync(
             RespireOptions.Parse(lease.ConnectionString(protocol)), useFake: false, requireArrays: true);
     }
 
     [Test]
-    [Arguments(2)]
-    [Arguments(3)]
-    public async Task SerializationPredicatesAndValidation(int protocol)
+    [Arguments(2, "redis:8.10-alpine")]
+    [Arguments(3, "redis:8.10-alpine")]
+    [Arguments(2, "redis:8.8.3-alpine")]
+    [Arguments(3, "redis:8.8.3-alpine")]
+    public async Task SerializationPredicatesAndValidation(int protocol, string image)
     {
-        var lease = await servers.LeaseAsync("redis:8.10-alpine");
+        var lease = await servers.LeaseAsync(image);
         await using var client = await RespireClient.ConnectAsync(lease.ConnectionString(protocol));
-        await RequireArrayCommandsAsync(client, "redis:8.10-alpine");
+        await RequireArrayCommandsAsync(client, image);
         await ArrayFacetScenarios.SerializationPredicatesAndValidation(client.WithKeyPrefix("validation:" + Guid.NewGuid().ToString("N") + ":"));
     }
 
     [Test]
-    [Arguments(2, false)]
-    [Arguments(3, false)]
-    [Arguments(2, true)]
-    [Arguments(3, true)]
-    public async Task EveryCommandHasDeferredExecution(int protocol, bool transactional)
+    [Arguments(2, false, "redis:8.10-alpine")]
+    [Arguments(3, false, "redis:8.10-alpine")]
+    [Arguments(2, true, "redis:8.10-alpine")]
+    [Arguments(3, true, "redis:8.10-alpine")]
+    [Arguments(2, false, "redis:8.8.3-alpine")]
+    [Arguments(3, false, "redis:8.8.3-alpine")]
+    [Arguments(2, true, "redis:8.8.3-alpine")]
+    [Arguments(3, true, "redis:8.8.3-alpine")]
+    public async Task EveryCommandHasDeferredExecution(int protocol, bool transactional, string image)
     {
-        var lease = await servers.LeaseAsync("redis:8.10-alpine");
+        var lease = await servers.LeaseAsync(image);
         await using var client = await RespireClient.ConnectAsync(lease.ConnectionString(protocol));
-        await RequireArrayCommandsAsync(client, "redis:8.10-alpine");
+        await RequireArrayCommandsAsync(client, image);
         await ArrayFacetScenarios.DeferredCommands(client.WithKeyPrefix("deferred:" + Guid.NewGuid().ToString("N") + ":"), transactional);
     }
 
@@ -79,6 +89,8 @@ public class ArrayFacetIntegrationTests(VersionedServerFixture servers)
     [Arguments(3, "redis:8.10-alpine")]
     [Arguments(2, "redis:7.4-alpine")]
     [Arguments(3, "redis:7.4-alpine")]
+    [Arguments(2, "redis:8.8.3-alpine")]
+    [Arguments(3, "redis:8.8.3-alpine")]
     public async Task SparseSlotsAndUnsignedIndexesPreservePresence(int protocol, string image)
     {
         var lease = await servers.LeaseAsync(image);
@@ -92,6 +104,8 @@ public class ArrayFacetIntegrationTests(VersionedServerFixture servers)
     [Arguments(3, "redis:8.10-alpine")]
     [Arguments(2, "redis:7.4-alpine")]
     [Arguments(3, "redis:7.4-alpine")]
+    [Arguments(2, "redis:8.8.3-alpine")]
+    [Arguments(3, "redis:8.8.3-alpine")]
     public async Task ScansPageByIndexInBothDirections(int protocol, string image)
     {
         var lease = await servers.LeaseAsync(image);
@@ -105,6 +119,8 @@ public class ArrayFacetIntegrationTests(VersionedServerFixture servers)
     [Arguments(3, "redis:8.10-alpine")]
     [Arguments(2, "redis:7.4-alpine")]
     [Arguments(3, "redis:7.4-alpine")]
+    [Arguments(2, "redis:8.8.3-alpine")]
+    [Arguments(3, "redis:8.8.3-alpine")]
     public async Task CursorRingAndLastItemsRespectHolesAndResize(int protocol, string image)
     {
         var lease = await servers.LeaseAsync(image);
@@ -118,6 +134,8 @@ public class ArrayFacetIntegrationTests(VersionedServerFixture servers)
     [Arguments(3, "redis:8.10-alpine")]
     [Arguments(2, "redis:7.4-alpine")]
     [Arguments(3, "redis:7.4-alpine")]
+    [Arguments(2, "redis:8.8.3-alpine")]
+    [Arguments(3, "redis:8.8.3-alpine")]
     public async Task SearchAggregateAndInfoKeepReplyShapes(int protocol, string image)
     {
         var lease = await servers.LeaseAsync(image);
@@ -130,8 +148,8 @@ public class ArrayFacetIntegrationTests(VersionedServerFixture servers)
     {
         using var info = await client.ExecuteAsync(RespireCommands.Server.COMMAND, "INFO", "ARGREP");
         var available = !info[0].IsNull;
-        // The requested acceptance server must implement the complete family.
-        if (image == "redis:8.10-alpine") await Assert.That(available).IsTrue();
-        Skip.Unless(available, "Redis 8.10 array commands are unavailable on this server.");
+        // Both the minimum supported family and the requested 8.10 acceptance server are mandatory.
+        if (image is "redis:8.10-alpine" or "redis:8.8.3-alpine") await Assert.That(available).IsTrue();
+        Skip.Unless(available, "Redis array commands are unavailable on this server.");
     }
 }
