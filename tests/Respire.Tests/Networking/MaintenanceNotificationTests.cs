@@ -1826,12 +1826,15 @@ public class MaintenanceNotificationTests
             CommandTimeout = TimeSpan.FromMilliseconds(150),
             MaintenanceRelaxedTimeout = TimeSpan.FromSeconds(5),
         });
+        // The 150ms budget tests the stalled upload, not connection initialization.
+        // Bound warmup separately and keep ordinary command deadlines armed after it.
+        using var initialization = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var pool = cluster
-            ? await client.Core.Cluster!.GetDedicatedPoolAsync(null, CancellationToken.None, discovery: null)
-            : await client.Core.GetDedicatedPoolAsync(CancellationToken.None);
-        var blocking = await pool.RentAsync(CancellationToken.None);
+            ? await client.Core.Cluster!.GetDedicatedPoolAsync(null, initialization.Token, discovery: null)
+            : await client.Core.GetDedicatedPoolAsync(initialization.Token);
+        var blocking = await pool.RentAsync(initialization.Token, armHandshakeDeadline: false);
         pool.Return(blocking);
-        var connection = await pool.RentAsync(CancellationToken.None, kind: DedicatedLeaseKind.Streaming);
+        var connection = await pool.RentAsync(initialization.Token, armHandshakeDeadline: false, kind: DedicatedLeaseKind.Streaming);
         await Assert.That(ReferenceEquals(blocking, connection)).IsFalse();
         await server.SendRawAsync(Start("MIGRATING", 1), server.ReceivedConnectionIds[^1]);
         await WaitForMaintenance(connection);
