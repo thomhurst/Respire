@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Networking;
 using Respire.Protocol;
@@ -19,9 +18,9 @@ public class FlushWakeTests
     {
         await using var server = new FakeRespServer(FakeRespServer.PongReply);
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
-        var signal = FlushSignal(connection);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        while (Volatile.Read(ref SignalState(signal)) != 2) // Waiting: no earlier wake can rescue this batch.
+        // Wait for the setup precondition; publication/release below controls the race itself.
+        while (!connection.IsFlushLoopWaiting)
             await Task.Delay(1, deadline.Token);
 
         var published = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -55,12 +54,6 @@ public class FlushWakeTests
         }
         await Assert.That(await first.Task.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo("PONG");
     }
-
-    [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_flushSignal")]
-    private static extern ref AsyncFlushSignal FlushSignal(RespireConnection connection);
-
-    [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_state")]
-    private static extern ref int SignalState(AsyncFlushSignal signal);
 
     private readonly struct PausedProducer(TaskCompletionSource published, ManualResetEventSlim release) : IRespCommand
     {

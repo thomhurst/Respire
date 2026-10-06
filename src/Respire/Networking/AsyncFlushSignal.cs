@@ -26,6 +26,9 @@ internal sealed class AsyncFlushSignal : IValueTaskSource, IThreadPoolWorkItem
     private ManualResetValueTaskSourceCore<bool> _core = new() { RunContinuationsAsynchronously = false };
     private int _state;
 
+    // Read-only diagnostic seam; observing it adds no work to the signaling path.
+    internal bool IsWaiting => Volatile.Read(ref _state) == Waiting;
+
     /// <summary>Single consumer only.</summary>
     public ValueTask WaitAsync()
     {
@@ -54,14 +57,7 @@ internal sealed class AsyncFlushSignal : IValueTaskSource, IThreadPoolWorkItem
     /// </param>
     public void Signal(bool preferInline = false)
     {
-        // Publish work before observing a pending wake. An acquire-only read does not
-        // order earlier stores; do not rely on the producer gate's implementation.
-        Interlocked.MemoryBarrier();
-        // Coalesce against the pending wake without taking exclusive ownership of its
-        // cache line. A concurrent consumer may consume that wake after this read;
-        // this signal then belongs to the wake it just consumed, as with Exchange.
-        if (Volatile.Read(ref _state) == Signaled
-            || Interlocked.Exchange(ref _state, Signaled) != Waiting)
+        if (Interlocked.Exchange(ref _state, Signaled) != Waiting)
         {
             return;
         }
