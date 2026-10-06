@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace Respire;
 
 /// <summary>Wire representation of a vector supplied to VADD or VSIM.</summary>
@@ -66,7 +68,13 @@ public readonly record struct RespireVectorSearchOptions
 
 /// <summary>An owned binary member with optional similarity score and JSON attributes.</summary>
 /// <remarks>Arrays are caller-owned and mutable; record equality compares array references.</remarks>
-public sealed record RespireVectorMatch(byte[] Member, double? Score, byte[]? AttributesJson);
+public sealed record RespireVectorMatch(
+    [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO retains its existing array storage without copying on access.")]
+    byte[] Member, double? Score,
+    [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO retains its existing array storage without copying on access.")]
+    byte[]? AttributesJson);
 
 /// <summary>An owned VINFO snapshot. Unknown fields preserve future server additions.</summary>
 /// <remarks>AdditionalFields have GC-owned storage and need no disposal.</remarks>

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Protocol;
@@ -20,7 +21,18 @@ public enum RespireCommandLogType
 /// disposing those GC-owned results is optional. Server-side truncation and redaction cannot be reversed.</remarks>
 public sealed record RespireCommandLogEntry(
     RespireCommandLogType Type, long Id, long TimestampUnixSeconds, long MetricValue,
-    byte[][] Arguments, byte[] ClientAddress, byte[] ClientName, RespireResult[] AdditionalValues)
+    [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO retains its existing array storage without copying on access.")]
+    byte[][] Arguments,
+    [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO retains its existing array storage without copying on access.")]
+    byte[] ClientAddress,
+    [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO retains its existing array storage without copying on access.")]
+    byte[] ClientName,
+    [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO retains its existing array storage without copying on access.")]
+    RespireResult[] AdditionalValues)
 {
     /// <summary>Execution microseconds for Slow entries; null for size logs.</summary>
     public long? DurationMicroseconds => Type == RespireCommandLogType.Slow ? MetricValue : null;

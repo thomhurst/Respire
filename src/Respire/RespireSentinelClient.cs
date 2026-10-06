@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using Respire.Internal;
 using Respire.Protocol;
@@ -20,7 +21,10 @@ public sealed record RespireSentinelPeer(string Name, RespireEndpoint Endpoint, 
 public sealed record RespireSentinelInfo(string PrimaryName, long AgeMilliseconds, string? Info);
 
 /// <summary>A pending script and its scheduling state. Time is runtime or delay in milliseconds.</summary>
-public sealed record RespireSentinelScript(string[] Arguments, string Flags, long ProcessId,
+public sealed record RespireSentinelScript(
+    [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO retains its existing array storage without copying on access.")]
+    string[] Arguments, string Flags, long ProcessId,
     long TimeMilliseconds, long RetryCount);
 
 /// <summary>A Sentinel down-state observation and its vote for a failover leader.</summary>

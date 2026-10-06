@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Buffers.Text;
 using System.Globalization;
 using System.Runtime.CompilerServices;
@@ -208,6 +209,8 @@ public readonly record struct RespireStreamPendingSummary(
     long Count,
     RespireStreamId? SmallestId,
     RespireStreamId? GreatestId,
+    [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO retains its existing array storage without copying on access.")]
     RespireStreamConsumerPendingCount[] Consumers);
 
 /// <summary>One detailed pending entry returned by Redis XPENDING.</summary>
@@ -220,7 +223,11 @@ public readonly record struct RespireStreamPendingEntry(
 /// <summary>The next scan position, claimed entries, and deleted pending ids returned by XAUTOCLAIM.</summary>
 public readonly record struct RespireStreamClaimResult(
     RespireStreamId NextStart,
+    [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO retains its existing array storage without copying on access.")]
     RespireStreamEntry[] Entries,
+    [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO retains its existing array storage without copying on access.")]
     RespireStreamId[] DeletedIds);
 
 /// <summary>Stream metadata returned by Redis XINFO STREAM.</summary>

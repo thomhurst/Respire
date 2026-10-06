@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace Respire;
 
 /// <summary>An inclusive Cluster hash-slot range.</summary>
@@ -11,9 +13,20 @@ public sealed record RespireClusterSlotTransition(int Slot, string Direction, st
 /// Unknown flag values, link states and trailing tokens are preserved.
 /// Arrays are caller-owned and mutable; record equality compares their references, not their contents.</remarks>
 public sealed record RespireClusterNode(
-    string Id, string Address, string[] Flags, string? PrimaryId,
+    string Id, string Address,
+    [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO retains its existing array storage without copying on access.")]
+    string[] Flags, string? PrimaryId,
     long PingSentMilliseconds, long PongReceivedMilliseconds, long ConfigurationEpoch,
-    string LinkState, RespireClusterSlotRange[] Slots, RespireClusterSlotTransition[] Transitions,
+    string LinkState,
+    [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO retains its existing array storage without copying on access.")]
+    RespireClusterSlotRange[] Slots,
+    [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO retains its existing array storage without copying on access.")]
+    RespireClusterSlotTransition[] Transitions,
+    [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO retains its existing array storage without copying on access.")]
     string[] AdditionalTokens);
 
 /// <summary>One node's owned CLUSTER INFO report. Attributes retain every reported field.</summary>
@@ -34,7 +47,12 @@ public sealed record RespireClusterShardNode(
 /// <remarks>Unknown fields contain GC-owned results; disposal is optional.
 /// Arrays are caller-owned and mutable; record equality compares their references, not their contents.</remarks>
 public sealed record RespireClusterShard(
-    RespireClusterSlotRange[] Slots, RespireClusterShardNode[] Nodes,
+    [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO retains its existing array storage without copying on access.")]
+    RespireClusterSlotRange[] Slots,
+    [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO retains its existing array storage without copying on access.")]
+    RespireClusterShardNode[] Nodes,
     IReadOnlyDictionary<string, RespireResult> AdditionalFields);
 
 /// <summary>An owned Cluster bus link. Creation time is Unix milliseconds.</summary>

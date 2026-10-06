@@ -195,4 +195,7 @@ public sealed record RespireTDigestOptions
 }
 
 /// <summary>A chunk produced by BF.SCANDUMP or CF.SCANDUMP.</summary>
-public sealed record RespireProbabilisticDumpChunk(long Iterator, byte[]? Data);
+public sealed record RespireProbabilisticDumpChunk(long Iterator,
+    [param: System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO retains its existing array storage without copying on access.")]
+    byte[]? Data);

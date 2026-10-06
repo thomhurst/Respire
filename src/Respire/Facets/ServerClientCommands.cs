@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Networking;
@@ -35,7 +36,12 @@ public enum RespireClientUnblockMode
 /// <summary>Owned CLIENT TRACKINGINFO data, including unrecognized flags and fields.</summary>
 /// <remarks>Field results have GC-owned storage; disposal is optional. Prefix bytes are not key-prefixed.</remarks>
 public sealed record RespireClientTrackingInfo(
-    string[] Flags, long RedirectClientId, byte[][] Prefixes, IReadOnlyDictionary<string, RespireResult> Fields);
+    [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO retains its existing array storage without copying on access.")]
+    string[] Flags, long RedirectClientId,
+    [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO retains its existing array storage without copying on access.")]
+    byte[][] Prefixes, IReadOnlyDictionary<string, RespireResult> Fields);
 
 public partial interface IServerCommands
 {

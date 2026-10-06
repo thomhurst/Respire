@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.AspNetCore.OutputCaching;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -35,6 +36,8 @@ public static class RespireOutputCacheServiceCollectionExtensions
     }
 }
 
+[SuppressMessage("Performance", "CA1812:Avoid uninstantiated internal classes",
+    Justification = "Instantiated by dependency injection through the IHostedService registration in AddRespireOutputCache.")]
 internal sealed class OutputCacheCleanupService(RespireOutputCacheStore store,
     IOptions<RespireOutputCacheOptions> options, ILogger<OutputCacheCleanupService> logger) : BackgroundService
 {
