@@ -101,13 +101,6 @@
   </PropertyGroup>
 
   <ItemGroup Condition="'$(IsRespirePackageProject)' == 'true'">
-    <!-- Stack storage is audited in docs/STACKALLOC_AUDIT.md before skipping zero initialization. -->
-    <Compile Include="$(RepositoryRoot)src/Shared/SkipLocalsInit.cs" Link="SkipLocalsInit.cs" />
     <None Include="$(RepositoryRoot)README.md" Pack="true" PackagePath="/" />
   </ItemGroup>
-
-  <PropertyGroup Condition="'$(IsRespirePackageProject)' == 'true'">
-    <!-- The compiler requires unsafe compilation for the module attribute, even without pointer code. -->
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-  </PropertyGroup>
 </Project>

@@ -9,8 +9,8 @@ namespace Respire.Internal;
 internal static class Utf8String
 {
 #if !NET9_0_OR_GREATER
-    // Preserve the original net8 cutoff: CI run 37399372813 found a large-Unicode
-    // regression without it. See docs/STACKALLOC_AUDIT.md for the measured scope.
+    // Preserve the original net8 cutoff. Longer payloads retain runtime decoding,
+    // avoiding an extra preflight scan before Unicode fallback.
     private const int Net8DirectAsciiMaxByteLength = 256;
 #endif
 

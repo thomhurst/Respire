@@ -1,8 +1,5 @@
 using System.Text;
-using System.Runtime.CompilerServices;
 using Respire.Internal;
-using Respire.Json;
-using Respire.Protocol;
 using TUnit.Core;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -109,11 +106,4 @@ public class Utf8StringTests
         await Assert.That(Utf8String.GetString(bytes.AsMemory())).IsEqualTo(expected);
     }
 
-    [Test]
-    [Arguments(typeof(RespWriter))]
-    [Arguments(typeof(RespireJsonClient))]
-    public async Task PackageModulesDeclareSkippedLocalInitialization(Type packageType)
-    {
-        await Assert.That(packageType.Module.IsDefined(typeof(SkipLocalsInitAttribute), inherit: false)).IsTrue();
-    }
 }
