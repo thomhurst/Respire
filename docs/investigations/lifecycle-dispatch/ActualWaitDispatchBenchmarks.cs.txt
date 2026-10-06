@@ -1,0 +1,63 @@
+using System.Diagnostics;
+using System.Diagnostics.Metrics;
+using BenchmarkDotNet.Attributes;
+using Respire;
+using Respire.Internal;
+using Respire.Networking;
+using Testcontainers.Redis;
+
+namespace Respire.Benchmarks;
+
+[MemoryDiagnoser]
+[ThreadingDiagnoser]
+public class ActualWaitDispatchBenchmarks
+{
+    private readonly RedisContainer _redis = InvestigationRedis.Build();
+    private readonly MeterListener _listener = new();
+    private readonly ManualResetEventSlim _drained = new(false);
+    private RespireConnection _connection = null!;
+    private long _delivered;
+    private long _expected;
+    private long _droppedBefore;
+
+    [GlobalSetup]
+    public async Task Setup()
+    {
+        RespireMetrics.Configure(new() { Groups = RespireMetricGroups.All });
+        await _redis.StartAsync();
+        _connection = await RespireConnection.ConnectAsync(_redis.Hostname, _redis.GetMappedPublicPort(6379),
+            new() { Protocol = RespProtocol.Resp2, IsDedicatedConnection = true });
+        _listener.InstrumentPublished = (instrument, listener) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.connection.wait_time")
+                listener.EnableMeasurementEvents(instrument);
+        };
+        _listener.SetMeasurementEventCallback<double>((_, _, _, _) =>
+        {
+            if (Interlocked.Increment(ref _delivered) >= Volatile.Read(ref _expected)) _drained.Set();
+        });
+        _listener.Start();
+        _droppedBefore = ConnectionTelemetry.DroppedMeasurements;
+    }
+
+    [Benchmark(OperationsPerInvoke = 32)]
+    public long WaitEventBurst()
+    {
+        _drained.Reset();
+        Volatile.Write(ref _expected, Volatile.Read(ref _delivered) + 32);
+        for (var i = 0; i < 32; i++) _connection.RecordConnectionWait(Stopwatch.GetTimestamp());
+        if (!_drained.Wait(TimeSpan.FromSeconds(30))) throw new TimeoutException("Incomplete real event delivery.");
+        while (ConnectionTelemetry.PendingMeasurements != 0) Thread.Yield();
+        return Volatile.Read(ref _delivered);
+    }
+
+    [GlobalCleanup]
+    public async Task Cleanup()
+    {
+        if (ConnectionTelemetry.DroppedMeasurements != _droppedBefore) throw new InvalidOperationException("Event delivery dropped.");
+        _listener.Dispose();
+        await _connection.DisposeAsync();
+        _drained.Dispose();
+        await _redis.DisposeAsync();
+    }
+}
