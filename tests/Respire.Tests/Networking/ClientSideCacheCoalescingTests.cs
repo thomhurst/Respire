@@ -13,6 +13,63 @@ public class ClientSideCacheCoalescingTests
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(5);
 
     [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task CoalescedHashCancellationDoesNotRunCallerOnCancelThread(bool generic, bool lastWaiter)
+    {
+        await using var server = CreateServer();
+        await using var client = await ConnectAsync(server);
+        using var cancellation = new CancellationTokenSource();
+        using var releaseCaller = new ManualResetEventSlim();
+        var pending = generic
+            ? client.Hashes.GetAsync<string>("key", "field", cancellation.Token)
+            : client.Hashes.GetStringAsync("key", "field", cancellation.Token);
+        var follower = lastWaiter ? null : client.Hashes.GetStringAsync("key", "field").AsTask();
+        await BarrierAsync(server, client, 1);
+
+        var observed = new TaskCompletionSource<(int Thread, Exception? Error)>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var callerFinished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancelReturned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var awaiter = pending.ConfigureAwait(false).GetAwaiter();
+        awaiter.UnsafeOnCompleted(() =>
+        {
+            Exception? failure = null;
+            try { _ = awaiter.GetResult(); }
+            catch (Exception error) { failure = error; }
+            observed.TrySetResult((Environment.CurrentManagedThreadId, failure));
+            if (releaseCaller.Wait(TimeSpan.FromSeconds(15))) callerFinished.TrySetResult();
+            else callerFinished.TrySetException(new TimeoutException("Caller was not released."));
+        });
+        var cancelThread = new Thread(() =>
+        {
+            try { cancellation.Cancel(); cancelReturned.TrySetResult(); }
+            catch (Exception error) { cancelReturned.TrySetException(error); }
+        }) { IsBackground = true };
+        cancelThread.Start();
+        try
+        {
+            var result = await observed.Task.WaitAsync(Timeout);
+            await Assert.That(result.Thread).IsNotEqualTo(cancelThread.ManagedThreadId);
+            await Assert.That(result.Error is OperationCanceledException error && error.CancellationToken == cancellation.Token).IsTrue();
+            await cancelReturned.Task.WaitAsync(Timeout);
+            await Assert.That(callerFinished.Task.IsCompleted).IsFalse();
+            if (follower is not null)
+            {
+                await server.SendRawAsync("+OK\r\n$5\r\nvalue\r\n+PONG\r\n"u8.ToArray());
+                await Assert.That(await follower.WaitAsync(Timeout)).IsEqualTo("value");
+            }
+        }
+        finally
+        {
+            releaseCaller.Set();
+            await Assert.That(cancelThread.Join(Timeout)).IsTrue();
+            await callerFinished.Task.WaitAsync(Timeout);
+        }
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task EquivalentMissesSendOneRequestAndCancellationOnlyDetachesCaller(bool cancelLeader)
