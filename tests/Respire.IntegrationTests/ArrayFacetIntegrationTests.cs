@@ -10,6 +10,24 @@ namespace Respire.IntegrationTests;
 public class ArrayFacetIntegrationTests(VersionedServerFixture servers)
 {
     [Test]
+    [Arguments(2, false, "redis:8.10-alpine")]
+    [Arguments(3, false, "redis:8.10-alpine")]
+    [Arguments(2, true, "redis:8.10-alpine")]
+    [Arguments(3, true, "redis:8.10-alpine")]
+    [Arguments(2, false, "redis:8.8.3-alpine")]
+    [Arguments(3, false, "redis:8.8.3-alpine")]
+    [Arguments(2, true, "redis:8.8.3-alpine")]
+    [Arguments(3, true, "redis:8.8.3-alpine")]
+    public async Task EmptyRegularExpressionIsRejectedBeforeKeyLookup(int protocol, bool present, string image)
+    {
+        var lease = await servers.LeaseAsync(image);
+        await using var client = await RespireClient.ConnectAsync(lease.ConnectionString(protocol));
+        await RequireArrayCommandsAsync(client, image);
+        await ArrayFacetScenarios.EmptyRegularExpressionIsRejectedBeforeKeyLookup(
+            client.WithKeyPrefix("EmptyRegularExpressionIsRejectedBeforeKeyLookup:" + Guid.NewGuid().ToString("N") + ":"), present);
+    }
+
+    [Test]
     [Arguments(2, "redis:8.10-alpine")]
     [Arguments(3, "redis:8.10-alpine")]
     [Arguments(2, "redis:8.8.3-alpine")]

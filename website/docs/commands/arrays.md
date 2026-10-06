@@ -77,7 +77,7 @@ string?[] recent = await redis.Arrays.LastItemsAsync("recent", 3);
 // ["b", "c", "d"]
 ```
 
-`AggregateAsync` preserves the server's numeric text for SUM/MIN/MAX and signed integers for AND/OR/XOR/MATCH/USED. Empty numeric or bitwise input gives `IsNull`; MATCH and USED give zero. MATCH requires the optional `match` argument. Redis evaluates aggregation ranges in ascending order regardless of endpoint order.
+`AggregateAsync` preserves the server's numeric text for SUM/MIN/MAX and signed integers for AND/OR/XOR/MATCH/USED. Empty numeric or bitwise input gives `IsNull`; MATCH and USED give zero. MATCH requires the optional `match` argument. Redis traverses the range in the requested direction: descending when `start > end`.
 
 `InsertAsync` writes at the insertion cursor and returns the last written index. `SetAsync` and `SetManyAsync` do not move that cursor. `NextIndexAsync` returns zero before insertion or when the key is missing, and null after exhaustion. `SeekAsync` returns false for a missing key.
 

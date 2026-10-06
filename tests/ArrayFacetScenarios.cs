@@ -9,6 +9,28 @@ internal static class ArrayFacetScenarios
 {
     internal sealed record Payload(int Number, string Name);
 
+    internal static async Task EmptyRegularExpressionIsRejectedBeforeKeyLookup(IRespireClient client, bool present)
+    {
+        if (present) await client.Arrays.SetAsync("regex", 0, "", "value");
+        RespireArrayPredicate[] predicates = [new(RespireArrayPredicateKind.Regex, "")];
+        await Assert.That(async () => await client.Arrays.GrepAsync("regex", RespireArrayBound.First, RespireArrayBound.Last, predicates))
+            .Throws<RespireServerException>().WithMessage("ERR regular expression is empty");
+        await Assert.That(async () => await client.Arrays.GrepEntriesAsync("regex", RespireArrayBound.Last, RespireArrayBound.First, predicates))
+            .Throws<RespireServerException>().WithMessage("ERR regular expression is empty");
+        await Assert.That(async () => await client.Arrays.GrepEntriesAsync<string>("regex", RespireArrayBound.First, RespireArrayBound.Last, predicates))
+            .Throws<RespireServerException>().WithMessage("ERR regular expression is empty");
+        await Assert.That(await client.Arrays.GrepAsync("regex", RespireArrayBound.First, RespireArrayBound.Last,
+            new RespireArrayPredicate(RespireArrayPredicateKind.Exact, "")))
+            .IsEquivalentTo(present ? new[] { 0UL } : [], CollectionOrdering.Matching);
+        await Assert.That(await client.Arrays.GrepAsync("regex", RespireArrayBound.First, RespireArrayBound.Last,
+            new RespireArrayPredicate(RespireArrayPredicateKind.Contains, "")))
+            .IsEquivalentTo(present ? new[] { 0UL, 1UL } : [], CollectionOrdering.Matching);
+        await Assert.That(await client.Arrays.GrepAsync("regex", RespireArrayBound.First, RespireArrayBound.Last,
+            new RespireArrayPredicate(RespireArrayPredicateKind.Glob, "")))
+            .IsEquivalentTo(present ? new[] { 0UL } : [], CollectionOrdering.Matching);
+        await Assert.That(await client.Arrays.CountAsync("regex")).IsEqualTo(present ? 2UL : 0UL);
+    }
+
     internal static async Task SerializationPredicatesAndValidation(IRespireClient client)
     {
         var arrays = client.Arrays;

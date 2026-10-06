@@ -14,7 +14,7 @@ public sealed partial class RespireFakeServer
         if (operation is not ("SUM" or "MIN" or "MAX" or "AND" or "OR" or "XOR" or "MATCH" or "USED"))
             return FakeReply.Error("ERR unknown operation");
         if (args.Length != (operation == "MATCH" ? 6 : 5)) return WrongArity("AROP");
-        var values = ArrayItems(FindArray(args[1]), Math.Min(start, end), Math.Max(start, end));
+        var values = ArrayItems(FindArray(args[1]), start, end);
         if (operation == "USED") return FakeReply.Integer(values.LongCount());
         if (operation == "MATCH") return FakeReply.Integer(values.LongCount(item => item.Value.AsSpan().SequenceEqual(args[5])));
         decimal? number = null;
@@ -102,6 +102,7 @@ public sealed partial class RespireFakeServer
             Regex? expression = null;
             if (kind == "RE")
             {
+                if (pattern.Length == 0) return FakeReply.Error("ERR regular expression is empty");
                 // Redis uses POSIX ERE; the fake supports only the common ASCII subset.
                 // Reject dialect-specific syntax instead of silently using .NET semantics.
                 var text = Encoding.Latin1.GetString(pattern);

@@ -9,6 +9,39 @@ namespace Respire.Tests;
 public class ArrayFacetTests
 {
     [Test]
+    [Arguments(2, false)]
+    [Arguments(3, false)]
+    [Arguments(2, true)]
+    [Arguments(3, true)]
+    public async Task BoundedAggregateArithmeticPreservesRequestedDirection(int protocol, bool descending)
+    {
+        await using var server = new RespireFakeServer();
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        var maximum = decimal.MaxValue.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        RespireValue[] values = descending ? [maximum, maximum, "-" + maximum] : ["-" + maximum, maximum, maximum];
+        await client.Arrays.SetAsync("ordered", 0, values);
+        var start = descending ? 2UL : 0UL;
+        var end = descending ? 0UL : 2UL;
+        await Assert.That((await client.Arrays.AggregateAsync("ordered", start, end, RespireArrayOperation.Sum)).NumericText)
+            .IsEqualTo(maximum);
+        await Assert.That(async () => await client.Arrays.AggregateAsync("ordered", end, start, RespireArrayOperation.Sum))
+            .Throws<RespireServerException>().WithMessage("ERR Respire.Testing does not support this AROP numeric range");
+        await Assert.That(await client.Arrays.CountAsync("ordered")).IsEqualTo(3UL);
+    }
+
+    [Test]
+    [Arguments(2, false)]
+    [Arguments(3, false)]
+    [Arguments(2, true)]
+    [Arguments(3, true)]
+    public async Task EmptyRegularExpressionIsRejectedBeforeKeyLookup(int protocol, bool present)
+    {
+        await using var server = new RespireFakeServer();
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await ArrayFacetScenarios.EmptyRegularExpressionIsRejectedBeforeKeyLookup(client, present);
+    }
+
+    [Test]
     [Arguments(2)]
     [Arguments(3)]
     public async Task GlobSearchHasBoundedWorkAndLeavesConnectionsUsable(int protocol)

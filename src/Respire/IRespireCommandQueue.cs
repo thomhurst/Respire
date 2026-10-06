@@ -39,7 +39,8 @@ public interface IRespireCommandQueue
     IBatchListCommands Lists { get; }
 
     /// <summary>Redis sparse array commands.</summary>
-    IBatchArrayCommands Arrays { get; }
+    /// <remarks>The default getter throws NotSupportedException when an implementation does not support arrays.</remarks>
+    IBatchArrayCommands Arrays => throw new NotSupportedException("This queue does not support Redis arrays.");
 
     /// <summary>Set (unordered, unique members) commands.</summary>
     IBatchSetCommands Sets { get; }
