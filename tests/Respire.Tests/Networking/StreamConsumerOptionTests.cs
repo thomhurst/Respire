@@ -63,6 +63,55 @@ public class StreamConsumerOptionTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ConsumerLoopPreservesRecoveryOptionsAcrossPagesAndCancels(bool map)
+    {
+        byte[] Page(string id) => Encoding.ASCII.GetBytes((map ? "%1\r\n" : "*1\r\n*2\r\n")
+            + "$13\r\ntenant:events\r\n*1\r\n*4\r\n$3\r\n" + id
+            + "\r\n*2\r\n$1\r\nf\r\n$1\r\nv\r\n:1250\r\n:7\r\n");
+        var nextPageRequested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var requests = 0;
+        await using var server = new FakeRespServer(2, Page("1-0"), Page("2-0"))
+        {
+            SuppressReply = command =>
+            {
+                if (!command.StartsWith("XREADGROUP ", StringComparison.Ordinal)
+                    || Interlocked.Increment(ref requests) < 3) return false;
+                nextPageRequested.TrySetResult();
+                return true;
+            },
+        };
+        await using var owner = Create(server.Port);
+        var client = owner.WithKeyPrefix("tenant:");
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
+        var options = new StreamReadOptions
+        {
+            Count = 1, NoAck = true, ClaimMinIdle = TimeSpan.FromMilliseconds(500),
+            WaitFor = Timeout.InfiniteTimeSpan,
+        };
+        await using var entries = client.Streams.ReadGroupAsync(options, "events", "g", "c",
+            cancellationToken: cancellation.Token).GetAsyncEnumerator();
+        foreach (var id in new RespireStreamId[] { "1-0", "2-0" })
+        {
+            await Assert.That(await entries.MoveNextAsync()).IsTrue();
+            await Assert.That(entries.Current.Id).IsEqualTo(id);
+            await Assert.That(entries.Current.PreviousIdleTime).IsEqualTo((TimeSpan?)TimeSpan.FromMilliseconds(1250));
+            await Assert.That(entries.Current.PreviousDeliveryCount).IsEqualTo((long?)7);
+        }
+        var pending = entries.MoveNextAsync().AsTask();
+        await nextPageRequested.Task.WaitAsync(deadline.Token);
+        cancellation.Cancel();
+        await Assert.That(async () => await pending).Throws<OperationCanceledException>();
+        await Assert.That(server.ReceivedCommands.Where(command => command.StartsWith("XREADGROUP ", StringComparison.Ordinal)))
+            .IsEquivalentTo(Enumerable.Repeat(
+                "XREADGROUP GROUP g c COUNT 1 BLOCK 0 CLAIM 500 NOACK STREAMS tenant:events >", 3),
+                CollectionOrdering.Matching);
+        await server.PeerClosed.WaitAsync(deadline.Token);
+    }
+
+    [Test]
     public async Task PendingIdleAndClaimOptionsHaveExactWireShape()
     {
         byte[] empty = "*0\r\n"u8.ToArray();
