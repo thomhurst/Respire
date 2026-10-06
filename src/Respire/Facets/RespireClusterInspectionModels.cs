@@ -30,9 +30,11 @@ public sealed record RespireClusterNode(
     string[] AdditionalTokens);
 
 /// <summary>One node's owned CLUSTER INFO report. Attributes retain every reported field.</summary>
+/// <remarks>CurrentEpoch and MyEpoch preserve the full unsigned 64-bit range; missing fields are null.
+/// Other counters retain signed nonnegative limits.</remarks>
 public sealed record RespireClusterInfo(
     string State, long? SlotsAssigned, long? SlotsOk, long? SlotsPossiblyFailing, long? SlotsFailing,
-    long? KnownNodes, long? ClusterSize, long? CurrentEpoch, long? MyEpoch,
+    long? KnownNodes, long? ClusterSize, ulong? CurrentEpoch, ulong? MyEpoch,
     IReadOnlyDictionary<string, string> Attributes);
 
 /// <summary>An owned CLUSTER SHARDS member. Endpoint values, including null, empty and ?, are not rewritten.</summary>

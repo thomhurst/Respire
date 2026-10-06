@@ -1,3 +1,4 @@
+using System.Globalization;
 using Respire.Protocol;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -76,7 +77,78 @@ public class ServerClusterInspectionParserTests
         await Assert.That(info.State).IsEqualTo("ok");
         await Assert.That(info.SlotsAssigned).IsEqualTo(16384);
         await Assert.That(info.CurrentEpoch).IsNull();
+        await Assert.That(info.MyEpoch).IsNull();
         await Assert.That(info.Attributes["future"]).IsEqualTo("value:with:colons");
+    }
+
+    [Test]
+    [Arguments("cluster_current_epoch", "0")]
+    [Arguments("cluster_current_epoch", "9223372036854775807")]
+    [Arguments("cluster_current_epoch", "9223372036854775808")]
+    [Arguments("cluster_current_epoch", "18446744073709551615")]
+    [Arguments("cluster_my_epoch", "0")]
+    [Arguments("cluster_my_epoch", "9223372036854775807")]
+    [Arguments("cluster_my_epoch", "9223372036854775808")]
+    [Arguments("cluster_my_epoch", "18446744073709551615")]
+    public async Task InfoEpochsPreserveEntireUnsignedRange(string field, string epoch)
+    {
+        byte[] bytes = System.Text.Encoding.UTF8.GetBytes($"cluster_state:ok\r\n{field}:{epoch}\r\nfuture:value:with:colons\r\n");
+        using var reply = RespValue.BulkString(bytes);
+        var info = ClusterInspectionParser.Info(in reply);
+        reply.Dispose();
+        bytes.AsSpan().Clear();
+        ulong? actual = field == "cluster_current_epoch" ? info.CurrentEpoch : info.MyEpoch;
+        var absent = field == "cluster_current_epoch" ? info.MyEpoch : info.CurrentEpoch;
+        await Assert.That(actual).IsEqualTo(ulong.Parse(epoch, CultureInfo.InvariantCulture));
+        await Assert.That(absent).IsNull();
+        await Assert.That(info.Attributes[field]).IsEqualTo(epoch);
+        await Assert.That(info.Attributes["future"]).IsEqualTo("value:with:colons");
+    }
+
+    [Test]
+    [Arguments("")]
+    [Arguments("-1")]
+    [Arguments("+1")]
+    [Arguments("18446744073709551616")]
+    [Arguments("1.0")]
+    [Arguments("invalid")]
+    public async Task InfoEpochsRejectInvalidText(string epoch)
+    {
+        foreach (var field in new[] { "cluster_current_epoch", "cluster_my_epoch" })
+        {
+            using var reply = Text($"cluster_state:ok\r\n{field}:{epoch}\r\n");
+            var error = await Assert.That(() => ClusterInspectionParser.Info(in reply)).ThrowsExactly<RespireProtocolException>();
+            await Assert.That(error!.Message).Contains($"'{field}'");
+        }
+    }
+
+    [Test]
+    [Arguments("cluster_slots_assigned")]
+    [Arguments("cluster_slots_ok")]
+    [Arguments("cluster_slots_pfail")]
+    [Arguments("cluster_slots_fail")]
+    [Arguments("cluster_known_nodes")]
+    [Arguments("cluster_size")]
+    public async Task InfoOrdinaryCountersRetainSignedNonnegativeLimits(string field)
+    {
+        using var valid = Text($"cluster_state:ok\r\n{field}:9223372036854775807\r\n");
+        var info = ClusterInspectionParser.Info(in valid);
+        var actual = field switch
+        {
+            "cluster_slots_assigned" => info.SlotsAssigned,
+            "cluster_slots_ok" => info.SlotsOk,
+            "cluster_slots_pfail" => info.SlotsPossiblyFailing,
+            "cluster_slots_fail" => info.SlotsFailing,
+            "cluster_known_nodes" => info.KnownNodes,
+            _ => info.ClusterSize,
+        };
+        await Assert.That(actual).IsEqualTo(long.MaxValue);
+        foreach (var value in new[] { "-1", "+1", "9223372036854775808", "invalid" })
+        {
+            using var invalid = Text($"cluster_state:ok\r\n{field}:{value}\r\n");
+            var error = await Assert.That(() => ClusterInspectionParser.Info(in invalid)).ThrowsExactly<RespireProtocolException>();
+            await Assert.That(error!.Message).Contains($"'{field}'");
+        }
     }
 
     [Test]

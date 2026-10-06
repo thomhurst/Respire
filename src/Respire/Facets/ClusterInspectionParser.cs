@@ -171,11 +171,19 @@ internal static class ClusterInspectionParser
         return new(state, InfoCount(fields, "cluster_slots_assigned"), InfoCount(fields, "cluster_slots_ok"),
             InfoCount(fields, "cluster_slots_pfail"), InfoCount(fields, "cluster_slots_fail"),
             InfoCount(fields, "cluster_known_nodes"), InfoCount(fields, "cluster_size"),
-            InfoCount(fields, "cluster_current_epoch"), InfoCount(fields, "cluster_my_epoch"), fields);
+            InfoEpoch(fields, "cluster_current_epoch"), InfoEpoch(fields, "cluster_my_epoch"), fields);
     }
 
     private static long? InfoCount(Dictionary<string, string> fields, string name)
         => fields.TryGetValue(name, out var value) ? TextCount(value, name) : null;
+
+    private static ulong? InfoEpoch(Dictionary<string, string> fields, string name)
+    {
+        if (!fields.TryGetValue(name, out var value)) return null;
+        if (!ulong.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var epoch))
+            throw new RespireProtocolException($"{FieldContext(name)} must be an unsigned 64-bit integer.");
+        return epoch;
+    }
 
     private static long TextCount(string value, string? field = null)
         => long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var count) && count >= 0
