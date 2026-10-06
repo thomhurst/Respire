@@ -9,10 +9,20 @@ namespace Respire;
 /// and <see cref="ReadOnlyMemory{T}"/> so command methods take one parameter type instead of
 /// an overload per representation.
 /// </summary>
+/// <remarks>Binary storage is borrowed, including through prefix views. Keep it unchanged until
+/// the command completes unless the receiving API explicitly snapshots or serializes it earlier.</remarks>
 public readonly struct RespireKey : IEquatable<RespireKey>
 {
     private readonly string? _string;
     private readonly ReadOnlyMemory<byte> _bytes;
+    private readonly Internal.KeyPrefix? _prefix;
+
+    internal RespireKey(Internal.KeyPrefix prefix, string? text, ReadOnlyMemory<byte> bytes)
+    {
+        _prefix = prefix;
+        _string = text;
+        _bytes = bytes;
+    }
 
     /// <summary>Creates a UTF-8 Redis key.</summary>
     public RespireKey(string key) => _string = key ?? throw new ArgumentNullException(nameof(key));
@@ -24,12 +34,17 @@ public readonly struct RespireKey : IEquatable<RespireKey>
     public static readonly RespireKey Empty;
 
     /// <summary>Whether this key has zero bytes.</summary>
-    public bool IsEmpty => _string is null or "" && _bytes.IsEmpty;
+    public bool IsEmpty => _prefix is null && _string is null or "" && _bytes.IsEmpty;
 
     /// <summary>The Redis Cluster hash slot for this key, including {...} hash-tag semantics.</summary>
-    public int ClusterSlot => _string is not null
-        ? Internal.ClusterHash.GetSlot(_string)
-        : Internal.ClusterHash.GetSlot(_bytes.Span);
+    public int ClusterSlot
+    {
+        get
+        {
+            if (_prefix is not null) return AsValue().GetPrefixedClusterSlot();
+            return _string is not null ? Internal.ClusterHash.GetSlot(_string) : Internal.ClusterHash.GetSlot(_bytes.Span);
+        }
+    }
 
     /// <summary>Converts text to a UTF-8 Redis key.</summary>
     public static implicit operator RespireKey(string key) => new(key);
@@ -48,27 +63,46 @@ public readonly struct RespireKey : IEquatable<RespireKey>
 
     /// <summary>The key as a command argument.</summary>
     internal RespireValue AsValue()
-        => _string is not null ? new RespireValue(_string) : new RespireValue(_bytes);
+    {
+        if (_prefix is not null) return RespireValue.Prefixed(_prefix, _string, _bytes);
+        return _string is not null ? new RespireValue(_string) : new RespireValue(_bytes);
+    }
 
     /// <summary>Returns a key whose storage cannot be changed by the original caller.</summary>
     internal RespireKey Snapshot()
-        => _string is not null ? this : new RespireKey(_bytes.ToArray());
+    {
+        if (_string is not null) return this;
+        var bytes = _bytes.ToArray();
+        return _prefix is not null ? new RespireKey(_prefix, null, bytes) : new RespireKey(bytes);
+    }
 
-    internal byte[] ToBytes() => _string is null ? _bytes.ToArray() : Encoding.UTF8.GetBytes(_string);
+    /// <summary>Owns an already-prefixed binary suffix while retaining ordinary keys' borrowing contract.</summary>
+    internal RespireKey SnapshotIfPrefixed() => _prefix is null ? this : Snapshot();
 
-    internal int WireLength => _string is not null
-        ? Encoding.UTF8.GetByteCount(_string)
-        : _bytes.Length;
+    internal byte[] ToBytes()
+    {
+        if (_prefix is null) return _string is null ? _bytes.ToArray() : Encoding.UTF8.GetBytes(_string);
+        return _prefix.Materialize(_string, _bytes);
+    }
+
+    internal int WireLength
+    {
+        get
+        {
+            if (_prefix is not null) return _prefix.GetWireLength(_string, _bytes);
+            return _string is not null ? Encoding.UTF8.GetByteCount(_string) : _bytes.Length;
+        }
+    }
 
     internal bool StartsWithAny(Internal.ClientCachePrefixSet prefixes)
     {
-        if (_string is null) return prefixes.Matches(_bytes.Span);
-        var length = Encoding.UTF8.GetByteCount(_string);
+        if (_prefix is null && _string is null) return prefixes.Matches(_bytes.Span);
+        var length = WireLength;
         byte[]? rented = null;
         Span<byte> encoded = length <= 256 ? stackalloc byte[length] : (rented = ArrayPool<byte>.Shared.Rent(length));
         try
         {
-            var written = Encoding.UTF8.GetBytes(_string, encoded);
+            var written = AsValue().WriteWirePayload(encoded);
             return prefixes.Matches(encoded[..written]);
         }
         finally
@@ -78,23 +112,32 @@ public readonly struct RespireKey : IEquatable<RespireKey>
     }
 
     /// <summary>Returns a copy of this key with <paramref name="prefix"/> prepended.</summary>
-    internal RespireKey Prepend(string prefix)
+    internal RespireKey Prepend(Internal.KeyPrefix prefix, bool snapshotBinaryKeys = false)
     {
-        if (_string is not null)
-        {
-            return new RespireKey(prefix + _string);
-        }
+        // Reapplying a prefix to an already resolved key preserves the original text/binary semantics.
+        // ToBytes owns a fresh snapshot; copying that storage again would allocate unnecessarily.
+        if (_prefix is not null)
+            return (_string is not null ? new RespireKey(ToString()) : new RespireKey(ToBytes()))
+                .Prepend(prefix, snapshotBinaryKeys: false);
+        return new RespireKey(prefix, _string,
+            _string is null && snapshotBinaryKeys ? _bytes.ToArray() : _bytes);
+    }
 
-        var prefixByteCount = Encoding.UTF8.GetByteCount(prefix);
-        var combined = new byte[prefixByteCount + _bytes.Length];
-        Encoding.UTF8.GetBytes(prefix, combined);
-        _bytes.Span.CopyTo(combined.AsSpan(prefixByteCount));
-        return new RespireKey(combined);
+    /// <summary>Resolves a command argument without copying through an intermediate prefixed key.</summary>
+    internal RespireValue PrependAsValue(Internal.KeyPrefix prefix, bool snapshotBinaryKeys)
+    {
+        if (_prefix is not null) return Prepend(prefix, snapshotBinaryKeys).AsValue();
+        return RespireValue.Prefixed(prefix, _string,
+            _string is null && snapshotBinaryKeys ? _bytes.ToArray() : _bytes);
     }
 
     internal void WriteTo(ref RespWriter writer)
     {
-        if (_string is not null)
+        if (_prefix is not null)
+        {
+            writer.WritePrefixedKey(_prefix, _string, _bytes);
+        }
+        else if (_string is not null)
         {
             writer.WriteBulkString(_string);
         }
@@ -105,7 +148,11 @@ public readonly struct RespireKey : IEquatable<RespireKey>
     }
 
     /// <inheritdoc/>
-    public override string ToString() => _string ?? Internal.Utf8String.GetString(_bytes);
+    public override string ToString()
+    {
+        if (_prefix is null) return _string ?? Internal.Utf8String.GetString(_bytes);
+        return _prefix.GetString(_string, _bytes);
+    }
 
     /// <inheritdoc/>
     public bool Equals(RespireKey other) => AsValue().Equals(other.AsValue());

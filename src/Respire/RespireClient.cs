@@ -22,40 +22,44 @@ public sealed partial class RespireClient : IRespireClient
 {
     private readonly ClientCore _core;
     private readonly string? _keyPrefix;
-    private readonly byte[]? _keyPrefixBytes;
+    private readonly KeyPrefix? _encodedKeyPrefix;
+    private RespireClient? _deferredBatchClient;
+    private IStringCommands? _strings;
+    private IKeyCommands? _keys;
+    private ILockCommands? _locks;
+    private IHashCommands? _hashes;
+    private IListCommands? _lists;
+    private IArrayCommands? _arrays;
+    private ISetCommands? _sets;
+    private ISortedSetCommands? _sortedSets;
+    private IStreamCommands? _streams;
+    private IBitmapCommands? _bitmaps;
+    private IHyperLogLogCommands? _hyperLogLog;
+    private IGeoCommands? _geo;
+    private IVectorSetCommands? _vectorSets;
+    private IScriptCommands? _scripts;
+    private IFunctionCommands? _functions;
+    private IServerCommands? _server;
     private readonly bool _ownsCore;
     private readonly bool _broadcastTracking;
     private readonly bool _bypassClientCache;
+    private readonly bool _snapshotPrefixedBinaryKeys;
     private readonly RespireReadFrom _readFrom;
     private static readonly bool s_getIsReadOnly = RespireCommands.String.GET.IsReadOnly;
     [ThreadStatic] private static PooledByteBufferWriter? s_serializationBuffer;
 
     private RespireClient(
-        ClientCore core, string? keyPrefix, bool ownsCore, RespireReadFrom? readFrom = null, bool bypassClientCache = false)
+        ClientCore core, string? keyPrefix, bool ownsCore, RespireReadFrom? readFrom = null, bool bypassClientCache = false,
+        KeyPrefix? encodedKeyPrefix = null, bool snapshotPrefixedBinaryKeys = false)
     {
         _core = core;
         _bypassClientCache = bypassClientCache;
+        _snapshotPrefixedBinaryKeys = snapshotPrefixedBinaryKeys;
         _keyPrefix = keyPrefix;
-        _keyPrefixBytes = keyPrefix is null ? null : System.Text.Encoding.UTF8.GetBytes(keyPrefix);
+        _encodedKeyPrefix = keyPrefix is null ? null : encodedKeyPrefix ?? new KeyPrefix(keyPrefix);
         _ownsCore = ownsCore;
         _readFrom = readFrom ?? core.Options.ReadFrom;
         _broadcastTracking = core.Options.ClientSideCache?.TrackingMode == RespireClientTrackingMode.Broadcast;
-        Strings = new StringCommands(this);
-        Keys = new KeyCommands(this);
-        Locks = new LockCommands(this);
-        Hashes = new HashCommands(this);
-        Lists = new ListCommands(this);
-        Arrays = new ArrayCommands(this);
-        Sets = new SetCommands(this);
-        SortedSets = new SortedSetCommands(this);
-        Streams = new StreamCommands(this);
-        Bitmaps = new BitmapCommands(this);
-        HyperLogLog = new HyperLogLogCommands(this);
-        Geo = new GeoCommands(this);
-        VectorSets = new VectorSetCommands(this);
-        Scripts = new ScriptCommands(this);
-        Functions = new FunctionCommands(this);
-        Server = new ServerCommands(this);
     }
 
     /// <summary>
@@ -216,39 +220,45 @@ public sealed partial class RespireClient : IRespireClient
     }
 
     /// <inheritdoc/>
-    public IStringCommands Strings { get; }
+    public IStringCommands Strings => Volatile.Read(ref _strings) ?? InitializeFacet(ref _strings, static client => new StringCommands(client));
     /// <inheritdoc/>
-    public IKeyCommands Keys { get; }
+    public IKeyCommands Keys => Volatile.Read(ref _keys) ?? InitializeFacet(ref _keys, static client => new KeyCommands(client));
     /// <inheritdoc/>
-    public ILockCommands Locks { get; }
+    public ILockCommands Locks => Volatile.Read(ref _locks) ?? InitializeFacet(ref _locks, static client => new LockCommands(client));
     /// <inheritdoc/>
-    public IHashCommands Hashes { get; }
+    public IHashCommands Hashes => Volatile.Read(ref _hashes) ?? InitializeFacet(ref _hashes, static client => new HashCommands(client));
     /// <inheritdoc/>
-    public IListCommands Lists { get; }
+    public IListCommands Lists => Volatile.Read(ref _lists) ?? InitializeFacet(ref _lists, static client => new ListCommands(client));
 
     /// <summary>Redis sparse array commands.</summary>
-    public IArrayCommands Arrays { get; }
+    public IArrayCommands Arrays => Volatile.Read(ref _arrays) ?? InitializeFacet(ref _arrays, static client => new ArrayCommands(client));
     /// <inheritdoc/>
-    public ISetCommands Sets { get; }
+    public ISetCommands Sets => Volatile.Read(ref _sets) ?? InitializeFacet(ref _sets, static client => new SetCommands(client));
     /// <inheritdoc/>
-    public ISortedSetCommands SortedSets { get; }
+    public ISortedSetCommands SortedSets => Volatile.Read(ref _sortedSets) ?? InitializeFacet(ref _sortedSets, static client => new SortedSetCommands(client));
     /// <inheritdoc/>
-    public IStreamCommands Streams { get; }
+    public IStreamCommands Streams => Volatile.Read(ref _streams) ?? InitializeFacet(ref _streams, static client => new StreamCommands(client));
     /// <inheritdoc/>
-    public IBitmapCommands Bitmaps { get; }
+    public IBitmapCommands Bitmaps => Volatile.Read(ref _bitmaps) ?? InitializeFacet(ref _bitmaps, static client => new BitmapCommands(client));
     /// <inheritdoc/>
-    public IHyperLogLogCommands HyperLogLog { get; }
+    public IHyperLogLogCommands HyperLogLog => Volatile.Read(ref _hyperLogLog) ?? InitializeFacet(ref _hyperLogLog, static client => new HyperLogLogCommands(client));
     /// <inheritdoc/>
-    public IGeoCommands Geo { get; }
+    public IGeoCommands Geo => Volatile.Read(ref _geo) ?? InitializeFacet(ref _geo, static client => new GeoCommands(client));
     /// <inheritdoc/>
-    public IVectorSetCommands VectorSets { get; }
+    public IVectorSetCommands VectorSets => Volatile.Read(ref _vectorSets) ?? InitializeFacet(ref _vectorSets, static client => new VectorSetCommands(client));
     /// <inheritdoc/>
-    public IScriptCommands Scripts { get; }
+    public IScriptCommands Scripts => Volatile.Read(ref _scripts) ?? InitializeFacet(ref _scripts, static client => new ScriptCommands(client));
 
     /// <summary>Redis Functions (Redis 7+).</summary>
-    public IFunctionCommands Functions { get; }
+    public IFunctionCommands Functions => Volatile.Read(ref _functions) ?? InitializeFacet(ref _functions, static client => new FunctionCommands(client));
     /// <inheritdoc/>
-    public IServerCommands Server { get; }
+    public IServerCommands Server => Volatile.Read(ref _server) ?? InitializeFacet(ref _server, static client => new ServerCommands(client));
+
+    private T InitializeFacet<T>(ref T? field, Func<RespireClient, T> create) where T : class
+    {
+        var created = create(this);
+        return Interlocked.CompareExchange(ref field, created, null) ?? created;
+    }
 
     /// <summary>
     /// A view of this client that prepends <paramref name="prefix"/> to every key (channels and
@@ -259,7 +269,8 @@ public sealed partial class RespireClient : IRespireClient
     {
         ArgumentException.ThrowIfNullOrEmpty(prefix);
         return new RespireClient(_core, _keyPrefix is null ? prefix : _keyPrefix + prefix,
-            ownsCore: false, readFrom: _readFrom, bypassClientCache: _bypassClientCache);
+            ownsCore: false, readFrom: _readFrom, bypassClientCache: _bypassClientCache,
+            snapshotPrefixedBinaryKeys: _snapshotPrefixedBinaryKeys);
     }
 
     /// <summary>Returns a view that applies a read-routing policy to metadata-confirmed read-only commands.</summary>
@@ -282,7 +293,8 @@ public sealed partial class RespireClient : IRespireClient
             && string.IsNullOrWhiteSpace(_core.Options.SentinelPrimaryName))
             throw new InvalidOperationException("Replica read routing requires Cluster, Sentinel discovery, or configured ReplicaEndpoints.");
         return new RespireClient(_core, _keyPrefix, ownsCore: false, readFrom: readFrom,
-            bypassClientCache: _bypassClientCache);
+            bypassClientCache: _bypassClientCache, encodedKeyPrefix: _encodedKeyPrefix,
+            snapshotPrefixedBinaryKeys: _snapshotPrefixedBinaryKeys);
     }
 
     /// <summary>
@@ -293,7 +305,8 @@ public sealed partial class RespireClient : IRespireClient
     public IRespireClient WithoutClientCache()
         => ReadCache is null
             ? this
-            : new RespireClient(_core, _keyPrefix, ownsCore: false, readFrom: _readFrom, bypassClientCache: true);
+            : new RespireClient(_core, _keyPrefix, ownsCore: false, readFrom: _readFrom, bypassClientCache: true,
+                encodedKeyPrefix: _encodedKeyPrefix, snapshotPrefixedBinaryKeys: _snapshotPrefixedBinaryKeys);
 
     /// <summary>The cache consulted for reads; null when caching is disabled or bypassed by this view.</summary>
     internal ClientSideCacheCoordinator? ReadCache => _bypassClientCache ? null : _core.ClientCache;
@@ -1456,15 +1469,32 @@ public sealed partial class RespireClient : IRespireClient
     internal ClientCore Core => _core;
 
     internal string? KeyPrefix => _keyPrefix;
-    internal ReadOnlySpan<byte> KeyPrefixBytes => _keyPrefixBytes;
+    internal ReadOnlySpan<byte> KeyPrefixBytes => _encodedKeyPrefix?.Bytes;
+
+    /// <summary>Shares routing and encoding, but snapshots prefixed binary keys as batch facets resolve them.</summary>
+    internal RespireClient ForDeferredBatch()
+    {
+        if (_snapshotPrefixedBinaryKeys) return this;
+        var cached = Volatile.Read(ref _deferredBatchClient);
+        if (cached is not null) return cached;
+        var created = new RespireClient(_core, _keyPrefix, ownsCore: false, readFrom: _readFrom,
+            bypassClientCache: _bypassClientCache, encodedKeyPrefix: _encodedKeyPrefix, snapshotPrefixedBinaryKeys: true);
+        return Interlocked.CompareExchange(ref _deferredBatchClient, created, null) ?? created;
+    }
 
     /// <inheritdoc/>
     public RespireKey ResolveKey(RespireKey key)
-        => _keyPrefix is null ? key : key.Prepend(_keyPrefix);
+    {
+        if (_encodedKeyPrefix is not null) return key.Prepend(_encodedKeyPrefix, _snapshotPrefixedBinaryKeys);
+        return _snapshotPrefixedBinaryKeys ? key.SnapshotIfPrefixed() : key;
+    }
 
     /// <summary>Resolves a user key to a command argument, applying this view's key prefix.</summary>
     internal RespireValue Key(in RespireKey key)
-        => _keyPrefix is null ? key.AsValue() : key.Prepend(_keyPrefix).AsValue();
+    {
+        if (_encodedKeyPrefix is not null) return key.PrependAsValue(_encodedKeyPrefix, _snapshotPrefixedBinaryKeys);
+        return _snapshotPrefixedBinaryKeys ? key.SnapshotIfPrefixed().AsValue() : key.AsValue();
+    }
 
     internal RespireValue[] MapKeys(ReadOnlySpan<RespireKey> keys)
     {
@@ -2401,7 +2431,8 @@ public sealed partial class RespireClient : IRespireClient
         => _readFrom == RespireReadFrom.Primary
             ? this
             : new RespireClient(_core, _keyPrefix, ownsCore: false, readFrom: RespireReadFrom.Primary,
-                bypassClientCache: _bypassClientCache);
+                bypassClientCache: _bypassClientCache, encodedKeyPrefix: _encodedKeyPrefix,
+                snapshotPrefixedBinaryKeys: _snapshotPrefixedBinaryKeys);
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]

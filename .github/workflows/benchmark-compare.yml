@@ -1,0 +1,200 @@
+name: Compare pinned protocol benchmarks
+
+on:
+  workflow_call:
+    inputs:
+      event-base-sha:
+        description: Full event base SHA, retained for provenance; baseline is the merge's first parent
+        required: true
+        type: string
+      candidate-sha:
+        description: Full immutable pull-request merge SHA for the candidate
+        required: true
+        type: string
+      expected-head-sha:
+        description: Full PR head SHA, which must be the candidate's second parent
+        required: true
+        type: string
+      fixture:
+        description: Candidate C# fixture under benchmarks/Respire.Benchmarks, copied unchanged to the baseline
+        required: true
+        type: string
+      filter:
+        description: One BenchmarkDotNet filter, passed as a quoted argument
+        required: true
+        type: string
+      expected-case-count:
+        description: Expected case count, including parameter combinations
+        required: true
+        type: number
+      expected-methods:
+        description: Comma-separated method names that must appear in every phase
+        required: true
+        type: string
+      zero-allocation-methods:
+        description: Comma-separated candidate methods that must allocate zero bytes
+        default: ''
+        type: string
+      artifact-prefix:
+        description: Unique artifact prefix when calling this workflow more than once
+        default: benchmark-comparison
+        type: string
+      job:
+        description: BenchmarkDotNet measurement preset (Short, Default, or Medium)
+        default: Medium
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    name: Compare (${{ matrix.framework }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: [net8.0, net10.0]
+    env:
+      EVENT_BASE_SHA: ${{ inputs.event-base-sha }}
+      HEAD_SHA: ${{ inputs.candidate-sha }}
+      EXPECTED_HEAD_SHA: ${{ inputs.expected-head-sha }}
+      FIXTURE: ${{ inputs.fixture }}
+      BENCH_FILTER: ${{ inputs.filter }}
+      BENCH_JOB: ${{ inputs.job }}
+      EXPECTED_COUNT: ${{ inputs.expected-case-count }}
+      EXPECTED_METHODS: ${{ inputs.expected-methods }}
+      ZERO_ALLOCATION_METHODS: ${{ inputs.zero-allocation-methods }}
+      FRAMEWORK: ${{ matrix.framework }}
+    steps:
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.candidate-sha }}
+          path: candidate
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Verify the immutable merge and derive its baseline
+        id: revisions
+        shell: python
+        run: |
+          import os, re, subprocess
+          for variable in ('HEAD_SHA', 'EXPECTED_HEAD_SHA', 'EVENT_BASE_SHA'):
+              assert re.fullmatch(r'[0-9a-f]{40}', os.environ[variable]), 'A pinned full SHA is required'
+          actual = subprocess.check_output(['git', '-C', 'candidate', 'rev-parse', 'HEAD'], text=True).strip()
+          assert actual == os.environ['HEAD_SHA'], 'Wrong candidate merge'
+          parents = subprocess.check_output(['git', '-C', 'candidate', 'show', '-s', '--format=%P', 'HEAD'], text=True).split()
+          assert len(parents) == 2, 'Candidate must be a two-parent PR merge'
+          assert parents[1] == os.environ['EXPECTED_HEAD_SHA'], 'Wrong PR head'
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
+              print('baseline-sha=' + parents[0], file=stream)
+          with open(os.environ['GITHUB_ENV'], 'a') as stream:
+              print('BASE_SHA=' + parents[0], file=stream)
+          with open('revisions.log', 'w') as stream:
+              print('merge=' + actual, 'baseline=' + parents[0],
+                    'head=' + parents[1], 'event-base=' + os.environ['EVENT_BASE_SHA'], sep='\n', file=stream)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.revisions.outputs.baseline-sha }}
+          path: baseline
+          persist-credentials: false
+      - name: Verify pinned sources and use an identical fixture
+        shell: python
+        run: |
+          import os, re, shutil, subprocess
+          from pathlib import Path, PurePosixPath
+          for source, variable in (('baseline', 'BASE_SHA'), ('candidate', 'HEAD_SHA')):
+              expected = os.environ[variable]
+              assert re.fullmatch(r'[0-9a-f]{40}', expected), 'A pinned full SHA is required'
+              actual = subprocess.check_output(['git', '-C', source, 'rev-parse', 'HEAD'], text=True).strip()
+              assert actual == expected, f'Wrong source: {source}'
+          assert os.environ['BENCH_JOB'] in ('Short', 'Default', 'Medium')
+          fixture = PurePosixPath(os.environ['FIXTURE'])
+          assert not fixture.is_absolute() and '..' not in fixture.parts and fixture.suffix == '.cs'
+          paths = []
+          for source in ('candidate', 'baseline'):
+              root = Path(source, 'benchmarks', 'Respire.Benchmarks').resolve()
+              path = Path(source, fixture).resolve()
+              assert path.is_relative_to(root), 'Fixture must stay inside the benchmark project'
+              paths.append(path)
+          paths[1].parent.mkdir(parents=True, exist_ok=True)
+          shutil.copyfile(*paths)
+      - name: Validate and measure against bracketing controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          for phase in baseline-validation candidate-validation baseline-a candidate baseline-b; do
+            source=baseline
+            job="$BENCH_JOB"
+            if [[ "$phase" == candidate* ]]; then source=candidate; fi
+            if [[ "$phase" == *validation ]]; then job=Dry; fi
+            (
+              cd "$source"
+              git rev-parse HEAD
+              dotnet run --project benchmarks/Respire.Benchmarks -c Release -f "$FRAMEWORK" -- \
+                --filter "$BENCH_FILTER" --job "$job" --exporters json markdown \
+                --artifacts "$GITHUB_WORKSPACE/results/$phase"
+            ) > "$GITHUB_WORKSPACE/$phase.log" 2>&1
+          done
+      - name: Require complete results and summarize both controls
+        shell: python
+        run: |
+          import json, os
+          from pathlib import Path
+          expected = set(filter(None, os.environ['EXPECTED_METHODS'].split(',')))
+          zero_allocation = set(filter(None, os.environ['ZERO_ALLOCATION_METHODS'].split(',')))
+          assert expected and zero_allocation <= expected
+          expected_count = int(os.environ['EXPECTED_COUNT'])
+          assert expected_count >= len(expected)
+          phases = {}
+          for phase in ('baseline-validation', 'candidate-validation', 'baseline-a', 'candidate', 'baseline-b'):
+              expected_sha = os.environ['HEAD_SHA' if phase.startswith('candidate') else 'BASE_SHA']
+              assert Path(f'{phase}.log').read_text().splitlines()[0] == expected_sha, f'Wrong source: {phase}'
+              cases = []
+              for report in Path('results', phase, 'results').glob('*-report-full-compressed.json'):
+                  cases.extend(json.loads(report.read_text())['Benchmarks'])
+              assert len(cases) == expected_count, f'Incomplete or duplicate cases: {phase}'
+              assert {case['Method'] for case in cases} == expected, f'Unexpected methods: {phase}'
+              assert all(case.get('Statistics') and case['Statistics']['Mean'] > 0 for case in cases), phase
+              keyed = {(case['FullName'], case.get('Parameters', '')): case for case in cases}
+              assert len(keyed) == expected_count, f'Duplicate identities: {phase}'
+              phases[phase] = keyed
+          assert all(cases.keys() == phases['candidate'].keys() for cases in phases.values())
+          for case in phases['candidate'].values():
+              if case['Method'] in zero_allocation:
+                  assert case['Memory']['BytesAllocatedPerOperation'] == 0, f"Allocation: {case['Method']}"
+          lines = ['## Pinned benchmark comparison', '',
+                   f"Baseline: `{os.environ['BASE_SHA']}`; candidate: `{os.environ['HEAD_SHA']}`.",
+                   f"PR head: `{os.environ['EXPECTED_HEAD_SHA']}`; event base: `{os.environ['EVENT_BASE_SHA']}`.",
+                   'Review latency, confidence intervals, allocations, and drift before merging. A green job validates measurements, not performance acceptance.', '',
+                   '| Case | A ns [interval] | Candidate ns [interval] | B ns [interval] | Candidate/A | Candidate/B | B/A drift | Allocated B (A/candidate/B) |',
+                   '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |']
+          for identity in sorted(phases['candidate']):
+              cases = [phases[phase][identity] for phase in ('baseline-a', 'candidate', 'baseline-b')]
+              a, candidate, b = [case['Statistics']['Mean'] for case in cases]
+              times = []
+              for case in cases:
+                  stats = case['Statistics']
+                  interval = stats['ConfidenceInterval']
+                  times.append(f"{stats['Mean']:.3f} [{interval['Lower']:.3f}, {interval['Upper']:.3f}]")
+              allocated = '/'.join(str(case['Memory']['BytesAllocatedPerOperation']) for case in cases)
+              label = cases[1]['Method'] + (' ' + identity[1] if identity[1] else '')
+              lines.append(f"| {label} | {' | '.join(times)} | {100*(candidate/a-1):+.2f}% | {100*(candidate/b-1):+.2f}% | {100*(b/a-1):+.2f}% | {allocated} |")
+          summary = '\n'.join(lines) + '\n'
+          Path('comparison.md').write_text(summary)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as stream:
+              stream.write(summary)
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: ${{ inputs.artifact-prefix }}-${{ matrix.framework }}
+          path: |
+            *.log
+            comparison.md
+            results/
+          retention-days: 14

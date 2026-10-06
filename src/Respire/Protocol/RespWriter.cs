@@ -55,6 +55,49 @@ internal ref struct RespWriter
         _buffer.Advance(2);
     }
 
+    /// <summary>Writes a resolved key directly into the coalescing buffer without concatenating its storage.</summary>
+    internal void WritePrefixedKey(KeyPrefix prefix, string? text, ReadOnlyMemory<byte> bytes)
+    {
+        if (text is null)
+        {
+            // Binary suffixes need neither UTF-8 length calculation nor surrogate handling.
+            var binaryLength = checked(prefix.Bytes.Length + bytes.Length);
+            WriteBulkStringHeader(binaryLength);
+            var binaryPayload = _buffer.GetSpan(checked(binaryLength + 2));
+            prefix.Bytes.CopyTo(binaryPayload);
+            bytes.Span.CopyTo(binaryPayload[prefix.Bytes.Length..]);
+            binaryPayload[binaryLength] = RespConstants.CarriageReturn;
+            binaryPayload[binaryLength + 1] = RespConstants.LineFeed;
+            _buffer.Advance(binaryLength + 2);
+            return;
+        }
+        if (text.Length == 0 || text[0] <= 0x7f)
+        {
+            // Match WriteBulkString's single-pass ASCII path. A non-ASCII suffix rolls
+            // back only this frame before using the UTF-8/surrogate-boundary path.
+            var mark = _buffer.Count;
+            var asciiLength = checked(prefix.Bytes.Length + text.Length);
+            WriteBulkStringHeader(asciiLength);
+            var asciiPayload = _buffer.GetSpan(checked(asciiLength + 2));
+            prefix.Bytes.CopyTo(asciiPayload);
+            if (Ascii.FromUtf16(text, asciiPayload[prefix.Bytes.Length..], out _) == OperationStatus.Done)
+            {
+                asciiPayload[asciiLength] = RespConstants.CarriageReturn;
+                asciiPayload[asciiLength + 1] = RespConstants.LineFeed;
+                _buffer.Advance(asciiLength + 2);
+                return;
+            }
+            _buffer.TruncateTo(mark);
+        }
+        var length = prefix.GetWireLength(text, bytes);
+        WriteBulkStringHeader(length);
+        var payload = _buffer.GetSpan(checked(length + 2));
+        prefix.WritePayload(text, bytes, payload);
+        payload[length] = RespConstants.CarriageReturn;
+        payload[length + 1] = RespConstants.LineFeed;
+        _buffer.Advance(length + 2);
+    }
+
     /// <summary>Writes FP32 components in little-endian order without a temporary vector buffer.</summary>
     public void WriteBulkFloat32(scoped ReadOnlySpan<float> values)
     {

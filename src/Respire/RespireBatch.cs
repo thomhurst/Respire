@@ -25,6 +25,9 @@ namespace Respire;
 /// (<c>ScanAsync</c>, <c>GetLeaseAsync</c>) have no deferred form. Script commands use
 /// <c>Evaluate</c> rather than the client's <c>ExecuteAsync</c> name and return owned results.
 /// Raw Execute supports known nonblocking key layouts and owned results. Unknown layouts are rejected.
+/// Prefixed binary keys are snapshotted when queued, including resolved keys passed to an
+/// unprefixed batch. Other binary arguments remain borrowed
+/// until execution completes unless their command explicitly snapshots them.
 /// Stream append, range, count, remove, trim, and acknowledge commands support deferred execution.
 /// Server flush commands affect only their execution node. Other server administration,
 /// blocking stream reads, consumer loops, group administration, and distributed
@@ -56,11 +59,11 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
     private IBatchFunctionCommands? _functions;
     private IBatchStreamCommands? _streams;
 
-    internal RespireBatch(RespireClient client) => _client = client;
+    internal RespireBatch(RespireClient client) => _client = client.ForDeferredBatch();
 
     internal RespireBatch(RespireClient client, RespireHashImportSession importSession)
     {
-        _client = client;
+        _client = client.ForDeferredBatch();
         _importSession = importSession;
     }
 
