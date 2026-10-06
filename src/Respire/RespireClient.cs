@@ -4998,12 +4998,7 @@ public sealed partial class RespireClient : IRespireClient
         if (CanUseDirectReplySource(operation, in command)
             && command is not IStreamingRespCommand)
         {
-            if (TryGetDirectReplyCluster(in command, out var cluster))
-            {
-                return SendOnReadyClusterAsync<TCommand, TResult, ClusterConvertedReadySend<TState, TResult>>(
-                    operation, cluster, command, ct, new(state, converter, transferOwnership));
-            }
-            else if (core.Cluster is null && core.TryGetReadyPrimaryMultiplexer(out var readyMultiplexer))
+            if (core.Cluster is null && core.TryGetReadyPrimaryMultiplexer(out var readyMultiplexer))
             {
                 // CommandTimeout is enforced by the connection's deadline sweep and covers the
                 // Redis response, not user converter work (conversion runs at the caller).
@@ -5012,6 +5007,11 @@ public sealed partial class RespireClient : IRespireClient
                 return SendOnReadyPrimaryAsync<TCommand, TResult, ConvertedReadySend<TState, TResult>>(
                     operation, readyMultiplexer, command, ct,
                     new ConvertedReadySend<TState, TResult>(state, converter, transferOwnership), cache, mutationFence);
+            }
+            else if (TryGetDirectReplyCluster(in command, out var cluster))
+            {
+                return SendOnReadyClusterAsync<TCommand, TResult, ClusterConvertedReadySend<TState, TResult>>(
+                    operation, cluster, command, ct, new(state, converter, transferOwnership));
             }
         }
 
@@ -5098,11 +5098,7 @@ public sealed partial class RespireClient : IRespireClient
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         if (CanUseDirectReplySource(operation, in command))
         {
-            if (TryGetDirectReplyCluster(in command, out var cluster))
-            {
-                return SendOnReadyClusterAsync<TCommand, string?, StringReadySend>(operation, cluster, command, ct, default);
-            }
-            else if (core.Cluster is null && core.TryGetReadyPrimaryMultiplexer(out var readyMultiplexer))
+            if (core.Cluster is null && core.TryGetReadyPrimaryMultiplexer(out var readyMultiplexer))
             {
                 // Specialized bulk-string source: small buffered replies decode straight from the
                 // receive buffer instead of round-tripping through a pooled RespValue payload.
@@ -5111,6 +5107,10 @@ public sealed partial class RespireClient : IRespireClient
                 var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
                 return SendOnReadyPrimaryAsync<TCommand, string?, StringReadySend>(
                     operation, readyMultiplexer, command, ct, default, cache, mutationFence);
+            }
+            else if (TryGetDirectReplyCluster(in command, out var cluster))
+            {
+                return SendOnReadyClusterAsync<TCommand, string?, StringReadySend>(operation, cluster, command, ct, default);
             }
         }
 
@@ -5128,16 +5128,16 @@ public sealed partial class RespireClient : IRespireClient
         if (CanUseDirectReplySource(operation, in command)
             && command is not IStreamingRespCommand)
         {
-            if (TryGetDirectReplyCluster(in command, out var cluster))
-            {
-                return SendOnReadyClusterAsync<TCommand, byte[]?, BytesReadySend>(operation, cluster, command, ct, default);
-            }
-            else if (core.Cluster is null && core.TryGetReadyPrimaryMultiplexer(out var readyMultiplexer))
+            if (core.Cluster is null && core.TryGetReadyPrimaryMultiplexer(out var readyMultiplexer))
             {
                 var cache = core.ClientCache;
                 var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
                 return SendOnReadyPrimaryAsync<TCommand, byte[]?, BytesReadySend>(
                     operation, readyMultiplexer, command, ct, default, cache, mutationFence);
+            }
+            else if (TryGetDirectReplyCluster(in command, out var cluster))
+            {
+                return SendOnReadyClusterAsync<TCommand, byte[]?, BytesReadySend>(operation, cluster, command, ct, default);
             }
         }
         return ConvertAsync(
