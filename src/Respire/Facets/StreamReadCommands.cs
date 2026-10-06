@@ -104,7 +104,7 @@ internal sealed partial class StreamCommands
             ids[i] = snapshots[i].After;
         }
         return new StreamReadCommand(keys, ids, options.Count, milliseconds, options.MaxCount, options.MaxSize, group, consumer,
-            options.NoAck, options.ClaimMinIdle?.Ticks / TimeSpan.TicksPerMillisecond);
+            options.NoAck, options.GetClaimMinIdleMilliseconds());
     }
 
     private static (RespireKey Key, RespireStreamId After)[] SnapshotStreams(RespireClient client,

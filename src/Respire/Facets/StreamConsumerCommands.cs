@@ -45,7 +45,7 @@ internal sealed partial class StreamCommands
         string group, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(group);
-        var count = options.Count ?? 10;
+        var count = options.Count ?? StreamPendingOptions.DefaultCount;
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(count, nameof(options.Count));
         long? idle = options.MinIdle is { } duration ? ToMilliseconds(duration, nameof(options.MinIdle)) : null;
         var args = new RespireValue[5 + (idle.HasValue ? 2 : 0) + (options.Consumer is null ? 0 : 1)];

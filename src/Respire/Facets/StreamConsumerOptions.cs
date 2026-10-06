@@ -3,6 +3,8 @@ namespace Respire;
 /// <summary>Filters for an extended XPENDING query.</summary>
 public readonly record struct StreamPendingOptions
 {
+    internal const int DefaultCount = 10;
+
     /// <summary>Inclusive lower ID bound; null means the beginning. Prefix an ID with ( for an exclusive bound.</summary>
     public RespireStreamId? Start { get; init; }
     /// <summary>Inclusive upper ID bound; null means the end. Prefix an ID with ( for an exclusive bound.</summary>

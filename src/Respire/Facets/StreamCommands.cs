@@ -469,7 +469,7 @@ public partial interface IStreamCommands
         string group,
         RespireStreamId? start = null,
         RespireStreamId? end = null,
-        int count = 10,
+        int count = StreamPendingOptions.DefaultCount,
         string? consumer = null,
         CancellationToken cancellationToken = default);
 
@@ -838,7 +838,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
         string group,
         RespireStreamId? start = null,
         RespireStreamId? end = null,
-        int count = 10,
+        int count = StreamPendingOptions.DefaultCount,
         string? consumer = null,
         CancellationToken cancellationToken = default)
         => PendingAsync(new StreamPendingOptions { Start = start, End = end, Count = count, Consumer = consumer },

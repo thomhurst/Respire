@@ -25,7 +25,8 @@ public readonly record struct StreamReadOptions
     public bool NoAck { get; init; }
 
     /// <summary>Claim pending entries idle for at least this duration before reading new entries. Requires Redis 8.4.</summary>
-    /// <remarks>Only valid for consumer group reads. Redis ignores CLAIM for cursors other than &gt;.</remarks>
+    /// <remarks>Only valid for consumer group reads. Redis ignores CLAIM for cursors other than &gt;.
+    /// Fractional milliseconds round up so the encoded threshold is never shorter than requested.</remarks>
     public TimeSpan? ClaimMinIdle { get; init; }
 
     internal void Validate(bool queued = false, bool group = false)
@@ -42,6 +43,13 @@ public readonly record struct StreamReadOptions
         if (WaitFor is not { } wait) return;
         if (queued) throw new ArgumentException("Queued stream reads cannot block.", nameof(WaitFor));
         MultiKeyPop.ValidateWait(wait);
+    }
+
+    internal long? GetClaimMinIdleMilliseconds()
+    {
+        if (ClaimMinIdle is not { } idle) return null;
+        return idle.Ticks / TimeSpan.TicksPerMillisecond
+            + (idle.Ticks % TimeSpan.TicksPerMillisecond == 0 ? 0 : 1);
     }
 
     internal long? GetBlockMilliseconds()

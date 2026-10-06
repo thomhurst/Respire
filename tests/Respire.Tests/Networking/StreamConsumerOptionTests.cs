@@ -9,6 +9,34 @@ namespace Respire.Tests.Networking;
 public class StreamConsumerOptionTests
 {
     [Test]
+    [Arguments(0L, 0L)]
+    [Arguments(1L, 1L)]
+    [Arguments(9999L, 1L)]
+    [Arguments(10000L, 1L)]
+    [Arguments(10001L, 2L)]
+    [Arguments(long.MaxValue, 922337203685478L)]
+    public async Task ClaimIdleRoundsUpWithoutOverflow(long ticks, long milliseconds)
+    {
+        await using var server = new FakeRespServer("*0\r\n"u8.ToArray());
+        await using var client = Create(server.Port);
+        await client.Streams.ReadGroupOnceAsync("events", "g", "c",
+            new StreamReadOptions { ClaimMinIdle = TimeSpan.FromTicks(ticks) });
+        await Assert.That(server.ReceivedCommands).Contains(
+            $"XREADGROUP GROUP g c CLAIM {milliseconds} STREAMS events >");
+    }
+
+    [Test]
+    public async Task PendingOverloadsShareDefaultCount()
+    {
+        await using var server = new FakeRespServer("*0\r\n"u8.ToArray(), "*0\r\n"u8.ToArray());
+        await using var client = Create(server.Port);
+        await client.Streams.PendingAsync("events", "g");
+        await client.Streams.PendingAsync(default(StreamPendingOptions), "events", "g");
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(
+            Enumerable.Repeat("XPENDING events g - + 10", 2), CollectionOrdering.Matching);
+    }
+
+    [Test]
     [Arguments(false, 0)]
     [Arguments(true, 0)]
     [Arguments(false, 1)]
