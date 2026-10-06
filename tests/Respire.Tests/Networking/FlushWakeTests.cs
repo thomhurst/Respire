@@ -10,6 +10,7 @@ namespace Respire.Tests.Networking;
 /// Commands written from threads outside the pool dispatch the flush wake to the pool instead
 /// of sending inline; they must still be sent and answered.
 /// </summary>
+[Category(TestCategories.ConstrainedRetirement)]
 public class FlushWakeTests
 {
     [Test]

@@ -13,6 +13,7 @@ namespace Respire.Tests.Networking;
 
 // Tests that deliberately block pool callbacks run alone, as in StalledDeliveryTests.
 // Other retirement tests can still run concurrently.
+[Category(TestCategories.ConstrainedRetirement)]
 public class TransportRetirementTests
 {
     [Test, NotInParallel]

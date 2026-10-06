@@ -7,6 +7,7 @@ using TUnit.Core;
 
 namespace Respire.Tests.Networking;
 
+[Category(TestCategories.ConstrainedRetirement)]
 public class ReceiveLoopStartupTests
 {
     // The scripted first read and reply continuation deliberately block pool workers.

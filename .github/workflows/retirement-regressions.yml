@@ -1,18 +1,20 @@
 name: Retirement regressions
 
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - 'src/Respire/Networking/**'
       - 'src/Respire/Infrastructure/**'
       - 'tests/Respire.Tests/Networking/**'
+      - 'tests/Respire.Tests/TestCategories.cs'
       - '.github/workflows/retirement-regressions.yml'
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -43,7 +45,7 @@ jobs:
           dotnet --info
           $retirementArguments = @(
             'run', '--project', 'tests/Respire.Tests', '-c', 'Release', '-f', '${{ matrix.framework }}', '--',
-            '--treenode-filter', '/*/*/(AsyncFlushSignalTests)|(FlushWakeTests)|(StalledDeliveryTests)|(TransportRetirementTests)|(ReceiveLoopStartupTests)/*',
+            '--treenode-filter', '/*/*/*/*[Category=ConstrainedRetirement]',
             '--report-trx', '--results-directory', "$env:RUNNER_TEMP/retirement"
           )
           dotnet @retirementArguments
