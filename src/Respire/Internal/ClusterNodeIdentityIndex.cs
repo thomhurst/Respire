@@ -52,7 +52,7 @@ internal sealed class ClusterNodeIdentityIndex
         AssertAccess();
         // Replica transports live only under their own endpoint, so that check is one lookup.
         // Primary transports can also be stored under aliases, so they keep the value scan.
-        return node.Options.ReadOnly ? _replicas.IsCurrent(node) : _nodes.Values.Contains(node);
+        return node.Options.ReadOnly ? _replicas.IsCurrent(node) : _nodes.ContainsValue(node);
     }
 
     /// <summary>Detaches departed generations, retaining configured seed addresses for discovery.</summary>

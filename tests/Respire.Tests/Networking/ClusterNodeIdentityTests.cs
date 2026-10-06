@@ -817,9 +817,9 @@ public class ClusterNodeIdentityTests
         router.SetSlotOwner(1, a);
 
         // B->C is received first, so it has the lower fence token, even when worker order differs.
-        var bc = router.CaptureSmigratedNotification(b, new object(),
+        var bc = ClusterRouter.CaptureSmigratedNotification(b, new object(),
             new("SMIGRATED", 1, Migrations: [new(bEndpoint, cEndpoint, "0")]));
-        var ab = router.CaptureSmigratedNotification(a, new object(),
+        var ab = ClusterRouter.CaptureSmigratedNotification(a, new object(),
             new("SMIGRATED", 1, Migrations: [new(aEndpoint, bEndpoint, "0")]));
 
         if (predecessorFirst)
@@ -852,14 +852,14 @@ public class ClusterNodeIdentityTests
         var a = router.GetMultiplexer(aEndpoint);
         var d = router.GetMultiplexer(dEndpoint);
         router.SetSlotOwner(0, a);
-        var staleBc = router.CaptureSmigratedNotification(a, new object(),
+        var staleBc = ClusterRouter.CaptureSmigratedNotification(a, new object(),
             new("SMIGRATED", 1, Migrations: [new(bEndpoint, cEndpoint, "0")]));
         router.ApplySmigratedNotification(staleBc);
 
         // Redirects move the slot away and back, then a fresh A->B is received.
         router.SetSlotOwner(0, d);
         router.SetSlotOwner(0, a);
-        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(a, new object(),
+        router.ApplySmigratedNotification(ClusterRouter.CaptureSmigratedNotification(a, new object(),
             new("SMIGRATED", 1, Migrations: [new(aEndpoint, bEndpoint, "0")])));
 
         await Assert.That(router.GetKnownSlotOwner(0)?.Port).IsEqualTo(bEndpoint.Port);
@@ -911,7 +911,7 @@ public class ClusterNodeIdentityTests
         listener.Start();
 
         var scope = new object();
-        var malformed = router.CaptureSmigratedNotification(primary, scope,
+        var malformed = ClusterRouter.CaptureSmigratedNotification(primary, scope,
             new("SMIGRATED", 7, Migrations: [new(source, target, "invalid")]));
         router.ApplySmigratedNotification(malformed);
         router.ApplySmigratedNotification(malformed);
@@ -939,7 +939,7 @@ public class ClusterNodeIdentityTests
         var order = receivedInChainOrder ? Enumerable.Range(0, links) : Enumerable.Range(0, links).Reverse();
         var captured = new ClusterRouter.QueuedSmigratedNotification[links];
         foreach (var i in order)
-            captured[i] = router.CaptureSmigratedNotification(first, new object(),
+            captured[i] = ClusterRouter.CaptureSmigratedNotification(first, new object(),
                 new("SMIGRATED", 1, Migrations: [new(endpoints[i], endpoints[i + 1], "0-1")]));
 
         // Every link but the first waits; the full deferral list (63 entries) then resolves in
@@ -967,14 +967,14 @@ public class ClusterNodeIdentityTests
         router.SetSlotOwner(0, a);
         router.SetSlotOwner(1, a);
 
-        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(a, new object(),
+        router.ApplySmigratedNotification(ClusterRouter.CaptureSmigratedNotification(a, new object(),
             new("SMIGRATED", 1, Migrations: [new(bEndpoint, cEndpoint, "0")])));
         now += 29_999;
-        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(a, new object(),
+        router.ApplySmigratedNotification(ClusterRouter.CaptureSmigratedNotification(a, new object(),
             new("SMIGRATED", 1, Migrations: [new(bEndpoint, cEndpoint, "1")])));
         now += 1;
         // The first B->C entry is now 30 seconds old and expires; the second still applies.
-        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(a, new object(),
+        router.ApplySmigratedNotification(ClusterRouter.CaptureSmigratedNotification(a, new object(),
             new("SMIGRATED", 1, Migrations: [new(aEndpoint, bEndpoint, "0-1")])));
 
         await Assert.That(router.GetKnownSlotOwner(0)?.Port).IsEqualTo(bEndpoint.Port);
@@ -1020,11 +1020,11 @@ public class ClusterNodeIdentityTests
         });
         listener.Start();
         var migration = new MaintenanceSlotMigration(new("absent-source", 7200), new("target", 7201), "0");
-        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(original, new object(),
+        router.ApplySmigratedNotification(ClusterRouter.CaptureSmigratedNotification(original, new object(),
             new("SMIGRATED", 1, Migrations: [migration])));
         if (!evict) now += 30_000;
         for (var i = 0; i < (evict ? 64 : 1); i++)
-            router.ApplySmigratedNotification(router.CaptureSmigratedNotification(later, new object(),
+            router.ApplySmigratedNotification(ClusterRouter.CaptureSmigratedNotification(later, new object(),
                 new("SMIGRATED", 1, Migrations: [migration])));
 
         await Assert.That(recorded.Count).IsEqualTo(1);
@@ -1047,7 +1047,7 @@ public class ClusterNodeIdentityTests
         var connection = new object();
 
         // The first copy is fenced by redirects made after it was received.
-        var fenced = router.CaptureSmigratedNotification(source, connection,
+        var fenced = ClusterRouter.CaptureSmigratedNotification(source, connection,
             new("SMIGRATED", 5, Migrations: [new(sourceEndpoint, targetEndpoint, "0")]));
         router.SetSlotOwner(0, other);
         router.SetSlotOwner(0, source);
@@ -1056,11 +1056,11 @@ public class ClusterNodeIdentityTests
 
         // A resend with the same ID on the same connection is a replay and is not re-evaluated,
         // even though it would now apply.
-        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(source, connection,
+        router.ApplySmigratedNotification(ClusterRouter.CaptureSmigratedNotification(source, connection,
             new("SMIGRATED", 5, Migrations: [new(sourceEndpoint, targetEndpoint, "0")])));
         await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(0), source)).IsTrue();
 
-        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(source, connection,
+        router.ApplySmigratedNotification(ClusterRouter.CaptureSmigratedNotification(source, connection,
             new("SMIGRATED", 6, Migrations: [new(sourceEndpoint, targetEndpoint, "0")])));
         await Assert.That(router.GetKnownSlotOwner(0)?.Port).IsEqualTo(targetEndpoint.Port);
     }
@@ -1079,18 +1079,18 @@ public class ClusterNodeIdentityTests
         router.SetSlotOwner(1, source);
         var connection = new object();
 
-        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(source, connection,
+        router.ApplySmigratedNotification(ClusterRouter.CaptureSmigratedNotification(source, connection,
             new("SMIGRATED", 5, Migrations: [new(sourceEndpoint, targetEndpoint, "0")])));
-        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(source, connection,
+        router.ApplySmigratedNotification(ClusterRouter.CaptureSmigratedNotification(source, connection,
             new("SMIGRATED", 6, Migrations: [new(targetEndpoint, sourceEndpoint, "0")])));
         for (var sequence = 7; sequence <= 300; sequence++)
         {
-            router.ApplySmigratedNotification(router.CaptureSmigratedNotification(source, connection,
+            router.ApplySmigratedNotification(ClusterRouter.CaptureSmigratedNotification(source, connection,
                 new("SMIGRATED", sequence, Migrations: [new(sourceEndpoint, sourceEndpoint, "0")])));
         }
 
         // The old copy would move the slot to target if the deduplication fence forgot sequence 5.
-        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(source, connection,
+        router.ApplySmigratedNotification(ClusterRouter.CaptureSmigratedNotification(source, connection,
             new("SMIGRATED", 5, Migrations: [new(sourceEndpoint, targetEndpoint, "0")])));
 
         await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(0), source)).IsTrue();
@@ -1115,11 +1115,11 @@ public class ClusterNodeIdentityTests
         if (!sourceRetiresInBetween) router.SetSlotOwner(2, a);
 
         // Received in this order on different connections: A->C (slot 0 only), B->A, A->B.
-        var ac = router.CaptureSmigratedNotification(a, new object(),
+        var ac = ClusterRouter.CaptureSmigratedNotification(a, new object(),
             new("SMIGRATED", 1, Migrations: [new(aEndpoint, cEndpoint, "0")]));
-        var ba = router.CaptureSmigratedNotification(a, new object(),
+        var ba = ClusterRouter.CaptureSmigratedNotification(a, new object(),
             new("SMIGRATED", 1, Migrations: [new(bEndpoint, aEndpoint, "0-1")]));
-        var ab = router.CaptureSmigratedNotification(a, new object(),
+        var ab = ClusterRouter.CaptureSmigratedNotification(a, new object(),
             new("SMIGRATED", 1, Migrations: [new(aEndpoint, bEndpoint, "0-1")]));
 
         // The worker sees A->B, then the dependent B->A, so A owns the slots again.
@@ -1136,7 +1136,7 @@ public class ClusterNodeIdentityTests
         await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(1), returned)).IsTrue();
 
         // A migration received after the round trip still applies.
-        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(a, new object(),
+        router.ApplySmigratedNotification(ClusterRouter.CaptureSmigratedNotification(a, new object(),
             new("SMIGRATED", 2, Migrations: [new(aEndpoint, cEndpoint, "0")])));
         await Assert.That(router.GetKnownSlotOwner(0)?.Port).IsEqualTo(cEndpoint.Port);
     }
@@ -1164,7 +1164,7 @@ public class ClusterNodeIdentityTests
         var bcToken = bcCapture.Token;
 
         // Meanwhile A->B, received on another connection, retires A and detaches its handlers.
-        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(a, new object(),
+        router.ApplySmigratedNotification(ClusterRouter.CaptureSmigratedNotification(a, new object(),
             new("SMIGRATED", 1, Migrations: [new(aEndpoint, bEndpoint, "0")])));
         await Assert.That(a.IsRetired).IsTrue();
         await Assert.That(a.CaptureMaintenanceHandlers()).IsNull();
@@ -1230,9 +1230,9 @@ public class ClusterNodeIdentityTests
 
         // On the worker, a skipped entry (here a duplicate ID) is counted mid-notification; the
         // listener failure must not abandon the rest of the worker's processing.
-        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(source, connection,
+        router.ApplySmigratedNotification(ClusterRouter.CaptureSmigratedNotification(source, connection,
             new("SMIGRATED", 130, Migrations: [new(sourceEndpoint, targetEndpoint, "1")])));
-        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(source, connection,
+        router.ApplySmigratedNotification(ClusterRouter.CaptureSmigratedNotification(source, connection,
             new("SMIGRATED", 131, Migrations: [new(sourceEndpoint, targetEndpoint, "1")])));
         await Assert.That(router.GetKnownSlotOwner(1)?.Port).IsEqualTo(targetEndpoint.Port);
     }
@@ -1300,11 +1300,11 @@ public class ClusterNodeIdentityTests
         listener.Start();
 
         // B->C waits for B to own slot 1, and expires before A->B arrives.
-        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(a, new object(),
+        router.ApplySmigratedNotification(ClusterRouter.CaptureSmigratedNotification(a, new object(),
             new("SMIGRATED", 1, Migrations: [new(bEndpoint, cEndpoint, "1")])));
         now += 30_000;
         // A->B moves A's last slot, so A retires; the expiry metric runs in the same call.
-        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(a, new object(),
+        router.ApplySmigratedNotification(ClusterRouter.CaptureSmigratedNotification(a, new object(),
             new("SMIGRATED", 2, Migrations: [new(aEndpoint, bEndpoint, "0")])));
 
         // Disposal waits for A's retirement drain, so the drain must have started first.
@@ -1388,7 +1388,7 @@ public class ClusterNodeIdentityTests
         router.SetSlotOwner(0, source);
         router.SetSlotOwner(1, source);
 
-        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(source, new object(),
+        router.ApplySmigratedNotification(ClusterRouter.CaptureSmigratedNotification(source, new object(),
             new("SMIGRATED", 1, Migrations:
             [
                 new(sourceEndpoint, targetEndpoint, "0-"),
@@ -1450,12 +1450,12 @@ public class ClusterNodeIdentityTests
 
         // Repeated full ranges exceed the slot count in enumeration and are rejected outright.
         var repeated = string.Join(',', Enumerable.Repeat("0-16383", 2));
-        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(source, new object(),
+        router.ApplySmigratedNotification(ClusterRouter.CaptureSmigratedNotification(source, new object(),
             new("SMIGRATED", 1, Migrations: [new(sourceEndpoint, targetEndpoint, repeated)])));
         await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(0), source)).IsTrue();
 
         // Small overlaps stay within the bound and move each slot once.
-        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(source, new object(),
+        router.ApplySmigratedNotification(ClusterRouter.CaptureSmigratedNotification(source, new object(),
             new("SMIGRATED", 2, Migrations: [new(sourceEndpoint, targetEndpoint, "0-1,1,0-1")])));
         await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(0), target)).IsTrue();
         await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(1), target)).IsTrue();
@@ -1476,10 +1476,10 @@ public class ClusterNodeIdentityTests
         router.SetSlotOwner(0, source);
         router.SetSlotOwner(1, source);
 
-        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(source, new object(),
+        router.ApplySmigratedNotification(ClusterRouter.CaptureSmigratedNotification(source, new object(),
             new("SMIGRATED", 1, Migrations: [new(sourceEndpoint, targetEndpoint, "0")])));
         // A reconnected connection restarts its sequence IDs.
-        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(source, new object(),
+        router.ApplySmigratedNotification(ClusterRouter.CaptureSmigratedNotification(source, new object(),
             new("SMIGRATED", 1, Migrations: [new(sourceEndpoint, targetEndpoint, "1")])));
 
         await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(0), target)).IsTrue();
@@ -1504,9 +1504,9 @@ public class ClusterNodeIdentityTests
         var connection = new object();
 
         // Both are captured before the worker applies either one.
-        var first = router.CaptureSmigratedNotification(a, connection,
+        var first = ClusterRouter.CaptureSmigratedNotification(a, connection,
             new("SMIGRATED", 1, Migrations: [new(aEndpoint, bEndpoint, "0")]));
-        var second = router.CaptureSmigratedNotification(a, connection,
+        var second = ClusterRouter.CaptureSmigratedNotification(a, connection,
             new("SMIGRATED", 2, Migrations: [new(bEndpoint, cEndpoint, "0")]));
         router.ApplySmigratedNotification(first);
         router.ApplySmigratedNotification(second);
@@ -1533,11 +1533,11 @@ public class ClusterNodeIdentityTests
         var connection = new object();
 
         // Capture the old callback before later callbacks, then apply those later callbacks first.
-        var overtaken = router.CaptureSmigratedNotification(a, connection,
+        var overtaken = ClusterRouter.CaptureSmigratedNotification(a, connection,
             new("SMIGRATED", 1, Migrations: [new(aEndpoint, bEndpoint, "0")]));
-        var laterOwner = router.CaptureSmigratedNotification(a, connection,
+        var laterOwner = ClusterRouter.CaptureSmigratedNotification(a, connection,
             new("SMIGRATED", 2, Migrations: [new(aEndpoint, cEndpoint, "0")]));
-        var laterReturn = router.CaptureSmigratedNotification(a, connection,
+        var laterReturn = ClusterRouter.CaptureSmigratedNotification(a, connection,
             new("SMIGRATED", 3, Migrations: [new(cEndpoint, aEndpoint, "0")]));
 
         router.ApplySmigratedNotification(laterOwner);
@@ -1564,7 +1564,7 @@ public class ClusterNodeIdentityTests
         router.SetSlotOwner(0, other);
         router.SetSlotOwner(1, source);
 
-        router.ApplySmigratedNotification(router.CaptureSmigratedNotification(source, new object(),
+        router.ApplySmigratedNotification(ClusterRouter.CaptureSmigratedNotification(source, new object(),
             new("SMIGRATED", 1, Migrations: [new(sourceEndpoint, targetEndpoint, "0")])));
 
         await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(0), other)).IsTrue();
@@ -1584,7 +1584,7 @@ public class ClusterNodeIdentityTests
         var source = router.GetMultiplexer(sourceEndpoint);
         var intermediate = router.GetMultiplexer(intermediateEndpoint);
         router.SetSlotOwner(0, source);
-        var queued = router.CaptureSmigratedNotification(source, new object(),
+        var queued = ClusterRouter.CaptureSmigratedNotification(source, new object(),
             new("SMIGRATED", 7, Migrations: [new(sourceEndpoint, targetEndpoint, "0")]));
 
         router.SetSlotOwner(0, intermediate);
@@ -1651,7 +1651,7 @@ public class ClusterNodeIdentityTests
         var source = router.GetMultiplexer(sourceEndpoint);
         var target = router.GetMultiplexer(targetEndpoint);
         router.SetSlotOwner(0, source);
-        var queued = router.CaptureSmigratedNotification(source, new object(),
+        var queued = ClusterRouter.CaptureSmigratedNotification(source, new object(),
             new("SMIGRATED", 8, Migrations: [new(sourceEndpoint, targetEndpoint, "0")]));
 
         router.SetSlotOwner(0, source);
@@ -1693,7 +1693,7 @@ public class ClusterNodeIdentityTests
         var source = router.GetMultiplexer(sourceEndpoint);
         router.SetSlotOwner(0, source);
         router.SetSlotOwner(1, source);
-        var queued = router.CaptureSmigratedNotification(source, new object(),
+        var queued = ClusterRouter.CaptureSmigratedNotification(source, new object(),
             new("SMIGRATED", 9, Migrations: [new(sourceEndpoint, targetEndpoint, "0")]));
         List<ClusterTopologyRange> intermediateSnapshot =
         [

@@ -18,7 +18,7 @@ public sealed partial class RespireTimeSeriesClient
     private static readonly string[] LatestOption = ["LATEST"];
     private static readonly string[] DebugOption = ["DEBUG"];
 
-    private readonly IRespireTimeSeriesCommands _commands;
+    private readonly IRespireTimeSeriesCommandsImplementation _commands;
 
     /// <summary>Creates TimeSeries operations over an existing client.</summary>
     public RespireTimeSeriesClient(IRespireClient client)

@@ -27,7 +27,6 @@ public sealed partial class RespireClient : IRespireClient
     private readonly bool _bypassClientCache;
     private readonly RespireReadFrom _readFrom;
     private static readonly bool s_getIsReadOnly = RespireCommands.String.GET.IsReadOnly;
-    private static readonly bool s_mgetIsReadOnly = RespireCommands.String.MGET.IsReadOnly;
 
     private RespireClient(
         ClientCore core, string? keyPrefix, bool ownsCore, RespireReadFrom? readFrom = null, bool bypassClientCache = false)
@@ -2280,7 +2279,7 @@ public sealed partial class RespireClient : IRespireClient
         if (!routeRead && flags == RespireCommandFlags.None
             && !_bypassClientCache
             && cache is not null
-            && cache.TryCreateQuery(operation, in command, out var query))
+            && ClientSideCacheCoordinator.TryCreateQuery(operation, in command, out var query))
         {
             // Shared GET/MGET producers must populate the same per-key representation,
             // regardless of whether a typed or raw caller wins the miss.
@@ -4197,7 +4196,7 @@ public sealed partial class RespireClient : IRespireClient
             }
 
             var identity = GetTrackedConnectionIdentity(
-                connection, core.Cluster?.HasReliableCorrectionOrdering(connection) ?? true);
+                connection, core.Cluster is null || ClusterRouter.HasReliableCorrectionOrdering(connection));
             var execution = new TrackedScriptExecution(connection, identity, onSerialized, onCommandNotApplied);
             ValueTask<RespireResult> response;
             telemetryDispatched = true;
@@ -4430,7 +4429,7 @@ public sealed partial class RespireClient : IRespireClient
                     discoveryPending = false;
                     execution.Connection = connection;
                     execution.ConnectionIdentity = GetTrackedConnectionIdentity(
-                        connection, cluster.HasReliableCorrectionOrdering(connection), sendAsking);
+                        connection, ClusterRouter.HasReliableCorrectionOrdering(connection), sendAsking);
                 }
                 catch (RespireServerException error)
                     when (attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
@@ -4445,7 +4444,7 @@ public sealed partial class RespireClient : IRespireClient
                     sendAsking = error.Code == RespireErrorCodes.Ask;
                     execution.Connection = connection;
                     execution.ConnectionIdentity = GetTrackedConnectionIdentity(
-                        connection, cluster.HasReliableCorrectionOrdering(connection), sendAsking);
+                        connection, ClusterRouter.HasReliableCorrectionOrdering(connection), sendAsking);
                 }
             }
         }

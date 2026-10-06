@@ -156,7 +156,7 @@ internal static class AclParser
     private static RespValue Take(Dictionary<string, RespValue> fields, string name)
         => fields.Remove(name, out var value) ? value : throw new RespireProtocolException($"ACL structure is missing field '{name}'.");
 
-    private static IReadOnlyDictionary<string, RespireResult> OwnRemaining(Dictionary<string, RespValue> fields)
+    private static Dictionary<string, RespireResult> OwnRemaining(Dictionary<string, RespValue> fields)
     {
         var result = new Dictionary<string, RespireResult>(fields.Count, StringComparer.Ordinal);
         foreach (var (name, value) in fields) result.Add(name, new RespireResult(value.ToOwned()));

@@ -157,7 +157,7 @@ internal static class TimeSeriesReplyParser
         => sample.Count == 0 ? [] : [ParseSample(sample)];
 
     // Ranges return [[timestamp, value], ...].
-    private static IReadOnlyList<RespireTimeSeriesSample> ParseSampleList(RespireResult samples)
+    private static List<RespireTimeSeriesSample> ParseSampleList(RespireResult samples)
     {
         var result = new List<RespireTimeSeriesSample>(samples.Count);
         foreach (var sample in samples) result.Add(ParseSample(sample));
