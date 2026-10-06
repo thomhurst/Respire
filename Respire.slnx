@@ -8,6 +8,7 @@
     <Project Path="benchmarks/Respire.ComparisonBenchmarks/Respire.ComparisonBenchmarks.csproj" />
   </Folder>
   <Folder Name="/Samples/">
+    <Project Path="samples/Respire.Samples.AspNetCore/Respire.Samples.AspNetCore.csproj" />
     <Project Path="samples/Respire.Samples.Azure/Respire.Samples.Azure.csproj" />
     <Project Path="samples/Respire.Samples.Basic/Respire.Samples.Basic.csproj" />
     <Project Path="samples/Respire.Samples.Cluster/Respire.Samples.Cluster.csproj" />
