@@ -63,8 +63,9 @@ internal sealed partial class DedicatedConnectionPool(
     }
 
     /// <summary>
-    /// Classifies acquisition errors eligible for bounded reselection when the caller observes
+    /// Classifies acquisition errors eligible for route-specific reselection when the caller observes
     /// a stopping pool. A CONNECT timeout may predate retirement; no causal ordering is inferred.
+    /// The route, not this classifier, determines whether retirement retries have an attempt limit.
     /// This does not classify Redis handshake timeouts or authorize replay of an admitted command.
     /// </summary>
     internal static bool IsRetirementFailure(Exception error)

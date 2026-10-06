@@ -231,8 +231,12 @@ as `OperationCanceledException`. Catch `RespireTimeoutException` for connect tim
 a catch for `OperationCanceledException` alone no longer handles those deadlines.
 If caller cancellation and the deadline have both fired when classified, caller cancellation wins.
 Routing samples pool retirement when handling the failure. A CONNECT timeout can therefore
-trigger bounded reselection even if the timeout preceded retirement; this never replays an
-admitted application command. Active-pool and Redis handshake timeouts remain failures.
+trigger reselection even if the timeout preceded retirement; this never replays an
+admitted application command. Cluster routes enforce their retirement retry limit. Standalone
+and Sentinel dedicated rentals have no retirement attempt limit: repeated pool replacement can
+continue until acquisition succeeds, cancellation or disposal occurs, or a terminal failure is
+encountered. `ConnectTimeout` bounds each connection attempt, not the entire rental across
+replacements. Active-pool and Redis handshake timeouts remain failures.
 
 `AllowAdmin = false` is the default safety setting. Set it to `true` only for callers that are allowed to run high-risk server administration commands such as `FLUSHDB`, `FLUSHALL`, and `CONFIG SET`.
 
