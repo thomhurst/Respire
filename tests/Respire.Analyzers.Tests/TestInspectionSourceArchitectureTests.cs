@@ -1,6 +1,7 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Operations;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -71,6 +72,53 @@ public class TestInspectionSourceArchitectureTests
     }
 
     [Test]
+    public async Task UnescapedNameofMethodDoesNotHideFactoryCalls()
+    {
+        const string source = """
+            class Example
+            {
+                static object nameof(object value) => value;
+                object InspectForTests() => this;
+                void Coordinate() { nameof(InspectForTests()); }
+            }
+            """;
+        var root = Parse(source, false);
+        var compilation = CreateCompilation([root.SyntaxTree]);
+        await Assert.That(compilation.GetDiagnostics().Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error)).IsEmpty();
+        await Assert.That(FindFactoryUses(root)).Count().IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task NameofShadowingInAnotherPartialIsBoundAcrossSourceFiles()
+    {
+        var declaration = Parse("partial class Example { static object nameof(object value) => value; object InspectForTests() => this; }", false);
+        var caller = Parse("partial class Example { void Coordinate() { nameof(InspectForTests()); } }", false);
+        var compilation = CreateCompilation([declaration.SyntaxTree, caller.SyntaxTree]);
+        await Assert.That(compilation.GetDiagnostics().Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error)).IsEmpty();
+        await Assert.That(FindFactoryUses(caller, compilation.GetSemanticModel(caller.SyntaxTree))).Count().IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task NameofLocalFunctionDoesNotHideFactoryCalls()
+    {
+        const string source = """
+            class Example
+            {
+                object InspectForTests() => this;
+                void Coordinate()
+                {
+                    object nameof(object value) => value;
+                    nameof(InspectForTests());
+                }
+            }
+            """;
+        var root = Parse(source, false);
+        var compilation = CreateCompilation([root.SyntaxTree]);
+        await Assert.That(compilation.GetDiagnostics().Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error)).IsEmpty();
+        await Assert.That(FindFactoryUses(root)).Count().IsEqualTo(1);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task OwnerSurfaceMatchesReviewedInventory(bool net10)
@@ -84,7 +132,9 @@ public class TestInspectionSourceArchitectureTests
         // An empty inventory is deliberately a failure, never an automatic snapshot update.
         if (expected.Length == 0)
             throw new InvalidOperationException("Missing reviewed inventory:\n" + string.Join('\n', actual));
-        await Assert.That(actual).IsEquivalentTo(expected);
+        await Assert.That(actual).IsEquivalentTo(expected).Because(
+            "Unreviewed signatures:\n" + string.Join('\n', actual.Except(expected, StringComparer.Ordinal))
+            + "\nRemoved signatures:\n" + string.Join('\n', expected.Except(actual, StringComparer.Ordinal)));
     }
 
     [Test]
@@ -92,7 +142,9 @@ public class TestInspectionSourceArchitectureTests
     [Arguments(true)]
     public async Task ProductionSourceDoesNotUseInspectionFactories(bool net10)
     {
-        var violations = ReadLibrarySources().SelectMany(source => FindFactoryUses(Parse(source.Text, net10))
+        var sources = ReadLibrarySources().Select(source => (source.Path, Root: Parse(source.Text, net10))).ToArray();
+        var compilation = CreateCompilation(sources.Select(source => source.Root.SyntaxTree));
+        var violations = sources.SelectMany(source => FindFactoryUses(source.Root, compilation.GetSemanticModel(source.Root.SyntaxTree))
             .Select(use => $"{source.Path}: {use}")).ToArray();
         await Assert.That(violations).IsEmpty();
     }
@@ -247,12 +299,18 @@ public class TestInspectionSourceArchitectureTests
         return members.ToArray();
     }
 
-    private static string[] FindFactoryUses(SyntaxNode root)
+    private static CSharpCompilation CreateCompilation(IEnumerable<SyntaxTree> trees)
+        => CSharpCompilation.Create("InspectionGuard", trees,
+            [MetadataReference.CreateFromFile(typeof(object).Assembly.Location)],
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+
+    private static string[] FindFactoryUses(SyntaxNode root, SemanticModel? semanticModel = null)
     {
+        semanticModel ??= CreateCompilation([root.SyntaxTree]).GetSemanticModel(root.SyntaxTree);
         return root.DescendantNodes().OfType<SimpleNameSyntax>()
             .Where(name => name.Identifier.ValueText == FactoryName && !name.Ancestors()
                 .OfType<InvocationExpressionSyntax>().Any(call => call.Expression is IdentifierNameSyntax
-                    { Identifier.Text: "nameof" }))
+                    { Identifier.Text: "nameof" } && semanticModel.GetOperation(call) is INameOfOperation))
             .Select(name => $"line {name.GetLocation().GetLineSpan().StartLinePosition.Line + 1}: {name.Parent}")
             .ToArray();
     }
