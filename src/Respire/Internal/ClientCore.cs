@@ -118,6 +118,10 @@ internal sealed class ClientCore : IAsyncDisposable
             : Multiplexer.EnsureConnectedAsync(cancellationToken);
 
     /// <summary>Captures an initialized primary route without starting discovery or reconnecting.</summary>
+    /// <remarks>
+    /// Readiness is an observation, not a lease. Connection selection or admission can still
+    /// throw if socket loss, retirement, or disposal races this check.
+    /// </remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal bool TryGetReadyPrimaryMultiplexer(out RespireConnectionMultiplexer multiplexer)
     {
