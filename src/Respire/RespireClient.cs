@@ -690,7 +690,7 @@ public sealed partial class RespireClient : IRespireClient
         bool allowReadFrom = false)
     {
         ValidateResultFlags(flags);
-        var (operation, words, firstArgumentIndex) = ParseRawCommand(command);
+        var (operation, words, firstArgumentIndex) = ParseRawCommand(command, ref args);
         var (storedProcedureName, commandValue) = CreateRawCommand(
             operation, words, firstArgumentIndex, args, cacheMutation, hasExplicitCacheMutation, readKind);
         var isBlocking = RespireCommand.IsBlocking(
@@ -746,7 +746,7 @@ public sealed partial class RespireClient : IRespireClient
         ReadCommandKind readKind = ReadCommandKind.None,
         bool allowReadFrom = false)
     {
-        var (operation, words, firstArgumentIndex) = ParseRawCommand(command);
+        var (operation, words, firstArgumentIndex) = ParseRawCommand(command, ref args);
         ValidateRawFireAndForgetCommand(
             operation, words.AsSpan(firstArgumentIndex), args);
         var (storedProcedureName, commandValue) = CreateRawCommand(
@@ -981,11 +981,21 @@ public sealed partial class RespireClient : IRespireClient
            || candidate.EqualsAsciiIgnoreCase("UNBLOCK")
            || candidate.EqualsAsciiIgnoreCase("UNPAUSE");
 
-    private static (string Operation, string[] Words, int FirstArgumentIndex) ParseRawCommand(string command)
+    private static (string Operation, string[] Words, int FirstArgumentIndex) ParseRawCommand(string command, ref RespireValue[] args)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(command);
         var words = command.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         var operation = RawOperationName(words, out var firstArgumentIndex);
+        // Both raw spellings must expose the same source position to scripting diagnostics.
+        if (words.Length == 1 && args.Length > 0 && operation is "SCRIPT" or "FUNCTION"
+            && KnownRawOperation(operation, args[0]) is { } normalized
+            && ScriptingEngineInfo.IsScriptingCommand(normalized))
+        {
+            words = [words[0], normalized[(operation.Length + 1)..]];
+            operation = normalized;
+            firstArgumentIndex = 2;
+            args = args[1..];
+        }
         return (operation, words, firstArgumentIndex);
     }
 

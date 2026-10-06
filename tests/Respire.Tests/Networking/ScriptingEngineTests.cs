@@ -59,6 +59,43 @@ public class ScriptingEngineTests
     private static byte[] Error(string message) => Encoding.UTF8.GetBytes($"-{message}\r\n");
     private static byte[] Bulk(string value) => Encoding.UTF8.GetBytes($"${Encoding.UTF8.GetByteCount(value)}\r\n{value}\r\n");
 
+    [Test]
+    [Arguments("SCRIPT", "LOAD", false)]
+    [Arguments("SCRIPT", "LOAD", true)]
+    [Arguments("FUNCTION", "LOAD", false)]
+    [Arguments("FUNCTION", "LOAD", true)]
+    [Arguments("FUNCTION", "RESTORE", false)]
+    [Arguments("FUNCTION", "RESTORE", true)]
+    public async Task RawArgumentSubcommandsMatchCombinedOperation(string command, string subcommand, bool byteSource)
+    {
+        var errorText = command == "SCRIPT" ? Missing : "ERR Engine 'lua' not found";
+        await using var server = new FakeRespServer(Error(errorText), Bulk(Absent));
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        const string source = "#!lua name=library\nreturn 42";
+        RespireValue payload = byteSource ? Encoding.UTF8.GetBytes(source) : source;
+        RespireValue[] arguments = [subcommand.ToLowerInvariant(), payload];
+        var error = await Assert.That(async () =>
+        {
+            using var result = await client.ExecuteAsync(command.ToLowerInvariant(), arguments);
+        }).ThrowsExactly<RespireScriptingEngineUnavailableException>();
+        await Assert.That(error!.ServerError.CommandName).IsEqualTo($"{command} {subcommand}");
+        await Assert.That(arguments[0].ToString()).IsEqualTo(subcommand.ToLowerInvariant());
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task RawFunctionLoadReplaceUsesSourceAfterSubcommand()
+    {
+        await using var server = new FakeRespServer(Error("ERR Engine 'python' not found"), Bulk(Present));
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var error = await Assert.That(async () =>
+        {
+            using var result = await client.ExecuteAsync("FUNCTION", ["LOAD", "REPLACE", "#!python name=library\nsource"]);
+        }).ThrowsExactly<RespireScriptingEngineUnavailableException>();
+        await Assert.That(error!.Engine).IsEqualTo("python");
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(2);
+    }
+
     private static async ValueTask<long> EvaluateAsync(RespireClient client, CancellationToken cancellationToken = default)
     {
         using var result = await client.ExecuteAsync("EVAL", ["return 42", 0], cancellationToken: cancellationToken);
