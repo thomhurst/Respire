@@ -220,6 +220,12 @@ await using var redis = await RespireClient.ConnectAsync(options);
 
 Omitting `Connections` uses one multiplexed connection, the default. The value must be at least one; raise the fixed pool size only when profiling shows one socket is saturated.
 
+An independent TCP/TLS `ConnectTimeout` throws `RespireTimeoutException` with
+`CommandName = "CONNECT"` and diagnostics at the `Connecting` stage, including during
+dedicated connection acquisition. Caller cancellation remains `OperationCanceledException`
+with the caller's token. Pool retirement keeps its separate cancellation identity so routing
+can select a replacement. Redis handshake replies retain their command timeout behavior.
+
 `AllowAdmin = false` is the default safety setting. Set it to `true` only for callers that are allowed to run high-risk server administration commands such as `FLUSHDB`, `FLUSHALL`, and `CONFIG SET`.
 
 For expiring passwords or access tokens, use a caller-owned

@@ -12,6 +12,72 @@ public class DedicatedLeaseAcquisitionTests
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(5);
 
     [Test]
+    [Arguments(true, true)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    public async Task ReportedConnectTimeoutCanRacePoolRetirement(bool retirePool, bool connectTimeout)
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        await using var replacement = new DedicatedConnectionPool(
+            "127.0.0.1", server.Port, RespireConnectionOptions.Default, null);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        // The timeout has already been selected before retirement is published. Delay its
+        // delivery to the route, rather than relying on a timer/retirement scheduling race.
+        var failure = new RespireTimeoutException(connectTimeout ? "CONNECT" : "SELECT", Limit,
+            new OperationCanceledException(),
+            RespireTimeoutDiagnostics.Capture(connectTimeout ? RespireCommandStage.Connecting : RespireCommandStage.Unknown));
+        await using var original = new DedicatedConnectionPool("127.0.0.1", server.Port,
+            new RespireConnectionOptions
+            {
+                TestingStreamFactory = async (_, _, _) =>
+                {
+                    entered.TrySetResult();
+                    await release.Task.WaitAsync(Limit);
+                    throw failure;
+                },
+            }, null);
+        var state = new RouteState(replacement);
+        var pending = RentAsync(original, state).AsTask();
+        Task? retirement = null;
+        try
+        {
+            await entered.Task.WaitAsync(Limit);
+            if (retirePool) retirement = original.RetireAsync().AsTask();
+            release.TrySetResult();
+            if (retirePool && connectTimeout)
+            {
+                var lease = await pending.WaitAsync(Limit);
+                await Assert.That(lease.Pool).IsSameReferenceAs(replacement);
+                await Assert.That(state.Selections).IsEqualTo(1);
+                await Assert.That(state.Retirements).IsEqualTo(1);
+                await Assert.That(state.TerminalError).IsNull();
+            }
+            else
+            {
+                var error = await Assert.That(async () => await pending.WaitAsync(Limit))
+                    .ThrowsExactly<RespireTimeoutException>();
+                await Assert.That(error).IsSameReferenceAs(failure);
+                await Assert.That(state.Selections).IsEqualTo(0);
+                await Assert.That(state.Retirements).IsEqualTo(0);
+            }
+            await Assert.That(state.Completions).IsEqualTo(1);
+            if (retirement is not null) await retirement.WaitAsync(Limit);
+        }
+        finally
+        {
+            release.TrySetResult();
+            try
+            {
+                var lease = await pending.WaitAsync(Limit);
+                lease.Pool.Return(lease.Connection);
+            }
+            catch (Exception) when (pending.IsCompleted) { }
+            if (retirement is not null) await retirement.WaitAsync(Limit);
+        }
+    }
+
+    [Test]
     public async Task SelectingSameStoppedPoolPreservesFailureAndStops()
     {
         await using var pool = new DedicatedConnectionPool("127.0.0.1", 6379, RespireConnectionOptions.Default, null);

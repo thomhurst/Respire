@@ -642,7 +642,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 if (connection is not null) await pool.DiscardAsync(connection).ConfigureAwait(false);
                 if (cancellationToken.IsCancellationRequested) throw new OperationCanceledException(cancellationToken);
                 if (router._lifetime.IsCancellationRequested) throw new ObjectDisposedException(nameof(ReadEndpointRouter));
-                if (pool.IsStopping && error is ObjectDisposedException or OperationCanceledException)
+                if (pool.IsStopping && DedicatedConnectionPool.IsRetirementFailure(error))
                     throw new RespireConnectionException($"Read replica {endpoint} retired during dedicated acquisition.", error);
                 throw;
             }
