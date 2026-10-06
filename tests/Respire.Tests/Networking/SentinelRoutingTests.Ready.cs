@@ -61,10 +61,13 @@ public partial class SentinelRoutingTests
             var index = Enumerable.Range(0, commands.Count).Single(i =>
                 commands[i].StartsWith(shape == "integer" ? "INCR" : "GET "));
             // Hold the reply so a completed ValueTask cannot hide its original source.
-            var source = typeof(ValueTask<T>).GetField("_obj", BindingFlags.Instance | BindingFlags.NonPublic)!
-                .GetValue(response);
             try
             {
+                // This control pins the BCL ValueTask source representation. If the runtime
+                // changes that representation, update the control rather than silently skipping it.
+                var sourceField = typeof(ValueTask<T>).GetField("_obj", BindingFlags.Instance | BindingFlags.NonPublic)
+                    ?? throw new InvalidOperationException("ValueTask<T>._obj is unavailable; update the reply-source control for this runtime.");
+                var source = sourceField.GetValue(response);
                 // TUnit's default HTML reporter attaches a tracing listener. The dedicated
                 // uninstrumented CI lane disables that reporter to verify direct sources;
                 // ordinary test runs must still retain their instrumented outer wrappers.

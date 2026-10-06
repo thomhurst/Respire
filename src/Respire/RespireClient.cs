@@ -2530,8 +2530,19 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (Exception error) when (_core.Sentinel is not null)
         {
-            return ReadySendFailureAsync<RespValue>(error);
+            return CaptureReadySendFailure<RespValue>(error);
         }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static ValueTask<TResult> CaptureReadySendFailure<TResult>(Exception error,
+        ClientSideCacheCoordinator? cache = null, ClientSideCacheCoordinator.MutationFence mutationFence = default)
+    {
+        // Readiness is an observation, not a lease: socket loss, retirement, or disposal
+        // can make GetConnection or admission throw after validation. A command writer
+        // can also throw before admission. Preserve the former async Sentinel result.
+        if (mutationFence.IsRequired) cache!.CompleteMutation(in mutationFence);
+        return ReadySendFailureAsync<TResult>(error);
     }
 
 #if NET
@@ -5036,8 +5047,7 @@ public sealed partial class RespireClient : IRespireClient
             }
             catch (Exception error) when (core.Sentinel is not null)
             {
-                if (mutationFence.IsRequired) cache!.CompleteMutation(in mutationFence);
-                return ReadySendFailureAsync<TResult>(error);
+                return CaptureReadySendFailure<TResult>(error, cache, mutationFence);
             }
         }
 
@@ -5144,8 +5154,7 @@ public sealed partial class RespireClient : IRespireClient
             }
             catch (Exception error) when (core.Sentinel is not null)
             {
-                if (mutationFence.IsRequired) cache!.CompleteMutation(in mutationFence);
-                return ReadySendFailureAsync<string?>(error);
+                return CaptureReadySendFailure<string?>(error, cache, mutationFence);
             }
         }
 
@@ -5176,8 +5185,7 @@ public sealed partial class RespireClient : IRespireClient
             }
             catch (Exception error) when (core.Sentinel is not null)
             {
-                if (mutationFence.IsRequired) cache!.CompleteMutation(in mutationFence);
-                return ReadySendFailureAsync<byte[]?>(error);
+                return CaptureReadySendFailure<byte[]?>(error, cache, mutationFence);
             }
         }
         return ConvertAsync(
