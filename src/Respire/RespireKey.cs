@@ -121,6 +121,14 @@ public readonly struct RespireKey : IEquatable<RespireKey>
             _string is null && snapshotBinaryKeys ? _bytes.ToArray() : _bytes);
     }
 
+    /// <summary>Resolves a command argument without copying through an intermediate prefixed key.</summary>
+    internal RespireValue PrependAsValue(Internal.KeyPrefix prefix, bool snapshotBinaryKeys)
+    {
+        if (_prefix is not null) return Prepend(prefix, snapshotBinaryKeys).AsValue();
+        return RespireValue.Prefixed(prefix, _string,
+            _string is null && snapshotBinaryKeys ? _bytes.ToArray() : _bytes);
+    }
+
     internal void WriteTo(ref RespWriter writer)
     {
         if (_prefix is not null)
