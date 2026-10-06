@@ -1,0 +1,56 @@
+name: Topology sample smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/topology-sample-smoke.yml'
+      - 'scripts/smoke_topology_samples.py'
+      - 'scripts/test_topology_sample_smoke.py'
+      - 'samples/Respire.Samples.Cluster/**'
+      - 'samples/Respire.Samples.Sentinel/**'
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: ${{ matrix.sample }} sample (${{ matrix.framework }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        sample: [Cluster, Sentinel]
+        framework: [net8.0, net10.0]
+    env:
+      DOTNET_PROCESSOR_COUNT: 2
+      RESPIRE_SMOKE_PROJECT: respire-smoke-${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-dotnet
+      - name: Verify output rejection controls
+        run: python3 -m unittest discover -s scripts -p test_topology_sample_smoke.py -v
+      - name: Run actual sample and verify topology behavior
+        run: >-
+          python3 scripts/smoke_topology_samples.py
+          --sample '${{ matrix.sample }}' --framework '${{ matrix.framework }}'
+          --project "$RESPIRE_SMOKE_PROJECT" --artifacts artifacts/topology-sample
+      - name: Ensure owned Compose project is removed
+        if: always()
+        timeout-minutes: 2
+        run: |
+          # Backup cleanup if cancellation interrupts the script's finally block.
+          marker=artifacts/topology-sample/owned-project.txt
+          if [[ -f "$marker" && "$(cat "$marker")" == "$RESPIRE_SMOKE_PROJECT" ]]; then
+            timeout 60s docker compose -p "$RESPIRE_SMOKE_PROJECT" \
+              -f 'samples/Respire.Samples.${{ matrix.sample }}/compose.yaml' \
+              down --volumes --remove-orphans --timeout 10
+          fi
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: topology-sample-${{ matrix.sample }}-${{ matrix.framework }}
+          path: artifacts/topology-sample/
+          if-no-files-found: error
+          retention-days: 14
