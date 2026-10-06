@@ -420,6 +420,11 @@ public class MultiItemCancellationOverloadTests
             int countHint = 250, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
+        public ValueTask<RespireValkeyClusterScanPage> ScanValkeyClusterPageAsync(
+            string cursor = "0", string? match = null, RespireKeyType? type = null,
+            int countHint = 250, int? slot = null, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
         public ValueTask<bool> CopyAsync(
             RespireKey source, RespireKey destination, int destinationDatabase, bool replace = false,
             CancellationToken cancellationToken = default)
