@@ -609,7 +609,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
             }
             catch (Exception ex)
             {
-                core.Logger?.SubscriptionReconnectRetry(delay, ex);
+                TryLog((delay, ex), static (logger, state) => logger.SubscriptionReconnectRetry(state.delay, state.ex));
                 await Task.Delay(delay).ConfigureAwait(false);
                 delay = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds * 2, 5000));
             }

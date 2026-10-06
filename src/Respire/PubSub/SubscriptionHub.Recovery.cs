@@ -133,7 +133,8 @@ internal sealed partial class SubscriptionHub
                         ExhaustConfiguredRecovery(endpoint, failure, attempt);
                         return;
                     }
-                    core.Logger?.SubscriptionRecoveryAttemptFailed(attempt, failure);
+                    TryLog((attempt, failure), static (logger, state)
+                        => logger.SubscriptionRecoveryAttemptFailed(state.attempt, state.failure));
                 }
                 finally
                 {
@@ -181,7 +182,7 @@ internal sealed partial class SubscriptionHub
                 try { await cleanup.ConfigureAwait(false); }
                 catch (Exception cleanupError)
                 {
-                    core.Logger?.SubscriptionReplacementCleanupFailed(cleanupError);
+                    TryLog(cleanupError, static (logger, error) => logger.SubscriptionReplacementCleanupFailed(error));
                 }
             }
             return (null, endpoint, error);

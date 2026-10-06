@@ -5,7 +5,7 @@ using Respire.Protocol;
 
 namespace Respire.Tests;
 
-public class LifecycleLoggingTests
+public partial class LifecycleLoggingTests
 {
     [Test]
     public async Task TypedMessagesPreserveLegacyStructuredOutput()
