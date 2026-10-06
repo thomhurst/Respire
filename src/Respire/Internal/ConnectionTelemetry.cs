@@ -12,6 +12,10 @@ namespace Respire.Internal;
 internal static class ConnectionTelemetry
 {
     private static readonly Registry Pools = new();
+    private static int _pendingCloseMeasurements;
+
+    // Diagnostic delivery has its own lifetime; transport disposal never waits for it.
+    internal static int PendingCloseMeasurements => Volatile.Read(ref _pendingCloseMeasurements);
 
     internal static State Attach(RespireConnection connection, RespireConnectionOptions options)
     {
@@ -43,7 +47,7 @@ internal static class ConnectionTelemetry
             var reason = "error";
             if (peerClosed) reason = "server_close";
             else if (IsCallerCancellation(error, callerToken)) reason = "application_close";
-            RecordClosed(ForConnection(host, port, options), reason, reason == "error" ? error : null);
+            QueueClosed(ForConnection(host, port, options), reason, reason == "error" ? error : null);
         }
     }
 
@@ -159,7 +163,7 @@ internal static class ConnectionTelemetry
             else if (error is null or RespireConnectionRetiredException
                 || error is OperationCanceledException && Volatile.Read(ref _requestedCloseReason) == "application_close")
                 reason = Volatile.Read(ref _requestedCloseReason) ?? "application_close";
-            RecordClosed(_pool, reason, reason == "error" ? error : null);
+            QueueClosed(_pool, reason, reason == "error" ? error : null);
         }
 
         internal bool TryRead(out bool used, out int pending)
@@ -172,6 +176,28 @@ internal static class ConnectionTelemetry
             used = _pool.PubSub || pending != 0 || _dedicated && Volatile.Read(ref _rented) != 0;
             return true;
         }
+    }
+
+    private static void QueueClosed(Pool pool, string reason, Exception? error)
+    {
+        // Membership and the reason are committed synchronously. Delivery is independent
+        // of receive/disposal tasks: a blocking listener must not hold pending failures,
+        // pool cleanup, or registration of a MOVING drain deadline behind Counter.Add.
+        Interlocked.Increment(ref _pendingCloseMeasurements);
+        try
+        {
+            if (ThreadPool.UnsafeQueueUserWorkItem(static state =>
+            {
+                try { RecordClosed(state.Pool, state.Reason, state.Error); }
+                finally { Interlocked.Decrement(ref _pendingCloseMeasurements); }
+            }, (Pool: pool, Reason: reason, Error: error), preferLocal: false)) return;
+        }
+        catch
+        {
+            Interlocked.Decrement(ref _pendingCloseMeasurements);
+            throw;
+        }
+        Interlocked.Decrement(ref _pendingCloseMeasurements);
     }
 
     private static void RecordClosed(Pool pool, string reason, Exception? error)

@@ -744,7 +744,6 @@ public class MaintenanceNotificationTests
         var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         source.SuppressReply = command =>
         {
             if (command != "HELLO 3") return false;
@@ -767,20 +766,17 @@ public class MaintenanceNotificationTests
         listener.Start();
         using var cancellation = new CancellationTokenSource();
         var connecting = RespireConnection.ConnectAsync("127.0.0.1", source.Port,
-            generation.ConnectionOptions with
-            {
-                // This event runs after generation notification, before failing pending replies.
-                UnexpectedConnectionClosed = connection => connection.PendingCommandsFailing += () => closed.TrySetResult(),
-            }, cancellationToken: cancellation.Token);
+            generation.ConnectionOptions, cancellationToken: cancellation.Token);
         Task? canceling = null;
         try
         {
             await handshake.Task.WaitAsync(TimeSpan.FromSeconds(5));
             canceling = cancellation.CancelAsync();
-            // Hold ConnectAsync between Abort and DisposeAsync, allowing the receive loop
-            // to observe transport closure before disposal marks it as intentional.
+            // Close metrics now run independently of cleanup. Cancellation must finish
+            // while the listener is still blocked, without retiring a healthy generation.
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            await closed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(async () => await connecting.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Throws<OperationCanceledException>();
             await Assert.That(generation.IsRetired).IsFalse();
             await Assert.That(client.Core.Sentinel.Current).IsSameReferenceAs(generation);
         }

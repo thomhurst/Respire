@@ -277,13 +277,13 @@ internal sealed partial class RespireConnectionMultiplexer
             _moving.BeginDrain();
             _ = DrainMovedConnectionsInBackgroundAsync(old, drains, request.Deadline);
         }
-        if (handedOff is not null)
-            foreach (var connection in handedOff) connection.RecordConnectionHandoff();
-
         // The handoff has published, so neither the second cache fence nor a metrics observer
         // can fail it. The fence's metrics reach MeterListener callbacks synchronously.
         try { _options.CredentialCacheRetirementFence?.Invoke(); }
         catch (Exception error) { _logger?.MovingCacheFenceObserverFailed(error); }
+
+        if (handedOff is not null)
+            foreach (var connection in handedOff) connection.RecordConnectionHandoff();
 
         // Notify other connection owners and metrics listeners outside the lifecycle locks.
         MovingHandoffPublished?.Invoke();

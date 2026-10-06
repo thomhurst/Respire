@@ -42,7 +42,7 @@ public class ConnectionMetricTests
         second.Observe();
         await Assert.That(first.Current("db.client.connection.count")).IsEqualTo(0d);
         await Assert.That(second.Current("db.client.connection.count")).IsEqualTo(0d);
-        var closed = first.Events.Single(item => item.Name == "redis.client.connection.closed");
+        var closed = await first.WaitForCloseAsync();
         await Assert.That(closed.Value).IsEqualTo(1d);
         await Assert.That(closed.Unit).IsEqualTo("{connection}");
         await Assert.That(closed.Tags["redis.client.connection.close.reason"]).IsEqualTo("application_close");
@@ -190,7 +190,7 @@ public class ConnectionMetricTests
         await WaitUntil(() => capture.Events.Any(item => item.Name == "redis.client.connection.closed"));
         capture.Observe();
         await Assert.That(capture.Current("db.client.connection.count", "idle")).IsEqualTo(4d);
-        var closed = capture.Events.Single(item => item.Name == "redis.client.connection.closed");
+        var closed = await capture.WaitForCloseAsync();
         await Assert.That(closed.Tags["redis.client.connection.close.reason"]).IsEqualTo("pool_eviction_idle");
     }
 
@@ -212,7 +212,7 @@ public class ConnectionMetricTests
             new() { Protocol = RespProtocol.Resp2 });
         capture.Observe();
         await Assert.That(capture.Current("db.client.connection.count")).IsEqualTo(1d);
-        var closed = capture.Events.Single(item => item.Name == "redis.client.connection.closed");
+        var closed = await capture.WaitForCloseAsync();
         await Assert.That(closed.Tags["redis.client.connection.close.reason"]).IsEqualTo("server_close");
         await Assert.That(closed.Tags.ContainsKey("error.type")).IsFalse();
     }
@@ -246,7 +246,7 @@ public class ConnectionMetricTests
         await Assert.That(async () => { using var reply = await pending.WaitAsync(deadline.Token); })
             .Throws<RespireConnectionException>();
         await connection.DisposeAsync();
-        var closed = capture.Events.Single(item => item.Name == "redis.client.connection.closed");
+        var closed = await capture.WaitForCloseAsync();
         await Assert.That(closed.Tags["redis.client.connection.close.reason"]).IsEqualTo("server_close");
         await Assert.That(closed.Tags.ContainsKey("error.type")).IsFalse();
     }
@@ -271,7 +271,7 @@ public class ConnectionMetricTests
         else peer.Shutdown(SocketShutdown.Send);
         if (reset) peer.Dispose();
         await Assert.That(async () => await connect.WaitAsync(deadline.Token)).Throws<IOException>();
-        var closed = capture.Events.Single(item => item.Name == "redis.client.connection.closed");
+        var closed = await capture.WaitForCloseAsync();
         await Assert.That(closed.Tags["redis.client.connection.close.reason"]).IsEqualTo("server_close");
         await Assert.That(closed.Tags.ContainsKey("error.type")).IsFalse();
     }
@@ -315,7 +315,7 @@ public class ConnectionMetricTests
         capture.Observe();
         await Assert.That(capture.Current("db.client.connection.count")).IsEqualTo(0d);
         await Assert.That(capture.Events.Count(item => item.Name == "db.client.connection.create_time")).IsEqualTo(0);
-        var closed = capture.Events.Single(item => item.Name == "redis.client.connection.closed");
+        var closed = await capture.WaitForCloseAsync();
         await Assert.That(closed.Tags["redis.client.connection.close.reason"]).IsEqualTo("error");
         await Assert.That(closed.Tags["redis.client.errors.category"]).IsEqualTo("auth");
         await Assert.That(closed.Tags["error.type"]).IsEqualTo(typeof(RespireServerException).FullName);
@@ -340,7 +340,7 @@ public class ConnectionMetricTests
             capture.Observe();
             await Assert.That(capture.Current("db.client.connection.count")).IsEqualTo(0d);
             await Assert.That(capture.Events.Count(item => item.Name == "db.client.connection.create_time")).IsEqualTo(0);
-            var closed = capture.Events.Single(item => item.Name == "redis.client.connection.closed");
+            var closed = await capture.WaitForCloseAsync();
             await Assert.That(closed.Tags["redis.client.connection.close.reason"]).IsEqualTo("error");
             await Assert.That(closed.Tags["redis.client.errors.category"]).IsEqualTo("tls");
         }
@@ -387,7 +387,7 @@ public class ConnectionMetricTests
         var error = await Assert.That(async () => await connect.WaitAsync(deadline.Token))
             .Throws<OperationCanceledException>();
         await Assert.That(error!.CancellationToken == caller.Token).IsEqualTo(callerCancels);
-        var closed = capture.Events.Single(item => item.Name == "redis.client.connection.closed");
+        var closed = await capture.WaitForCloseAsync();
         await Assert.That(closed.Tags["redis.client.connection.close.reason"])
             .IsEqualTo(callerCancels ? "application_close" : "error");
         await Assert.That(closed.Tags.ContainsKey("error.type")).IsEqualTo(!callerCancels);
@@ -427,7 +427,7 @@ public class ConnectionMetricTests
         });
         renewal.SetResult(new(null, "second", expiry));
         await WaitUntil(() => capture.Events.Any(item => item.Name == "redis.client.connection.closed"));
-        var closed = capture.Events.Single(item => item.Name == "redis.client.connection.closed");
+        var closed = await capture.WaitForCloseAsync();
         await Assert.That(closed.Tags["redis.client.connection.close.reason"]).IsEqualTo("error");
         await Assert.That(closed.Tags["redis.client.errors.category"]).IsEqualTo("auth");
         await Assert.That(closed.Tags["error.type"]).IsEqualTo(typeof(RespireAuthenticationException).FullName);
@@ -452,16 +452,27 @@ public class ConnectionMetricTests
             CommandTimeout = TimeSpan.FromSeconds(1), MaintenanceRelaxedTimeout = TimeSpan.FromSeconds(5),
             MaintenanceWindowTimeout = TimeSpan.FromMilliseconds(100),
         });
-        await server.SendRawAsync(">3\r\n+MIGRATING\r\n:1\r\n:1\r\n"u8.ToArray());
-        await WaitUntil(() => connection.HasMaintenanceWindow);
+        // Observe on the receive-side state transition. An asynchronously scheduled poll
+        // can miss the entire 100 ms window on a constrained runner.
         capture.Observe();
-        await Assert.That(capture.Current("redis.client.connection.relaxed_timeout")).IsEqualTo(1d);
-        await server.SendRawAsync(">2\r\n+MIGRATED\r\n:1\r\n"u8.ToArray());
-        await WaitUntil(() => !connection.HasMaintenanceWindow);
-        capture.Observe();
-        await Assert.That(capture.Current("redis.client.connection.relaxed_timeout")).IsEqualTo(0d);
-        await server.SendRawAsync(">3\r\n+MIGRATING\r\n:2\r\n:1\r\n"u8.ToArray());
-        await WaitUntil(() => connection.HasMaintenanceWindow);
+        var snapshots = new double[3];
+        var observed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var index = 0;
+        Action onChanged = () =>
+        {
+            capture.Observe();
+            snapshots[index++] = capture.Current("redis.client.connection.relaxed_timeout");
+            if (index == snapshots.Length) observed.TrySetResult();
+        };
+        typeof(RespireConnection).GetEvent("MaintenanceStateChanged",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetAddMethod(nonPublic: true)!.Invoke(connection, [onChanged]);
+        await server.SendRawAsync(
+            ">3\r\n+MIGRATING\r\n:1\r\n:1\r\n>2\r\n+MIGRATED\r\n:1\r\n>3\r\n+MIGRATING\r\n:2\r\n:1\r\n"u8.ToArray());
+        await observed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(snapshots[0]).IsEqualTo(1d);
+        await Assert.That(snapshots[1]).IsEqualTo(0d);
+        await Assert.That(snapshots[2]).IsEqualTo(1d);
         await WaitUntil(() => !connection.HasMaintenanceWindow);
         capture.Observe();
         await Assert.That(capture.Current("redis.client.connection.relaxed_timeout")).IsEqualTo(0d);
@@ -541,7 +552,7 @@ public class ConnectionMetricTests
             : cause;
         state.Closed(error, peerClosed: false);
         state.Closed(error, peerClosed: false);
-        var closed = capture.Events.Single(item => item.Name == "redis.client.connection.closed");
+        var closed = await capture.WaitForCloseAsync();
         await Assert.That(closed.Tags["redis.client.connection.close.reason"])
             .IsEqualTo(unrelatedError ? "error" : "server_close");
         await Assert.That(closed.Tags.ContainsKey("error.type")).IsEqualTo(unrelatedError);
@@ -972,6 +983,12 @@ public class ConnectionMetricTests
                 if (instrument is ObservableUpDownCounter<long>) Observations.Enqueue(sample);
                 else Events.Enqueue(sample);
             }
+        }
+
+        internal async Task<Sample> WaitForCloseAsync()
+        {
+            await WaitUntil(() => Events.Any(item => item.Name == "redis.client.connection.closed"));
+            return Events.Single(item => item.Name == "redis.client.connection.closed");
         }
 
         internal void Observe()

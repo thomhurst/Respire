@@ -274,6 +274,12 @@ not emit `healthcheck_failed`. Close events do not count unsuccessful TCP connec
 Connection instrumentation adds no metric callbacks to command submission. Listener callbacks
 run outside transport and dedicated-pool locks; listener exceptions cannot replace connection,
 lease or disposal outcomes.
+Close counts are queued for delivery on the thread pool after the close reason and live pool
+membership are committed. Disposal does not wait for this delivery. A blocking close listener
+therefore cannot stop pending replies from failing, pool cleanup, or retirement scheduling.
+An exporter can observe the live count change before the close event arrives; listeners should
+remain enabled until queued events have been collected. MOVING applies its retirement cache
+fence before invoking handoff listeners.
 
 ## Reads by availability zone
 
