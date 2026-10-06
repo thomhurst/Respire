@@ -162,9 +162,12 @@ child cleanup are bounded. A dedicated consumer would bypass the dispatch contra
 being tested; increasing the allowed byte count would hide production allocations.
 
 The parent remains an unkeyed `NotInParallel` test. The child enters through an
-explicit environment mode before the test runner starts, and warms module-owned
-initialization before scheduling measured work. Preserve the environment and child
-coverage configuration when running this control under a coverage collector.
+explicit environment mode from the normal entry point before the test runner starts,
+after module initialization completes. It reuses the current apphost or .NET host
+(with an explicit `DOTNET_HOST_PATH` fallback) and verifies the parent's runtime version.
+Exit and post-kill waits are bounded; failures include captured stdout and stderr.
+Preserve the environment and child coverage configuration when running this control
+under a coverage collector.
 
 ## Unknown-slot Cluster replica discovery
 
