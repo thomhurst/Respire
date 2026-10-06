@@ -580,8 +580,11 @@ internal static class SentinelResolver
         }
         finally
         {
-            await aliasTimeout.CancelAsync().ConfigureAwait(false);
-            if (pending.Count > 0) await Task.WhenAll(pending).ConfigureAwait(false);
+            try { await aliasTimeout.CancelAsync().ConfigureAwait(false); }
+            finally
+            {
+                if (pending.Count > 0) await Task.WhenAll(pending).ConfigureAwait(false);
+            }
         }
 
         async Task<bool> MatchesAliasAsync(RespireEndpoint primary)

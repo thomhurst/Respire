@@ -209,7 +209,7 @@ public class RedisRateLimiterTests
     }
 
     [Test]
-    public async Task SlidingWindowExpiresOldestSegmentAndHonorsQueueCancellation()
+    public async Task SlidingWindowExpiresOldestSegment()
     {
         var fixture = Redis74;
         await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions());
@@ -219,11 +219,40 @@ public class RedisRateLimiterTests
 
         using var acquired = await limiter.AcquireAsync(1);
         await Assert.That(acquired.IsAcquired).IsTrue();
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(30));
-        await Assert.That(async () => await limiter.AcquireAsync(1, cancellation.Token))
-            .Throws<OperationCanceledException>();
         await Task.Delay(330);
-        await Assert.That((await limiter.AcquireAsync(1)).IsAcquired).IsTrue();
+        using var expired = await limiter.AcquireAsync(1).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(expired.IsAcquired).IsTrue();
+    }
+
+    [Test]
+    public async Task SlidingWindowHonorsCancellationAfterQueueAdmission()
+    {
+        await using var client = await RespireClient.ConnectAsync(Redis74.CreateOptions());
+        // Queue cancellation must not race a short Redis window or a timer callback.
+        await using var limiter = new RespireCoordination(client).RateLimiters.SlidingWindow(
+            SharedRespireContainer.Key("sliding-cancellation"), permitLimit: 1, TimeSpan.FromMinutes(1), segments: 2,
+            queueLimit: 1, QueueProcessingOrder.OldestFirst);
+        using var acquired = await limiter.AcquireAsync(1);
+        await Assert.That(acquired.IsAcquired).IsTrue();
+        using var cancellation = new CancellationTokenSource();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var queued = limiter.AcquireAsync(1, cancellation.Token).AsTask();
+        try
+        {
+            while (limiter.GetStatistics()!.CurrentQueuedCount != 1)
+                await Task.Delay(1, deadline.Token);
+            cancellation.Cancel();
+            var error = await Assert.That(async () => await queued.WaitAsync(deadline.Token))
+                .Throws<OperationCanceledException>();
+            await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
+            await Assert.That(limiter.GetStatistics()!.CurrentQueuedCount).IsEqualTo(0);
+        }
+        finally
+        {
+            cancellation.Cancel();
+            try { using var lease = await queued.WaitAsync(TimeSpan.FromSeconds(5)); }
+            catch (OperationCanceledException) { }
+        }
     }
 
     [Test]

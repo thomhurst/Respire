@@ -79,10 +79,13 @@ internal sealed partial class ClusterRouter
                 if (cancellation is not null) await cancellation.CancelAsync().ConfigureAwait(false);
             }
             catch (ObjectDisposedException) { }
-            // The flight owns this discovery round while its cancellation unwinds, even when this
-            // was the last waiter. The caller must not mutate the round concurrently.
-            if (canceled && flight.Kind == SharedRefreshCoordinator.RefreshFlightKind.ReadOnly)
-                discovery?.LeftSharedReadOnlyFlight();
+            finally
+            {
+                // The flight owns this discovery round while its cancellation unwinds, even when this
+                // was the last waiter. Release the caller's flight state even if a callback failed.
+                if (canceled && flight.Kind == SharedRefreshCoordinator.RefreshFlightKind.ReadOnly)
+                    discovery?.LeftSharedReadOnlyFlight();
+            }
         }
     }
 
