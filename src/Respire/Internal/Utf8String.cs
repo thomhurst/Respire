@@ -24,6 +24,12 @@ internal static class Utf8String
             return string.Empty;
         }
 
+#if !NET9_0_OR_GREATER
+        // Keep the existing net8 limit: scanning a long ASCII prefix before Unicode
+        // fallback adds work that the runtime decoder already performs.
+        if (utf8.Length > 256) return Encoding.UTF8.GetString(utf8);
+#endif
+
         // Validate before allocating: a failed ASCII conversion into a byte-length string
         // would discard that string and allocate a second one for Unicode or invalid UTF-8.
         if (!Ascii.IsValid(utf8)) return Encoding.UTF8.GetString(utf8);
