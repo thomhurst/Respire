@@ -66,3 +66,6 @@ unauthenticated container network is still a local development boundary.
 Ordinary CI builds the sample. The separate manual [topology smoke workflow](../TopologySmoke.md)
 runs it against its owned Compose project on both frameworks and requires successful
 round trips in all three slot ranges. The same controller runs locally.
+
+If any Redis child process exits, the container exits and stops the other
+processes. Restart the owned Compose topology before continuing the demo.

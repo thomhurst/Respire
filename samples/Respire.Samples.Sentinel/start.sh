@@ -38,4 +38,7 @@ EOF
     redis-server "/data/$port/sentinel.conf" --sentinel > "/data/$port/server.log" 2>&1 &
     pids="$pids $!"
 done
-wait
+# The Redis Alpine image uses BusyBox ash, which supports wait -n.
+wait -n
+echo 'A Redis process exited; stopping the topology.' >&2
+exit 1

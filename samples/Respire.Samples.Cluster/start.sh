@@ -30,4 +30,7 @@ redis-cli -e -p 7001 CLUSTER ADDSLOTSRANGE 5461 10921
 redis-cli -e -p 7002 CLUSTER ADDSLOTSRANGE 10922 16383
 redis-cli -e -p 7000 CLUSTER MEET 127.0.0.1 7001
 redis-cli -e -p 7000 CLUSTER MEET 127.0.0.1 7002
-wait
+# The Redis Alpine image uses BusyBox ash, which supports wait -n.
+wait -n
+echo 'A Redis process exited; stopping the topology.' >&2
+exit 1
