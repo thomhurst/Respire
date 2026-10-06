@@ -22,8 +22,7 @@ public readonly record struct StreamPendingOptions
         if (MinIdle is not { } idle) return null;
         if (idle < TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(MinIdle), "Minimum idle time must be non-negative.");
-        return idle.Ticks / TimeSpan.TicksPerMillisecond
-            + (idle.Ticks % TimeSpan.TicksPerMillisecond == 0 ? 0 : 1);
+        return StreamCommands.CeilingMilliseconds(idle);
     }
 }
 

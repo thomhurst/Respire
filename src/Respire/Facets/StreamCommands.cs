@@ -1351,6 +1351,13 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
         }
     }
 
+    internal static long CeilingMilliseconds(TimeSpan value)
+    {
+        // Callers validate durations. Divide before adding to avoid overflow at TimeSpan.MaxValue.
+        return value.Ticks / TimeSpan.TicksPerMillisecond
+            + (value.Ticks % TimeSpan.TicksPerMillisecond == 0 ? 0 : 1);
+    }
+
     private static long ToMilliseconds(TimeSpan value, string parameterName)
     {
         if (value < TimeSpan.Zero)

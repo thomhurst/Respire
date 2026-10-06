@@ -176,8 +176,6 @@ internal sealed partial class StreamCommands
     {
         if (minIdle < TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(minIdle), "Minimum idle time must be non-negative.");
-        // Ceiling preserves the minimum threshold; dividing first avoids overflow at TimeSpan.MaxValue.
-        return minIdle.Ticks / TimeSpan.TicksPerMillisecond
-            + (minIdle.Ticks % TimeSpan.TicksPerMillisecond == 0 ? 0 : 1);
+        return CeilingMilliseconds(minIdle);
     }
 }

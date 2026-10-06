@@ -48,14 +48,13 @@ public readonly record struct StreamReadOptions
     internal long? GetClaimMinIdleMilliseconds()
     {
         if (ClaimMinIdle is not { } idle) return null;
-        return idle.Ticks / TimeSpan.TicksPerMillisecond
-            + (idle.Ticks % TimeSpan.TicksPerMillisecond == 0 ? 0 : 1);
+        return StreamCommands.CeilingMilliseconds(idle);
     }
 
     internal long? GetBlockMilliseconds()
     {
         if (WaitFor is not { } wait) return null;
         return wait == Timeout.InfiniteTimeSpan ? 0
-            : Math.Max(1, wait.Ticks / TimeSpan.TicksPerMillisecond + (wait.Ticks % TimeSpan.TicksPerMillisecond == 0 ? 0 : 1));
+            : Math.Max(1, StreamCommands.CeilingMilliseconds(wait));
     }
 }
