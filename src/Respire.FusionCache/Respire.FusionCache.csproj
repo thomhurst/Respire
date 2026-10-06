@@ -1,11 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <Title>Respire.FusionCache</Title>
-    <Description>FusionCache backplane using a shared Respire client.</Description>
-    <PackageTags>$(PackageTags);fusioncache;backplane</PackageTags>
+    <Description>FusionCache backplane and distributed locker using a shared Respire client.</Description>
+    <PackageTags>$(PackageTags);fusioncache;backplane;locking</PackageTags>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Respire/Respire.csproj" />
+    <ProjectReference Include="../Respire.Coordination/Respire.Coordination.csproj" />
     <PackageReference Include="ZiggyCreatures.FusionCache" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />

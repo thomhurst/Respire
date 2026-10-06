@@ -48,6 +48,13 @@ public sealed class RespireFencedLock : IAsyncDisposable
     /// <remarks>Managed renewal uses CLIENT ID and CLIENT KILL to fence uncertain commands; Redis ACLs must permit them.</remarks>
     public ValueTask<bool> ResetExpiryAsync(TimeSpan duration, CancellationToken cancellationToken = default)
         => _lease.ResetExpiryAsync(duration, cancellationToken);
+    /// <summary>Renews halfway through each lease duration, retaining the fencing token.</summary>
+    /// <remarks>
+    /// Dispose the returned scope before releasing the lease. Its cancellation token signals caller
+    /// cancellation or uncertain ownership. Managed renewal requires CLIENT ID and CLIENT KILL permissions.
+    /// </remarks>
+    public ValueTask<RespireLockKeepAlive> KeepAliveAsync(CancellationToken cancellationToken = default)
+        => _lease.KeepAliveAsync(cancellationToken);
     /// <summary>Releases only this owner and preserves the counter for future acquisitions.</summary>
     public ValueTask<LockReleaseOutcome> ReleaseAsync(CancellationToken cancellationToken = default)
         => _lease.ReleaseAsync(cancellationToken);
