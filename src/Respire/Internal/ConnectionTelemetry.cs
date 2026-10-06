@@ -12,6 +12,7 @@ namespace Respire.Internal;
 internal static class ConnectionTelemetry
 {
     private static readonly Registry Pools = new();
+    private const int MaximumPendingMeasurements = 64;
     private static int _pendingMeasurements;
 
     // Diagnostic delivery has its own lifetime; transport disposal never waits for it.
@@ -195,7 +196,16 @@ internal static class ConnectionTelemetry
     {
         // Enablement, duration and ownership are captured before queueing. Delivery must
         // not retain an acquisition reservation or hold up transport cleanup/retirement.
-        Interlocked.Increment(ref _pendingMeasurements);
+        // Bound queued and running callbacks together. A stuck listener must not retain
+        // an unbounded backlog or keep consuming additional thread-pool workers.
+        var pending = Volatile.Read(ref _pendingMeasurements);
+        while (true)
+        {
+            if (pending >= MaximumPendingMeasurements) return;
+            var observed = Interlocked.CompareExchange(ref _pendingMeasurements, pending + 1, pending);
+            if (observed == pending) break;
+            pending = observed;
+        }
         try
         {
             if (ThreadPool.UnsafeQueueUserWorkItem(static state =>

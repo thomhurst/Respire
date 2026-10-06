@@ -277,7 +277,12 @@ lease or disposal outcomes.
 Creation/wait durations, handoff counts and close counts are queued for delivery on the thread
 pool. Durations and metric enablement are captured at the event, before queueing; scheduling
 delay does not inflate the measured duration. Close reasons and live membership changes also
-commit synchronously. If enqueueing fails, the measurement is dropped and cleanup continues.
+commit synchronously. At most 64 lifecycle measurements can be queued or executing across
+the process. When that limit is reached, new measurements are dropped without waiting or
+allocating another work item. If enqueueing fails, the measurement is also dropped.
+Capacity becomes available when a callback returns, including after it throws. A listener
+that never returns can exhaust this delivery capacity; live observable counts and transport
+cleanup still continue, while lifecycle event counts may under-report during saturation.
 Acquisition and disposal do not wait for delivery. A blocking lifecycle listener therefore cannot
 stop a rental from completing, pending replies from failing, pool cleanup, or retirement scheduling.
 An exporter can observe live state changes before the corresponding events arrive, and queued

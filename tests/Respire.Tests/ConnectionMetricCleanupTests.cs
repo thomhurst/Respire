@@ -14,6 +14,42 @@ namespace Respire.Tests;
 public class ConnectionMetricCleanupTests
 {
     [Test]
+    public async Task BlockedLifecycleDeliveriesAreBoundedAndResumeAfterDrain()
+    {
+        using var configuration = new MetricConfigurationScope();
+        await using var server = new FakeRespServer(1, FakeRespServer.PongReply);
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+            new() { Protocol = RespProtocol.Resp2 });
+        using var listener = new BlockingListener("db.client.connection.wait_time");
+        var pendingWhileBlocked = 0;
+        try
+        {
+            connection.RecordConnectionWait(System.Diagnostics.Stopwatch.GetTimestamp());
+            await listener.Entered.WaitAsync(TimeSpan.FromSeconds(5));
+            // Keep one callback blocked while a burst exceeds the process-wide capacity.
+            // Read before releasing so queued and running deliveries are both counted.
+            for (var i = 0; i < 256; i++)
+                connection.RecordConnectionWait(System.Diagnostics.Stopwatch.GetTimestamp());
+            pendingWhileBlocked = ConnectionTelemetry.PendingMeasurements;
+        }
+        finally { listener.Release(); }
+
+        await WaitForDeliveries();
+        await Assert.That(pendingWhileBlocked).IsEqualTo(64);
+        await Assert.That(listener.Deliveries).IsEqualTo(64);
+
+        connection.RecordConnectionWait(System.Diagnostics.Stopwatch.GetTimestamp());
+        await WaitForDeliveries();
+        await Assert.That(listener.Deliveries).IsEqualTo(65);
+    }
+
+    private static async Task WaitForDeliveries()
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (ConnectionTelemetry.PendingMeasurements != 0) await Task.Delay(1, deadline.Token);
+    }
+
+    [Test]
     [Arguments("db.client.connection.create_time")]
     [Arguments("db.client.connection.wait_time")]
     public async Task AcquisitionListenerCannotDelayRentalOrPoolDisposal(string instrument)
@@ -169,7 +205,9 @@ public class ConnectionMetricCleanupTests
         private readonly MeterListener _listener = new();
         private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _deliveries;
         internal Task Entered => _entered.Task;
+        internal int Deliveries => Volatile.Read(ref _deliveries);
 
         internal BlockingListener(string name)
         {
@@ -180,11 +218,13 @@ public class ConnectionMetricCleanupTests
             };
             _listener.SetMeasurementEventCallback<long>((_, _, _, _) =>
             {
+                Interlocked.Increment(ref _deliveries);
                 _entered.TrySetResult();
                 _release.Task.GetAwaiter().GetResult();
             });
             _listener.SetMeasurementEventCallback<double>((_, _, _, _) =>
             {
+                Interlocked.Increment(ref _deliveries);
                 _entered.TrySetResult();
                 _release.Task.GetAwaiter().GetResult();
             });
