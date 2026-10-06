@@ -14,9 +14,9 @@ concurrency:
 jobs:
   compare:
     if: >-
-      (github.event.action == 'labeled' && github.event.label.name == 'run-sentinel-benchmarks') ||
-      (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-sentinel-benchmarks'))
-    name: Sentinel ready routing (${{ matrix.framework }})
+      (github.event.action == 'labeled' && (github.event.label.name == 'run-sentinel-benchmarks' || github.event.label.name == 'run-ready-strategy-benchmarks')) ||
+      (github.event.action == 'synchronize' && (contains(github.event.pull_request.labels.*.name, 'run-sentinel-benchmarks') || contains(github.event.pull_request.labels.*.name, 'run-ready-strategy-benchmarks')))
+    name: Sentinel ready routing (${{ matrix.framework }}, ${{ contains(github.event.pull_request.labels.*.name, 'run-ready-strategy-benchmarks') && 'pre-strategy' || 'main' }})
     runs-on: ubuntu-latest
     timeout-minutes: 40
     strategy:
@@ -40,6 +40,7 @@ jobs:
       EXPECTED_MERGE_SHA: ${{ github.sha }}
       EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
       EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      PRE_STRATEGY_BASELINE: ${{ contains(github.event.pull_request.labels.*.name, 'run-ready-strategy-benchmarks') }}
     steps:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
@@ -81,6 +82,10 @@ jobs:
           ref: ${{ steps.revisions.outputs.baseline_sha }}
           path: baseline
           persist-credentials: false
+      - name: Restore pre-strategy dispatch for the isolated comparison
+        if: env.PRE_STRATEGY_BASELINE == 'true'
+        shell: bash
+        run: python candidate/scripts/benchmarks/PrepareReadySendBaseline.py baseline baseline-control.json
       - name: Start Sentinel beside the shared primary
         shell: bash
         env:
@@ -111,6 +116,8 @@ jobs:
           test "$(git -C candidate rev-parse HEAD^1)" = "$EXPECTED_BASE_SHA"
           test "$(git -C candidate rev-parse HEAD^2)" = "$EXPECTED_HEAD_SHA"
           cp candidate/benchmarks/Respire.Benchmarks/SentinelReadyRoutingBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
+          diagnostics=()
+          if [[ "$PRE_STRATEGY_BASELINE" == true ]]; then diagnostics=(--disasm --disasmDepth 6); fi
           for phase in baseline-validation candidate-validation baseline-a candidate baseline-b; do
             source=baseline
             job=Medium
@@ -120,7 +127,7 @@ jobs:
               cd "$source"
               git rev-parse HEAD
               dotnet run --project benchmarks/Respire.Benchmarks -c Release -f "$FRAMEWORK" -- \
-                --filter '*SentinelReadyRoutingBenchmarks*' --job "$job" --exporters json markdown \
+                --filter '*SentinelReadyRoutingBenchmarks*' --job "$job" --exporters json markdown "${diagnostics[@]}" \
                 --artifacts "$GITHUB_WORKSPACE/results/$phase"
             ) > "$GITHUB_WORKSPACE/$phase.log" 2>&1
           done
@@ -133,6 +140,8 @@ jobs:
           expected = {f'{route}{shape}' for route in ('Standalone', 'Sentinel') for shape in ('Ping', 'String', 'Integer', 'Bytes')}
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
               summary.write('## Stable Sentinel routing before/after\n\nPinned base and matching merge candidate use the same primary. Assess paired Sentinel/standalone ratios, absolute latency, confidence intervals, allocations, and both baseline controls. A material regression blocks the change.\n')
+              if os.environ['PRE_STRATEGY_BASELINE'] == 'true':
+                  summary.write('\nThis baseline restores pre-strategy dispatch with a production-only reverse patch; it is not an unmodified main build. All other baseline source is unchanged.\n\n```json\n' + Path('baseline-control.json').read_text() + '```\n')
               summary.write('\nCandidate merge and its base/head parents:\n\n' + Path('comparison-revisions.txt').read_text() + '\n')
               for phase in ('baseline-validation', 'candidate-validation', 'baseline-a', 'candidate', 'baseline-b'):
                   reports = list(Path('results', phase, 'results').glob('*-report-full-compressed.json'))
@@ -151,4 +160,6 @@ jobs:
             results/
             *.log
             comparison-revisions.txt
+            baseline-control.json
+            baseline-control.patch
           retention-days: 30

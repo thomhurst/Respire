@@ -1,0 +1,205 @@
+diff --git a/src/Respire/RespireClient.cs b/src/Respire/RespireClient.cs
+index dcd9b02c..dc501cbe 100644
+--- a/src/Respire/RespireClient.cs
++++ b/src/Respire/RespireClient.cs
+@@ -2520,39 +2520,6 @@ public sealed partial class RespireClient : IRespireClient
+             .ConfigureAwait(false);
+     }
+
+-    private ValueTask<RespValue> SendOnReadyPrimaryAsync<TCommand>(
+-        string operation, RespireConnectionMultiplexer multiplexer, TCommand command,
+-        CancellationToken cancellationToken) where TCommand : struct, IRespCommand
+-    {
+-        try
+-        {
+-            return SendOnConnectionAsync(operation, multiplexer.GetConnection(), command, cancellationToken);
+-        }
+-        catch (Exception error) when (_core.Sentinel is not null)
+-        {
+-            return CaptureReadySendFailure<RespValue>(error);
+-        }
+-    }
+-
+-    [MethodImpl(MethodImplOptions.NoInlining)]
+-    private static ValueTask<TResult> CaptureReadySendFailure<TResult>(Exception error,
+-        ClientSideCacheCoordinator? cache = null, ClientSideCacheCoordinator.MutationFence mutationFence = default)
+-    {
+-        // Readiness is an observation, not a lease: socket loss, retirement, or disposal
+-        // can make GetConnection or admission throw after validation. A command writer
+-        // can also throw before admission. Preserve the former async Sentinel result.
+-        if (mutationFence.IsRequired) cache!.CompleteMutation(in mutationFence);
+-        return ReadySendFailureAsync<TResult>(error);
+-    }
+-
+-#if NET
+-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+-#endif
+-    private static async ValueTask<TResult> ReadySendFailureAsync<TResult>(Exception error)
+-        // Keep the former async Sentinel path's cancellation status and original exception/token,
+-        // including OperationCanceledException carrying an uncanceled token. Only failures use this.
+-        => await ValueTask.FromException<TResult>(error).ConfigureAwait(false);
+-
+ #if NET
+     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+ #endif
+@@ -5036,19 +5003,9 @@ public sealed partial class RespireClient : IRespireClient
+             // Redis response, not user converter work (conversion runs at the caller).
+             var cache = core.ClientCache;
+             var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
+-            try
+-            {
+-                var connection = readyMultiplexer.GetConnection();
+-                var response = connection.SendConvertedAsync(
+-                    in command, state, converter, transferOwnership, ct, operation);
+-                return mutationFence.IsRequired
+-                    ? CompleteMutationAsync(response, cache!, mutationFence)
+-                    : response;
+-            }
+-            catch (Exception error) when (core.Sentinel is not null)
+-            {
+-                return CaptureReadySendFailure<TResult>(error, cache, mutationFence);
+-            }
++            return SendOnReadyPrimaryAsync<TCommand, TResult, ConvertedReadySend<TState, TResult>>(
++                operation, readyMultiplexer, command, ct,
++                new ConvertedReadySend<TState, TResult>(state, converter, transferOwnership), cache, mutationFence);
+         }
+
+         return PooledResponseSource<TState, TResult>.Create(
+@@ -5144,18 +5101,8 @@ public sealed partial class RespireClient : IRespireClient
+             // CommandTimeout is enforced by the connection's deadline sweep.
+             var cache = core.ClientCache;
+             var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
+-            try
+-            {
+-                var connection = readyMultiplexer.GetConnection();
+-                var response = connection.SendStringAsync(in command, ct, operation);
+-                return mutationFence.IsRequired
+-                    ? CompleteMutationAsync(response, cache!, mutationFence)
+-                    : response;
+-            }
+-            catch (Exception error) when (core.Sentinel is not null)
+-            {
+-                return CaptureReadySendFailure<string?>(error, cache, mutationFence);
+-            }
++            return SendOnReadyPrimaryAsync<TCommand, string?, StringReadySend>(
++                operation, readyMultiplexer, command, ct, default, cache, mutationFence);
+         }
+
+         return PooledResponseSource<RespireClient, string?>.Create(
+@@ -5177,16 +5124,8 @@ public sealed partial class RespireClient : IRespireClient
+         {
+             var cache = core.ClientCache;
+             var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
+-            try
+-            {
+-                var connection = readyMultiplexer.GetConnection();
+-                var response = connection.SendBytesAsync(in command, ct, operation);
+-                return mutationFence.IsRequired ? CompleteMutationAsync(response, cache!, mutationFence) : response;
+-            }
+-            catch (Exception error) when (core.Sentinel is not null)
+-            {
+-                return CaptureReadySendFailure<byte[]?>(error, cache, mutationFence);
+-            }
++            return SendOnReadyPrimaryAsync<TCommand, byte[]?, BytesReadySend>(
++                operation, readyMultiplexer, command, ct, default, cache, mutationFence);
+         }
+         return ConvertAsync(
+             operation, command, ct,
+diff --git a/src/Respire/RespireClient.ReadySend.cs b/src/Respire/RespireClient.ReadySend.cs
+new file mode 100644
+index 00000000..37fc6668
+--- /dev/null
++++ b/src/Respire/RespireClient.ReadySend.cs
+@@ -0,0 +1,92 @@
++using System.Runtime.CompilerServices;
++using Respire.Commands;
++using Respire.Infrastructure;
++using Respire.Internal;
++using Respire.Networking;
++using Respire.Protocol;
++
++namespace Respire;
++
++public sealed partial class RespireClient
++{
++    private ValueTask<RespValue> SendOnReadyPrimaryAsync<TCommand>(
++        string operation, RespireConnectionMultiplexer multiplexer, TCommand command,
++        CancellationToken cancellationToken) where TCommand : struct, IRespCommand
++        // Raw sends keep their mutation fence in the outer SendAsync path.
++        => SendOnReadyPrimaryAsync<TCommand, RespValue, RawReadySend>(
++            operation, multiplexer, command, cancellationToken, new RawReadySend(this));
++
++    private ValueTask<TResult> SendOnReadyPrimaryAsync<TCommand, TResult, TSend>(
++        string operation, RespireConnectionMultiplexer multiplexer, TCommand command,
++        CancellationToken cancellationToken, TSend sender, ClientSideCacheCoordinator? cache = null,
++        ClientSideCacheCoordinator.MutationFence mutationFence = default)
++        where TCommand : struct, IRespCommand
++        where TSend : struct, IReadySend<TResult>
++    {
++        try
++        {
++            var response = sender.Send(multiplexer.GetConnection(), operation, in command, cancellationToken);
++            return mutationFence.IsRequired ? CompleteMutationAsync(response, cache!, mutationFence) : response;
++        }
++        // _core is readonly: this filter observes the same core captured by the caller.
++        catch (Exception error) when (_core.Sentinel is not null)
++        {
++            return CaptureReadySendFailure<TResult>(error, cache, mutationFence);
++        }
++    }
++
++    // Constrained value-type dispatch keeps each specialized response source without a delegate or boxing.
++    private interface IReadySend<TResult>
++    {
++        ValueTask<TResult> Send<TCommand>(RespireConnection connection, string operation,
++            in TCommand command, CancellationToken cancellationToken) where TCommand : struct, IRespCommand;
++    }
++
++    private readonly struct RawReadySend(RespireClient client) : IReadySend<RespValue>
++    {
++        public ValueTask<RespValue> Send<TCommand>(RespireConnection connection, string operation,
++            in TCommand command, CancellationToken cancellationToken) where TCommand : struct, IRespCommand
++            => client.SendOnConnectionAsync(operation, connection, command, cancellationToken);
++    }
++
++    private readonly struct StringReadySend : IReadySend<string?>
++    {
++        public ValueTask<string?> Send<TCommand>(RespireConnection connection, string operation,
++            in TCommand command, CancellationToken cancellationToken) where TCommand : struct, IRespCommand
++            => connection.SendStringAsync(in command, cancellationToken, operation);
++    }
++
++    private readonly struct BytesReadySend : IReadySend<byte[]?>
++    {
++        public ValueTask<byte[]?> Send<TCommand>(RespireConnection connection, string operation,
++            in TCommand command, CancellationToken cancellationToken) where TCommand : struct, IRespCommand
++            => connection.SendBytesAsync(in command, cancellationToken, operation);
++    }
++
++    private readonly struct ConvertedReadySend<TState, TResult>(
++        TState state, ResponseConverter<TState, TResult> converter, bool transferOwnership) : IReadySend<TResult>
++    {
++        public ValueTask<TResult> Send<TCommand>(RespireConnection connection, string operation,
++            in TCommand command, CancellationToken cancellationToken) where TCommand : struct, IRespCommand
++            => connection.SendConvertedAsync(in command, state, converter, transferOwnership, cancellationToken, operation);
++    }
++
++    [MethodImpl(MethodImplOptions.NoInlining)]
++    private static ValueTask<TResult> CaptureReadySendFailure<TResult>(Exception error,
++        ClientSideCacheCoordinator? cache = null, ClientSideCacheCoordinator.MutationFence mutationFence = default)
++    {
++        // Readiness is an observation, not a lease: socket loss, retirement, or disposal
++        // can make GetConnection or admission throw after validation. A command writer
++        // can also throw before admission. Preserve the former async Sentinel result.
++        if (mutationFence.IsRequired) cache!.CompleteMutation(in mutationFence);
++        return ReadySendFailureAsync<TResult>(error);
++    }
++
++#if NET
++    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
++#endif
++    private static async ValueTask<TResult> ReadySendFailureAsync<TResult>(Exception error)
++        // Keep the former async Sentinel path's cancellation status and original exception/token,
++        // including OperationCanceledException carrying an uncanceled token. Only failures use this.
++        => await ValueTask.FromException<TResult>(error).ConfigureAwait(false);
++}

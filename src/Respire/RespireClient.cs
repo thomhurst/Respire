@@ -4991,12 +4991,8 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
-        if (!RespireTelemetry.IsOperationEnabled(operation)
-            && (_readFrom == RespireReadFrom.Primary || command.ReadKind == ReadCommandKind.None)
+        if (CanUseDirectReplySource(operation, in command)
             && command is not IStreamingRespCommand
-            && core.Cluster is null
-            && (ReadCache is null
-                || !ClientSideCacheCoordinator.CanCacheOperation(operation))
             && core.TryGetReadyPrimaryMultiplexer(out var readyMultiplexer))
         {
             // CommandTimeout is enforced by the connection's deadline sweep and covers the
@@ -5089,11 +5085,7 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
-        if (!RespireTelemetry.IsOperationEnabled(operation)
-            && core.Cluster is null
-            && (_readFrom == RespireReadFrom.Primary || command.ReadKind == ReadCommandKind.None)
-            && (ReadCache is null
-                || !ClientSideCacheCoordinator.CanCacheOperation(operation))
+        if (CanUseDirectReplySource(operation, in command)
             && core.TryGetReadyPrimaryMultiplexer(out var readyMultiplexer))
         {
             // Specialized bulk-string source: small buffered replies decode straight from the
@@ -5116,10 +5108,8 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
-        if (!RespireTelemetry.IsOperationEnabled(operation) && core.Cluster is null
-            && (_readFrom == RespireReadFrom.Primary || command.ReadKind == ReadCommandKind.None)
+        if (CanUseDirectReplySource(operation, in command)
             && command is not IStreamingRespCommand
-            && (ReadCache is null || !ClientSideCacheCoordinator.CanCacheOperation(operation))
             && core.TryGetReadyPrimaryMultiplexer(out var readyMultiplexer))
         {
             var cache = core.ClientCache;

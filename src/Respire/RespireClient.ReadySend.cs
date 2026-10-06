@@ -9,6 +9,16 @@ namespace Respire;
 
 public sealed partial class RespireClient
 {
+    // Raw SendAsync has already handled telemetry, cache hits, and replica/cluster routing.
+    // Typed entry points share these gates before selecting a generation or opening a fence.
+    // Callers retain their response-specific streaming exclusions.
+    private bool CanUseDirectReplySource<TCommand>(string operation, in TCommand command)
+        where TCommand : struct, IRespCommand
+        => !RespireTelemetry.IsOperationEnabled(operation)
+            && _core.Cluster is null
+            && (_readFrom == RespireReadFrom.Primary || command.ReadKind == ReadCommandKind.None)
+            && (ReadCache is null || !ClientSideCacheCoordinator.CanCacheOperation(operation));
+
     private ValueTask<RespValue> SendOnReadyPrimaryAsync<TCommand>(
         string operation, RespireConnectionMultiplexer multiplexer, TCommand command,
         CancellationToken cancellationToken) where TCommand : struct, IRespCommand
