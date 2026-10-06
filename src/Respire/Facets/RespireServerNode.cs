@@ -81,7 +81,7 @@ public sealed class RespireServerNode
 
     /// <summary>Aborts an in-progress shutdown and awaits OK. Requires AllowAdmin and Redis 7.0 or later.</summary>
     public ValueTask AbortShutdownAsync(CancellationToken cancellationToken = default)
-        => MutationAsync("SHUTDOWN", ["ABORT"], cancellationToken, controlConnection: true);
+        => MutationAsync("SHUTDOWN", ["ABORT"], cancellationToken, NodeCallKind.ControlMutation);
 
     /// <summary>Starts coordinated FAILOVER. Requires AllowAdmin and Redis 6.2 or later.</summary>
     public ValueTask FailoverAsync(RespireFailoverOptions? options = null, CancellationToken cancellationToken = default)
@@ -178,11 +178,11 @@ public sealed class RespireServerNode
     /// <summary>Kills a read-only BUSY script on an independent control connection. Requires AllowAdmin. Redis: SCRIPT KILL.</summary>
     /// <remarks>Redis rejects killing a script that has written data. Server errors, including NOTBUSY and UNKILLABLE, propagate.</remarks>
     public ValueTask ScriptKillAsync(CancellationToken cancellationToken = default)
-        => MutationAsync("SCRIPT KILL", [], cancellationToken, controlConnection: true);
+        => MutationAsync("SCRIPT KILL", [], cancellationToken, NodeCallKind.ControlMutation);
 
     /// <summary>Kills a read-only BUSY function on an independent control connection. Requires AllowAdmin and Redis 7.0 or later.</summary>
     public ValueTask FunctionKillAsync(CancellationToken cancellationToken = default)
-        => MutationAsync("FUNCTION KILL", [], cancellationToken, controlConnection: true);
+        => MutationAsync("FUNCTION KILL", [], cancellationToken, NodeCallKind.ControlMutation);
 
     /// <summary>Starts an incremental backup. Requires AllowAdmin and Redis 8.10 or later. Redis: BACKUP START.</summary>
     public ValueTask BackupStartAsync(CancellationToken cancellationToken = default) => MutationAsync("BACKUP START", [], cancellationToken);
@@ -234,16 +234,18 @@ public sealed class RespireServerNode
         }
         tokens.Add("KEYS");
         foreach (var key in keys) tokens.Add(key.AsValue().Snapshot());
-        return ExecuteAsync("MIGRATE", tokens.ToArray(), ServerNodeParser.Migration, cancellationToken, mutation: true,
+        return ExecuteAsync("MIGRATE", tokens.ToArray(), ServerNodeParser.Migration, cancellationToken, NodeCallKind.Mutation,
             commandTimeout: options.CommandTimeout);
     }
 
     private delegate T ReplyParser<T>(in RespValue reply);
 
+    private enum NodeCallKind { Read, Mutation, ControlMutation }
+
     private ValueTask<T> ExecuteAsync<T>(string operation, RespireValue[] arguments, ReplyParser<T> parser,
-        CancellationToken cancellationToken, bool mutation = false, bool controlConnection = false,
+        CancellationToken cancellationToken, NodeCallKind callKind = NodeCallKind.Read,
         TimeSpan? commandTimeout = null)
-        => WithNodeConnectionAsync(operation, mutation, controlConnection,
+        => WithNodeConnectionAsync(operation, callKind,
             (Client: _client, Operation: operation, Arguments: arguments, Parser: parser),
             static async (connection, state, token) =>
             {
@@ -252,10 +254,11 @@ public sealed class RespireServerNode
                 return state.Parser(in reply);
             }, cancellationToken, commandTimeout);
 
-    private async ValueTask<T> WithNodeConnectionAsync<TState, T>(string operation, bool mutation, bool controlConnection,
+    private async ValueTask<T> WithNodeConnectionAsync<TState, T>(string operation, NodeCallKind callKind,
         TState state, Func<RespireConnection, TState, CancellationToken, ValueTask<T>> execute,
         CancellationToken cancellationToken, TimeSpan? commandTimeout = null)
     {
+        var mutation = callKind is NodeCallKind.Mutation or NodeCallKind.ControlMutation;
         if (mutation) ServerCommands.EnsureAdminAllowed(_client, operation);
         ObjectDisposedException.ThrowIf(_client.Core.Disposed, _client);
         cancellationToken.ThrowIfCancellationRequested();
@@ -264,7 +267,8 @@ public sealed class RespireServerNode
         DedicatedConnectionPool? pool = null;
         try
         {
-            pool = _client.Core.CreateServerPool(Endpoint, controlConnection, commandTimeout);
+            pool = _client.Core.CreateServerPool(Endpoint,
+                controlConnection: callKind == NodeCallKind.ControlMutation, commandTimeout: commandTimeout);
             var connection = await pool.RentAsync(cancellationToken).ConfigureAwait(false);
             return await execute(connection, state, cancellationToken).ConfigureAwait(false);
         }
@@ -276,11 +280,11 @@ public sealed class RespireServerNode
     }
 
     private async ValueTask MutationAsync(string operation, RespireValue[] arguments, CancellationToken cancellationToken,
-        bool controlConnection = false)
-        => _ = await ExecuteAsync(operation, arguments, ServerNodeParser.Ok, cancellationToken, mutation: true, controlConnection).ConfigureAwait(false);
+        NodeCallKind callKind = NodeCallKind.Mutation)
+        => _ = await ExecuteAsync(operation, arguments, ServerNodeParser.Ok, cancellationToken, callKind).ConfigureAwait(false);
 
     private async ValueTask ShutdownWriteAsync(RespireValue[] arguments, CancellationToken cancellationToken)
-        => _ = await WithNodeConnectionAsync("SHUTDOWN", mutation: true, controlConnection: true, arguments,
+        => _ = await WithNodeConnectionAsync("SHUTDOWN", NodeCallKind.ControlMutation, arguments,
             static async (connection, tokens, token) =>
             {
                 await connection.SendFireAndForgetAsync(new CmdN(new Verb(-1, "SHUTDOWN"), tokens), token, "SHUTDOWN").ConfigureAwait(false);
