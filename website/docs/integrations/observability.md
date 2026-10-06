@@ -71,8 +71,8 @@ their contents. `Configure` copies and validates the collections before publishi
 | Flag | Redis group | Currently selected standard measurements |
 | --- | --- | --- |
 | `Resiliency` | `resiliency` | Maintenance notifications and geographic failovers |
-| `ConnectionBasic` | `connection-basic` | Reserved for connection lifecycle measurements in [#928](https://github.com/thomhurst/Respire/issues/928) |
-| `ConnectionAdvanced` | `connection-advanced` | Reserved for detailed connection measurements in #928 |
+| `ConnectionBasic` | `connection-basic` | Ready connection counts, creation time, active maintenance timeout allowances and published handoffs |
+| `ConnectionAdvanced` | `connection-advanced` | Pending replies, dedicated-pool acquisition waits and physical socket closes |
 | `Command` | `command` | Logical operation duration, including Redis commands used for pub/sub and streams |
 | `ClientSideCaching` | `client-side-caching` | Cache requests and evictions |
 | `PubSub` | `pubsub` | Confirmed publications and received messages |
@@ -151,7 +151,7 @@ Respire-specific instruments remain available for hedging, availability zones, t
 health, coordination, Sentinel recovery, cache invalidation notifications, continuity
 flushes, and pub/sub delivery gaps. Mapping existing signals does not imply that every
 instrument or configuration group in the Redis specification is implemented. Additional
-connection, error, and dashboard coverage is tracked
+error and dashboard coverage is tracked
 by [#866](https://github.com/thomhurst/Respire/issues/866).
 
 ## Pub/sub messages and stream lag
@@ -213,6 +213,59 @@ result; future timestamps and malformed/sentinel IDs are skipped rather than
 reported as negative or fabricated zero lag. With the group or listener disabled,
 the method performs no timestamp read, ID parsing, or allocation. Listener failures
 cannot change publication, subscription, or application processing outcomes.
+
+## Connection lifecycle
+
+| Instrument | Group | Unit | Measurement boundary |
+| --- | --- | --- | --- |
+| `db.client.connection.count` | `ConnectionBasic` | `{connection}` | Current ready TCP connections, split into `idle` and `used` |
+| `db.client.connection.create_time` | `ConnectionBasic` | `s` | Successful socket connection, TLS and Redis handshake, ending after generation validation |
+| `redis.client.connection.relaxed_timeout` | `ConnectionBasic` | `{relaxation}` | Current connections with an active maintenance window that increases a configured command or response timeout |
+| `redis.client.connection.handoff` | `ConnectionBasic` | `1` | One per old physical connection replaced by a successfully published `MOVING` handoff |
+| `db.client.connection.pending_requests` | `ConnectionAdvanced` | `{request}` | Replies still owed on ready connections, including canceled replies that still need draining |
+| `db.client.connection.wait_time` | `ConnectionAdvanced` | `s` | Waiting for a newly created dedicated lease, including connection recovery; healthy idle reuse emits no wait |
+| `redis.client.connection.closed` | `ConnectionAdvanced` | `{connection}` | One event after each connected TCP socket closes, including failed TLS or Redis handshakes |
+
+These instruments carry `redis.client.library`, `db.system.name` and
+`db.client.connection.pool.name`. Pool names combine configured host, port, database and
+purpose (`shared`, `dedicated`, or `pubsub`). Connections with the same identity aggregate,
+including connections owned by separate clients. No credential, key or payload enters a pool
+name. The process retains at most 64 distinct pool identities and two overflow identities,
+`overflow/shared` and `overflow/pubsub`. Names longer than 256 characters also overflow.
+Zero-valued series remain observable after closure within that bound; configuration changes
+do not reset the budget. Overflow aggregates endpoints and databases, retaining pub/sub identity.
+
+The count adds `db.client.connection.state` and `redis.client.connection.pubsub`.
+A multiplexed connection is used while a reply remains owed; a dedicated connection is used
+while rented. Pub/sub connections are always used. A canceled command remains pending until
+its frame drains. These are transport observations, not application tasks or pool capacity.
+During replacement, both old and new ready sockets can count until the old socket closes.
+Connections still negotiating their handshake, in-memory test streams and Unix sockets are
+excluded from these TCP measurements.
+
+Current counts, pending replies and relaxed allowances use .NET
+`ObservableUpDownCounter<long>`. Redis v0.2 lists synchronous up/down counters; both forms
+export an OpenTelemetry non-monotonic Sum. Observation provides truthful baselines to late,
+independent or re-enabled listeners without replaying historical lifecycle events. Group
+changes affect the next observation; event instruments emit only events selected when they
+occur. An exporter collects the observable instruments on its normal interval.
+
+Timeout allowances return to zero when matching completion arrives, the bounded maintenance
+window expires or the socket closes. They count connections with increased allowances, not
+requests granted an extension. Duplicate notifications do not add allowances or handoffs.
+A failed or superseded replacement emits no handoff. Ordinary reconnects are creation/close
+events and do not count as `MOVING` handoffs.
+
+Close events add `redis.client.connection.close.reason`: `application_close` for intentional
+disposal or retirement, `pool_eviction_idle` for dedicated idle-capacity overflow,
+`server_close` for observed peer EOF, or `error` for transport/handshake failure. Error closes
+also include `error.type` and `redis.client.errors.category` (`network`, `tls`, `auth`,
+`server`, or `other`). Respire has no separate healthcheck-driven pool eviction, so it does
+not emit `healthcheck_failed`. Close events do not count unsuccessful TCP connection attempts.
+
+Connection instrumentation adds no metric callbacks to command submission. Listener callbacks
+run outside transport and dedicated-pool locks; listener exceptions cannot replace connection,
+lease or disposal outcomes.
 
 ## Reads by availability zone
 

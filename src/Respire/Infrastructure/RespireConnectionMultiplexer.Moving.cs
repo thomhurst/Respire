@@ -266,6 +266,7 @@ internal sealed partial class RespireConnectionMultiplexer
         // Stop admission on the unpublished sockets before anything yields. RetireAsync takes
         // each socket's write gate, so it runs after the multiplexer locks are released.
         var retiredConnections = old.OfType<RespireConnection>().ToArray();
+        foreach (var connection in retiredConnections) connection.RecordConnectionHandoff();
         var drains = retiredConnections.Select(connection => connection.RetireAsync()).ToArray();
         lock (_moving.Gate)
         {

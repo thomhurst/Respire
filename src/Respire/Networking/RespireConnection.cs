@@ -50,6 +50,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
     private readonly Socket? _socket;
     private readonly Stream? _stream;
+    private readonly ConnectionTelemetry.State? _connectionMetrics;
+    private bool _peerClosed;
     private readonly Lock _writeGate = new();
     private readonly SemaphoreSlim _streamingGate = new(1, 1);
     // Cancelled by Abort so a streamed SET blocked on its source or on a stalled socket write
@@ -140,6 +142,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     internal string? AvailabilityZone { get; private set; }
     public bool IsConnected => !Volatile.Read(ref _dead);
     internal bool IsFlushLoopWaiting => _flushSignal.IsWaiting;
+    internal int PendingResponseCount => Math.Max(0, _inflight.Count);
+    internal void SetLeaseRented(bool rented) => _connectionMetrics?.SetRented(rented);
+    internal void RequestMetricCloseReason(string reason) => _connectionMetrics?.RequestClose(reason);
+    internal void RecordConnectionWait(long started) => _connectionMetrics?.Waited(started);
+    internal void RecordConnectionHandoff() => _connectionMetrics?.HandedOff();
     internal bool IsAcceptingCommands => IsConnected && !Volatile.Read(ref _retired) && _generation?.IsRetired != true;
     internal int WriteBufferCapacity => Math.Max(_activeBuffer.Capacity, _spareBuffer.Capacity);
     internal bool DrainedSuccessfully => Volatile.Read(ref _drainedSuccessfully);
@@ -237,6 +244,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         _maintenanceOptions = options.MaintenanceNotifications == RespireMaintenanceNotificationMode.Disabled ? null : options;
         _receiveBufferSize = options.ReceiveBufferSize;
         _inflight = new InflightRing(options.MaxInflightCommands);
+        if (socket is not null && port != 0)
+            _connectionMetrics = ConnectionTelemetry.Attach(this, options);
         _sourcePool = new PendingResponsePool(options.CompletionSourcePoolSize);
         _streamPayloadPool = options.StreamPayloadPool ?? ArrayPool<byte>.Shared;
         _activeBuffer = new WriteBuffer(options.WriteBufferSize);
@@ -312,6 +321,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         if (options.TestingStreamFactory is not null)
             return await ConnectTestingStreamAsync(host, port, options, logger, cancellationToken, armHandshakeDeadline).ConfigureAwait(false);
 
+        var started = Stopwatch.GetTimestamp();
+        var physicalConnected = false;
         var socket = isUnixSocket
             ? new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified)
             : new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
@@ -338,6 +349,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     await socket.ConnectAsync(new UnixDomainSocketEndPoint(host), timeoutCts.Token).ConfigureAwait(false);
                 else
                     await socket.ConnectAsync(host, port, timeoutCts.Token).ConfigureAwait(false);
+                physicalConnected = true;
                 timeoutCts.Token.ThrowIfCancellationRequested();
 
                 if (options.UseTls)
@@ -362,11 +374,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 throw TranslateConnectCancellation(error, cancellationToken, options, host, port);
             }
         }
-        catch
+        catch (Exception error)
         {
             try { if (tlsStream is not null) await tlsStream.DisposeAsync().ConfigureAwait(false); }
             catch { /* Preserve the original connection failure. */ }
             finally { socket.Dispose(); }
+            if (physicalConnected && !isUnixSocket)
+                ConnectionTelemetry.ClosedBeforeHandshake(host, port, options, error);
             throw;
         }
 
@@ -380,9 +394,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             if (options.Generation is { } generation)
                 await generation.ValidateAsync(connection, cancellationToken).ConfigureAwait(false);
             connection.StartCredentialRefresh(options);
+            connection._connectionMetrics?.Ready(started);
         }
-        catch
+        catch (Exception error)
         {
+            connection.Abort(error);
             try { await connection.DisposeAsync().ConfigureAwait(false); }
             catch { /* Preserve the original handshake or validation failure. */ }
             throw;
@@ -2535,6 +2551,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 if (received == 0)
                 {
                     fault = new RespireConnectionException($"Connection to {Host}:{Port} closed by remote peer.");
+                    Volatile.Write(ref _peerClosed, true);
                     break;
                 }
 
@@ -2653,6 +2670,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
                 if (received == 0)
                 {
+                    Volatile.Write(ref _peerClosed, true);
                     throw new RespireConnectionException($"Connection to {Host}:{Port} closed mid-frame.");
                 }
 
@@ -2683,6 +2701,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     .ConfigureAwait(false);
                 if (received == 0)
                 {
+                    Volatile.Write(ref _peerClosed, true);
                     throw new RespireConnectionException($"Connection to {Host}:{Port} closed mid-frame.");
                 }
 
@@ -2790,6 +2809,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 var read = await ReceiveAsync(destination).ConfigureAwait(false);
                 if (read == 0)
                 {
+                    Volatile.Write(ref _peerClosed, true);
                     throw new RespireConnectionException($"Connection to {Host}:{Port} closed mid-frame.");
                 }
 
@@ -2816,6 +2836,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 var read = await ReceiveAsync(buffer.AsMemory(end)).ConfigureAwait(false);
                 if (read == 0)
                 {
+                    Volatile.Write(ref _peerClosed, true);
                     throw new RespireConnectionException($"Connection to {Host}:{Port} closed mid-frame.");
                 }
 
@@ -3258,6 +3279,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     continue;
                 }
 
+                bool closed;
                 lock (_receiveDeadlineGate)
                 {
                     if (deadlineStart != _receiveDeadlineTimestamp
@@ -3268,10 +3290,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                         continue;
                     }
 
-                    Abort(new RespireConnectionException(
-                        $"Connection to {Host}:{Port} received no data for {effectiveTimeout} while responses were pending."));
+                    closed = Abort(new RespireConnectionException(
+                        $"Connection to {Host}:{Port} received no data for {effectiveTimeout} while responses were pending."),
+                        publishConnectionMetrics: false);
                 }
-
+                if (closed) _connectionMetrics?.Closed(_abortReason, Volatile.Read(ref _peerClosed));
                 return;
             }
         }
@@ -3500,7 +3523,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
     }
 
-    private void Abort(Exception? reason = null)
+    private bool Abort(Exception? reason = null, bool publishConnectionMetrics = true)
     {
         _credentialSession?.RequestStop();
         // A late Abort can race disposal of the source; the wake below must still happen.
@@ -3513,7 +3536,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             if (_dead)
             {
-                return;
+                return false;
             }
 
             _dead = true;
@@ -3549,6 +3572,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         _flushSignal.Signal();
         try { ObserveCancellationCallbacks(_closedCancellation.CancelAsync()); }
         catch (ObjectDisposedException) { }
+        if (publishConnectionMetrics) _connectionMetrics?.Closed(reason, Volatile.Read(ref _peerClosed));
+        return true;
     }
 
     /// <summary>
@@ -3785,6 +3810,7 @@ internal sealed record RespireConnectionOptions
     public static readonly RespireConnectionOptions Default = new();
 
     internal IConnectionGeneration? Generation { get; init; }
+    internal bool IsDedicatedConnection { get; init; }
 
     internal Func<string, int, CancellationToken, ValueTask<Stream>>? TestingStreamFactory { get; init; }
     /// <summary>

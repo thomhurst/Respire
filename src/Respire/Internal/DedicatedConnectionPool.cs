@@ -43,8 +43,9 @@ internal sealed partial class DedicatedConnectionPool(
     // back into the router or invoke user callbacks while holding this gate.
     private readonly Lock _gate = new();
     private readonly List<Entry> _idle = new(MaxIdle);
-    private readonly RespireConnectionOptions _ordinaryOptions = options.MaintenanceNotifications == RespireMaintenanceNotificationMode.Disabled
-        ? options : options with { MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled };
+    private readonly RespireConnectionOptions _ordinaryOptions = options with
+        { MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled, IsDedicatedConnection = true };
+    private readonly RespireConnectionOptions _streamingOptions = options with { IsDedicatedConnection = true };
     // Keep closing entries registered until socket and receive/flush cleanup actually completes.
     private readonly Dictionary<RespireConnection, Entry> _connections = [];
     private readonly CancellationTokenSource _lifetimeCancellation = new();
@@ -100,7 +101,7 @@ internal sealed partial class DedicatedConnectionPool(
         // Maintenance negotiation is connection state. Keep these leases separate from blocking
         // and corrective leases, while retaining one ownership/drain ledger and idle bound.
         var useStreamingMaintenance = kind == DedicatedLeaseKind.Streaming && options.MaintenanceNotifications != RespireMaintenanceNotificationMode.Disabled;
-        var connectionOptions = useStreamingMaintenance ? options : _ordinaryOptions;
+        var connectionOptions = useStreamingMaintenance ? _streamingOptions : _ordinaryOptions;
         var compatibleKind = useStreamingMaintenance ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary;
         while (true)
         {
@@ -113,6 +114,7 @@ internal sealed partial class DedicatedConnectionPool(
                     if (entry.Connection.IsConnected)
                     {
                         entry.State = State.Rented;
+                        entry.Connection.SetLeaseRented(true);
                         return entry.Connection;
                     }
                     BeginCloseLocked(entry);
@@ -129,6 +131,7 @@ internal sealed partial class DedicatedConnectionPool(
             _ = CloseAsync(stale);
         }
 
+        var waitStarted = Stopwatch.GetTimestamp();
         try
         {
             using var connectCancellation = CancellationTokenSource.CreateLinkedTokenSource(
@@ -164,6 +167,7 @@ internal sealed partial class DedicatedConnectionPool(
                     // Observers may publish a handoff and retire this pool. Never call them
                     // under the ownership gate; the borrower still owns any returned lease.
                     if (useStreamingMaintenance) streamingConnectionCreated?.Invoke(connection);
+                    connection.RecordConnectionWait(waitStarted);
                     return connection;
                 }
                 catch
@@ -233,6 +237,7 @@ internal sealed partial class DedicatedConnectionPool(
                         Debug.Assert(other < _idle.Count,
                             "A full pool below this kind's reserved share must contain another lease kind.");
                         closing = _idle[other];
+                        closing.Connection.RequestMetricCloseReason("pool_eviction_idle");
                         _idle.RemoveAt(other);
                         BeginCloseLocked(closing);
                     }
@@ -240,9 +245,14 @@ internal sealed partial class DedicatedConnectionPool(
                 if (_idle.Count < MaxIdle)
                 {
                     entry.State = State.Idle;
+                    entry.Connection.SetLeaseRented(false);
                     _idle.Add(entry);
                 }
-                else closing = entry;
+                else
+                {
+                    closing = entry;
+                    connection.RequestMetricCloseReason("pool_eviction_idle");
+                }
             }
             else closing = entry;
             if (ReferenceEquals(closing, entry)) BeginCloseLocked(entry);
