@@ -206,6 +206,40 @@ public class ContainerFixtureIntegrationTests
         (await docker.Containers.InspectContainerAsync(blocker.Id)).State.Running.Should().BeTrue();
     }
 
+    [Test]
+    [Arguments(RespireContainerServer.Redis)]
+    [Arguments(RespireContainerServer.Valkey)]
+    public async Task StandaloneBindCollisionRecoversWithUsableFreshContainer(RespireContainerServer server)
+    {
+        var options = new RespireContainerOptions { Server = server };
+        var failed = ContainerStartupRetryTests.ContainerProbe.Create(_ =>
+            Task.FromException(StandaloneStartupRetryTests.ApiError(StandaloneStartupRetryTests.BindFailure)));
+        var probe = (ContainerStartupRetryTests.ContainerProbe)failed;
+        var attempts = 0;
+        var createdIds = new List<string>();
+        await using var fixture = await RespireContainerFixture.StartAsync(options, default, async (ports, _) =>
+        {
+            ports.Should().Equal(6379);
+            if (++attempts == 1) return failed;
+            probe.DisposeCount.Should().Be(1);
+            foreach (var id in createdIds) await AssertContainerRemovedAsync(id);
+            var container = RespireContainerFixture.BuildContainer(options, ports);
+            container.Created += (_, _) => createdIds.Add(container.Id);
+            return container;
+        });
+        // Docker can hit a real second collision after the injected first failure.
+        // Exact retry counts are covered by StandaloneStartupRetryTests with controlled starts.
+        attempts.Should().BeInRange(2, 3);
+        createdIds.Should().HaveCount(attempts - 1);
+        await using (var client = await RespireClient.ConnectAsync(fixture.CreateOptions()))
+        {
+            (await client.SetAsync("retry:key", "ready")).Should().BeTrue();
+            (await client.GetStringAsync("retry:key")).Should().Be("ready");
+        }
+        await fixture.DisposeAsync();
+        foreach (var id in createdIds) await AssertContainerRemovedAsync(id);
+    }
+
     private static async Task<(IContainer Container, int Port)> StartCompetingOwnerAsync(RespireContainerOptions options)
     {
         using var deadline = new CancellationTokenSource(options.StartupTimeout);
