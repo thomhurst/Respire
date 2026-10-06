@@ -82,14 +82,80 @@ public class BufferedBulkReplyTests
         }
     }
 
+    [Test]
+    public async Task ExcessiveAggregateDepthFailsRemainingFifoWithoutLosingEarlierReply()
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var stream = new SegmentedStream();
+        await using var connection = await RespireConnection.ConnectAsync("scripted", 6379,
+            new RespireConnectionOptions
+            {
+                Protocol = RespProtocol.Resp2,
+                TestingStreamFactory = (_, _, _) => ValueTask.FromResult<Stream>(stream),
+            });
+        var command = new Cmd1(Verbs.Get, "key");
+        var earlier = connection.SendAsync(command, deadline.Token).AsTask();
+        var malformed = connection.SendAsync(command, deadline.Token).AsTask();
+        var following = connection.SendAsync(command, deadline.Token).AsTask();
+        await stream.NextReadAsync(deadline.Token);
+        // Retain a real pooled child before the later depth error exercises parser cleanup.
+        stream.Publish(":11\r\n*2\r\n$7\r\npayload\r\n"u8.ToArray());
+        await stream.NextReadAsync(deadline.Token);
+        using var first = await earlier.WaitAsync(deadline.Token);
+        await Assert.That(first.AsInteger()).IsEqualTo(11);
+        stream.Publish(Encoding.ASCII.GetBytes(string.Concat(Enumerable.Repeat("*1\r\n", 512)) + "*0\r\n:22\r\n"));
+        await Assert.That(async () => await malformed.WaitAsync(deadline.Token)).Throws<RespireProtocolException>();
+        await Assert.That(async () => await following.WaitAsync(deadline.Token)).Throws<RespireProtocolException>();
+        await Assert.That(connection.IsConnected).IsFalse();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CanceledAggregateDrainsAcrossGrowthBeforeFollowingReply(bool cancelBeforeHeader)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var canceled = new CancellationTokenSource();
+        var stream = new SegmentedStream();
+        await using var connection = await RespireConnection.ConnectAsync("scripted", 6379,
+            new RespireConnectionOptions
+            {
+                Protocol = RespProtocol.Resp2,
+                TestingStreamFactory = (_, _, _) => ValueTask.FromResult<Stream>(stream),
+            });
+        var command = new Cmd1(Verbs.Get, "key");
+        var abandoned = connection.SendAsync(command, canceled.Token).AsTask();
+        var following = connection.SendAsync(command, deadline.Token).AsTask();
+        // Cancellation must abandon a submitted response, not remove an unsent command.
+        await stream.WaitForWrittenAsync(2 * "*2\r\n$3\r\nGET\r\n$3\r\nkey\r\n"u8.Length, deadline.Token);
+        await stream.NextReadAsync(deadline.Token);
+        if (cancelBeforeHeader) canceled.Cancel();
+        stream.Publish(Encoding.ASCII.GetBytes("*33\r\n" + string.Concat(Enumerable.Repeat(":7\r\n", 16))));
+        await stream.NextReadAsync(deadline.Token);
+        if (!cancelBeforeHeader) canceled.Cancel();
+        await Assert.That(async () => await abandoned.WaitAsync(deadline.Token)).Throws<OperationCanceledException>();
+        await Assert.That(following.IsCompleted).IsFalse();
+        stream.Publish(Encoding.ASCII.GetBytes(string.Concat(Enumerable.Repeat(":7\r\n", 17)) + ":99\r\n"));
+        using var reply = await following.WaitAsync(deadline.Token);
+        await Assert.That(reply.AsInteger()).IsEqualTo(99);
+        await Assert.That(connection.IsConnected).IsTrue();
+    }
+
     private sealed class SegmentedStream : Stream
     {
         private readonly Channel<ReadOnlyMemory<byte>> _segments = Channel.CreateUnbounded<ReadOnlyMemory<byte>>();
         private readonly Channel<bool> _reads = Channel.CreateUnbounded<bool>();
+        private readonly Channel<bool> _writes = Channel.CreateUnbounded<bool>();
+        private long _writtenBytes;
         private ReadOnlyMemory<byte> _remaining;
 
         public void Publish(byte[] bytes) => _segments.Writer.TryWrite(bytes);
         public async Task NextReadAsync(CancellationToken token) => await _reads.Reader.ReadAsync(token);
+        public async Task WaitForWrittenAsync(int count, CancellationToken token)
+        {
+            while (Interlocked.Read(ref _writtenBytes) < count)
+                await _writes.Reader.ReadAsync(token);
+        }
 
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
@@ -106,10 +172,15 @@ public class BufferedBulkReplyTests
         }
 
         public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
-            => ValueTask.CompletedTask;
+        {
+            Interlocked.Add(ref _writtenBytes, buffer.Length);
+            _writes.Writer.TryWrite(true);
+            return ValueTask.CompletedTask;
+        }
         protected override void Dispose(bool disposing)
         {
             _segments.Writer.TryComplete();
+            _writes.Writer.TryComplete();
             base.Dispose(disposing);
         }
         public override bool CanRead => true;
