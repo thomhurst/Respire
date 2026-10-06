@@ -453,7 +453,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             try
             {
                 var cluster = core.Cluster;
-                acquisition.CheckDeadline("MULTI/EXEC", core, ConnectionPolicy.IsImportSession ? ConnectionPolicy.PinnedConnection : null);
+                acquisition.CheckDeadline("MULTI/EXEC", core, ConnectionPolicy.ImportConnection);
                 if (slot is null && cluster is { } flushCluster
                     && _ops.Exists(static operation => operation.Operation is "FLUSHDB" or "FLUSHALL"))
                     slot = await flushCluster.GetPrimaryRoutingSlotAsync(acquisition.Token).ConfigureAwait(false);
@@ -461,7 +461,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                 {
                     connection ??= await _client.AcquireConnectionAsync(slot, ref acquisition).ConfigureAwait(false);
                     acquisition.Dispose();
-                    acquisition.CheckDeadline("MULTI/EXEC", core, ConnectionPolicy.IsImportSession ? ConnectionPolicy.PinnedConnection : null);
+                    acquisition.CheckDeadline("MULTI/EXEC", core, ConnectionPolicy.ImportConnection);
                     if (core.Sentinel is not null)
                         telemetry = RespireTelemetry.StartBatchOperation(
                             "MULTI", _ops, static op => op.Operation,
@@ -479,6 +479,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                             // This lease is exclusive: confirm MULTI before any import can
                             // reach Redis, including when ACLs allow HIMPORT but deny MULTI.
                             importSubmissionAttempted = true;
+                            // Import-only MULTI cannot reroute; keep this decision in the shared policy.
                             using var multi = await _client.SendOnConnectionAsync("MULTI", connection,
                                 new Cmd(RespireCommands.Transaction.MULTI.Verb), cancellationToken, commandDeadline: deadline,
                                 allowStreamingConnectionReroute: ConnectionPolicy.CanReplayRejectedCommands).ConfigureAwait(false);
@@ -558,7 +559,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                 {
                     if (acquisition.IsDeadlineCancellation(canceled))
                         failure = acquisition.CreateTimeout("MULTI/EXEC", core,
-                            ConnectionPolicy.IsImportSession ? ConnectionPolicy.PinnedConnection : null, canceled);
+                            ConnectionPolicy.ImportConnection, canceled);
                     else if (acquisition.IsCallerCancellation(canceled))
                     {
                         OperationCanceledException callerFailure = new(error.Message, error, cancellationToken);

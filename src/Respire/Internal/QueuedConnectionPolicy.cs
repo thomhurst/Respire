@@ -8,7 +8,9 @@ namespace Respire.Internal;
 /// </summary>
 internal readonly struct QueuedConnectionPolicy(RespireHashImportSession? importSession, RespireConnection? watchConnection = null)
 {
-    public RespireConnection? PinnedConnection => importSession?.Connection ?? watchConnection;
+    public RespireConnection? ImportConnection => importSession?.Connection;
+
+    public RespireConnection? PinnedConnection => ImportConnection ?? watchConnection;
 
     public bool IsImportSession => importSession is not null;
 
