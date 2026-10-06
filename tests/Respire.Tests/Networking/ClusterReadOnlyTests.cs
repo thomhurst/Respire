@@ -541,6 +541,8 @@ public class ClusterReadOnlyTests
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
             var timer = _clock.CreateTimer(callback, state, dueTime, period);
+            // This fixture assumes the first timer is the READONLY recovery budget;
+            // connection initialization does not schedule timers on this recovery clock.
             if (Interlocked.Exchange(ref _expired, 1) == 0)
                 _clock.Advance(dueTime);
             return timer;
