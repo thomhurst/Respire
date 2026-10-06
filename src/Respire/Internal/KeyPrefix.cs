@@ -11,11 +11,13 @@ internal sealed class KeyPrefix
     private readonly int _tagStart;
     private readonly int _binaryTagStart;
     private readonly int _fixedSlot;
+    private readonly bool _endsWithHighSurrogate;
 
     internal KeyPrefix(string text)
     {
         Text = text;
         Bytes = Encoding.UTF8.GetBytes(text);
+        _endsWithHighSurrogate = text.Length != 0 && char.IsHighSurrogate(text[^1]);
         _tagStart = text.IndexOf('{');
         _binaryTagStart = Bytes.AsSpan().IndexOf((byte)'{');
         var close = _tagStart < 0 ? -1 : text.AsSpan(_tagStart + 1).IndexOf('}');
@@ -82,7 +84,7 @@ internal sealed class KeyPrefix
     }
 
     private bool JoinsSurrogatePair(string? key)
-        => Text.Length != 0 && char.IsHighSurrogate(Text[^1])
+        => _endsWithHighSurrogate
             && key is { Length: > 0 } && char.IsLowSurrogate(key[0]);
 
     internal int GetWireLength(string? key, ReadOnlyMemory<byte> bytes)
