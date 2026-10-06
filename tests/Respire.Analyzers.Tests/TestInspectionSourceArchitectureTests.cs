@@ -16,6 +16,33 @@ public class TestInspectionSourceArchitectureTests
         "Respire.ClientSideCacheCoordinator", "Respire.RespireTransactionBase"];
 
     [Test]
+    [Arguments("")]
+    [Arguments("internal")]
+    [Arguments("public")]
+    [Arguments("public abstract")]
+    public async Task InventoryDetectsOwnerPrimaryConstructorOverloads(string accessibility)
+    {
+        const string declaration = """
+            namespace Respire.Networking;
+            partial class RespireConnection
+            {
+                internal RespireConnection() { }
+            }
+            """;
+        var original = declaration.Replace("partial class", accessibility + " partial class");
+        var changed = original.Replace("class RespireConnection", "class RespireConnection(int count)")
+            .Replace("internal RespireConnection() { }", "internal RespireConnection() : this(0) { }");
+        var root = Parse(changed, false);
+        var compilation = CreateCompilation([root.SyntaxTree]);
+        await Assert.That(compilation.GetDiagnostics().Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error)).IsEmpty();
+        await Assert.That(FindOwnerSurface(root).Except(FindOwnerSurface(Parse(original, false)))).IsEquivalentTo([
+            "Respire.Networking.RespireConnection | constructor RespireConnection(int)"]);
+        var explicitConstructor = original.Replace("internal RespireConnection() { }",
+            "internal RespireConnection() { } public RespireConnection(int renamed) { }");
+        await Assert.That(FindOwnerSurface(root)).IsEquivalentTo(FindOwnerSurface(Parse(explicitConstructor, false)));
+    }
+
+    [Test]
     public async Task InventoryIncludesExplicitInterfaceMembers()
     {
         const string source = """
@@ -287,6 +314,8 @@ public class TestInspectionSourceArchitectureTests
                 .Select(space => string.Concat(space.Name.DescendantTokens().Select(token => token.ValueText)));
             var name = string.Join('.', namespaces.Append(owner.Identifier.ValueText));
             if (!Owners.Contains(name)) continue;
+            if (owner.ParameterList is { } primaryConstructor)
+                members.Add($"{name} | constructor {owner.Identifier.ValueText}({Parameters(primaryConstructor)})");
             foreach (var member in owner.Members)
             {
                 // Explicit implementations remain callable through an interface, despite lacking accessibility modifiers.

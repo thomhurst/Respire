@@ -35,8 +35,10 @@ source with the net8.0 and net10.0 preprocessor symbols:
   do not accept a new test-only accessor into that inventory. Put inspection state
   in the designated nested view instead. Keys contain the owner, member kind, name,
   generic arity, parameter types and passing modifiers, and result or value type.
-  Explicit interface names and nested-type primary constructor parameter types are
-  included. Bodies, accessor style, initializers, parameter names, attributes,
+  Explicit interface names and primary constructor parameter types are included.
+  An owner's primary constructor uses the same key as an ordinary constructor
+  overload; nested-type primary constructors remain part of their type key.
+  Bodies, accessor style, initializers, parameter names, attributes,
   generic constraints, and private-only helpers are not inventoried. Known legacy
   test hooks are marked explicitly; their presence is not precedent for new hooks.
   Inventory failures list exact unreviewed and removed signatures for deliberate
@@ -51,8 +53,9 @@ source with the net8.0 and net10.0 preprocessor symbols:
   factories. The rule uses this exact reserved name, not guesses about names that
   sound like testing or inspection.
 
-Positive controls cover a renamed accessor, a new operational overload, explicit
-interface methods/properties/indexers/events, production calls, a method group,
+Positive controls cover a renamed accessor, a new operational overload, owner
+primary constructors (including abstract owners and default internal visibility),
+explicit interface methods/properties/indexers/events, production calls, a method group,
 and escaped, unescaped, local-function, and cross-file `nameof` helpers. Negative
 controls cover reviewed operations, body and accessor style changes, parameter
 renames, attributes, constraints, private
