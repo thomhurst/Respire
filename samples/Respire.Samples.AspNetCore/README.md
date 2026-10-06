@@ -15,7 +15,7 @@ containers for the local Redis example. Run these commands from the repository r
 Start a Redis container owned by this sample (choose another name/port if needed):
 
 ```sh
-docker run --detach --rm --name respire-aspnet-sample-redis --publish 127.0.0.1:6384:6379 redis:8.10-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+docker run --detach --rm --name respire-aspnet-sample-redis --publish 127.0.0.1:6384:6379 redis:8.10-alpine
 docker exec respire-aspnet-sample-redis redis-cli ping
 ```
 
