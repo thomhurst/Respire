@@ -1,5 +1,7 @@
 # Connection measurement dispatch: point-in-time investigation
 
+> Frozen snapshot: do not update these measurements alongside dispatcher changes.
+
 This investigation addresses #1063 against revision
 `69ea7200ff05719852f5bfdd3512b7e2c4041a22`. At this revision, lifecycle delivery
 already reserves a process-wide maximum of 64 queued or running callbacks. This
@@ -217,9 +219,12 @@ The lifecycle contract remains explicit:
 
 ## Reproduction and validation
 
-The result summaries above and the published fixture hashes below are archived
-in this repository. The hashes identify the published files; they cannot recover
-missing source or raw observations if the external evidence is removed.
+The result summaries above and all nine published fixture files are archived
+in this repository under [investigations/lifecycle-dispatch](investigations/lifecycle-dispatch).
+The files have an added `.txt` suffix so the archive is not built or discovered
+as another benchmark project. Their bytes match the published hashes below,
+including the original line endings. Raw observations remain in the external
+evidence; the archive preserves the fixture and summaries if those links disappear.
 
 | Fixture file | Published SHA-256 |
 |---|---|
@@ -233,10 +238,10 @@ missing source or raw observations if the external evidence is removed.
 | `Respire.Benchmarks.csproj` | `F03C4BDC1304F5A2C2081D604E310030864F6EFB508036B89FE6E81F034D8979` |
 | `Run-IsolatedRentals.ps1` | `4B912ABD28D0E9A11D6194B6334C28B49575B7F9BD10D686BC92360CA71E2FA9` |
 
-The repository alone cannot reproduce these measurements: download the nine
-temporary fixture files from
+Copy the nine archived files to `artifacts/issue-1063-investigation` in a checkout
+of the measured revision, remove only the added `.txt` suffix, and verify their
+SHA-256 hashes against the table above. The original publication is retained in
 [issue #1063](https://github.com/thomhurst/Respire/issues/1063#issuecomment-6015063619).
-Verify their SHA-256 hashes against the table above.
 The [complete 32-case Markdown reports and corrected diagnostics](https://github.com/thomhurst/Respire/issues/1063#issuecomment-6015088702)
 include delivery records, measured binary hashes, and excluded-run provenance.
 Original observations and confidence intervals are published for

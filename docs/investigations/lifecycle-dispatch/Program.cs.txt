@@ -1,0 +1,30 @@
+using BenchmarkDotNet.Running;
+
+if (args is ["churn-diagnostics", var churnOutput])
+{
+    using var writer = new StreamWriter(churnOutput);
+    Console.SetOut(writer);
+    var workload = new Respire.Benchmarks.LifecycleBenchmarks { Listener = Respire.Benchmarks.ListenerMode.Fast };
+    await workload.Setup();
+    try
+    {
+        for (var i = 0; i < 50_000; i++)
+        {
+            if (!await workload.NewConnectionRental()) throw new InvalidOperationException("Disconnected rental.");
+            if (i % 5_000 == 0) Console.WriteLine($"CHURN_PROGRESS {i + 1}");
+        }
+    }
+    catch (Exception error) { Console.WriteLine("CHURN_FAILURE " + error); throw; }
+    finally { await workload.Cleanup(); }
+    return;
+}
+
+if (args is ["diagnostics", var output])
+{
+    using var writer = new StreamWriter(output);
+    Console.SetOut(writer);
+    await Respire.Benchmarks.Diagnostics.RunAsync();
+    return;
+}
+
+BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args);
