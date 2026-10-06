@@ -17,7 +17,9 @@ internal sealed class PooledResponseSource<TState, TResult> : IValueTaskSource<T
     private const int MaxPoolSize = 4096;
     private static readonly ObjectPool<PooledResponseSource<TState, TResult>, PoolPolicy> Pool = new(MaxPoolSize);
 
-    private ManualResetValueTaskSourceCore<TResult> _core = new() { RunContinuationsAsynchronously = true };
+    // CompletionScheduler dispatches network replies; PendingResponse dispatches failures.
+    // Conversion can reuse that completion owner without another pool dispatch.
+    private ManualResetValueTaskSourceCore<TResult> _core = new() { RunContinuationsAsynchronously = false };
     private readonly Action _complete;
     private ValueTask<RespValue> _responseTask;
     private ResponseConverter<TState, TResult>? _converter;
@@ -75,16 +77,17 @@ internal sealed class PooledResponseSource<TState, TResult> : IValueTaskSource<T
 
         var response = default(RespValue);
         var converted = false;
+        TResult result = default!;
+        Exception? error = null;
         try
         {
             response = responseTask.GetAwaiter().GetResult();
-            var result = converter(state, in response);
+            result = converter(state, in response);
             converted = true;
-            _core.SetResult(result);
         }
         catch (Exception exception)
         {
-            _core.SetException(exception);
+            error = exception;
         }
         finally
         {
@@ -92,6 +95,17 @@ internal sealed class PooledResponseSource<TState, TResult> : IValueTaskSource<T
             {
                 response.Dispose();
             }
+        }
+
+        // Publishing can run the caller inline, returning this instance to the pool and
+        // renting it again. Finish cleanup first and never catch a caller's exception here.
+        if (error is null)
+        {
+            _core.SetResult(result);
+        }
+        else
+        {
+            _core.SetException(error);
         }
     }
 

@@ -1,4 +1,5 @@
 using Respire.Commands;
+using Respire.Internal;
 using Respire.Networking;
 using Respire.Protocol;
 using TUnit.Assertions;
@@ -261,14 +262,30 @@ public class StalledDeliveryTests
     // The idle connection delivers this reply before it starts its next receive. A command
     // from another thread must still start that receive while the continuation blocks.
     [Test]
-    public async Task CommandSentWhileAnIdleReplyContinuationBlocksStillCompletes()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CommandSentWhileAnIdleReplyContinuationBlocksStillCompletes(bool convertResponse)
     {
-        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        var firstSent = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pings = 0;
+        await using var server = new FakeRespServer(FakeRespServer.PongReply)
+        {
+            SuppressReply = command =>
+            {
+                if (command != "PING" || Interlocked.Increment(ref pings) != 1) return false;
+                firstSent.TrySetResult();
+                return true;
+            },
+        };
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
         // Not disposed: a continuation delayed by a starved pool may still wait after the test ends.
         var release = new ManualResetEventSlim();
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var awaiter = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).ConfigureAwait(false).GetAwaiter();
+        var response = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame));
+        if (convertResponse)
+            response = PooledResponseSource<int, RespValue>.Create(response, 0,
+                static (int _, in RespValue value) => value, transferOwnership: true);
+        var awaiter = response.ConfigureAwait(false).GetAwaiter();
         awaiter.UnsafeOnCompleted(() =>
         {
             using var first = awaiter.GetResult();
@@ -278,6 +295,9 @@ public class StalledDeliveryTests
 
         try
         {
+            // Register conversion and its caller before the reply can arrive.
+            await firstSent.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await server.SendRawAsync(FakeRespServer.PongReply);
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
             // Delivered by the stall rescue, since the blocked continuation still holds the runner.
             using var second = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame))
@@ -294,14 +314,29 @@ public class StalledDeliveryTests
     // Closing the connection must end the receive loop even while delivery, which runs before
     // the next receive starts, is blocked in a continuation.
     [Test]
-    public async Task ReceiveLoopEndsOnCloseWhileAnIdleReplyContinuationBlocks()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ReceiveLoopEndsOnCloseWhileAnIdleReplyContinuationBlocks(bool convertResponse)
     {
-        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        var firstSent = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(FakeRespServer.PongReply)
+        {
+            SuppressReply = command =>
+            {
+                if (command != "PING") return false;
+                firstSent.TrySetResult();
+                return true;
+            },
+        };
         var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
         // Not disposed: a continuation delayed by a starved pool may still wait after the test ends.
         var release = new ManualResetEventSlim();
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var awaiter = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).ConfigureAwait(false).GetAwaiter();
+        var response = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame));
+        if (convertResponse)
+            response = PooledResponseSource<int, RespValue>.Create(response, 0,
+                static (int _, in RespValue value) => value, transferOwnership: true);
+        var awaiter = response.ConfigureAwait(false).GetAwaiter();
         awaiter.UnsafeOnCompleted(() =>
         {
             using var first = awaiter.GetResult();
@@ -312,6 +347,8 @@ public class StalledDeliveryTests
         Task? dispose = null;
         try
         {
+            await firstSent.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await server.SendRawAsync(FakeRespServer.PongReply);
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
             dispose = connection.DisposeAsync().AsTask();
             await connection.Closed.WaitAsync(TimeSpan.FromSeconds(5));

@@ -1,0 +1,113 @@
+name: Response routing benchmarks
+
+on:
+  pull_request:
+    paths:
+      - 'src/Respire/Internal/PooledResponseSource.cs'
+      - 'benchmarks/Respire.Benchmarks/ResponseRoutingBenchmarks.cs'
+      - 'benchmarks/Respire.Benchmarks/infra/**'
+      - '.github/workflows/benchmark-response-routing.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    name: Response routing (${{ matrix.framework }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: [net8.0, net10.0]
+    env:
+      FRAMEWORK: ${{ matrix.framework }}
+      REDIS_IMAGE: redis:8.10@sha256:6f81e8915c60b065a524e6967e0ad1c639ba6efa84d669f823683ea04d9150ee
+    steps:
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: baseline
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: candidate
+          persist-credentials: false
+      - name: Start isolated primary, replica, Sentinel and Cluster
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name response-routing \
+            -p 127.0.0.1:19580:19580 -p 127.0.0.1:19581:19581 \
+            -p 127.0.0.1:19582:19582 -p 127.0.0.1:19583:19583 \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/candidate/benchmarks/Respire.Benchmarks/infra/response-routing.sh,target=/response-routing.sh,readonly" \
+            "$REDIS_IMAGE" sh /response-routing.sh
+          for attempt in $(seq 1 60); do
+            if docker exec response-routing redis-cli -p 19582 PING | grep -q PONG \
+              && docker exec response-routing redis-cli -p 19583 CLUSTER INFO | grep -q 'cluster_state:ok' \
+              && docker exec response-routing redis-cli -p 19581 INFO replication | grep -q 'master_link_status:up'; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs response-routing
+          exit 1
+      - name: Validate and measure baseline, candidate, baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp candidate/benchmarks/Respire.Benchmarks/ResponseRoutingBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
+          for phase in baseline-validation candidate-validation baseline-a candidate baseline-b; do
+            source=baseline
+            job=Medium
+            if [[ "$phase" == candidate* ]]; then source=candidate; fi
+            if [[ "$phase" == *validation ]]; then job=Dry; fi
+            (
+              cd "$source"
+              git rev-parse HEAD
+              dotnet run --project benchmarks/Respire.Benchmarks -c Release -f "$FRAMEWORK" -- \
+                --filter '*ResponseRoutingBenchmarks*' --job "$job" --exporters json markdown \
+                --artifacts "$GITHUB_WORKSPACE/results/$phase"
+            ) > "$GITHUB_WORKSPACE/$phase.log" 2>&1
+          done
+      - name: Require all routes and publish comparisons
+        shell: python
+        run: |
+          import json
+          import os
+          from pathlib import Path
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write('## Response routing latency\n\nPinned base and event merge commit use the same Redis topology and fixture. Compare candidate latency and completed work items against both baseline controls. Standalone uses the native fast path. These steady-state rows exclude failover and redirection.\n')
+              for phase in ('baseline-validation', 'candidate-validation', 'baseline-a', 'candidate', 'baseline-b'):
+                  reports = list(Path('results', phase, 'results').glob('*-report-full-compressed.json'))
+                  assert len(reports) == 1, f'Missing report: {phase}'
+                  cases = json.loads(reports[0].read_text())['Benchmarks']
+                  assert len(cases) == 4, f'Missing routing cases: {phase}'
+                  assert all(case.get('Statistics') and case['Statistics']['Mean'] > 0 for case in cases), phase
+                  if 'validation' not in phase:
+                      summary.write(f'\n### {phase}\n\n')
+                      summary.write(next(Path('results', phase, 'results').glob('*-report-github.md')).read_text())
+      - name: Collect Redis log and stop owned container
+        if: always()
+        shell: bash
+        run: |
+          docker logs response-routing > redis.log 2>&1 || true
+          docker rm -f response-routing || true
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: response-routing-${{ matrix.framework }}
+          path: |
+            results/
+            *.log
+          retention-days: 30
