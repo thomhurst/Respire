@@ -940,7 +940,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 cancellationToken, commandDeadline: deadline).ConfigureAwait(false);
         source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
         ScheduleFlush(startedBatch);
-        return source.Task;
+        return ObserveScriptingReply(source.Task, commandName, cancellationToken, deadline);
     }
 
     /// <summary>Sends an intentionally blocking command without applying the receive watchdog
@@ -1018,6 +1018,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         CommandDeadline commandDeadline = default)
         where TCommand : struct, IRespCommand
     {
+        if (ScriptingEngineInfo.IsScriptingCommand(commandName))
+            return PooledResponseSource<TState, TResult>.Create(
+                SendCheckedAsync(in command, cancellationToken, commandName, commandDeadline),
+                state, converter, transferOwnership);
         if (!commandDeadline.IsSet) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
         var source = ConvertedPendingResponseSource<TState, TResult>.Rent(
             state, converter, transferOwnership, commandName);
@@ -1429,7 +1433,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         ClampDeadline(source, commandDeadline);
         source.RegisterCancellation(cancellationToken);
         ScheduleFlush(startedBatch);
-        return source.Task;
+        return ObserveScriptingReply(source.Task, commandName, cancellationToken, commandDeadline);
     }
 
     internal static bool IsDeadlineCancellation(OperationCanceledException error,
@@ -1487,7 +1491,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             ClampDeadline(source, commandDeadline);
             source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
             ScheduleFlush(startedBatch);
-            return source.Task;
+            return ObserveScriptingReply(source.Task, commandName, cancellationToken, commandDeadline);
         }
 
         return SendSlowAsync(command, source, discardRepliesBefore, cancellationToken, throwOnError,
@@ -1905,7 +1909,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
         ScheduleFlush(startedBatch);
-        return await source.Task.ConfigureAwait(false);
+        return await ObserveScriptingReply(source.Task, commandName, cancellationToken, commandDeadline).ConfigureAwait(false);
     }
 
 #if NET
@@ -1965,7 +1969,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         source.RegisterCancellation(cancellationToken);
         ScheduleFlush(startedBatch);
-        return await source.Task.ConfigureAwait(false);
+        return await ObserveScriptingReply(source.Task, commandName, cancellationToken, commandDeadline).ConfigureAwait(false);
     }
 
 #if NET

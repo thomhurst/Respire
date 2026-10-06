@@ -159,6 +159,27 @@ public sealed class RespireServerException : RespireException
     }
 }
 
+/// <summary>A scripting command failed because its engine is absent from the server's current inventory.</summary>
+public sealed class RespireScriptingEngineUnavailableException : RespireException
+{
+    internal RespireScriptingEngineUnavailableException(string engine, RespireEndpoint endpoint, RespireServerException serverError)
+        : base($"Scripting engine '{engine}' is unavailable at {endpoint}. Load the engine on that server before retrying the command.", serverError)
+    {
+        Engine = engine;
+        Endpoint = endpoint;
+        ServerError = serverError;
+    }
+
+    /// <summary>The engine named by the server's command error.</summary>
+    public string Engine { get; }
+
+    /// <summary>The endpoint whose connection confirmed the missing engine.</summary>
+    public RespireEndpoint Endpoint { get; }
+
+    /// <summary>The original command error; engine detection does not replay it.</summary>
+    public RespireServerException ServerError { get; }
+}
+
 /// <summary>Known Redis error reply codes.</summary>
 public static class RespireErrorCodes
 {

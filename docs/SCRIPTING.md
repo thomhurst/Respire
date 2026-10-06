@@ -144,3 +144,41 @@ Redis references: [FUNCTION LOAD](https://redis.io/docs/latest/commands/function
 [FUNCTION LIST](https://redis.io/docs/latest/commands/function-list/),
 [FUNCTION RESTORE](https://redis.io/docs/latest/commands/function-restore/),
 [FUNCTION STATS](https://redis.io/docs/latest/commands/function-stats/).
+
+## Valkey scripting engines
+
+Valkey 9.1 registers Lua as a module-backed scripting engine. If an applicable scripting
+command returns the exact missing-engine error, Respire checks `INFO scriptingengines`
+on the same physical connection. A complete inventory that omits the named engine produces
+`RespireScriptingEngineUnavailableException`. Its `Engine`, `Endpoint`, and `ServerError`
+properties identify the missing engine, selected server, and original command error.
+The original error is also the inner exception. Respire does not load modules or replay
+commands after this exception; an operator must make the engine available before retrying.
+
+Detection is lazy: successful calls and ordinary script errors perform no extra I/O.
+`NOSCRIPT` still triggers the existing EVAL fallback, and a registered function's missing
+library still follows the existing reload policy. An EVALSHA-only `NOSCRIPT` or an FCALL
+`Function not found` error does not identify an engine and is not classified as engine
+absence. EVAL/EVAL_RO, SCRIPT LOAD, FUNCTION LOAD/RESTORE, immediate calls, batches, and
+executed transaction errors share the same detection policy. A transaction is never replayed.
+
+The optional probe needs INFO permission. A denied, unknown, malformed, timed-out, or
+disconnected probe preserves the original command error. Redis and older Valkey servers
+do not need additional ACL permissions for working scripting calls. A caller cancelling
+during an immediate probe still observes cancellation. Classification after EXEC does not
+cancel completion of already-executed transaction results.
+
+Each diagnostic has a maximum one-second deadline, shortened to the command's remaining
+budget. There is no inventory cache or negative cache: each qualifying failure checks its
+own connection, and the probe cannot reroute to a replacement connection. Reconnects,
+failover, and module changes therefore cannot reuse stale absence evidence. The inventory
+is an observation at probe time; a concurrent module change can still race with it.
+
+The released `valkey/valkey:9.1.0-alpine` image loads its built-in Lua module at startup
+and supports `MODULE UNLOAD lua` when module administration is enabled. That image does
+not provide a separate Lua shared library for `MODULE LOAD lua`; restarting the server
+restores its startup engine. Deployment-specific module loading remains an operator task.
+
+Released source: [engine inventory](https://github.com/valkey-io/valkey/blob/c9e8005e9d0ec817e26c7db318861cb821409249/src/server.c),
+[EVAL errors](https://github.com/valkey-io/valkey/blob/c9e8005e9d0ec817e26c7db318861cb821409249/src/eval.c),
+and [function errors](https://github.com/valkey-io/valkey/blob/c9e8005e9d0ec817e26c7db318861cb821409249/src/functions.c).

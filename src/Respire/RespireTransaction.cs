@@ -372,10 +372,22 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                 foreach (var op in _ops) op.Fail(error);
                 throw error;
             }
-            var completeCount = Math.Min(_ops.Count, elements.Length);
+            var elementCount = elements.Length;
+            var completeCount = Math.Min(_ops.Count, elementCount);
             for (var i = 0; i < completeCount; i++)
             {
-                var itemError = _ops[i].Complete(_client, in elements[i]);
+                var element = result.AsArray()[i];
+                Exception? itemError;
+                if (element.IsError && connection is not null
+                    && ScriptingEngineInfo.IsScriptingCommand(_ops[i].Operation))
+                {
+                    var serverError = ResponseReader.ServerError(in element, _ops[i].Operation);
+                    // EXEC already ran. Classification never replays a transaction or command.
+                    itemError = await connection.ClassifyScriptingErrorAsync(serverError, CancellationToken.None, deadline)
+                        .ConfigureAwait(false);
+                    _ops[i].Fail(itemError);
+                }
+                else itemError = _ops[i].Complete(_client, in element);
                 operationError ??= itemError;
                 if (itemError is not null && ConnectionPolicy.RequiresExpiration(itemError))
                     importError ??= itemError;
@@ -384,7 +396,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             if (completeCount < _ops.Count)
             {
                 var mismatch = new RespireProtocolException(
-                    $"EXEC returned {elements.Length} results for {_ops.Count} queued commands.");
+                    $"EXEC returned {elementCount} results for {_ops.Count} queued commands.");
                 operationError ??= mismatch;
                 for (var i = completeCount; i < _ops.Count; i++)
                 {
