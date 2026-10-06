@@ -126,3 +126,47 @@ server-side command logs according to the server's handling of sensitive data.
 Timeouts, errors, cancellation, and disconnects can leave a transfer or other lifecycle
 mutation partially applied. Inspect the affected servers before retrying. Respire never
 replays these operations automatically.
+
+## Atomic Redis Cluster slot migration
+
+Redis 8.4 and later support [CLUSTER MIGRATION](https://redis.io/docs/latest/commands/cluster-migration/).
+Use the destination primary's explicit endpoint to start an import. Set `AllowAdmin = true`
+for imports and cancellation; status queries do not require the client-side admin flag.
+Redis ACL permissions still apply to all three operations. This protocol is distinct from
+Valkey slot migration and classic key-by-key `MIGRATE`.
+
+```csharp
+var destination = redis.Server.OnNode(new RespireEndpoint("destination-primary", 6379));
+string taskId = await destination.ClusterMigrationImportAsync(
+    [new RespireClusterSlotRange(0, 100), new RespireClusterSlotRange(200, 300)], cancellationToken);
+RespireClusterMigrationTask[] tasks = await destination.ClusterMigrationStatusAsync(taskId, cancellationToken);
+long cancelled = await destination.ClusterMigrationCancelAsync(taskId, cancellationToken);
+```
+
+Ranges are inclusive, non-overlapping, and within 0–16383; Redis accepts fewer than 16384 ranges. The source is determined
+by the server's slot ownership. The returned task ID confirms task creation, not migration
+completion. Poll with your own cancellation/deadline until the task reports `completed` or
+a terminal failure, and inspect `LastError` and `Retries`. Respire does not orchestrate the
+migration, wait for cluster convergence, or silently refresh its routing table.
+
+`ClusterMigrationStatusAsync()` sends `STATUS ALL` and includes active and archived tasks
+on this node. The string overload sends `STATUS ID task-id`; an absent task returns an empty
+array. `RespireClusterMigrationStatusScope.Default` explicitly sends bare `STATUS`, matching
+the published optional-selector syntax. Redis 8.4 and 8.10 currently reject that form; use
+`All` for those versions. Respire preserves the error without substituting another request.
+The discrepancy is visible in the [Redis 8.4 implementation](https://github.com/redis/redis/blob/8.4/src/cluster_asm.c)
+and [Redis 8.10 implementation](https://github.com/redis/redis/blob/8.10/src/cluster_asm.c).
+
+Task results own their data. `Slots` retains the server's range text; `Operation`, `State`,
+and `AdditionalFields` preserve future values. Timestamps are decoded from Unix **milliseconds**;
+unset start/end values (`-1`) become null. `WritePauseMilliseconds` is the server's pause duration.
+
+`ClusterMigrationCancelAllAsync()` sends `CANCEL ALL`. Both cancellation methods return the
+number of tasks cancelled on the selected node. Cancelling on the source does **not** stop
+the destination retrying: cancel at the destination too. Cancellation does not undo an
+already completed migration. Check status and slot ownership across the affected nodes.
+
+Every request uses a short-lived connection to exactly the selected endpoint. Imports and
+cancellation conservatively fence the local client cache, including error paths. These
+requests never redirect or replay. A client timeout, cancellation, or disconnect after
+submission may leave an import running; inspect task status before deciding what to do next.
