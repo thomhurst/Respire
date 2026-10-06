@@ -55,6 +55,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Verify compiled package local initialization policy
+        # BuildProjectsModule builds ../Respire.slnx in Release before tests/packing.
+        # Verify excluded assemblies as well as all package framework outputs.
         shell: pwsh
         run: ./scripts/Verify-PackageLocalInitialization.ps1 -ReportPath artifacts/local-initialization-policy.json
 

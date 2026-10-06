@@ -10,6 +10,11 @@
     <ItemGroup>
         <ProjectReference Include="..\..\src\Respire\Respire.csproj" />
         <ProjectReference Include="..\..\src\Respire.Analyzers\Respire.Analyzers.csproj" />
+        <!-- Metadata inspection resolves every package, even in a standalone harness build.
+             Restore those inputs without building or referencing their assemblies. -->
+        <_StackAllocationRestorePackage Include="$(RespirePackageProjects)" Exclude="Respire" />
+        <ProjectReference Include="@(_StackAllocationRestorePackage->'../../src/%(Identity)/%(Identity).csproj')"
+                          ReferenceOutputAssembly="false" BuildReference="false" />
     </ItemGroup>
 
     <ItemGroup>

@@ -2,6 +2,8 @@ name: Package local initialization benchmarks
 
 on:
   pull_request:
+    # This audit isolates the attribute on each pinned PR head. Decoder/writer
+    # changes have their own workflows; they are not attributed to this policy.
     paths:
       - 'Directory.Build.props'
       - 'src/Shared/SkipLocalsInit.cs'
@@ -9,6 +11,8 @@ on:
       - 'benchmarks/Respire.Benchmarks/ProtocolBenchmarks.cs'
       - '.github/workflows/benchmark-package-local-initialization.yml'
       - 'scripts/Check-LocalInitializationBenchmarks.py'
+      - 'scripts/Derive-LocalInitializationSources.py'
+      - 'scripts/tests/test_local_initialization_sources.py'
 
 permissions:
   contents: read
@@ -45,43 +49,12 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           path: candidate
           persist-credentials: false
+      - name: Verify source derivation controls
+        run: python3 -m unittest discover -s candidate/scripts/tests -p 'test_local_initialization_sources.py' -v
       - name: Derive the attribute-only comparison and record exact sources
-        shell: python
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          import hashlib
-          import json
-          import os
-          import subprocess
-          from pathlib import Path
-          head = os.environ['HEAD_SHA']
-          for source in ('baseline', 'candidate'):
-              assert subprocess.check_output(['git', '-C', source, 'rev-parse', 'HEAD'], text=True).strip() == head
-              assert not subprocess.check_output(['git', '-C', source, 'status', '--porcelain']).strip()
-          module = 'src/Shared/SkipLocalsInit.cs'
-          decoder = 'src/Respire/Internal/Utf8String.cs'
-          fixture = 'benchmarks/Respire.Benchmarks/ProtocolBenchmarks.cs'
-          assert Path('candidate', module).read_text().strip() == 'using System.Runtime.CompilerServices;\n\n[module: SkipLocalsInit]'
-          Path('baseline', module).write_text('// Bracketing control: retain implicit local initialization.\n')
-          text = Path('candidate', fixture).read_text()
-          job = '[SimpleJob(warmupCount: 3, iterationCount: 10)]'
-          assert text.count(job) == 1, 'Review fixture jobs before modifying the comparison'
-          for source in ('baseline', 'candidate'):
-              Path(source, fixture).write_text(text.replace(job, ''))
-          tracked = subprocess.check_output(['git', '-C', 'candidate', 'ls-files', '-z'], text=True).split('\0')
-          differences = [path for path in tracked if path and Path('candidate', path).is_file()
-                         and Path('baseline', path).read_bytes() != Path('candidate', path).read_bytes()]
-          assert differences == [module], differences
-          manifest = {'head_sha': head, 'only_source_difference': module, 'sources': {}}
-          for source in ('baseline', 'candidate'):
-              patch = subprocess.check_output(['git', '-C', source, 'diff', '--binary'])
-              Path(f'{source}.patch').write_bytes(patch)
-              manifest['sources'][source] = {
-                  'patch_sha256': hashlib.sha256(patch).hexdigest(),
-                  'files': {path: hashlib.sha256(Path(source, path).read_bytes()).hexdigest()
-                            for path in (module, decoder, fixture)}}
-          Path('source-manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+        run: python3 candidate/scripts/Derive-LocalInitializationSources.py "$HEAD_SHA"
       - name: Measure ten operations with bracketing controls
         shell: bash
         env:
