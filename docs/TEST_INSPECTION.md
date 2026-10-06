@@ -27,29 +27,38 @@ host adds `TestInspectionSourceArchitectureTests`, reading embedded production
 source with the net8.0 and net10.0 preprocessor symbols:
 
 - `TestInspectionOwnerSurface.txt` is an explicitly reviewed inventory of directly
-  declared public, internal, and protected member headers on the four owners. A new
-  accessor or overload fails the inventory comparison regardless of its name.
+  declared public, internal, protected, and explicit interface members on the four
+  owners. A new accessor or overload fails the inventory comparison regardless of
+  its name.
   Existing operational members remain permitted. When adding or changing an
   operational declaration, review and update its inventory entry deliberately;
   do not accept a new test-only accessor into that inventory. Put inspection state
-  in the designated nested view instead. Implementation bodies, initializers, and
-  private-only helpers are not inventoried.
+  in the designated nested view instead. Keys contain the owner, member kind, name,
+  generic arity, parameter types and passing modifiers, and result or value type.
+  Explicit interface names and nested-type primary constructor parameter types are
+  included. Bodies, accessor style, initializers, parameter names, attributes,
+  generic constraints, and private-only helpers are not inventoried. Known legacy
+  test hooks are marked explicitly; their presence is not precedent for new hooks.
 - `InspectForTests` is a reserved factory name throughout production source. Its
   identifier references, including direct calls, conditional calls, and method
   groups, are forbidden there. Declarations and deliberate `nameof` metadata
-  references remain permitted. Friend-test source is outside the production
-  resource set and may call the factories. The rule uses this exact reserved name,
+  references remain permitted. An ordinary escaped `@nameof(...)` call is not
+  metadata and remains subject to the guard. Friend-test source is outside the
+  production resource set and may call the factories. The rule uses this exact reserved name,
   not guesses about names that sound like testing or inspection.
 
-Positive controls cover a renamed accessor, a new operational overload, production
-calls, and a method group. Negative controls cover reviewed operations, private
-implementation changes, another type with the same simple owner name, friend-test
-consumption, metadata references, comments, and string literals.
+Positive controls cover a renamed accessor, a new operational overload, explicit
+interface methods/properties/indexers/events, production calls, a method group,
+and an escaped `@nameof` helper. Negative controls cover reviewed operations, body
+and accessor style changes, parameter renames, attributes, constraints, private
+implementation changes, another type with the same simple owner name, metadata
+references, comments, and string literals. A non-empty resource-set check verifies
+that friend-test source is excluded; missing resources report their names.
 
 These are architecture checks, not a lifetime or ownership analysis. They cannot
 detect repurposing an existing inventoried member, reflection-based state access,
 or code hidden behind other preprocessor configurations. Nested implementation
-member bodies are not part of the owner-header inventory. Returned references and
+member bodies are not part of the owner inventory. Returned references and
 copies still require the boundaries in the consumer table above. Update that table
 when adding consumers or inspection members; passing a guard does not establish
 quiescence, source lifetime, or ownership.

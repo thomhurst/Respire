@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -16,14 +15,69 @@ public class TestInspectionSourceArchitectureTests
         "Respire.ClientSideCacheCoordinator", "Respire.RespireTransactionBase"];
 
     [Test]
+    public async Task InventoryIncludesExplicitInterfaceMembers()
+    {
+        const string source = """
+            namespace Respire.Networking;
+            partial class RespireConnection : IInspection
+            {
+                int IInspection.ReadSlots() => 42;
+                int IInspection.Slots => 42;
+                int IInspection.this[int index] => 42;
+                event System.Action IInspection.Changed { add { } remove { } }
+            }
+            """;
+        await Assert.That(FindOwnerSurface(Parse(source, false))).IsEquivalentTo([
+            "Respire.Networking.RespireConnection | method IInspection.ReadSlots() : int",
+            "Respire.Networking.RespireConnection | property IInspection.Slots : int",
+            "Respire.Networking.RespireConnection | indexer IInspection.this(int) : int",
+            "Respire.Networking.RespireConnection | event IInspection.Changed : System.Action"]);
+    }
+
+    [Test]
+    public async Task InventoryIgnoresBodyStyleParameterNamesAttributesAndConstraints()
+    {
+        const string original = """
+            namespace Respire.Networking;
+            partial class RespireConnection
+            {
+                internal int Slots => 42;
+                internal int Read<T>(int count) where T : class => count;
+            }
+            """;
+        const string changed = """
+            namespace Respire.Networking;
+            partial class RespireConnection
+            {
+                internal int Slots { get { return 43; } }
+                [System.Obsolete] internal int Read<T>(int renamed) where T : struct { return renamed; }
+            }
+            """;
+        await Assert.That(FindOwnerSurface(Parse(changed, false)))
+            .IsEquivalentTo(FindOwnerSurface(Parse(original, false)));
+    }
+
+    [Test]
+    public async Task EscapedNameofMethodDoesNotHideFactoryCalls()
+    {
+        const string source = """
+            class Example
+            {
+                static void @nameof(object value) { }
+                void Coordinate() { @nameof(connection.InspectForTests()); }
+            }
+            """;
+        await Assert.That(FindFactoryUses(Parse(source, false))).Count().IsEqualTo(1);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task OwnerSurfaceMatchesReviewedInventory(bool net10)
     {
         var actual = ReadLibrarySources().SelectMany(source => FindOwnerSurface(Parse(source.Text, net10)))
             .Order(StringComparer.Ordinal).ToArray();
-        using var stream = typeof(TestInspectionSourceArchitectureTests).Assembly
-            .GetManifestResourceStream("TestInspectionOwnerSurface.txt")!;
+        using var stream = OpenResource("TestInspectionOwnerSurface.txt");
         using var reader = new StreamReader(stream);
         var expected = (await reader.ReadToEndAsync()).Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .Select(line => line.Trim()).Where(line => !line.StartsWith('#')).ToArray();
@@ -38,7 +92,7 @@ public class TestInspectionSourceArchitectureTests
     [Arguments(true)]
     public async Task ProductionSourceDoesNotUseInspectionFactories(bool net10)
     {
-        var violations = ReadLibrarySources().SelectMany(source => FindFactoryUses(Parse(source.Text, net10), false)
+        var violations = ReadLibrarySources().SelectMany(source => FindFactoryUses(Parse(source.Text, net10))
             .Select(use => $"{source.Path}: {use}")).ToArray();
         await Assert.That(violations).IsEmpty();
     }
@@ -60,8 +114,8 @@ public class TestInspectionSourceArchitectureTests
             .Replace("internal void Send(int count) { }", "internal void Send(int count) { } internal void Send(string text) { }");
         var added = FindOwnerSurface(Parse(changed, false)).Except(reviewed).ToArray();
         await Assert.That(added).IsEquivalentTo([
-            "Respire.Networking.RespireConnection | internal int BorrowedSlots;",
-            "Respire.Networking.RespireConnection | internal void Send(string text)"]);
+            "Respire.Networking.RespireConnection | property BorrowedSlots : int",
+            "Respire.Networking.RespireConnection | method Send(string) : void"]);
         await Assert.That(FindOwnerSurface(Parse(original.Replace("42", "43"), false)))
             .IsEquivalentTo(reviewed);
         await Assert.That(FindOwnerSurface(Parse(original.Replace("Respire.Networking", "Respire . @Networking"), false)))
@@ -71,7 +125,7 @@ public class TestInspectionSourceArchitectureTests
     }
 
     [Test]
-    public async Task FactoryGuardDetectsProductionCallsAndMethodGroupsButPermitsFriendAndMetadataUses()
+    public async Task FactoryGuardDetectsProductionCallsAndMethodGroupsButPermitsMetadataUses()
     {
         const string source = """
             class Example
@@ -92,9 +146,8 @@ public class TestInspectionSourceArchitectureTests
                 }
             }
             """;
-        await Assert.That(FindFactoryUses(Parse(source, false), false)).Count().IsEqualTo(6);
-        await Assert.That(FindFactoryUses(Parse(source, false), true)).IsEmpty();
-        await Assert.That(FindFactoryUses(Parse("class Example { void Run() { connection.Send(); var name = nameof(connection.InspectForTests); } }", false), false))
+        await Assert.That(FindFactoryUses(Parse(source, false))).Count().IsEqualTo(6);
+        await Assert.That(FindFactoryUses(Parse("class Example { void Run() { connection.Send(); var name = nameof(connection.InspectForTests); } }", false)))
             .IsEmpty();
     }
 
@@ -118,10 +171,35 @@ public class TestInspectionSourceArchitectureTests
             """;
         var root = Parse(source, net10);
         await Assert.That(FindOwnerSurface(root)).IsEquivalentTo([
-            net10 ? "Respire.Networking.RespireConnection | internal int BorrowedSlots;"
-                : "Respire.Networking.RespireConnection | internal string AlternateSlots;"]);
-        await Assert.That(FindFactoryUses(root, false)).Count().IsEqualTo(1);
+            net10 ? "Respire.Networking.RespireConnection | property BorrowedSlots : int"
+                : "Respire.Networking.RespireConnection | property AlternateSlots : string"]);
+        await Assert.That(FindFactoryUses(root)).Count().IsEqualTo(1);
     }
+
+    [Test]
+    public async Task EmbeddedProductionSourcesExcludeFriendTestSource()
+    {
+        var sources = ReadLibrarySources().ToArray();
+        await Assert.That(sources).IsNotEmpty();
+        await Assert.That(sources.Any(source => source.Path.Split('/')
+            .Any(segment => segment.Equals("tests", StringComparison.OrdinalIgnoreCase)))).IsFalse();
+        await Assert.That(sources.Any(source => source.Path.EndsWith("/RespireConnection.TestInspection.cs", StringComparison.Ordinal))).IsTrue();
+    }
+
+    [Test]
+    public async Task MissingResourceReportsItsName()
+    {
+        const string missing = "MissingTestInspectionOwnerSurface.txt";
+        InvalidOperationException? failure = null;
+        try { using var stream = OpenResource(missing); }
+        catch (InvalidOperationException error) { failure = error; }
+        await Assert.That(failure).IsNotNull();
+        await Assert.That(failure!.Message).IsEqualTo("Missing embedded resource: " + missing);
+    }
+
+    private static Stream OpenResource(string resource)
+        => typeof(TestInspectionSourceArchitectureTests).Assembly.GetManifestResourceStream(resource)
+            ?? throw new InvalidOperationException("Missing embedded resource: " + resource);
 
     private static IEnumerable<(string Path, string Text)> ReadLibrarySources()
     {
@@ -130,7 +208,7 @@ public class TestInspectionSourceArchitectureTests
         {
             var path = resource.Replace('\\', '/');
             if (!path.StartsWith("LibrarySource/", StringComparison.Ordinal)) continue;
-            using var stream = assembly.GetManifestResourceStream(resource)!;
+            using var stream = OpenResource(resource);
             using var reader = new StreamReader(stream);
             yield return (path, reader.ReadToEnd());
         }
@@ -159,37 +237,90 @@ public class TestInspectionSourceArchitectureTests
             if (!Owners.Contains(name)) continue;
             foreach (var member in owner.Members)
             {
-                // Default-private implementation and private-only declarations cannot expose a friend-test accessor.
+                // Explicit implementations remain callable through an interface, despite lacking accessibility modifiers.
                 var modifiers = member.Modifiers;
                 if (!modifiers.Any(SyntaxKind.PublicKeyword) && !modifiers.Any(SyntaxKind.InternalKeyword)
-                    && !modifiers.Any(SyntaxKind.ProtectedKeyword)) continue;
-                var header = member;
-                if (header is TypeDeclarationSyntax type) header = type.WithMembers(default);
-                if (header is EnumDeclarationSyntax enumeration) header = enumeration.WithMembers(default);
-                var signature = new HeaderRewriter().Visit(header)!.WithoutTrivia().NormalizeWhitespace().ToFullString();
-                members.Add(name + " | " + Regex.Replace(signature, @"\s+", " "));
+                    && !modifiers.Any(SyntaxKind.ProtectedKeyword) && ExplicitInterface(member) is null) continue;
+                members.AddRange(MemberKeys(member).Select(key => name + " | " + key));
             }
         }
         return members.ToArray();
     }
 
-    private static string[] FindFactoryUses(SyntaxNode root, bool friendTestSource)
+    private static string[] FindFactoryUses(SyntaxNode root)
     {
-        if (friendTestSource) return [];
         return root.DescendantNodes().OfType<SimpleNameSyntax>()
             .Where(name => name.Identifier.ValueText == FactoryName && !name.Ancestors()
                 .OfType<InvocationExpressionSyntax>().Any(call => call.Expression is IdentifierNameSyntax
-                    { Identifier.ValueText: "nameof" }))
+                    { Identifier.Text: "nameof" }))
             .Select(name => $"line {name.GetLocation().GetLineSpan().StartLinePosition.Line + 1}: {name.Parent}")
             .ToArray();
     }
 
-    private sealed class HeaderRewriter : CSharpSyntaxRewriter
+    private static ExplicitInterfaceSpecifierSyntax? ExplicitInterface(MemberDeclarationSyntax member)
+        => member switch
+        {
+            MethodDeclarationSyntax method => method.ExplicitInterfaceSpecifier,
+            PropertyDeclarationSyntax property => property.ExplicitInterfaceSpecifier,
+            IndexerDeclarationSyntax indexer => indexer.ExplicitInterfaceSpecifier,
+            EventDeclarationSyntax @event => @event.ExplicitInterfaceSpecifier,
+            _ => null
+        };
+
+    private static IEnumerable<string> MemberKeys(MemberDeclarationSyntax member)
     {
-        public override SyntaxTrivia VisitTrivia(SyntaxTrivia trivia) => default;
-        public override SyntaxNode? VisitBlock(BlockSyntax node) => null;
-        public override SyntaxNode? VisitArrowExpressionClause(ArrowExpressionClauseSyntax node) => null;
-        public override SyntaxNode? VisitEqualsValueClause(EqualsValueClauseSyntax node) => null;
-        public override SyntaxNode? VisitConstructorInitializer(ConstructorInitializerSyntax node) => null;
+        var prefix = ExplicitInterface(member) is { } specifier ? TypeText(specifier.Name) + "." : "";
+        switch (member)
+        {
+            case MethodDeclarationSyntax method:
+                yield return $"method {prefix}{method.Identifier.ValueText}{Arity(method.TypeParameterList)}({Parameters(method.ParameterList)}) : {TypeText(method.ReturnType)}";
+                break;
+            case ConstructorDeclarationSyntax constructor:
+                yield return $"constructor {constructor.Identifier.ValueText}({Parameters(constructor.ParameterList)})";
+                break;
+            case PropertyDeclarationSyntax property:
+                yield return $"property {prefix}{property.Identifier.ValueText} : {TypeText(property.Type)}";
+                break;
+            case IndexerDeclarationSyntax indexer:
+                yield return $"indexer {prefix}this({Parameters(indexer.ParameterList)}) : {TypeText(indexer.Type)}";
+                break;
+            case EventDeclarationSyntax @event:
+                yield return $"event {prefix}{@event.Identifier.ValueText} : {TypeText(@event.Type)}";
+                break;
+            case BaseFieldDeclarationSyntax field:
+                foreach (var variable in field.Declaration.Variables)
+                    yield return $"{(field is EventFieldDeclarationSyntax ? "event" : "field")} {variable.Identifier.ValueText} : {TypeText(field.Declaration.Type)}";
+                break;
+            case TypeDeclarationSyntax type:
+                var kind = type.Keyword.ValueText;
+                if (type is RecordDeclarationSyntax record)
+                    kind = record.ClassOrStructKeyword.IsKind(SyntaxKind.StructKeyword) ? "record struct" : "record class";
+                yield return $"{kind} {type.Identifier.ValueText}{Arity(type.TypeParameterList)}({Parameters(type.ParameterList)})";
+                break;
+            case EnumDeclarationSyntax enumeration:
+                yield return $"enum {enumeration.Identifier.ValueText} : {(enumeration.BaseList is { } bases ? TypeText(bases.Types.Single().Type) : "int")}";
+                break;
+            case DelegateDeclarationSyntax @delegate:
+                yield return $"delegate {@delegate.Identifier.ValueText}{Arity(@delegate.TypeParameterList)}({Parameters(@delegate.ParameterList)}) : {TypeText(@delegate.ReturnType)}";
+                break;
+            case OperatorDeclarationSyntax @operator:
+                yield return $"operator {@operator.OperatorToken.ValueText}({Parameters(@operator.ParameterList)}) : {TypeText(@operator.ReturnType)}";
+                break;
+            case ConversionOperatorDeclarationSyntax conversion:
+                yield return $"conversion {conversion.ImplicitOrExplicitKeyword.ValueText}({Parameters(conversion.ParameterList)}) : {TypeText(conversion.Type)}";
+                break;
+            default:
+                throw new InvalidOperationException("Uninventoried member kind: " + member.Kind());
+        }
     }
+
+    private static string Arity(TypeParameterListSyntax? parameters)
+        => parameters is null ? "" : "`" + parameters.Parameters.Count;
+
+    private static string Parameters(BaseParameterListSyntax? list)
+        => list is null ? "" : string.Join(", ", list.Parameters.Select(parameter =>
+            string.Concat(parameter.Modifiers.Select(modifier => modifier.ValueText + " ")) + TypeText(parameter.Type!)));
+
+    private static string TypeText(SyntaxNode type)
+        => type.ReplaceTrivia(type.DescendantTrivia(), (_, _) => default).NormalizeWhitespace().ToFullString();
 }
