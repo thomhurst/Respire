@@ -7,24 +7,11 @@ namespace Respire.Testing.Containers;
 
 internal static class ContainerPortCollision
 {
-    internal static bool IsMatch(Exception error, int[] selectedPorts, bool randomHostPort = false)
+    /// <summary>Recognizes a structured Docker bind collision for explicitly selected host ports.</summary>
+    internal static bool IsMatch(Exception error, int[] selectedPorts)
     {
-        // Docker has no typed port-conflict subtype. Require its structured API response,
-        // and a known address-in-use bind failure. Most formats also name the selected port.
-        if (error is not DockerApiException { StatusCode: HttpStatusCode.InternalServerError, ResponseBody: { } body })
-            return false;
-        string? message;
-        try
-        {
-            using var response = JsonDocument.Parse(body);
-            if (response.RootElement.ValueKind != JsonValueKind.Object
-                || !response.RootElement.TryGetProperty("message", out var value)
-                || value.ValueKind != JsonValueKind.String) return false;
-            message = value.GetString();
-        }
-        catch (JsonException) { return false; }
+        var message = DockerMessage(error);
         if (message is null) return false;
-        if (randomHostPort) return IsRandomHostPortCollision(message, selectedPorts);
         // Recent Linux engines omit the host address in this libnetwork TCP bind error.
         // The fixture calls this only for StartAsync failures with explicit port mappings;
         // retain the complete networking prefix and TCP bind suffix, not a generic match.
@@ -51,6 +38,25 @@ internal static class ContainerPortCollision
                 return true;
         }
         return false;
+    }
+
+    /// <summary>Recognizes the standalone TCP bind collision with an empty random host port and a selected container port.</summary>
+    internal static bool IsStandaloneBindCollision(Exception error, int[] containerPorts)
+        => DockerMessage(error) is { } message && IsRandomHostPortCollision(message, containerPorts);
+
+    private static string? DockerMessage(Exception error)
+    {
+        // Docker has no typed port-conflict subtype. Both matchers require the structured HTTP 500 response.
+        if (error is not DockerApiException { StatusCode: HttpStatusCode.InternalServerError, ResponseBody: { } body })
+            return null;
+        try
+        {
+            using var response = JsonDocument.Parse(body);
+            return response.RootElement.ValueKind == JsonValueKind.Object
+                && response.RootElement.TryGetProperty("message", out var value)
+                && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+        }
+        catch (JsonException) { return null; }
     }
 
     private static bool IsRandomHostPortCollision(string message, int[] containerPorts)

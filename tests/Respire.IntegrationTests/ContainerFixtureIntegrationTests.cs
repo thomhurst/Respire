@@ -227,7 +227,7 @@ public class ContainerFixtureIntegrationTests
             container.Created += (_, _) => createdIds.Add(container.Id);
             return container;
         });
-        attempts.Should().BeInRange(2, 3);
+        attempts.Should().Be(2);
         createdIds.Should().HaveCount(attempts - 1);
         await using (var client = await RespireClient.ConnectAsync(fixture.CreateOptions()))
         {
