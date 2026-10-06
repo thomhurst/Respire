@@ -487,6 +487,39 @@ public class ConnectionMetricTests
     }
 
     [Test]
+    public async Task MovingDoesNotCountSocketsClosedBeforePublication()
+    {
+        using var configuration = new MetricConfigurationScope();
+        await using var source = MaintenanceServer();
+        await using var target = MaintenanceServer();
+        using var capture = new Capture(source.Port);
+        await using var client = await RespireClient.ConnectAsync(Options(source) with
+        { Protocol = RespProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled });
+        var old = client.Core.Multiplexer.GetConnection();
+        var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var published = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.Core.Multiplexer.MovingHandoffPublished += () => published.TrySetResult();
+        target.SuppressReply = command =>
+        {
+            if (command != "HELLO 3") return false;
+            handshake.TrySetResult();
+            return true;
+        };
+        await source.SendRawAsync(Encoding.UTF8.GetBytes($">4\r\n+MOVING\r\n:1\r\n:5\r\n+127.0.0.1:{target.Port}\r\n"));
+        await handshake.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        // The source has no second accepted socket: reconnect cannot replace this slot.
+        // Finish closing it while the MOVING target is still in its handshake.
+        source.CloseConnection(source.ReceivedConnectionIds[0]);
+        await WaitUntil(() => !old.IsConnected);
+        await old.DisposeAsync();
+        await target.SendRawAsync("%1\r\n+proto\r\n:3\r\n"u8.ToArray());
+        await published.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(capture.Events.Any(item => item.Name == "redis.client.connection.handoff")).IsFalse();
+        await client.PingAsync();
+        await Assert.That(target.ReceivedCommands.Contains("PING")).IsTrue();
+    }
+
+    [Test]
     [Arguments(false, false)]
     [Arguments(true, false)]
     [Arguments(true, true)]

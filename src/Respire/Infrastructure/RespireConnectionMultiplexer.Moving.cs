@@ -205,6 +205,7 @@ internal sealed partial class RespireConnectionMultiplexer
         // The drain below then has no time remaining and aborts the old sockets at once.
         // (Contrast the setup-failure path above, which has nothing to publish.)
         var old = new RespireConnection?[_connections.Length];
+        List<RespireConnection>? handedOff = null;
         var published = false;
         int? cacheEvictions = null;
         try
@@ -239,6 +240,10 @@ internal sealed partial class RespireConnectionMultiplexer
                         replacements[i].MovingPublicationGeneration = generation;
                         replacements[i].Multiplexer = this;
                         old[i] = Interlocked.Exchange(ref _connections[i], replacements[i]);
+                        // Snapshot liveness at publication. Retirement may close a live idle
+                        // socket before metrics run, but already-dead slots are not handoffs.
+                        if (old[i] is { IsConnected: true } live)
+                            (handedOff ??= []).Add(live);
                         // Failure history belongs to the previous endpoint's sockets.
                         if (_reconnectAttempts is not null) _reconnectAttempts[i] = 0;
                     }
@@ -272,7 +277,8 @@ internal sealed partial class RespireConnectionMultiplexer
             _moving.BeginDrain();
             _ = DrainMovedConnectionsInBackgroundAsync(old, drains, request.Deadline);
         }
-        foreach (var connection in retiredConnections) connection.RecordConnectionHandoff();
+        if (handedOff is not null)
+            foreach (var connection in handedOff) connection.RecordConnectionHandoff();
 
         // The handoff has published, so neither the second cache fence nor a metrics observer
         // can fail it. The fence's metrics reach MeterListener callbacks synchronously.

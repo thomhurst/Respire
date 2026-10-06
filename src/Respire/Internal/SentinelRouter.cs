@@ -631,8 +631,11 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
 
         public void ConnectionClosed(RespireConnection connection, bool unexpected)
         {
-            lock (_connectionsGate) _connections.Remove(connection);
-            if (unexpected) _owner.Invalidate(this, connection.CloseError);
+            bool validated;
+            lock (_connectionsGate) validated = _connections.Remove(connection);
+            // Failed or canceled handshakes never joined this generation. Their receive
+            // loops can observe closure before disposal starts, without a primary failure.
+            if (unexpected && validated) _owner.Invalidate(this, connection.CloseError);
         }
 
         internal Task StopConnections()
