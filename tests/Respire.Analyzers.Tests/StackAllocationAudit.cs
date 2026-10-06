@@ -9,6 +9,26 @@ namespace Respire.Analyzers.Tests;
 /// <summary>Matches reviewed source; this is not a data-flow or memory-safety proof.</summary>
 internal static class StackAllocationAudit
 {
+    internal static string[] FindUnsafeSurface(string path, string source, TestInspectionSource.SourceConfiguration configuration)
+    {
+        var root = TestInspectionSource.Parse(source, configuration);
+        var owners = root.DescendantTokens().Where(token => token.IsKind(SyntaxKind.UnsafeKeyword))
+            .Select(token => token.Parent!.AncestorsAndSelf().OfType<MemberDeclarationSyntax>().FirstOrDefault() ?? root)
+            .Distinct().ToArray();
+        foreach (var pointer in root.DescendantNodes().Where(node => node is PointerTypeSyntax or FunctionPointerTypeSyntax))
+        {
+            if (!pointer.AncestorsAndSelf().Any(owners.Contains))
+                throw new InvalidOperationException("Pointer syntax outside a reviewed unsafe owner: " + path);
+        }
+        return owners.Select(owner => path + "|" + Fingerprint(owner)).ToArray();
+    }
+
+    private static string Fingerprint(SyntaxNode member)
+    {
+        var tokens = string.Join("\n", member.DescendantTokens().Select(token => $"{token.RawKind}:{token.Text}"));
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(tokens)));
+    }
+
     internal sealed record Site(string Framework, string Path, int Ordinal, string Fingerprint, string Description)
     {
         internal string Key => $"{Framework}|{Path}|{Ordinal}|{Fingerprint}";
@@ -32,8 +52,7 @@ internal static class StackAllocationAudit
                 // Fingerprint the whole enclosing member, including the consumers and branches,
                 // so replacing a site or changing its read boundary invalidates the review.
                 var member = node.Ancestors().OfType<MemberDeclarationSyntax>().FirstOrDefault() ?? root;
-                var tokens = string.Join("\n", member.DescendantTokens().Select(token => $"{token.RawKind}:{token.Text}"));
-                var fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(tokens)));
+                var fingerprint = Fingerprint(member);
                 var variable = node.Ancestors().OfType<VariableDeclaratorSyntax>().FirstOrDefault()?.Identifier.ValueText ?? "expression";
                 var method = member is MethodDeclarationSyntax declaration ? declaration.Identifier.ValueText : member.Kind().ToString();
                 return new Site(configuration.Framework, path, index + 1, fingerprint, $"{method}/{variable}: {node}");

@@ -10,7 +10,7 @@ using ModularPipelines.Modules;
 
 namespace Respire.Pipeline.Modules;
 
-[DependsOn<BuildProjectsModule>]
+[DependsOn<VerifyPackageLocalInitializationModule>]
 public class RunUnitTestsModule : Module<CommandResult[]>
 {
     // The test verifies that this inactivity threshold leaves time before the module deadline.

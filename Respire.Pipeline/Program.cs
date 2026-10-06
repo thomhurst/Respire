@@ -48,6 +48,7 @@ public class Program
             .AddModule<RunUnitTestsModule>()
             .AddModule<NugetVersionGeneratorModule>()
             .AddModule<BuildProjectsModule>()
+            .AddModule<VerifyPackageLocalInitializationModule>()
             .AddModule<PackProjectsModule>()
             .AddModule<PackageFilesRemovalModule>()
             .AddModule<PackagePathsParserModule>()

@@ -54,13 +54,10 @@ jobs:
           PUBLISH_PACKAGES: ${{ inputs.publish-packages }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Verify compiled package local initialization policy
-        # BuildProjectsModule builds ../Respire.slnx in Release before tests/packing.
-        # Verify excluded assemblies as well as all package framework outputs.
-        shell: pwsh
-        run: ./scripts/Verify-PackageLocalInitialization.ps1 -ReportPath artifacts/local-initialization-policy.json
-
       - name: Upload compiled initialization policy
+        # Verification runs inside the pipeline after the Release solution build,
+        # before tests, packing, NuGet upload, and GitHub release creation.
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: package-local-initialization-policy

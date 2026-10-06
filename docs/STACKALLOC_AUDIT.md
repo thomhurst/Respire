@@ -10,6 +10,23 @@ Each table row identifies one active explicit or implicit `stackalloc`, in sourc
 
 **Source matching cannot prove data-flow safety.** The guard detects changed source and missing, duplicate, or stale review entries. It cannot determine whether prose is correct, whether a called helper's contract has changed, or whether externally supplied memory is mutated concurrently in violation of its lifetime contract. Helper changes still require human review. This document records the checked contracts, not a claim that matching hashes prove memory safety.
 
+The module policy also removes implicit zeroing from ordinary locals outside this table. These rows do not audit struct, `out`, `fixed`, or inline-array locals, or `Unsafe.SkipInit` usage. C# definite-assignment rules remain in force, but they are not a proof for unsafe or indirectly accessed storage. Review those lifetimes and initialization contracts separately when changing production code; the full test suites and compiled-output checks remain required.
+
+`AllowUnsafeBlocks` is required to compile the module attribute. The source guard separately inventories active unsafe owners and rejects any added or changed owner, stale approval, or pointer syntax outside an unsafe owner. It scans repository and imported package sources under the same framework and Debug/Release configurations as the stack audit. Comments, strings, and inactive branches do not add an owner. Approval fingerprints cover the complete enclosing member, including nested pointer consumers; they do not prove memory safety. The existing approved owners are:
+
+- DEFLATE compression initializes `bytesWritten` before every return and pins the destination until both streams are disposed. Capacity checks prevent publishing overflowed output.
+<!-- REVIEWED_UNSAFE: src/Respire/Compression/DeflateValueCodec.cs|32C58C929A09F609B36A2B4DE68CF745F2AF2B5883B6AF22D9EC65BBB8933A91 -->
+- DEFLATE decompression pins the input until its stream is disposed, fills the destination with `ReadExactly`, and rejects truncated or excess decoded output before returning.
+<!-- REVIEWED_UNSAFE: src/Respire/Compression/DeflateValueCodec.cs|9FD3634A155ED4E1CBF8F49F15FFA0A514AAC828CC49C25272D1871BF14F559A -->
+- `BoundedWriteStream` borrows its pointer only inside the caller's fixed scope. Both write overloads compare against remaining capacity before delegating; they set overflow state instead of writing past capacity.
+<!-- REVIEWED_UNSAFE: src/Respire/Compression/DeflateValueCodec.cs|4A3FA157EC7A082DF0425BD47EC062ADF21EA8D09413584EBB072422E129F26D -->
+- The imported Polyfill string extension block initializes its result strings before pinning and copies through bounded spans. The result remains pinned through all writes; failed length calculations or copies throw before returning a partial result. This approval covers the enclosing extension block, including both join overloads.
+<!-- REVIEWED_UNSAFE: nuget/polyfill/11.4.3/contentFiles/cs/net8.0/StringPolyfill.cs|67DB89597D5A85058BED4A497A9522FFCFF24A8658AF8B6FF971C0B7115C0000 -->
+- Zstandard frame validation rejects missing magic before pinning, passes the exact payload length to the dependency, and releases the pin before bounded decoding. The dependency's frame-size result must equal the complete payload length.
+<!-- REVIEWED_UNSAFE: src/Respire.Compression.Zstd/ZstdValueCodec.cs|F44F497085C7D9A0A08402189CB771EB870CDD6A913B0314BC8158CF0AA585E8 -->
+
+The compiled-policy verifier runs as a required pipeline module after the Release solution build and before tests, packing, NuGet publication, or GitHub release creation. A nonzero verifier exit fails the module and prevents those dependent operations. CI uploads its report even when a later step fails.
+
 ## Individual sites
 
 All ranges below are half-open. `Utf8Formatter.TryFormat` initializes the reported prefix and reports zero bytes when the destination is too small; its callers never consume the unreported suffix. The fixed buffers cover default invariant formatting: signed/unsigned 64-bit integers need at most 20 bytes, `float` at most 16, and `double` fewer than 32. Immutable strings use the same `Encoding.UTF8` replacement fallback for sizing and writing. A returned pooled array is not read by a `finally` block.

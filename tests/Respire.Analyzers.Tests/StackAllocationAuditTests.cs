@@ -14,7 +14,12 @@ public class StackAllocationAuditTests
     public async Task EveryPackageSiteHasAnIndividualCurrentJustification()
     {
         using var reader = new StreamReader(OpenResource("StackAllocationAudit.md"));
-        var reviews = ReadReviews(await reader.ReadToEndAsync());
+        var audit = await reader.ReadToEndAsync();
+        var reviews = ReadReviews(audit);
+        var reviewedUnsafe = audit.Split('\n').Where(line => line.StartsWith("<!-- REVIEWED_UNSAFE: ", StringComparison.Ordinal))
+            .Select(line => line["<!-- REVIEWED_UNSAFE: ".Length..].Trim().Replace(" -->", "", StringComparison.Ordinal))
+            .ToHashSet(StringComparer.Ordinal);
+        var unsafeSurface = new HashSet<string>(StringComparer.Ordinal);
         await Assert.That(reviews).IsNotEmpty();
         var sources = ReadLibrarySources().Where(source => !source.Path.StartsWith("LibrarySource/Respire.Analyzers/", StringComparison.Ordinal)).ToArray();
         await Assert.That(sources).IsNotEmpty();
@@ -45,13 +50,54 @@ public class StackAllocationAuditTests
                 || source.Path.StartsWith("LibrarySource/Shared/", StringComparison.Ordinal)).ToArray();
             if (packageSources.Length == 0) throw new InvalidOperationException("No embedded source for package " + parts[0]);
             var configuration = new SourceConfiguration(parts[1], parts[2].Split(','));
-            return packageSources.SelectMany(source => FindSites("src/" + source.Path["LibrarySource/".Length..], source.Text, configuration))
+            Site[] Inspect(string path, string text)
+            {
+                unsafeSurface.UnionWith(FindUnsafeSurface(path, text, configuration));
+                return FindSites(path, text, configuration);
+            }
+            return packageSources.SelectMany(source => Inspect("src/" + source.Path["LibrarySource/".Length..], source.Text))
                 .Concat(importedSources.Where(source => source.Package == parts[0] && source.Framework == parts[1])
-                    .SelectMany(source => FindSites(source.Path, source.Text, configuration)));
+                    .SelectMany(source => Inspect(source.Path, source.Text)));
         }).DistinctBy(site => site.Key).ToArray();
         await Assert.That(sites).IsNotEmpty();
         var errors = Validate(sites, reviews);
         if (errors.Length != 0) throw new InvalidOperationException(string.Join('\n', errors));
+        if (!unsafeSurface.SetEquals(reviewedUnsafe))
+            throw new InvalidOperationException("Unsafe source requires explicit review:\n" + string.Join('\n', unsafeSurface.Except(reviewedUnsafe))
+                + "\nStale unsafe reviews:\n" + string.Join('\n', reviewedUnsafe.Except(unsafeSurface)));
+    }
+
+    [Test]
+    [Arguments("unsafe class Example { byte* pointer; }")]
+    [Arguments("class Example { unsafe void Read() { byte* pointer = null; } }")]
+    [Arguments("class Example { void Read() { unsafe { byte* pointer = null; } } }")]
+    [Arguments("unsafe class Example { delegate*<void> callback; }")]
+    public async Task NewUnsafeContextsRequireReview(string source)
+    {
+        var configuration = ReadSourceConfigurations().First();
+        var surface = FindUnsafeSurface("src/Example.cs", source, configuration);
+        await Assert.That(surface.Length).IsEqualTo(1);
+        await Assert.That(FindUnsafeSurface("src/Example.cs", source.Replace("null", "(byte*)1", StringComparison.Ordinal), configuration)
+            .SequenceEqual(surface)).IsEqualTo(!source.Contains("null", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public async Task PointerSyntaxCannotEscapeAnUnsafeOwner()
+    {
+        await Assert.That(() => FindUnsafeSurface("src/Example.cs", "class Example { byte* pointer; }", ReadSourceConfigurations().First()))
+            .Throws<InvalidOperationException>();
+    }
+
+    [Test]
+    public async Task InactiveUnsafeSyntaxCommentsAndStringsDoNotWidenPolicy()
+    {
+        const string source = """
+            class Example { string Text = "unsafe byte*"; /* unsafe byte* */ }
+            #if NEVER_DEFINED
+            unsafe class Inactive { byte* pointer; }
+            #endif
+            """;
+        await Assert.That(FindUnsafeSurface("src/Example.cs", source, ReadSourceConfigurations().First())).IsEmpty();
     }
 
     [Test]
