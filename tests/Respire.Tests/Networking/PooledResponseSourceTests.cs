@@ -13,7 +13,7 @@ public class PooledResponseSourceTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task ConversionPublishesOnTheCompletionOwnerWithoutAnotherDispatch(bool converterFails)
+    public async Task ConversionKeepsSuccessInlineAndDispatchesFailure(bool converterFails)
     {
         var source = new PendingResponsePool(1).Rent();
         var expectedError = new InvalidOperationException("converter failure");
@@ -42,10 +42,14 @@ public class PooledResponseSourceTests
         {
             var result = await observed.Task.WaitAsync(TimeSpan.FromSeconds(5));
             var owner = await finished.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            await Assert.That(result.Thread).IsEqualTo(owner);
-            if (converterFails) await Assert.That(ReferenceEquals(result.Error, expectedError)).IsTrue();
+            if (converterFails)
+            {
+                await Assert.That(result.Thread).IsNotEqualTo(owner);
+                await Assert.That(ReferenceEquals(result.Error, expectedError)).IsTrue();
+            }
             else
             {
+                await Assert.That(result.Thread).IsEqualTo(owner);
                 await Assert.That(result.Error).IsNull();
                 await Assert.That(result.Value).IsEqualTo(42L);
             }

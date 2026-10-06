@@ -17,8 +17,8 @@ internal sealed class PooledResponseSource<TState, TResult> : IValueTaskSource<T
     private const int MaxPoolSize = 4096;
     private static readonly ObjectPool<PooledResponseSource<TState, TResult>, PoolPolicy> Pool = new(MaxPoolSize);
 
-    // CompletionScheduler dispatches network replies; PendingResponse dispatches failures.
-    // Conversion can reuse that completion owner without another pool dispatch.
+    // Successful network replies can reuse the CompletionScheduler owner. Failures
+    // may originate in a caller's cancellation callback and require their own dispatch.
     private ManualResetValueTaskSourceCore<TResult> _core = new() { RunContinuationsAsynchronously = false };
     private readonly Action _complete;
     private ValueTask<RespValue> _responseTask;
@@ -28,9 +28,9 @@ internal sealed class PooledResponseSource<TState, TResult> : IValueTaskSource<T
 
     private PooledResponseSource() => _complete = Complete;
 
-    // Incomplete inputs must publish on an owner that can safely run caller code inline,
-    // outside receive-loop continuations and locks. Network replies use CompletionScheduler;
-    // failures use PendingResponse.DispatchException. Preserve this contract at new call sites.
+    // Incomplete inputs must publish successful replies on an owner that can safely run
+    // caller code inline, outside receive-loop continuations and locks (CompletionScheduler
+    // for network replies). Faults/cancellation may originate on any owner and are dispatched.
     public static ValueTask<TResult> Create(
         ValueTask<RespValue> responseTask,
         TState state,
@@ -102,6 +102,10 @@ internal sealed class PooledResponseSource<TState, TResult> : IValueTaskSource<T
 
         // Publishing can run the caller inline, returning this instance to the pool and
         // renting it again. Finish cleanup first and never catch a caller's exception here.
+        // Task.WaitAsync cancellation in cache/discovery wrappers can complete inline in
+        // CancellationTokenSource.Cancel, independently of PendingResponse.DispatchException.
+        // Set this on every completion: Reset preserves this property across pooled reuse.
+        _core.RunContinuationsAsynchronously = error is not null;
         if (error is null)
         {
             _core.SetResult(result);
