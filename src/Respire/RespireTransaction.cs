@@ -25,6 +25,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
     private readonly RespireClient _client;
     private readonly RespireHashImportSession? _importSession;
     private readonly RespireConnection? _watchConnection;
+    // Friend-test inspection of the pinned connection; ownership remains with the transaction.
     internal RespireConnection? WatchConnection => _watchConnection;
     private readonly WriteBuffer _buffer = new(1024);
     private readonly List<TxOp> _ops = [];

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Respire.Networking;
 
 namespace Respire.Internal;
@@ -44,6 +45,7 @@ internal struct CommandAcquisitionScope(
     internal readonly RespireTimeoutException CreateTimeout(string operation, ClientCore core,
         RespireConnection? pinnedConnection = null, Exception? cause = null)
     {
+        Debug.Assert(deadline.IsSet && timeout.HasValue);
         var diagnostics = core.Cluster is null && core.Sentinel is null
             ? core.Multiplexer.CaptureConnectionWait()
             : RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting);

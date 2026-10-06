@@ -11,6 +11,7 @@ internal sealed partial class ClientSideCacheCoordinator
     internal static long SharedReadRetirements => Interlocked.Read(ref _sharedReadRetirements);
 
     private readonly Lock _sharedReadLock = new();
+    // Friend tests hold this gate to control admission races; production uses the coordinator.
     internal Lock SharedReadGate => _sharedReadLock;
     private readonly Dictionary<ClientCacheCommandKey, SharedRead> _sharedReads = new();
     private readonly HashSet<SharedRead> _activeSharedReads = new();
