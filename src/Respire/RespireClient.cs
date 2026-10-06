@@ -1469,6 +1469,7 @@ public sealed partial class RespireClient : IRespireClient
     internal ClientCore Core => _core;
 
     internal string? KeyPrefix => _keyPrefix;
+    internal KeyPrefix? EncodedKeyPrefix => _encodedKeyPrefix;
     internal ReadOnlySpan<byte> KeyPrefixBytes => _encodedKeyPrefix?.Bytes;
 
     /// <summary>Shares routing and encoding, but snapshots prefixed binary keys as batch facets resolve them.</summary>

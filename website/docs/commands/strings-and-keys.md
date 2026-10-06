@@ -468,3 +468,92 @@ as validated scan progress. Authenticate them at the application boundary if the
 trust boundary, and enforce storage/request size limits. Tokens can be several kilobytes;
 the encoded ceiling is 6 MiB and fragmented slot layouts increase their size. Start a new scan
 with `Start` after completion.
+
+### Valkey 9.1 server cursors
+
+`Keys.ScanValkeyClusterPageAsync` explicitly uses Valkey 9.1+ `CLUSTERSCAN` in Cluster mode.
+It returns an owned `RespireValkeyClusterScanPage` containing an opaque string cursor and
+binary-safe `RespireKey` values. Start with `"0"` and pass each returned cursor unchanged:
+
+```csharp
+await using var cluster = await RespireClient.ConnectAsync(new RespireOptions
+{
+    UseCluster = true,
+    Endpoints = [new("localhost", 6379)],
+}, cancellationToken);
+string cursor = "0";
+do
+{
+    var page = await cluster.Keys.ScanValkeyClusterPageAsync(
+        cursor, match: "user:*", type: RespireKeyType.String, countHint: 250,
+        cancellationToken: cancellationToken);
+    foreach (RespireKey key in page.Keys)
+        Console.WriteLine(await cluster.GetStringAsync(key, cancellationToken));
+
+    cursor = page.Cursor; // Persist only after processing this page.
+}
+while (cursor != "0");
+```
+
+Only `"0"` means completion. Empty pages and duplicate keys are valid; make processing
+idempotent. `COUNT` controls server work, not page size. Keep the same cluster, database,
+prefix, `match`, `type`, and optional `slot` when resuming, including from another client.
+The server cursor does not bind these options for the client. A failed or cancelled call
+leaves the input string available for retry. Apply cancellation or an application deadline
+to bound scanning during topology changes.
+
+Valkey fingerprints server scan state. A changed fingerprint can restart the affected scan
+range, so duplicates can occur after server or topology changes. Migration redirects follow
+the current slot owner; this is not a database snapshot.
+
+The cursor contains routing information and is never key-prefixed. Requests use primaries
+regardless of `ReadFrom`, with ordinary `MOVED`/`ASK` handling. Optional `slot` restricts the
+scan to a physical slot from 0 through 16383. A prefixed view escapes its literal prefix
+in `MATCH`, filters returned physical keys, and removes that prefix. Pass returned keys
+directly back to the same view; converting arbitrary binary keys to strings can lose data.
+Page keys and cursor remain valid after the reply or client is disposed.
+
+When a string prefix ends with a high UTF-16 surrogate, string keys can join it
+to a leading low surrogate while binary keys use the prefix's replacement-byte
+encoding. This namespace has no single literal UTF-8 prefix. These pages omit the
+server `MATCH` filter and apply namespace and bytewise glob filtering locally to
+the logical suffix. `COUNT`, `TYPE`, `SLOT`, cursor routing, and cancellation retain
+their normal behavior; sparse filtered pages can be empty before completion.
+Returned keys retain the boundary information needed to round-trip even binary
+tails through a view with the same prefix, including on a new client.
+Their equality and hashing include the original namespace, exact UTF-16 boundary,
+and binary tail. Different low surrogates therefore remain distinct in a
+`HashSet<RespireKey>`, while repeated pages and snapshots retain equal identities.
+These boundary keys do not compare equal to ordinary replacement-byte suffixes.
+
+One page can also be queued with `batch.Keys.ScanValkeyClusterPage(...)` or
+`transaction.Keys.ScanValkeyClusterPage(...)`. Execute or commit before reading
+the pending result. The next page needs the preceding result's cursor, so a whole
+cursor walk cannot be queued in advance. Ordinary Cluster batch and transaction
+slot constraints apply, and results own their keys after completion.
+In a non-primary read view, a read-only batch containing CLUSTERSCAN still routes
+its scan group to a primary without flushing the shared client cache. A mixed
+write batch and a primary-view batch retain conservative cache invalidation.
+
+This explicit API retains unsupported-command and permission errors from older servers.
+It does not change `ScanClusterPageAsync`, its `RespireClusterScanCursor` checkpoints, or
+automatically convert between the two cursor formats. See Valkey's
+[CLUSTERSCAN reference](https://valkey.io/commands/clusterscan/) for server scan guarantees.
+
+#### Database ACLs
+
+Valkey 9.1 adds database ACL rules. For example, this rule limits an existing user's
+database access to databases 0 and 1 while retaining its other command and key rules:
+
+```text
+ACL SETUSER app-user resetdbs db=0,1
+```
+
+Apply matching ACLs on every cluster node. Nonzero cluster databases also require a server
+`cluster-databases` setting large enough to include the selected database. Set
+`RespireOptions.Database = 1` and the user's `Username`/`Password` when connecting;
+`CLUSTERSCAN` scans that selected database. Database access does not grant command or key
+permissions. A denied database selection can surface as a connection exception containing
+the server's `NOPERM` error; command permission failures retain their server error.
+Respire does not silently switch databases or broaden permissions.
+See the [Valkey 9.1 announcement](https://valkey.io/blog/valkey-9-1-delivers-improvements-in-security-performance-and-more/).

@@ -68,6 +68,12 @@ public partial interface IBatchKeyCommands
 
     /// <summary>Touches keys (updates access time); returns how many existed. Redis: TOUCH.</summary>
     RespirePending<long> Touch(params ReadOnlySpan<RespireKey> keys);
+
+    /// <summary>Queues one owned Valkey CLUSTERSCAN page. Requires a Cluster client.</summary>
+    /// <remarks>The cursor and SLOT are physical routing values. Resume only after executing this page.</remarks>
+    RespirePending<RespireValkeyClusterScanPage> ScanValkeyClusterPage(string cursor = "0",
+        string? match = null, RespireKeyType? type = null, int countHint = 250, int? slot = null)
+        => throw new NotSupportedException("This implementation does not support CLUSTERSCAN.");
 }
 
 internal sealed partial class BatchKeyCommands(IPendingSink sink) : IBatchKeyCommands
@@ -208,6 +214,14 @@ internal sealed partial class BatchKeyCommands(IPendingSink sink) : IBatchKeyCom
 
     public RespirePending<long> Touch(params ReadOnlySpan<RespireKey> keys)
         => IntegerKeys("TOUCH", Verbs.Touch, keys);
+
+    public RespirePending<RespireValkeyClusterScanPage> ScanValkeyClusterPage(string cursor = "0",
+        string? match = null, RespireKeyType? type = null, int countHint = 250, int? slot = null)
+    {
+        var command = KeyCommands.CreateValkeyClusterScanCommand(sink.Client, cursor, match, type, countHint, slot);
+        return sink.Add<KeyCommands.ValkeyClusterScanCommand, RespireValkeyClusterScanPage>("CLUSTERSCAN", command,
+            (client, reply) => ValkeyClusterScanParser.ParseWithPrefix(in reply, client.EncodedKeyPrefix, match));
+    }
 
     private RespirePending<long> IntegerKeys(string operation, Verb verb, ReadOnlySpan<RespireKey> keys)
     {

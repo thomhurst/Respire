@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Text;
 
 namespace Respire.Internal;
@@ -12,6 +13,8 @@ internal sealed class KeyPrefix
     private readonly int _binaryTagStart;
     private readonly int _fixedSlot;
     private readonly bool _endsWithHighSurrogate;
+    internal string? ScanOwnerPrefix { get; }
+    internal bool HasSurrogateBoundary => _endsWithHighSurrogate;
 
     internal KeyPrefix(string text)
     {
@@ -24,6 +27,49 @@ internal sealed class KeyPrefix
         _fixedSlot = close > 0 ? ClusterHash.GetSlot(text) : -1;
         // An empty first tag disables tag selection, including later tags in the suffix.
         if (close == 0) _tagStart = _binaryTagStart = HashTagsDisabled;
+    }
+
+    private KeyPrefix(string text, string scanOwnerPrefix) : this(text)
+        => ScanOwnerPrefix = scanOwnerPrefix;
+
+    /// <summary>Owns a scan suffix, including a scalar split across the string prefix boundary.</summary>
+    internal bool TryStripScanKey(ReadOnlySpan<byte> physical, out RespireKey key)
+    {
+        if (physical.StartsWith(Bytes))
+        {
+            key = new RespireKey(physical[Bytes.Length..].ToArray());
+            return true;
+        }
+        if (_endsWithHighSurrogate)
+        {
+            var boundary = Bytes.Length - 3;
+            if (physical.StartsWith(Bytes.AsSpan(0, boundary))
+                && Rune.DecodeFromUtf8(physical[boundary..], out var scalar, out var consumed) == OperationStatus.Done
+                && scalar.Value >= 0x10000
+                && (char)(0xD800 + ((scalar.Value - 0x10000) >> 10)) == Text[^1])
+            {
+                var low = (char)(0xDC00 + ((scalar.Value - 0x10000) & 0x3FF));
+                // Keep the low code unit separate from arbitrary binary tails. The marker owns
+                // only text and bytes, never a client, reply buffer, or connection.
+                key = new RespireKey(new KeyPrefix(low.ToString(), Text), null,
+                    physical[(boundary + consumed)..].ToArray());
+                return true;
+            }
+        }
+        key = default;
+        return false;
+    }
+
+    /// <summary>Rejoins an owned scan suffix only when used with its original namespace.</summary>
+    internal bool TryComposeScanKey(KeyPrefix prefix, ReadOnlyMemory<byte> bytes, bool snapshot, out RespireKey key)
+    {
+        if (ScanOwnerPrefix is not null && StringComparer.Ordinal.Equals(ScanOwnerPrefix, prefix.Text))
+        {
+            key = new RespireKey(new KeyPrefix(prefix.Text + Text), null, snapshot ? bytes.ToArray() : bytes);
+            return true;
+        }
+        key = default;
+        return false;
     }
 
     /// <summary>Materializes the exact wire bytes for an explicitly owned representation.</summary>
