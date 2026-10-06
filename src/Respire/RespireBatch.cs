@@ -35,6 +35,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
 {
     private readonly RespireClient _client;
     private readonly RespireHashImportSession? _importSession;
+    private QueuedConnectionPolicy ConnectionPolicy => new(_importSession);
     private readonly List<Op> _ops = [];
     private bool _disposed;
     private bool _sent;
@@ -227,7 +228,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             throw new InvalidOperationException("This batch has already been sent.");
         }
 
-        using var importUsage = _importSession?.EnterOperation();
+        using var importUsage = ConnectionPolicy.EnterOperation();
         _sent = true;
         var core = _client.Core;
         var telemetryOperation = "PIPELINE";
@@ -263,7 +264,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             cacheToInvalidate = null;
         cacheToInvalidate?.FlushForUnknownCommand();
 
-        if (core.Cluster is not null && _importSession is null)
+        if (core.Cluster is not null && ConnectionPolicy.CanReplayRejectedCommands)
         {
             var groups = new List<(int? Slot, List<Op> Operations)>();
             var groupIndexes = new Dictionary<int, int>();
@@ -310,7 +311,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         RespireConnection? connection = null;
         try
         {
-            connection = _importSession?.Connection ?? await _client.AcquireConnectionAsync(cancellationToken).ConfigureAwait(false);
+            connection = ConnectionPolicy.PinnedConnection ?? await _client.AcquireConnectionAsync(cancellationToken).ConfigureAwait(false);
             if (core.Sentinel is not null)
                 telemetry = RespireTelemetry.StartBatchOperation(
                     "PIPELINE", _ops, static op => op.Operation,
@@ -341,7 +342,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         // batch-level CancellationTokenSource or per-operation registrations needed.
         try
         {
-            if (_importSession is not null)
+            if (ConnectionPolicy.IsImportSession)
             {
                 await RunImportBatchAsync(connection, cancellationToken).ConfigureAwait(false);
             }
@@ -384,8 +385,8 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             offset += count;
             for (var index = 0; index < count; index++)
             {
-                if (results[index] is not { } error || !RespireHashImportSession.RequiresExpiration(error)) continue;
-                await _importSession!.ExpireIfUncertainAsync(error).ConfigureAwait(false);
+                if (results[index] is not { } error || !ConnectionPolicy.RequiresExpiration(error)) continue;
+                await ConnectionPolicy.ExpireAsync(error).ConfigureAwait(false);
                 for (; offset < _ops.Count; offset++) _ops[offset].Fail(error);
                 return;
             }
@@ -461,7 +462,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         {
             var operationConnection = operations[i].IsCursorContinuation == true ? continuationConnection ?? connection : connection;
             _ = await operations[i].CompleteClusterSendAsync(
-                    _client, operationConnection, sends[i], readFrom, cancellationToken)
+                    this, operationConnection, sends[i], readFrom, cancellationToken)
                 .ConfigureAwait(false);
         }
     }
@@ -563,7 +564,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             throw new InvalidOperationException("This batch has already been sent.");
         }
 
-        _importSession?.ValidateQueuedCommand(operation);
+        ConnectionPolicy.ValidateQueuedCommand(operation);
         var pending = new RespirePending<T>();
         _ops.Add(new Op<TCommand, T>(operation, command, pending, convert));
         return pending;
@@ -597,7 +598,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             CancellationToken cancellationToken);
 
         public abstract Task<Exception?> CompleteClusterSendAsync(
-            RespireClient client,
+            RespireBatch batch,
             RespireConnection connection,
             ValueTask<RespValue> send,
             RespireReadFrom readFrom,
@@ -633,7 +634,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             => client.SendOnConnectionAsync(Operation, connection, command, cancellationToken);
 
         public override async Task<Exception?> CompleteClusterSendAsync(
-            RespireClient client,
+            RespireBatch batch,
             RespireConnection connection,
             ValueTask<RespValue> send,
             RespireReadFrom readFrom,
@@ -646,30 +647,31 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
                 {
                     value = await send.ConfigureAwait(false);
                 }
-                catch (RespireConnectionRetiredException error)
+                catch (RespireConnectionRetiredException error) when (batch.ConnectionPolicy.CanReplayRejectedCommands)
                 {
                     // Retry only this rejected operation; other pipeline entries may already be accepted.
-                    value = await client.ResumeRetiredClusterSendAsync(
+                    value = await batch._client.ResumeRetiredClusterSendAsync(
                         Operation, command, connection, error, readFrom, cancellationToken).ConfigureAwait(false);
                 }
-                catch (RespireServerException error) when (command.TryGetClusterSlot(out var readSlot)
+                catch (RespireServerException error) when (batch.ConnectionPolicy.CanReplayRejectedCommands
+                    && command.TryGetClusterSlot(out var readSlot)
                     && ReadFallbackPolicy.CanFallBackToOtherRole(error, readFrom, readSlot,
                         ReadFallbackPolicy.IsReplicaConnection(connection)))
                 {
                     // Complete each operation in queue order; retry only its rejected read.
-                    value = await client.ResumeRejectedClusterSendAsync(
+                    value = await batch._client.ResumeRejectedClusterSendAsync(
                             Operation, command, connection, error, readFrom, cancellationToken)
                         .ConfigureAwait(false);
                 }
                 catch (RespireServerException error) when (
-                    ClusterRouter.CanRecover(error, command.TryGetClusterSlot(out var slot) ? slot : null))
+                    batch.ConnectionPolicy.CanRecoverRejectedCommand(error, command.TryGetClusterSlot(out var slot) ? slot : null))
                 {
-                    value = await client.ResumeRejectedClusterSendAsync(
+                    value = await batch._client.ResumeRejectedClusterSendAsync(
                             Operation, command, connection, error, readFrom, cancellationToken)
                         .ConfigureAwait(false);
                 }
 
-                return Complete(client, value);
+                return Complete(batch._client, value);
             }
             catch (Exception ex)
             {

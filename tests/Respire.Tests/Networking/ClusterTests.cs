@@ -3799,8 +3799,13 @@ public class ClusterTests
             }
         }
         catch (Exception exception) when (
-            exception is RespireConnectionException or OperationCanceledException or System.Net.Sockets.SocketException)
+            exception is RespireConnectionException or RespireTimeoutException or OperationCanceledException or System.Net.Sockets.SocketException)
         {
+            if (exception is RespireTimeoutException timeout)
+            {
+                await Assert.That(timeout.CommandName).IsEqualTo("CONNECT");
+                await Assert.That(timeout.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Connecting);
+            }
             failed = true;
         }
 

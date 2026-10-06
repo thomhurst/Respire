@@ -1,4 +1,5 @@
 using Respire.Commands;
+using Respire.Internal;
 using Respire.Networking;
 using Respire.Infrastructure;
 using System.Net;
@@ -594,7 +595,7 @@ public class TimeoutDiagnosticsTests
         var diagnostics = error!.Diagnostics;
         await Assert.That(diagnostics.Stage).IsEqualTo(RespireCommandStage.AwaitingReply);
         await Assert.That(error.IsCommandNotSubmitted).IsFalse();
-        await Assert.That(RespireHashImportSession.RequiresExpiration(error)).IsTrue();
+        await Assert.That(QueuedConnectionPolicy.RequiresSessionExpiration(error)).IsTrue();
         await Assert.That(LockCommands.IsUnsubmitted(error)).IsFalse();
         await Assert.That(diagnostics.Endpoint).IsEqualTo(new RespireEndpoint("127.0.0.1", server.Port));
         await Assert.That(diagnostics.ConnectionId.GetValueOrDefault()).IsGreaterThan(0);
@@ -626,7 +627,7 @@ public class TimeoutDiagnosticsTests
         await Assert.That(error.Diagnostics.InflightBytes).IsEqualTo(FakeRespServer.PingFrame.LongLength);
         await Assert.That(error.Message.Contains("not been enqueued", StringComparison.Ordinal)).IsTrue();
         await Assert.That(error.IsCommandNotSubmitted).IsTrue();
-        await Assert.That(RespireHashImportSession.RequiresExpiration(error)).IsFalse();
+        await Assert.That(QueuedConnectionPolicy.RequiresSessionExpiration(error)).IsFalse();
         await Assert.That(LockCommands.IsUnsubmitted(error)).IsTrue();
         cancellation.Cancel();
         await Assert.That(async () => await first).ThrowsExactly<OperationCanceledException>();

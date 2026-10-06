@@ -77,8 +77,7 @@ public sealed partial class RespireBatch
         ObjectDisposedException.ThrowIf(_disposed, this);
         ObjectDisposedException.ThrowIf(_client.Core.Disposed, _client);
         if (_sent) throw new InvalidOperationException("This batch has already been sent.");
-        if (_importSession is not null)
-            throw new NotSupportedException("Hash import sessions require their original connection and do not support durability batch execution.");
+        ConnectionPolicy.ValidateDurabilityExecution();
         if (_ops.Count == 0) throw new InvalidOperationException("A durability acknowledgement requires a nonempty batch.");
         cancellationToken.ThrowIfCancellationRequested();
         var core = _client.Core;
