@@ -15,6 +15,7 @@
         <Compile Include="..\RedisTestContainer.cs" Link="RedisTestContainer.cs" />
         <Compile Include="../TestRespSession.cs" Link="TestRespSession.cs" />
         <Compile Include="../CredentialTestClock.cs" Link="CredentialTestClock.cs" />
+        <Compile Include="../ClientFilterTestOptions.cs" Link="ClientFilterTestOptions.cs" />
         <Using Include="Respire.Testing" />
     </ItemGroup>
 

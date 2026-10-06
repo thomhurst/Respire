@@ -23,9 +23,15 @@ public enum RespireClientType
 /// and multiple Ids Valkey 8.1+. Name, IdleSeconds, Flags, LibraryName, LibraryVersion, Database,
 /// Capabilities, Ip and all Excluded filters require Valkey 9+. Unsupported filters produce server errors.
 /// IDs belong to one server. Values are copied when the operation is called or queued; later collection changes have no effect.
+/// Use Include and/or Exclude, or the legacy flat selectors. Mixing these forms throws synchronously.
+/// Null scalar selectors and empty ID lists are omitted. SkipMe and AllowUnfilteredKill work with either form.
 /// </remarks>
 public sealed record RespireClientFilterOptions
 {
+    /// <summary>Positive selectors. Cannot be combined with legacy flat selector properties.</summary>
+    public RespireClientIncludeFilters? Include { get; init; }
+    /// <summary>Negative selectors. Cannot be combined with legacy flat selector properties.</summary>
+    public RespireClientExcludeFilters? Exclude { get; init; }
     /// <summary>Explicitly permits KILL without a selector, including a SkipMe-only call. Ignored by LIST.</summary>
     public bool AllowUnfilteredKill { get; init; }
     /// <summary>Include only this connection class.</summary>
@@ -82,103 +88,95 @@ public sealed record RespireClientFilterOptions
     public string? ExcludedCapabilities { get; init; }
     /// <summary>Exclude this remote IP address. Must be nonempty when specified. Requires Valkey 9+.</summary>
     public string? ExcludedIp { get; init; }
+
+    internal bool HasFlatSelectors => Type.HasValue || Ids is not { Count: 0 } || User is not null
+        || Address is not null || LocalAddress is not null || MaximumAgeSeconds.HasValue || Name is not null
+        || IdleSeconds.HasValue || Flags is not null || LibraryName is not null || LibraryVersion is not null
+        || Database.HasValue || Capabilities is not null || Ip is not null || ExcludedType.HasValue
+        || ExcludedIds is not { Count: 0 } || ExcludedUser is not null || ExcludedAddress is not null
+        || ExcludedLocalAddress is not null || ExcludedName is not null || ExcludedFlags is not null
+        || ExcludedLibraryName is not null || ExcludedLibraryVersion is not null || ExcludedDatabase.HasValue
+        || ExcludedCapabilities is not null || ExcludedIp is not null;
 }
 
-internal static class ClientFilterArguments
+internal ref struct ClientFilterArguments(bool kill)
 {
+    private readonly List<RespireValue> _arguments = [];
+    private bool _hasSelector;
+    internal string PropertyPrefix { get; set; } = "";
+
     internal static CmdN Build(RespireClientFilterOptions options, bool kill)
     {
         ArgumentNullException.ThrowIfNull(options);
-        var args = new List<RespireValue>();
-        var hasSelector = false;
-        AddType("TYPE", options.Type, nameof(options.Type));
-        AddIds("ID", options.Ids, nameof(options.Ids));
-        Add("USER", options.User);
-        Add("ADDR", options.Address);
-        Add("LADDR", options.LocalAddress);
-        if (options.SkipMe is { } skip) Add("SKIPME", skip ? "yes" : "no", isSelector: false);
-        AddNumber("MAXAGE", options.MaximumAgeSeconds, nameof(options.MaximumAgeSeconds), positive: true);
-        Add("NAME", options.Name);
-        AddNumber("IDLE", options.IdleSeconds, nameof(options.IdleSeconds), positive: true);
-        AddNonEmpty("FLAGS", options.Flags, nameof(options.Flags));
-        Add("LIB-NAME", options.LibraryName);
-        Add("LIB-VER", options.LibraryVersion);
-        AddNumber("DB", options.Database, nameof(options.Database));
-        AddNonEmpty("CAPA", options.Capabilities, nameof(options.Capabilities));
-        Add("IP", options.Ip);
-        AddType("NOT-TYPE", options.ExcludedType, nameof(options.ExcludedType));
-        AddIds("NOT-ID", options.ExcludedIds, nameof(options.ExcludedIds));
-        Add("NOT-USER", options.ExcludedUser);
-        // Empty address/metadata exclusions can exclude nobody, bypassing the unfiltered-kill guard.
-        // Empty excluded flag/capability sets instead exclude everybody, so remain valid.
-        AddNonEmpty("NOT-ADDR", options.ExcludedAddress, nameof(options.ExcludedAddress));
-        AddNonEmpty("NOT-LADDR", options.ExcludedLocalAddress, nameof(options.ExcludedLocalAddress));
-        AddNonEmpty("NOT-NAME", options.ExcludedName, nameof(options.ExcludedName));
-        Add("NOT-FLAGS", options.ExcludedFlags);
-        AddNonEmpty("NOT-LIB-NAME", options.ExcludedLibraryName, nameof(options.ExcludedLibraryName));
-        AddNonEmpty("NOT-LIB-VER", options.ExcludedLibraryVersion, nameof(options.ExcludedLibraryVersion));
-        AddNumber("NOT-DB", options.ExcludedDatabase, nameof(options.ExcludedDatabase));
-        Add("NOT-CAPA", options.ExcludedCapabilities);
-        AddNonEmpty("NOT-IP", options.ExcludedIp, nameof(options.ExcludedIp));
-        if (kill && !hasSelector)
+        ArgumentNullException.ThrowIfNull(options.Ids, nameof(options.Ids));
+        ArgumentNullException.ThrowIfNull(options.ExcludedIds, nameof(options.ExcludedIds));
+        if ((options.Include is not null || options.Exclude is not null) && options.HasFlatSelectors)
+            throw new ArgumentException("Include/Exclude cannot be combined with legacy flat selector properties.", nameof(options));
+        var writer = new ClientFilterArguments(kill);
+        RespireClientIncludeFilters.AppendArguments(options, ref writer);
+        RespireClientExcludeFilters.AppendArguments(options, ref writer);
+        if (kill && !writer._hasSelector)
         {
             if (!options.AllowUnfilteredKill)
                 throw new ArgumentException("CLIENT KILL requires a selector or AllowUnfilteredKill = true.", nameof(options));
-            if (!options.SkipMe.HasValue) Add("SKIPME", "yes", isSelector: false);
+            if (!options.SkipMe.HasValue) writer.Add("SKIPME", "yes", isSelector: false);
         }
-        return new CmdN(kill ? Verbs.ClientKill : Verbs.ClientList, args.ToArray());
+        return new CmdN(kill ? Verbs.ClientKill : Verbs.ClientList, writer._arguments.ToArray());
+    }
 
-        void Add(string token, string? value, bool isSelector = true)
-        {
-            if (value is null) return;
-            args.Add(token);
-            args.Add(value);
-            hasSelector |= isSelector;
-        }
+    internal void Add(string token, string? value, bool isSelector = true)
+    {
+        if (value is null) return;
+        AddToken(token, isSelector);
+        _arguments.Add(value);
+    }
 
-        void AddNonEmpty(string token, string? value, string propertyName)
-        {
-            if (value is "")
-                throw new ArgumentException($"{propertyName} must be nonempty when specified.", nameof(options));
-            Add(token, value);
-        }
+    internal void AddNonEmpty(string token, string? value, string propertyName)
+    {
+        if (value is "")
+            throw new ArgumentException($"{PropertyPrefix}{propertyName} must be nonempty when specified.", "options");
+        Add(token, value);
+    }
 
-        void AddNumber(string token, long? value, string propertyName, bool positive = false)
-        {
-            if (value is not { } number) return;
-            if (number < 0 || (positive && number == 0))
-                throw new ArgumentOutOfRangeException(nameof(options), number,
-                    $"{propertyName} must be {(positive ? "positive" : "nonnegative")}.");
-            args.Add(token);
-            args.Add(number);
-            hasSelector = true;
-        }
+    internal void AddNumber(string token, long? value, string propertyName, bool positive = false)
+    {
+        if (value is not { } number) return;
+        if (number < 0 || (positive && number == 0))
+            throw new ArgumentOutOfRangeException("options", number,
+                $"{PropertyPrefix}{propertyName} must be {(positive ? "positive" : "nonnegative")}.");
+        AddToken(token);
+        _arguments.Add(number);
+    }
 
-        void AddType(string token, RespireClientType? type, string propertyName)
+    internal void AddType(string token, RespireClientType? type, string propertyName)
+    {
+        if (type is null) return;
+        Add(token, type switch
         {
-            if (type is null) return;
-            Add(token, type switch
-            {
-                RespireClientType.Normal => "normal",
-                RespireClientType.Primary => "master",
-                RespireClientType.Replica => kill ? "slave" : "replica",
-                RespireClientType.PubSub => "pubsub",
-                _ => throw new ArgumentOutOfRangeException(nameof(options), type, $"{propertyName} is an unknown client type."),
-            });
-        }
+            RespireClientType.Normal => "normal",
+            RespireClientType.Primary => "master",
+            RespireClientType.Replica => kill ? "slave" : "replica",
+            RespireClientType.PubSub => "pubsub",
+            _ => throw new ArgumentOutOfRangeException("options", type, $"{PropertyPrefix}{propertyName} is an unknown client type."),
+        });
+    }
 
-        void AddIds(string token, IReadOnlyList<long> ids, string propertyName)
+    internal void AddIds(string token, IReadOnlyList<long> ids, string propertyName)
+    {
+        if (ids is null) throw new ArgumentNullException(PropertyPrefix + propertyName);
+        if (ids.Count == 0) return;
+        AddToken(token);
+        foreach (var id in ids)
         {
-            ArgumentNullException.ThrowIfNull(ids);
-            if (ids.Count == 0) return;
-            args.Add(token);
-            foreach (var id in ids)
-            {
-                if (id <= 0)
-                    throw new ArgumentOutOfRangeException(nameof(options), id, $"{propertyName} must contain only positive client IDs.");
-                args.Add(id);
-            }
-            hasSelector = true;
+            if (id <= 0)
+                throw new ArgumentOutOfRangeException("options", id, $"{PropertyPrefix}{propertyName} must contain only positive client IDs.");
+            _arguments.Add(id);
         }
+    }
+
+    private void AddToken(string token, bool isSelector = true)
+    {
+        _arguments.Add(token);
+        _hasSelector |= isSelector;
     }
 }

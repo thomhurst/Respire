@@ -8,9 +8,11 @@ namespace Respire.IntegrationTests;
 public class ClientFilterIntegrationTests
 {
     [Test]
-    [Arguments(2)]
-    [Arguments(3)]
-    public async Task ValkeyListMaximumAgeUsesWholeSeconds(int protocol)
+    [Arguments(2, false)]
+    [Arguments(3, false)]
+    [Arguments(2, true)]
+    [Arguments(3, true)]
+    public async Task ValkeyListMaximumAgeUsesWholeSeconds(int protocol, bool grouped)
     {
         await using var container = new RedisBuilder("valkey/valkey:9.0-alpine").Build();
         await container.StartAsync();
@@ -34,6 +36,11 @@ public class ClientFilterIntegrationTests
         } while (age < 2);
         var matching = new RespireClientFilterOptions { Ids = [handle.Id], MaximumAgeSeconds = age };
         var tooYoung = matching with { MaximumAgeSeconds = age + 60 };
+        if (grouped)
+        {
+            matching = ClientFilterTestOptions.Group(matching);
+            tooYoung = ClientFilterTestOptions.Group(tooYoung);
+        }
         (await admin.Server.ClientsAsync(matching, default)).Select(client => client.Id).Should().Equal(handle.Id);
         (await admin.Server.ClientsAsync(tooYoung, default)).Should().BeEmpty();
         (await admin.Server.KillClientsAsync(tooYoung)).Should().Be(0);
@@ -42,9 +49,11 @@ public class ClientFilterIntegrationTests
     }
 
     [Test]
-    [Arguments(2)]
-    [Arguments(3)]
-    public async Task ValkeyFiltersIndependentlyChangeSelectionAndKillCounts(int protocol)
+    [Arguments(2, false)]
+    [Arguments(3, false)]
+    [Arguments(2, true)]
+    [Arguments(3, true)]
+    public async Task ValkeyFiltersIndependentlyChangeSelectionAndKillCounts(int protocol, bool grouped)
     {
         await using var container = new RedisBuilder("valkey/valkey:9.0-alpine").Build();
         await container.StartAsync();
@@ -114,28 +123,46 @@ public class ClientFilterIntegrationTests
 
         async Task Check(RespireClientFilterOptions matches, RespireClientFilterOptions excludes, long id, string filter)
         {
+            if (grouped)
+            {
+                matches = ClientFilterTestOptions.Group(matches);
+                excludes = ClientFilterTestOptions.Group(excludes);
+            }
             (await handle.ClientsAsync(matches)).Select(row => row.Id).Should().Equal([id], filter);
             (await handle.ClientsAsync(excludes)).Should().BeEmpty(filter);
             (await handle.KillClientsAsync(excludes)).Should().Be(0, filter);
             (await handle.KillClientsAsync(matches)).Should().Be(1, filter);
-            (await handle.ClientsAsync(new() { Ids = [id] })).Should().BeEmpty(filter);
+            var ids = new RespireClientFilterOptions { Ids = [id] };
+            (await handle.ClientsAsync(grouped ? ClientFilterTestOptions.Group(ids) : ids)).Should().BeEmpty(filter);
         }
     }
 
     [Test]
-    [Arguments("redis:8.10-alpine", 2, 0)]
-    [Arguments("redis:8.10-alpine", 3, 0)]
-    [Arguments("redis:8.10-alpine", 2, 1)]
-    [Arguments("redis:8.10-alpine", 3, 1)]
-    [Arguments("redis:8.10-alpine", 2, 2)]
-    [Arguments("redis:8.10-alpine", 3, 2)]
-    [Arguments("valkey/valkey:9.0-alpine", 2, 0)]
-    [Arguments("valkey/valkey:9.0-alpine", 3, 0)]
-    [Arguments("valkey/valkey:9.0-alpine", 2, 1)]
-    [Arguments("valkey/valkey:9.0-alpine", 3, 1)]
-    [Arguments("valkey/valkey:9.0-alpine", 2, 2)]
-    [Arguments("valkey/valkey:9.0-alpine", 3, 2)]
-    public async Task FiltersSelectAndKillOnlyOwnedTargets(string image, int protocol, int execution)
+    [Arguments("redis:8.10-alpine", 2, 0, false)]
+    [Arguments("redis:8.10-alpine", 3, 0, false)]
+    [Arguments("redis:8.10-alpine", 2, 1, false)]
+    [Arguments("redis:8.10-alpine", 3, 1, false)]
+    [Arguments("redis:8.10-alpine", 2, 2, false)]
+    [Arguments("redis:8.10-alpine", 3, 2, false)]
+    [Arguments("valkey/valkey:9.0-alpine", 2, 0, false)]
+    [Arguments("valkey/valkey:9.0-alpine", 3, 0, false)]
+    [Arguments("valkey/valkey:9.0-alpine", 2, 1, false)]
+    [Arguments("valkey/valkey:9.0-alpine", 3, 1, false)]
+    [Arguments("valkey/valkey:9.0-alpine", 2, 2, false)]
+    [Arguments("valkey/valkey:9.0-alpine", 3, 2, false)]
+    [Arguments("redis:8.10-alpine", 2, 0, true)]
+    [Arguments("redis:8.10-alpine", 3, 0, true)]
+    [Arguments("redis:8.10-alpine", 2, 1, true)]
+    [Arguments("redis:8.10-alpine", 3, 1, true)]
+    [Arguments("redis:8.10-alpine", 2, 2, true)]
+    [Arguments("redis:8.10-alpine", 3, 2, true)]
+    [Arguments("valkey/valkey:9.0-alpine", 2, 0, true)]
+    [Arguments("valkey/valkey:9.0-alpine", 3, 0, true)]
+    [Arguments("valkey/valkey:9.0-alpine", 2, 1, true)]
+    [Arguments("valkey/valkey:9.0-alpine", 3, 1, true)]
+    [Arguments("valkey/valkey:9.0-alpine", 2, 2, true)]
+    [Arguments("valkey/valkey:9.0-alpine", 3, 2, true)]
+    public async Task FiltersSelectAndKillOnlyOwnedTargets(string image, int protocol, int execution, bool grouped)
     {
         await using var container = new RedisBuilder(image).Build();
         await container.StartAsync();
@@ -166,21 +193,21 @@ public class ClientFilterIntegrationTests
             };
         else
         {
-            (await adminHandle.ClientsAsync(new() { Type = RespireClientType.Normal }))
+            (await adminHandle.ClientsAsync(Select(new() { Type = RespireClientType.Normal })))
                 .Select(row => row.Id).Should().Contain(targetHandle.Id);
-            Func<Task> combined = async () => await adminHandle.ClientsAsync(filter with { Type = RespireClientType.Normal });
+            Func<Task> combined = async () => await adminHandle.ClientsAsync(Select(filter with { Type = RespireClientType.Normal }));
             await combined.Should().ThrowAsync<RespireServerException>();
-            Func<Task> unsupported = async () => await adminHandle.ClientsAsync(new() { ExcludedIds = [survivorHandle.Id] });
+            Func<Task> unsupported = async () => await adminHandle.ClientsAsync(Select(new() { ExcludedIds = [survivorHandle.Id] }));
             await unsupported.Should().ThrowAsync<RespireServerException>();
         }
         RespireServerClientInfo[] rows;
-        if (execution == 0) rows = await adminHandle.ClientsAsync(filter);
+        if (execution == 0) rows = await adminHandle.ClientsAsync(Select(filter));
         else
         {
             using var batch = admin.CreateBatch();
             await using var tx = admin.CreateTransaction();
             IRespireCommandQueue queue = execution == 1 ? batch : tx;
-            var result = queue.Server.Clients(filter);
+            var result = queue.Server.Clients(Select(filter));
             if (execution == 1) await batch.ExecuteAsync(); else await tx.CommitAsync();
             rows = result.Result;
         }
@@ -191,25 +218,28 @@ public class ClientFilterIntegrationTests
             LocalAddress = targetInfo.Attributes["laddr"], SkipMe = true,
         };
         long killed;
-        if (execution == 0) killed = await adminHandle.KillClientsAsync(kill);
+        if (execution == 0) killed = await adminHandle.KillClientsAsync(Select(kill));
         else
         {
             using var batch = admin.CreateBatch();
             await using var tx = admin.CreateTransaction();
             IRespireCommandQueue queue = execution == 1 ? batch : tx;
-            var result = queue.Server.KillClients(kill);
+            var result = queue.Server.KillClients(Select(kill));
             if (execution == 1) await batch.ExecuteAsync(); else await tx.CommitAsync();
             killed = result.Result;
         }
         killed.Should().Be(1);
-        (await adminHandle.ClientsAsync(new() { Ids = [targetHandle.Id] })).Should().BeEmpty();
+        (await adminHandle.ClientsAsync(Select(new() { Ids = [targetHandle.Id] }))).Should().BeEmpty();
         (await survivorHandle.InfoAsync()).Id.Should().Be(survivorHandle.Id);
-        (await adminHandle.KillClientsAsync(new() { Ids = [adminHandle.Id], SkipMe = true })).Should().Be(0);
+        (await adminHandle.KillClientsAsync(Select(new() { Ids = [adminHandle.Id], SkipMe = true }))).Should().Be(0);
         (await adminHandle.InfoAsync()).Id.Should().Be(adminHandle.Id);
         // An unattainable positive age exercises MAXAGE without timing sleeps or collateral kills.
-        (await adminHandle.KillClientsAsync(new() { Ids = [survivorHandle.Id], MaximumAgeSeconds = long.MaxValue })).Should().Be(0);
-        var fanout = await admin.Server.ClientsOnAllNodesAsync(new() { Ids = [survivorHandle.Id] }, default);
+        (await adminHandle.KillClientsAsync(Select(new() { Ids = [survivorHandle.Id], MaximumAgeSeconds = long.MaxValue }))).Should().Be(0);
+        var fanout = await admin.Server.ClientsOnAllNodesAsync(Select(new() { Ids = [survivorHandle.Id] }), default);
         fanout.Should().ContainSingle();
         fanout[0].Value.Single().Id.Should().Be(survivorHandle.Id);
+
+        RespireClientFilterOptions Select(RespireClientFilterOptions value)
+            => grouped ? ClientFilterTestOptions.Group(value) : value;
     }
 }

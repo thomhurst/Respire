@@ -21,6 +21,7 @@
     <ItemGroup>
         <Compile Include="../TestRespSession.cs" Link="TestRespSession.cs" />
         <Compile Include="../CredentialTestClock.cs" Link="CredentialTestClock.cs" />
+        <Compile Include="../ClientFilterTestOptions.cs" Link="ClientFilterTestOptions.cs" />
         <PackageReference Include="TUnit" />
         <PackageReference Include="Microsoft.Testing.Extensions.HangDump" />
     </ItemGroup>
