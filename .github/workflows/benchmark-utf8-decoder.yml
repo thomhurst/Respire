@@ -1,0 +1,168 @@
+name: UTF-8 decoder benchmarks
+
+on:
+  pull_request:
+    paths:
+      - 'src/Respire/Internal/Utf8String.cs'
+      - 'benchmarks/Respire.Benchmarks/ProtocolBenchmarks.cs'
+      - 'scripts/assert_decoder_benchmarks.py'
+      - 'scripts/tests/test_assert_decoder_benchmarks.py'
+      - 'scripts/decoder_benchmark_inputs.py'
+      - 'scripts/tests/test_decoder_benchmark_inputs.py'
+      - '.github/workflows/benchmark-utf8-decoder.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: utf8-decoder-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    name: Decoder operations (${{ matrix.framework }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: [net8.0, net10.0]
+    env:
+      FRAMEWORK: ${{ matrix.framework }}
+    steps:
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: baseline
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Pin an unmodified decoder candidate and its common base
+        shell: bash
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          test "$(git -C candidate rev-parse HEAD)" = "$HEAD_SHA"
+          comparison_base=$(git -C candidate merge-base "$HEAD_SHA" "refs/remotes/origin/$BASE_REF")
+          git -C baseline checkout --detach "$comparison_base"
+          git -C candidate diff "$comparison_base" "$HEAD_SHA" > comparison-source.patch
+          COMPARISON_BASE_SHA="$comparison_base" python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import subprocess
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, str(Path('candidate/scripts').resolve()))
+          from decoder_benchmark_inputs import validate_changes
+          changed = subprocess.check_output(
+              ['git', '-C', 'candidate', 'diff', '--name-only', os.environ['COMPARISON_BASE_SHA'], os.environ['HEAD_SHA']],
+              text=True).splitlines()
+          production = validate_changes(changed)
+          paths = ('src/Respire/Internal/Utf8String.cs', 'Directory.Build.props')
+          hashes = {source: {path: hashlib.sha256(Path(source, path).read_bytes()).hexdigest() for path in paths}
+                    for source in ('baseline', 'candidate')}
+          assert hashes['baseline']['Directory.Build.props'] == hashes['candidate']['Directory.Build.props']
+          manifest = {
+              'head_sha': os.environ['HEAD_SHA'],
+              'event_base_sha': os.environ['EVENT_BASE_SHA'],
+              'comparison_base_sha': os.environ['COMPARISON_BASE_SHA'],
+              'production_changes': production,
+              'source_sha256': hashes,
+          }
+          Path('source-shas.json').write_text(json.dumps(manifest, indent=2) + '\n')
+          print(json.dumps(manifest, indent=2))
+          PY
+      - name: Check result guards and use identical fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s candidate/scripts/tests -p test_assert_decoder_benchmarks.py
+          python3 -m unittest discover -s candidate/scripts/tests -p test_decoder_benchmark_inputs.py
+          python3 - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          fixture = Path('candidate/benchmarks/Respire.Benchmarks/ProtocolBenchmarks.cs').read_text()
+          job = '[SimpleJob(warmupCount: 3, iterationCount: 10)]'
+          assert fixture.count(job) == 1, 'Review benchmark job configuration before changing the fixture'
+          fixture = fixture.replace(job, '')
+          for source in ('baseline', 'candidate'):
+              Path(source, 'benchmarks/Respire.Benchmarks/ProtocolBenchmarks.cs').write_text(fixture)
+          manifest = json.loads(Path('source-shas.json').read_text())
+          manifest['fixture_sha256'] = hashlib.sha256(fixture.encode()).hexdigest()
+          Path('source-shas.json').write_text(json.dumps(manifest, indent=2) + '\n')
+          PY
+      - name: Compare ten operations against bracketing controls
+        shell: bash
+        env:
+          DOTNET_JitDisasm: Respire.Internal.Utf8String:GetString Respire.Benchmarks.ProtocolBenchmarks:*UnicodeBulkString Respire.Benchmarks.ProtocolBenchmarks:Build*Command
+          DOTNET_JitDisasmDiffable: '1'
+        run: |
+          set -euo pipefail
+          for phase in baseline-validation candidate-validation baseline-a candidate baseline-b; do
+            source=baseline
+            job=Default
+            if [[ "$phase" == candidate* ]]; then source=candidate; fi
+            if [[ "$phase" == *validation ]]; then job=Dry; fi
+            (
+              cd "$source"
+              git rev-parse HEAD
+              dotnet run --project benchmarks/Respire.Benchmarks -c Release -f "$FRAMEWORK" -- \
+                --filter '*ProtocolBenchmarks.DecodeAsciiBulkString' '*ProtocolBenchmarks.ReadAsciiBulkString' \
+                '*ProtocolBenchmarks.DecodeUnicodeBulkString' '*ProtocolBenchmarks.ReadUnicodeBulkString' \
+                '*ProtocolBenchmarks.FormatAsciiBulkString' '*ProtocolBenchmarks.FormatLargeAsciiBulkString' \
+                '*ProtocolBenchmarks.FormatUnicodeBulkString' '*ProtocolBenchmarks.FormatLargeUnicodeBulkString' \
+                '*ProtocolBenchmarks.BuildGetCommand' '*ProtocolBenchmarks.BuildSetCommand' \
+                --job "$job" --exporters json markdown --artifacts "$GITHUB_WORKSPACE/results/$phase"
+            ) > "$GITHUB_WORKSPACE/$phase.log" 2>&1
+          done
+      - name: Require source identity and performance acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import subprocess
+          from pathlib import Path
+          manifest = json.loads(Path('source-shas.json').read_text())
+          for source, paths in manifest['source_sha256'].items():
+              changed = subprocess.check_output(['git', '-C', source, 'diff', '--name-only', 'HEAD'], text=True).splitlines()
+              assert set(changed) <= {'benchmarks/Respire.Benchmarks/ProtocolBenchmarks.cs'}, (source, changed)
+              for path, expected in paths.items():
+                  assert hashlib.sha256(Path(source, path).read_bytes()).hexdigest() == expected, (source, path)
+              assert hashlib.sha256(Path(source, 'benchmarks/Respire.Benchmarks/ProtocolBenchmarks.cs').read_bytes()).hexdigest() == manifest['fixture_sha256']
+          for phase in ('baseline-validation', 'candidate-validation', 'baseline-a', 'candidate', 'baseline-b'):
+              expected = manifest['head_sha'] if phase.startswith('candidate') else manifest['comparison_base_sha']
+              assert Path(f'{phase}.log').read_text().splitlines()[0] == expected, phase
+          PY
+          improvement=()
+          if [[ "$FRAMEWORK" == net8.0 ]] && python3 -c 'import json; import sys; sys.exit(not json.load(open("source-shas.json"))["production_changes"])'; then
+            improvement=(--require-ascii-improvement)
+          fi
+          python3 candidate/scripts/assert_decoder_benchmarks.py results "${improvement[@]}" \
+            --summary "$GITHUB_STEP_SUMMARY" --manifest source-shas.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: utf8-decoder-${{ matrix.framework }}
+          path: |
+            results/
+            *.log
+            source-shas.json
+            comparison-source.patch
+          retention-days: 30

@@ -20,7 +20,9 @@ public class ProtocolBenchmarks
     private byte[] _mixedTypesData = null!;
     private byte[] _fragmentedArrayData = null!;
     private RespValue _asciiBulkValue;
+    private RespValue _largeAsciiBulkValue;
     private RespValue _unicodeBulkValue;
+    private RespValue _largeUnicodeBulkValue;
     private readonly RespParseState _parseState = new(int.MaxValue);
     private readonly WriteBuffer _commandBuffer = new(512);
 
@@ -44,7 +46,9 @@ public class ProtocolBenchmarks
         _nestedArrayData = "*2\r\n*3\r\n:1\r\n:2\r\n:3\r\n*2\r\n+OK\r\n$4\r\ntest\r\n"u8.ToArray();
         _mixedTypesData = "*6\r\n+OK\r\n:42\r\n$4\r\ntest\r\n_\r\n#t\r\n,3.14\r\n"u8.ToArray();
         _asciiBulkValue = RespValue.BulkString("Hello World");
+        _largeAsciiBulkValue = RespValue.BulkString(new string('x', 4096));
         _unicodeBulkValue = RespValue.BulkString("Hello \u00A3 World");
+        _largeUnicodeBulkValue = RespValue.BulkString(new string('x', 4094) + "é");
 
         var fragmentedArrayBuilder = new StringBuilder();
         fragmentedArrayBuilder.Append("*1000\r\n");
@@ -230,6 +234,23 @@ public class ProtocolBenchmarks
     [Benchmark(Description = "Read Unicode bulk string")]
     [BenchmarkCategory("GET", "Conversion")]
     public string? ReadUnicodeBulkString() => ResponseReader.StringOrNull(in _unicodeBulkValue);
+
+    // ToString uses the span decoder, including net8's pointer-based string.Create path.
+    [Benchmark(Description = "Format ASCII bulk string")]
+    [BenchmarkCategory("Conversion")]
+    public string FormatAsciiBulkString() => _asciiBulkValue.ToString();
+
+    [Benchmark(Description = "Format large ASCII bulk string")]
+    [BenchmarkCategory("Conversion")]
+    public string FormatLargeAsciiBulkString() => _largeAsciiBulkValue.ToString();
+
+    [Benchmark(Description = "Format Unicode bulk string")]
+    [BenchmarkCategory("Conversion")]
+    public string FormatUnicodeBulkString() => _unicodeBulkValue.ToString();
+
+    [Benchmark(Description = "Format large Unicode bulk string")]
+    [BenchmarkCategory("Conversion")]
+    public string FormatLargeUnicodeBulkString() => _largeUnicodeBulkValue.ToString();
 
     // ===== COMMAND BUILDING BENCHMARKS =====
 
