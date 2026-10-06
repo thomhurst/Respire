@@ -35,6 +35,12 @@ public class SynchronizationGateArchitectureTests
             {
                 private readonly object _newGate = new();
                 private readonly object? _nullableGate;
+                private readonly object _releaseSync = new();
+                protected readonly System.Object _ownershipSync = new();
+                public static readonly global::System.Object _disposeLock = new();
+                internal readonly object Gate = new();
+                internal object NodeStateGate => Gate;
+                internal object SharedReadLock { get; } = new();
                 private readonly System.Threading.Lock _typedGate = new();
                 private readonly object _identity = new();
                 private object? _nearestGate;
@@ -42,18 +48,29 @@ public class SynchronizationGateArchitectureTests
                 // private readonly object _commentGate;
             }
             """;
-        await Assert.That(FindObjectGates(source)).IsEquivalentTo(["_newGate", "_nullableGate"]);
+        await Assert.That(FindObjectGates(source)).IsEquivalentTo([
+            "_newGate", "_nullableGate", "_releaseSync", "_ownershipSync", "_disposeLock",
+            "Gate", "NodeStateGate", "SharedReadLock"]);
     }
 
     private static string[] FindObjectGates(string source)
-        => CSharpSyntaxTree.ParseText(source).GetRoot().DescendantNodes().OfType<FieldDeclarationSyntax>()
-            .Where(field => field.Modifiers.Any(SyntaxKind.PrivateKeyword)
-                && field.Modifiers.Any(SyntaxKind.ReadOnlyKeyword)
+    {
+        var root = CSharpSyntaxTree.ParseText(source).GetRoot();
+        var fields = root.DescendantNodes().OfType<FieldDeclarationSyntax>()
+            .Where(field => field.Modifiers.Any(SyntaxKind.ReadOnlyKeyword)
                 && IsObjectType(field.Declaration.Type))
             .SelectMany(field => field.Declaration.Variables)
-            .Select(variable => variable.Identifier.ValueText)
-            .Where(name => name.StartsWith('_') && name.EndsWith("Gate", StringComparison.OrdinalIgnoreCase))
-            .ToArray();
+            .Select(variable => variable.Identifier.ValueText);
+        var properties = root.DescendantNodes().OfType<PropertyDeclarationSyntax>()
+            .Where(property => IsObjectType(property.Type))
+            .Select(property => property.Identifier.ValueText);
+        return fields.Concat(properties).Where(IsGateName).ToArray();
+    }
+
+    private static bool IsGateName(string name)
+        => name.EndsWith("Gate", StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith("Lock", StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith("Sync", StringComparison.OrdinalIgnoreCase);
 
     [Test]
     public async Task ContainerFixtureObjectAliasUsesOnlyLockStatementsOnNet8()
@@ -107,5 +124,6 @@ public class SynchronizationGateArchitectureTests
     private static bool IsObjectType(TypeSyntax type)
         => type is NullableTypeSyntax nullable
             ? IsObjectType(nullable.ElementType)
-            : type is PredefinedTypeSyntax predefined && predefined.Keyword.IsKind(SyntaxKind.ObjectKeyword);
+            : type is PredefinedTypeSyntax predefined && predefined.Keyword.IsKind(SyntaxKind.ObjectKeyword)
+                || type.ToString() is "System.Object" or "global::System.Object";
 }
