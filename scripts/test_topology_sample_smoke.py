@@ -1,9 +1,16 @@
 import argparse
+import json
+import os
 from pathlib import Path
+import select
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
+from unittest.mock import Mock, patch
 
 from smoke_topology_samples import Smoke, validate_cluster, validate_sentinel
 
@@ -33,6 +40,7 @@ class OutputContracts(unittest.TestCase):
     def test_sentinel_requires_both_endpoints_and_completion(self):
         validate_sentinel(SENTINEL, 7100, 7101)
         for bad in (SENTINEL.replace(":7101", ":7100"), SENTINEL.split("Sentinel sample completed")[0],
+                    SENTINEL.replace(":7100", ":temporary").replace(":7101", ":7100").replace(":temporary", ":7101"),
                     "Sentinel sample completed: 2 successful round trips.\n"):
             with self.subTest(output=bad), self.assertRaises(RuntimeError):
                 validate_sentinel(bad, 7100, 7101)
@@ -48,6 +56,7 @@ class LifecycleContracts(unittest.TestCase):
     def smoke(folder):
         return Smoke(argparse.Namespace(artifacts=Path(folder), project="controlled-smoke", sample="Cluster"))
 
+    @unittest.skipUnless(sys.platform == "linux", "Controller process supervision requires Linux")
     def test_timeout_stops_owned_process_and_keeps_log(self):
         with tempfile.TemporaryDirectory() as folder:
             smoke = self.smoke(folder)
@@ -81,7 +90,135 @@ class LifecycleContracts(unittest.TestCase):
             self.assertEqual(commands, [])  # No ownership: no Docker operation, including cleanup.
             smoke.owned = True
             smoke.cleanup()
-            self.assertEqual(commands[-1], smoke.compose + ["down", "--volumes", "--remove-orphans", "--timeout", "10"])
+            self.assertEqual(commands[-1], smoke.compose + ["down", "--volumes", "--remove-orphans", "--rmi", "local", "--timeout", "10"])
+
+    @unittest.skipUnless(sys.platform == "linux", "Controller process supervision requires Linux")
+    def test_polling_keeps_only_latest_output(self):
+        with tempfile.TemporaryDirectory() as folder:
+            smoke = self.smoke(folder)
+            for value in range(3):
+                self.assertEqual(smoke.run([sys.executable, "-c", f"print({value})"], "poll", keep_log=False), str(value))
+            self.assertEqual([path.name for path in Path(folder).iterdir()], ["poll-latest.log"])
+            self.assertEqual((Path(folder) / "poll-latest.log").read_text().strip(), "2")
+
+    def test_promotion_poll_retries_transient_inspection_failure(self):
+        with tempfile.TemporaryDirectory() as folder:
+            smoke = self.smoke(folder)
+            predicate = Mock(side_effect=[RuntimeError("connection lost"), False, True])
+            with patch("smoke_topology_samples.time.sleep") as sleep:
+                smoke.wait_for(predicate, 5, "controlled promotion", retry_errors=(RuntimeError,))
+            self.assertEqual(predicate.call_count, 3)
+            self.assertEqual([call.args for call in sleep.call_args_list], [(1,), (1,)])
+
+    def test_expired_poll_retains_last_error_without_extra_sleep(self):
+        with tempfile.TemporaryDirectory() as folder:
+            smoke = self.smoke(folder)
+            failure = RuntimeError("last inspection failed")
+            with patch("smoke_topology_samples.time.monotonic", side_effect=[0, 0, 2, 2]), \
+                    patch("smoke_topology_samples.time.sleep") as sleep:
+                with self.assertRaises(TimeoutError) as error:
+                    smoke.wait_for(Mock(side_effect=failure), 1, "promotion", retry_errors=(RuntimeError,))
+            self.assertIs(error.exception.__cause__, failure)
+            sleep.assert_not_called()
+
+    def test_unsupported_platform_rejected_before_process_start(self):
+        with tempfile.TemporaryDirectory() as folder:
+            smoke = self.smoke(folder)
+            with patch("smoke_topology_samples.sys.platform", "win32"):
+                with self.assertRaisesRegex(RuntimeError, "requires Linux"):
+                    smoke.start(["unused"], smoke.sample_log)
+            self.assertFalse(smoke.sample_log.exists())
+
+    def test_failed_client_recovery_retains_observed_promotion(self):
+        with tempfile.TemporaryDirectory() as folder:
+            smoke = self.smoke(folder)
+            path = Path(folder) / "promotion.json"
+
+            def request(*arguments):
+                self.assertEqual(json.loads(path.read_text()), {"before": 7100, "after": None})
+                return "OK"
+
+            def wait(predicate, seconds, description, **options):
+                if description == "Sentinel promotion":
+                    self.assertTrue(predicate())
+                else:
+                    raise TimeoutError("client never reached promoted primary")
+
+            smoke.redis = request
+            smoke.primary = lambda: 7101
+            smoke.wait_for = wait
+            with self.assertRaises(TimeoutError):
+                smoke.follow_promotion(7100)
+            self.assertEqual(json.loads(path.read_text()), {"before": 7100, "after": 7101})
+
+    def test_rejected_promotion_retains_initial_primary(self):
+        with tempfile.TemporaryDirectory() as folder:
+            smoke = self.smoke(folder)
+            smoke.redis = lambda *arguments: "ERR rejected"
+            with self.assertRaises(RuntimeError):
+                smoke.follow_promotion(7100)
+            self.assertEqual(json.loads((Path(folder) / "promotion.json").read_text()), {"before": 7100, "after": None})
+
+    def test_cleanup_ignores_repeated_signals_and_restores_handlers(self):
+        with tempfile.TemporaryDirectory() as folder:
+            smoke = self.smoke(folder)
+            original = {kind: signal.getsignal(kind) for kind in (signal.SIGINT, signal.SIGTERM)}
+            observed = []
+            smoke.owned = True
+
+            def cleanup():
+                observed.extend(signal.getsignal(kind) for kind in original)
+                raise RuntimeError("controlled cleanup failure")
+
+            smoke.cleanup_compose = cleanup
+            with self.assertRaises(RuntimeError):
+                smoke.cleanup()
+            self.assertEqual(observed, [signal.SIG_IGN, signal.SIG_IGN])
+            self.assertEqual({kind: signal.getsignal(kind) for kind in original}, original)
+
+    def test_existing_image_prevents_cleanup_ownership(self):
+        with tempfile.TemporaryDirectory() as folder:
+            smoke = self.smoke(folder)
+            smoke.run = lambda command, name: "existing-image-id" if name == "existing-image" else ""
+            with self.assertRaisesRegex(RuntimeError, "image already exists"):
+                smoke.execute()
+            self.assertFalse(smoke.owned)
+            self.assertFalse((Path(folder) / "owned-project.txt").exists())
+
+    @unittest.skipUnless(sys.platform == "linux" and shutil.which("pwsh"), "Requires Linux and PowerShell")
+    def test_stop_terminates_actual_guard_wrapper_workload_and_descendant(self):
+        with tempfile.TemporaryDirectory() as folder:
+            smoke = self.smoke(folder)
+            marker = Path(folder) / "workload.json"
+            payload = (
+                "import json,os,pathlib,subprocess,sys,time; "
+                "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)']); "
+                f"marker=pathlib.Path({str(marker)!r}); temporary=marker.with_suffix('.tmp'); "
+                "temporary.write_text(json.dumps([os.getppid(),os.getpid(),child.pid])); "
+                "print('controlled guarded workload started',flush=True); temporary.replace(marker); time.sleep(60)"
+            )
+            # Exercise Smoke.dotnet and the real guard. Only the workload executable is
+            # substituted, as in Test-InvokeAgentDotNet.ps1; no SDK compilation is needed.
+            handle = smoke.start(smoke.dotnet(["-c", payload], 20, dotnet_path=sys.executable), smoke.sample_log)
+            observers = []
+            try:
+                deadline = time.monotonic() + 10
+                while not marker.exists() and time.monotonic() < deadline and handle[0].poll() is None:
+                    time.sleep(0.05)
+                self.assertTrue(marker.exists(), smoke.sample_log.read_text())
+                # pidfds pin identity before stopping; PID reuse cannot satisfy the check.
+                for pid in json.loads(marker.read_text()):
+                    observers.append(os.pidfd_open(pid))
+                smoke.stop(handle)
+                self.assertIsNotNone(handle[0].poll())
+                for observer in observers:
+                    self.assertTrue(select.select([observer], [], [], 5)[0], "Guarded process survived Smoke.stop")
+                self.assertTrue(handle[1].closed)
+                self.assertIn("controlled guarded workload started", smoke.sample_log.read_text())
+            finally:
+                smoke.stop(handle)
+                for observer in observers:
+                    os.close(observer)
 
 
 if __name__ == "__main__":

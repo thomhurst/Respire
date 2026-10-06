@@ -78,6 +78,6 @@ Cleanup targets only this Compose project. Stopping the container discards its
 tmpfs data and rewritten Sentinel configuration; startup begins again with port
 7100 as primary. No shared Redis service or volume is touched. Host bindings are
 loopback-only; the container's unauthenticated network is for local development.
-Ordinary CI builds both framework targets. The separate manual [topology smoke workflow](../TopologySmoke.md)
+Ordinary CI builds both framework targets. The separate [topology smoke workflow](../TopologySmoke.md), triggered on demand and on PRs touching the sample,
 runs the sample on both frameworks, requests promotion, and requires successful rows
 from both primary endpoints in the same process. The same controller runs locally.
