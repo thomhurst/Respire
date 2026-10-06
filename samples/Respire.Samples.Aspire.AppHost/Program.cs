@@ -6,6 +6,6 @@ var valkey = builder.AddValkey("valkey").WithImageTag("9-alpine");
 builder.AddProject<Projects.Respire_Samples_Aspire_Api>("api")
     .WithReference(redis).WaitFor(redis)
     .WithReference(valkey).WaitFor(valkey)
-    .WithHttpHealthCheck("/health");
+    .WithHttpHealthCheck("/health", endpointName: "http");
 
 builder.Build().Run();

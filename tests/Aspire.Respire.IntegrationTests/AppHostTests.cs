@@ -9,6 +9,7 @@ namespace Respire.Tests.Aspire;
 
 public class AppHostTests
 {
+    /// <summary>Starts real Aspire resources and verifies client injection, readiness, and all cache backends.</summary>
     [Test]
     public async Task RedisAndValkeyReferencesConnectWithoutManualClientConfiguration()
     {
@@ -29,6 +30,7 @@ public class AppHostTests
         await Assert.That(cache!.Stored).IsEqualTo(cache.Value);
         var hybrid = await http.GetStringAsync($"/hybrid/{key}", deadline.Token);
         await Assert.That(await http.GetStringAsync($"/hybrid/{key}", deadline.Token)).IsEqualTo(hybrid);
+        await Assert.That(await http.GetStringAsync($"/hybrid/{key}/distributed", deadline.Token)).IsEqualTo(hybrid);
         var output = await http.GetStringAsync("/output", deadline.Token);
         await Assert.That(await http.GetStringAsync("/output", deadline.Token)).IsEqualTo(output);
     }

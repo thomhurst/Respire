@@ -24,6 +24,7 @@ namespace Respire.Tests.Aspire;
 
 public class RegistrationTests
 {
+    /// <summary>Creates a host without environment defaults so configuration tests remain isolated.</summary>
     private static HostApplicationBuilder Builder(Dictionary<string, string?>? values = null)
     {
         var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings { DisableDefaults = true });
@@ -31,6 +32,7 @@ public class RegistrationTests
         return builder;
     }
 
+    /// <summary>Verifies injection precedence and lazy client creation after immutable option overrides.</summary>
     [Test]
     public async Task ConfigurationPrecedencePreservesParsedOptionsAndAppliesCallbackLast()
     {
@@ -63,6 +65,7 @@ public class RegistrationTests
         await Assert.That(client).IsSameReferenceAs(host.Services.GetRequiredService<RespireClient>());
     }
 
+    /// <summary>Ensures the settings callback can replace an Aspire-injected connection string.</summary>
     [Test]
     public async Task SettingsCallbackOverridesInjectedConnectionString()
     {
@@ -74,6 +77,7 @@ public class RegistrationTests
         await Assert.That(observed!.Endpoints.Single()).IsEqualTo(new RespireEndpoint("callback", 6380));
     }
 
+    /// <summary>Exercises nested policies, endpoint representations, nullable values, and TLS configuration.</summary>
     [Test]
     public async Task OptionsBindEndpointsNestedPoliciesAndNullableTimeout()
     {
@@ -108,6 +112,7 @@ public class RegistrationTests
         await Assert.That(observed.TlsOptions!.TargetHost).IsEqualTo("redis.example");
     }
 
+    /// <summary>Protects singleton identity and duplicate-registration rejection for both registration kinds.</summary>
     [Test]
     public async Task DefaultAndKeyedClientsAreIndependentAndDuplicatesFail()
     {
@@ -124,19 +129,65 @@ public class RegistrationTests
         await Assert.That(client.IsConnected || keyed.IsConnected).IsFalse();
     }
 
+    /// <summary>Distinguishes eager configuration errors from deferred DI callback validation.</summary>
     [Test]
-    public async Task MissingEndpointsAndNullCallbackFailWhenResolving()
+    public async Task MissingEndpointsFailEagerlyUnlessOptionsCallbackCanSupplyThem()
     {
         var builder = Builder(new());
-        builder.AddRespireClient("missing");
+        await Assert.That(() => builder.AddRespireClient("missing")).Throws<InvalidOperationException>();
+        builder.AddRespireClient("missing", configureOptions: (_, options) => options);
         using var host = builder.Build();
         await Assert.That(() => host.Services.GetRequiredService<IRespireClient>()).Throws<InvalidOperationException>();
+        var supplied = Builder(new());
+        supplied.AddRespireClient("missing", configureOptions: (_, options) => options with { Endpoints = [new("localhost", 6379)] });
+        using var suppliedHost = supplied.Build();
+        await Assert.That(suppliedHost.Services.GetRequiredService<IRespireClient>().IsConnected).IsFalse();
         var nullBuilder = Builder();
         nullBuilder.AddRespireClient("cache", configureOptions: (_, _) => null!);
         using var nullHost = nullBuilder.Build();
         await Assert.That(() => nullHost.Services.GetRequiredService<IRespireClient>()).Throws<InvalidOperationException>();
     }
 
+    /// <summary>Verifies diagnostic paths for global and named format or overflow failures.</summary>
+    [Test]
+    [Arguments("Aspire:Respire:Options:Endpoints:0", "localhost:bad")]
+    [Arguments("Aspire:Respire:cache:Options:Endpoints:0:Port", "999999999999999999999999")]
+    [Arguments("Aspire:Respire:Options:CommandTimeout", "invalid")]
+    [Arguments("Aspire:Respire:cache:Options:ReconnectPolicy:MaxAttempts", "invalid")]
+    public async Task InvalidConfigurationReportsFullPath(string path, string value)
+    {
+        var builder = Builder(new() { [path] = value, ["Aspire:Respire:cache:Options:Endpoints:0:Host"] = "localhost" });
+        var exception = await Assert.That(() => builder.AddRespireClient("cache")).Throws<InvalidOperationException>();
+        await Assert.That(exception!.Message).Contains(path);
+    }
+
+    /// <summary>Checks both clients independently when their connection-string name is identical.</summary>
+    [Test]
+    public async Task DefaultAndKeyedHealthChecksSharingConnectionNameRemainIndependent()
+    {
+        await using var server = new FakeRespServer(2, FakeRespServer.PongReply);
+        var builder = Builder(new()
+        {
+            ["ConnectionStrings:cache"] = $"127.0.0.1:{server.Port}",
+            ["Aspire:Respire:Options:Protocol"] = "Resp2",
+        });
+        builder.AddRespireClient("cache");
+        builder.AddKeyedRespireClient("cache");
+        using var host = builder.Build();
+        var checks = host.Services.GetRequiredService<HealthCheckService>();
+        var client = host.Services.GetRequiredService<IRespireClient>();
+        var keyed = host.Services.GetRequiredKeyedService<IRespireClient>("cache");
+        await Assert.That(ReferenceEquals(client, keyed)).IsFalse();
+        await client.PingAsync();
+        var partial = await checks.CheckHealthAsync();
+        await Assert.That(partial.Entries.Count).IsEqualTo(2);
+        await Assert.That(partial.Entries["respire_default_cache"].Status).IsEqualTo(HealthStatus.Healthy);
+        await Assert.That(partial.Entries["respire_keyed_cache"].Status).IsEqualTo(HealthStatus.Unhealthy);
+        await keyed.PingAsync();
+        await Assert.That((await checks.CheckHealthAsync()).Status).IsEqualTo(HealthStatus.Healthy);
+    }
+
+    /// <summary>Ensures health checks never create connections and reuse the selected keyed client.</summary>
     [Test]
     public async Task HealthCheckReusesSelectedKeyedConnection()
     {
@@ -158,10 +209,11 @@ public class RegistrationTests
         await host.Services.GetRequiredKeyedService<IRespireClient>("other").PingAsync();
         var after = await checks.CheckHealthAsync();
         await Assert.That(after.Status).IsEqualTo(HealthStatus.Healthy);
-        await Assert.That(after.Entries.Keys.Single()).IsEqualTo("respire_other");
+        await Assert.That(after.Entries.Keys.Single()).IsEqualTo("respire_keyed_other");
         await Assert.That(server.ReceivedConnectionIds.Distinct().Count()).IsEqualTo(1);
     }
 
+    /// <summary>Exercises all tracing, metrics, and health-check flag combinations with real providers.</summary>
     [Test]
     [Arguments(false, false, false)]
     [Arguments(false, false, true)]
@@ -201,6 +253,7 @@ public class RegistrationTests
         await host.StopAsync();
     }
 
+    /// <summary>Checks logging suppression with host-provided and explicitly configured factories.</summary>
     [Test]
     [Arguments(false, false)]
     [Arguments(false, true)]
@@ -218,6 +271,7 @@ public class RegistrationTests
         await Assert.That(loggerFactory.RespireCategories > 0).IsEqualTo(!disabled);
     }
 
+    /// <summary>Verifies cache writes use the keyed client and cache disposal leaves that client usable.</summary>
     [Test]
     public async Task KeyedCacheHelpersReuseClientAndCacheDisposalDoesNotOwnIt()
     {
@@ -254,6 +308,7 @@ public class RegistrationTests
         await Assert.That(server.ReceivedConnectionIds.Distinct().Count()).IsEqualTo(1);
     }
 
+    /// <summary>Checks DI credential resolution and the Entra Redis token scope without Azure provisioning.</summary>
     [Test]
     public async Task AzureManagedRedisUsesCallerOwnedCredentialFromDependencyInjection()
     {
@@ -276,11 +331,13 @@ public class RegistrationTests
     private sealed class TestCredential : TokenCredential
     {
         internal string[]? Scopes;
+        /// <summary>Captures requested scopes while returning a deterministic, unexpired test token.</summary>
         public override AccessToken GetToken(TokenRequestContext requestContext, CancellationToken cancellationToken)
         {
             Scopes = requestContext.Scopes;
             return new AccessToken("test-token", DateTimeOffset.UtcNow.AddHours(1));
         }
+        /// <summary>Shares the deterministic token behavior for asynchronous credential consumers.</summary>
         public override ValueTask<AccessToken> GetTokenAsync(TokenRequestContext requestContext, CancellationToken cancellationToken)
             => ValueTask.FromResult(GetToken(requestContext, cancellationToken));
     }
@@ -288,12 +345,15 @@ public class RegistrationTests
     private sealed class CountingLoggerFactory : ILoggerFactory
     {
         internal int RespireCategories;
+        /// <summary>Counts Respire categories while avoiding actual log output.</summary>
         public ILogger CreateLogger(string categoryName)
         {
             if (categoryName.StartsWith("Respire", StringComparison.Ordinal)) RespireCategories++;
             return Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
         }
+        /// <summary>Leaves provider ownership with the test; this factory only counts category requests.</summary>
         public void AddProvider(ILoggerProvider provider) { }
+        /// <summary>Releases no resources because the factory owns none.</summary>
         public void Dispose() { }
     }
 }

@@ -33,5 +33,9 @@ app.MapGet("/distributed/{key}", async (string key, IDistributedCache cache, Can
 });
 app.MapGet("/hybrid/{key}", async (string key, HybridCache cache, CancellationToken cancellationToken) =>
     await cache.GetOrCreateAsync(key, _ => ValueTask.FromResult(Guid.NewGuid().ToString()), cancellationToken: cancellationToken));
+// Bypass L1 and fail on a miss so the acceptance test proves the Redis-backed L2 read.
+app.MapGet("/hybrid/{key}/distributed", async (string key, HybridCache cache, CancellationToken cancellationToken) =>
+    await cache.GetOrCreateAsync<string>(key, _ => throw new InvalidOperationException("The Redis cache entry is missing."),
+        new HybridCacheEntryOptions { Flags = HybridCacheEntryFlags.DisableLocalCache }, cancellationToken: cancellationToken));
 app.MapGet("/output", () => Guid.NewGuid().ToString()).CacheOutput();
 app.Run();

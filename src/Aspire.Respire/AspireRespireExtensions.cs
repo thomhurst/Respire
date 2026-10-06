@@ -37,6 +37,7 @@ public static class AspireRespireExtensions
         Func<IServiceProvider, RespireOptions, RespireOptions>? configureOptions = null)
         => Add(builder, connectionName, connectionName, configureSettings, configureOptions);
 
+    /// <summary>Applies configuration before registering a lazy, host-owned client and its optional integrations.</summary>
     private static AspireRespireClientBuilder Add(IHostApplicationBuilder builder, string connectionName, string? serviceKey,
         Action<RespireClientSettings>? configureSettings,
         Func<IServiceProvider, RespireOptions, RespireOptions>? configureOptions)
@@ -57,14 +58,13 @@ public static class AspireRespireExtensions
         options = RespireConfiguration.Apply(root.GetSection("Options"), options);
         options = RespireConfiguration.Apply(named.GetSection("Options"), options);
         var disableLogging = settings.DisableLogging;
+        if (configureOptions is null) ValidateEndpoints(options, connectionName);
 
         RespireOptions ResolveOptions(IServiceProvider provider)
         {
             var resolved = configureOptions is null ? options : configureOptions(provider, options)
                 ?? throw new InvalidOperationException("The Respire options callback returned null.");
-            if (resolved.Endpoints.Count == 0)
-                throw new InvalidOperationException($"No endpoints are configured for Respire connection '{connectionName}'. " +
-                    $"Set ConnectionStrings:{connectionName}, Aspire:Respire:Options:Endpoints, or configureOptions.");
+            ValidateEndpoints(resolved, connectionName);
             return disableLogging ? resolved with { LoggerFactory = NullLoggerFactory.Instance } : resolved;
         }
 
@@ -72,12 +72,22 @@ public static class AspireRespireExtensions
         else builder.Services.AddKeyedRespire(serviceKey, ResolveOptions);
         var clientBuilder = new AspireRespireClientBuilder(builder, settings, serviceKey);
         if (!settings.DisableHealthChecks)
-            builder.Services.AddHealthChecks().AddRespire(name: $"respire_{connectionName}", tags: ["ready"],
+            builder.Services.AddHealthChecks().AddRespire(name: $"respire_{(serviceKey is null ? "default" : "keyed")}_{connectionName}", tags: ["ready"],
                 clientFactory: clientBuilder.GetClient);
-        if (!settings.DisableTracing)
-            builder.Services.AddOpenTelemetry().WithTracing(tracing => tracing.AddSource("Respire"));
-        if (!settings.DisableMetrics)
-            builder.Services.AddOpenTelemetry().WithMetrics(metrics => metrics.AddMeter("Respire"));
+        if (!settings.DisableTracing || !settings.DisableMetrics)
+        {
+            var telemetry = builder.Services.AddOpenTelemetry();
+            if (!settings.DisableTracing) telemetry.WithTracing(tracing => tracing.AddSource("Respire"));
+            if (!settings.DisableMetrics) telemetry.WithMetrics(metrics => metrics.AddMeter("Respire"));
+        }
         return clientBuilder;
+    }
+
+    /// <summary>Reports missing endpoints without opening a connection or invoking a deferred callback.</summary>
+    private static void ValidateEndpoints(RespireOptions options, string connectionName)
+    {
+        if (options.Endpoints.Count == 0)
+            throw new InvalidOperationException($"No endpoints are configured for Respire connection '{connectionName}'. " +
+                $"Set ConnectionStrings:{connectionName}, Aspire:Respire:Options:Endpoints, or configureOptions.");
     }
 }

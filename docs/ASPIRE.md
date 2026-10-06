@@ -22,6 +22,7 @@ or duplicate service keys throw. The host owns and disposes the clients.
 
 Use the normal Aspire hosting integrations and references:
 
+<!-- doc-test-ignore: AppHost-only fragment requires generated Projects.Api metadata and Aspire hosting packages; the equivalent sample is built and run by Aspire.Respire.IntegrationTests. -->
 ```csharp
 var cache = builder.AddRedis("cache");
 var valkey = builder.AddValkey("valkey");
@@ -83,9 +84,11 @@ builder.AddRespireClient("cache", configureOptions: (services, options) => optio
 });
 ```
 
-A callback can supply endpoints when no connection string is configured. Resolving
-a client with no endpoints, or returning null from the callback, throws a clear
-configuration error. Registration and host construction do not connect to Redis.
+A callback can supply endpoints when no connection string is configured. Without
+an options callback, missing endpoints fail during registration. Callback results
+are validated when the singleton is resolved; missing endpoints or a null result
+throw a clear configuration error. Registration and host construction do not
+connect to Redis.
 
 ## Health checks, logging, and OpenTelemetry
 
@@ -97,8 +100,10 @@ or in `configureSettings`:
 builder.AddRespireClient("cache", settings => settings.DisableTracing = true);
 ```
 
-The health check is named `respire_<connectionName>` and carries the `ready` tag.
-It reuses the selected client's existing connections. A client that has never
+Health checks are named `respire_default_<connectionName>` or
+`respire_keyed_<connectionName>` and carry the `ready` tag. Default and keyed clients
+can share a connection name without colliding.
+Each check reuses the selected client's existing connections. A client that has never
 connected reports unhealthy; health checks do not create connections. Applications
 requiring readiness immediately after startup should issue a bounded startup PING,
 as the sample does.
@@ -109,6 +114,8 @@ Metrics add meter `Respire`. Configure exporters in the application, for example
 The integration does not change process-wide metric group selection. To export
 command duration, configure `RespireMetricsOptions.Groups` to include
 `RespireMetricGroups.Command` before registering providers or creating clients.
+Repeated client registrations are safe: OpenTelemetry deduplicates source and meter
+names, and uses one provider of each kind per host.
 
 Tracing and metrics flags disable this integration's automatic provider wiring.
 They do not suppress listeners registered elsewhere in the same process, and a
@@ -147,8 +154,8 @@ Add `Respire.Azure` and your chosen Azure credential package. Grant the identity
 Redis access, and use its object ID as the Redis username:
 
 ```csharp
-using Azure.Core;
-using Azure.Identity;
+using global::Azure.Core;
+using global::Azure.Identity;
 using Respire.Azure;
 
 builder.Services.AddSingleton<TokenCredential>(new DefaultAzureCredential());
@@ -179,7 +186,8 @@ Stop it with `aspire stop` when finished.
 
 `tests/Aspire.Respire.IntegrationTests` starts this AppHost through
 `Aspire.Hosting.Testing`, waits for health, verifies both injected clients and all
-three HTTP caches, and disposes its resources. A container runtime is required.
+three HTTP caches, including a HybridCache read that bypasses L1 and fails if the
+Redis entry is absent, and disposes its resources. A container runtime is required.
 `tests/Aspire.Respire.Tests` covers configuration, keyed registration, telemetry
 flags, logging, health reuse, cache ownership, and Entra credentials on both client
 target frameworks.

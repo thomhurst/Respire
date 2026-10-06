@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Hosting;
 using Respire;
 
 namespace Respire.DocTests;
@@ -25,7 +26,9 @@ internal static class Program
         if (expected.Count == 0)
             throw new InvalidOperationException("No expected runtime assemblies were generated from package references.");
 
-        var paths = Directory.GetFiles(AppContext.BaseDirectory, "Respire*.dll")
+        var paths = Directory.GetFiles(AppContext.BaseDirectory, "*.dll")
+            .Where(path => Path.GetFileName(path).StartsWith("Respire", StringComparison.Ordinal)
+                || Path.GetFileName(path).StartsWith("Aspire.Respire", StringComparison.Ordinal))
             .Where(path => Path.GetFileNameWithoutExtension(path) != typeof(Program).Assembly.GetName().Name)
             .ToDictionary(path => Path.GetFileNameWithoutExtension(path), StringComparer.Ordinal);
         var missing = expected.Except(paths.Keys, StringComparer.Ordinal).Order().ToArray();
@@ -43,16 +46,26 @@ internal static class Program
                 throw new InvalidOperationException($"Assembly name does not match {path}.");
 
             var publicTypes = assembly.GetExportedTypes();
-            if (!publicTypes.Any(type => type.Namespace == name))
+            // Aspire companions expose host extensions in Microsoft's conventional namespace.
+            // Keep this exception limited to the four explicitly audited integration packages.
+            var aspirePackage = name is "Aspire.Respire" or "Aspire.Respire.DistributedCaching"
+                or "Aspire.Respire.HybridCaching" or "Aspire.Respire.OutputCaching";
+            if (!publicTypes.Any(type => type.Namespace == name
+                || (aspirePackage && IsHostExtension(type))))
                 throw new InvalidOperationException($"{name} has no public types in its root namespace.");
 
             foreach (var type in publicTypes)
             {
-                if (type.Namespace != name && !(type.Namespace?.StartsWith(name + ".", StringComparison.Ordinal) ?? false))
+                if (type.Namespace != name && !(type.Namespace?.StartsWith(name + ".", StringComparison.Ordinal) ?? false)
+                    && !(aspirePackage && IsHostExtension(type)))
                     throw new InvalidOperationException($"{type.FullName} is outside the {name} namespace hierarchy.");
             }
         }
     }
+
+    private static bool IsHostExtension(Type type)
+        => type.Namespace == "Microsoft.Extensions.Hosting" && type.IsAbstract && type.IsSealed
+            && type.IsDefined(typeof(System.Runtime.CompilerServices.ExtensionAttribute), inherit: false);
 }
 
 #pragma warning disable CS0162, CS0169, CS0219, CS0414, CS0649, CS1998
@@ -76,7 +89,7 @@ internal abstract class SnippetContext
     protected static readonly IConfiguration configuration = new ConfigurationBuilder().Build();
     protected static readonly ILogger logger = NullLogger.Instance;
     protected static readonly ILoggerFactory loggerFactory = NullLoggerFactory.Instance;
-    protected static readonly DocumentationBuilder builder = new();
+    protected static readonly HostApplicationBuilder builder = Host.CreateApplicationBuilder();
     protected static readonly DocumentationHealthState healthState = new();
     protected static readonly RespireMessage message = default;
 
@@ -89,13 +102,6 @@ internal abstract class SnippetContext
     protected static ValueTask ProcessAsync(string _, CancellationToken __) => ValueTask.CompletedTask;
 
     protected static ValueTask RunReportAsync(CancellationToken _ = default) => ValueTask.CompletedTask;
-}
-
-internal sealed class DocumentationBuilder
-{
-    public IServiceCollection Services { get; } = new ServiceCollection();
-
-    public IConfiguration Configuration { get; } = new ConfigurationBuilder().Build();
 }
 
 internal sealed class DocumentationHealthState

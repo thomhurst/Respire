@@ -9,6 +9,7 @@ namespace Aspire.Respire;
 // callbacks, certificate handles, or binary key internals as though they were configuration objects.
 internal static class RespireConfiguration
 {
+    /// <summary>Overlays configuration-representable options without binding service or certificate objects.</summary>
     internal static RespireOptions Apply(IConfigurationSection section, RespireOptions options) => options with
     {
         Endpoints = Endpoints(section.GetSection("Endpoints"), options.Endpoints),
@@ -55,17 +56,23 @@ internal static class RespireConfiguration
         MaxInflightCommands = section.GetValue("MaxInflightCommands", options.MaxInflightCommands),
     };
 
+    /// <summary>Replaces endpoint arrays only when the section is present.</summary>
     private static IList<RespireEndpoint> Endpoints(IConfigurationSection section, IList<RespireEndpoint> fallback)
     {
         if (!section.Exists()) return fallback;
         return section.GetChildren().Select(ParseEndpoint).ToList();
     }
 
+    /// <summary>Accepts a string endpoint or a host/port object, retaining the failing configuration path.</summary>
     private static RespireEndpoint ParseEndpoint(IConfigurationSection endpoint)
-        => endpoint.Value is { } value ? RespireEndpoint.Parse(value)
-            : new RespireEndpoint(endpoint["Host"] ?? throw new InvalidOperationException($"{endpoint.Path}:Host is required."),
-                int.Parse(endpoint["Port"] ?? "6379", CultureInfo.InvariantCulture));
+    {
+        if (endpoint.Value is not null) return Parse(endpoint, RespireEndpoint.Parse);
+        var host = endpoint["Host"] ?? throw new InvalidOperationException($"{endpoint.Path}:Host is required.");
+        var port = endpoint.GetSection("Port");
+        return new RespireEndpoint(host, port.Value is null ? 6379 : Parse(port, value => int.Parse(value, CultureInfo.InvariantCulture)));
+    }
 
+    /// <summary>Overlays configured hedged-read fields while preserving unspecified defaults.</summary>
     private static RespireHedgedReadOptions? HedgedReads(IConfigurationSection section, RespireHedgedReadOptions? options)
     {
         if (!section.Exists()) return options;
@@ -77,6 +84,7 @@ internal static class RespireConfiguration
         };
     }
 
+    /// <summary>Overlays reconnect settings, including an explicitly cleared attempt limit.</summary>
     private static RespireReconnectPolicy? ReconnectPolicy(IConfigurationSection section, RespireReconnectPolicy? options)
     {
         if (!section.Exists()) return options;
@@ -91,6 +99,7 @@ internal static class RespireConfiguration
         };
     }
 
+    /// <summary>Overlays cache settings and replaces configured key-prefix arrays.</summary>
     private static RespireClientSideCacheOptions? ClientSideCache(IConfigurationSection section, RespireClientSideCacheOptions? options)
     {
         if (!section.Exists()) return options;
@@ -109,6 +118,7 @@ internal static class RespireConfiguration
         };
     }
 
+    /// <summary>Copies scalar TLS overrides while retaining caller-owned certificate objects and callbacks.</summary>
     private static SslClientAuthenticationOptions? Tls(IConfigurationSection section, SslClientAuthenticationOptions? options)
     {
         if (!section.Exists()) return options;
@@ -134,19 +144,31 @@ internal static class RespireConfiguration
 
     // GetValue with a fallback treats an empty nullable value as absent. Here an empty string
     // explicitly clears the setting, allowing named configuration to disable global timeouts.
-    private static TimeSpan? OptionalTimeSpan(IConfiguration section, string key, TimeSpan? fallback)
+    /// <summary>Preserves absent values and treats an empty configured time span as null.</summary>
+    private static TimeSpan? OptionalTimeSpan(IConfigurationSection section, string key, TimeSpan? fallback)
     {
         var value = section[key];
         if (value is null) return fallback;
         if (value.Length == 0) return null;
-        return TimeSpan.Parse(value, CultureInfo.InvariantCulture);
+        return Parse(section.GetSection(key), value => TimeSpan.Parse(value, CultureInfo.InvariantCulture));
     }
 
-    private static int? OptionalInt32(IConfiguration section, string key, int? fallback)
+    /// <summary>Preserves absent values and treats an empty configured integer as null.</summary>
+    private static int? OptionalInt32(IConfigurationSection section, string key, int? fallback)
     {
         var value = section[key];
         if (value is null) return fallback;
         if (value.Length == 0) return null;
-        return int.Parse(value, CultureInfo.InvariantCulture);
+        return Parse(section.GetSection(key), value => int.Parse(value, CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>Annotates invalid endpoint, format, and overflow errors with the full configuration path.</summary>
+    private static T Parse<T>(IConfigurationSection section, Func<string, T> parser)
+    {
+        try { return parser(section.Value!); }
+        catch (Exception exception) when (exception is ArgumentException or FormatException or OverflowException)
+        {
+            throw new InvalidOperationException($"Invalid configuration at '{section.Path}'.", exception);
+        }
     }
 }

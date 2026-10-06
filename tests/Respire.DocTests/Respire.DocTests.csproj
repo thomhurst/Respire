@@ -9,6 +9,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Aspire.Respire" Version="$(RespirePackageVersion)" />
+    <PackageReference Include="Aspire.Respire.DistributedCaching" Version="$(RespirePackageVersion)" />
+    <PackageReference Include="Aspire.Respire.HybridCaching" Version="$(RespirePackageVersion)" />
+    <PackageReference Include="Aspire.Respire.OutputCaching" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Compression.Lz4" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Compression.Zstd" Version="$(RespirePackageVersion)" />
@@ -44,7 +48,7 @@
          set from references so adding a package cannot silently omit its audit. -->
     <ItemGroup>
       <AssemblyMetadata Include="ExpectedRuntimeAssembly" Value="%(PackageReference.Identity)"
-                        Condition="'%(PackageReference.Identity)' == 'Respire' Or $([System.String]::Copy('%(PackageReference.Identity)').StartsWith('Respire.'))" />
+                        Condition="'%(PackageReference.Identity)' == 'Respire' Or $([System.String]::Copy('%(PackageReference.Identity)').StartsWith('Respire.')) Or '%(PackageReference.Identity)' == 'Aspire.Respire' Or $([System.String]::Copy('%(PackageReference.Identity)').StartsWith('Aspire.Respire.'))" />
     </ItemGroup>
   </Target>
 
