@@ -27,6 +27,7 @@ public sealed partial class RespireClient : IRespireClient
     private readonly bool _bypassClientCache;
     private readonly RespireReadFrom _readFrom;
     private static readonly bool s_getIsReadOnly = RespireCommands.String.GET.IsReadOnly;
+    [ThreadStatic] private static PooledByteBufferWriter? s_serializationBuffer;
 
     private RespireClient(
         ClientCore core, string? keyPrefix, bool ownsCore, RespireReadFrom? readFrom = null, bool bypassClientCache = false)
@@ -1482,7 +1483,8 @@ public sealed partial class RespireClient : IRespireClient
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     internal RespireValue Serialize<T>(T value)
     {
-        ArgumentNullException.ThrowIfNull(value);
+        // Passing an unconstrained T to the object-based guard boxes values on .NET 8.
+        if (value is null) throw new ArgumentNullException(nameof(value));
         if (typeof(T) == typeof(string))
         {
             return (string)(object)value;
@@ -1510,9 +1512,22 @@ public sealed partial class RespireClient : IRespireClient
             return primitive;
         }
 
-        var buffer = new ArrayBufferWriter<byte>(256);
-        _core.Options.Serializer.Serialize(buffer, value);
-        return buffer.WrittenMemory;
+        var buffer = s_serializationBuffer ?? new PooledByteBufferWriter();
+        s_serializationBuffer = null;
+        try
+        {
+            _core.Options.Serializer.Serialize(buffer, value);
+            // Command arguments can outlive this call (admission waits, retries, batches).
+            // Only scratch storage is reusable; the returned payload must remain owned.
+            return buffer.WrittenSpan.ToArray();
+        }
+        finally
+        {
+            // Reset clears and returns the entire rental, including uncommitted serializer writes.
+            buffer.Reset();
+            if (s_serializationBuffer is null) s_serializationBuffer = buffer;
+            else buffer.Dispose();
+        }
     }
 
     internal RespireResult CreateResult(in RespValue value)

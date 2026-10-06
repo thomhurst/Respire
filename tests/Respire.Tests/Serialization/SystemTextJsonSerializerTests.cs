@@ -83,4 +83,5 @@ public class SystemTextJsonSerializerTests
 }
 
 [JsonSerializable(typeof(SystemTextJsonSerializerTests.Payload))]
+[JsonSerializable(typeof(int))]
 internal sealed partial class TestJsonContext : JsonSerializerContext;

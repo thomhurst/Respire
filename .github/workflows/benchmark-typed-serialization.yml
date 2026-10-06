@@ -1,0 +1,130 @@
+name: Typed serialization benchmarks
+
+on:
+  workflow_dispatch:
+    inputs:
+      baseline:
+        description: 'Ref whose common ancestor with the candidate is used as baseline'
+        required: true
+        type: string
+  pull_request:
+    paths:
+      - 'src/Respire/Serialization/SystemTextJsonSerializer.cs'
+      - 'src/Respire/Serialization/PooledByteBufferWriter.cs'
+      - 'src/Respire/RespireClient.cs'
+      - 'benchmarks/Respire.Benchmarks/TypedSerializationBenchmarks.cs'
+      - '.github/workflows/benchmark-typed-serialization.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    name: Typed serialization (${{ matrix.framework }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: [net8.0, net10.0]
+    services:
+      redis:
+        image: redis:8.10@sha256:8aee6591ee8c2b26e9e01ad4913fbc804ea6b79a9bc675ee1824d80ea5dd9856
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: 6379
+      FRAMEWORK: ${{ matrix.framework }}
+    steps:
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.baseline || github.event.pull_request.base.sha }}
+          path: baseline
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Record exact comparison revisions
+        shell: bash
+        run: |
+          set -euo pipefail
+          baseline=$(git -C baseline rev-parse HEAD)
+          baseline=$(git -C candidate merge-base "$baseline" HEAD)
+          git -C baseline fetch --no-tags origin "$baseline"
+          git -C baseline checkout --detach "$baseline"
+          {
+            printf 'baseline=%s\n' "$(git -C baseline rev-parse HEAD)"
+            printf 'candidate=%s\n' "$(git -C candidate rev-parse HEAD)"
+          } | tee revisions.log
+      - name: Validate and compare identical typed SET and GET workloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp candidate/benchmarks/Respire.Benchmarks/TypedSerializationBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
+          for phase in baseline-validation candidate-validation baseline-a candidate baseline-b; do
+            source=baseline
+            job=Medium
+            if [[ "$phase" == candidate* ]]; then source=candidate; fi
+            if [[ "$phase" == *validation ]]; then job=Dry; fi
+            (
+              cd "$source"
+              git rev-parse HEAD
+              dotnet run --project benchmarks/Respire.Benchmarks -c Release -f "$FRAMEWORK" -- \
+                --filter '*TypedSerializationBenchmarks*' --job "$job" --exporters json markdown \
+                --artifacts "$GITHUB_WORKSPACE/results/$phase"
+            ) > "$GITHUB_WORKSPACE/$phase.log" 2>&1
+            python - "$GITHUB_WORKSPACE/results/$phase" <<'PY'
+          import json
+          import re
+          import sys
+          from pathlib import Path
+          reports = list(Path(sys.argv[1], 'results').glob('*-report-full-compressed.json'))
+          assert len(reports) == 1, f'Missing report: {sys.argv[1]}'
+          cases = json.loads(reports[0].read_text())['Benchmarks']
+          fixture = Path('candidate/benchmarks/Respire.Benchmarks/TypedSerializationBenchmarks.cs').read_text()
+          expected = set(re.findall(r'\[Benchmark\]\s+public\s+ValueTask<[^>]+>\s+(\w+)\(', fixture))
+          assert expected and len(expected) == fixture.count('[Benchmark]'), 'Unrecognized benchmark declaration'
+          actual = [case['Method'] for case in cases]
+          assert set(actual) == expected and len(actual) == len(expected), f'Missing or duplicate typed SET/GET cases: {actual}'
+          assert all(case.get('Statistics') and case['Statistics']['Mean'] > 0 for case in cases), sys.argv[1]
+          PY
+          done
+      - name: Publish allocation and latency reports
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write('## Typed SET/GET before and after\n\nExact candidate and common-ancestor baseline use identical workloads on one runner. Compare bytes/op and latency against both controls. POCO SET retains an owned payload; POCO GET retains its returned object. Int32 already uses the primitive fast path. Struct rows exercise generic JSON without boxing.\n')
+              summary.write('\n```text\n' + Path('revisions.log').read_text() + '```\n')
+              for phase in ('baseline-a', 'candidate', 'baseline-b'):
+                  summary.write(f'\n### {phase}\n\n')
+                  summary.write(next(Path('results', phase, 'results').glob('*-report-github.md')).read_text())
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: typed-serialization-${{ matrix.framework }}
+          path: |
+            results/
+            *.log
+          retention-days: 30
