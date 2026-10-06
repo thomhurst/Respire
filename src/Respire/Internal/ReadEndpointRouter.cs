@@ -281,7 +281,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             return new(pool, connection, null);
         }
         catch (Exception error) when (!core.Disposed && !cancellationToken.IsCancellationRequested && pool is { IsStopping: true }
-            && error is ObjectDisposedException or OperationCanceledException)
+            && DedicatedConnectionPool.IsRetirementFailure(error))
         {
             // Reselect the endpoint as well as the pool. Retirement alone does not exclude
             // a healthy replacement at the same address; it is not a candidate failure.

@@ -32,14 +32,31 @@ public class TestingTransportHandshakeTests
         var pending = RespireConnection.ConnectAsync("testing", 6379, options, cancellationToken: caller.Token);
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         if (callerCancellation) caller.Cancel();
-        var error = await Assert.That(async () =>
+        OperationCanceledException cancellation;
+        if (callerCancellation)
+        {
+            cancellation = (await Assert.That(CompleteConnectionAsync).Throws<OperationCanceledException>())!;
+        }
+        else
+        {
+            var error = await Assert.That(CompleteConnectionAsync).Throws<RespireTimeoutException>();
+            await Assert.That(error!.CommandName).IsEqualTo("CONNECT");
+            await Assert.That(error.Timeout).IsEqualTo(options.ConnectTimeout);
+            await Assert.That(error.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Connecting);
+            await Assert.That(error.Diagnostics.Endpoint).IsEqualTo(new RespireEndpoint("testing", 6379));
+            await Assert.That(error.InnerException is OperationCanceledException).IsTrue();
+            cancellation = (OperationCanceledException)error.InnerException!;
+        }
+        await Assert.That(cancellation.CancellationToken == caller.Token).IsEqualTo(callerCancellation);
+        await Assert.That(cancellation.CancellationToken.IsCancellationRequested).IsTrue();
+        await Assert.That(caller.IsCancellationRequested).IsEqualTo(callerCancellation);
+        if (returnsAfterCancellation) await Assert.That(stream.CanRead).IsFalse();
+
+        async Task CompleteConnectionAsync()
         {
             // Also close a wrongly accepted connection, so a failed regression leaks no work.
             await using var connection = await pending.WaitAsync(TimeSpan.FromSeconds(5));
-        }).Throws<OperationCanceledException>();
-        await Assert.That(error!.CancellationToken == caller.Token).IsEqualTo(callerCancellation);
-        await Assert.That(caller.IsCancellationRequested).IsEqualTo(callerCancellation);
-        if (returnsAfterCancellation) await Assert.That(stream.CanRead).IsFalse();
+        }
     }
 
     [Test]
