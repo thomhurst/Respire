@@ -21,6 +21,12 @@ following synchronization even after the temporary view has gone out of scope.
 | `ClientSideCacheCoordinator.TestInspection.SharedReadGate` | `TransactionDeadlineTests` | Hold an `EnterScope` lease to control the shared-read barrier or inspect protected state. Release that lease on the owning thread; do not await while holding it or dispose the borrowed gate. |
 | `RespireTransactionBase.TestInspection.WatchConnection` | `TransactionDeadlineTests` | The transaction owns the pinned lease. Do not dispose or return the connection, or race transaction disposal. A transaction without WATCH returns null. |
 
+The table lists every current consumer that reads state through these four views;
+only `TransactionDeadlineTests` and `HashImportTests` do so. Keep this inventory
+complete when adding a consumer. `TestInspectionArchitectureTests` checks the
+internal, borrowed view boundary and rejects the four legacy member names on
+their owners, with a synthetic legacy accessor as a positive control.
+
 The four former direct accessors are removed. Existing tests still establish
 their server/worker barriers, inspect the same source and token, and assert the
 same deadline, caller-cancellation, import preservation, and FIFO behavior.
