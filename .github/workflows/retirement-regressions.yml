@@ -2,6 +2,8 @@ name: Retirement regressions
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '17 6 * * 1'
   pull_request:
     paths:
       - 'src/Respire/Networking/**'
@@ -12,6 +14,7 @@ on:
       - 'Directory.Build.props'
       - 'Directory.Packages.props'
       - 'global.json'
+      - 'scripts/Assert-RetirementResults.ps1'
       - '.github/workflows/retirement-regressions.yml'
 
 permissions:
@@ -54,6 +57,9 @@ jobs:
           )
           dotnet @retirementArguments
           exit $LASTEXITCODE
+      - name: Verify selected retirement coverage
+        shell: pwsh
+        run: ./scripts/Assert-RetirementResults.ps1 -ResultsDirectory "$env:RUNNER_TEMP/retirement"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
