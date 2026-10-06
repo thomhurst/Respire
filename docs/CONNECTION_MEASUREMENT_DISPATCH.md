@@ -1,9 +1,11 @@
-# Connection measurement dispatch investigation
+# Connection measurement dispatch: point-in-time investigation
 
 This investigation addresses #1063 against revision
 `69ea7200ff05719852f5bfdd3512b7e2c4041a22`. At this revision, lifecycle delivery
 already reserves a process-wide maximum of 64 queued or running callbacks. This
 bound predates the investigation.
+The hashes, runtime versions, and workstation measurements below record this
+investigation; they are not continuously maintained performance baselines.
 
 The decision is to retain the existing bounded work-item dispatcher. A single
 Channel reader improves the fast-callback model but fails independent delivery
@@ -23,35 +25,11 @@ The Redis image used is
 `redis@sha256:29e8589c3f9ba699b5f7aa4b3c7733c58852a3626439e619aa0ee78de08c6ca0`
 under the local `redis:7.2-alpine` tag.
 
-An initial .NET 8 run completed wait/handoff delivery and disabled-listener rental
-cases, but Docker failed to bind automatically assigned host ports for four later
-cases. Those cases produced no measurements. The failure logs are retained. The
-fixture subsequently selects verified-unused port 26363 outside the timed workload.
-Final rental cases use that setup on both runtimes. Dispatcher models do not use
-Docker and retain their original results; actual-event setup provenance appears below.
-
-A later startup collision also affects Ryuk's automatically assigned port. The
-task fixture therefore selects distinct verified-unused ports 26500–26505 (.NET 8)
-and 26510–26515 (.NET 10) for its enabled resource reaper, using
-the constructor hook in [the installed Testcontainers 4.15.0 source](https://github.com/testcontainers/testcontainers-dotnet/blob/37352559c0af87d5c7eeaced1accc2d21e3a4e69/src/Testcontainers/Containers/ResourceReaper.cs#L63).
-This deprecated hook is confined to the investigation fixture and verified against
-that pinned package revision. Rental cases run in separate processes and verify
-their completion, drained callbacks, and warm-rental event counts. Failed cases
-from earlier multi-case runs are retained as failures; later cases in those
-processes are excluded from final rental comparisons.
-
-One earlier .NET 8 multi-case fast rental failed with `SocketException (10061)`
-after 53 measurement iterations. It produced no timing result. A separate
-50,000-rental fast-listener diagnostic subsequently completed with 150,001
-deliveries and zero drops, including the final close. This does not establish the
-cause of the earlier refusal. Reusing one explicit reaper port also exposed its
-shutdown overlap; distinct reaper ports remove that startup dependency. All final
-rental cases require one complete statistics record and a zero-pending delivery
-record. No failed measurement is represented as a successful result.
-
-The first acquisition diagnostic incorrectly retained the saturation listener
-during later modes. Its acquisition data is excluded. The corrected fixture
-disposes that listener before measuring each runtime's acquisition modes below.
+Failed Docker/Redis runs, dry runs, and an acquisition diagnostic with a retained
+saturation listener are excluded. Final rental cases use separate processes and
+verified-unused Redis/reaper ports, with complete statistics and drained-delivery
+records. The [published evidence](https://github.com/thomhurst/Respire/issues/1063#issuecomment-6015088702)
+retains the detailed failure, port-selection, and exclusion history.
 
 The task-scoped fixture is separate from the permanent benchmark suite. Its
 dispatch and rental methods are identical across runtime builds. BenchmarkDotNet's
@@ -239,7 +217,8 @@ The lifecycle contract remains explicit:
 
 ## Reproduction and validation
 
-The complete temporary fixture and SHA-256 source hashes are published in
+The repository alone cannot reproduce these measurements: download the nine
+temporary fixture files and verify their SHA-256 source hashes from
 [issue #1063](https://github.com/thomhurst/Respire/issues/1063#issuecomment-6015063619).
 The [complete 32-case Markdown reports and corrected diagnostics](https://github.com/thomhurst/Respire/issues/1063#issuecomment-6015088702)
 include delivery records, measured binary hashes, and excluded-run provenance.
@@ -247,7 +226,7 @@ Original observations and confidence intervals are published for
 [.NET 8](https://github.com/thomhurst/Respire/issues/1063#issuecomment-6015189477) and
 [.NET 10](https://github.com/thomhurst/Respire/issues/1063#issuecomment-6015189975),
 with hashes of their complete BenchmarkDotNet JSON reports.
-Save the nine files under `artifacts/issue-1063-investigation` at the measured
+Save those files under `artifacts/issue-1063-investigation` at the measured
 revision. The runner's path and port parameters were added after measurement for
 portability; its C# benchmark methods and default port assignments are unchanged.
 Run from the repository root, with Docker available and the selected ports free:
@@ -277,18 +256,9 @@ per process. Allow reaper cleanup before reusing its port or select a different
 unused port. The .NET 10 wait result predates explicit port selection; only the
 untimed Redis construction differs from the published fixture.
 
-Release builds of `Respire.Tests` pass on .NET 8 and .NET 10. Focused execution of
-`ConnectionMetricCleanupTests`, `ConnectionMetricTests`, `MetricSelectionTests`,
-and `RedisMetricSchemaTests` passes 179 tests per runtime (358 total), with zero
-failures or skips. The HTML reporter is disabled, matching the existing telemetry
-CI isolation. Restore uses the local NuGet cache with `NuGetAudit=false`.
-Each build has 22 existing warnings and zero
-errors. TRX counters and fixture/test source hashes are retained with the local
-evidence. The telemetry, dedicated pool, and connection source files match the
-measured revision after rebasing onto `c6172a2a3658fb6072d91faa053d7ff3d7bc7893`.
-
 The added coverage verifies delivery below capacity with four blocked callbacks,
-capacity recovery after throwing callbacks, queued delivery after group changes,
+capacity recovery after throwing callbacks, delivery after group changes while
+an isolated worker gate guarantees the callback has not yet started,
 and disabled-listener allocation with both None and All groups. Existing focused
 tests cover acquisition, retirement, transport cleanup, pool disposal, close and
 handoff ownership, bounded identities, and disabled command allocations. No
