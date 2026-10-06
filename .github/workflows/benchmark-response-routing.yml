@@ -1,6 +1,12 @@
 name: Response routing benchmarks
 
 on:
+  workflow_dispatch:
+    inputs:
+      baseline:
+        description: Base ref whose common ancestor with the selected workflow ref is the baseline
+        required: true
+        type: string
   pull_request:
     paths:
       - 'src/Respire/Internal/PooledResponseSource.cs'
@@ -12,7 +18,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -35,14 +41,25 @@ jobs:
             10.0.x
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.event.pull_request.base.sha || inputs.baseline }}
           path: baseline
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           path: candidate
+          fetch-depth: 0
           persist-credentials: false
+      - name: Pin the shared baseline and candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          baseline=$(git -C baseline rev-parse HEAD)
+          candidate=$(git -C candidate rev-parse HEAD)
+          common=$(git -C candidate merge-base "$baseline" "$candidate")
+          git -C baseline checkout --detach "$common"
+          printf 'baseline=%s\ncandidate=%s\n' "$common" "$candidate" > revisions.log
       - name: Start isolated primary, replica, Sentinel and Cluster
         shell: bash
         run: |
@@ -87,12 +104,13 @@ jobs:
           import os
           from pathlib import Path
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
-              summary.write('## Response routing latency\n\nPinned base and event merge commit use the same Redis topology and fixture. Compare candidate latency and completed work items against both baseline controls. Standalone uses the native fast path. These steady-state rows exclude failover and redirection.\n')
+              summary.write('## Response routing latency\n\nPinned base and candidate commits use the same Redis topology and fixture. Compare candidate latency and completed work items against both baseline controls. Standalone uses the native fast path. These steady-state rows exclude failover and redirection.\n')
               for phase in ('baseline-validation', 'candidate-validation', 'baseline-a', 'candidate', 'baseline-b'):
                   reports = list(Path('results', phase, 'results').glob('*-report-full-compressed.json'))
                   assert len(reports) == 1, f'Missing report: {phase}'
                   cases = json.loads(reports[0].read_text())['Benchmarks']
                   assert len(cases) == 4, f'Missing routing cases: {phase}'
+                  assert {case['Parameters'] for case in cases} == {f'Route={route}' for route in ('Standalone', 'Cluster', 'Sentinel', 'Replica')}, f'Unexpected routes: {phase}'
                   assert all(case.get('Statistics') and case['Statistics']['Mean'] > 0 for case in cases), phase
                   if 'validation' not in phase:
                       summary.write(f'\n### {phase}\n\n')

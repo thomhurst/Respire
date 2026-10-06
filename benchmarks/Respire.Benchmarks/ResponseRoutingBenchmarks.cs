@@ -40,6 +40,35 @@ public class ResponseRoutingBenchmarks
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         while (await _client.GetStringAsync(Key, timeout.Token) != Value)
             await Task.Delay(25, timeout.Token);
+        if (Route == "Replica") await VerifyReplicaRouteAsync(timeout.Token);
+    }
+
+    private async Task VerifyReplicaRouteAsync(CancellationToken cancellationToken)
+    {
+        // This isolated topology has no other GET producer during setup. Observe each
+        // server directly so a silent fallback to the primary cannot validate the fixture.
+        await using var primary = await RespireClient.ConnectAsync(new RespireOptions { Endpoints = [new("127.0.0.1", 19580)] });
+        await using var replica = await RespireClient.ConnectAsync(new RespireOptions { Endpoints = [new("127.0.0.1", 19581)] });
+        var primaryBefore = await GetCallsAsync(primary, cancellationToken);
+        var replicaBefore = await GetCallsAsync(replica, cancellationToken);
+        if (await _client.GetStringAsync(Key, cancellationToken) != Value)
+            throw new InvalidOperationException("Replica route returned an unexpected value.");
+        var primaryAfter = await GetCallsAsync(primary, cancellationToken);
+        var replicaAfter = await GetCallsAsync(replica, cancellationToken);
+        if (primaryAfter != primaryBefore || replicaAfter != replicaBefore + 1)
+            throw new InvalidOperationException($"Replica route mismatch: primary GET delta {primaryAfter - primaryBefore}, replica GET delta {replicaAfter - replicaBefore}.");
+    }
+
+    private static async Task<long> GetCallsAsync(RespireClient client, CancellationToken cancellationToken)
+    {
+        using var info = await client.ExecuteAsync("INFO", ["commandstats"], cancellationToken: cancellationToken);
+        const string prefix = "cmdstat_get:calls=";
+        foreach (var line in info.AsString().Split('\n'))
+        {
+            if (line.StartsWith(prefix, StringComparison.Ordinal))
+                return long.Parse(line.AsSpan(prefix.Length, line.IndexOf(',') - prefix.Length), System.Globalization.CultureInfo.InvariantCulture);
+        }
+        return 0;
     }
 
     [Benchmark]

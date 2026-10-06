@@ -32,20 +32,25 @@ public class PooledResponseSourceTests
         await Assert.That(scheduler.FlushDeferred()).IsTrue();
         var finished = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         // A dedicated owner makes an extra pool dispatch distinguishable without timing assertions.
-        new Thread(() =>
+        var completionThread = new Thread(() =>
         {
             try { scheduler.Execute(); finished.TrySetResult(Environment.CurrentManagedThreadId); }
             catch (Exception error) { finished.TrySetException(error); }
-        }) { IsBackground = true }.Start();
-        var result = await observed.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        var owner = await finished.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await Assert.That(result.Thread).IsEqualTo(owner);
-        if (converterFails) await Assert.That(ReferenceEquals(result.Error, expectedError)).IsTrue();
-        else
+        }) { IsBackground = true };
+        completionThread.Start();
+        try
         {
-            await Assert.That(result.Error).IsNull();
-            await Assert.That(result.Value).IsEqualTo(42L);
+            var result = await observed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var owner = await finished.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(result.Thread).IsEqualTo(owner);
+            if (converterFails) await Assert.That(ReferenceEquals(result.Error, expectedError)).IsTrue();
+            else
+            {
+                await Assert.That(result.Error).IsNull();
+                await Assert.That(result.Value).IsEqualTo(42L);
+            }
         }
+        finally { await Assert.That(completionThread.Join(TimeSpan.FromSeconds(5))).IsTrue(); }
     }
 
     [Test]

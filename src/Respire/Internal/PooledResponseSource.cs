@@ -28,6 +28,9 @@ internal sealed class PooledResponseSource<TState, TResult> : IValueTaskSource<T
 
     private PooledResponseSource() => _complete = Complete;
 
+    // Incomplete inputs must publish on an owner that can safely run caller code inline,
+    // outside receive-loop continuations and locks. Network replies use CompletionScheduler;
+    // failures use PendingResponse.DispatchException. Preserve this contract at new call sites.
     public static ValueTask<TResult> Create(
         ValueTask<RespValue> responseTask,
         TState state,
