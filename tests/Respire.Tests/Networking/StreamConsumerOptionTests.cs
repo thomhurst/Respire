@@ -15,6 +15,49 @@ public class StreamConsumerOptionTests
     [Arguments(10000L, 1L)]
     [Arguments(10001L, 2L)]
     [Arguments(long.MaxValue, 922337203685478L)]
+    public async Task ClaimMinimumIdleRoundsUpWithoutChangingAssignedIdle(long ticks, long milliseconds)
+    {
+        await using var server = new FakeRespServer("*0\r\n"u8.ToArray());
+        await using var client = Create(server.Port);
+        var minimum = TimeSpan.FromTicks(ticks);
+        var options = new StreamClaimOptions { IdleTime = TimeSpan.FromTicks(10001) };
+        await client.Streams.ClaimIdsAsync(options, "events", "g", "c", minimum, ["1-0"], cancellationToken: CancellationToken.None);
+        await client.Streams.ClaimAsync(options, "events", "g", "c", minimum, ["1-0"], CancellationToken.None);
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
+        {
+            $"XCLAIM events g c {milliseconds} 1-0 IDLE 1 JUSTID",
+            $"XCLAIM events g c {milliseconds} 1-0 IDLE 1",
+        }, CollectionOrdering.Matching);
+    }
+
+    [Test]
+    [Arguments(0L, 0L)]
+    [Arguments(1L, 1L)]
+    [Arguments(9999L, 1L)]
+    [Arguments(10000L, 1L)]
+    [Arguments(10001L, 2L)]
+    [Arguments(long.MaxValue, 922337203685478L)]
+    public async Task AutoClaimMinimumIdleRoundsUpWithoutOverflow(long ticks, long milliseconds)
+    {
+        await using var server = new FakeRespServer("*3\r\n$3\r\n0-0\r\n*0\r\n*0\r\n"u8.ToArray());
+        await using var client = Create(server.Port);
+        var minimum = TimeSpan.FromTicks(ticks);
+        await client.Streams.ClaimPendingIdsAsync("events", "g", "c", minimum);
+        await client.Streams.ClaimPendingAsync("events", "g", "c", minimum);
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
+        {
+            $"XAUTOCLAIM events g c {milliseconds} 0 COUNT 100 JUSTID",
+            $"XAUTOCLAIM events g c {milliseconds} 0 COUNT 100",
+        }, CollectionOrdering.Matching);
+    }
+
+    [Test]
+    [Arguments(0L, 0L)]
+    [Arguments(1L, 1L)]
+    [Arguments(9999L, 1L)]
+    [Arguments(10000L, 1L)]
+    [Arguments(10001L, 2L)]
+    [Arguments(long.MaxValue, 922337203685478L)]
     public async Task PendingIdleRoundsUpWithoutOverflow(long ticks, long milliseconds)
     {
         await using var server = new FakeRespServer("*0\r\n"u8.ToArray());
@@ -230,6 +273,15 @@ public class StreamConsumerOptionTests
             .Throws<ArgumentException>();
         await Assert.That(async () => await client.Streams.ClaimPendingIdsAsync("events", "g", "c", TimeSpan.Zero, count: 0))
             .Throws<ArgumentException>();
+        var negativeMinimum = TimeSpan.FromTicks(-1);
+        await Assert.That(async () => await client.Streams.ClaimIdsAsync("events", "g", "c", negativeMinimum, "1-0"))
+            .Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await client.Streams.ClaimAsync("events", "g", "c", negativeMinimum, "1-0"))
+            .Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await client.Streams.ClaimPendingIdsAsync("events", "g", "c", negativeMinimum))
+            .Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await client.Streams.ClaimPendingAsync("events", "g", "c", negativeMinimum))
+            .Throws<ArgumentOutOfRangeException>();
         await Assert.That(batch.Count).IsEqualTo(0);
         await Assert.That(transaction.Count).IsEqualTo(0);
         await Assert.That(server.ReceivedCommands).IsEmpty();

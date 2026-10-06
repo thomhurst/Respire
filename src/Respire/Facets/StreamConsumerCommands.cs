@@ -101,7 +101,7 @@ internal sealed partial class StreamCommands
         ArgumentNullException.ThrowIfNull(group);
         ArgumentNullException.ThrowIfNull(consumer);
         RequireIds(ids);
-        var minimum = ToMilliseconds(minIdle, nameof(minIdle));
+        var minimum = ToMinimumIdleMilliseconds(minIdle);
         if (options.IdleTime.HasValue && options.DeliveryTime.HasValue)
             throw new ArgumentException("IDLE and TIME cannot be combined.", nameof(options));
         long? idle = options.IdleTime is { } duration ? ToMilliseconds(duration, nameof(options.IdleTime)) : null;
@@ -164,11 +164,20 @@ internal sealed partial class StreamCommands
         args[0] = key;
         args[1] = group;
         args[2] = consumer;
-        args[3] = ToMilliseconds(minIdle, nameof(minIdle));
+        args[3] = ToMinimumIdleMilliseconds(minIdle);
         args[4] = (start ?? RespireStreamId.Beginning).Value;
         args[5] = "COUNT";
         args[6] = count;
         if (justIds) args[7] = "JUSTID";
         return new CmdN(XAutoClaim, args);
+    }
+
+    private static long ToMinimumIdleMilliseconds(TimeSpan minIdle)
+    {
+        if (minIdle < TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(minIdle), "Minimum idle time must be non-negative.");
+        // Ceiling preserves the minimum threshold; dividing first avoids overflow at TimeSpan.MaxValue.
+        return minIdle.Ticks / TimeSpan.TicksPerMillisecond
+            + (minIdle.Ticks % TimeSpan.TicksPerMillisecond == 0 ? 0 : 1);
     }
 }

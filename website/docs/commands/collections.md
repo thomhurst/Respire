@@ -771,7 +771,7 @@ if (pending.Length > 0)
     var ids = await redis.Streams.ClaimIdsAsync(
         new StreamClaimOptions { IdleTime = TimeSpan.Zero, RetryCount = 1 },
         "events", "processors", "worker-2", TimeSpan.FromMinutes(1),
-        pending.Select(entry => entry.Id).ToArray(), stoppingToken);
+        pending.Select(entry => entry.Id).ToArray(), cancellationToken: stoppingToken);
 }
 
 var recoveredIds = await redis.Streams.ClaimPendingIdsAsync(
@@ -784,6 +784,11 @@ var recoveredIds = await redis.Streams.ClaimPendingIdsAsync(
 `RetryCount` sets the delivery counter, `Force` creates a pending record only if the stream
 entry exists, and `LastId` advances the group's last-delivered ID when greater.
 Durations and counters must be nonnegative; durations use whole milliseconds.
+The `minIdle` threshold on `ClaimAsync`, `ClaimIdsAsync`, `ClaimPendingAsync`, and
+`ClaimPendingIdsAsync` rounds fractional milliseconds upward, including at `TimeSpan.MaxValue`.
+The assigned `IdleTime` value retains whole-millisecond truncation.
+For cancellable `ClaimIdsAsync` calls, pass the IDs as a span or array followed by
+`cancellationToken: stoppingToken`, as above. The `params` overload omits cancellation.
 
 The IDs-only methods send `JUSTID`, avoiding field payloads and automatic delivery-counter
 increments. An explicit `RetryCount` still sets the counter. `ClaimPendingIdsAsync` requires
