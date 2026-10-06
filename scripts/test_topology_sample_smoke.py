@@ -121,6 +121,19 @@ class LifecycleContracts(unittest.TestCase):
             self.assertIs(error.exception.__cause__, failure)
             sleep.assert_not_called()
 
+    def test_promotion_retries_command_timeout_before_success(self):
+        with tempfile.TemporaryDirectory() as folder:
+            smoke = self.smoke(folder)
+            smoke.redis = Mock(return_value="OK")
+            smoke.primary = Mock(side_effect=[subprocess.TimeoutExpired("redis-cli", 15), 7101])
+            smoke.output = Mock(return_value=SENTINEL)
+            with patch("smoke_topology_samples.time.sleep") as sleep:
+                self.assertEqual(smoke.follow_promotion(7100), 7101)
+            self.assertEqual(smoke.primary.call_count, 2)
+            sleep.assert_called_once_with(1)
+            self.assertEqual(json.loads((Path(folder) / "promotion.json").read_text()),
+                             {"before": 7100, "after": 7101})
+
     def test_unsupported_platform_rejected_before_process_start(self):
         with tempfile.TemporaryDirectory() as folder:
             smoke = self.smoke(folder)
@@ -199,13 +212,17 @@ class LifecycleContracts(unittest.TestCase):
             )
             # Exercise Smoke.dotnet and the real guard. Only the workload executable is
             # substituted, as in Test-InvokeAgentDotNet.ps1; no SDK compilation is needed.
-            handle = smoke.start(smoke.dotnet(["-c", payload], 20, dotnet_path=sys.executable), smoke.sample_log)
+            command = smoke.dotnet(["-c", payload], 20, dotnet_path=sys.executable)
+            # Reproduce a cold PowerShell startup exceeding the old ten-second readiness limit.
+            # The delay precedes the guard, whose workload timeout remains twenty seconds.
+            command[-1] = "Start-Sleep -Seconds 11; " + command[-1]
+            handle = smoke.start(command, smoke.sample_log)
+            smoke.sample = handle
             observers = []
             try:
-                deadline = time.monotonic() + 10
-                while not marker.exists() and time.monotonic() < deadline and handle[0].poll() is None:
-                    time.sleep(0.05)
-                self.assertTrue(marker.exists(), smoke.sample_log.read_text())
+                # Match the controller's thirty-second outer startup/cleanup margin.
+                # wait_for also fails immediately if the guarded process exits.
+                smoke.wait_for(marker.exists, 50, "guarded workload readiness")
                 # pidfds pin identity before stopping; PID reuse cannot satisfy the check.
                 for pid in json.loads(marker.read_text()):
                     observers.append(os.pidfd_open(pid))

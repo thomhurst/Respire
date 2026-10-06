@@ -155,7 +155,7 @@ class Smoke:
         record()
         if self.redis("--raw", "-p", "27100", "SENTINEL", "FAILOVER", "sample-primary") != "OK":
             raise RuntimeError("Sentinel rejected the promotion request.")
-        self.wait_for(changed, 30, "Sentinel promotion", retry_errors=(RuntimeError,))
+        self.wait_for(changed, 30, "Sentinel promotion", retry_errors=(RuntimeError, subprocess.TimeoutExpired))
         after = promotion["after"]
         self.wait_for(lambda: has_primary(self.output(), after), 30, "same-client success on promoted primary")
         return after
