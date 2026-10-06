@@ -695,6 +695,49 @@ public class FailoverGroupTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DisposeAsyncClosesEveryCandidateWhenStopCallbackThrows(bool callbackThrows)
+    {
+        await using var firstServer = new FakeRespServer(FakeRespServer.PongReply);
+        await using var secondServer = new FakeRespServer(FakeRespServer.PongReply);
+        var group = await RespireFailoverGroup.ConnectAsync(
+            [Candidate(firstServer, priority: 0), Candidate(secondServer, priority: 1)],
+            FastOptions() with { ProbeInterval = TimeSpan.FromMinutes(1) });
+        var client = group.ActiveClient;
+        var callbackFailure = new InvalidOperationException("Shutdown callback failed.");
+        var selectionClosedDuringCallback = false;
+        using var registration = group.ForTests.StopToken.Register(() =>
+        {
+            selectionClosedDuringCallback = !group.IsConnected;
+            if (callbackThrows) throw callbackFailure;
+        });
+
+        var firstDisposal = group.DisposeAsync().AsTask();
+        var repeatedDisposal = group.DisposeAsync().AsTask();
+        await Assert.That(ReferenceEquals(firstDisposal, repeatedDisposal)).IsTrue();
+        AggregateException? observed = null;
+        try { await firstDisposal.WaitAsync(TimeSpan.FromSeconds(5)); }
+        catch (AggregateException error) { observed = error; }
+
+        await Assert.That(selectionClosedDuringCallback).IsTrue();
+        await Assert.That(client.IsConnected).IsFalse();
+        await Task.WhenAll(firstServer.PeerClosed, secondServer.PeerClosed).WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(() => group.ActiveClient).ThrowsExactly<ObjectDisposedException>();
+        if (callbackThrows)
+        {
+            await Assert.That(observed).IsNotNull();
+            await Assert.That(ReferenceEquals(observed!.Flatten().InnerExceptions.Single(), callbackFailure)).IsTrue();
+            await Assert.That(async () => await repeatedDisposal).ThrowsExactly<AggregateException>();
+        }
+        else
+        {
+            await Assert.That(observed).IsNull();
+            await repeatedDisposal;
+        }
+    }
+
+    [Test]
     public async Task ConnectAsync_ProbesClusterCandidatesAndRejectsClientSideCache()
     {
         var cluster = new RespireFailoverCandidate(new RespireOptions

@@ -799,7 +799,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
 
         lock (_gate)
             if (_observingClusterTopology) core.Cluster!.TopologyChanged -= RequestShardedRecovery;
-        _lifetimeCancellation.Cancel();
+        await _lifetimeCancellation.CancelAsync().ConfigureAwait(false);
 
         // Interrupt stalled control commands while waiting for their serialization gate. A
         // reconnect can publish a replacement after the first snapshot, so keep detaching every

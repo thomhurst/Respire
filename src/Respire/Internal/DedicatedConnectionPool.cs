@@ -304,7 +304,9 @@ internal sealed partial class DedicatedConnectionPool(
             try
             {
                 // Outside the gate: cancellation may synchronously finish an acquisition.
+#pragma warning disable CA1849 // Stop publishes _cancellationComplete only after these callbacks finish, before scheduling entry cleanup.
                 _lifetimeCancellation.Cancel();
+#pragma warning restore CA1849
             }
             catch (Exception error)
             {

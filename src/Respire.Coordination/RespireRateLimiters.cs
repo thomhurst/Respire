@@ -393,12 +393,14 @@ internal sealed class RedisRateLimiter : RateLimiter
             var timer = Task.Delay(delay, wakeCancellation.Token);
             var changed = _queueChanged.WaitAsync(wakeCancellation.Token);
             await Task.WhenAny(timer, changed).ConfigureAwait(false);
+#pragma warning disable CA1849 // This private token only serves Task.Delay and SemaphoreSlim.WaitAsync; detach the losing wait without a worker hop on each queue tick.
             if (!timer.IsCompleted)
             {
                 wakeCancellation.Cancel();
                 continue;
             }
             wakeCancellation.Cancel();
+#pragma warning restore CA1849
             lock (_queueGate)
             {
                 if (request.Node?.List is null || request.Node != _queue.First) continue;

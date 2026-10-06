@@ -346,7 +346,10 @@ internal sealed partial class RespireConnectionMultiplexer
             foreach (var connect in connects)
             {
                 if (connect.Status == TaskStatus.RanToCompletion)
-                    await connect.Result.DisposeAsync().ConfigureAwait(false);
+                {
+                    var connection = await connect.ConfigureAwait(false);
+                    await connection.DisposeAsync().ConfigureAwait(false);
+                }
             }
             throw;
         }
@@ -417,7 +420,7 @@ internal sealed partial class RespireConnectionMultiplexer
             foreach (var connection in old)
             {
                 if (connection is null || connection.DrainedSuccessfully) continue;
-                RetireConnection(connection);
+                RecordRetiredConnectionIdentity(connection);
                 try { await connection.DisposeAsync().ConfigureAwait(false); }
                 catch (Exception disposeError) { _logger?.LogDebug(disposeError, "Aborting an old MOVING socket failed"); }
             }
@@ -425,7 +428,7 @@ internal sealed partial class RespireConnectionMultiplexer
 
         try { await Task.WhenAll(drains).ConfigureAwait(false); }
         catch (Exception error) { _logger?.LogDebug(error, "Old MOVING sockets completed after drain cleanup"); }
-        foreach (var connection in old) RetireConnection(connection);
+        foreach (var connection in old) RecordRetiredConnectionIdentity(connection);
         if (HasPendingCorrectionFences)
             await FenceRetiredConnectionsAsync(_stopConnecting.Token).ConfigureAwait(false);
     }

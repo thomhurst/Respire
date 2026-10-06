@@ -132,7 +132,7 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
             {
                 lock (_gate) _failures.Add(error);
             }
-            try { connection.Stream.Dispose(); }
+            try { await connection.Stream.DisposeAsync().ConfigureAwait(false); }
             catch (Exception error) { lock (_gate) _failures.Add(error); }
             lock (_gate)
             {
@@ -338,7 +338,7 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
         {
             try
             {
-                connection.Lifetime.Cancel();
+                await connection.Lifetime.CancelAsync().ConfigureAwait(false);
                 // The server loop joins its writer before disposing the shared stream.
             }
             catch (Exception error) { (errors ??= []).Add(error); }

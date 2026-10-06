@@ -2497,7 +2497,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         _smigratedNotifications.Writer.TryComplete();
         // Claims the lazily started worker slot, so no worker starts after this point.
         var smigratedWorker = CloseSmigratedWorker();
-        _stopRetirement.Cancel();
+        await _stopRetirement.CancelAsync().ConfigureAwait(false);
         await _stopDiscovery.CancelAsync().ConfigureAwait(false);
         if (Volatile.Read(ref NearestLatency) is { } latency) await latency.DisposeAsync().ConfigureAwait(false);
         _smigratedNotifications.Writer.TryComplete();

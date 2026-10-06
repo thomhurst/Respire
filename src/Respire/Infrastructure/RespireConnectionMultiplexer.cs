@@ -375,7 +375,8 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
                 {
                     if (task.IsCompletedSuccessfully)
                     {
-                        await task.Result.DisposeAsync().ConfigureAwait(false);
+                        var connection = await task.ConfigureAwait(false);
+                        await connection.DisposeAsync().ConfigureAwait(false);
                     }
                 }
 
@@ -522,7 +523,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
                     var connection = Volatile.Read(ref _connections[slot]);
                     if (connection is not { IsConnected: true })
                     {
-                        RetireConnection(connection);
+                        RecordRetiredConnectionIdentity(connection);
                         ScheduleReconnect(slot);
                         ThrowIfRecoveryExhausted(slot);
                         ready = false;
@@ -535,7 +536,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
                     }
                     catch (Exception ex) when (IsConnectionLoss(ex) && Volatile.Read(ref _disposed) == 0)
                     {
-                        RetireConnection(connection);
+                        RecordRetiredConnectionIdentity(connection);
                         ScheduleReconnect(slot);
                         ThrowIfRecoveryExhausted(slot);
                         ready = false;
@@ -557,7 +558,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
                     }
                     catch (Exception ex) when (IsConnectionLoss(ex) && Volatile.Read(ref _disposed) == 0)
                     {
-                        RetireConnection(connection);
+                        RecordRetiredConnectionIdentity(connection);
                         var slot = FindSlot(connection);
                         if (slot >= 0)
                         {
@@ -675,7 +676,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
                 var connection = Volatile.Read(ref _connections[slot]);
                 if (connection is not { IsConnected: true })
                 {
-                    RetireConnection(connection);
+                    RecordRetiredConnectionIdentity(connection);
                     ScheduleReconnect(slot);
                     continue;
                 }
@@ -693,7 +694,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
                 }
                 catch (Exception ex) when (IsConnectionLoss(ex))
                 {
-                    RetireConnection(connection);
+                    RecordRetiredConnectionIdentity(connection);
                     ScheduleReconnect(slot);
                 }
                 catch (RespireConnectionRetiredException)
@@ -776,7 +777,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
                     // Publish the dead ID as soon as this individual reply faults. Aggregation
                     // may still be waiting on another slot, but a caller abandoning that wait
                     // must already be able to fence every failure observed so far.
-                    RetireConnection(connection);
+                    RecordRetiredConnectionIdentity(connection);
                 }
 
                 return ex;
@@ -853,7 +854,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         {
             if (Volatile.Read(ref _disposed) != 0) throw new CorrectionFenceDisposedException();
             foreach (var connection in _connections)
-                if (connection is not { IsConnected: true }) RetireConnection(connection);
+                if (connection is not { IsConnected: true }) RecordRetiredConnectionIdentity(connection);
 
             foreach (var identity in _retiredServerClientIds.Keys)
             {
@@ -936,7 +937,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         }
     }
 
-    private void RetireConnection(RespireConnection? connection)
+    private void RecordRetiredConnectionIdentity(RespireConnection? connection)
     {
         // An identity already obtained remains an obligation even if interrupted bootstrap
         // clears the flag that requests identities on future replacement connections.
@@ -975,7 +976,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         // that socket as a correction fence. A draining socket must also finish first.
         if (connection is { IsConnected: true }) return;
         var error = connection?.CloseError;
-        RetireConnection(connection);
+        RecordRetiredConnectionIdentity(connection);
         ForgetMovingSequences(connectedOnly: true);
         bool publish;
         var attempt = 0;
@@ -1037,7 +1038,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
                 }
             }
             ObservePublishedConnection(slot, publishedReplacement);
-            RetireConnection(old);
+            RecordRetiredConnectionIdentity(old);
             _logger?.LogInformation("Replaced dead connection {Slot} to {Host}:{Port}", slot, Host, Port);
             if (old is not null) await old.DisposeAsync().ConfigureAwait(false);
             lock (_lifecycleGate)
@@ -1308,7 +1309,9 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
             }
             publish = QueueLifecycleNotificationUnderLock(new StateNotification(null, RespireConnectionState.Disconnected, null));
         }
+#pragma warning disable CA1849 // Settle connect callbacks before starting retirement and publishing its synchronous notification.
         _stopConnecting.Cancel();
+#pragma warning restore CA1849
         _ = RetireCoreAsync(completion);
         if (publish) DrainStateNotifications();
         return completion.Task;
@@ -1371,7 +1374,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
                 CloseMaintenanceHandlerEpoch(ClusterSlotMutationClock.Next());
             await CleanupTasks.WhenAllAsync(connections.Select(connection => connection.RetireAsync())).ConfigureAwait(false);
             await WaitForCorrectionIdentityAsync().ConfigureAwait(false);
-            foreach (var connection in _connections) RetireConnection(connection);
+            foreach (var connection in _connections) RecordRetiredConnectionIdentity(connection);
             Volatile.Write(ref _retirementDrained, true);
             if (Volatile.Read(ref _disposed) == 0)
                 await FenceRetiredConnectionsAsync(_abortCancellation.Token).ConfigureAwait(false);
@@ -1454,8 +1457,10 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
             }
             publish = QueueLifecycleNotificationUnderLock(new StateNotification(null, RespireConnectionState.Disconnected, null));
         }
+#pragma warning disable CA1849 // This synchronous admission boundary must finish callbacks before aborting sockets and starting shared disposal.
         _stopConnecting.Cancel();
         _abortCancellation.Cancel();
+#pragma warning restore CA1849
         foreach (var connection in _connections)
             if (connection is not null) _ = connection.DisposeAsync();
         _ = DisposeCoreAsync(completion);

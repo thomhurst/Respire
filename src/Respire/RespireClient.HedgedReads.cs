@@ -43,7 +43,9 @@ public sealed partial class RespireClient
                 {
                     await Task.WhenAny(original, Task.Delay(_core.Options.HedgedReads!.Delay, timer.Token)).ConfigureAwait(false);
                 }
+#pragma warning disable CA1849 // This private token only cancels Task.Delay; keep read completion free of a cancellation worker hop.
                 finally { timer.Cancel(); }
+#pragma warning restore CA1849
 
                 if (!original.IsCompleted && !cancellationToken.IsCancellationRequested && budget.HasCredit
                     && (originalRoute is null ? connection : originalRoute.Connection) is { } currentOriginal)
@@ -60,7 +62,7 @@ public sealed partial class RespireClient
                     }
                     else
                     {
-                        selectionStop.Cancel();
+                        await selectionStop.CancelAsync().ConfigureAwait(false);
                         _ = ObserveHedgeSelectionAsync(selection);
                     }
                     if (race.Alternative is { } alternative && !original.IsCompleted

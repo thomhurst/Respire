@@ -249,7 +249,7 @@ internal sealed partial class SentinelRouter
         var delay = Task.Delay(transition.Delay, Clock, retry.Token);
         if (await Task.WhenAny(delay, notification).ConfigureAwait(false) == notification)
         {
-            retry.Cancel();
+            await retry.CancelAsync().ConfigureAwait(false);
             return;
         }
         await delay.ConfigureAwait(false);

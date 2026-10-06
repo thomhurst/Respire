@@ -380,11 +380,11 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             for (var index = 0; index < count; index++)
                 tasks[index] = await _ops[offset + index].StartImportAsync(_client, connection, cancellationToken).ConfigureAwait(false);
             // Slots beyond count still contain completed tasks from the preceding chunk.
-            await Task.WhenAll(tasks).ConfigureAwait(false);
+            var results = await Task.WhenAll(tasks).ConfigureAwait(false);
             offset += count;
             for (var index = 0; index < count; index++)
             {
-                if (tasks[index].Result is not { } error || !RespireHashImportSession.RequiresExpiration(error)) continue;
+                if (results[index] is not { } error || !RespireHashImportSession.RequiresExpiration(error)) continue;
                 await _importSession!.ExpireIfUncertainAsync(error).ConfigureAwait(false);
                 for (; offset < _ops.Count; offset++) _ops[offset].Fail(error);
                 return;

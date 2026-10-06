@@ -132,6 +132,15 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
     private bool _hasSelected;
     private volatile bool _disposed;
 
+    /// <summary>Friend-test access; never used by normal failover coordination.</summary>
+    internal TestAccess ForTests => new(this);
+
+    /// <summary>Read-only inspection for tests that control shutdown callbacks before disposal.</summary>
+    internal readonly struct TestAccess(RespireFailoverGroup group)
+    {
+        internal CancellationToken StopToken => group._stop.Token;
+    }
+
     private RespireFailoverGroup(CandidateState[] candidates, RespireFailoverGroupOptions options, TimeProvider clock, ILogger? logger)
     {
         _candidates = candidates;
@@ -552,7 +561,6 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
             _disposed = true;
             Volatile.Write(ref _active, null);
             _activeEndpoint = null;
-            _stop.Cancel();
         }
         finally
         {
@@ -562,6 +570,10 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         List<Exception>? failures = null;
         try
         {
+            // Selection is already closed. A failing callback must not skip candidate cleanup.
+            try { await _stop.CancelAsync().ConfigureAwait(false); }
+            catch (Exception error) { (failures ??= []).Add(error); }
+
             if (_monitor is { } monitor)
             {
                 try { await monitor.ConfigureAwait(false); }

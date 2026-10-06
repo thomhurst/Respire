@@ -370,8 +370,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
         catch
         {
-            tlsStream?.Dispose();
-            socket.Dispose();
+            try { if (tlsStream is not null) await tlsStream.DisposeAsync().ConfigureAwait(false); }
+            catch { /* Preserve the original connection failure. */ }
+            finally { socket.Dispose(); }
             throw;
         }
 
@@ -388,7 +389,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
         catch
         {
-            await connection.DisposeAsync().ConfigureAwait(false);
+            try { await connection.DisposeAsync().ConfigureAwait(false); }
+            catch { /* Preserve the original handshake or validation failure. */ }
             throw;
         }
 
@@ -417,7 +419,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
         catch
         {
-            stream?.Dispose();
+            try { if (stream is not null) await stream.DisposeAsync().ConfigureAwait(false); }
+            catch { /* Preserve the factory cancellation or connection failure. */ }
             throw;
         }
         var connection = new RespireConnection(null, stream, host, port, options, logger);
@@ -434,7 +437,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
         catch
         {
-            await connection.DisposeAsync().ConfigureAwait(false);
+            try { await connection.DisposeAsync().ConfigureAwait(false); }
+            catch { /* Preserve the original handshake or validation failure. */ }
             throw;
         }
     }
@@ -3736,9 +3740,16 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 _activeBuffer.Release();
                 _spareBuffer.Release();
             }
-            _stream?.Dispose();
-            _socket?.Dispose();
-            _watchdogCancellation.Dispose();
+            try
+            {
+                if (_stream is not null) await _stream.DisposeAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                // A failing custom stream must not retain the transport or its timeout source.
+                try { _socket?.Dispose(); }
+                finally { _watchdogCancellation.Dispose(); }
+            }
             _logger?.LogDebug("Disconnected from {Host}:{Port}", Host, Port);
             completion.TrySetResult();
         }
