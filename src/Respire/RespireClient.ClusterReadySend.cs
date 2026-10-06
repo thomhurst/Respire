@@ -79,6 +79,7 @@ public sealed partial class RespireClient
         bool TransferOwnership { get; }
     }
 
+    // Only this variant invokes caller code; built-in string/bytes senders need no converter exception wrapper.
     private readonly struct ClusterConvertedReadySend<TState, TResult>(
         TState state, ResponseConverter<TState, TResult> converter, bool transferOwnership) : IClusterReadySend<TResult>
     {
