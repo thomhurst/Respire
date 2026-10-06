@@ -74,7 +74,7 @@ jobs:
       - name: Execute generated commands with RESP2 and RESP3
         shell: bash
         run: |
-          container=$(docker run --rm -d -p 127.0.0.1::6379 redis:8.4-alpine)
+          container=$(docker run --rm -d -p 127.0.0.1::6379 redis:8.10-alpine)
           trap 'docker stop "$container" >/dev/null' EXIT
           for attempt in {1..30}; do
             if docker exec "$container" redis-cli ping | grep -q PONG; then break; fi

@@ -4,7 +4,7 @@ This console application connects through one seed, inspects the discovered
 shards, and round-trips three expiring keys in different hash-slot ranges.
 It uses public Respire APIs and builds on .NET 8 and .NET 10 in CI.
 
-The Compose topology is for local development: three Redis 8.4 primaries in one
+The Compose topology is for local development: three Redis 8.10 primaries in one
 container, with no replicas, persistence, authentication or host redundancy.
 All processes share a loopback network namespace. Published host ports match
 the advertised client ports, so a .NET process on the host can follow discovered
