@@ -2222,7 +2222,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             _dedicatedPools[node] = pool;
             _ownedPools.Add(pool);
         }
-        if (previous is not null) _ = RetirePoolAsync(previous);
+        if (previous is not null) _ = RetirePoolAsync(previous, moving: true);
         return pool;
     }
 

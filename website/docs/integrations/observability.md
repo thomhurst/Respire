@@ -257,6 +257,9 @@ window expires or the socket closes. They count connections with increased allow
 requests granted an extension. Duplicate notifications do not add allowances or handoffs.
 A failed or superseded replacement emits no handoff. Ordinary reconnects are creation/close
 events and do not count as `MOVING` handoffs.
+Handoffs include idle and borrowed dedicated connections from the retired pool, including
+streaming leases, across standalone, Sentinel and Cluster routing. Repeated retirement does
+not count them again. Connections already closing or still negotiating at publication are excluded.
 
 Close events add `redis.client.connection.close.reason`: `application_close` for intentional
 disposal, retirement or caller cancellation during a handshake, `pool_eviction_idle` for

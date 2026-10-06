@@ -155,7 +155,7 @@ internal static class ConnectionTelemetry
             _pool.Remove(this);
             if (!RespireTelemetry.IsMetricEnabled(RespireMetricGroups.ConnectionAdvanced, RespireTelemetry.ConnectionsClosed)) return;
             var reason = "error";
-            if (peerClosed) reason = "server_close";
+            if (peerClosed || IsPeerReset(error)) reason = "server_close";
             else if (error is null or RespireConnectionRetiredException
                 || error is OperationCanceledException && Volatile.Read(ref _requestedCloseReason) == "application_close")
                 reason = Volatile.Read(ref _requestedCloseReason) ?? "application_close";

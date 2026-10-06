@@ -280,7 +280,7 @@ internal sealed partial class DedicatedConnectionPool(
     /// Stops rentals and pending handshakes, closes idle sockets, and waits for borrowed leases
     /// to return. Accepted operations can finish; DisposeAsync can still abort them later.
     /// </summary>
-    internal ValueTask RetireAsync() => Stop(abortBorrowed: false);
+    internal ValueTask RetireAsync(bool moving = false) => Stop(abortBorrowed: false, moving);
 
     /// <summary>Stops the pool and aborts borrowed operations, including an existing retirement.</summary>
     public async ValueTask DisposeAsync()
@@ -297,9 +297,10 @@ internal sealed partial class DedicatedConnectionPool(
         }
     }
 
-    private ValueTask Stop(bool abortBorrowed)
+    private ValueTask Stop(bool abortBorrowed, bool moving = false)
     {
         List<Entry>? closing = null;
+        List<RespireConnection>? handedOff = null;
         bool cancel;
         Task completion;
         lock (_gate)
@@ -310,6 +311,10 @@ internal sealed partial class DedicatedConnectionPool(
             completion = _completion.Task;
             foreach (var entry in _connections.Values)
             {
+                // Count only live members of this retired publication. Closing entries and
+                // connections whose handshake finishes after retirement were not handed off.
+                if (cancel && moving && entry.State != State.Closing && entry.Connection.IsConnected)
+                    (handedOff ??= []).Add(entry.Connection);
                 if (entry.State == State.Idle || (abortBorrowed && entry.State == State.Rented))
                 {
                     BeginCloseLocked(entry);
@@ -345,6 +350,10 @@ internal sealed partial class DedicatedConnectionPool(
         {
             foreach (var entry in closing) _ = CloseAsync(entry);
         }
+        // Admission is closed and idle cleanup is running before any listener can block.
+        // Borrowed operations still drain normally; callbacks run outside ownership gates.
+        if (handedOff is not null)
+            foreach (var connection in handedOff) connection.RecordConnectionHandoff();
         return new ValueTask(completion);
     }
 

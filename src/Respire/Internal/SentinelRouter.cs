@@ -575,7 +575,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
         {
             try
             {
-                await _pools.RetireAsync(pool).ConfigureAwait(false);
+                await _pools.RetireAsync(pool, moving: true).ConfigureAwait(false);
             }
             catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
             {

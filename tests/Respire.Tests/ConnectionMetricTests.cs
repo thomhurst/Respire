@@ -293,7 +293,14 @@ public class ConnectionMetricTests
         await Assert.That(capture.Current("db.client.connection.count", "used")).IsEqualTo(1d);
         await server.SendRawAsync("def\r\n"u8.ToArray());
         if (!discard) await stream.CopyToAsync(Stream.Null);
-        await WaitUntil(() => { capture.Observe(); return capture.Current("db.client.connection.pending_requests") == 0; });
+        await WaitUntil(() =>
+        {
+            // Observable instruments collect separately while receive completion can advance.
+            // Wait for both final observations rather than treating them as one atomic scrape.
+            capture.Observe();
+            return capture.Current("db.client.connection.pending_requests") == 0
+                && capture.Current("db.client.connection.count", "idle") == 1;
+        });
         await Assert.That(capture.Current("db.client.connection.count", "idle")).IsEqualTo(1d);
     }
 
@@ -477,6 +484,170 @@ public class ConnectionMetricTests
         var handoff = capture.Events.Single(item => item.Name == "redis.client.connection.handoff");
         await Assert.That(handoff.Value).IsEqualTo(1d);
         await Assert.That(handoff.Unit).IsEqualTo("1");
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task WriteFailureClassifiesResetWithoutAReceiveFlag(bool wrapped, bool unrelatedError)
+    {
+        using var configuration = new MetricConfigurationScope();
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+            new() { Protocol = RespProtocol.Resp2 });
+        using var capture = new Capture(server.Port);
+        var pool = new ConnectionTelemetry.Pool($"127.0.0.1:{server.Port}/0/shared", false);
+        var state = new ConnectionTelemetry.State(connection, pool, false);
+        // Match FlushLoopAsync's wrapped failure before the receive loop publishes its flag.
+        // TLS adds an IOException around the underlying socket reset.
+        Exception cause = unrelatedError ? new IOException("Local write failure.")
+            : new SocketException((int)SocketError.ConnectionReset);
+        var error = wrapped
+            ? new RespireConnectionException("Send failed.", new IOException("TLS write failed.", cause))
+            : cause;
+        state.Closed(error, peerClosed: false);
+        state.Closed(error, peerClosed: false);
+        var closed = capture.Events.Single(item => item.Name == "redis.client.connection.closed");
+        await Assert.That(closed.Tags["redis.client.connection.close.reason"])
+            .IsEqualTo(unrelatedError ? "error" : "server_close");
+        await Assert.That(closed.Tags.ContainsKey("error.type")).IsEqualTo(unrelatedError);
+        await Assert.That(closed.Value).IsEqualTo(1d);
+    }
+
+    [Test]
+    [Arguments("standalone")]
+    [Arguments("sentinel")]
+    [Arguments("cluster")]
+    public async Task MovingCountsIdleAndBorrowedDedicatedConnectionsOnce(string mode)
+    {
+        using var configuration = new MetricConfigurationScope();
+        await using var source = RoutingMaintenanceServer();
+        await using var target = RoutingMaintenanceServer();
+        await using var sentinel = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR", StringComparison.Ordinal)
+                ? Encoding.ASCII.GetBytes("*2\r\n$9\r\n127.0.0.1\r\n" + "$"
+                    + $"{source.Port.ToString().Length}\r\n{source.Port}\r\n")
+                : "*0\r\n"u8.ToArray(),
+        };
+        var options = Options(source) with
+        {
+            Protocol = RespProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            UseCluster = mode == "cluster", SentinelPrimaryName = mode == "sentinel" ? "mymaster" : null,
+        };
+        if (mode == "sentinel")
+        {
+            options.Endpoints.Clear();
+            options.Endpoints.Add(new("127.0.0.1", sentinel.Port));
+        }
+        await using var client = await RespireClient.ConnectAsync(options);
+        var pool = client.Core.Cluster is { } cluster
+            ? await cluster.GetDedicatedPoolAsync(ClusterHash.GetSlot("lease"), default, discovery: null)
+            : await client.Core.GetDedicatedPoolAsync(default);
+        var idle = await pool.RentAsync(default);
+        var borrowed = await pool.RentAsync(default, reuseIdle: false);
+        var streaming = await pool.RentAsync(default, kind: DedicatedLeaseKind.Streaming);
+        pool.Return(idle);
+        using var capture = new Capture(source.Port);
+        var expectedHandoffs = pool.MovingOwner!.ConnectionCount + 3;
+        var moving = Encoding.UTF8.GetBytes($">4\r\n+MOVING\r\n:1\r\n:5\r\n+127.0.0.1:{target.Port}\r\n");
+        try
+        {
+            await source.SendRawAsync(moving.Concat(moving).ToArray());
+            await WaitUntil(() => pool.IsStopping);
+            await WaitUntil(() => capture.Events.Count(item => item.Name == "redis.client.connection.handoff") == expectedHandoffs);
+            await Assert.That(borrowed.IsConnected).IsTrue();
+            await Assert.That(streaming.IsConnected).IsTrue();
+            // Count all old sockets so this also works after the process-wide label budget
+            // combines shared and dedicated identities in its ordinary overflow pool.
+            var handoffs = capture.Events.Where(item => item.Name == "redis.client.connection.handoff").ToArray();
+            await Assert.That(handoffs.Length).IsEqualTo(expectedHandoffs);
+            await Assert.That(handoffs.Sum(item => item.Value)).IsEqualTo((double)expectedHandoffs);
+            var repeated = pool.RetireAsync().AsTask();
+            pool.Return(borrowed);
+            pool.Return(streaming);
+            await repeated.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(capture.Events.Count(item => item.Name == "redis.client.connection.handoff"))
+                .IsEqualTo(expectedHandoffs);
+        }
+        finally
+        {
+            pool.Return(borrowed);
+            pool.Return(streaming);
+        }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DedicatedRetirementReportsOnlyMovingAndExcludesClosedConnections(bool moving)
+    {
+        using var configuration = new MetricConfigurationScope();
+        await using var server = new FakeRespServer(3, FakeRespServer.PongReply);
+        await using var pool = new DedicatedConnectionPool("127.0.0.1", server.Port,
+            new() { Protocol = RespProtocol.Resp2 }, null);
+        var idle = await pool.RentAsync(default);
+        var borrowed = await pool.RentAsync(default, reuseIdle: false);
+        var dead = await pool.RentAsync(default, reuseIdle: false);
+        await dead.DisposeAsync();
+        pool.Return(idle);
+        using var capture = new Capture(server.Port);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, current) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "redis.client.connection.handoff")
+                current.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, _, _) =>
+        {
+            entered.TrySetResult();
+            release.Task.GetAwaiter().GetResult();
+        });
+        listener.Start();
+        var retirement = Task.Run(async () => await pool.RetireAsync(moving));
+        try
+        {
+            if (moving) await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            else await WaitUntil(() => pool.IsStopping);
+            var gateCheck = Task.Run(() => pool.CaptureRetirementState());
+            await gateCheck.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(pool.IsStopping).IsTrue();
+            await WaitUntil(() => !idle.IsConnected);
+            await Assert.That(idle.IsConnected).IsFalse();
+            await Assert.That(borrowed.IsConnected).IsTrue();
+            await Assert.That(retirement.IsCompleted).IsFalse();
+            pool.Return(borrowed);
+            pool.Return(dead);
+            // Repeated calls cannot emit more handoffs, even while the first callback blocks.
+            await pool.RetireAsync(moving).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            release.TrySetResult();
+            pool.Return(borrowed);
+            pool.Return(dead);
+            await retirement.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        var handoffs = capture.Events.Where(item => item.Name == "redis.client.connection.handoff").ToArray();
+        await Assert.That(handoffs.Length).IsEqualTo(moving ? 2 : 0);
+    }
+
+    private static FakeRespServer RoutingMaintenanceServer()
+    {
+        var server = new FakeRespServer(8, FakeRespServer.PongReply);
+        server.ReplyOverride = (_, command) => command switch
+        {
+            "HELLO 3" => "%1\r\n+proto\r\n:3\r\n"u8.ToArray(),
+            "CLIENT MAINT_NOTIFICATIONS ON" => FakeRespServer.OkReply,
+            "ROLE" => "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray(),
+            "CLUSTER SLOTS" => Encoding.ASCII.GetBytes(
+                $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{server.Port}\r\n"),
+            _ => FakeRespServer.OkReply,
+        };
+        return server;
     }
 
     [Test]

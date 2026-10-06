@@ -239,7 +239,7 @@ internal sealed class ClientCore : IAsyncDisposable
 
     private async Task RetireMovedDedicatedPoolAsync(DedicatedConnectionPool pool)
     {
-        try { await _ownedPools.RetireAsync(pool).ConfigureAwait(false); }
+        try { await _ownedPools.RetireAsync(pool, moving: true).ConfigureAwait(false); }
         catch (Exception error)
         {
             try { Logger?.DedicatedMovingCleanupFailed(error); }

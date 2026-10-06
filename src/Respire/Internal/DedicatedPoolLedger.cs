@@ -24,9 +24,9 @@ internal sealed class DedicatedPoolLedger(Lock gate)
         lock (gate) return _pools.ToArray();
     }
 
-    internal async Task RetireAsync(DedicatedConnectionPool pool)
+    internal async Task RetireAsync(DedicatedConnectionPool pool, bool moving = false)
     {
-        await pool.RetireAsync().ConfigureAwait(false);
+        await pool.RetireAsync(moving).ConfigureAwait(false);
         // Failed retirement stays owned so explicit disposal can still abort it.
         lock (gate) _pools.Remove(pool);
     }
@@ -38,7 +38,7 @@ internal sealed class DedicatedPoolLedger(Lock gate)
     }
 
     internal Task RetireAllAsync()
-        => Task.WhenAll(Snapshot().Select(RetireAsync));
+        => Task.WhenAll(Snapshot().Select(pool => RetireAsync(pool)));
 
     internal Task DisposeAllAsync()
         // Start every abort before awaiting any completion, even when one pool fails.
