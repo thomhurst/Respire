@@ -37,7 +37,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     private readonly SemaphoreSlim _correctionIdentityGate = new(1, 1);
     private readonly SemaphoreSlim _retiredFenceGate = new(1, 1);
     private readonly ConcurrentDictionary<RetiredClientIdentity, byte> _retiredServerClientIds = new();
-    private readonly object _stateNotificationGate = new();
+    private readonly Lock _stateNotificationGate = new();
     private readonly Queue<StateNotification> _stateNotifications = [];
     private uint _next;
     private int _disposed;
@@ -46,7 +46,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     // Cold lifecycle transitions share this gate; normal selection reads only volatile state.
     // A reconnect reserves ownership before starting so shutdown also awaits unpublished work.
     // Lock order: _lifecycleGate, then MovingHandoffCoordinator.Gate.
-    private readonly object _lifecycleGate = new();
+    private readonly Lock _lifecycleGate = new();
     private readonly CancellationTokenSource _stopConnecting = new();
     private readonly CancellationTokenSource _abortCancellation = new();
     private int _activeReconnects;
@@ -121,7 +121,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         }
     }
 
-    private readonly object _maintenanceHandlersGate = new();
+    private readonly Lock _maintenanceHandlersGate = new();
     private MaintenanceNotificationHandler? _maintenanceNotificationReceived;
     // A receive loop stamps and registers its fence before waiting for this gate. Keep only
     // epochs that an in-flight receive can still select; older closed epochs are pruned.

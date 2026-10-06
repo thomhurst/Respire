@@ -6,6 +6,7 @@ namespace Respire.Internal;
 internal sealed partial class ClusterRouter
 {
     internal ReadLatencySampler<RespireConnection>? NearestLatency;
+    // LazyInitializer's ref-object overload uses Monitor internally; do not replace with Lock.
     private object? _nearestGate;
     private int _nearestCursor;
     private HashSet<int>? _nearestReplicaDiscoveries;

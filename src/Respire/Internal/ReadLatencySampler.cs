@@ -19,7 +19,7 @@ internal sealed class ReadLatencySampler<TConnection>(
     internal const int MaximumConcurrentProbes = 4;
     private readonly ConditionalWeakTable<TConnection, Sample> _samples = new();
     private readonly ConditionalWeakTable<object, StrongBox<long>> _connectionFailures = new();
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly List<Task> _running = [];
     private readonly CancellationTokenSource _stop = new();
     private int _disposed;

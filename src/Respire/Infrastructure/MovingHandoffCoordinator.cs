@@ -18,7 +18,7 @@ internal sealed class MovingHandoffCoordinator
     private TaskCompletionSource? _drainsIdle;
     private long _handoffEpoch;
 
-    internal object Gate { get; } = new();
+    internal Lock Gate { get; } = new();
 
     internal bool HasSequenceFences
     {
@@ -154,6 +154,6 @@ internal sealed class MovingHandoffCoordinator
 
     [System.Diagnostics.Conditional("DEBUG")]
     private void AssertGateHeld()
-        => System.Diagnostics.Debug.Assert(System.Threading.Monitor.IsEntered(Gate),
+        => System.Diagnostics.Debug.Assert(Gate.IsHeldByCurrentThread,
             "MovingHandoffCoordinator state must be accessed while holding Gate.");
 }

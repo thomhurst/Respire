@@ -23,7 +23,7 @@ internal sealed partial class SubscriptionHub
 
     internal readonly struct RecoveryTestAccess(SubscriptionHub owner)
     {
-        internal object StateGate => owner._reconnectStateGate;
+        internal Lock StateGate => owner._reconnectStateGate;
         internal bool IsControlIdle => owner._controlGate.CurrentCount == 1;
 
         internal Task CloseCurrentConnection()

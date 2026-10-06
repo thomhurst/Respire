@@ -9,14 +9,14 @@ namespace Respire.Internal;
 internal sealed class ClusterReplicaDiscovery(
     Func<int, Task> refresh, Func<int, bool> hasCoverage, Func<long>? clock = null)
 {
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     // Only value-type throttle/attempt records scale with uncovered slots; one probe runs per router.
     private readonly Dictionary<int, (long NotBefore, long Version)> _notBefore = new();
     private (int Slot, Task<(int Slot, long Version)>? Completion) _current;
     private long _nextVersion;
 
     // Deterministic completion/interleaving seam for the coordinator's tests.
-    internal object TestingGate => _gate;
+    internal Lock TestingGate => _gate;
     internal Task? TestingCurrentProbe => _current.Completion;
 
     internal async ValueTask<long> DiscoverAsync(int slot, CancellationToken cancellationToken)

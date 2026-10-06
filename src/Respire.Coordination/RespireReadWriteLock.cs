@@ -35,7 +35,7 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
     private readonly RespireLockToken _owner;
     private readonly bool _isWriter;
     private readonly SemaphoreSlim _operationGate = new(1, 1);
-    private readonly object _ownershipSync = new();
+    private readonly Lock _ownershipSync = new();
     private LeaseSnapshot _snapshot;
     private int _released;
     private Task<bool>? _releaseTask;

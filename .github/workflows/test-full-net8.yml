@@ -1,0 +1,78 @@
+name: Full .NET 8 tests
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  full-suite:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.action == 'labeled' && github.event.label.name == 'test-full-net8') ||
+      (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'test-full-net8'))
+    name: Full test suite (net8.0)
+    concurrency:
+      group: full-net8-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      RESPIRE_TEST_PROTOCOL: '3'
+      DOCKER_HOST: unix:///var/run/docker.sock
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: ./.github/actions/setup-dotnet
+      # CI's required net8 job is a smoke set. This opt-in job covers every
+      # multi-targeted test project; analyzer, pipeline and packed-package smoke projects are net10-only.
+      - name: Build and run every .NET 8 test project
+        shell: bash
+        run: |
+          set -euo pipefail
+          for project in \
+            tests/Respire.Tests \
+            tests/Respire.HealthChecks.Tests \
+            tests/Respire.IntegrationTests \
+            tests/Respire.Coordination.Tests \
+            tests/Respire.Azure.Tests \
+            tests/Respire.DataProtection.Tests \
+            tests/Respire.Caching.Tests \
+            tests/Respire.Caching.Hybrid.Tests
+          do
+            dotnet build "$project" -c Release -f net8.0
+            if [[ "$project" == tests/Respire.Tests ]]; then
+              # MetricSelectionTests controls listener state; run it without the HTML reporter below.
+              dotnet run --project "$project" -c Release -f net8.0 --no-build -- \
+                --treenode-filter '/*/*/(!MetricSelectionTests)/*'
+            else
+              dotnet run --project "$project" -c Release -f net8.0 --no-build
+            fi
+          done
+      - name: Run integration tests with RESP2
+        env:
+          RESPIRE_TEST_PROTOCOL: '2'
+        run: >-
+          dotnet run --project tests/Respire.IntegrationTests -c Release -f net8.0 --no-build --
+          --treenode-filter '/*/*/*/*[Category!=ProtocolIndependent]'
+      - name: Run telemetry and direct response regressions without tracing
+        env:
+          TUNIT_DISABLE_HTML_REPORTER: 'true'
+        run: |
+          dotnet run --project tests/Respire.Tests -c Release -f net8.0 --no-build -- \
+            --treenode-filter '/*/*/(HedgedReadTests)|(BytesResponseTests)/*'
+          dotnet run --project tests/Respire.Tests -c Release -f net8.0 --no-build -- \
+            --treenode-filter '/*/*/GetStringDirectPathTests/*'
+          dotnet run --project tests/Respire.Tests -c Release -f net8.0 --no-build -- \
+            --treenode-filter '/*/*/MetricSelectionTests/*'
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: full-net8-test-reports
+          path: '**/TestResults/*-report.html'
+          retention-days: 14

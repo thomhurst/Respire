@@ -301,7 +301,7 @@ public class FakeTransactionTests
 
     private static Task[] ConnectionLoops(RespireFakeServer server)
     {
-        var gate = typeof(RespireFakeServer).GetField("_gate", PrivateInstance)!.GetValue(server)!;
+        var gate = (Lock)typeof(RespireFakeServer).GetField("_gate", PrivateInstance)!.GetValue(server)!;
         lock (gate)
         {
             var connections = (System.Collections.IEnumerable)typeof(RespireFakeServer).GetField("_connections", PrivateInstance)!.GetValue(server)!;
@@ -311,7 +311,7 @@ public class FakeTransactionTests
 
     private static int WatcherCount(RespireFakeServer server)
     {
-        var gate = typeof(RespireFakeServer).GetField("_gate", PrivateInstance)!.GetValue(server)!;
+        var gate = (Lock)typeof(RespireFakeServer).GetField("_gate", PrivateInstance)!.GetValue(server)!;
         lock (gate)
             return ((System.Collections.IDictionary)typeof(RespireFakeServer).GetField("_watchers", PrivateInstance)!.GetValue(server)!).Count;
     }

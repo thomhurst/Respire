@@ -23,12 +23,12 @@ internal sealed class ClusterNodeIdentityIndex
     // Includes detached generations until their owner confirms drain and correction completion.
     private readonly HashSet<RespireConnectionMultiplexer> _allNodes = [];
     private readonly Func<RespireEndpoint, bool, RespireConnectionMultiplexer> _create;
-    private readonly object _gate;
+    private readonly Lock _gate;
 
     internal ClusterNodeIdentityIndex(RespireEndpoint endpoint, RespireConnectionMultiplexer primary,
-        Func<RespireEndpoint, bool, RespireConnectionMultiplexer> create, object gate)
+        Func<RespireEndpoint, bool, RespireConnectionMultiplexer> create, Lock gate)
     {
-        ArgumentNullException.ThrowIfNull(gate);
+        if (gate is null) throw new ArgumentNullException(nameof(gate));
         _create = create;
         _gate = gate;
         _nodes.Add(endpoint, primary);
@@ -36,7 +36,7 @@ internal sealed class ClusterNodeIdentityIndex
     }
 
     internal ClusterNodeIdentityIndex(RespireEndpoint endpoint, RespireConnectionMultiplexer primary,
-        Func<RespireEndpoint, RespireConnectionMultiplexer> create, object gate)
+        Func<RespireEndpoint, RespireConnectionMultiplexer> create, Lock gate)
         : this(endpoint, primary, (address, _) => create(address), gate)
     {
     }
@@ -298,7 +298,7 @@ internal sealed class ClusterNodeIdentityIndex
 
     [Conditional("DEBUG")]
     private void AssertAccess()
-        => Debug.Assert(Monitor.IsEntered(_gate), "Cluster identity access requires the router node gate.");
+        => Debug.Assert(_gate.IsHeldByCurrentThread, "Cluster identity access requires the router node gate.");
 
     // Reuse a transport only while its immutable address remains
     // advertised for this node; a stable node ID alone does not make an old host reachable.

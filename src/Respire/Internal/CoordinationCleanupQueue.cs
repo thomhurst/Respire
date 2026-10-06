@@ -22,8 +22,8 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
     private readonly CancellationTokenSource _stopping = new();
     private readonly CancellationToken _stoppingToken;
     private readonly SemaphoreSlim _outstanding = new(Capacity + WorkerCount);
-    private readonly object _workerGate = new();
-    private readonly object _scheduledGate = new();
+    private readonly Lock _workerGate = new();
+    private readonly Lock _scheduledGate = new();
     private readonly HashSet<Task> _scheduledRetries = [];
     private Task[]? _workers;
     private int _disposed;

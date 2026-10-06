@@ -412,7 +412,7 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     // Serializes renewal and release. It is never disposed: only WaitAsync is used, so no wait
     // handle is ever allocated and there is nothing to free.
     private readonly SemaphoreSlim _operationGate = new(1, 1);
-    private readonly object _disposeRetryGate = new();
+    private readonly Lock _disposeRetryGate = new();
     // Expiry and local validity change together, so readers see both through one snapshot.
     private Lease _lease;
     // PermitState flags. Flags are only ever set or cleared through Set and Clear.

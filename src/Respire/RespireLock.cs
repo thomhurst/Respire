@@ -64,7 +64,7 @@ public sealed class RespireLock : IAsyncDisposable
     private int _keepAlive;
     private RespireLockKeepAlive? _ownedKeepAlive;
     private int _ownedKeepAliveDisposed;
-    private readonly object _releaseSync = new();
+    private readonly Lock _releaseSync = new();
     private ReleaseAttempt? _releaseAttempt;
 
     internal RespireLock(

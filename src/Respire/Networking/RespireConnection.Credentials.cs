@@ -132,7 +132,7 @@ internal sealed partial class RespireConnection
     private sealed class CredentialSession(
         RespireConnection connection, RespireConnectionOptions options, RespireCredentials initial) : IAsyncDisposable
     {
-        private readonly object _gate = new();
+        private readonly Lock _gate = new();
         private readonly CancellationTokenSource _stop = new();
         private Task? _cancelTask;
         private bool _disposed;

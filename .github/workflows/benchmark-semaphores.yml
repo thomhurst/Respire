@@ -49,123 +49,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Keep shared feature sources identical across phases so each revision builds.
-          # The copied semaphore source compiles against baseline internals (for example
-          # RespireLock.NewToken and the tracked-script types); the shims below add only the
-          # client and telemetry members it needs. Remove these shims once the PR base contains
-          # every API used by the candidate semaphore source. Baseline phases benchmark the standard lease,
-          # which never runs the copied semaphore code, and keep the base client implementation.
+          # Share only the fixture. Both revisions already contain the semaphore API;
+          # keep each revision's production code intact for a valid comparison.
           cp candidate/benchmarks/Respire.Benchmarks/SemaphoreBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
-          baseline_coordination=baseline/src/Respire.Coordination
-          if [ ! -d "$baseline_coordination" ]; then
-            baseline_coordination=baseline/src/Respire.Extensions.Coordination
-          fi
-          cp candidate/src/Respire.Coordination/RespireSemaphore.cs "$baseline_coordination/"
-          if [ "$baseline_coordination" = baseline/src/Respire.Extensions.Coordination ]; then
-            sed -i 's/Respire\.Coordination/Respire.Extensions.Coordination/g' \
-              baseline/benchmarks/Respire.Benchmarks/SemaphoreBenchmarks.cs \
-              "$baseline_coordination/RespireSemaphore.cs"
-          fi
-          cp candidate/src/Respire/Internal/CoordinationCleanupRetry.cs baseline/src/Respire/Internal/
-          python3 - <<'PY'
-          from pathlib import Path
-
-          path = Path('baseline/src/Respire/RespireClient.cs')
-          source = path.read_text()
-          correction_marker = '    internal async ValueTask<bool> TryEnsureReliableCorrectionOrderingAsync()\n'
-          correction_shim = ('    internal async ValueTask<RespireClient?> GetCorrectionTrackingClientAsync(CancellationToken cancellationToken)\n'
-                             '    {\n'
-                             '        if (RequiresReliableCorrectionOrdering(cancellationToken))\n'
-                             '        {\n'
-                             '            await EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);\n'
-                             '            return this;\n'
-                             '        }\n'
-                             '        return await TryEnsureReliableCorrectionOrderingAsync().ConfigureAwait(false) ? this : null;\n'
-                             '    }\n\n')
-          correction_api = 'internal async ValueTask<RespireClient?> GetCorrectionTrackingClientAsync(CancellationToken cancellationToken)'
-          if correction_api not in source:
-              assert source.count(correction_marker) == 1
-              source = source.replace(correction_marker, correction_shim + correction_marker, 1)
-          assert source.count(correction_api) == 1
-          marker = '    internal async ValueTask FenceCorrectionConnectionAsync(TrackedConnectionIdentity identity)\n'
-          existing_marker = '    internal ValueTask FenceCorrectionConnectionAsync(TrackedConnectionIdentity identity)\n'
-          shim = ('    internal ValueTask FenceCorrectionConnectionAsync(TrackedConnectionIdentity identity, CancellationToken cancellationToken, Action? onAcknowledged)\n'
-                  '        => FenceCorrectionConnectionAsync(identity);\n\n')
-          fence_api = 'TrackedConnectionIdentity identity, CancellationToken cancellationToken, Action? onAcknowledged'
-          if fence_api not in source:
-              insertion_marker = marker if source.count(marker) == 1 else existing_marker
-              assert source.count(insertion_marker) == 1
-              source = source.replace(insertion_marker, shim + insertion_marker, 1)
-          assert source.count(fence_api) == 1
-          tracked_marker = '    internal async ValueTask<TrackedScriptExecution> StartTrackedScriptExecutionAsync(\n'
-          tracked_shim = ('    internal ValueTask<TrackedScriptExecution> StartTrackedScriptExecutionAsync(\n'
-                          '        RespireScript script, RespireKey[] keys, RespireValue[] args,\n'
-                          '        CancellationToken cancellationToken, bool requireReliableCorrectionOrdering,\n'
-                          '        bool captureSendTimestampOnly, Action<long>? onSerialized = null, Action? onCommandNotApplied = null)\n'
-                          '    {\n'
-                          '        // The pinned baseline API has no serialization callback; invoke it immediately before its legacy send path.\n'
-                          '        onSerialized?.Invoke(Stopwatch.GetTimestamp());\n'
-                          '        return StartTrackedScriptExecutionAsync(script, keys, args, cancellationToken, requireReliableCorrectionOrdering);\n'
-                          '    }\n\n')
-          tracked_api = 'bool captureSendTimestampOnly = false,\n        Action<long>? onSerialized = null,\n        Action? onCommandNotApplied = null)'
-          if tracked_api not in source:
-              assert source.count(tracked_marker) == 1
-              source = source.replace(tracked_marker, tracked_shim + tracked_marker, 1)
-              tracked_shim_api = 'bool captureSendTimestampOnly, Action<long>? onSerialized = null, Action? onCommandNotApplied = null)'
-              assert source.count(tracked_shim_api) == 1
-          else:
-              assert source.count(tracked_api) == 1
-          assert source.count(fence_api) == 1
-          path.write_text(source)
-
-          # The copied semaphore uses the candidate cleanup queue, but baseline measurements
-          # only exercise standard leases. Add a compile-only queue stub to the pinned baseline.
-          core = Path('baseline/src/Respire/Internal/ClientCore.cs')
-          core_source = core.read_text()
-          core_marker = '    public readonly ClientSideCacheCoordinator? ClientCache;\n'
-          core_shim = '    internal readonly CoordinationCleanupQueue CoordinationCleanupQueue = new();\n'
-          if 'CoordinationCleanupQueue CoordinationCleanupQueue' not in core_source:
-              assert core_source.count(core_marker) == 1
-              core_source = core_source.replace(core_marker, core_marker + core_shim, 1)
-              core.write_text(core_source)
-
-          queue = Path('baseline/src/Respire/Internal/CoordinationCleanupQueue.BenchmarkShim.cs')
-          if not queue.exists():
-              queue.write_text('''using System;
-          using System.Threading;
-          using System.Threading.Tasks;
-
-          namespace Respire.Internal;
-
-          internal enum CleanupAttemptResult { Succeeded, Failed, Abandoned }
-
-          internal sealed class CoordinationCleanupQueue
-          {
-              internal Task<bool> EnqueueAsync(
-                  Func<CancellationToken, ValueTask<CleanupAttemptResult>> attempt,
-                  Func<bool>? shouldContinue,
-                  TimeSpan retryLimit,
-                  TimeSpan initialDelay,
-                  TimeSpan maximumDelay,
-                  Action<string> onAbandoned) => Task.FromResult(false);
-          }
-          ''')
-
-          # The copied semaphore reports abandoned cleanup through telemetry that this PR adds.
-          # The baseline never runs semaphore cleanup, so a no-op stub is enough to compile.
-          telemetry = Path('baseline/src/Respire/Internal/RespireTelemetry.cs')
-          telemetry_source = telemetry.read_text()
-          if 'RecordCoordinationCleanupAbandoned(' not in telemetry_source:
-              telemetry_marker = 'internal static class RespireTelemetry\n{\n'
-              telemetry_shim = ('    internal static void RecordCoordinationCleanupAbandoned(\n'
-                                '        string primitive, string stage, string reason, ILogger? logger)\n'
-                                '    {\n'
-                                '    }\n\n')
-              assert telemetry_source.count(telemetry_marker) == 1
-              assert 'using Microsoft.Extensions.Logging;' in telemetry_source
-              telemetry_source = telemetry_source.replace(telemetry_marker, telemetry_marker + telemetry_shim, 1)
-              telemetry.write_text(telemetry_source)
-          PY
           for phase in validation baseline-a candidate baseline-b; do
             source=baseline
             job=Medium
@@ -216,7 +102,7 @@ jobs:
           a, candidate, b = [phases[phase][standard] for phase in ('baseline-a', 'candidate', 'baseline-b')]
           am, cm, bm = [case['Statistics']['Mean'] for case in (a, candidate, b)]
           lines += ['', f'Standard lease deltas: candidate/A {(cm/am-1)*100:+.2f}%; candidate/B {(cm/bm-1)*100:+.2f}%; control drift {(bm/am-1)*100:+.2f}%.',
-                    '', 'Baseline phases run the base revision client plus compatibility shims that let the copied semaphore source compile; the shims are not on the measured path.',
+                    '', 'Baseline phases run the unmodified base revision libraries with the same benchmark fixture as the candidate.',
                     '', 'Process CPU includes warmup, calibration and background work. Raw launch measurements remain in the JSON artifacts.']
           report = '\n'.join(lines) + '\n'
           Path('results/comparison.md').write_text(report)

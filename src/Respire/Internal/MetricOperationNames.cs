@@ -6,7 +6,7 @@ namespace Respire.Internal;
 internal sealed class MetricOperationNames(int maximumNames = 1024)
 {
     private readonly ConcurrentDictionary<string, string> _names = new(StringComparer.OrdinalIgnoreCase);
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
 
     internal string GetName(string operation)
     {

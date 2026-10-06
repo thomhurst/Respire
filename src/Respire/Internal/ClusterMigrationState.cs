@@ -16,7 +16,7 @@ internal sealed class ClusterMigrationState<TNode> where TNode : class
     internal const long DeferredLifetimeMilliseconds = 30_000;
 
     private readonly ConditionalWeakTable<object, SequenceWindow> _sequences = new();
-    private readonly object _sequenceGate = new();
+    private readonly Lock _sequenceGate = new();
     private readonly List<DeferredMigration> _deferred = [];
     private int _deferredSlots;
 

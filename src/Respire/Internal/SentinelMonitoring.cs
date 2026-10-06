@@ -11,13 +11,13 @@ namespace Respire.Internal;
 // outside gate with a captured startup version (zero means an independent gap).
 // The router rechecks disposal when consuming either callback.
 internal sealed class SentinelMonitoring(
-    RespireOptions options, ILogger? logger, object gate, SentinelDiscoveryState discovery,
+    RespireOptions options, ILogger? logger, Lock gate, SentinelDiscoveryState discovery,
     CancellationTokenSource lifetime,
     Func<RespireEndpoint, SentinelEvent, string?, CancellationToken, ValueTask> received,
     Action<RespireEndpoint, long, CancellationToken> deliveryGap,
     SentinelBackgroundWork? background = null)
 {
-    private readonly object _gate = gate;
+    private readonly Lock _gate = gate;
     private readonly SentinelDiscoveryState _discovery = discovery;
     private readonly CancellationTokenSource _lifetime = lifetime;
     private bool _disposed;

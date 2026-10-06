@@ -8,13 +8,13 @@ namespace Respire.Internal;
 // one probe is queued, even during a prolonged stall. Commands never touch this monitor.
 internal sealed class ThreadPoolMonitor
 {
-    private static readonly object Gate = new();
+    private static readonly Lock Gate = new();
     private static readonly Probe SharedProbe = new();
     private static ThreadPoolMonitor? _current;
     private static RespireThreadPoolSnapshot? _latest;
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan WarningInterval = TimeSpan.FromSeconds(30);
-    private readonly object _stopGate = new();
+    private readonly Lock _stopGate = new();
     private readonly ManualResetEventSlim _stop = new(false);
     private readonly Thread _thread;
     private Lease[] _leases = [];

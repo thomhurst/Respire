@@ -17,8 +17,8 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
     private static readonly TimeSpan DisposeConnectionPollInterval = TimeSpan.FromMilliseconds(10);
 
     private readonly ClusterNotificationCoordinator _clusterNotifications = new();
-    private readonly object _gate;
-    private readonly object _reconnectStateGate = new();
+    private readonly Lock _gate;
+    private readonly Lock _reconnectStateGate = new();
     private readonly Queue<(RespireConnectionStateChange Change, bool ClusterSharded)> _pendingReconnectStates = [];
     private readonly ByteRouteDictionary<List<RespireSubscription>>[] _routes =
         [new(), new(), new()];

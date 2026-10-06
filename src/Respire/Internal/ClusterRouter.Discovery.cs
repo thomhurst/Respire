@@ -8,7 +8,7 @@ namespace Respire.Internal;
 internal sealed partial class ClusterRouter
 {
     private readonly CancellationTokenSource _stopDiscovery = new();
-    private readonly object _discoveryNotificationsGate = new();
+    private readonly Lock _discoveryNotificationsGate = new();
     private Queue<RespireConnectionStateChange>? _discoveryNotifications;
     private bool _publishingDiscovery;
     // Process-wide within ClusterDiscovery so events from different clients cannot share an
@@ -25,7 +25,7 @@ internal sealed partial class ClusterRouter
     private static readonly TimeSpan MaximumTopologyRefreshDeadline = TimeSpan.FromSeconds(60);
     // With many known nodes an even share of the deadline can be shorter than one round trip.
     private static readonly TimeSpan MinimumTopologyCandidateTimeout = TimeSpan.FromSeconds(2);
-    private readonly object _topologyRefreshWorkerGate = new();
+    private readonly Lock _topologyRefreshWorkerGate = new();
     private Task? _topologyRefreshWorker;
     private int _topologyRefreshStarted;
     /// <summary>A READONLY caller's view of the shared flight it started or joined.</summary>
@@ -412,7 +412,7 @@ internal sealed partial class ClusterRouter
     // Finish is non-throwing and idempotent; an outstanding transition publishes the deferred finish.
     internal sealed class DiscoveryRound(ClusterRouter owner, RespireReconnectPolicy policy)
     {
-        private readonly object _lifecycleGate = new();
+        private readonly Lock _lifecycleGate = new();
         private enum Lifecycle { Idle, InTransition, FinishPending, Done }
         private Lifecycle _lifecycle;
         private int _sharedHolds;

@@ -657,7 +657,7 @@ public class PubSubReconnectPolicyTests
             else await disposal.WaitAsync(deadline.Token);
             releaseObserver.Set();
             await observedExhaustion.Task.WaitAsync(deadline.Token);
-            var gate = hub.GetType().GetField("_reconnectStateGate",
+            var gate = (Lock)hub.GetType().GetField("_reconnectStateGate",
                 BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(hub)!;
             var publishing = hub.GetType().GetField("_publishingReconnectState",
                 BindingFlags.Instance | BindingFlags.NonPublic)!;

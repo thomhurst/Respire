@@ -12,7 +12,7 @@ namespace Respire.Testing;
 public sealed partial class RespireFakeServer : IAsyncDisposable
 {
     private const int MaximumRequestBytes = 16 * 1024 * 1024;
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly string _host = $"respire-fake-{Guid.NewGuid():N}";
     private readonly TimeProvider _clock;
     private readonly Dictionary<byte[], Entry> _entries = new(BinaryKeyComparer.Instance);

@@ -17,7 +17,7 @@ public class ClusterNodeIdentityIndexTests
         await using var first = RespireConnectionMultiplexer.Create(endpoint.Host, endpoint.Port);
         await using var second = RespireConnectionMultiplexer.Create(endpoint.Host, endpoint.Port);
         var created = 0;
-        var gate = new object();
+        var gate = new Lock();
         var index = new ClusterNodeIdentityIndex(seedEndpoint, seed, _ => ++created == 1 ? first : second, gate);
         WithLock(gate, () => index.ApplySnapshot([new(0, 16383, endpoint, "old", [])]));
         WithLock(gate, () => index.ApplySnapshot([new(0, 16383, endpoint, "new", [])]));
@@ -42,7 +42,7 @@ public class ClusterNodeIdentityIndexTests
         var endpoint = new RespireEndpoint("node.example");
         await using var seed = RespireConnectionMultiplexer.Create(seedEndpoint.Host, seedEndpoint.Port);
         await using var replacement = RespireConnectionMultiplexer.Create(endpoint.Host, endpoint.Port);
-        var gate = new object();
+        var gate = new Lock();
         var index = new ClusterNodeIdentityIndex(seedEndpoint, seed, _ => replacement, gate);
         WithLock(gate, () => index.ApplySnapshot([new(0, 16383, seedEndpoint, "old", [])]));
         WithLock(gate, () => index.ApplySnapshot([new(0, 16383, endpoint, "new", [])]));
@@ -66,7 +66,7 @@ public class ClusterNodeIdentityIndexTests
         await using var first = RespireConnectionMultiplexer.Create(firstEndpoint.Host, firstEndpoint.Port);
         await using var second = await RespireConnectionMultiplexer.CreateAsync(secondEndpoint.Host, secondEndpoint.Port);
         await using var duplicate = RespireConnectionMultiplexer.Create(secondEndpoint.Host, secondEndpoint.Port);
-        var gate = new object();
+        var gate = new Lock();
         var index = new ClusterNodeIdentityIndex(secondEndpoint, second,
             endpoint => endpoint == firstEndpoint ? first : duplicate, gate);
         List<ClusterTopologyRange> ranges = [
@@ -94,7 +94,7 @@ public class ClusterNodeIdentityIndexTests
         var preferredEndpoint = new RespireEndpoint("redis.example");
         await using var alias = RespireConnectionMultiplexer.Create(aliasEndpoint.Host, aliasEndpoint.Port);
         await using var preferred = RespireConnectionMultiplexer.Create(preferredEndpoint.Host, preferredEndpoint.Port);
-        var gate = new object();
+        var gate = new Lock();
         var index = new ClusterNodeIdentityIndex(aliasEndpoint, alias, _ => preferred, gate);
 
         var resolved = WithLock(gate, () => index.ApplySnapshot([new(0, 3, preferredEndpoint, "node", [aliasEndpoint])]));
@@ -112,7 +112,7 @@ public class ClusterNodeIdentityIndexTests
         await using var oldNode = RespireConnectionMultiplexer.Create(oldEndpoint.Host, oldEndpoint.Port);
         await using var newNode = RespireConnectionMultiplexer.Create(newEndpoint.Host, newEndpoint.Port);
         await using var aliasNode = RespireConnectionMultiplexer.Create(withdrawn.Host, withdrawn.Port);
-        var gate = new object();
+        var gate = new Lock();
         var index = new ClusterNodeIdentityIndex(oldEndpoint, oldNode,
             endpoint => endpoint == newEndpoint ? newNode : aliasNode, gate);
         WithLock(gate, () => index.ApplySnapshot([new(0, 3, oldEndpoint, "node", [withdrawn])]));
@@ -139,7 +139,7 @@ public class ClusterNodeIdentityIndexTests
         await using var primary = RespireConnectionMultiplexer.Create(known.Host, known.Port);
         var requested = endpointKnown ? known : unknown;
         await using var replacement = RespireConnectionMultiplexer.Create(requested.Host, requested.Port);
-        var gate = new object();
+        var gate = new Lock();
         var index = new ClusterNodeIdentityIndex(known, primary, _ => replacement, gate);
         WithLock(gate, () => index.ApplySnapshot([new(0, 3, known, "known-id", [])]));
 
@@ -156,7 +156,7 @@ public class ClusterNodeIdentityIndexTests
         var created = new RespireEndpoint("created.example");
         await using var primary = RespireConnectionMultiplexer.Create(seed.Host, seed.Port);
         await using var candidate = RespireConnectionMultiplexer.Create(created.Host, created.Port);
-        var gate = new object();
+        var gate = new Lock();
         var index = new ClusterNodeIdentityIndex(seed, primary, endpoint =>
             endpoint == created ? candidate : throw new InvalidOperationException("Injected construction failure"), gate);
 
@@ -179,7 +179,7 @@ public class ClusterNodeIdentityIndexTests
         var aliasEndpoint = new RespireEndpoint("alias.example");
         await using var preferred = RespireConnectionMultiplexer.Create(preferredEndpoint.Host, preferredEndpoint.Port);
         await using var alias = RespireConnectionMultiplexer.Create(aliasEndpoint.Host, aliasEndpoint.Port);
-        var gate = new object();
+        var gate = new Lock();
         var index = new ClusterNodeIdentityIndex(preferredEndpoint, preferred, _ => alias, gate);
         _ = WithLock(gate, () => index.GetOrCreate(aliasEndpoint));
 
@@ -201,7 +201,7 @@ public class ClusterNodeIdentityIndexTests
         await using var seed = RespireConnectionMultiplexer.Create(seedEndpoint.Host, seedEndpoint.Port);
         await using var first = RespireConnectionMultiplexer.Create(firstEndpoint.Host, firstEndpoint.Port, options: readOnly);
         await using var second = RespireConnectionMultiplexer.Create(secondEndpoint.Host, secondEndpoint.Port, options: readOnly);
-        var gate = new object();
+        var gate = new Lock();
         var index = new ClusterNodeIdentityIndex(seedEndpoint, seed, (endpoint, isReadOnly) =>
         {
             if (!isReadOnly) throw new InvalidOperationException("Only replica transports are expected.");
@@ -233,7 +233,7 @@ public class ClusterNodeIdentityIndexTests
         await Assert.That(WithLock(gate, () => registry.TryGetId(second, out var id) ? id : null)).IsEqualTo("replica-id");
     }
 
-    private static T WithLock<T>(object gate, Func<T> action)
+    private static T WithLock<T>(Lock gate, Func<T> action)
     {
         lock (gate)
         {

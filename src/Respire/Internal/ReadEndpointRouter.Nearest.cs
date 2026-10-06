@@ -6,6 +6,7 @@ internal sealed partial class ReadEndpointRouter
 {
     // Lazily created only by Nearest. Tests can supply deterministic measurements before use.
     internal ReadLatencySampler<RespireConnection>? NearestLatency;
+    // LazyInitializer's ref-object overload uses Monitor internally; do not replace with Lock.
     private object? _nearestGate;
 
     private async ValueTask<Selection> GetNearestAsync(CancellationToken cancellationToken, bool retry = true,

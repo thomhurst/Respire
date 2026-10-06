@@ -23,7 +23,7 @@ public class FakeListMoveManyTests
         while (observed.ExecutionCount == 0) await Task.Delay(1, deadline.Token);
         // The clock is sampled once per execution under the server gate. Taking the same
         // gate ensures the blocked command has registered its wait before the baseline.
-        var gate = typeof(RespireFakeServer).GetField("_gate",
+        var gate = (Lock)typeof(RespireFakeServer).GetField("_gate",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(server)!;
         long before;
         lock (gate) before = clock.Count;
@@ -91,7 +91,7 @@ public class FakeListMoveManyTests
     private static async Task WaitForWaiterCount(RespireFakeServer server, int expected, CancellationToken cancellationToken)
     {
         const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
-        var gate = typeof(RespireFakeServer).GetField("_gate", flags)!.GetValue(server)!;
+        var gate = (Lock)typeof(RespireFakeServer).GetField("_gate", flags)!.GetValue(server)!;
         var groups = (System.Collections.IDictionary)typeof(RespireFakeServer).GetField("_listMoveWaiters", flags)!.GetValue(server)!;
         while (true)
         {

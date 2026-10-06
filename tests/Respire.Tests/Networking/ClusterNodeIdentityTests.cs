@@ -1609,7 +1609,7 @@ public class ClusterNodeIdentityTests
         router.SetSlotOwner(0, source);
         router.SetSlotOwner(1, source);
         router.SetSlotOwner(2, target); // Observe both nodes before blocking the mutation clock.
-        var clockGate = typeof(ClusterSlotMutationClock).GetField("s_gate",
+        var clockGate = (Lock)typeof(ClusterSlotMutationClock).GetField("s_gate",
             System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!.GetValue(null)!;
         Exception? failure = null;
         var worker = new Thread(() =>
@@ -1727,7 +1727,7 @@ public class ClusterNodeIdentityTests
         var router = core.Cluster!;
         var original = core.Multiplexer;
         router.SetSlotOwner(0, original);
-        var healthGate = typeof(ClientCore).GetField("_stateGate",
+        var healthGate = (Lock)typeof(ClientCore).GetField("_stateGate",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(core)!;
         RespireKey key = "cached";
         var token = core.ClientCache!.BeginRead(in key);
@@ -1755,7 +1755,7 @@ public class ClusterNodeIdentityTests
         {
             if (Environment.CurrentManagedThreadId != callbackThread) return;
             measurements++;
-            gateHeld |= Monitor.IsEntered(healthGate) || Monitor.IsEntered(router.NodeStateGate);
+            gateHeld |= healthGate.IsHeldByCurrentThread || router.NodeStateGate.IsHeldByCurrentThread;
         });
         listener.Start();
         if (retirement)
@@ -2088,7 +2088,7 @@ public class ClusterNodeIdentityTests
         if (retirement) router.SetSlotOwner(0, replacement);
         var cache = core.ClientCache!;
         CacheValue();
-        var gate = typeof(ClientCore).GetField("_stateGate",
+        var gate = (Lock)typeof(ClientCore).GetField("_stateGate",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(core)!;
         using var started = new ManualResetEventSlim();
         var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

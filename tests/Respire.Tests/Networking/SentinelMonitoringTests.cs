@@ -14,7 +14,7 @@ public class SentinelMonitoringTests
     public async Task DnsStartSharesStopGateAndRejectsLateEvidence()
     {
         using var lifetime = new CancellationTokenSource();
-        var gate = new object();
+        var gate = new Lock();
         var monitor = new SentinelMonitoring(new() { SentinelPrimaryName = "service" }, null,
             gate, new([]), lifetime, (_, _, _, _) => ValueTask.CompletedTask, (_, _, _) => { });
         var reply = new TaskCompletionSource<System.Net.IPAddress[]>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -22,7 +22,7 @@ public class SentinelMonitoringTests
         var startedUnderGate = false;
         monitor.HostResolver = (host, _) =>
         {
-            startedUnderGate = Monitor.IsEntered(gate);
+            startedUnderGate = gate.IsHeldByCurrentThread;
             queries.Add(host);
             return reply.Task;
         };
@@ -244,7 +244,7 @@ public class SentinelMonitoringTests
             SentinelPrimaryName = "service", ConnectTimeout = Limit,
             ReconnectPolicy = new() { InitialDelay = TimeSpan.FromMilliseconds(10), JitterRatio = 0 },
         };
-        var monitor = new SentinelMonitoring(options, null, new object(), new([endpoint]), lifetime,
+        var monitor = new SentinelMonitoring(options, null, new Lock(), new([endpoint]), lifetime,
             (_, parsed, _, _) => { Interlocked.Increment(ref count); received.TrySetResult(parsed); return ValueTask.CompletedTask; },
             (_, version, _) => { if (version > 0) startup.TrySetResult(); else gap.TrySetResult(); });
         try
@@ -280,7 +280,7 @@ public class SentinelMonitoringTests
     }
 
     private static SentinelMonitoring Create(CancellationTokenSource lifetime, Action<RespireEndpoint, bool> gap)
-        => new(new() { SentinelPrimaryName = "service" }, null, new object(), new([]), lifetime,
+        => new(new() { SentinelPrimaryName = "service" }, null, new Lock(), new([]), lifetime,
             (_, _, _, _) => ValueTask.CompletedTask, (endpoint, version, _) => gap(endpoint, version > 0));
 
     [Test]
@@ -321,7 +321,7 @@ public class SentinelMonitoringTests
             DisposeClient = () => ValueTask.FromException(second),
         };
         var monitor = new SentinelMonitoring(new() { SentinelPrimaryName = "service" }, null,
-            new object(), new([new RespireEndpoint("seed", 26379)]), lifetime,
+            new Lock(), new([new RespireEndpoint("seed", 26379)]), lifetime,
             (_, _, _, _) => ValueTask.CompletedTask, (_, _, _) => { }) { ClientFactory = _ => probe.Client };
         monitor.Published();
         using var deadline = new CancellationTokenSource(Limit);
@@ -353,7 +353,7 @@ public class SentinelMonitoringTests
         var starts = 0;
         var gaps = new System.Collections.Concurrent.ConcurrentQueue<(RespireEndpoint Endpoint, long Version)>();
         var monitor = new SentinelMonitoring(new() { SentinelPrimaryName = "service" }, null,
-            new object(), discovery, lifetime, (_, _, _, _) => ValueTask.CompletedTask,
+            new Lock(), discovery, lifetime, (_, _, _, _) => ValueTask.CompletedTask,
             (endpoint, version, _) => gaps.Enqueue((endpoint, version)))
         {
             Clock = clock,
@@ -413,7 +413,7 @@ public class SentinelMonitoringTests
     {
         using var lifetime = new CancellationTokenSource();
         using var deadline = new CancellationTokenSource(Limit);
-        var gate = new object();
+        var gate = new Lock();
         var background = new SentinelBackgroundWork(gate);
         var seed = new RespireEndpoint("seed", 26379);
         var peer = new RespireEndpoint("peer", 26379);

@@ -208,11 +208,31 @@ public class FunctionClusterTests
         };
         await using var primary = new FakeRespServer(FunctionLibraryList(source));
         await using var seed = new FakeRespServer(TopologyWithReplica(primary.Port, replica.Port));
+        if (outcome == "MOVED")
+        {
+            foreach (var server in new[] { seed, primary, replica, target })
+            {
+                var previous = server.ReplyOverride;
+                server.ReplyOverride = (id, command) => command switch
+                {
+                    var text when text.StartsWith("HELLO ", StringComparison.Ordinal) => "%1\r\n+proto\r\n:3\r\n"u8.ToArray(),
+                    var text when text.StartsWith("CLIENT ", StringComparison.Ordinal) => FakeRespServer.OkReply,
+                    "GET {foo}:cached" => "$3\r\nold\r\n"u8.ToArray(),
+                    _ => previous?.Invoke(id, command),
+                };
+            }
+        }
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with
         {
+            ClientSideCache = outcome == "MOVED" ? new() : null,
             CommandTimeout = null,
             ClusterTopologyRefreshInterval = null,
         });
+        if (outcome == "MOVED")
+        {
+            await Assert.That(await client.GetStringAsync("{foo}:cached")).IsEqualTo("old");
+            await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
+        }
         using var caller = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         var function = RespireFunctionLibrary.Create(source).Function("function", readOnly: true);
         var pending = client.WithReadFrom(strict ? RespireReadFrom.Replica : RespireReadFrom.ReplicaPreferred)
@@ -230,6 +250,8 @@ public class FunctionClusterTests
         // The response stays gated until the whole admission budget has certainly elapsed.
         await Task.Delay(FunctionCommands.FunctionPropagationLimit + TimeSpan.FromMilliseconds(250));
         await Assert.That(pending.IsCompleted).IsFalse();
+        var continuityFlushes = client.ClientSideCache?.GetStatistics().ContinuityFlushes ?? 0;
+        if (outcome == "MOVED") await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
         if (outcome is "success" or "accepted-ASK")
         {
             await responseServer.SendRawAsync(":42\r\n"u8.ToArray());
@@ -254,9 +276,16 @@ public class FunctionClusterTests
                     .Throws<RespireTimeoutException>();
         }
         await Assert.That(calls).IsEqualTo(2);
+        if (outcome == "MOVED")
+        {
+            await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
+            await Assert.That(client.ClientSideCache.GetStatistics().ContinuityFlushes).IsEqualTo(continuityFlushes + 1);
+        }
         await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("FCALL", StringComparison.Ordinal))).IsFalse();
         await Assert.That(target.ReceivedCommands.Count(command => command.StartsWith("FCALL", StringComparison.Ordinal)))
             .IsEqualTo(outcome == "accepted-ASK" ? 1 : 0);
+        await Assert.That(target.ReceivedCommands.Any(command => command.StartsWith("CLUSTER SLOTS", StringComparison.Ordinal)))
+            .IsFalse();
         if (outcome == "accepted-ASK") await Assert.That(target.ReceivedCommands).Contains("ASKING");
 
         byte[] Redirect(string kind) => Encoding.ASCII.GetBytes($"-{kind} {ClusterHash.GetSlot("foo")} 127.0.0.1:{target.Port}\r\n");

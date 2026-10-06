@@ -12,7 +12,7 @@ public class SentinelBackgroundWorkTests
     [Test]
     public async Task ConcurrentStopIncludesEveryAdmittedTaskAndRejectsLateWork()
     {
-        var owner = new SentinelBackgroundWork(new object());
+        var owner = new SentinelBackgroundWork(new Lock());
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var registrations = new System.Collections.Concurrent.ConcurrentBag<Task>();
         var workers = Enumerable.Range(0, 32).Select(_ => Task.Run(() =>
@@ -36,7 +36,7 @@ public class SentinelBackgroundWorkTests
     [Test]
     public async Task CompletedFailuresRemainOwnedForAggregateCleanup()
     {
-        var owner = new SentinelBackgroundWork(new object());
+        var owner = new SentinelBackgroundWork(new Lock());
         var first = new IOException("first");
         var second = new InvalidOperationException("second");
         var tasks = new[]
@@ -53,7 +53,7 @@ public class SentinelBackgroundWorkTests
     [Test]
     public async Task RepeatedMonitorFailuresRetainBoundedShutdownEvidence()
     {
-        var owner = new SentinelBackgroundWork(new object());
+        var owner = new SentinelBackgroundWork(new Lock());
         var tasks = Enumerable.Range(0, 128).Select(index => owner.TryStart(SentinelWorkKind.Monitor,
             () => Task.FromException(new IOException($"monitor episode {index}")))!).ToArray();
         try { await Task.WhenAll(tasks).WaitAsync(Limit); } catch (Exception) { }

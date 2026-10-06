@@ -8,7 +8,7 @@ namespace Respire.Internal;
 internal sealed class MaintenanceTelemetry(string host, int port, int database, ILogger? logger)
 {
     private const int Capacity = 256;
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly Queue<(DiagnosticNotification Notification, DateTimeOffset Received)> _pending = [];
     private bool _dispatching;
     private long _dropped;

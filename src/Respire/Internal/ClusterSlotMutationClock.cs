@@ -17,7 +17,7 @@ namespace Respire.Internal;
 /// </remarks>
 internal static class ClusterSlotMutationClock
 {
-    private static readonly object s_gate = new();
+    private static readonly Lock s_gate = new();
     private static readonly SortedSet<long> s_globalCaptures = [];
     private static readonly ConditionalWeakTable<RespireConnectionMultiplexer, SortedSet<long>> s_multiplexerCaptures = new();
     private static readonly List<WeakReference<RespireConnectionMultiplexer>> s_multiplexers = [];

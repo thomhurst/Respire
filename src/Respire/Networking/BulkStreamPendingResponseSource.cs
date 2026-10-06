@@ -259,7 +259,7 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
 /// <summary>Bounded bridge from the connection receive loop to one caller-owned stream.</summary>
 internal sealed class RespBulkPayloadPipe : IDisposable
 {
-    private readonly object _flushGate = new();
+    private readonly Lock _flushGate = new();
     private readonly Pipe _pipe = new(new PipeOptions(
         pauseWriterThreshold: 64 * 1024,
         resumeWriterThreshold: 32 * 1024,

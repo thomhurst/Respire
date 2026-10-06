@@ -11,8 +11,8 @@ namespace Respire.Internal;
 /// </summary>
 internal sealed class ClientCore : IAsyncDisposable
 {
-    private readonly object _hubGate = new();
-    private readonly object _stateGate = new();
+    private readonly Lock _hubGate = new();
+    private readonly Lock _stateGate = new();
     private readonly Queue<RespireConnectionStateChange> _pendingStates = [];
     private readonly HashSet<(RespireConnectionMultiplexer Node, int Slot)> _reconnectingCommandSlots = [];
     private readonly HashSet<(RespireConnectionMultiplexer Node, int Slot)> _disconnectedCommandSlots = [];

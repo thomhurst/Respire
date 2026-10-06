@@ -19,7 +19,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
     private static long _retiredGenerationCount;
     internal static long RetiredGenerationCount => Interlocked.Read(ref _retiredGenerationCount);
 
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly SemaphoreSlim _discoveryGate = new(1, 1);
     private readonly CancellationTokenSource _lifetime = new();
     private readonly SentinelDiscoveryState _discovery = new(core.Options.Endpoints.Count == 0
@@ -498,8 +498,8 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
         internal SentinelGenerationIdentity Identity { get; } = new();
         private readonly SentinelRouter _owner;
         private readonly ClientCore _core;
-        private readonly object _connectionsGate = new();
-        private readonly object _poolsGate = new();
+        private readonly Lock _connectionsGate = new();
+        private readonly Lock _poolsGate = new();
         private readonly DedicatedPoolLedger _pools;
         private DedicatedConnectionPool _pool;
         private readonly HashSet<RespireConnection> _connections = [];

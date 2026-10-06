@@ -7,7 +7,7 @@ namespace Respire.Networking;
 /// </summary>
 internal sealed class AsyncCapacitySignal
 {
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private volatile TaskCompletionSource? _waiters;
 
     public Task WaitAsync(CancellationToken cancellationToken)

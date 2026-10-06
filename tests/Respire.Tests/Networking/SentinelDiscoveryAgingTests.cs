@@ -123,7 +123,7 @@ public class SentinelDiscoveryAgingTests
         using var lifetime = new CancellationTokenSource();
         var seed = new SentinelMonitorProbe();
         var monitor = new SentinelMonitoring(new() { SentinelPrimaryName = "mymaster" }, null,
-            new object(), state, lifetime, (_, _, _, _) => ValueTask.CompletedTask, (_, _, _) => { })
+            new Lock(), state, lifetime, (_, _, _, _) => ValueTask.CompletedTask, (_, _, _) => { })
         {
             ClientFactory = options => options.Endpoints[0] == Seed ? seed.Client
                 : throw new RespireConnectionException("Learned Sentinel is unavailable."),
@@ -157,7 +157,7 @@ public class SentinelDiscoveryAgingTests
         {
             SentinelPrimaryName = "mymaster",
             ReconnectPolicy = configured ? new() { MaxAttempts = null } : null,
-        }, null, new object(), state, lifetime, (_, _, _, _) => ValueTask.CompletedTask, (_, _, _) => { })
+        }, null, new Lock(), state, lifetime, (_, _, _, _) => ValueTask.CompletedTask, (_, _, _) => { })
         {
             ClientFactory = options => options.Endpoints[0] == Seed ? seed.Client : peer.Client,
         };
@@ -200,7 +200,7 @@ public class SentinelDiscoveryAgingTests
                     { ReconnectSource = RespireReconnectSource.SentinelMonitor });
         };
         var monitor = new SentinelMonitoring(new() { SentinelPrimaryName = "mymaster" }, null,
-            new object(), state, lifetime, (_, _, _, _) => ValueTask.CompletedTask, (_, _, _) => { })
+            new Lock(), state, lifetime, (_, _, _, _) => ValueTask.CompletedTask, (_, _, _) => { })
         {
             ClientFactory = options => options.Endpoints[0] == Seed ? seed.Client : peer.Client,
         };
