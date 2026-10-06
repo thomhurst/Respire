@@ -13,6 +13,10 @@ methods, not this test surface. A temporary view works in an async test; a view
 cannot be boxed, captured in a lambda, stored in a heap object, or retained across
 an `await`. References returned by the view are still borrowed and require the
 following synchronization even after the temporary view has gone out of scope.
+The compiler restricts the view's lifetime, not the references or value copies
+returned by its members. Tests can retain those results; the compiler does not
+enforce their borrowing or synchronization rules. The inventory and documented
+boundaries remain the contract for that use.
 
 | View member | Consumer inventory | Required boundary |
 | --- | --- | --- |
@@ -26,6 +30,10 @@ only `TransactionDeadlineTests` and `HashImportTests` do so. Keep this inventory
 complete when adding a consumer. `TestInspectionArchitectureTests` checks the
 internal, borrowed view boundary and rejects the four legacy member names on
 their owners, with a synthetic legacy accessor as a positive control.
+This is a narrow regression guard for those four names and the factory/view
+metadata. It does not detect differently named state accessors or prove that
+every non-private member is an inspection hook. These owners also expose ordinary
+operational members, so a blanket ban on non-private members would be incorrect.
 
 The four former direct accessors are removed. Existing tests still establish
 their server/worker barriers, inspect the same source and token, and assert the

@@ -8,6 +8,7 @@ namespace Respire.Tests;
 
 public class TestInspectionArchitectureTests
 {
+    private const string InspectionFactoryName = "InspectForTests";
     private const BindingFlags OwnerMembers = BindingFlags.Instance | BindingFlags.Public
         | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
 
@@ -21,7 +22,7 @@ public class TestInspectionArchitectureTests
         await Assert.That(HasDirectInspectionMember(owner, member)).IsFalse();
         await Assert.That(view.IsByRefLike).IsTrue();
         await Assert.That(view.IsNestedAssembly).IsTrue();
-        var factory = owner.GetMethod(nameof(RespireConnection.InspectForTests), OwnerMembers);
+        var factory = owner.GetMethod(InspectionFactoryName, OwnerMembers);
         await Assert.That(factory).IsNotNull();
         await Assert.That(factory!.IsAssembly).IsTrue();
         await Assert.That(factory.ReturnType).IsEqualTo(view);
