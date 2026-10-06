@@ -1,4 +1,4 @@
-# Reviewed stable member signatures for the four owners: 178 original members plus 8 existing explicit interface implementations.
+# Reviewed source-declared member signatures: 186 owner declarations plus 31 accessible nested operational members.
 Respire.ClientSideCacheCoordinator | class CacheEntry(byte[]?, long, long)
 Respire.ClientSideCacheCoordinator | class CacheStore()
 Respire.ClientSideCacheCoordinator | class InflightRead(RespireKey, bool)
@@ -38,17 +38,17 @@ Respire.ClientSideCacheCoordinator | method TryGet(in QueryRequest, out RespValu
 Respire.ClientSideCacheCoordinator | method TryGet(in RespireKey, out RespValue) : bool
 Respire.ClientSideCacheCoordinator | method TryPeek(in QueryRequest, out RespValue) : bool
 Respire.ClientSideCacheCoordinator | method TryPeek(in RespireKey, out RespValue) : bool
-Respire.ClientSideCacheCoordinator | property ActiveSharedReadCount : int
-Respire.ClientSideCacheCoordinator | property CoalesceConcurrentMisses : bool
-Respire.ClientSideCacheCoordinator | property Count : int
-Respire.ClientSideCacheCoordinator | property ReuseHashFields : bool
-Respire.ClientSideCacheCoordinator | property SharedReadRetirements : long
-Respire.ClientSideCacheCoordinator | property SizeBytes : long
+Respire.ClientSideCacheCoordinator | property ActiveSharedReadCount [internal; get] : int
+Respire.ClientSideCacheCoordinator | property CoalesceConcurrentMisses [internal; get] : bool
+Respire.ClientSideCacheCoordinator | property Count [public; get] : int
+Respire.ClientSideCacheCoordinator | property ReuseHashFields [internal; get] : bool
+Respire.ClientSideCacheCoordinator | property SharedReadRetirements [internal; get] : long
+Respire.ClientSideCacheCoordinator | property SizeBytes [public; get] : long
 Respire.ClientSideCacheCoordinator | readonly record struct QueryReadToken(ClientCacheCommandKey, RespireKey[], long, long, CacheStore, bool)
 Respire.ClientSideCacheCoordinator | readonly record struct QueryRequest(ClientCacheCommandKey, RespireKey)
 Respire.ClientSideCacheCoordinator | readonly record struct ReadToken(InflightRead, long, long, CacheStore)
 Respire.ClientSideCacheCoordinator | readonly struct MutationFence()
-# Designated borrowed test-inspection view; compiled metadata tests enforce readonly ref struct.
+# Designated borrowed view; source keys retain readonly/ref and compiled metadata checks stack-only visibility.
 Respire.ClientSideCacheCoordinator | readonly ref struct TestInspection(ClientSideCacheCoordinator)
 Respire.Networking.PendingResponse | field WriteEnd : long
 Respire.Networking.PendingResponse | field WriteStart : long
@@ -69,10 +69,10 @@ Respire.Networking.PendingResponse | method TrySetCanceled(CancellationToken) : 
 Respire.Networking.PendingResponse | method TrySetException(Exception) : bool
 Respire.Networking.PendingResponse | method TrySetResult(in RespValue) : bool
 Respire.Networking.PendingResponse | method TrySetTimedOut(long, TimeSpan, ref RespireTimeoutDiagnostics?, RespireConnection?) : bool
-Respire.Networking.PendingResponse | property CommandName : string?
-Respire.Networking.PendingResponse | property Deadline : CommandDeadline
-Respire.Networking.PendingResponse | property State : long
-# Designated borrowed test-inspection view; compiled metadata tests enforce readonly ref struct.
+Respire.Networking.PendingResponse | property CommandName [internal; get] : string?
+Respire.Networking.PendingResponse | property Deadline [internal; get, set] : CommandDeadline
+Respire.Networking.PendingResponse | property State [internal; get] : long
+# Designated borrowed view; source keys retain readonly/ref and compiled metadata checks stack-only visibility.
 Respire.Networking.PendingResponse | readonly ref struct TestInspection(PendingResponse)
 Respire.Networking.RespireConnection | event MovingNotification : Action<Respire.Infrastructure.MovingAnnouncement>?
 Respire.Networking.RespireConnection | event PendingCommandsFailing : Action?
@@ -122,33 +122,33 @@ Respire.Networking.RespireConnection | method ValidateTransactionCapacity(int, b
 Respire.Networking.RespireConnection | method WaitForActiveBulkStreamToCompleteAsync(TimeSpan, CancellationToken) : Task<bool>
 Respire.Networking.RespireConnection | method WaitForFinalFrameWriteAsync(Task, CancellationToken) : ValueTask
 Respire.Networking.RespireConnection | method WaitForOtherCommandsToCompleteAsync(CancellationToken) : Task
-Respire.Networking.RespireConnection | property AvailabilityZone : string?
-Respire.Networking.RespireConnection | property CloseError : Exception?
-Respire.Networking.RespireConnection | property Closed : Task
-Respire.Networking.RespireConnection | property CredentialRefreshCompletion : Task?
-Respire.Networking.RespireConnection | property DrainedSuccessfully : bool
-Respire.Networking.RespireConnection | property HasActiveBulkStream : bool
-Respire.Networking.RespireConnection | property HasMaintenanceWindow : bool
-Respire.Networking.RespireConnection | property HasOtherIncompleteCommandThanMaintenanceBarrier : bool
-Respire.Networking.RespireConnection | property HasOutstandingMaintenanceBarrier : bool
-Respire.Networking.RespireConnection | property HasUndeliveredReplies : bool
-Respire.Networking.RespireConnection | property Host : string
-Respire.Networking.RespireConnection | property IsAcceptingCommands : bool
-Respire.Networking.RespireConnection | property IsConnected : bool
-Respire.Networking.RespireConnection | property IsFlushLoopWaiting : bool
-Respire.Networking.RespireConnection | property IsStreamingWriteActive : bool
-Respire.Networking.RespireConnection | property LastMovingAnnouncement : Respire.Infrastructure.MovingAnnouncement?
-Respire.Networking.RespireConnection | property Multiplexer : Respire.Infrastructure.RespireConnectionMultiplexer?
-Respire.Networking.RespireConnection | property MultiplexerSlot : int
-Respire.Networking.RespireConnection | property NetworkPeerAddress : string?
-Respire.Networking.RespireConnection | property NetworkPeerPort : int?
-Respire.Networking.RespireConnection | property PeerKey : (string Host, int Port)
-Respire.Networking.RespireConnection | property Port : int
-Respire.Networking.RespireConnection | property ServerClientId : long
-Respire.Networking.RespireConnection | property UndeliveredReplyCount : int
-Respire.Networking.RespireConnection | property WriteBufferCapacity : int
+Respire.Networking.RespireConnection | property AvailabilityZone [internal; get, private set] : string?
+Respire.Networking.RespireConnection | property CloseError [internal; get] : Exception?
+Respire.Networking.RespireConnection | property Closed [internal; get] : Task
+Respire.Networking.RespireConnection | property CredentialRefreshCompletion [internal; get] : Task?
+Respire.Networking.RespireConnection | property DrainedSuccessfully [internal; get] : bool
+Respire.Networking.RespireConnection | property HasActiveBulkStream [internal; get] : bool
+Respire.Networking.RespireConnection | property HasMaintenanceWindow [internal; get] : bool
+Respire.Networking.RespireConnection | property HasOtherIncompleteCommandThanMaintenanceBarrier [internal; get] : bool
+Respire.Networking.RespireConnection | property HasOutstandingMaintenanceBarrier [internal; get] : bool
+Respire.Networking.RespireConnection | property HasUndeliveredReplies [internal; get] : bool
+Respire.Networking.RespireConnection | property Host [public; get] : string
+Respire.Networking.RespireConnection | property IsAcceptingCommands [internal; get] : bool
+Respire.Networking.RespireConnection | property IsConnected [public; get] : bool
+Respire.Networking.RespireConnection | property IsFlushLoopWaiting [internal; get] : bool
+Respire.Networking.RespireConnection | property IsStreamingWriteActive [internal; get] : bool
+Respire.Networking.RespireConnection | property LastMovingAnnouncement [internal; get] : Respire.Infrastructure.MovingAnnouncement?
+Respire.Networking.RespireConnection | property Multiplexer [internal; get, set] : Respire.Infrastructure.RespireConnectionMultiplexer?
+Respire.Networking.RespireConnection | property MultiplexerSlot [internal; get, set] : int
+Respire.Networking.RespireConnection | property NetworkPeerAddress [internal; get] : string?
+Respire.Networking.RespireConnection | property NetworkPeerPort [internal; get] : int?
+Respire.Networking.RespireConnection | property PeerKey [internal; get] : (string Host, int Port)
+Respire.Networking.RespireConnection | property Port [public; get] : int
+Respire.Networking.RespireConnection | property ServerClientId [internal; get] : long
+Respire.Networking.RespireConnection | property UndeliveredReplyCount [internal; get] : int
+Respire.Networking.RespireConnection | property WriteBufferCapacity [internal; get] : int
 Respire.Networking.RespireConnection | readonly struct CredentialSequenceLease(SemaphoreSlim?)
-# Designated borrowed test-inspection view; compiled metadata tests enforce readonly ref struct.
+# Designated borrowed view; source keys retain readonly/ref and compiled metadata checks stack-only visibility.
 Respire.Networking.RespireConnection | readonly ref struct TestInspection(RespireConnection)
 Respire.RespireTransactionBase | constructor RespireTransactionBase(RespireClient, RespireConnection?, int?, RespireHashImportSession?)
 Respire.RespireTransactionBase | method CommitCoreAsync(CancellationToken, bool) : ValueTask<bool>
@@ -173,24 +173,56 @@ Respire.RespireTransactionBase | method Set(RespireKey, RespireValue, RespireExp
 Respire.RespireTransactionBase | method Set`1(RespireKey, T, RespireExpiry, SetWhen) : RespirePending<bool>
 Respire.RespireTransactionBase | method TryGet`1(RespireKey) : RespirePending<RespireGet<T>>
 Respire.RespireTransactionBase | method ValidateClusterSlot(int, ref int?) : void
-Respire.RespireTransactionBase | property Bitmaps : IBatchBitmapCommands
-Respire.RespireTransactionBase | property Count : int
-Respire.RespireTransactionBase | property Functions : IBatchFunctionCommands
-Respire.RespireTransactionBase | property Geo : IBatchGeoCommands
-Respire.RespireTransactionBase | property Hashes : IBatchHashCommands
-Respire.RespireTransactionBase | property HyperLogLog : IBatchHyperLogLogCommands
-Respire.RespireTransactionBase | property IPendingSink.Client : RespireClient
-Respire.RespireTransactionBase | property IPendingSink.DefersSerialization : bool
-Respire.RespireTransactionBase | property IPendingSink.ImportSession : RespireHashImportSession?
-Respire.RespireTransactionBase | property Keys : IBatchKeyCommands
-Respire.RespireTransactionBase | property Lists : IBatchListCommands
-Respire.RespireTransactionBase | property Scripts : IBatchScriptCommands
-Respire.RespireTransactionBase | property Server : IBatchServerCommands
-Respire.RespireTransactionBase | property Sets : IBatchSetCommands
-Respire.RespireTransactionBase | property SortedSets : IBatchSortedSetCommands
-Respire.RespireTransactionBase | property Streams : IBatchStreamCommands
-Respire.RespireTransactionBase | property Strings : IBatchStringCommands
-Respire.RespireTransactionBase | property VectorSets : IBatchVectorSetCommands
-Respire.RespireTransactionBase | property WatchPool : DedicatedConnectionPool?
-# Designated borrowed test-inspection view; compiled metadata tests enforce readonly ref struct.
+Respire.RespireTransactionBase | property Bitmaps [public; get] : IBatchBitmapCommands
+Respire.RespireTransactionBase | property Count [public; get] : int
+Respire.RespireTransactionBase | property Functions [public; get] : IBatchFunctionCommands
+Respire.RespireTransactionBase | property Geo [public; get] : IBatchGeoCommands
+Respire.RespireTransactionBase | property Hashes [public; get] : IBatchHashCommands
+Respire.RespireTransactionBase | property HyperLogLog [public; get] : IBatchHyperLogLogCommands
+Respire.RespireTransactionBase | property IPendingSink.Client [explicit; get] : RespireClient
+Respire.RespireTransactionBase | property IPendingSink.DefersSerialization [explicit; get] : bool
+Respire.RespireTransactionBase | property IPendingSink.ImportSession [explicit; get] : RespireHashImportSession?
+Respire.RespireTransactionBase | property Keys [public; get] : IBatchKeyCommands
+Respire.RespireTransactionBase | property Lists [public; get] : IBatchListCommands
+Respire.RespireTransactionBase | property Scripts [public; get] : IBatchScriptCommands
+Respire.RespireTransactionBase | property Server [public; get] : IBatchServerCommands
+Respire.RespireTransactionBase | property Sets [public; get] : IBatchSetCommands
+Respire.RespireTransactionBase | property SortedSets [public; get] : IBatchSortedSetCommands
+Respire.RespireTransactionBase | property Streams [public; get] : IBatchStreamCommands
+Respire.RespireTransactionBase | property Strings [public; get] : IBatchStringCommands
+Respire.RespireTransactionBase | property VectorSets [public; get] : IBatchVectorSetCommands
+Respire.RespireTransactionBase | property WatchPool [private protected; get] : DedicatedConnectionPool?
+# Designated borrowed view; source keys retain readonly/ref and compiled metadata checks stack-only visibility.
 Respire.RespireTransactionBase | readonly ref struct TestInspection(RespireTransactionBase)
+# Reviewed accessible nested operational members; new inspection state belongs in the designated borrowed view.
+Respire.ClientSideCacheCoordinator.CacheEntry | property ExpiresAt [public; get] : long
+Respire.ClientSideCacheCoordinator.CacheEntry | property Payload [public; get] : byte[]?
+Respire.ClientSideCacheCoordinator.CacheEntry | property Size [public; get] : long
+Respire.ClientSideCacheCoordinator.CacheStore | constructor CacheStore(RespireClientSideCacheOptions, Action<CacheRemoval>)
+Respire.ClientSideCacheCoordinator.CacheStore | method Invalidate(in RespireKey) : int
+Respire.ClientSideCacheCoordinator.CacheStore | method Retire() : int
+Respire.ClientSideCacheCoordinator.CacheStore | method Set(RespireKey, in RespValue) : void
+Respire.ClientSideCacheCoordinator.CacheStore | method Set(in ClientCacheCommandKey, QueryCacheEntry) : bool
+Respire.ClientSideCacheCoordinator.CacheStore | method Trim() : void
+Respire.ClientSideCacheCoordinator.CacheStore | method TryCreateEntry(in ClientCacheCommandKey, RespireKey[], in RespValue, out QueryCacheEntry?) : bool
+Respire.ClientSideCacheCoordinator.CacheStore | method TryGet(in ClientCacheCommandKey, out RespValue) : bool
+Respire.ClientSideCacheCoordinator.CacheStore | method TryGet(in RespireKey, out byte[]?) : bool
+Respire.ClientSideCacheCoordinator.CacheStore | property Count [public; get] : int
+Respire.ClientSideCacheCoordinator.CacheStore | property SizeBytes [public; get] : long
+Respire.ClientSideCacheCoordinator.InflightRead | field Generation : long
+Respire.ClientSideCacheCoordinator.InflightRead | field Readers : int
+Respire.ClientSideCacheCoordinator.InflightRead | field Retired : bool
+Respire.ClientSideCacheCoordinator.InflightRead | property CanCache [public; get] : bool
+Respire.ClientSideCacheCoordinator.InflightRead | property Key [public; get] : RespireKey
+Respire.ClientSideCacheCoordinator.MutationFence | method ForKey(RespireKey) : MutationFence
+Respire.ClientSideCacheCoordinator.MutationFence | method ForKeys(RespireKey[]) : MutationFence
+Respire.ClientSideCacheCoordinator.MutationFence | property All [internal; get] : MutationFence
+Respire.ClientSideCacheCoordinator.MutationFence | property IsRequired [internal; get] : bool
+Respire.ClientSideCacheCoordinator.MutationFence | property Key [internal; get] : RespireKey
+Respire.ClientSideCacheCoordinator.MutationFence | property Keys [internal; get] : RespireKey[]?
+Respire.ClientSideCacheCoordinator.MutationFence | property Kind [internal; get] : MutationFenceKind
+Respire.ClientSideCacheCoordinator.QueryCacheEntry | property Dependencies [public; get] : RespireKey[]
+Respire.ClientSideCacheCoordinator.QueryCacheEntry | property ExpiresAt [public; get] : long
+Respire.ClientSideCacheCoordinator.QueryCacheEntry | property Size [public; get] : long
+Respire.ClientSideCacheCoordinator.QueryCacheEntry | property Value [public; get] : RespValue
+Respire.Networking.RespireConnection.CredentialSequenceLease | method Dispose() : void

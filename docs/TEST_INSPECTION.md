@@ -23,19 +23,26 @@ Preserve the tests' barriers, deadlines, cancellation, import, and FIFO assertio
 
 `TestInspectionArchitectureTests` checks compiled factory/view metadata and rejects
 the four legacy names on both supported frameworks. The single-target analyzer-test
-host adds `TestInspectionSourceArchitectureTests`, reading embedded production
-source with the net8.0 and net10.0 preprocessor symbols:
+host separates inventory, factory-use and resource-validation tests, sharing
+`TestInspectionSource` helpers. It reads embedded production source with the net8.0
+and net10.0 preprocessor symbols, without requiring a checkout at test runtime.
+The resource check rejects friend-test source and generated `bin`/`obj` paths:
 
-- `TestInspectionOwnerSurface.txt` is an explicitly reviewed inventory of directly
-  declared public, internal, protected, and explicit interface members on the four
-  owners. A new accessor or overload fails the inventory comparison regardless of
-  its name.
+- `TestInspectionOwnerSurface.txt` explicitly reviews 217 source-declared member
+  signatures: 186 owner declarations and 31 accessible nested operational members.
+  It includes public, internal, protected, and explicit interface members, recursively
+  following accessible nested types. A new accessor or overload fails comparison
+  regardless of its name. Instance members of the four designated borrowed views
+  remain permitted; their static members and accessible nested types require review.
   Existing operational members remain permitted. When adding or changing an
   operational declaration, review and update its inventory entry deliberately;
   do not accept a new test-only accessor into that inventory. Put inspection state
   in the designated nested view instead. Keys contain the owner, member kind, name,
   generic arity, parameter types and passing modifiers, and result or value type.
   Explicit interface names and primary constructor parameter types are included.
+  Properties and indexers include accessibility and accessor kind/accessibility
+  (`get`, `set` or `init`). Expression-bodied getters and block getters share a key;
+  adding a setter or changing its accessibility changes the key.
   An owner's primary constructor uses the same key as an ordinary constructor
   overload; nested-type primary constructors remain part of their type key.
   Nested-type keys preserve `readonly` and `ref`, so weakening a borrowed view's
@@ -45,8 +52,11 @@ source with the net8.0 and net10.0 preprocessor symbols:
   Bodies, accessor style, initializers, parameter names, attributes,
   generic constraints, and private-only helpers are not inventoried. Known legacy
   test hooks are marked explicitly; their presence is not precedent for new hooks.
-  Inventory failures list exact unreviewed and removed signatures for deliberate
-  review; the guard never updates the inventory automatically.
+  Inventory failures list exact unreviewed and removed signatures and point here.
+  For an approved operational change, copy each approved unreviewed line into the
+  inventory and remove its obsolete line, retaining the test-hook comments. Rerun
+  both framework-symbol checks. Do not accept an inspection bypass merely to make
+  the test pass; the guard never overwrites or regenerates the inventory automatically.
 - `InspectForTests` is a reserved factory name throughout production source. Its
   identifier references, including direct calls, conditional calls, and method
   groups, are forbidden there. Declarations and deliberate `nameof` metadata
@@ -65,18 +75,19 @@ Positive controls cover a renamed accessor, a new operational overload, owner
 primary constructors (including abstract owners and default internal visibility),
 explicit interface methods/properties/indexers/events, production calls, a method group,
 and escaped, unescaped, local-function, and cross-file `nameof` helpers. Additional
-controls cover direct view construction, removed `readonly`/`ref`
-modifiers, missing qualified owners and unsupported owner declaration kinds. Negative
-controls cover reviewed operations, body and accessor style changes, parameter
-renames, attributes, constraints, private
+controls cover direct view construction, removed `readonly`/`ref` modifiers,
+missing qualified owners, unsupported owner declaration kinds, writable
+properties/indexers, property accessibility, and nested helper/static-view bypasses.
+Negative controls cover permitted borrowed instance members, reviewed operations,
+body and accessor style changes, parameter renames, attributes, constraints, private
 implementation changes, another type with the same simple owner name, metadata
 references, comments, and string literals. A non-empty resource-set check verifies
 that friend-test source is excluded; missing resources report their names.
 
 These are architecture checks, not a lifetime or ownership analysis. They cannot
 detect repurposing an existing inventoried member, reflection-based state access,
-or code hidden behind other preprocessor configurations. Nested implementation
-member bodies are not part of the owner inventory. Returned references and
-copies still require the boundaries in the consumer table above. Update that table
+or code hidden behind other preprocessor configurations. Implementation bodies and
+compiler-synthesized members are not part of the source-declared inventory.
+Returned references and copies still require the boundaries in the consumer table above. Update that table
 when adding consumers or inspection members; passing a guard does not establish
 quiescence, source lifetime, or ownership.
