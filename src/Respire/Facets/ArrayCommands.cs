@@ -86,6 +86,9 @@ public interface IArrayCommands
     /// <summary>Writes consecutive slots; returns newly populated slot count. Does not move the insertion cursor. Redis: ARSET.</summary>
     ValueTask<ulong> SetAsync(RespireKey key, ulong index, ReadOnlySpan<RespireValue> values, CancellationToken cancellationToken);
 
+    /// <summary>Writes an array of values to consecutive slots. Redis: ARSET.</summary>
+    ValueTask<ulong> SetAsync(RespireKey key, ulong index, RespireValue[] values, CancellationToken cancellationToken = default);
+
     /// <summary>Writes scattered slots; returns newly populated slot count. Does not move the insertion cursor. Redis: ARMSET.</summary>
     ValueTask<ulong> SetManyAsync(RespireKey key, params ReadOnlySpan<RespireArrayItem> items);
 
@@ -247,6 +250,12 @@ internal sealed class ArrayCommands(RespireClient client) : IArrayCommands
 
     public ValueTask<ulong> SetAsync(RespireKey key, ulong index, ReadOnlySpan<RespireValue> values, CancellationToken cancellationToken)
         => Read(RespireCommands.Array.ARSET, key, ArrayCommandArguments.Set(index, values), cancellationToken, static (RespireClient c, in RespValue v) => ArrayResponseReader.Unsigned(in v));
+
+    public ValueTask<ulong> SetAsync(RespireKey key, ulong index, RespireValue[] values, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        return SetAsync(key, index, values.AsSpan(), cancellationToken);
+    }
 
     public ValueTask<ulong> SetManyAsync(RespireKey key, params ReadOnlySpan<RespireArrayItem> items)
         => SetManyAsync(key, items, CancellationToken.None);

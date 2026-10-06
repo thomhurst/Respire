@@ -64,6 +64,7 @@ public class DeferredApiNamingTests
 
         await Assert.That(facetNames).IsEquivalentTo(new[]
         {
+            "Arrays",
             "Bitmaps",
             "Functions",
             "Geo",

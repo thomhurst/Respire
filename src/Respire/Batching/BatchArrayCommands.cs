@@ -64,6 +64,9 @@ public interface IBatchArrayCommands
     /// <summary>Writes consecutive slots; returns newly populated slot count. Does not move the insertion cursor. Redis: ARSET.</summary>
     RespirePending<ulong> Set(RespireKey key, ulong index, params ReadOnlySpan<RespireValue> values);
 
+    /// <summary>Writes an array of values to consecutive slots. Redis: ARSET.</summary>
+    RespirePending<ulong> Set(RespireKey key, ulong index, RespireValue[] values);
+
     /// <summary>Writes scattered slots; returns newly populated slot count. Does not move the insertion cursor. Redis: ARMSET.</summary>
     RespirePending<ulong> SetMany(RespireKey key, params ReadOnlySpan<RespireArrayItem> items);
 
@@ -179,6 +182,12 @@ internal sealed class BatchArrayCommands(IPendingSink sink) : IBatchArrayCommand
 
     public RespirePending<ulong> Set(RespireKey key, ulong index, params ReadOnlySpan<RespireValue> values)
         => Read(RespireCommands.Array.ARSET, key, ArrayCommandArguments.Set(index, values), static (c, v) => ArrayResponseReader.Unsigned(in v));
+
+    public RespirePending<ulong> Set(RespireKey key, ulong index, RespireValue[] values)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        return Set(key, index, values.AsSpan());
+    }
 
     public RespirePending<ulong> SetMany(RespireKey key, params ReadOnlySpan<RespireArrayItem> items)
         => Read(RespireCommands.Array.ARMSET, key, ArrayCommandArguments.SetMany(items), static (c, v) => ArrayResponseReader.Unsigned(in v));

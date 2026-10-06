@@ -12,6 +12,10 @@ internal static class ArrayFacetScenarios
     internal static async Task SerializationPredicatesAndValidation(IRespireClient client)
     {
         var arrays = client.Arrays;
+        RespireValue[] values = ["first", "second"];
+        await Assert.That(await arrays.SetAsync("value-array", 0, values)).IsEqualTo(2UL);
+        await Assert.That(await arrays.SetAsync("value-array-token", 0, values, CancellationToken.None)).IsEqualTo(2UL);
+        await Assert.That(await arrays.RangeAsync("value-array", 0, 1)).IsEquivalentTo(new string?[] { "first", "second" }, CollectionOrdering.Matching);
         var payload = new Payload(42, "sample");
         await Assert.That(await arrays.SetAsync("json", 0, payload)).IsEqualTo(1UL);
         await Assert.That(await arrays.GetAsync<Payload>("json", 0)).IsEqualTo(payload);
@@ -40,6 +44,16 @@ internal static class ArrayFacetScenarios
         await Assert.That(await arrays.GrepAsync("search", RespireArrayBound.First, RespireArrayBound.Last,
             [new(RespireArrayPredicateKind.Regex, "^Alpha")], new RespireArrayGrepOptions { IgnoreCase = true }))
             .IsEquivalentTo(new[] { 0UL, 1UL }, CollectionOrdering.Matching);
+        await arrays.SetAsync("glob", 0, "abc", "a*?", "B4", "", "abb", "aaax");
+        (string Pattern, ulong[] Expected)[] globCases =
+        [
+            ("[a-c]*", [0, 1, 4, 5]), ("[^a]*", [2]), ("a\\*\\?", [1]),
+            ("*a*b*", [0, 4]), ("B[5-1]", [2]), ("?*?", [0, 1, 2, 4, 5]),
+        ];
+        foreach (var (pattern, expected) in globCases)
+            await Assert.That(await arrays.GrepAsync("glob", RespireArrayBound.First, RespireArrayBound.Last,
+                new RespireArrayPredicate(RespireArrayPredicateKind.Glob, pattern)))
+                .IsEquivalentTo(expected, CollectionOrdering.Matching);
         await Assert.That((await arrays.AggregateAsync("search", 3, 5, RespireArrayOperation.And)).Integer).IsEqualTo(0L);
         await Assert.That((await arrays.AggregateAsync("search", 3, 5, RespireArrayOperation.Or)).Integer).IsEqualTo(-1L);
         await Assert.That((await arrays.AggregateAsync("search", 3, 5, RespireArrayOperation.Xor)).Integer).IsEqualTo(-2L);
@@ -100,6 +114,9 @@ internal static class ArrayFacetScenarios
         var payload = new Payload(17, "queued");
         var typedSet = arrays.Set("json", 0, payload);
         var typedRead = arrays.Get<Payload>("json", 0);
+        RespireValue[] values = ["first", "second"];
+        var arraySet = arrays.Set("value-array", 0, values);
+        var arrayRead = arrays.Range("value-array", 0, 1);
         if (transaction is not null) await transaction.CommitAsync();
         else await batch!.ExecuteAsync();
         await Assert.That(set.Result).IsEqualTo(2UL);
@@ -127,6 +144,8 @@ internal static class ArrayFacetScenarios
         await Assert.That(copiedRead.Result).IsEqualTo("original");
         await Assert.That(typedSet.Result).IsEqualTo(1UL);
         await Assert.That(typedRead.Result).IsEqualTo(payload);
+        await Assert.That(arraySet.Result).IsEqualTo(2UL);
+        await Assert.That(arrayRead.Result).IsEquivalentTo(new string?[] { "first", "second" }, CollectionOrdering.Matching);
         await Assert.That(await client.Arrays.CountAsync("queued")).IsEqualTo(2UL);
     }
 
@@ -171,6 +190,11 @@ internal static class ArrayFacetScenarios
 
     internal static async Task CursorRingAndLastItemsRespectHolesAndResize(IRespireClient client)
     {
+        await client.Arrays.SetAsync("sparse-last", 100, "last");
+        await Assert.That(await client.Arrays.LastItemsAsync("sparse-last", 3)).IsEquivalentTo(new string?[] { "last" }, CollectionOrdering.Matching);
+        await Assert.That(await client.Arrays.LastItemsAsync("sparse-last", 3, reverse: true)).IsEquivalentTo(new string?[] { "last" }, CollectionOrdering.Matching);
+        await Assert.That(await client.Arrays.LastItemsAsync("sparse-last", 0)).IsEmpty();
+        await Assert.That(await client.Arrays.LastItemsAsync("sparse-last", -1)).IsEmpty();
         await Assert.That(await client.Arrays.NextIndexAsync("missing")).IsEqualTo(0UL);
         await Assert.That(await client.Arrays.SeekAsync("missing", 5)).IsFalse();
         await Assert.That(await client.Arrays.InsertAsync("ring", "a", "b", "c")).IsEqualTo(2UL);
@@ -195,6 +219,10 @@ internal static class ArrayFacetScenarios
         await Assert.That(sum.Integer).IsNull();
         await Assert.That((await client.Arrays.AggregateAsync("numbers", 0, 3, RespireArrayOperation.Used)).Integer).IsEqualTo(4L);
         await Assert.That((await client.Arrays.AggregateAsync("numbers", 9, 10, RespireArrayOperation.Min)).IsNull).IsTrue();
+        await client.Arrays.SetAsync("zero", 0, "0");
+        var zero = await client.Arrays.AggregateAsync("zero", 0, 0, RespireArrayOperation.Sum);
+        await Assert.That(zero.IsNull).IsFalse();
+        await Assert.That(zero.NumericText).IsEqualTo("0");
         RespireArrayPredicate[] predicates = [new(RespireArrayPredicateKind.Exact, "TEXT")];
         var options = new RespireArrayGrepOptions { IgnoreCase = true, Limit = 1 };
         await Assert.That(await client.Arrays.GrepAsync("numbers", RespireArrayBound.First, RespireArrayBound.Last, predicates, options)).IsEquivalentTo(new[] { 2UL }, CollectionOrdering.Matching);

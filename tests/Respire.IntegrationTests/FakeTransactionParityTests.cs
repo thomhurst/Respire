@@ -110,12 +110,40 @@ public class FakeTransactionParityTests(RedisTestContainer fixture)
         await AssertWatchTracksMutationsAsync(Options(fake, protocol), useFake);
     }
 
-    internal static async Task AssertWatchTracksMutationsAsync(RespireOptions options, bool useFake)
+    internal static async Task AssertWatchTracksMutationsAsync(RespireOptions options, bool useFake, bool requireArrays = false)
     {
         await using var session = await TestRespSession.ConnectAsync(options);
         await using var writer = await TestRespSession.ConnectAsync(options);
         var scenarios = new WatchCase[]
         {
+            new([], ["ARSET", "key", "0", "value"], true),
+            new([ ["ARSET", "key", "0", "value"] ], ["ARSET", "key", "0", "value"], true),
+            new([], ["ARMSET", "key", "0", "value", "2", "other"], true),
+            new([ ["ARSET", "key", "0", "value"] ], ["ARMSET", "key", "0", "value"], true),
+            new([ ["ARSET", "key", "0", "value"] ], ["ARDEL", "key", "0"], true),
+            new([ ["ARSET", "key", "0", "value"] ], ["ARDEL", "key", "1"], false),
+            new([], ["ARDEL", "key", "0"], false),
+            new([ ["ARSET", "key", "0", "value"] ], ["ARDELRANGE", "key", "0", "1"], true),
+            new([ ["ARSET", "key", "0", "value"] ], ["ARDELRANGE", "key", "1", "2"], false),
+            new([], ["ARDELRANGE", "key", "0", "1"], false),
+            new([ ["ARSET", "key", "0", "value"] ], ["ARSEEK", "key", "0"], true),
+            new([], ["ARSEEK", "key", "0"], false),
+            new([], ["ARINSERT", "key", "value"], true),
+            new([], ["ARRING", "key", "2", "value"], true),
+            new([ ["ARSET", "key", "0", "value"] ], ["ARRING", "key", "0", "value"], false, Error: true),
+            new([ ["ARSET", "key", "0", "value"] ], ["ARSET", "key", "18446744073709551615", "new"], false, Error: true),
+            new([ ["SET", "key", "wrong-type"] ], ["ARINSERT", "key", "value"], false, Error: true),
+            new([ ["ARSET", "key", "0", "value"] ], ["ARCOUNT", "key"], false),
+            new([ ["ARSET", "key", "0", "value"] ], ["ARGET", "key", "0"], false),
+            new([ ["ARSET", "key", "0", "value"] ], ["ARGETRANGE", "key", "0", "1"], false),
+            new([ ["ARSET", "key", "0", "value"] ], ["ARGREP", "key", "-", "+", "EXACT", "value"], false),
+            new([ ["ARSET", "key", "0", "value"] ], ["ARINFO", "key", "FULL"], false),
+            new([ ["ARSET", "key", "0", "value"] ], ["ARLASTITEMS", "key", "2"], false),
+            new([ ["ARSET", "key", "0", "value"] ], ["ARLEN", "key"], false),
+            new([ ["ARSET", "key", "0", "value"] ], ["ARMGET", "key", "0", "1"], false),
+            new([ ["ARSET", "key", "0", "value"] ], ["ARNEXT", "key"], false),
+            new([ ["ARSET", "key", "0", "value"] ], ["AROP", "key", "0", "1", "USED"], false),
+            new([ ["ARSET", "key", "0", "value"] ], ["ARSCAN", "key", "0", "1"], false),
             new([], ["XADD", "key", "1-0", "f", "value"], true),
             new([ ["XADD", "key", "1-0", "f", "value"] ], ["XADD", "key", "1-0", "f", "duplicate"], false, Error: true),
             new([ ["XADD", "key", "1-0", "f", "value"] ], ["XGROUP", "CREATE", "key", "g", "0"], false),
@@ -240,11 +268,16 @@ public class FakeTransactionParityTests(RedisTestContainer fixture)
         var unsupported = new HashSet<string>(StringComparer.Ordinal);
         if (!useFake)
         {
-            foreach (var command in new[] { "LMOVEM", "BLMOVEM", "INCREX", "XCFGSET", "HIMPORT" })
+            var optionalCommands = new[] { "LMOVEM", "BLMOVEM", "INCREX", "XCFGSET", "HIMPORT" }
+                .Concat(scenarios.Select(scenario => scenario.Mutation[0]).Where(command => command.StartsWith("AR", StringComparison.Ordinal)).Distinct());
+            foreach (var command in optionalCommands)
             {
                 using var info = await writer.CommandAsync("COMMAND", "INFO", command);
                 if (info.AsArray()[0].IsNull) unsupported.Add(command);
             }
+            if (requireArrays)
+                unsupported.Where(command => command.StartsWith("AR", StringComparison.Ordinal)).Should().BeEmpty(
+                    "the Redis 8.10 acceptance server must execute every array WATCH parity vector");
         }
         foreach (var scenario in scenarios)
         {
@@ -306,6 +339,8 @@ public class FakeTransactionParityTests(RedisTestContainer fixture)
         string[] nonInvalidatingCommands =
         [
             "HELLO", "MULTI", "EXEC", "DISCARD", "WATCH", "UNWATCH", "PING", "ECHO",
+            "ARCOUNT", "ARGET", "ARGETRANGE", "ARGREP", "ARINFO", "ARLASTITEMS", "ARLEN",
+            "ARMGET", "ARNEXT", "AROP", "ARSCAN",
             "HIMPORT PREPARE", "HIMPORT DISCARD", "HIMPORT DISCARDALL",
             "SUBSCRIBE", "UNSUBSCRIBE", "PUBLISH", "XREAD",
             // Group cursor/PEL changes do not invalidate WATCH, unlike XGROUP CREATE ... MKSTREAM.

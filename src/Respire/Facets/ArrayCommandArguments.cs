@@ -2,6 +2,8 @@ namespace Respire;
 
 internal static class ArrayCommandArguments
 {
+    // Redis 8.10 src/t_array.c: ARGREP_MAX_PREDICATES.
+    private const int MaximumGrepPredicates = 250;
     internal static void ValidateIndex(ulong index)
     {
         if (index == ulong.MaxValue) throw new ArgumentOutOfRangeException(nameof(index), "UInt64.MaxValue is reserved by Redis.");
@@ -106,7 +108,7 @@ internal static class ArrayCommandArguments
         ReadOnlySpan<RespireArrayPredicate> predicates, RespireArrayGrepOptions options, bool withValues)
     {
         RequireItems(predicates.Length);
-        if (predicates.Length > 250) throw new ArgumentOutOfRangeException(nameof(predicates));
+        if (predicates.Length > MaximumGrepPredicates) throw new ArgumentOutOfRangeException(nameof(predicates));
         if (options.Limit is <= 0) throw new ArgumentOutOfRangeException(nameof(options));
         var args = new RespireValue[2 + predicates.Length * 2 + (options.MatchAll ? 1 : 0)
             + (options.IgnoreCase ? 1 : 0) + (options.Limit.HasValue ? 2 : 0) + (withValues ? 1 : 0)];

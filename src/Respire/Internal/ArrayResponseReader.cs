@@ -36,8 +36,7 @@ internal static class ArrayResponseReader
         var result = new RespireArrayEntry<string>[elements.Length];
         for (var i = 0; i < result.Length; i++)
         {
-            var pair = elements[i].AsArray();
-            if (pair.Length != 2) throw new RespireProtocolException("Expected an index/value pair.");
+            var pair = EntryPair(in elements[i]);
             result[i] = new(Unsigned(in pair[0]), pair[1].AsString());
         }
         return result;
@@ -51,11 +50,17 @@ internal static class ArrayResponseReader
         var result = new RespireArrayEntry<T>[elements.Length];
         for (var i = 0; i < result.Length; i++)
         {
-            var pair = elements[i].AsArray();
-            if (pair.Length != 2) throw new RespireProtocolException("Expected an index/value pair.");
+            var pair = EntryPair(in elements[i]);
             result[i] = new(Unsigned(in pair[0]), client.DeserializeBorrowed<T>(in pair[1]));
         }
         return result;
+    }
+
+    private static ReadOnlySpan<RespValue> EntryPair(in RespValue value)
+    {
+        var pair = value.AsArray();
+        if (pair.Length != 2) throw new RespireProtocolException("Expected an index/value pair.");
+        return pair;
     }
 
     internal static RespireArrayInfo Info(in RespValue value)

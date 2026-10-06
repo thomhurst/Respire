@@ -58,6 +58,8 @@ public sealed partial class RespireFakeServer
     }
 
     private sealed record ArrayPredicate(string Kind, byte[] Pattern, Regex? Expression);
+    private sealed class ArrayGlobLimitException : Exception;
+    private const int ArrayGlobWorkLimit = 1_000_000;
 
     private FakeReply ArrayGrep(byte[][] args)
     {
@@ -122,6 +124,7 @@ public sealed partial class RespireFakeServer
         var start = Bound(args[2], array.Length - 1);
         var end = Bound(args[3], array.Length - 1);
         List<FakeReply> result = [];
+        var remainingGlobWork = ArrayGlobWorkLimit;
         foreach (var item in ArrayItems(array, start, end))
         {
             if (predicates.Any(predicate => predicate.Kind == "RE") && item.Value.Any(value => value is < 32 or > 126))
@@ -130,12 +133,13 @@ public sealed partial class RespireFakeServer
             {
                 "EXACT" => ArrayEqual(item.Value, predicate.Pattern, ignoreCase),
                 "MATCH" => ArrayContains(item.Value, predicate.Pattern, ignoreCase),
-                "GLOB" => ArrayGlob(item.Value, predicate.Pattern, ignoreCase),
+                "GLOB" => ArrayGlob(item.Value, predicate.Pattern, ignoreCase, ref remainingGlobWork),
                 _ => predicate.Expression!.IsMatch(Encoding.Latin1.GetString(item.Value)),
             };
             bool matched;
             try { matched = all ? predicates.All(Match) : predicates.Any(Match); }
             catch (RegexMatchTimeoutException) { return FakeReply.Error("ERR Respire.Testing ARGREP regex exceeded its time limit"); }
+            catch (ArrayGlobLimitException) { return FakeReply.Error("ERR Respire.Testing ARGREP glob exceeded its work limit"); }
             if (!matched) continue;
             result.Add(withValues ? FakeReply.Array([ArrayUnsigned(item.Key), FakeReply.Bulk(item.Value)]) : ArrayUnsigned(item.Key));
             if (--limit == 0) break;
@@ -160,51 +164,75 @@ public sealed partial class RespireFakeServer
         return false;
     }
 
-    private static bool ArrayGlob(ReadOnlySpan<byte> value, ReadOnlySpan<byte> pattern, bool ignoreCase)
+    private static bool ArrayGlob(ReadOnlySpan<byte> value, ReadOnlySpan<byte> pattern, bool ignoreCase, ref int remainingWork)
     {
-        // Redis glob syntax is byte based, including bracket ranges and escaped literals.
-        while (!pattern.IsEmpty)
+        // Retry only the most recent star, without recursive suffix searches. The budget
+        // is shared by all values and predicates in this command while the fake holds its lock.
+        var valueIndex = 0;
+        var patternIndex = 0;
+        var starPatternIndex = -1;
+        var starValueIndex = 0;
+        while (true)
         {
-            var token = pattern[0];
-            pattern = pattern[1..];
-            if (token == '*')
+            if (--remainingWork < 0) throw new ArrayGlobLimitException();
+            if (patternIndex == pattern.Length && valueIndex == value.Length) return true;
+            if (patternIndex < pattern.Length && pattern[patternIndex] == '*')
             {
-                while (!pattern.IsEmpty && pattern[0] == '*') pattern = pattern[1..];
-                if (pattern.IsEmpty) return true;
-                for (var i = 0; i <= value.Length; i++) if (ArrayGlob(value[i..], pattern, ignoreCase)) return true;
-                return false;
-            }
-            if (value.IsEmpty) return false;
-            var actual = ignoreCase ? ArrayFold(value[0]) : value[0];
-            if (token == '[')
-            {
-                var negate = !pattern.IsEmpty && pattern[0] == '^';
-                if (negate) pattern = pattern[1..];
-                var matched = false;
-                while (!pattern.IsEmpty && pattern[0] != ']')
+                while (patternIndex < pattern.Length && pattern[patternIndex] == '*')
                 {
-                    var first = pattern[0];
-                    pattern = pattern[1..];
-                    if (first == '\\' && !pattern.IsEmpty) { first = pattern[0]; pattern = pattern[1..]; }
-                    if (ignoreCase) first = ArrayFold(first);
-                    if (pattern.Length >= 2 && pattern[0] == '-')
-                    {
-                        var last = ignoreCase ? ArrayFold(pattern[1]) : pattern[1];
-                        matched |= actual >= Math.Min(first, last) && actual <= Math.Max(first, last);
-                        pattern = pattern[2..];
-                    }
-                    else matched |= actual == first;
+                    if (--remainingWork < 0) throw new ArrayGlobLimitException();
+                    patternIndex++;
                 }
-                if (!pattern.IsEmpty) pattern = pattern[1..];
-                if (matched == negate) return false;
+                if (patternIndex == pattern.Length) return true;
+                starPatternIndex = patternIndex;
+                starValueIndex = valueIndex;
+                continue;
             }
-            else if (token != '?')
+            var nextPatternIndex = patternIndex;
+            if (valueIndex < value.Length && nextPatternIndex < pattern.Length
+                && ArrayGlobToken(value[valueIndex], pattern, ref nextPatternIndex, ignoreCase, ref remainingWork))
             {
-                if (token == '\\' && !pattern.IsEmpty) { token = pattern[0]; pattern = pattern[1..]; }
-                if ((ignoreCase ? ArrayFold(token) : token) != actual) return false;
+                valueIndex++;
+                patternIndex = nextPatternIndex;
+                continue;
             }
-            value = value[1..];
+            if (starPatternIndex < 0 || starValueIndex == value.Length) return false;
+            valueIndex = ++starValueIndex;
+            patternIndex = starPatternIndex;
         }
-        return value.IsEmpty;
+    }
+
+    private static bool ArrayGlobToken(byte value, ReadOnlySpan<byte> pattern, ref int index, bool ignoreCase, ref int remainingWork)
+    {
+        var token = pattern[index++];
+        var remaining = pattern[index..];
+        var actual = ignoreCase ? ArrayFold(value) : value;
+        if (token == '[')
+        {
+            var negate = !remaining.IsEmpty && remaining[0] == '^';
+            if (negate) remaining = remaining[1..];
+            var matched = false;
+            while (!remaining.IsEmpty && remaining[0] != ']')
+            {
+                if (--remainingWork < 0) throw new ArrayGlobLimitException();
+                var first = remaining[0];
+                remaining = remaining[1..];
+                if (first == '\\' && !remaining.IsEmpty) { first = remaining[0]; remaining = remaining[1..]; }
+                if (ignoreCase) first = ArrayFold(first);
+                if (remaining.Length >= 2 && remaining[0] == '-')
+                {
+                    var last = ignoreCase ? ArrayFold(remaining[1]) : remaining[1];
+                    matched |= actual >= Math.Min(first, last) && actual <= Math.Max(first, last);
+                    remaining = remaining[2..];
+                }
+                else matched |= actual == first;
+            }
+            if (!remaining.IsEmpty) remaining = remaining[1..];
+            index = pattern.Length - remaining.Length;
+            return matched != negate;
+        }
+        if (token == '?') return true;
+        if (token == '\\' && !remaining.IsEmpty) { token = remaining[0]; index++; }
+        return (ignoreCase ? ArrayFold(token) : token) == actual;
     }
 }
