@@ -84,6 +84,9 @@ internal sealed partial class RespireConnection
     // Raised on the receive loop after every applied notification; handlers must not block.
     private event Action? MaintenanceStateChanged;
     internal bool HasMaintenanceWindow => Volatile.Read(ref _maintenanceState)?.Remaining(Environment.TickCount64) > 0;
+    internal bool HasRelaxedTimeoutAllowance => HasMaintenanceWindow && _maintenanceOptions is { } options
+        && (_responseTimeout is { } response && options.MaintenanceRelaxedTimeout > response
+            || _commandTimeout is { } command && options.MaintenanceRelaxedTimeout > command);
     internal Respire.Infrastructure.MovingAnnouncement? LastMovingAnnouncement => Volatile.Read(ref _lastMovingAnnouncement);
 
     private async ValueTask NegotiateMaintenanceAsync(RespireConnectionOptions options, RespProtocol protocol,

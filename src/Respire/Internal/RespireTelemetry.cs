@@ -28,6 +28,27 @@ internal static class RespireTelemetry
     private static readonly KeyValuePair<string, object?> SystemTag = new("db.system.name", DatabaseSystem);
     private static readonly MetricOperationNames MetricNames = new();
 
+    internal static KeyValuePair<string, object?> ConnectionLibraryTag => LibraryTag;
+    internal static KeyValuePair<string, object?> ConnectionSystemTag => SystemTag;
+    internal static readonly ObservableUpDownCounter<long> ConnectionCount = Meter.CreateObservableUpDownCounter(
+        "db.client.connection.count", ConnectionTelemetry.ObserveConnections, "{connection}", "Current ready connections by idle/used state.");
+    internal static readonly ObservableUpDownCounter<long> ConnectionPendingRequests = Meter.CreateObservableUpDownCounter(
+        "db.client.connection.pending_requests", ConnectionTelemetry.ObservePendingRequests, "{request}", "Responses still owed by ready connections.");
+    internal static readonly Histogram<double> ConnectionCreateTime = Meter.CreateHistogram<double>(
+        "db.client.connection.create_time", "s", "Time to create a usable connection, including its handshake.");
+    internal static readonly Counter<long> ConnectionsClosed = Meter.CreateCounter<long>(
+        "redis.client.connection.closed", "{connection}", "Physical connections closed, including unsuccessful handshakes.");
+    internal static readonly Histogram<double> ConnectionWaitTime = Meter.CreateHistogram<double>(
+        "db.client.connection.wait_time", "s", "Time waiting for a newly created dedicated connection to become available.");
+    internal static readonly ObservableUpDownCounter<long> ConnectionRelaxedTimeout = Meter.CreateObservableUpDownCounter(
+        "redis.client.connection.relaxed_timeout", ConnectionTelemetry.ObserveRelaxedTimeouts, "{relaxation}",
+        "Connections whose configured timeout allowance is currently increased by maintenance.");
+    internal static readonly Counter<long> ConnectionHandoffs = Meter.CreateCounter<long>(
+        "redis.client.connection.handoff", "1", "Old physical connections replaced by a published MOVING handoff.");
+    internal static readonly ObservableCounter<long> ConnectionMeasurementsDropped = Meter.CreateObservableCounter(
+        "respire.connection.measurements.dropped", () => ConnectionTelemetry.DroppedMeasurements,
+        "{measurement}", "Process-wide lifecycle measurements rejected by delivery capacity or enqueue failure.");
+
     private static readonly Counter<long> TransactionConflicts = Meter.CreateCounter<long>(
         "respire.transaction.watch.conflicts", "{attempt}", "Watched transaction attempts discarded by Redis.");
     private static readonly Counter<long> TransactionRetries = Meter.CreateCounter<long>(

@@ -552,6 +552,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
                     connection.MovingNotification += OnMoving;
                     if (connection.LastMovingAnnouncement is { } announcement) OnMoving(announcement);
                 }) { MovingOwner = Multiplexer, MovingPublication = publication.Publication };
+            Multiplexer.RegisterMovingDedicatedPool(pool);
             return pool;
         }
 
@@ -575,7 +576,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
         {
             try
             {
-                await _pools.RetireAsync(pool).ConfigureAwait(false);
+                await _pools.RetireAsync(pool, moving: true).ConfigureAwait(false);
             }
             catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
             {
@@ -631,8 +632,11 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
 
         public void ConnectionClosed(RespireConnection connection, bool unexpected)
         {
-            lock (_connectionsGate) _connections.Remove(connection);
-            if (unexpected) _owner.Invalidate(this, connection.CloseError);
+            bool validated;
+            lock (_connectionsGate) validated = _connections.Remove(connection);
+            // Failed or canceled handshakes never joined this generation. Their receive
+            // loops can observe closure before disposal starts, without a primary failure.
+            if (unexpected && validated) _owner.Invalidate(this, connection.CloseError);
         }
 
         internal Task StopConnections()

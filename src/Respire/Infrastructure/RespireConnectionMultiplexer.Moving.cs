@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Respire.Internal;
 using Respire.Networking;
 
 namespace Respire.Infrastructure;
@@ -23,9 +24,12 @@ internal sealed record MovingAnnouncement(
 /// </summary>
 /// <remarks>
 /// Lock order: <c>_lifecycleGate</c> before the coordinator gate. No path may acquire
-/// <c>_lifecycleGate</c> while it holds that gate. Code under the gate only
-/// updates handoff state and cancels superseded requests; it never awaits, never calls user code
-/// and never takes another gate. (A cancelled request's worker unwinds without taking
+/// <c>_lifecycleGate</c> while it holds that gate. Code under the gate updates handoff state
+/// and cancels superseded requests without awaiting. Publication takes the dedicated
+/// registration gate, then the pool gate, to capture membership without callbacks.
+/// Registration and pool code never acquire either multiplexer gate. Owner
+/// callbacks and current-pool predicates run outside the coordinator gate.
+/// (A cancelled request's worker unwinds without taking
 /// <c>_lifecycleGate</c>, so even a continuation inlined by that cancellation keeps the order.)
 /// </remarks>
 internal sealed partial class RespireConnectionMultiplexer
@@ -36,6 +40,23 @@ internal sealed partial class RespireConnectionMultiplexer
     private const long MaxMovingGraceSeconds = 24 * 60 * 60;
 
     private readonly MovingHandoffCoordinator _moving = new();
+    // Owners register while holding their own gates. Keep registration independent of the
+    // coordinator, whose existing logging callbacks can themselves inspect those owners.
+    private readonly Lock _movingDedicatedGate = new();
+    private DedicatedConnectionPool? _movingDedicatedPool;
+
+    internal void RegisterMovingDedicatedPool(DedicatedConnectionPool pool)
+    {
+        lock (_movingDedicatedGate)
+        {
+            _movingDedicatedPool = pool;
+            // Serialize registration with publication, including its membership snapshot.
+            // No lease escapes the owner's factory before registration returns. A stale
+            // empty pool must not count handshakes that finish after that publication.
+            if (!ReferenceEquals(pool.MovingPublication, MovingPublication))
+                pool.CaptureMovingHandoffs();
+        }
+    }
 
     private sealed record ActiveEndpoint(string Host, int Port);
 
@@ -205,6 +226,7 @@ internal sealed partial class RespireConnectionMultiplexer
         // The drain below then has no time remaining and aborts the old sockets at once.
         // (Contrast the setup-failure path above, which has nothing to publish.)
         var old = new RespireConnection?[_connections.Length];
+        List<RespireConnection>? handedOff = null;
         var published = false;
         int? cacheEvictions = null;
         try
@@ -228,7 +250,13 @@ internal sealed partial class RespireConnectionMultiplexer
                     // Not user code: the cache flush only updates state and queues events, and its
                     // metrics are published after the gates are released (see below).
                     cacheEvictions = _options.CredentialCacheInvalidation?.Invoke();
-                    Volatile.Write(ref _activeEndpoint, new ActiveEndpoint(endpoint.Host, endpoint.Port));
+                    lock (_movingDedicatedGate)
+                    {
+                        var dedicated = _movingDedicatedPool;
+                        if (dedicated is not null && ReferenceEquals(dedicated.MovingPublication, MovingPublication))
+                            handedOff = dedicated.CaptureMovingHandoffs();
+                        Volatile.Write(ref _activeEndpoint, new ActiveEndpoint(endpoint.Host, endpoint.Port));
+                    }
                     // Bump the epoch before any slot changes, so a MOVING parsed by a replacement
                     // after its publication is captured as current.
                     _moving.PublishHandoffEpoch();
@@ -239,6 +267,10 @@ internal sealed partial class RespireConnectionMultiplexer
                         replacements[i].MovingPublicationGeneration = generation;
                         replacements[i].Multiplexer = this;
                         old[i] = Interlocked.Exchange(ref _connections[i], replacements[i]);
+                        // Snapshot liveness at publication. Retirement may close a live idle
+                        // socket before metrics run, but already-dead slots are not handoffs.
+                        if (old[i] is { IsConnected: true } live)
+                            (handedOff ??= []).Add(live);
                         // Failure history belongs to the previous endpoint's sockets.
                         if (_reconnectAttempts is not null) _reconnectAttempts[i] = 0;
                     }
@@ -272,14 +304,16 @@ internal sealed partial class RespireConnectionMultiplexer
             _moving.BeginDrain();
             _ = DrainMovedConnectionsInBackgroundAsync(old, drains, request.Deadline);
         }
-
-        // The handoff has published, so neither the second cache fence nor a metrics observer
-        // can fail it. The fence's metrics reach MeterListener callbacks synchronously.
+        // The state-only second cache fence precedes retirement and metric delivery.
+        // The handoff has already published, so a fence failure cannot roll it back.
         try { _options.CredentialCacheRetirementFence?.Invoke(); }
         catch (Exception error) { _logger?.MovingCacheFenceObserverFailed(error); }
 
-        // Notify other connection owners and metrics listeners outside the lifecycle locks.
+        // Dedicated membership was captured at publication. Owners now stop admission before
+        // publishing any handoff measurements. No lifecycle locks are held here.
         MovingHandoffPublished?.Invoke();
+        if (handedOff is not null)
+            foreach (var connection in handedOff) connection.RecordConnectionHandoff();
         if (cacheEvictions is { } removed)
         {
             try { ClientSideCacheCoordinator.PublishContinuityFlushMetrics(removed); }

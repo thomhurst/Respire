@@ -41,6 +41,22 @@ internal sealed class InflightRing
 
     public int Count => (int)(Volatile.Read(ref _tail) - Volatile.Read(ref _head));
 
+    /// <summary>Monotonic head position; only the consumer can advance it.</summary>
+    internal long ConsumerPosition => Volatile.Read(ref _head);
+
+    /// <summary>
+    /// Counts queued replies and an active streamed reply using the same head snapshot.
+    /// A negative position means no active stream. The caller must validate that the active
+    /// position did not change during observation; this method never reads consumer-owned slots.
+    /// </summary>
+    internal int CountIncludingActiveReply(long activeReplyPosition)
+    {
+        var tail = Volatile.Read(ref _tail);
+        var head = Volatile.Read(ref _head);
+        var count = Math.Max(0, (int)(tail - head));
+        return activeReplyPosition >= 0 && activeReplyPosition < head ? count + 1 : count;
+    }
+
     /// <summary>Producer only (must be called under the connection's write gate).</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryEnqueue(PendingResponse source, long writeEnd = 0)

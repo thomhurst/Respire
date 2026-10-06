@@ -139,11 +139,11 @@ internal sealed partial class ClusterRouter
         }
     }
 
-    private async Task RetirePoolAsync(DedicatedConnectionPool pool)
+    private async Task RetirePoolAsync(DedicatedConnectionPool pool, bool moving = false)
     {
         try
         {
-            await DrainPoolAsync(pool).ConfigureAwait(false);
+            await _ownedPools.RetireAsync(pool, moving).ConfigureAwait(false);
         }
         catch (Exception error)
         {

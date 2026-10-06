@@ -234,12 +234,13 @@ internal sealed class ClientCore : IAsyncDisposable
                 // A server may send MOVING alongside the maintenance opt-in acknowledgement.
                 if (connection.LastMovingAnnouncement is { } announcement) OnMoving(announcement);
             }) { MovingOwner = _multiplexer, MovingPublication = publication.Publication };
+        _multiplexer.RegisterMovingDedicatedPool(pool);
         return pool;
     }
 
     private async Task RetireMovedDedicatedPoolAsync(DedicatedConnectionPool pool)
     {
-        try { await _ownedPools.RetireAsync(pool).ConfigureAwait(false); }
+        try { await _ownedPools.RetireAsync(pool, moving: true).ConfigureAwait(false); }
         catch (Exception error)
         {
             try { Logger?.DedicatedMovingCleanupFailed(error); }

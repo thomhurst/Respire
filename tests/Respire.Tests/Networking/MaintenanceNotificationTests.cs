@@ -676,6 +676,120 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task SentinelGenerationClosesOnlyAfterValidatedConnectionFailure(bool handshakeComplete, bool streaming)
+    {
+        await using var source = Server(maxConnections: 8);
+        ConfigureMaintenanceRouting(source);
+        await using var sentinel = MaintenanceSentinel(source.Port);
+        await using var client = await RespireClient.ConnectAsync(MaintenanceRoutingOptions(source, sentinel, "sentinel"));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var generation = client.Core.Sentinel!.Current!;
+        var pool = generation.Pool;
+        var handshake = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var originalReply = source.ReplyOverride!;
+        source.ReplyOverride = (connection, command) =>
+        {
+            if (command == "HELLO 3")
+            {
+                handshake.TrySetResult(connection);
+                if (!handshakeComplete) return [];
+            }
+            return originalReply(connection, command);
+        };
+        var rental = pool.RentAsync(deadline.Token,
+            kind: streaming ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary).AsTask();
+        var wire = await handshake.Task.WaitAsync(deadline.Token);
+        RespireConnection? lease = null;
+        try
+        {
+            if (handshakeComplete) lease = await rental.WaitAsync(deadline.Token);
+            source.CloseConnection(wire);
+            if (handshakeComplete)
+            {
+                while (!generation.IsRetired) await Task.Delay(1, deadline.Token);
+            }
+            else
+            {
+                // The receive loop notifies the generation before failing the pending HELLO,
+                // so awaiting this failure also observes the generation-close decision.
+                await Assert.That(async () => await rental.WaitAsync(deadline.Token))
+                    .Throws<RespireConnectionException>();
+                await Assert.That(generation.IsRetired).IsFalse();
+                await Assert.That(client.Core.Sentinel.Current).IsSameReferenceAs(generation);
+                using var reply = await generation.Multiplexer.GetConnection()
+                    .SendAsync(new RawCommand(FakeRespServer.PingFrame), deadline.Token);
+                await Assert.That(reply.AsString()).IsEqualTo("PONG");
+            }
+        }
+        finally
+        {
+            if (lease is not null) pool.Return(lease);
+        }
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task CanceledHandshakeCloseMetricCannotRetireHealthySentinelGeneration()
+    {
+        using var configuration = new MetricConfigurationScope();
+        await using var source = Server(maxConnections: 8);
+        ConfigureMaintenanceRouting(source);
+        await using var sentinel = MaintenanceSentinel(source.Port);
+        await using var client = await RespireClient.ConnectAsync(MaintenanceRoutingOptions(source, sentinel, "sentinel"));
+        var generation = client.Core.Sentinel!.Current!;
+        var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        source.SuppressReply = command =>
+        {
+            if (command != "HELLO 3") return false;
+            handshake.TrySetResult();
+            return true;
+        };
+        using var listener = new System.Diagnostics.Metrics.MeterListener();
+        listener.InstrumentPublished = (instrument, current) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "redis.client.connection.closed")
+                current.EnableMeasurementEvents(instrument);
+        };
+        var observed = 0;
+        listener.SetMeasurementEventCallback<long>((_, _, _, _) =>
+        {
+            if (Interlocked.Exchange(ref observed, 1) != 0) return;
+            entered.TrySetResult();
+            release.Task.GetAwaiter().GetResult();
+        });
+        listener.Start();
+        using var cancellation = new CancellationTokenSource();
+        var connecting = RespireConnection.ConnectAsync("127.0.0.1", source.Port,
+            generation.ConnectionOptions, cancellationToken: cancellation.Token);
+        Task? canceling = null;
+        try
+        {
+            await handshake.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            canceling = cancellation.CancelAsync();
+            // Close metrics now run independently of cleanup. Cancellation must finish
+            // while the listener is still blocked, without retiring a healthy generation.
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(async () => await connecting.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Throws<OperationCanceledException>();
+            await Assert.That(generation.IsRetired).IsFalse();
+            await Assert.That(client.Core.Sentinel.Current).IsSameReferenceAs(generation);
+        }
+        finally
+        {
+            release.TrySetResult();
+            if (canceling is not null) await canceling.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(async () => await connecting.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Throws<OperationCanceledException>();
+        }
+    }
+
+    [Test]
     [Arguments("standalone", false)]
     [Arguments("standalone", true)]
     [Arguments("cluster", false)]
