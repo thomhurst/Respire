@@ -264,10 +264,12 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         }
 
         // Batch commands bypass the client's per-command mutation classifier. Conservatively
-        // fence older reads unless the complete policy-routed batch is known to be read-only.
+        // fence older reads unless a non-primary view's complete batch is known to be read-only.
+        // Read-only commands can still require primary routing, such as CLUSTERSCAN.
         var cacheToInvalidate = core.ClientCache;
         if (cacheToInvalidate is not null && core.Cluster is not null
-            && GetGroupReadFrom(_ops) != RespireReadFrom.Primary)
+            && _client.GetBatchReadFromPolicy() != RespireReadFrom.Primary
+            && _ops.TrueForAll(static operation => operation.IsReadOnly))
             cacheToInvalidate = null;
         cacheToInvalidate?.FlushForUnknownCommand();
 
@@ -526,7 +528,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         if (policy == RespireReadFrom.Primary) return RespireReadFrom.Primary;
         for (var index = 0; index < operations.Count; index++)
         {
-            if (!operations[index].IsReadOnly) return RespireReadFrom.Primary;
+            if (!operations[index].AllowsReadRouting) return RespireReadFrom.Primary;
         }
         return policy;
     }
@@ -589,6 +591,8 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
 
         public abstract bool IsReadOnly { get; }
 
+        public abstract bool AllowsReadRouting { get; }
+
         public abstract Task<Exception?> RunAsync(
             RespireClient client, RespireConnection connection, CancellationToken cancellationToken);
 
@@ -625,7 +629,10 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
 
         public override bool IsCompleted => pending.IsCompleted;
 
-        public override bool IsReadOnly => command.ReadKind != ReadCommandKind.None;
+        public override bool IsReadOnly => command.ReadKind != ReadCommandKind.None
+            || command.GetCacheMutation(Operation) == RespireCacheMutation.ReadOnly;
+
+        public override bool AllowsReadRouting => command.ReadKind != ReadCommandKind.None;
 
         // ARSCAN pages are index ranges without an issuing server cursor. They can follow
         // same-slot writes on the primary while the catalog retains its CursorRead classification.

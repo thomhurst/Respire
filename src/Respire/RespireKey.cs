@@ -10,7 +10,9 @@ namespace Respire;
 /// an overload per representation.
 /// </summary>
 /// <remarks>Binary storage is borrowed, including through prefix views. Keep it unchanged until
-/// the command completes unless the receiving API explicitly snapshots or serializes it earlier.</remarks>
+/// the command completes unless the receiving API explicitly snapshots or serializes it earlier.
+/// A scan key with a split UTF-16 scalar retains its namespace and boundary identity; it is not
+/// interchangeable with an unprefixed key containing UTF-8 replacement bytes.</remarks>
 public readonly struct RespireKey : IEquatable<RespireKey>
 {
     private readonly string? _string;
@@ -55,10 +57,10 @@ public readonly struct RespireKey : IEquatable<RespireKey>
     /// <summary>Converts read-only bytes to a binary-safe Redis key.</summary>
     public static implicit operator RespireKey(ReadOnlyMemory<byte> key) => new(key);
 
-    /// <summary>Tests two keys for byte equality.</summary>
+    /// <summary>Tests two keys for equality, preserving owned scan-boundary identity.</summary>
     public static bool operator ==(RespireKey left, RespireKey right) => left.Equals(right);
 
-    /// <summary>Tests two keys for byte inequality.</summary>
+    /// <summary>Tests two keys for inequality, preserving owned scan-boundary identity.</summary>
     public static bool operator !=(RespireKey left, RespireKey right) => !left.Equals(right);
 
     /// <summary>The key as a command argument.</summary>
@@ -157,11 +159,26 @@ public readonly struct RespireKey : IEquatable<RespireKey>
     }
 
     /// <inheritdoc/>
-    public bool Equals(RespireKey other) => AsValue().Equals(other.AsValue());
+    public bool Equals(RespireKey other)
+    {
+        var owner = _prefix?.ScanOwnerPrefix;
+        var otherOwner = other._prefix?.ScanOwnerPrefix;
+        if (owner is not null || otherOwner is not null)
+            return owner is not null && otherOwner is not null
+                && StringComparer.Ordinal.Equals(owner, otherOwner)
+                && StringComparer.Ordinal.Equals(_prefix!.Text, other._prefix!.Text)
+                && _bytes.Span.SequenceEqual(other._bytes.Span);
+        return AsValue().Equals(other.AsValue());
+    }
 
     /// <inheritdoc/>
     public override bool Equals(object? obj) => obj is RespireKey other && Equals(other);
 
     /// <inheritdoc/>
-    public override int GetHashCode() => AsValue().GetHashCode();
+    public override int GetHashCode()
+    {
+        if (_prefix?.ScanOwnerPrefix is { } owner)
+            return HashCode.Combine(owner, _prefix.Text, new RespireValue(_bytes).GetHashCode());
+        return AsValue().GetHashCode();
+    }
 }

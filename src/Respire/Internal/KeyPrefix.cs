@@ -13,7 +13,7 @@ internal sealed class KeyPrefix
     private readonly int _binaryTagStart;
     private readonly int _fixedSlot;
     private readonly bool _endsWithHighSurrogate;
-    private readonly string? _scanOwnerPrefix;
+    internal string? ScanOwnerPrefix { get; }
     internal bool HasSurrogateBoundary => _endsWithHighSurrogate;
 
     internal KeyPrefix(string text)
@@ -30,7 +30,7 @@ internal sealed class KeyPrefix
     }
 
     private KeyPrefix(string text, string scanOwnerPrefix) : this(text)
-        => _scanOwnerPrefix = scanOwnerPrefix;
+        => ScanOwnerPrefix = scanOwnerPrefix;
 
     /// <summary>Owns a scan suffix, including a scalar split across the string prefix boundary.</summary>
     internal bool TryStripScanKey(ReadOnlySpan<byte> physical, out RespireKey key)
@@ -63,7 +63,7 @@ internal sealed class KeyPrefix
     /// <summary>Rejoins an owned scan suffix only when used with its original namespace.</summary>
     internal bool TryComposeScanKey(KeyPrefix prefix, ReadOnlyMemory<byte> bytes, bool snapshot, out RespireKey key)
     {
-        if (_scanOwnerPrefix is not null && StringComparer.Ordinal.Equals(_scanOwnerPrefix, prefix.Text))
+        if (ScanOwnerPrefix is not null && StringComparer.Ordinal.Equals(ScanOwnerPrefix, prefix.Text))
         {
             key = new RespireKey(new KeyPrefix(prefix.Text + Text), null, snapshot ? bytes.ToArray() : bytes);
             return true;

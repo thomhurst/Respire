@@ -127,6 +127,7 @@ public class ValkeyClusterScanIntegrationTests
         var prefix = $"{{{Tag(0)}}}:tenant*\uD83D";
         var view = client.WithKeyPrefix(prefix);
         await view.SetAsync("\uDE00:joined", "joined", cancellationToken: token);
+        await view.SetAsync("\uDE01:joined", "joined-second", cancellationToken: token);
         await view.SetAsync((byte[])[255, 0], "binary", cancellationToken: token);
         byte[] foreign = [.. Encoding.UTF8.GetBytes(prefix + "\uDE01"), 255, 0];
         await client.SetAsync(foreign, "foreign", cancellationToken: token);
@@ -139,10 +140,11 @@ public class ValkeyClusterScanIntegrationTests
             found.AddRange(page.Keys);
             cursor = page.Cursor;
         } while (cursor != "0");
-        found.Should().HaveCount(3);
+        found.Should().HaveCount(4);
+        new HashSet<RespireKey>(found).Should().HaveCount(4);
         var values = new List<string?>();
         foreach (var key in found) values.Add(await view.GetStringAsync(key, token));
-        values.Should().BeEquivalentTo(["joined", "binary", "foreign"]);
+        values.Should().BeEquivalentTo(["joined", "joined-second", "binary", "foreign"]);
 
         var batchKeys = new List<RespireKey>();
         cursor = "0";
@@ -154,8 +156,11 @@ public class ValkeyClusterScanIntegrationTests
             batchKeys.AddRange(page.Result.Keys);
             cursor = page.Result.Cursor;
         } while (cursor != "0");
-        batchKeys.Should().ContainSingle();
-        (await view.GetStringAsync(batchKeys[0], token)).Should().Be("joined");
+        batchKeys.Should().HaveCount(2);
+        new HashSet<RespireKey>(batchKeys).Should().HaveCount(2);
+        var batchValues = new List<string?>();
+        foreach (var key in batchKeys) batchValues.Add(await view.GetStringAsync(key, token));
+        batchValues.Should().BeEquivalentTo(["joined", "joined-second"]);
         var transactionKeys = new List<RespireKey>();
         cursor = "0";
         do
@@ -166,13 +171,16 @@ public class ValkeyClusterScanIntegrationTests
             transactionKeys.AddRange(deferred.Result.Keys);
             cursor = deferred.Result.Cursor;
         } while (cursor != "0");
-        transactionKeys.Should().ContainSingle();
-        (await view.GetStringAsync(transactionKeys[0], token)).Should().Be("joined");
+        transactionKeys.Should().HaveCount(2);
+        new HashSet<RespireKey>(transactionKeys).Should().HaveCount(2);
+        var transactionValues = new List<string?>();
+        foreach (var key in transactionKeys) transactionValues.Add(await view.GetStringAsync(key, token));
+        transactionValues.Should().BeEquivalentTo(["joined", "joined-second"]);
         await client.DisposeAsync();
         await using var resumed = await RespireClient.ConnectAsync(options, token);
         var resumedView = resumed.WithKeyPrefix(prefix);
-        foreach (var key in found)
-            (await resumedView.GetStringAsync(key, token)).Should().NotBeNull();
+        for (var index = 0; index < found.Count; index++)
+            (await resumedView.GetStringAsync(found[index], token)).Should().Be(values[index]);
     }
 
     private sealed class OwnedCluster(IContainer container) : IAsyncDisposable

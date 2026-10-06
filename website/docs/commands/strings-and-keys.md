@@ -521,12 +521,19 @@ the logical suffix. `COUNT`, `TYPE`, `SLOT`, cursor routing, and cancellation re
 their normal behavior; sparse filtered pages can be empty before completion.
 Returned keys retain the boundary information needed to round-trip even binary
 tails through a view with the same prefix, including on a new client.
+Their equality and hashing include the original namespace, exact UTF-16 boundary,
+and binary tail. Different low surrogates therefore remain distinct in a
+`HashSet<RespireKey>`, while repeated pages and snapshots retain equal identities.
+These boundary keys do not compare equal to ordinary replacement-byte suffixes.
 
 One page can also be queued with `batch.Keys.ScanValkeyClusterPage(...)` or
 `transaction.Keys.ScanValkeyClusterPage(...)`. Execute or commit before reading
 the pending result. The next page needs the preceding result's cursor, so a whole
 cursor walk cannot be queued in advance. Ordinary Cluster batch and transaction
 slot constraints apply, and results own their keys after completion.
+In a non-primary read view, a read-only batch containing CLUSTERSCAN still routes
+its scan group to a primary without flushing the shared client cache. A mixed
+write batch and a primary-view batch retain conservative cache invalidation.
 
 This explicit API retains unsupported-command and permission errors from older servers.
 It does not change `ScanClusterPageAsync`, its `RespireClusterScanCursor` checkpoints, or

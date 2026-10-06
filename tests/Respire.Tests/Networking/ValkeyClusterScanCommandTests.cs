@@ -10,6 +10,38 @@ namespace Respire.Tests.Networking;
 public class ValkeyClusterScanCommandTests
 {
     [Test]
+    [Arguments(RespireReadFrom.Primary, false)]
+    [Arguments(RespireReadFrom.Primary, true)]
+    [Arguments(RespireReadFrom.Replica, false)]
+    [Arguments(RespireReadFrom.Replica, true)]
+    [Arguments(RespireReadFrom.ReplicaPreferred, false)]
+    [Arguments(RespireReadFrom.ReplicaPreferred, true)]
+    public async Task DeferredReadOnlyScanPreservesPolicyCacheAndPrimaryRouting(
+        RespireReadFrom policy, bool includeWrite)
+    {
+        await using var cluster = new ScanCluster();
+        await using var client = await RespireClient.ConnectAsync(Options(cluster.First.Port, 3)
+            with { ClientSideCache = new(), ClusterTopologyRefreshInterval = null });
+        var tag = $"{{{Tag(0)}}}:";
+        await Assert.That(await client.GetStringAsync(tag + "cached")).IsEqualTo("value");
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
+        using var batch = client.WithReadFrom(policy).CreateBatch();
+        var scan = batch.Keys.ScanValkeyClusterPage(slot: 0);
+        var read = batch.Strings.GetString(tag + "read");
+        if (includeWrite) _ = batch.Strings.Set(tag + "write", new RespireValue("value"));
+        await batch.ExecuteAsync();
+        await Assert.That(scan.Result.IsComplete).IsTrue();
+        await Assert.That(read.Result).IsEqualTo("value");
+        await Assert.That(Scans(cluster.First).Single()).IsEqualTo("CLUSTERSCAN 0 COUNT 250 SLOT 0");
+        await Assert.That(Scans(cluster.Second)).IsEmpty();
+        await Assert.That(cluster.First.ReceivedCommands.Contains("GET " + tag + "read")).IsTrue();
+        await Assert.That(cluster.Replica.ConnectionAccepted.IsCompleted).IsFalse();
+        // Primary-view batches retain their existing conservative invalidation policy.
+        await Assert.That(client.ClientSideCache.Count)
+            .IsEqualTo(includeWrite || policy == RespireReadFrom.Primary ? 0 : 1);
+    }
+
+    [Test]
     [Arguments(2)]
     [Arguments(3)]
     public async Task InitialSlotAndOpaqueContinuationRouteToPrimariesWithExactOptions(int protocol)
@@ -81,11 +113,13 @@ public class ValkeyClusterScanCommandTests
         var gets = cluster.First.ReceivedArguments.Where(row => Encoding.UTF8.GetString(row[0]) == "GET").ToArray();
         await Assert.That(gets[0][1]).IsEquivalentTo(joined);
         await Assert.That(gets[1][1]).IsEquivalentTo(binary);
+        var expectedJoined = joined.ToArray();
         await client.DisposeAsync();
         joined.AsSpan().Clear();
         binary.AsSpan().Clear();
         byte[] logicalJoined = [.. Encoding.UTF8.GetBytes("\uDE00"), .. tail];
-        await Assert.That(page.Keys[0]).IsEqualTo(new RespireKey(logicalJoined));
+        await Assert.That(page.Keys[0]).IsNotEqualTo(new RespireKey(logicalJoined));
+        await Assert.That(page.Keys[0].Prepend(new KeyPrefix(prefix)).ToBytes()).IsEquivalentTo(expectedJoined);
         await Assert.That(page.Keys[1]).IsEqualTo(new RespireKey("binary"));
     }
 
@@ -134,7 +168,14 @@ public class ValkeyClusterScanCommandTests
         await Assert.That(get[1]).IsEquivalentTo(physical);
         await client.DisposeAsync();
         physical.AsSpan().Clear();
-        await Assert.That(page.Keys[0]).IsEqualTo(new RespireKey(suffix));
+        if (surrogate)
+        {
+            await Assert.That(page.Keys[0].Prepend(new KeyPrefix(prefix)).ToBytes())
+                .IsEquivalentTo(Encoding.UTF8.GetBytes(prefix + suffix));
+            await Assert.That(page.Keys[0]).IsNotEqualTo(new RespireKey(suffix));
+        }
+        else
+            await Assert.That(page.Keys[0]).IsEqualTo(new RespireKey(suffix));
         await Assert.That(cluster.Replica.ConnectionAccepted.IsCompleted).IsFalse();
     }
 
