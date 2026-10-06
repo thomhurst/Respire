@@ -141,6 +141,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     public int Port { get; }
     internal string? AvailabilityZone { get; private set; }
     public bool IsConnected => !Volatile.Read(ref _dead);
+    internal bool IsFlushLoopWaiting => _flushSignal.IsWaiting;
     internal bool IsAcceptingCommands => IsConnected && !Volatile.Read(ref _retired) && _generation?.IsRetired != true;
     internal int WriteBufferCapacity => Math.Max(_activeBuffer.Capacity, _spareBuffer.Capacity);
     internal bool DrainedSuccessfully => Volatile.Read(ref _drainedSuccessfully);

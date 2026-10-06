@@ -11,6 +11,66 @@ public class AsyncFlushSignalTests
     private const int Wakes = 200;
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ConcurrentSignalsCoalesceWithoutLeavingAnExtraWake(bool preferInline)
+    {
+        var signal = new AsyncFlushSignal();
+        signal.Signal(preferInline);
+        await Task.WhenAll(Enumerable.Range(0, 50).Select(_ => Task.Run(() => signal.Signal(preferInline))));
+        await signal.WaitAsync();
+
+        var next = signal.WaitAsync();
+        await Assert.That(next.IsCompleted).IsFalse();
+        signal.Signal(preferInline);
+        await next.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ConcurrentPublicationAndRearmingDrainEveryPublishedItem(bool preferInline)
+    {
+        const int producers = 8;
+        const int perProducer = 1_000;
+        var signal = new AsyncFlushSignal();
+        var gate = new object();
+        var buffer = new Queue<int>();
+        var observed = new bool[producers * perProducer];
+        var drained = 0;
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var pending = signal.WaitAsync();
+        var writers = Enumerable.Range(0, producers).Select(producer => Task.Run(() =>
+        {
+            for (var i = 0; i < perProducer; i++)
+            {
+                lock (gate) buffer.Enqueue(producer * perProducer + i);
+                signal.Signal(preferInline);
+                if (i % 16 == 0) Thread.Yield();
+            }
+        })).ToArray();
+        // Signals coalesce; consumers inspect authoritative work after every wake.
+        do
+        {
+            await pending.AsTask().WaitAsync(deadline.Token);
+            lock (gate)
+            {
+                while (buffer.TryDequeue(out var item))
+                {
+                    if (observed[item]) throw new InvalidOperationException("A published item was drained twice.");
+                    observed[item] = true;
+                    drained++;
+                }
+            }
+            if (drained == observed.Length) break;
+            pending = signal.WaitAsync();
+        } while (true);
+        await Task.WhenAll(writers).WaitAsync(deadline.Token);
+        await Assert.That(drained).IsEqualTo(producers * perProducer);
+        await Assert.That(observed.All(item => item)).IsTrue();
+    }
+
+    [Test]
     public async Task DispatchedWakeResumesParkedWaiter()
     {
         var signal = new AsyncFlushSignal();
