@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <ItemGroup>
+    <ProjectReference Include="../../src/Respire.DependencyInjection/Respire.DependencyInjection.csproj" />
+    <ProjectReference Include="../../src/Respire.Caching.Hybrid/Respire.Caching.Hybrid.csproj" />
+    <ProjectReference Include="../../src/Respire.HealthChecks/Respire.HealthChecks.csproj" />
+    <ProjectReference Include="../../src/Respire.OutputCaching/Respire.OutputCaching.csproj" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+    <PackageReference Include="OpenTelemetry.Exporter.Console" />
+  </ItemGroup>
+</Project>
