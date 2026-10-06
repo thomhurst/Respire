@@ -38,7 +38,7 @@ public sealed partial class RespireServerNode
             RespireClusterFailoverMode.Normal => [],
             RespireClusterFailoverMode.Force => ["FORCE"],
             RespireClusterFailoverMode.Takeover => ["TAKEOVER"],
-            _ => [InvalidClusterOption(nameof(mode))],
+            _ => throw InvalidClusterOption(nameof(mode)),
         }, cancellationToken);
 
     /// <summary>Forgets a node in this node's topology. Requires AllowAdmin.</summary>
@@ -77,7 +77,7 @@ public sealed partial class RespireServerNode
         {
             RespireClusterResetMode.Soft => ["SOFT"],
             RespireClusterResetMode.Hard => ["HARD"],
-            _ => [InvalidClusterOption(nameof(mode))],
+            _ => throw InvalidClusterOption(nameof(mode)),
         }, cancellationToken);
 
     /// <summary>Persists this node's Cluster configuration. Requires AllowAdmin.</summary>
@@ -102,7 +102,7 @@ public sealed partial class RespireServerNode
             RespireClusterSlotState.Migrating => "MIGRATING",
             RespireClusterSlotState.Node => "NODE",
             RespireClusterSlotState.Stable => "STABLE",
-            _ => InvalidClusterOption(nameof(state)),
+            _ => throw InvalidClusterOption(nameof(state)),
         };
         if (state != RespireClusterSlotState.Stable)
             return MutationAsync("CLUSTER SETSLOT", [slot, token, ClusterNodeId(nodeId)], cancellationToken);
@@ -123,8 +123,8 @@ public sealed partial class RespireServerNode
         return nodeId;
     }
 
-    private static string InvalidClusterOption(string parameterName)
-        => throw new ArgumentOutOfRangeException(parameterName);
+    private static ArgumentOutOfRangeException InvalidClusterOption(string parameterName)
+        => new(parameterName);
 
     private static void ValidateClusterSlot(int slot)
     {
