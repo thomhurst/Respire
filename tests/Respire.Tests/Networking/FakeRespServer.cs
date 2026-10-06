@@ -57,6 +57,9 @@ internal sealed class FakeRespServer : IAsyncDisposable
     /// </summary>
     public Func<string, bool>? SuppressReply { get; set; }
 
+    /// <summary>Pauses socket reads so tests can separate local writes from peer receipt.</summary>
+    public Task? ReadGate { get; set; }
+
     /// <summary>Overrides a command's scripted reply by accepted connection ID; null keeps the script.</summary>
     public Func<int, string, byte[]?>? ReplyOverride { get; set; }
 
@@ -257,7 +260,11 @@ internal sealed class FakeRespServer : IAsyncDisposable
             while (!_cts.IsCancellationRequested)
             {
                 int read;
-                try { read = await socket.ReceiveAsync(buffer.AsMemory(end), SocketFlags.None, _cts.Token); }
+                try
+                {
+                    if (ReadGate is { } gate) await gate.WaitAsync(_cts.Token);
+                    read = await socket.ReceiveAsync(buffer.AsMemory(end), SocketFlags.None, _cts.Token);
+                }
                 catch (SocketException error) when (!_cts.IsCancellationRequested
                     && error.SocketErrorCode is SocketError.ConnectionReset or SocketError.ConnectionAborted)
                 {
