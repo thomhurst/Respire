@@ -81,3 +81,9 @@ loopback-only; the container's unauthenticated network is for local development.
 Ordinary CI builds both framework targets. The separate manual [topology smoke workflow](../TopologySmoke.md)
 runs the sample on both frameworks, requests promotion, and requires successful rows
 from both primary endpoints in the same process. The same controller runs locally.
+
+Readiness checks quorum on all three Sentinels, the discovered primary's role,
+and a connected replica that Sentinel considers eligible for promotion. Health
+can briefly become unhealthy while a promotion reconfigures replication. If any
+Redis or Sentinel child process exits, the container exits and stops the other
+processes; restart the owned Compose topology before continuing the demo.

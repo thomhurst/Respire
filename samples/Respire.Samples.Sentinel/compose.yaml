@@ -11,7 +11,7 @@ services:
       - "127.0.0.1:27101:27101"
       - "127.0.0.1:27102:27102"
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -p 27100 SENTINEL CKQUORUM sample-primary | grep -q '^OK'"]
+      test: ["CMD", "sh", "/sample/health.sh"]
       interval: 1s
       timeout: 3s
       retries: 45
