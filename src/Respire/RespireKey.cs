@@ -109,13 +109,13 @@ public readonly struct RespireKey : IEquatable<RespireKey>
     }
 
     /// <summary>Returns a copy of this key with <paramref name="prefix"/> prepended.</summary>
-    internal RespireKey Prepend(Internal.KeyPrefix prefix)
+    internal RespireKey Prepend(Internal.KeyPrefix prefix, bool snapshotBinaryKeys = false)
     {
         // Reapplying a prefix to an already resolved key preserves the original text/binary semantics.
         if (_prefix is not null)
             return (_string is not null ? new RespireKey(ToString()) : new RespireKey(ToBytes())).Prepend(prefix);
         return new RespireKey(prefix, _string,
-            _string is null && prefix.SnapshotBinaryKeys ? _bytes.ToArray() : _bytes);
+            _string is null && snapshotBinaryKeys ? _bytes.ToArray() : _bytes);
     }
 
     internal void WriteTo(ref RespWriter writer)

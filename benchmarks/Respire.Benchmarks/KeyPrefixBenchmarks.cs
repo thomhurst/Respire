@@ -36,6 +36,7 @@ public class KeyPrefixBenchmarks
         _largeBinary = System.Text.Encoding.UTF8.GetBytes(large);
         _tagRemainder = "}:" + large;
         _ = _client.Strings;
+        using var warmBatch = _prefixed.CreateBatch();
     }
 
     [Benchmark(Baseline = true)]
@@ -52,6 +53,13 @@ public class KeyPrefixBenchmarks
 
     [Benchmark]
     public IRespireClient CreatePrefixView() => _client.WithKeyPrefix(_prefix);
+
+    [Benchmark]
+    public int CreatePrefixedBatch()
+    {
+        using var batch = _prefixed.CreateBatch();
+        return batch.Count;
+    }
 
     [Benchmark]
     public IStringCommands ReadInitializedFacet() => _client.Strings;

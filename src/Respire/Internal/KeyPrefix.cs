@@ -5,30 +5,24 @@ namespace Respire.Internal;
 /// <summary>Immutable prefix encoding shared by every key resolved through a client view.</summary>
 internal sealed class KeyPrefix
 {
+    private const int HashTagsDisabled = -2;
     internal string Text { get; }
     internal byte[] Bytes { get; }
-    internal bool SnapshotBinaryKeys { get; }
     private readonly int _tagStart;
     private readonly int _binaryTagStart;
     private readonly int _fixedSlot;
 
-    internal KeyPrefix(string text) : this(text, Encoding.UTF8.GetBytes(text), false) { }
-
-    private KeyPrefix(string text, byte[] bytes, bool snapshotBinaryKeys)
+    internal KeyPrefix(string text)
     {
         Text = text;
-        Bytes = bytes;
-        SnapshotBinaryKeys = snapshotBinaryKeys;
+        Bytes = Encoding.UTF8.GetBytes(text);
         _tagStart = text.IndexOf('{');
-        _binaryTagStart = bytes.AsSpan().IndexOf((byte)'{');
+        _binaryTagStart = Bytes.AsSpan().IndexOf((byte)'{');
         var close = _tagStart < 0 ? -1 : text.AsSpan(_tagStart + 1).IndexOf('}');
         _fixedSlot = close > 0 ? ClusterHash.GetSlot(text) : -1;
         // An empty first tag disables tag selection, including later tags in the suffix.
-        if (close == 0) _tagStart = _binaryTagStart = -2;
+        if (close == 0) _tagStart = _binaryTagStart = HashTagsDisabled;
     }
-
-    /// <summary>Shares the encoding while restoring owned binary keys for deferred batches.</summary>
-    internal KeyPrefix ForDeferredBatch() => SnapshotBinaryKeys ? this : new(Text, Bytes, true);
 
     /// <summary>Materializes the exact wire bytes for an explicitly owned representation.</summary>
     internal byte[] Materialize(string? key, ReadOnlyMemory<byte> bytes)
@@ -47,47 +41,43 @@ internal sealed class KeyPrefix
     {
         slot = _fixedSlot;
         if (slot >= 0) return true;
-        if (_tagStart == -2) return false;
+        if (_tagStart == HashTagsDisabled) return false;
         if (key is not null)
         {
-            var suffix = key.AsSpan();
-            if (_tagStart >= 0)
-            {
-                var close = suffix.IndexOf('}');
-                var prefixTag = Text.AsSpan(_tagStart + 1);
-                if (close < 0 || prefixTag.IsEmpty && close == 0) return false;
-                slot = ClusterHash.GetTagSlot(prefixTag, suffix[..close]);
-            }
-            else
-            {
-                var open = suffix.IndexOf('{');
-                if (open < 0) return false;
-                var tag = suffix[(open + 1)..];
-                var close = tag.IndexOf('}');
-                if (close <= 0) return false;
-                slot = ClusterHash.GetTagSlot(tag[..close], default);
-            }
+            if (!TrySelectTag<char>(Text.AsSpan(), key.AsSpan(), _tagStart, '{', '}', out var prefixTag, out var suffixTag))
+                return false;
+            slot = ClusterHash.GetTagSlot(prefixTag, suffixTag);
         }
         else
         {
-            var suffix = bytes.Span;
-            if (_binaryTagStart >= 0)
-            {
-                var close = suffix.IndexOf((byte)'}');
-                var prefixTag = Bytes.AsSpan(_binaryTagStart + 1);
-                if (close < 0 || prefixTag.IsEmpty && close == 0) return false;
-                slot = ClusterHash.GetTagSlot(prefixTag, suffix[..close]);
-            }
-            else
-            {
-                var open = suffix.IndexOf((byte)'{');
-                if (open < 0) return false;
-                var tag = suffix[(open + 1)..];
-                var close = tag.IndexOf((byte)'}');
-                if (close <= 0) return false;
-                slot = ClusterHash.GetTagSlot(tag[..close], default);
-            }
+            if (!TrySelectTag<byte>(Bytes, bytes.Span, _binaryTagStart, (byte)'{', (byte)'}', out var prefixTag, out var suffixTag))
+                return false;
+            slot = ClusterHash.GetTagSlot(prefixTag, suffixTag);
         }
+        return true;
+    }
+
+    private static bool TrySelectTag<T>(ReadOnlySpan<T> prefix, ReadOnlySpan<T> suffix, int tagStart,
+        T openBrace, T closeBrace, out ReadOnlySpan<T> prefixTag, out ReadOnlySpan<T> suffixTag)
+        where T : IEquatable<T>
+    {
+        prefixTag = default;
+        suffixTag = default;
+        if (tagStart >= 0)
+        {
+            var close = suffix.IndexOf(closeBrace);
+            prefixTag = prefix[(tagStart + 1)..];
+            if (close < 0 || prefixTag.IsEmpty && close == 0) return false;
+            suffixTag = suffix[..close];
+            return true;
+        }
+
+        var open = suffix.IndexOf(openBrace);
+        if (open < 0) return false;
+        var tag = suffix[(open + 1)..];
+        var end = tag.IndexOf(closeBrace);
+        if (end <= 0) return false;
+        suffixTag = tag[..end];
         return true;
     }
 

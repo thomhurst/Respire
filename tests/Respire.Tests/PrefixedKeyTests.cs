@@ -13,6 +13,59 @@ namespace Respire.Tests;
 
 public class PrefixedKeyTests
 {
+    [Test, NotInParallel]
+    public async Task CachedDeferredPrefixViewAllocatesNothing()
+    {
+        await using var client = RespireClient.Create("localhost");
+        var view = (RespireClient)client.WithKeyPrefix("tenant:{fixed}:");
+        _ = MeasureDeferredView(view, false);
+        _ = MeasureDeferredView(view, true);
+        var result = AllocationMeasurement.WithoutConcurrentGc(() => (
+            Cached: MeasureDeferredView(view, false), Control: MeasureDeferredView(view, true)));
+        await Assert.That(result.Cached).IsEqualTo(0);
+        await Assert.That(result.Control).IsGreaterThanOrEqualTo(37_000);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long MeasureDeferredView(RespireClient view, bool control)
+    {
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        for (var index = 0; index < 1000; index++)
+        {
+            GC.KeepAlive(view.ForDeferredBatch());
+            if (control) GC.KeepAlive(new byte[37]);
+        }
+        return GC.GetAllocatedBytesForCurrentThread() - before;
+    }
+
+    [Test]
+    public async Task ConcurrentDeferredViewsShareEncodingAndKeepOwnershipPolicyAcrossClones()
+    {
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", 1)],
+            ReplicaEndpoints = [new("127.0.0.1", 2)],
+            ClientSideCache = new(),
+        });
+        var view = (RespireClient)client.WithKeyPrefix("tenant:");
+        var siblings = await Task.WhenAll(Enumerable.Range(0, 32).Select(_ => Task.Run(view.ForDeferredBatch)));
+        var deferred = siblings[0];
+        await Assert.That(siblings.All(sibling => ReferenceEquals(sibling, deferred))).IsTrue();
+        await Assert.That(ReferenceEquals(deferred, deferred.ForDeferredBatch())).IsTrue();
+        await Assert.That(deferred.KeyPrefixBytes.Overlaps(view.KeyPrefixBytes, out var offset) && offset == 0).IsTrue();
+        await Assert.That(ReferenceEquals(deferred.Core, view.Core)).IsTrue();
+        var replica = (RespireClient)deferred.WithReadFrom(RespireReadFrom.Replica);
+        RespireClient[] variants = [deferred, replica, replica.PrimaryReadView,
+            (RespireClient)deferred.WithoutClientCache(), (RespireClient)deferred.WithKeyPrefix("next:")];
+        var source = "source"u8.ToArray();
+        var owned = variants.Select(variant => variant.ResolveKey(source)).ToArray();
+        var borrowed = view.ResolveKey(source);
+        source[0] = (byte)'X';
+        for (var index = 0; index < owned.Length; index++)
+            await Assert.That(owned[index].ToString()).IsEqualTo(index == owned.Length - 1 ? "tenant:next:source" : "tenant:source");
+        await Assert.That(borrowed.ToString()).IsEqualTo("tenant:Xource");
+    }
+
     [Test]
     [Arguments(false)]
     [Arguments(true)]

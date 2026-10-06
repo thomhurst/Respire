@@ -23,6 +23,7 @@ public sealed partial class RespireClient : IRespireClient
     private readonly ClientCore _core;
     private readonly string? _keyPrefix;
     private readonly KeyPrefix? _encodedKeyPrefix;
+    private RespireClient? _deferredBatchClient;
     private IStringCommands? _strings;
     private IKeyCommands? _keys;
     private ILockCommands? _locks;
@@ -42,16 +43,18 @@ public sealed partial class RespireClient : IRespireClient
     private readonly bool _ownsCore;
     private readonly bool _broadcastTracking;
     private readonly bool _bypassClientCache;
+    private readonly bool _snapshotPrefixedBinaryKeys;
     private readonly RespireReadFrom _readFrom;
     private static readonly bool s_getIsReadOnly = RespireCommands.String.GET.IsReadOnly;
     [ThreadStatic] private static PooledByteBufferWriter? s_serializationBuffer;
 
     private RespireClient(
         ClientCore core, string? keyPrefix, bool ownsCore, RespireReadFrom? readFrom = null, bool bypassClientCache = false,
-        KeyPrefix? encodedKeyPrefix = null)
+        KeyPrefix? encodedKeyPrefix = null, bool snapshotPrefixedBinaryKeys = false)
     {
         _core = core;
         _bypassClientCache = bypassClientCache;
+        _snapshotPrefixedBinaryKeys = snapshotPrefixedBinaryKeys;
         _keyPrefix = keyPrefix;
         _encodedKeyPrefix = keyPrefix is null ? null : encodedKeyPrefix ?? new KeyPrefix(keyPrefix);
         _ownsCore = ownsCore;
@@ -266,7 +269,8 @@ public sealed partial class RespireClient : IRespireClient
     {
         ArgumentException.ThrowIfNullOrEmpty(prefix);
         return new RespireClient(_core, _keyPrefix is null ? prefix : _keyPrefix + prefix,
-            ownsCore: false, readFrom: _readFrom, bypassClientCache: _bypassClientCache);
+            ownsCore: false, readFrom: _readFrom, bypassClientCache: _bypassClientCache,
+            snapshotPrefixedBinaryKeys: _snapshotPrefixedBinaryKeys);
     }
 
     /// <summary>Returns a view that applies a read-routing policy to metadata-confirmed read-only commands.</summary>
@@ -289,7 +293,8 @@ public sealed partial class RespireClient : IRespireClient
             && string.IsNullOrWhiteSpace(_core.Options.SentinelPrimaryName))
             throw new InvalidOperationException("Replica read routing requires Cluster, Sentinel discovery, or configured ReplicaEndpoints.");
         return new RespireClient(_core, _keyPrefix, ownsCore: false, readFrom: readFrom,
-            bypassClientCache: _bypassClientCache, encodedKeyPrefix: _encodedKeyPrefix);
+            bypassClientCache: _bypassClientCache, encodedKeyPrefix: _encodedKeyPrefix,
+            snapshotPrefixedBinaryKeys: _snapshotPrefixedBinaryKeys);
     }
 
     /// <summary>
@@ -301,7 +306,7 @@ public sealed partial class RespireClient : IRespireClient
         => ReadCache is null
             ? this
             : new RespireClient(_core, _keyPrefix, ownsCore: false, readFrom: _readFrom, bypassClientCache: true,
-                encodedKeyPrefix: _encodedKeyPrefix);
+                encodedKeyPrefix: _encodedKeyPrefix, snapshotPrefixedBinaryKeys: _snapshotPrefixedBinaryKeys);
 
     /// <summary>The cache consulted for reads; null when caching is disabled or bypassed by this view.</summary>
     internal ClientSideCacheCoordinator? ReadCache => _bypassClientCache ? null : _core.ClientCache;
@@ -1468,17 +1473,22 @@ public sealed partial class RespireClient : IRespireClient
 
     /// <summary>Shares routing and encoding, but snapshots prefixed binary keys as batch facets resolve them.</summary>
     internal RespireClient ForDeferredBatch()
-        => _encodedKeyPrefix is null ? this
-            : new RespireClient(_core, _keyPrefix, ownsCore: false, readFrom: _readFrom,
-                bypassClientCache: _bypassClientCache, encodedKeyPrefix: _encodedKeyPrefix.ForDeferredBatch());
+    {
+        if (_encodedKeyPrefix is null || _snapshotPrefixedBinaryKeys) return this;
+        var cached = Volatile.Read(ref _deferredBatchClient);
+        if (cached is not null) return cached;
+        var created = new RespireClient(_core, _keyPrefix, ownsCore: false, readFrom: _readFrom,
+            bypassClientCache: _bypassClientCache, encodedKeyPrefix: _encodedKeyPrefix, snapshotPrefixedBinaryKeys: true);
+        return Interlocked.CompareExchange(ref _deferredBatchClient, created, null) ?? created;
+    }
 
     /// <inheritdoc/>
     public RespireKey ResolveKey(RespireKey key)
-        => _encodedKeyPrefix is null ? key : key.Prepend(_encodedKeyPrefix);
+        => _encodedKeyPrefix is null ? key : key.Prepend(_encodedKeyPrefix, _snapshotPrefixedBinaryKeys);
 
     /// <summary>Resolves a user key to a command argument, applying this view's key prefix.</summary>
     internal RespireValue Key(in RespireKey key)
-        => _encodedKeyPrefix is null ? key.AsValue() : key.Prepend(_encodedKeyPrefix).AsValue();
+        => _encodedKeyPrefix is null ? key.AsValue() : key.Prepend(_encodedKeyPrefix, _snapshotPrefixedBinaryKeys).AsValue();
 
     internal RespireValue[] MapKeys(ReadOnlySpan<RespireKey> keys)
     {
@@ -2415,7 +2425,8 @@ public sealed partial class RespireClient : IRespireClient
         => _readFrom == RespireReadFrom.Primary
             ? this
             : new RespireClient(_core, _keyPrefix, ownsCore: false, readFrom: RespireReadFrom.Primary,
-                bypassClientCache: _bypassClientCache, encodedKeyPrefix: _encodedKeyPrefix);
+                bypassClientCache: _bypassClientCache, encodedKeyPrefix: _encodedKeyPrefix,
+                snapshotPrefixedBinaryKeys: _snapshotPrefixedBinaryKeys);
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
