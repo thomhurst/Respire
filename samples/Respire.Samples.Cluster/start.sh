@@ -30,7 +30,15 @@ redis-cli -e -p 7001 CLUSTER ADDSLOTSRANGE 5461 10921
 redis-cli -e -p 7002 CLUSTER ADDSLOTSRANGE 10922 16383
 redis-cli -e -p 7000 CLUSTER MEET 127.0.0.1 7001
 redis-cli -e -p 7000 CLUSTER MEET 127.0.0.1 7002
-# The Redis Alpine image uses BusyBox ash, which supports wait -n.
-wait -n
-echo 'A Redis process exited; stopping the topology.' >&2
-exit 1
+# Check every tracked child: BusyBox wait -n can wait for the last background job.
+while :; do
+    for pid in $pids; do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            status=0
+            wait "$pid" || status=$?
+            echo "A Redis process exited (status $status); stopping the topology." >&2
+            exit 1
+        fi
+    done
+    sleep 1
+done
