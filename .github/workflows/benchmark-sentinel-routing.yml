@@ -22,7 +22,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
       - name: Check comparison selection
-        run: python -B -m unittest discover -s scripts/benchmarks -p SelectSentinelBenchmarkModesTests.py
+        run: python -B -m unittest discover -s scripts/benchmarks -p '*Tests.py'
       - name: Select requested comparisons
         id: modes
         run: python scripts/benchmarks/SelectSentinelBenchmarkModes.py
@@ -34,8 +34,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     concurrency:
-      # Requesting one control must not cancel the other control's in-progress run.
-      group: ${{ github.workflow }}-${{ github.event.pull_request.number }}-${{ matrix.framework }}-${{ matrix.baseline }}
+      # An older selector must not cancel a newer head or another control.
+      group: ${{ github.workflow }}-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}-${{ matrix.framework }}-${{ matrix.baseline }}
       cancel-in-progress: true
     strategy:
       fail-fast: false
@@ -159,7 +159,10 @@ jobs:
         run: |
           import json
           import os
+          import sys
           from pathlib import Path
+          sys.path.insert(0, str(Path('candidate/scripts/benchmarks').resolve()))
+          from RequireReadySendJit import require_dispatch_evidence
           expected = {f'{route}{shape}' for route in ('Standalone', 'Sentinel') for shape in ('Ping', 'String', 'Integer', 'Bytes')}
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
               summary.write('## Stable Sentinel routing before/after\n\nPinned base and matching merge candidate use the same primary. Assess paired Sentinel/standalone ratios, absolute latency, confidence intervals, allocations, and both baseline controls. A material regression blocks the change.\n')
@@ -169,7 +172,7 @@ jobs:
               summary.write('\nCandidate merge and its base/head parents:\n\n' + Path('comparison-revisions.txt').read_text() + '\n')
               for phase in ('baseline-validation', 'candidate-validation', 'baseline-a', 'candidate', 'baseline-b'):
                   if os.environ['PRE_STRATEGY_BASELINE'] == 'true':
-                      assert 'Assembly listing for method Respire.RespireClient:SendOnReadyPrimaryAsync' in Path(f'{phase}.log').read_text(), f'Missing dispatch JIT evidence: {phase}'
+                      require_dispatch_evidence(Path(f'{phase}.log').read_text(), candidate=phase.startswith('candidate'))
                   reports = list(Path('results', phase, 'results').glob('*-report-full-compressed.json'))
                   assert len(reports) == 1, f'Missing report: {phase}'
                   cases = json.loads(reports[0].read_text())['Benchmarks']
