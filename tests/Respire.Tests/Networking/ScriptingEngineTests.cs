@@ -14,6 +14,12 @@ public class ScriptingEngineTests
     private static byte[] Error(string message) => Encoding.UTF8.GetBytes($"-{message}\r\n");
     private static byte[] Bulk(string value) => Encoding.UTF8.GetBytes($"${Encoding.UTF8.GetByteCount(value)}\r\n{value}\r\n");
 
+    private static async ValueTask<long> EvaluateAsync(RespireClient client, CancellationToken cancellationToken = default)
+    {
+        using var result = await client.ExecuteAsync("EVAL", ["return 42", 0], cancellationToken: cancellationToken);
+        return result.AsInteger();
+    }
+
     [Test]
     [Arguments(Absent, true)]
     [Arguments(Present, false)]
@@ -30,12 +36,55 @@ public class ScriptingEngineTests
         => await Assert.That(ScriptingEngineInfo.ConfirmsAbsence(info, "lua")).IsEqualTo(absent);
 
     [Test]
+    public async Task InventoryParsingSeparatesUnknownFromEmpty()
+    {
+        await Assert.That(ScriptingEngineInfo.ParseInventory("")).IsNull();
+        await Assert.That(ScriptingEngineInfo.ParseInventory(Absent)!.Count).IsEqualTo(0);
+        await Assert.That(ScriptingEngineInfo.ParseInventory(Present)!.Contains("lua")).IsTrue();
+        await Assert.That(ScriptingEngineInfo.ParseInventory(
+            "# Scripting Engines\nengines_count:2\nengine_0:name=lua\nengine_1:name=LUA\n")).IsNull();
+    }
+
+    [Test]
+    [Arguments("EVAL", "return 42", "ERR Engine 'python' not found")]
+    [Arguments("EVAL", "return 42", "ERR Could not find scripting engine 'python'")]
+    [Arguments("EVAL_RO", "#!python\nreturn 42", "ERR Could not find scripting engine 'lua'")]
+    [Arguments("EVALSHA", "digest", "ERR Could not find scripting engine 'lua'")]
+    [Arguments("FCALL", "function", "ERR Engine 'python' not found")]
+    public async Task ApplicationErrorsDoNotProbeAnotherEngine(string operation, string source, string message)
+    {
+        await using var server = new FakeRespServer(Error(message), Bulk(Absent));
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var error = await Assert.That(async () =>
+        {
+            using var result = await client.ExecuteAsync(operation, [source, 0]);
+        }).ThrowsExactly<RespireServerException>();
+        await Assert.That(error!.Message).IsEqualTo(message);
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments("#!python\nreturn 42", true)]
+    [Arguments("#!'python'\nreturn 42", false)]
+    public async Task CustomEngineRequiresUnambiguousSource(string source, bool classified)
+    {
+        await using var server = new FakeRespServer(Error("ERR Could not find scripting engine 'python'"), Bulk(Present));
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        Exception? error = null;
+        try { using var result = await client.ExecuteAsync("EVAL", [source, 0]); }
+        catch (Exception caught) { error = caught; }
+        await Assert.That(error is RespireScriptingEngineUnavailableException).IsEqualTo(classified);
+        await Assert.That(error is RespireServerException).IsEqualTo(!classified);
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(classified ? 2 : 1);
+    }
+
+    [Test]
     public async Task Resp3VerbatimInventoryConfirmsAbsence()
     {
         var info = Encoding.UTF8.GetBytes($"={Encoding.UTF8.GetByteCount(Absent) + 4}\r\ntxt:{Absent}\r\n");
         await using var server = new FakeRespServer(Error(Missing), info);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
-        await Assert.That(async () => await client.Scripts.ExecuteIntegerAsync(RespireScript.Create("return 42")))
+        await Assert.That(async () => await EvaluateAsync(client))
             .ThrowsExactly<RespireScriptingEngineUnavailableException>();
     }
 
@@ -44,7 +93,7 @@ public class ScriptingEngineTests
     {
         await using var server = new FakeRespServer(Error(Missing)) { CloseConnectionAfterCommand = 2 };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
-        var error = await Assert.That(async () => await client.Scripts.ExecuteIntegerAsync(RespireScript.Create("return 42")))
+        var error = await Assert.That(async () => await EvaluateAsync(client))
             .ThrowsExactly<RespireServerException>();
         await Assert.That(error!.Message).IsEqualTo(Missing);
     }
@@ -64,7 +113,7 @@ public class ScriptingEngineTests
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
             CommandTimeout = disableCommandTimeout ? null : TimeSpan.FromSeconds(10),
         });
-        var error = await Assert.That(async () => await client.Scripts.ExecuteIntegerAsync(RespireScript.Create("return 42"))
+        var error = await Assert.That(async () => await EvaluateAsync(client)
                 .AsTask().WaitAsync(TimeSpan.FromSeconds(5)))
             .ThrowsExactly<RespireServerException>();
         await Assert.That(error!.Message).IsEqualTo(Missing);
@@ -97,7 +146,7 @@ public class ScriptingEngineTests
             0 => Bulk(Present), 1 => Bulk(""), _ => Error("NOPERM no permission for INFO")
         });
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
-        var error = await Assert.That(async () => await client.Scripts.ExecuteIntegerAsync(RespireScript.Create("return 42")))
+        var error = await Assert.That(async () => await EvaluateAsync(client))
             .ThrowsExactly<RespireServerException>();
         await Assert.That(error!.Message).IsEqualTo(Missing);
     }
@@ -130,10 +179,9 @@ public class ScriptingEngineTests
     {
         await using var server = new FakeRespServer(Error(Missing), Bulk(Absent), ":42\r\n"u8.ToArray(), Error(Missing), Bulk(Present));
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
-        var script = RespireScript.Create("return 42");
-        await Assert.That(async () => await client.Scripts.ExecuteIntegerAsync(script)).ThrowsExactly<RespireScriptingEngineUnavailableException>();
-        await Assert.That(await client.Scripts.ExecuteIntegerAsync(script)).IsEqualTo(42);
-        await Assert.That(async () => await client.Scripts.ExecuteIntegerAsync(script)).ThrowsExactly<RespireServerException>();
+        await Assert.That(async () => await EvaluateAsync(client)).ThrowsExactly<RespireScriptingEngineUnavailableException>();
+        await Assert.That(await EvaluateAsync(client)).IsEqualTo(42);
+        await Assert.That(async () => await EvaluateAsync(client)).ThrowsExactly<RespireServerException>();
         await Assert.That(server.ReceivedCommands.Count).IsEqualTo(5);
     }
 
@@ -145,10 +193,10 @@ public class ScriptingEngineTests
             ReplyOverride = (id, command) => command == "INFO scriptingengines" ? Bulk(id == 0 ? Absent : Present) : null
         };
         await using (var first = await FakeRespServer.ConnectClientAsync(server.Port))
-            await Assert.That(async () => await first.Scripts.ExecuteIntegerAsync(RespireScript.Create("return 42")))
+            await Assert.That(async () => await EvaluateAsync(first))
                 .ThrowsExactly<RespireScriptingEngineUnavailableException>();
         await using var second = await FakeRespServer.ConnectClientAsync(server.Port);
-        await Assert.That(async () => await second.Scripts.ExecuteIntegerAsync(RespireScript.Create("return 42")))
+        await Assert.That(async () => await EvaluateAsync(second))
             .ThrowsExactly<RespireServerException>();
     }
 
@@ -161,7 +209,7 @@ public class ScriptingEngineTests
         };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         await Task.WhenAll(Enumerable.Range(0, 8).Select(async _ =>
-            await Assert.That(async () => await client.Scripts.ExecuteIntegerAsync(RespireScript.Create("return 42")))
+            await Assert.That(async () => await EvaluateAsync(client))
                 .ThrowsExactly<RespireScriptingEngineUnavailableException>()));
         await Assert.That(server.ReceivedCommands.Count).IsEqualTo(16);
     }
@@ -181,7 +229,7 @@ public class ScriptingEngineTests
         };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var cancellation = new CancellationTokenSource();
-        var call = client.Scripts.ExecuteIntegerAsync(RespireScript.Create("return 42"), cancellationToken: cancellation.Token).AsTask();
+        var call = EvaluateAsync(client, cancellation.Token).AsTask();
         await probing.Task.WaitAsync(TimeSpan.FromSeconds(5));
         cancellation.Cancel();
         await Assert.That(async () => await call).Throws<OperationCanceledException>();
@@ -225,5 +273,28 @@ public class ScriptingEngineTests
         await transaction.CommitAsync();
         await Assert.That(pending.Error).IsTypeOf<RespireScriptingEngineUnavailableException>();
         await Assert.That(server.ReceivedCommands.Count).IsEqualTo(4);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task TransactionSharesOnlyThisReplyInventory(bool denied)
+    {
+        var queued = "+QUEUED\r\n"u8.ToArray();
+        var executed = Encoding.UTF8.GetBytes($"*2\r\n-{Missing}\r\n-{Missing}\r\n");
+        await using var server = new FakeRespServer(FakeRespServer.OkReply, queued, queued, executed,
+            denied ? Error("NOPERM no INFO") : Bulk(Absent));
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await using var transaction = client.CreateTransaction();
+        var first = transaction.Scripts.Evaluate(RespireScript.Create("return 42"));
+        var second = transaction.Scripts.Evaluate(RespireScript.Create("return 43", readOnly: true));
+        await transaction.CommitAsync();
+        await Assert.That(first.Error is RespireScriptingEngineUnavailableException).IsEqualTo(!denied);
+        await Assert.That(second.Error is RespireScriptingEngineUnavailableException).IsEqualTo(!denied);
+        var firstError = first.Error is RespireScriptingEngineUnavailableException firstMissing ? firstMissing.ServerError : (RespireServerException)first.Error!;
+        var secondError = second.Error is RespireScriptingEngineUnavailableException secondMissing ? secondMissing.ServerError : (RespireServerException)second.Error!;
+        await Assert.That(firstError.CommandName).IsEqualTo("EVAL");
+        await Assert.That(secondError.CommandName).IsEqualTo("EVAL_RO");
+        await Assert.That(server.ReceivedCommands.Count(command => command == "INFO scriptingengines")).IsEqualTo(1);
     }
 }

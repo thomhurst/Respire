@@ -159,7 +159,11 @@ Detection is lazy: successful calls and ordinary script errors perform no extra 
 `NOSCRIPT` still triggers the existing EVAL fallback, and a registered function's missing
 library still follows the existing reload policy. An EVALSHA-only `NOSCRIPT` or an FCALL
 `Function not found` error does not identify an engine and is not classified as engine
-absence. EVAL/EVAL_RO, SCRIPT LOAD, FUNCTION LOAD/RESTORE, immediate calls, batches, and
+absence. EVALSHA and FCALL execution errors are never classified from their text alone.
+For EVAL and source loads, the error must match both the operation's error format and the
+engine identified by the submitted source. Ambiguous quoted/escaped engine headers retain
+the server error. Application errors naming a different engine do not trigger a probe.
+EVAL/EVAL_RO, SCRIPT LOAD, FUNCTION LOAD/RESTORE, immediate calls, batches, and
 executed transaction errors share the same detection policy. A transaction is never replayed.
 
 The optional probe needs INFO permission. A denied, unknown, malformed, timed-out, or
@@ -169,8 +173,11 @@ during an immediate probe still observes cancellation. Classification after EXEC
 cancel completion of already-executed transaction results.
 
 Each diagnostic has a maximum one-second deadline, shortened to the command's remaining
-budget. There is no inventory cache or negative cache: each qualifying failure checks its
-own connection, and the probe cannot reroute to a replacement connection. Reconnects,
+budget. There is no persistent inventory or negative cache: each immediate failure checks
+its own connection, and the probe cannot reroute to a replacement connection. One EXEC
+reply shares its observation (including unknown results) per engine across its failed
+operations, then discards it. Transactions use the connection that accepted their frame,
+including after a pre-admission maintenance handoff. Reconnects,
 failover, and module changes therefore cannot reuse stale absence evidence. The inventory
 is an observation at probe time; a concurrent module change can still race with it.
 

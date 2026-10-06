@@ -47,6 +47,18 @@ public class ScriptingEngineIntegrationTests
         // Unloading clears both cached scripts and registered function libraries.
         var library = RespireFunctionLibrary.Create(Source);
         (await client.Functions.ExecuteIntegerAsync(library.Function("answer"), cancellationToken: token)).Should().Be(42);
+        // Executing Lua may return arbitrary application errors naming an unrelated engine.
+        // Neither the EVAL fallback nor its cached EVALSHA call may reinterpret those errors.
+        const string applicationError = "ERR Could not find scripting engine 'python'";
+        var spoof = RespireScript.Create("return redis.error_reply(\"ERR Could not find scripting engine 'python'\")");
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            Func<Task> application = async () => { await client.Scripts.ExecuteIntegerAsync(spoof, cancellationToken: token); };
+            (await application.Should().ThrowExactlyAsync<RespireServerException>()).Which.Message.Should().Be(applicationError);
+        }
+        var spoofLibrary = RespireFunctionLibrary.Create("#!lua name=spoof\nredis.register_function('spoof', function() return redis.error_reply(\"ERR Engine 'python' not found\") end)");
+        Func<Task> applicationFunction = async () => { await client.Functions.ExecuteIntegerAsync(spoofLibrary.Function("spoof"), cancellationToken: token); };
+        (await applicationFunction.Should().ThrowExactlyAsync<RespireServerException>()).Which.Message.Should().Be("ERR Engine 'python' not found");
         var dump = await client.Functions.DumpAsync(token);
         using (await client.ExecuteAsync("MODULE UNLOAD", ["lua"], cancellationToken: token)) { }
         using (var info = await client.ExecuteAsync("INFO", ["scriptingengines"], cancellationToken: token))

@@ -190,7 +190,7 @@ Respire.Networking.PendingResponseSource | readonly struct PoolPolicy(PendingRes
 # Count: Respire.Networking.PendingResponseSource.PoolPolicy | 2
 Respire.Networking.PendingResponseSource.PoolPolicy | method Create() : PendingResponseSource
 Respire.Networking.PendingResponseSource.PoolPolicy | method TryReset(PendingResponseSource) : bool
-# Count: Respire.Networking.RespireConnection | 79
+# Count: Respire.Networking.RespireConnection | 80
 Respire.Networking.RespireConnection | event MovingNotification : Action<Respire.Infrastructure.MovingAnnouncement>?
 Respire.Networking.RespireConnection | event PendingCommandsFailing : Action?
 Respire.Networking.RespireConnection | field LastQueuedMovingSequence : long
@@ -200,6 +200,7 @@ Respire.Networking.RespireConnection | method AcquireCredentialSequenceAsync(Can
 Respire.Networking.RespireConnection | method ApplyTcpKeepAlive(Socket, RespireConnectionOptions) : void
 Respire.Networking.RespireConnection | method CaptureDedicatedTimeoutDiagnostics() : RespireTimeoutDiagnostics
 Respire.Networking.RespireConnection | method CaptureTimeoutDiagnostics(long, long, RespireCommandStage) : RespireTimeoutDiagnostics
+Respire.Networking.RespireConnection | method ClassifyScriptingErrorAsync(RespireServerException, string?, CancellationToken, CommandDeadline) : ValueTask<Exception>
 Respire.Networking.RespireConnection | method ConnectAsync(string, int, RespireConnectionOptions?, ILogger?, CancellationToken, bool) : Task<RespireConnection>
 Respire.Networking.RespireConnection | method CreateTlsOptions(SslClientAuthenticationOptions?, string, bool) : SslClientAuthenticationOptions
 Respire.Networking.RespireConnection | method DisposeAsync() : ValueTask
@@ -231,7 +232,7 @@ Respire.Networking.RespireConnection | method SendPrefixedBulkStreamAsync`2(in T
 Respire.Networking.RespireConnection | method SendPrefixedCheckedAsync`2(in TPrefix, in TCommand, CancellationToken, string?, CommandDeadline, bool, string?) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendPrefixedWithoutResponseTimeoutAsync`2(TPrefix, TCommand, bool, CancellationToken) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendStringAsync`1(in TCommand, CancellationToken, string?, CommandDeadline) : ValueTask<string?>
-Respire.Networking.RespireConnection | method SendTransactionAsync(ReadOnlyMemory<byte>, int, CancellationToken, TimeSpan?, CancellationToken, bool, CommandDeadline) : ValueTask<RespValue>
+Respire.Networking.RespireConnection | method SendTransactionAsync(ReadOnlyMemory<byte>, int, CancellationToken, TimeSpan?, CancellationToken, bool, CommandDeadline, RespireTransactionBase?) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendValidatedPrefixedAsync`2(in TPrefix, in TCommand, CancellationToken, string, string?) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendValidatedPrefixedAsync`3(in TFirstPrefix, in TSecondPrefix, in TCommand, CancellationToken, string, string?) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendWithoutResponseTimeoutAsync`1(TCommand, CancellationToken) : ValueTask<RespValue>
@@ -290,7 +291,7 @@ Respire.Networking.StringPendingResponseSource | property Task [public; get] : V
 Respire.RespireTransaction | constructor RespireTransaction(RespireClient)
 Respire.RespireTransaction | constructor RespireTransaction(RespireClient, RespireHashImportSession)
 Respire.RespireTransaction | method CommitAsync(CancellationToken) : ValueTask
-# Count: Respire.RespireTransactionBase | 43
+# Count: Respire.RespireTransactionBase | 44
 Respire.RespireTransactionBase | constructor RespireTransactionBase(RespireClient, RespireConnection?, int?, RespireHashImportSession?)
 Respire.RespireTransactionBase | method CommitCoreAsync(CancellationToken, bool) : ValueTask<bool>
 Respire.RespireTransactionBase | method Decrement(RespireKey, long) : RespirePending<long>
@@ -317,6 +318,7 @@ Respire.RespireTransactionBase | method ValidateClusterSlot(int, ref int?) : voi
 Respire.RespireTransactionBase | property Arrays [public; get] : IBatchArrayCommands
 Respire.RespireTransactionBase | property Bitmaps [public; get] : IBatchBitmapCommands
 Respire.RespireTransactionBase | property Count [public; get] : int
+Respire.RespireTransactionBase | property ExecutingConnection [internal; get, set] : RespireConnection?
 Respire.RespireTransactionBase | property Functions [public; get] : IBatchFunctionCommands
 Respire.RespireTransactionBase | property Geo [public; get] : IBatchGeoCommands
 Respire.RespireTransactionBase | property Hashes [public; get] : IBatchHashCommands

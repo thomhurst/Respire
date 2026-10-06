@@ -940,7 +940,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 cancellationToken, commandDeadline: deadline).ConfigureAwait(false);
         source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
         ScheduleFlush(startedBatch);
-        return ObserveScriptingReply(source.Task, commandName, cancellationToken, deadline);
+        return ObserveScriptingReply(source.Task, in command, commandName, cancellationToken, deadline);
     }
 
     /// <summary>Sends an intentionally blocking command without applying the receive watchdog
@@ -1257,12 +1257,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     public ValueTask<RespValue> SendTransactionAsync(
         ReadOnlyMemory<byte> serializedCommands, int commandCount, CancellationToken cancellationToken = default,
         TimeSpan? cancellationTimeout = null, CancellationToken callerCancellationToken = default, bool includeMulti = true,
-        CommandDeadline commandDeadline = default)
+        CommandDeadline commandDeadline = default, RespireTransactionBase? transaction = null)
     {
         ValidateTransactionCapacity(commandCount, includeMulti);
         var prefixReplies = includeMulti ? 1 : 0;
         return SendMultiReplyCoreAsync(
-            new TransactionCommand(serializedCommands, includeMulti), repliesBeforeFinal: commandCount + prefixReplies,
+            new TransactionCommand(serializedCommands, includeMulti, transaction), repliesBeforeFinal: commandCount + prefixReplies,
             firstQueueReply: prefixReplies, cancellationToken, commandName: "MULTI/EXEC", cancellationTimeout, callerCancellationToken,
             commandDeadline);
     }
@@ -1432,8 +1432,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         ClampDeadline(source, commandDeadline);
         source.RegisterCancellation(cancellationToken);
+        if (command is TransactionCommand transactionCommand) transactionCommand.RecordConnection(this);
         ScheduleFlush(startedBatch);
-        return ObserveScriptingReply(source.Task, commandName, cancellationToken, commandDeadline);
+        return ObserveScriptingReply(source.Task, in command, commandName, cancellationToken, commandDeadline);
     }
 
     internal static bool IsDeadlineCancellation(OperationCanceledException error,
@@ -1491,7 +1492,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             ClampDeadline(source, commandDeadline);
             source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
             ScheduleFlush(startedBatch);
-            return ObserveScriptingReply(source.Task, commandName, cancellationToken, commandDeadline);
+            return ObserveScriptingReply(source.Task, in command, commandName, cancellationToken, commandDeadline);
         }
 
         return SendSlowAsync(command, source, discardRepliesBefore, cancellationToken, throwOnError,
@@ -1909,7 +1910,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
         ScheduleFlush(startedBatch);
-        return await ObserveScriptingReply(source.Task, commandName, cancellationToken, commandDeadline).ConfigureAwait(false);
+        return await ObserveScriptingReply(source.Task, in command, commandName, cancellationToken, commandDeadline).ConfigureAwait(false);
     }
 
 #if NET
@@ -1968,8 +1969,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         source.RegisterCancellation(cancellationToken);
+        if (command is TransactionCommand transactionCommand) transactionCommand.RecordConnection(this);
         ScheduleFlush(startedBatch);
-        return await ObserveScriptingReply(source.Task, commandName, cancellationToken, commandDeadline).ConfigureAwait(false);
+        return await ObserveScriptingReply(source.Task, in command, commandName, cancellationToken, commandDeadline).ConfigureAwait(false);
     }
 
 #if NET
@@ -3215,8 +3217,14 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
     /// <summary>Writes an optional MULTI, a pre-serialized command block, and EXEC.
     /// Only an exclusive caller that already confirmed MULTI may omit it.</summary>
-    private readonly struct TransactionCommand(ReadOnlyMemory<byte> serializedCommands, bool includeMulti) : IRespCommand
+    private readonly struct TransactionCommand(ReadOnlyMemory<byte> serializedCommands, bool includeMulti,
+        RespireTransactionBase? transaction) : IRespCommand
     {
+        internal void RecordConnection(RespireConnection connection)
+        {
+            if (transaction is not null) transaction.ExecutingConnection = connection;
+        }
+
         public ReadCommandKind ReadKind => ReadCommandKind.None;
 
         public void Write(ref RespWriter writer)
@@ -3253,6 +3261,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             => _command.GetResponseCancellationToken(admissionToken);
 
         public ReadCommandKind ReadKind => _command.ReadKind;
+        public bool TryGetArgument(int index, out RespireValue value) => _command.TryGetArgument(index, out value);
         public int CursorArgumentIndex => _command.CursorArgumentIndex;
     }
 

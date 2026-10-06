@@ -7,40 +7,44 @@ namespace Respire.Networking;
 
 internal sealed partial class RespireConnection
 {
-    private ValueTask<RespValue> ObserveScriptingReply(ValueTask<RespValue> reply, string? commandName,
+    private ValueTask<RespValue> ObserveScriptingReply<TCommand>(ValueTask<RespValue> reply, in TCommand command, string? commandName,
         CancellationToken cancellationToken, CommandDeadline deadline)
+        where TCommand : struct, IRespCommand
         => ScriptingEngineInfo.IsScriptingCommand(commandName)
-            ? ObserveScriptingReplyAsync(reply, commandName!, cancellationToken, deadline) : reply;
+            ? ObserveScriptingReplyAsync(reply, commandName!, ScriptingEngineInfo.ExpectedEngine(in command, commandName!),
+                cancellationToken, deadline) : reply;
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
     private async ValueTask<RespValue> ObserveScriptingReplyAsync(ValueTask<RespValue> reply, string commandName,
-        CancellationToken cancellationToken, CommandDeadline deadline)
+        string? expectedEngine, CancellationToken cancellationToken, CommandDeadline deadline)
     {
         RespValue value;
         try { value = await reply.ConfigureAwait(false); }
         catch (RespireServerException error)
         {
-            var classified = await ClassifyScriptingErrorAsync(error, cancellationToken, deadline).ConfigureAwait(false);
+            var classified = await ClassifyScriptingErrorAsync(error, expectedEngine, cancellationToken, deadline).ConfigureAwait(false);
             if (ReferenceEquals(classified, error)) throw;
             throw classified;
         }
         if (!value.IsError) return value;
         var serverError = ResponseReader.ServerError(in value, commandName);
+        Exception classifiedError;
         try
         {
-            var classified = await ClassifyScriptingErrorAsync(serverError, cancellationToken, deadline).ConfigureAwait(false);
-            if (!ReferenceEquals(classified, serverError)) throw classified;
-            return value;
+            classifiedError = await ClassifyScriptingErrorAsync(serverError, expectedEngine, cancellationToken, deadline).ConfigureAwait(false);
         }
         catch { value.Dispose(); throw; }
+        if (ReferenceEquals(classifiedError, serverError)) return value;
+        value.Dispose();
+        throw classifiedError;
     }
 
-    internal async ValueTask<Exception> ClassifyScriptingErrorAsync(RespireServerException error,
+    internal async ValueTask<Exception> ClassifyScriptingErrorAsync(RespireServerException error, string? expectedEngine,
         CancellationToken cancellationToken, CommandDeadline deadline = default)
     {
-        var engine = ScriptingEngineInfo.MissingEngine(error);
+        var engine = ScriptingEngineInfo.MissingEngine(error, expectedEngine);
         if (engine is null) return error;
         cancellationToken.ThrowIfCancellationRequested();
         var remaining = Math.Min(1000L, deadline.RemainingMilliseconds);

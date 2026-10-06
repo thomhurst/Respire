@@ -70,6 +70,12 @@ internal readonly struct Cmd(Verb verb) : IRespCommand
 
 internal readonly struct Cmd1(Verb verb, RespireValue a1) : IRespCommand
 {
+    public bool TryGetArgument(int index, out RespireValue value)
+    {
+        value = index == 0 ? a1 : default;
+        return index == 0;
+    }
+
     public ReadCommandKind ReadKind => verb.ReadKind;
     public int CursorArgumentIndex => verb.CursorArgumentIndex;
 
@@ -369,6 +375,15 @@ internal static class CommandRouting
 /// <summary>VERB a1 a2 rest… (e.g. XACK key group id…).</summary>
 internal readonly struct Cmd2N(Verb verb, RespireValue a1, RespireValue a2, RespireValue[] rest) : IRespCommand
 {
+    public bool TryGetArgument(int index, out RespireValue value)
+    {
+        if (index == 0) { value = a1; return true; }
+        if (index == 1) { value = a2; return true; }
+        if ((uint)(index - 2) < (uint)rest.Length) { value = rest[index - 2]; return true; }
+        value = default;
+        return false;
+    }
+
     public ReadCommandKind ReadKind => verb.ReadKind;
     public int CursorArgumentIndex => verb.CursorArgumentIndex;
 
