@@ -54,7 +54,11 @@ internal sealed class AsyncFlushSignal : IValueTaskSource, IThreadPoolWorkItem
     /// </param>
     public void Signal(bool preferInline = false)
     {
-        if (Interlocked.Exchange(ref _state, Signaled) != Waiting)
+        // Coalesce against the pending wake without taking exclusive ownership of its
+        // cache line. A concurrent consumer may consume that wake after this read;
+        // this signal then belongs to the wake it just consumed, as with Exchange.
+        if (Volatile.Read(ref _state) == Signaled
+            || Interlocked.Exchange(ref _state, Signaled) != Waiting)
         {
             return;
         }

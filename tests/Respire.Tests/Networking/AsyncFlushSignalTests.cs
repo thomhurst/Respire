@@ -11,6 +11,53 @@ public class AsyncFlushSignalTests
     private const int Wakes = 200;
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ConcurrentSignalsCoalesceWithoutLeavingAnExtraWake(bool preferInline)
+    {
+        var signal = new AsyncFlushSignal();
+        signal.Signal(preferInline);
+        await Task.WhenAll(Enumerable.Range(0, 50).Select(_ => Task.Run(() => signal.Signal(preferInline))));
+        await signal.WaitAsync();
+
+        var next = signal.WaitAsync();
+        await Assert.That(next.IsCompleted).IsFalse();
+        signal.Signal(preferInline);
+        await next.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ConcurrentPublicationAndRearmingDoNotLoseTheFinalWake(bool preferInline)
+    {
+        const int producers = 8;
+        const int perProducer = 1_000;
+        var signal = new AsyncFlushSignal();
+        var published = 0;
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var pending = signal.WaitAsync();
+        var writers = Enumerable.Range(0, producers).Select(_ => Task.Run(() =>
+        {
+            for (var i = 0; i < perProducer; i++)
+            {
+                Interlocked.Increment(ref published);
+                signal.Signal(preferInline);
+                if (i % 16 == 0) Thread.Yield();
+            }
+        })).ToArray();
+        // Signals coalesce; consumers inspect authoritative work after every wake.
+        do
+        {
+            await pending.AsTask().WaitAsync(deadline.Token);
+            if (Volatile.Read(ref published) == producers * perProducer) break;
+            pending = signal.WaitAsync();
+        } while (true);
+        await Task.WhenAll(writers).WaitAsync(deadline.Token);
+        await Assert.That(published).IsEqualTo(producers * perProducer);
+    }
+
+    [Test]
     public async Task DispatchedWakeResumesParkedWaiter()
     {
         var signal = new AsyncFlushSignal();
