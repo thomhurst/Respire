@@ -126,7 +126,7 @@ internal sealed partial class DedicatedConnectionPool
             }
             catch (Exception error)
             {
-                logger?.LogWarning(error, "Dedicated connection recovery observer threw");
+                logger?.DedicatedRecoveryObserverFailed(error);
             }
         }
     }

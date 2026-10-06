@@ -56,10 +56,7 @@ public sealed partial class RespireClient
     {
         if (Interlocked.Exchange(ref _unfencedLockReleaseLogged, 1) == 0)
         {
-            _core.Logger?.LogWarning(error,
-                "Lock releases run without connection fencing because CLIENT ID or CLIENT KILL was denied. " +
-                "An uncertain release still treats ownership as lost, but its delete may run later. " +
-                "Grant the client and client|id/client|kill permissions to restore fencing.");
+            _core.Logger?.NativeLockFencingUnavailable(error);
         }
     }
 
@@ -76,10 +73,7 @@ public sealed partial class RespireClient
         }
         catch (Exception error)
         {
-            _core.Logger?.LogWarning(error,
-                "Could not fence Redis client {ServerClientId} at {Endpoint} after an uncertain {Operation}; " +
-                "the command may still execute. Ownership was already treated as lost.",
-                identity.ServerClientId, identity.Endpoint, operation);
+            _core.Logger?.NativeLockFenceFailed(identity.ServerClientId, identity.Endpoint, operation, error);
         }
     }
 

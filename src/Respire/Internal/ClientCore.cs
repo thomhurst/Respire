@@ -214,7 +214,7 @@ internal sealed class ClientCore : IAsyncDisposable
         try { await _ownedPools.RetireAsync(pool).ConfigureAwait(false); }
         catch (Exception error)
         {
-            try { Logger?.LogWarning(error, "Dedicated connection cleanup after MOVING failed"); }
+            try { Logger?.DedicatedMovingCleanupFailed(error); }
             catch { /* Logging cannot fault the background retirement. */ }
         }
     }
@@ -632,7 +632,7 @@ internal sealed class ClientCore : IAsyncDisposable
             }
             catch (Exception ex)
             {
-                try { Logger?.LogWarning(ex, "Connection state-change handler threw"); }
+                try { Logger?.ConnectionStateObserverFailed(ex); }
                 catch (Exception) { /* A user logger must not strand queued connection events. */ }
             }
         }

@@ -210,8 +210,7 @@ internal sealed class SentinelMonitoring(
                 }
                 if (restarted is not null)
                     foreach (var restart in restarted)
-                        SafeLog(restart, static (logger, state) => logger.LogWarning(state.Error,
-                            "Restarting an unexpectedly completed Sentinel event monitor at {Endpoint}", state.Endpoint));
+                        SafeLog(restart, static (logger, state) => logger.SentinelMonitorRestarting(state.Endpoint, state.Error));
                 // Wake on additions and removals, without periodically polling membership.
                 try
                 {
@@ -295,7 +294,7 @@ internal sealed class SentinelMonitoring(
                 if (subscription is null && !cancellationToken.IsCancellationRequested)
                     _discovery.RecordConnection(membership, succeeded: false);
                 SafeLog((error, endpoint), static (logger, state)
-                    => logger.LogWarning(state.error, "Sentinel event monitor failed at {Endpoint}", state.endpoint));
+                    => logger.SentinelMonitorFailed(state.endpoint, state.error));
             }
             finally
             {
@@ -313,7 +312,7 @@ internal sealed class SentinelMonitoring(
                         || aggregate.Flatten().InnerExceptions.All(SentinelExceptionPolicy.IsRecoverable)))
                 {
                     SafeLog((error, endpoint), static (logger, state)
-                        => logger.LogDebug(state.error, "Sentinel event monitor cleanup failed at {Endpoint}", state.endpoint));
+                        => logger.SentinelMonitorCleanupFailed(state.endpoint, state.error));
                 }
             }
             if (cancellationToken.IsCancellationRequested) return;
@@ -327,9 +326,7 @@ internal sealed class SentinelMonitoring(
                 // respire.reconnect.scope=sentinel-monitor, plus a warning.
                 if (!subscriptionReconnectExhausted)
                     RespireTelemetry.RecordDiscoveryReconnect(endpoint, SentinelMonitorReconnectScope, budget.Attempts, null, logger);
-                SafeLog(endpoint, static (logger, endpoint) => logger.LogWarning(
-                    "Sentinel event monitor exhausted reconnect attempts at {Endpoint}; failover events from this "
-                    + "Sentinel are not observed until a new primary is published, and discovery runs on demand", endpoint));
+                SafeLog(endpoint, static (logger, endpoint) => logger.SentinelMonitorExhausted(endpoint));
                 // Stay parked rather than completing: the supervisor restarts completed monitors,
                 // which would bypass the configured budget. Discovery still runs on demand, and the
                 // next validated publication grants a fresh budget, so one long outage does not
@@ -338,8 +335,7 @@ internal sealed class SentinelMonitoring(
                 // the final attempts were failing, so the monitor resumes without a second one.
                 try { await Volatile.Read(ref rearm).WaitAsync(cancellationToken).ConfigureAwait(false); }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
-                SafeLog(endpoint, static (logger, endpoint) => logger.LogInformation(
-                    "Sentinel event monitor at {Endpoint} resumes after a new primary was published", endpoint));
+                SafeLog(endpoint, static (logger, endpoint) => logger.SentinelMonitorResumed(endpoint));
                 budget.Reset();
                 rearm = CurrentMonitorRearm();
                 continue;
@@ -447,7 +443,7 @@ internal sealed class SentinelMonitoring(
         catch (Exception error) when (!cancellationToken.IsCancellationRequested && SentinelExceptionPolicy.IsRecoverable(error))
         {
             SafeLog((error, host), static (logger, state)
-                => logger.LogDebug(state.error, "Could not resolve Sentinel switch source {Host}", state.host));
+                => logger.SentinelSwitchSourceResolutionFailed(state.host, state.error));
             return null;
         }
     }
@@ -468,8 +464,7 @@ internal sealed class SentinelMonitoring(
         try
         {
             if (logger?.IsEnabled(level) == true)
-                logger.Log(level, "Sentinel {Channel} event for service {Service} from {Sentinel}: {Event}",
-                    message.Channel.ToString(), options.SentinelPrimaryName, sentinel, message.Text);
+                logger.SentinelEvent(level, message.Channel.ToString(), options.SentinelPrimaryName, sentinel, message.Text);
         }
         catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
         {

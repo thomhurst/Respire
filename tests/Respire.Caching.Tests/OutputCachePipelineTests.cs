@@ -36,13 +36,14 @@ public class OutputCachePipelineTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task CleanupPipelinesRemovalsAndReportsLockLoss(bool loseLock)
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    [Arguments(true, false)]
+    public async Task CleanupPipelinesRemovalsAndReportsLockLoss(bool loseLock, bool loggingEnabled)
     {
         var count = loseLock ? 250 : 3;
         var removed = 0;
-        var logger = new CapturingLogger();
+        var logger = new CapturingLogger(loggingEnabled);
         await using var server = new FakeRespServer();
         server.ReplyOverride = (_, command) =>
         {
@@ -63,7 +64,19 @@ public class OutputCachePipelineTests
         var store = new RespireOutputCacheStore(client, logger: logger);
         await store.CollectExpiredTagsAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         await Assert.That(removed).IsEqualTo(count);
-        await Assert.That(logger.Messages.Any(message => message.Contains("lost its lock", StringComparison.Ordinal))).IsEqualTo(loseLock);
+        await Assert.That(logger.Messages.Any(message => message.Contains("lost its lock", StringComparison.Ordinal)))
+            .IsEqualTo(loseLock && loggingEnabled);
+        if (loseLock && loggingEnabled)
+        {
+            var entry = logger.Events.Single();
+            await Assert.That(entry.Level).IsEqualTo(LogLevel.Debug);
+            await Assert.That(entry.EventId.Id).IsEqualTo(0);
+            await Assert.That(entry.EventId.Name).IsNull();
+            await Assert.That(entry.Error).IsNull();
+            await Assert.That(entry.State.Single().Key).IsEqualTo("{OriginalFormat}");
+            await Assert.That(entry.State.Single().Value).IsEqualTo(
+                "Respire output-cache cleanup lost its lock; skipping the remaining sweep and master purge.");
+        }
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("ZREMRANGEBYSCORE __MSOCT ", StringComparison.Ordinal)))
             .IsEqualTo(!loseLock);
     }
@@ -88,12 +101,20 @@ public class OutputCachePipelineTests
         return Encoding.UTF8.GetBytes(reply.ToString());
     }
 
-    private sealed class CapturingLogger : ILogger<RespireOutputCacheStore>
+    private sealed record LogEntry(LogLevel Level, EventId EventId, Exception? Error,
+        KeyValuePair<string, object?>[] State);
+
+    private sealed class CapturingLogger(bool enabled = true) : ILogger<RespireOutputCacheStore>
     {
         public List<string> Messages { get; } = [];
-        public bool IsEnabled(LogLevel logLevel) => true;
+        public List<LogEntry> Events { get; } = [];
+        public bool IsEnabled(LogLevel logLevel) => enabled;
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
-            => Messages.Add(formatter(state, exception));
+        {
+            Messages.Add(formatter(state, exception));
+            Events.Add(new(logLevel, eventId, exception,
+                ((IEnumerable<KeyValuePair<string, object?>>)state!).ToArray()));
+        }
     }
 }

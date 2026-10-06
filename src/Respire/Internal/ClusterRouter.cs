@@ -2351,9 +2351,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
                     if (host == "?")
                     {
-                        _logger?.LogDebug(
-                            "Skipping Redis Cluster slots {Start}-{End}: the preferred endpoint is unknown ('?').",
-                            start, end);
+                        _logger?.ClusterUnknownEndpointSkipped(start, end);
                         continue;
                     }
 

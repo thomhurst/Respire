@@ -203,7 +203,7 @@ public sealed partial class RespireOutputCacheStore : IOutputCacheBufferStore
                 tags.Clear();
                 if (!await attempt.Lock.ResetExpiryAsync(lockLifetime, cancellationToken).ConfigureAwait(false))
                 {
-                    _logger.LogDebug("Respire output-cache cleanup lost its lock; skipping the remaining sweep and master purge.");
+                    _logger.OutputCacheCleanupLockLost();
                     return;
                 }
             }

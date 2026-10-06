@@ -37,14 +37,14 @@ internal static class SentinelResolver
                 using var reply = await connection.SendAsync(
                     new Cmd1(Verbs.SentinelReplicas, options.SentinelPrimaryName!), deadline.Token).ConfigureAwait(false);
                 if (TryParseReplicaList(in reply, out var replicas)) return replicas;
-                try { logger?.LogDebug("Sentinel {Endpoint} returned a malformed SENTINEL REPLICAS reply", sentinel); }
+                try { logger?.SentinelMalformedReplicas(sentinel); }
                 catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error)) { }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
             catch (OperationCanceledException) when (deadline.IsCancellationRequested) { continue; }
             catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
             {
-                try { logger?.LogDebug(error, "Optional Sentinel replica discovery failed at {Endpoint}", sentinel); }
+                try { logger?.SentinelReplicaDiscoveryUnavailable(sentinel, error); }
                 catch (Exception logError) when (SentinelExceptionPolicy.IsRecoverable(logError)) { }
             }
         }
@@ -276,11 +276,7 @@ internal static class SentinelResolver
                         "SENTINEL GET-MASTER-ADDR-BY-NAME", discoveryTimeout, ex,
                         RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting))
                     : ex;
-                logger?.LogWarning(
-                    lastError,
-                    "Redis Sentinel discovery or primary connection failed through {Host}:{Port}",
-                    endpoint.Host,
-                    endpoint.Port);
+                logger?.SentinelPrimaryDiscoveryFailed(endpoint.Host, endpoint.Port, lastError);
                 if (fallbackBudget.StopAfterFailure(endpoint, index + 1 < sentinelEndpoints.Count))
                 {
                     break;
@@ -520,7 +516,7 @@ internal static class SentinelResolver
 
     private static void LogOptionalDiscoveryFailure(ILogger? logger, Exception error, string stage, RespireEndpoint sentinel)
     {
-        try { logger?.LogDebug(error, "Optional Sentinel {Stage} discovery failed at {Sentinel}", stage, sentinel); }
+        try { logger?.SentinelOptionalDiscoveryFailed(stage, sentinel, error); }
         catch (Exception logError) when (SentinelExceptionPolicy.IsRecoverable(logError))
         {
             // Diagnostic callbacks must not discard the already completed primary reply.
@@ -635,7 +631,7 @@ internal static class SentinelResolver
             new Cmd1(SentinelPeers, serviceName), cancellationToken).ConfigureAwait(false);
         if (reply.IsError)
         {
-            logger?.LogDebug("Sentinel peer discovery was unavailable: {Error}", reply.GetErrorMessage());
+            logger?.SentinelPeerDiscoveryUnavailable(in reply);
             return; // Optional discovery permissions must not reject a usable configured Sentinel.
         }
         if (reply.Type != RespDataType.Array) return;

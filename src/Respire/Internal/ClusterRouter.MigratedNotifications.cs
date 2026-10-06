@@ -100,7 +100,7 @@ internal sealed partial class ClusterRouter
         }
         catch (Exception error)
         {
-            try { _options.LoggerFactory?.CreateLogger("Respire.Cluster").LogError(error, "Error recording clustered migration-drop metric."); }
+            try { _logger?.ClusterMigrationDropMetricFailed(error); }
             catch { /* A failing logger must not abandon the queue diagnostics drain. */ }
         }
         if (_logger is null) return;
@@ -110,9 +110,7 @@ internal sealed partial class ClusterRouter
             || Interlocked.CompareExchange(ref _lastSmigratedDropWarning, now, last) != last) return;
         try
         {
-            _logger.LogWarning(
-                "Cluster SMIGRATED queue is full; {Dropped} notifications dropped so far. MOVED handling and topology discovery will correct the affected slots.",
-                SmigratedNotificationsDropped);
+            _logger.ClusterMigrationQueueFull(SmigratedNotificationsDropped);
         }
         catch
         {
@@ -134,7 +132,7 @@ internal sealed partial class ClusterRouter
         }
         catch (Exception error)
         {
-            try { _logger?.LogWarning(error, "Cluster slot migration metric listener threw."); }
+            try { _logger?.ClusterMigrationMetricObserverFailed(error); }
             catch { /* A failing logger is also an isolated diagnostic listener. */ }
         }
     }
@@ -197,8 +195,7 @@ internal sealed partial class ClusterRouter
                 {
                     try
                     {
-                        _logger?.LogError(error, "Failed to apply Cluster SMIGRATED notification from {Host}:{Port}.",
-                            item.Sender.Host, item.Sender.Port);
+                        _logger?.ClusterMigrationApplyFailed(item.Sender.Host, item.Sender.Port, error);
                     }
                     catch
                     {
@@ -223,8 +220,7 @@ internal sealed partial class ClusterRouter
         if (!_migrations.TryRecordSequence(item.SequenceScope, item.Notification.SequenceId))
         {
             RecordSmigratedSkipped("duplicate", item.Sender);
-            _logger?.LogDebug("Ignored duplicate Cluster SMIGRATED sequence {Sequence} from {Host}:{Port}.",
-                item.Notification.SequenceId, item.Sender.Host, item.Sender.Port);
+            _logger?.ClusterMigrationSequenceIgnored(item.Notification.SequenceId, item.Sender.Host, item.Sender.Port);
             return;
         }
         var parsed = ParseMigrations(item, migrations);
@@ -329,23 +325,16 @@ internal sealed partial class ClusterRouter
             if (budget < 0)
             {
                 RecordSmigratedSkipped("malformed", item.Sender, migrations.Length - i);
-                TryLogMalformedMigration(
-                    "Rejected {Count} Cluster SMIGRATED entries from {Host}:{Port} (sequence {Sequence}): slot ranges exceed {Limit} slots in total.",
-                    migrations.Length - i, item.Sender.Host, item.Sender.Port, item.Notification.SequenceId, ClusterHash.SlotCount);
+                _logger.TryLog((Count: migrations.Length - i, item.Sender.Host, item.Sender.Port, item.Notification.SequenceId),
+                    static (logger, state) => logger.ClusterMigrationBudgetRejected(state.Count, state.Host, state.Port,
+                        state.SequenceId, ClusterHash.SlotCount));
                 break;
             }
             RecordSmigratedSkipped("malformed", item.Sender);
-            TryLogMalformedMigration(
-                "Rejected a Cluster SMIGRATED entry from {Host}:{Port} (sequence {Sequence}): invalid slot list {Slots}.",
-                item.Sender.Host, item.Sender.Port, item.Notification.SequenceId, migrations[i].Slots);
+            _logger.TryLog((item.Sender.Host, item.Sender.Port, item.Notification.SequenceId, migrations[i].Slots),
+                static (logger, state) => logger.ClusterMigrationSlotsRejected(state.Host, state.Port, state.SequenceId, state.Slots));
         }
         return parsed;
-    }
-
-    private void TryLogMalformedMigration(string message, params object?[] args)
-    {
-        try { _logger?.LogDebug(message, args); }
-        catch { /* Diagnostic providers cannot discard valid entries from this notification. */ }
     }
 
     // Caller holds _nodesGate. Moves the slots that the advertised source owns now and that no
@@ -457,4 +446,3 @@ internal sealed partial class ClusterRouter
         return slots.Length > 0;
     }
 }
-

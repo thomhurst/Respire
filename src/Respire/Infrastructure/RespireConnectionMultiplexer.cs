@@ -1039,7 +1039,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
             }
             ObservePublishedConnection(slot, publishedReplacement);
             RecordRetiredConnectionIdentity(old);
-            _logger?.LogInformation("Replaced dead connection {Slot} to {Host}:{Port}", slot, Host, Port);
+            _logger?.DeadConnectionReplaced(slot, Host, Port);
             if (old is not null) await old.DisposeAsync().ConfigureAwait(false);
             lock (_lifecycleGate)
             {
@@ -1054,7 +1054,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
                 try { await replacement.DisposeAsync().ConfigureAwait(false); }
                 catch (Exception disposeException)
                 {
-                    _logger?.LogWarning(disposeException, "Failed to dispose rejected replacement connection to {Host}:{Port}", Host, Port);
+                    _logger?.RejectedReplacementDisposalFailed(Host, Port, disposeException);
                 }
             }
             if (IsOperational)
@@ -1067,8 +1067,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
                         // against an endpoint a MOVING handoff has just left), the handoff
                         // published a healthy socket into this slot. Report the slot as
                         // connected and reset its attempts instead of scheduling a retry.
-                        _logger?.LogDebug(ex,
-                            "Reconnect of slot {Slot} failed after a healthy connection was published; keeping it", slot);
+                        _logger?.ReconnectKeptHealthyConnection(slot, ex);
                         if (_reconnectAttempts is not null) _reconnectAttempts[slot] = 0;
                         publish = QueueLifecycleNotificationUnderLock(
                             new StateNotification(slot, RespireConnectionState.Connected, null));
@@ -1079,11 +1078,11 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
                     {
                         var exhausted = _options.ReconnectPolicy?.IsExhausted(attempt) == true;
                         if (exhausted)
-                            _logger?.LogWarning(ex, "Reconnect to {Host}:{Port} exhausted its {Attempts} attempts", Host, Port, attempt);
+                            _logger?.ReconnectExhausted(Host, Port, attempt, ex);
                         else if (_options.ReconnectPolicy is not null)
-                            _logger?.LogWarning(ex, "Reconnect to {Host}:{Port} failed; next use will schedule another attempt with configured backoff", Host, Port);
+                            _logger?.ReconnectBackoffDeferred(Host, Port, ex);
                         else
-                            _logger?.LogWarning(ex, "Reconnect to {Host}:{Port} failed; will retry on next use", Host, Port);
+                            _logger?.ReconnectDeferred(Host, Port, ex);
                         publish = EnqueueReconnectFailure(slot, ex, attempt, exhausted);
                         reconnectGuardReleased = true;
                     }
@@ -1236,7 +1235,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            _logger?.LogWarning(ex, "Connection state-change handler threw");
+            _logger?.ConnectionStateObserverFailed(ex);
         }
 
         if (notification.Slot is { } slot)
@@ -1247,18 +1246,18 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
             }
             catch (Exception ex)
             {
-                _logger?.LogWarning(ex, "Connection slot state-change handler threw");
+                _logger?.ConnectionSlotObserverFailed(ex);
             }
         }
         if (notification.Exhausted)
         {
             try { RespireTelemetry.RecordReconnectExhaustion(Host, Port); }
-            catch (Exception ex) { _logger?.LogWarning(ex, "Reconnect metrics listener threw"); }
+            catch (Exception ex) { _logger?.ReconnectMetricObserverFailed(ex); }
         }
         if (notification.Delay is { } delay)
         {
             try { RespireTelemetry.RecordReconnectAttempt(Host, Port, notification.Attempt, delay); }
-            catch (Exception ex) { _logger?.LogWarning(ex, "Reconnect metrics listener threw"); }
+            catch (Exception ex) { _logger?.ReconnectMetricObserverFailed(ex); }
         }
     }
 
@@ -1431,11 +1430,11 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
             try { await connection.DisposeAsync().ConfigureAwait(false); }
             catch (Exception disposeError)
             {
-                try { _logger?.LogDebug(disposeError, "Connection abort after maintenance barrier failure also failed at {Host}:{Port}", Host, Port); }
+                try { _logger?.MaintenanceBarrierAbortFailed(Host, Port, disposeError); }
                 catch { /* Logging must not stop retirement. */ }
             }
 
-            try { _logger?.LogDebug(error, "Maintenance drain barrier failed at {Host}:{Port}; retiring connection", Host, Port); }
+            try { _logger?.MaintenanceBarrierFailed(Host, Port, error); }
             catch { /* Logging must not stop retirement. */ }
         }
     }
@@ -1483,7 +1482,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
                 try { await retirement.Task.ConfigureAwait(false); }
                 catch (Exception error)
                 {
-                    _logger?.LogDebug(error, "Retirement did not finish cleanly before disposal of {Host}:{Port}", Host, Port);
+                    _logger?.RetirementDisposalFailed(Host, Port, error);
                 }
             }
             // A caller may have started an explicit fence retry independently of retirement.

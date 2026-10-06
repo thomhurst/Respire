@@ -247,7 +247,7 @@ internal sealed partial class SubscriptionHub
             if (connectionToClose is not null)
             {
                 try { await connectionToClose.DisposeAsync().ConfigureAwait(false); }
-                catch (Exception error) { TryLogDebug(error, "Closing a rolled back cluster notification connection failed"); }
+                catch (Exception error) { TryLog(error, static (logger, state) => logger.NotificationRollbackCloseFailed(state)); }
             }
         }
     }
@@ -362,8 +362,8 @@ internal sealed partial class SubscriptionHub
                 {
                     // A rejection (for example NOPERM after an ACL change) is specific to this
                     // route and leaves the socket healthy. Keep replaying the others.
-                    TryLogWarning(error, "Cluster notification route {Route} was rejected by {Host}:{Port}",
-                        name.ToString(), endpoint.Host, endpoint.Port);
+                    TryLog((error, name, endpoint), static (logger, state)
+                        => logger.NotificationRouteRejected(state.name, state.endpoint.Host, state.endpoint.Port, state.error));
                     (rejected ??= []).Add((kind, name));
                 }
             }
@@ -372,7 +372,7 @@ internal sealed partial class SubscriptionHub
         {
             Volatile.Write(ref node.PendingEpoch, 0);
             try { await connection.DisposeAsync().ConfigureAwait(false); }
-            catch (Exception error) { TryLogDebug(error, "Closing a failed cluster notification replacement failed"); }
+            catch (Exception error) { TryLog(error, static (logger, state) => logger.NotificationReplacementCloseFailed(state)); }
             throw;
         }
         return (connection, rejected);
@@ -408,13 +408,13 @@ internal sealed partial class SubscriptionHub
             // leak its socket and deliver to subscriptions that already ended.
             Debug.Fail("A cluster notification node was retired while its replacement replayed.");
             try { await connection.DisposeAsync().ConfigureAwait(false); }
-            catch (Exception error) { TryLogDebug(error, "Closing a replacement for a retired cluster notification node failed"); }
+            catch (Exception error) { TryLog(error, static (logger, state) => logger.NotificationRetiredReplacementCloseFailed(state)); }
             throw new RespireConnectionException($"Cluster notification routes for {node.Endpoint} were removed during recovery.");
         }
         if (supersededConnection is not null)
         {
             try { await supersededConnection.DisposeAsync().ConfigureAwait(false); }
-            catch (Exception error) { TryLogDebug(error, "Closing a superseded cluster notification connection failed"); }
+            catch (Exception error) { TryLog(error, static (logger, state) => logger.NotificationSupersededCloseFailed(state)); }
         }
         if (rejected is null) return;
         lock (_gate)
@@ -519,8 +519,8 @@ internal sealed partial class SubscriptionHub
         catch (ObjectDisposedException) when (_disposed) { }
         catch (Exception error)
         {
-            TryLogWarning(error, "Cluster notification recovery for {Host}:{Port} stopped unexpectedly",
-                node.Endpoint.Host, node.Endpoint.Port);
+            TryLog((error, node.Endpoint), static (logger, state)
+                => logger.NotificationRecoveryStopped(state.Endpoint.Host, state.Endpoint.Port, state.error));
         }
     }
 
@@ -553,7 +553,7 @@ internal sealed partial class SubscriptionHub
             }
             catch (Exception telemetryError)
             {
-                TryLogWarning(telemetryError, "Cluster notification reconnect telemetry listener threw");
+                TryLog(telemetryError, static (logger, state) => logger.NotificationReconnectTelemetryFailed(state));
             }
             if (attempt > 1)
                 core.NotifyClusterSubscriptionStateChanged(new RespireConnectionStateChange(
@@ -585,8 +585,8 @@ internal sealed partial class SubscriptionHub
                 }
                 if (attempt < int.MaxValue) attempt++;
                 nextDelay = NotificationReconnectDelay(attempt);
-                TryLogWarning(error, "Cluster notification reconnect failed for {Host}:{Port}; retrying in {Delay}",
-                    node.Endpoint.Host, node.Endpoint.Port, nextDelay);
+                TryLog((error, node.Endpoint, nextDelay), static (logger, state)
+                    => logger.NotificationReconnectRetry(state.Endpoint.Host, state.Endpoint.Port, state.nextDelay, state.error));
             }
         }
     }
@@ -669,7 +669,7 @@ internal sealed partial class SubscriptionHub
             node.Endpoint.Host, node.Endpoint.Port, RespireReconnectSource.PubSub); }
         catch (Exception telemetryError)
         {
-            TryLogWarning(telemetryError, "Cluster notification reconnect exhaustion telemetry listener threw");
+            TryLog(telemetryError, static (logger, state) => logger.NotificationReconnectExhaustionTelemetryFailed(state));
         }
         foreach (var subscription in subscriptions) subscription.CompleteFromReconnectExhaustion();
 
@@ -691,7 +691,7 @@ internal sealed partial class SubscriptionHub
             }
             catch (Exception cleanupError)
             {
-                TryLogDebug(cleanupError, "Cluster notification unsubscribe failed during exhaustion cleanup");
+                TryLog(cleanupError, static (logger, state) => logger.NotificationExhaustionUnsubscribeFailed(state));
                 // Closing a still-shared socket makes its watcher reconnect and replay every live
                 // route, including one acquired after the gate was released, with a delivery gap.
                 close.Add(connection);
@@ -702,7 +702,7 @@ internal sealed partial class SubscriptionHub
         foreach (var connection in close.Distinct())
         {
             try { await connection.DisposeAsync().ConfigureAwait(false); }
-            catch (Exception closeError) { TryLogDebug(closeError, "Closing an exhausted cluster notification connection failed"); }
+            catch (Exception closeError) { TryLog(closeError, static (logger, state) => logger.NotificationExhaustionCloseFailed(state)); }
         }
     }
 
@@ -774,9 +774,9 @@ internal sealed partial class SubscriptionHub
             {
                 // The server may still hold a route this node no longer tracks. Closing the
                 // socket clears it; a shared node reconnects and replays only its live routes.
-                TryLogDebug(error, "Cluster notification unsubscribe failed");
+                TryLog(error, static (logger, state) => logger.NotificationUnsubscribeFailed(state));
                 try { await connection.DisposeAsync().ConfigureAwait(false); }
-                catch (Exception closeError) { TryLogDebug(closeError, "Closing an uncertain cluster notification connection failed"); }
+                catch (Exception closeError) { TryLog(closeError, static (logger, state) => logger.NotificationUncertainCloseFailed(state)); }
             }
         }
         RespireConnection? connectionToDispose = null;
@@ -791,7 +791,7 @@ internal sealed partial class SubscriptionHub
             // Route state is already committed; a failed close must not abort callers that
             // still have to complete or unsubscribe other routes.
             try { await connectionToDispose.DisposeAsync().ConfigureAwait(false); }
-            catch (Exception error) { TryLogDebug(error, "Closing a retired cluster notification connection failed"); }
+            catch (Exception error) { TryLog(error, static (logger, state) => logger.NotificationRetiredCloseFailed(state)); }
         }
     }
 
@@ -876,7 +876,7 @@ internal sealed partial class SubscriptionHub
                     catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested) { throw; }
                     catch (Exception error)
                     {
-                        TryLogWarning(error, "Cluster notification topology reconciliation failed");
+                        TryLog(error, static (logger, state) => logger.NotificationTopologyReconciliationFailed(state));
                         // Each failing endpoint gets the policy's full attempt budget. A failure
                         // against a different endpoint, such as a newer topology replacing an
                         // unreachable primary, starts a new count, so a topology that flaps
@@ -942,7 +942,7 @@ internal sealed partial class SubscriptionHub
         catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested) { return; }
         catch (Exception error)
         {
-            TryLogWarning(error, "Cluster notification topology reconciliation failed");
+            TryLog(error, static (logger, state) => logger.NotificationTopologyReconciliationFailed(state));
             retryFullPass = true;
         }
         if (!_disposed && version == Volatile.Read(ref _clusterNotifications.TopologyVersion)
@@ -1104,7 +1104,7 @@ internal sealed partial class SubscriptionHub
                         try { await connection.DisposeAsync().ConfigureAwait(false); }
                         catch (Exception disposeError)
                         {
-                            TryLogDebug(disposeError, "Closing a cluster notification connection after a failed subscribe failed");
+                            TryLog(disposeError, static (logger, state) => logger.NotificationSubscribeFailureCloseFailed(state));
                         }
                     }
                     throw;
@@ -1196,7 +1196,7 @@ internal sealed partial class SubscriptionHub
             try { await ReleaseNotificationRoutesAsync(node, subscription).ConfigureAwait(false); }
             catch (Exception releaseError)
             {
-                TryLogDebug(releaseError, "Releasing an exhausted cluster notification subscription failed");
+                TryLog(releaseError, static (logger, state) => logger.NotificationExhaustedSubscriptionReleaseFailed(state));
             }
         }
         var disconnected = false;
@@ -1243,7 +1243,7 @@ internal sealed partial class SubscriptionHub
             }
             catch (Exception telemetryError)
             {
-                TryLogWarning(telemetryError, "Cluster notification reconnect exhaustion telemetry listener threw");
+                TryLog(telemetryError, static (logger, state) => logger.NotificationReconnectExhaustionTelemetryFailed(state));
             }
         }
         if (recoveredEndpoint is { } recovered) core.ClearClusterSubscriptionState(recovered);
@@ -1289,7 +1289,7 @@ internal sealed partial class SubscriptionHub
         }
         catch (Exception telemetryError)
         {
-            TryLogWarning(telemetryError, "Cluster notification reconnect telemetry listener threw");
+            TryLog(telemetryError, static (logger, state) => logger.NotificationReconnectTelemetryFailed(state));
         }
         core.NotifyClusterSubscriptionStateChanged(new RespireConnectionStateChange(
             failed, RespireConnectionState.Reconnecting, error)

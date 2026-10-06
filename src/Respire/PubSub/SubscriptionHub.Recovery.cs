@@ -53,7 +53,7 @@ internal sealed partial class SubscriptionHub
         try { core.Options.ReconnectEpisodeStarted?.Invoke(); }
         catch (Exception error)
         {
-            try { core.Logger?.LogWarning(error, "Pub/sub recovery episode observer threw"); }
+            try { core.Logger?.SubscriptionRecoveryEpisodeObserverFailed(error); }
             catch { /* Diagnostics must not prevent recovery ownership from advancing. */ }
         }
     }
@@ -133,7 +133,7 @@ internal sealed partial class SubscriptionHub
                         ExhaustConfiguredRecovery(endpoint, failure, attempt);
                         return;
                     }
-                    core.Logger?.LogWarning(failure, "Pub/sub recovery attempt {Attempt} failed", attempt);
+                    core.Logger?.SubscriptionRecoveryAttemptFailed(attempt, failure);
                 }
                 finally
                 {
@@ -181,7 +181,7 @@ internal sealed partial class SubscriptionHub
                 try { await cleanup.ConfigureAwait(false); }
                 catch (Exception cleanupError)
                 {
-                    core.Logger?.LogWarning(cleanupError, "Failed to clean up a pub/sub replacement");
+                    core.Logger?.SubscriptionReplacementCleanupFailed(cleanupError);
                 }
             }
             return (null, endpoint, error);

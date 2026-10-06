@@ -281,15 +281,14 @@ internal sealed class ClusterTopologyRefreshScheduler
                 catch (OperationCanceledException) when (stop.IsCancellationRequested) { return; }
                 catch (Exception error)
                 {
-                    logger.TryLog(LogLevel.Debug, error, "Redis Cluster topology refresh failed");
+                    logger.TryLog(error, static (logger, error) => logger.ClusterTopologyRefreshFailed(error));
                     outcome = TopologyRefreshOutcome.Failed;
                 }
 
                 if (Complete(decision, outcome) is { } retryDelay)
                 {
-                    logger.TryLog(LogLevel.Warning, null,
-                        "Redis Cluster topology refresh failed {ConsecutiveFailures} consecutive time(s); retrying in {RetryDelay}",
-                        ConsecutiveFailures, retryDelay);
+                    logger.TryLog((ConsecutiveFailures, retryDelay), static (logger, state)
+                        => logger.ClusterTopologyRefreshRetry(state.ConsecutiveFailures, state.retryDelay));
                 }
             }
             catch (OperationCanceledException) when (stop.IsCancellationRequested)
@@ -299,7 +298,7 @@ internal sealed class ClusterTopologyRefreshScheduler
             catch (Exception error)
             {
                 // A faulted worker would silently stop all MOVED, disconnect and periodic refreshes.
-                logger.TryLog(LogLevel.Warning, error, "Redis Cluster topology refresh worker failed; continuing");
+                logger.TryLog(error, static (logger, error) => logger.ClusterTopologyWorkerFailed(error));
                 try { await Task.Delay(InitialFailureRetryDelay, _clock, stop).ConfigureAwait(false); }
                 catch (OperationCanceledException) when (stop.IsCancellationRequested) { return; }
             }
@@ -322,15 +321,12 @@ internal sealed class ClusterTopologyRefreshScheduler
 internal static class SafeLoggerExtensions
 {
     /// <summary>Logs without letting a faulty user logger break background work.</summary>
-    internal static void TryLog(this ILogger? logger, LogLevel level, Exception? error, string message,
-        params object?[] args)
+    internal static void TryLog<TState>(this ILogger? logger, TState state, Action<ILogger, TState> log)
     {
         if (logger is null) return;
         try
         {
-#pragma warning disable CA2254 // Callers pass constant templates.
-            logger.Log(level, error, message, args);
-#pragma warning restore CA2254
+            log(logger, state);
         }
         catch (Exception)
         {

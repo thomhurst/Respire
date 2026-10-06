@@ -99,8 +99,7 @@ internal sealed class MaintenanceTelemetry(string host, int port, int database, 
 
             try
             {
-                logger?.LogInformation("Redis maintenance {Kind} ({SequenceId}) on {Host}:{Port}",
-                    notification.Kind, notification.SequenceId, host, port);
+                logger?.MaintenanceNotificationReceived(notification.Kind, notification.SequenceId, host, port);
             }
             catch (Exception error)
             {
@@ -111,7 +110,7 @@ internal sealed class MaintenanceTelemetry(string host, int port, int database, 
 
     private void LogFailure(Exception error)
     {
-        try { logger?.LogWarning(error, "Maintenance diagnostic listener threw"); }
+        try { logger?.MaintenanceDiagnosticObserverFailed(error); }
         catch { /* A failing logger is also an isolated diagnostic listener. */ }
     }
 }

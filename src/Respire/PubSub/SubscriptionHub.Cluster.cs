@@ -310,7 +310,7 @@ internal sealed partial class SubscriptionHub
         {
             // A faulted receive loop still requires recovery. Observe its failure even when
             // a user logger throws, so the detached watcher cannot fault without a consumer.
-            try { core.Logger?.LogWarning(error, "Sharded subscription connection closed with a receive failure"); }
+            try { core.Logger?.ShardedSubscriptionReceiveFailed(error); }
             catch { /* A user logger must not prevent recovery after a receive failure. */ }
         }
         lock (_gate)
@@ -346,9 +346,7 @@ internal sealed partial class SubscriptionHub
         {
             try
             {
-                core.Logger?.LogDebug(error,
-                    "Closing sharded subscription connection {Host}:{Port} after SUNSUBSCRIBE failed",
-                    primary.Owner.Host, primary.Owner.Port);
+                core.Logger?.ShardedSubscriptionCloseFailed(primary.Owner.Host, primary.Owner.Port, error);
             }
             catch { /* A user logger must not prevent uncertain socket cleanup. */ }
             await ClosePrimaryAsync(primary).ConfigureAwait(false);
@@ -533,7 +531,7 @@ internal sealed partial class SubscriptionHub
                     if (failure is null) attempt = 0;
                     else
                     {
-                        try { core.Logger?.LogWarning(failure, "Sharded pub/sub recovery attempt {Attempt} failed", attempt); }
+                        try { core.Logger?.ShardedSubscriptionRecoveryFailed(attempt, failure); }
                         catch { /* A user logger must not terminate the detached recovery loop. */ }
                     }
                 }

@@ -237,7 +237,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
             // before this resumes, and a socket or timeout fault on a retired generation needs the same
             // rediscovery. A failed rediscovery below becomes the probe error, so keep this cause in the log.
             SafeLog(error, static (logger, error)
-                => logger.LogDebug(error, "Sentinel primary probe failed on a retired generation; rediscovering"));
+                => logger.SentinelRetiredPrimaryProbeFailed(error));
         }
 
         // Application traffic may already have published a replacement; never retire that one.
@@ -361,7 +361,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
             }
             catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
             {
-                SafeLog(error, static (logger, error) => logger.LogWarning(error, "Sentinel state observer failed"));
+                SafeLog(error, static (logger, error) => logger.SentinelStateObserverFailed(error));
             }
         });
     }
@@ -377,7 +377,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
                 && SentinelExceptionPolicy.IsRecoverable(error))
             {
                 SafeLog((error, generation.Endpoint), static (logger, state)
-                    => logger.LogDebug(state.error, "Sentinel transport retirement reported an error after draining at {Endpoint}", state.Endpoint));
+                    => logger.SentinelRetirementDrainFailed(state.Endpoint, state.error));
             }
             var delay = 1;
             long? lastWarning = null;
@@ -394,7 +394,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
                     {
                         lastWarning = now;
                         SafeLog((error, generation.Endpoint), static (logger, state)
-                            => logger.LogWarning(state.error, "Sentinel generation at {Endpoint} retains an unacknowledged correction fence", state.Endpoint));
+                            => logger.SentinelCorrectionFenceUnacknowledged(state.Endpoint, state.error));
                     }
                     await Task.Delay(TimeSpan.FromSeconds(delay), Clock, _lifetime.Token).ConfigureAwait(false);
                     delay = Math.Min(delay * 2, 30);
@@ -411,7 +411,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
             if (!_lifetime.IsCancellationRequested)
             {
                 SafeLog((error, generation.Endpoint), static (logger, state)
-                    => logger.LogWarning(state.error, "Sentinel generation cleanup failed at {Endpoint}; retained until client disposal", state.Endpoint));
+                    => logger.SentinelGenerationCleanupFailed(state.Endpoint, state.error));
             }
         }
     }
@@ -444,9 +444,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
             try { await stopping.WaitAsync(NotificationShutdownTimeout, ShutdownClock).ConfigureAwait(false); }
             catch (TimeoutException) when (!stopping.IsFaulted)
             {
-                SafeLog(monitorTasks, static (logger, tasks) => logger.LogWarning(
-                    "Sentinel event monitoring did not stop within {Timeout}; {Count} task(s) still running",
-                    NotificationShutdownTimeout, tasks.Count(task => !task.IsCompleted)));
+                SafeLog(monitorTasks, static (logger, tasks) => logger.SentinelMonitorShutdownTimedOut(NotificationShutdownTimeout, tasks));
             }
             catch (Exception error) { disposeError = stopping.Exception?.InnerException ?? error; }
             finally
@@ -581,7 +579,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
             }
             catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
             {
-                _owner.SafeLog(error, static (logger, error) => logger.LogWarning(error, "Sentinel upload pool cleanup after MOVING failed"));
+                _owner.SafeLog(error, static (logger, error) => logger.SentinelMovingUploadCleanupFailed(error));
             }
         }
 

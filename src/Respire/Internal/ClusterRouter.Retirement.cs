@@ -56,7 +56,7 @@ internal sealed partial class ClusterRouter
             }
             catch (Exception error) when (node.RetirementDrained && !_stopRetirement.IsCancellationRequested)
             {
-                _logger?.LogDebug(error, "Cluster generation retirement needs correction cleanup at {Host}:{Port}", node.Host, node.Port);
+                _logger?.ClusterRetirementCorrectionNeeded(node.Host, node.Port, error);
             }
             finally
             {
@@ -79,15 +79,15 @@ internal sealed partial class ClusterRouter
                     // An unacknowledged kill never releases generation ownership.
                     if (retrySeconds == maximumRetrySeconds)
                     {
-                        int retained;
-                        lock (_nodesGate) retained = _retiringNodes.Count;
-                        _logger?.LogWarning(error,
-                            "Cluster fence still unavailable at {Host}:{Port}; retrying in {DelaySeconds}s; {RetiringGenerationCount} generations remain in retirement",
-                            node.Host, node.Port, retrySeconds, retained);
+                        if (_logger?.IsEnabled(LogLevel.Warning) == true)
+                        {
+                            int retained;
+                            lock (_nodesGate) retained = _retiringNodes.Count;
+                            _logger.ClusterFenceUnavailable(node.Host, node.Port, retrySeconds, retained, error);
+                        }
                     }
                     else
-                        _logger?.LogDebug(error, "Cluster fence retry failed at {Host}:{Port}; retrying in {DelaySeconds}s",
-                            node.Host, node.Port, retrySeconds);
+                        _logger?.ClusterFenceRetry(node.Host, node.Port, retrySeconds, error);
                     await Task.Delay(TimeSpan.FromSeconds(retrySeconds), _stopRetirement.Token).ConfigureAwait(false);
                     retrySeconds = Math.Min(maximumRetrySeconds, retrySeconds * 2);
                 }
@@ -110,7 +110,7 @@ internal sealed partial class ClusterRouter
             try { await poolDrain.ConfigureAwait(false); }
             catch (Exception poolError) { failure = new AggregateException(error, poolError); }
             if (!_stopRetirement.IsCancellationRequested)
-                _logger?.LogWarning(failure, "Cluster generation retirement failed at {Host}:{Port}", node.Host, node.Port);
+                _logger?.ClusterRetirementFailed(node.Host, node.Port, failure);
             retirement.Completion.TrySetException(failure);
             return;
         }
@@ -134,7 +134,7 @@ internal sealed partial class ClusterRouter
         {
             retirement.MarkCleanupFailed();
             if (!_stopRetirement.IsCancellationRequested)
-                _logger?.LogWarning(error, "Cluster generation cleanup failed at {Host}:{Port}", node.Host, node.Port);
+                _logger?.ClusterGenerationCleanupFailed(node.Host, node.Port, error);
             retirement.Completion.TrySetException(error);
         }
     }
@@ -147,7 +147,7 @@ internal sealed partial class ClusterRouter
         }
         catch (Exception error)
         {
-            try { _logger?.LogWarning(error, "A retired Cluster pool reported a cleanup failure"); }
+            try { _logger?.ClusterRetiredPoolCleanupFailed(error); }
             catch { /* Background retirement remains observed even if logging fails. */ }
         }
     }

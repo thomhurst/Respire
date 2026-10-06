@@ -299,19 +299,14 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
     }
 
     internal void LogGapObserverFailure(Exception error)
-        => TryLogWarning(error, "Subscription delivery-gap observer threw");
+        => TryLog(error, static (logger, state) => logger.SubscriptionGapObserverFailed(state));
 
     // Logging providers must not interrupt delivery, cleanup or recovery, so their failures
     // are swallowed. Out-of-memory is not, because nothing after it is reliable.
-    private void TryLogDebug(Exception error, string message)
+    private void TryLog<TState>(TState state, Action<ILogger, TState> log)
     {
-        try { core.Logger?.LogDebug(error, message); }
-        catch (Exception logError) when (logError is not OutOfMemoryException) { }
-    }
-
-    private void TryLogWarning(Exception error, string message, params object?[] args)
-    {
-        try { core.Logger?.LogWarning(error, message, args); }
+        if (core.Logger is not { } logger) return;
+        try { log(logger, state); }
         catch (Exception logError) when (logError is not OutOfMemoryException) { }
     }
 
@@ -323,7 +318,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            try { core.Logger?.LogDebug(ex, "Closing a failed subscription connection failed"); }
+            try { core.Logger?.SubscriptionCloseFailed(ex); }
             catch { /* Cleanup remains observed even when a user logger throws. */ }
         }
     }
@@ -614,7 +609,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
             }
             catch (Exception ex)
             {
-                core.Logger?.LogWarning(ex, "Pub/sub reconnect failed; retrying in {Delay}", delay);
+                core.Logger?.SubscriptionReconnectRetry(delay, ex);
                 await Task.Delay(delay).ConfigureAwait(false);
                 delay = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds * 2, 5000));
             }
@@ -677,7 +672,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
             }
             catch (Exception error)
             {
-                TryLogWarning(error, "Pub/sub recovery metric observer threw");
+                TryLog(error, static (logger, state) => logger.SubscriptionRecoveryMetricFailed(state));
             }
             // Measurements describe scheduled work and survive disposal. Lifecycle events
             // still queued when disposal wins must not restore the client's subscription state.
@@ -858,7 +853,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
             foreach (var connection in notificationConnections)
             {
                 try { await connection.DisposeAsync().ConfigureAwait(false); }
-                catch (Exception error) { TryLogDebug(error, "Closing a cluster notification connection failed"); }
+                catch (Exception error) { TryLog(error, static (logger, state) => logger.NotificationConnectionCloseFailed(state)); }
             }
 
             foreach (var subscription in subscriptions)
