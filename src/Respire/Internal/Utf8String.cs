@@ -3,11 +3,17 @@ using System.Text;
 namespace Respire.Internal;
 
 /// <summary>
-/// UTF-8 decoding that widens ASCII directly into the final string and preserves
+/// UTF-8 decoding that widens eligible ASCII payloads directly into the final string and preserves
 /// <see cref="Encoding.UTF8"/>'s replacement fallback for other payloads.
 /// </summary>
 internal static class Utf8String
 {
+#if !NET9_0_OR_GREATER
+    // Preserve the original net8 cutoff: CI run 37399372813 found a large-Unicode
+    // regression without it. See docs/STACKALLOC_AUDIT.md for the measured scope.
+    private const int Net8DirectAsciiMaxByteLength = 256;
+#endif
+
     internal static string GetString(ReadOnlyMemory<byte> utf8)
     {
         if (utf8.IsEmpty) return string.Empty;
@@ -27,7 +33,7 @@ internal static class Utf8String
 #if !NET9_0_OR_GREATER
         // Keep the existing net8 limit: scanning a long ASCII prefix before Unicode
         // fallback adds work that the runtime decoder already performs.
-        if (utf8.Length > 256) return Encoding.UTF8.GetString(utf8);
+        if (utf8.Length > Net8DirectAsciiMaxByteLength) return Encoding.UTF8.GetString(utf8);
 #endif
 
         // Validate before allocating: a failed ASCII conversion into a byte-length string

@@ -50,7 +50,28 @@ The UTF-8 decoder's char scratch buffer is removed by the change, leaving 27 sit
 | `RespireValue.cs`: scalar equality, byte/string equality, and wire-length scratch | 5 | `WriteWirePayload` initializes the returned prefix for every kind. Comparisons slice to that length; wire-length calculation reads only the returned integer. The null/default case returns zero and reads no buffer element. |
 | `RespireValue.cs`: payload hashing and UTF-8 equality buffers | 3 | `GetWireLength` or UTF-8 byte count determines the consumed prefix. `WriteWirePayload`/`GetBytes` initializes that prefix first. Hashing and comparisons ignore any excess capacity in rented arrays. |
 | `RespireKey.cs`: cache-prefix encoding | 1 | UTF-8 encoding reports its initialized prefix; prefix matching receives only that slice. |
-| `Internal/Utf8String.cs`: former 256-char scratch | 1 | Removed. ASCII conversion writes directly into the final string; Unicode and invalid UTF-8 use the runtime decoder. |
+| `Internal/Utf8String.cs`: former 256-char scratch | 1 | Removed. On net8, ASCII spans up to 256 bytes write directly into the final string; longer spans use the runtime decoder. The memory overload and net10 span overload retain direct ASCII conversion without that cutoff. Unicode and invalid UTF-8 use the runtime decoder. |
+
+### Decoder scope and measurements
+
+The net8 span optimization removes the scratch copy for small ASCII payloads.
+It retains the original 256-byte cutoff, named `Net8DirectAsciiMaxByteLength` in
+the implementation; this is a preserved boundary, not a newly tuned optimum.
+In [CI run 37399372813](https://github.com/thomhurst/Respire/actions/runs/37399372813),
+removing the cutoff made large Unicode spans cost 465.69 ns against 441.76/428.10 ns
+controls, with non-overlapping reported confidence intervals. A long ASCII
+preflight before the runtime decoder added work on that path.
+
+[CI run 37401915652](https://github.com/thomhurst/Respire/actions/runs/37401915652)
+measured the restored cutoff: small net8 ASCII spans cost 16.39 ns against
+24.93/25.05 ns controls. Large Unicode spans cost 562.23 ns against 552.90/585.79 ns
+controls; its interval overlaps the first control and lies below the second.
+No large-input decoder speedup is claimed.
+Both frameworks retained the same allocation counts in all ten measured cases.
+Acceptance requires the small-span gain without a repeatable regression in the
+other operations; compare each candidate with both controls and their dispersion.
+These measurements describe the tested build and runner, not a universal latency
+guarantee. Reassess current-head reports after decoder or module-policy changes.
 
 ## Satellite packages
 
