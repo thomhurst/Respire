@@ -1,0 +1,94 @@
+using System.Diagnostics;
+using System.Diagnostics.Metrics;
+using System.Text.Json;
+using BenchmarkDotNet.Attributes;
+using Respire;
+using Respire.Internal;
+using Respire.Networking;
+using Testcontainers.Redis;
+
+namespace Respire.Benchmarks;
+
+public enum ListenerMode { Disabled, Fast, Slow }
+
+[MemoryDiagnoser]
+[ThreadingDiagnoser]
+public class LifecycleBenchmarks
+{
+    private readonly RedisContainer _redis = InvestigationRedis.Build();
+    private DedicatedConnectionPool _pool = null!;
+    private MeterListener? _listener;
+    private long _delivered;
+    private long _droppedBefore;
+
+    [Params(ListenerMode.Disabled, ListenerMode.Fast, ListenerMode.Slow)]
+    public ListenerMode Listener { get; set; }
+
+    [GlobalSetup]
+    public async Task Setup()
+    {
+        RespireMetrics.Configure(new() { Groups = RespireMetricGroups.All });
+        await _redis.StartAsync();
+        _pool = new DedicatedConnectionPool(_redis.Hostname, _redis.GetMappedPublicPort(6379),
+            new() { Protocol = RespProtocol.Resp2 }, null);
+        var connection = await _pool.RentAsync(default);
+        _pool.Return(connection);
+        if (Listener != ListenerMode.Disabled)
+        {
+            _listener = new MeterListener();
+            _listener.InstrumentPublished = (instrument, listener) =>
+            {
+                if (instrument.Meter.Name == "Respire" && instrument.Name is
+                    "db.client.connection.create_time" or "db.client.connection.wait_time" or "redis.client.connection.closed")
+                    listener.EnableMeasurementEvents(instrument);
+            };
+            _listener.SetMeasurementEventCallback<double>((_, _, _, _) => Delivered());
+            _listener.SetMeasurementEventCallback<long>((_, _, _, _) => Delivered());
+            _listener.Start();
+        }
+        _droppedBefore = ConnectionTelemetry.DroppedMeasurements;
+    }
+
+    private void Delivered()
+    {
+        if (Listener == ListenerMode.Slow) Thread.Sleep(1);
+        Interlocked.Increment(ref _delivered);
+    }
+
+    [Benchmark]
+    public async Task<bool> WarmIdleRental()
+    {
+        var connection = await _pool.RentAsync(default);
+        var connected = connection.IsConnected;
+        _pool.Return(connection);
+        return connected;
+    }
+
+    [Benchmark]
+    public async Task<bool> NewConnectionRental()
+    {
+        var connection = await _pool.RentAsync(default, reuseIdle: false);
+        var connected = connection.IsConnected;
+        await _pool.DiscardAsync(connection);
+        return connected;
+    }
+
+    [GlobalCleanup]
+    public async Task Cleanup()
+    {
+        await _pool.DisposeAsync();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        while (ConnectionTelemetry.PendingMeasurements != 0) await Task.Delay(1, deadline.Token);
+        var delivery = JsonSerializer.Serialize(new
+        {
+            Listener, Delivered = Interlocked.Read(ref _delivered),
+            Dropped = ConnectionTelemetry.DroppedMeasurements - _droppedBefore,
+            Pending = ConnectionTelemetry.PendingMeasurements
+        });
+        Console.WriteLine("LIFECYCLE_DELIVERY " + delivery);
+        if (Environment.GetEnvironmentVariable("RESP_LIFECYCLE_DELIVERY_LOG") is { } output)
+            File.AppendAllText(output, delivery + Environment.NewLine);
+        _listener?.Dispose();
+        await _redis.DisposeAsync();
+    }
+}

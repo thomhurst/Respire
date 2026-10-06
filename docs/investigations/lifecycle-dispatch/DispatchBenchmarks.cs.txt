@@ -1,0 +1,169 @@
+using System.Diagnostics.Metrics;
+using System.Threading.Channels;
+using BenchmarkDotNet.Attributes;
+
+namespace Respire.Benchmarks;
+
+[MemoryDiagnoser]
+[ThreadingDiagnoser]
+public class DispatchBenchmarks
+{
+    private readonly Meter _meter = new("LifecycleInvestigation");
+    private MeterListener _listener = null!;
+    private Histogram<double> _histogram = null!;
+    private readonly KeyValuePair<string, object?>[] _tags = [new("db.client.connection.pool.name", "investigation")];
+    private readonly WorkItemDispatch _current = new();
+    private readonly ChannelDispatch _one = new(1);
+    private readonly ChannelDispatch _four = new(4);
+    private readonly ChannelDispatch _sixtyFour = new(64);
+
+    [Params(0, 1)]
+    public int CallbackDelayMilliseconds { get; set; }
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        _histogram = _meter.CreateHistogram<double>("wait", "s");
+        _listener = new MeterListener();
+        _listener.InstrumentPublished = (instrument, listener) =>
+        {
+            if (instrument.Meter == _meter) listener.EnableMeasurementEvents(instrument);
+        };
+        _listener.SetMeasurementEventCallback<double>((_, _, _, _) =>
+        {
+            if (CallbackDelayMilliseconds != 0) Thread.Sleep(CallbackDelayMilliseconds);
+        });
+        _listener.Start();
+    }
+
+    [Benchmark(Baseline = true, OperationsPerInvoke = 32)]
+    public long CurrentWorkItems() => Batch(_current);
+
+    [Benchmark(OperationsPerInvoke = 32)]
+    public long ChannelOneReader() => Batch(_one);
+
+    [Benchmark(OperationsPerInvoke = 32)]
+    public long ChannelFourReaders() => Batch(_four);
+
+    [Benchmark(OperationsPerInvoke = 32)]
+    public long ChannelSixtyFourReaders() => Batch(_sixtyFour);
+
+    private long Batch(Dispatch dispatch)
+    {
+        // This workload is one burst of 32 events followed by full delivery, not an
+        // enqueue-only comparison in which dropping events could appear faster.
+        var before = dispatch.Completed;
+        for (var i = 0; i < 32; i++)
+            if (!dispatch.Offer(new(dispatch, _histogram, _tags, 0.001)))
+                throw new InvalidOperationException("Unsaturated comparison dropped an event.");
+        dispatch.WaitForDrain();
+        var delivered = dispatch.Completed - before;
+        if (delivered != 32) throw new InvalidOperationException("Incomplete delivery.");
+        return delivered;
+    }
+
+    [GlobalCleanup]
+    public void Cleanup()
+    {
+        _one.Dispose();
+        _four.Dispose();
+        _sixtyFour.Dispose();
+        _listener.Dispose();
+        _meter.Dispose();
+    }
+}
+
+internal readonly record struct Sample(Dispatch Owner, Histogram<double> Instrument,
+    KeyValuePair<string, object?>[] Tags, double Seconds);
+
+internal abstract class Dispatch
+{
+    private readonly ManualResetEventSlim _drained = new(true);
+    private int _pending;
+    private long _completed;
+    private long _dropped;
+    internal long Completed => Interlocked.Read(ref _completed);
+    internal long Dropped => Interlocked.Read(ref _dropped);
+    internal int Pending => Volatile.Read(ref _pending);
+
+    internal bool Offer(Sample sample)
+    {
+        var pending = Volatile.Read(ref _pending);
+        while (true)
+        {
+            if (pending >= 64) { Interlocked.Increment(ref _dropped); return false; }
+            var observed = Interlocked.CompareExchange(ref _pending, pending + 1, pending);
+            if (observed == pending) break;
+            pending = observed;
+        }
+        try { if (Queue(sample)) return true; }
+        catch { }
+        Interlocked.Decrement(ref _pending);
+        Interlocked.Increment(ref _dropped);
+        return false;
+    }
+
+    protected abstract bool Queue(Sample sample);
+
+    internal static void Deliver(Sample sample)
+    {
+        try { sample.Instrument.Record(sample.Seconds, sample.Tags); }
+        catch { }
+        finally
+        {
+            Interlocked.Increment(ref sample.Owner._completed);
+            if (Interlocked.Decrement(ref sample.Owner._pending) == 0) sample.Owner._drained.Set();
+        }
+    }
+
+    internal void WaitForDrain()
+    {
+        while (Pending != 0)
+        {
+            _drained.Reset();
+            if (Pending != 0 && !_drained.Wait(TimeSpan.FromSeconds(30)))
+                throw new TimeoutException("Listener drain did not complete.");
+        }
+    }
+}
+
+internal sealed class WorkItemDispatch : Dispatch
+{
+    protected override bool Queue(Sample sample) => Queue(static state => Deliver(state), sample);
+
+    private static bool Queue<T>(Action<T> record, T value)
+        => ThreadPool.UnsafeQueueUserWorkItem(static state => state.Record(state.Value),
+            (Record: record, Value: value), preferLocal: false);
+}
+
+internal sealed class ChannelDispatch : Dispatch, IDisposable
+{
+    private readonly Channel<Sample> _queue;
+    private readonly Task[] _workers;
+
+    internal ChannelDispatch(int readers)
+    {
+        _queue = Channel.CreateBounded<Sample>(new BoundedChannelOptions(64)
+        {
+            SingleReader = readers == 1, SingleWriter = false,
+            AllowSynchronousContinuations = false, FullMode = BoundedChannelFullMode.Wait
+        });
+        _workers = new Task[readers];
+        using (ExecutionContext.SuppressFlow())
+            for (var i = 0; i < readers; i++) _workers[i] = Task.Run(DrainAsync);
+    }
+
+    protected override bool Queue(Sample sample) => _queue.Writer.TryWrite(sample);
+
+    private async Task DrainAsync()
+    {
+        while (await _queue.Reader.WaitToReadAsync().ConfigureAwait(false))
+            while (_queue.Reader.TryRead(out var sample)) Deliver(sample);
+    }
+
+    public void Dispose()
+    {
+        _queue.Writer.TryComplete();
+        if (!Task.WaitAll(_workers, TimeSpan.FromSeconds(30))) throw new TimeoutException("Worker shutdown failed.");
+    }
+}
