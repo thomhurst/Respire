@@ -37,7 +37,8 @@ jobs:
       REDIS_HOST: 127.0.0.1
       REDIS_PORT: 6379
       SENTINEL_PORT: 26379
-      EXPECTED_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      EXPECTED_MERGE_SHA: ${{ github.sha }}
+      EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
       EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
@@ -47,15 +48,39 @@ jobs:
             10.0.x
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: baseline
-          persist-credentials: false
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+          ref: ${{ github.sha }}
           path: candidate
           persist-credentials: false
           fetch-depth: 2
+      - name: Pin the merge snapshot and its actual baseline
+        id: revisions
+        shell: python
+        run: |
+          import os
+          import subprocess
+          from pathlib import Path
+
+          def git(*arguments):
+              return subprocess.check_output(['git', '-C', 'candidate', *arguments], text=True).strip()
+
+          merge = git('rev-parse', 'HEAD')
+          parents = git('show', '-s', '--format=%P', 'HEAD').split()
+          if merge != os.environ['EXPECTED_MERGE_SHA']:
+              raise SystemExit(f'Candidate merge changed: {merge}')
+          if len(parents) != 2 or parents[1] != os.environ['EXPECTED_HEAD_SHA']:
+              raise SystemExit(f'Candidate does not merge the expected PR head: {parents}')
+          # The payload base can lag main; use the immutable merge's actual first parent.
+          # This keeps both sources aligned even when the PR merge ref moves during the run.
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'baseline_sha={parents[0]}\n')
+          Path(os.environ['GITHUB_WORKSPACE'], 'comparison-revisions.txt').write_text(
+              f'merge={merge}\nbaseline={parents[0]}\nhead={parents[1]}\n'
+              f'event_base={os.environ["EVENT_BASE_SHA"]}\n')
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.revisions.outputs.baseline_sha }}
+          path: baseline
+          persist-credentials: false
       - name: Start Sentinel beside the shared primary
         shell: bash
         env:
@@ -77,12 +102,14 @@ jobs:
           exit 1
       - name: Validate both builds and measure baseline, candidate, baseline
         shell: bash
+        env:
+          EXPECTED_BASE_SHA: ${{ steps.revisions.outputs.baseline_sha }}
         run: |
           set -euo pipefail
           test "$(git -C baseline rev-parse HEAD)" = "$EXPECTED_BASE_SHA"
+          test "$(git -C candidate rev-parse HEAD)" = "$EXPECTED_MERGE_SHA"
           test "$(git -C candidate rev-parse HEAD^1)" = "$EXPECTED_BASE_SHA"
           test "$(git -C candidate rev-parse HEAD^2)" = "$EXPECTED_HEAD_SHA"
-          git -C candidate show -s --format='%H%n%P' > "$GITHUB_WORKSPACE/comparison-revisions.txt"
           cp candidate/benchmarks/Respire.Benchmarks/SentinelReadyRoutingBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
           for phase in baseline-validation candidate-validation baseline-a candidate baseline-b; do
             source=baseline

@@ -2520,39 +2520,6 @@ public sealed partial class RespireClient : IRespireClient
             .ConfigureAwait(false);
     }
 
-    private ValueTask<RespValue> SendOnReadyPrimaryAsync<TCommand>(
-        string operation, RespireConnectionMultiplexer multiplexer, TCommand command,
-        CancellationToken cancellationToken) where TCommand : struct, IRespCommand
-    {
-        try
-        {
-            return SendOnConnectionAsync(operation, multiplexer.GetConnection(), command, cancellationToken);
-        }
-        catch (Exception error) when (_core.Sentinel is not null)
-        {
-            return CaptureReadySendFailure<RespValue>(error);
-        }
-    }
-
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    private static ValueTask<TResult> CaptureReadySendFailure<TResult>(Exception error,
-        ClientSideCacheCoordinator? cache = null, ClientSideCacheCoordinator.MutationFence mutationFence = default)
-    {
-        // Readiness is an observation, not a lease: socket loss, retirement, or disposal
-        // can make GetConnection or admission throw after validation. A command writer
-        // can also throw before admission. Preserve the former async Sentinel result.
-        if (mutationFence.IsRequired) cache!.CompleteMutation(in mutationFence);
-        return ReadySendFailureAsync<TResult>(error);
-    }
-
-#if NET
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-#endif
-    private static async ValueTask<TResult> ReadySendFailureAsync<TResult>(Exception error)
-        // Keep the former async Sentinel path's cancellation status and original exception/token,
-        // including OperationCanceledException carrying an uncanceled token. Only failures use this.
-        => await ValueTask.FromException<TResult>(error).ConfigureAwait(false);
-
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
@@ -5036,19 +5003,9 @@ public sealed partial class RespireClient : IRespireClient
             // Redis response, not user converter work (conversion runs at the caller).
             var cache = core.ClientCache;
             var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
-            try
-            {
-                var connection = readyMultiplexer.GetConnection();
-                var response = connection.SendConvertedAsync(
-                    in command, state, converter, transferOwnership, ct, operation);
-                return mutationFence.IsRequired
-                    ? CompleteMutationAsync(response, cache!, mutationFence)
-                    : response;
-            }
-            catch (Exception error) when (core.Sentinel is not null)
-            {
-                return CaptureReadySendFailure<TResult>(error, cache, mutationFence);
-            }
+            return SendOnReadyPrimaryAsync<TCommand, TResult, ConvertedReadySend<TState, TResult>>(
+                operation, readyMultiplexer, command, ct,
+                new ConvertedReadySend<TState, TResult>(state, converter, transferOwnership), cache, mutationFence);
         }
 
         return PooledResponseSource<TState, TResult>.Create(
@@ -5144,18 +5101,8 @@ public sealed partial class RespireClient : IRespireClient
             // CommandTimeout is enforced by the connection's deadline sweep.
             var cache = core.ClientCache;
             var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
-            try
-            {
-                var connection = readyMultiplexer.GetConnection();
-                var response = connection.SendStringAsync(in command, ct, operation);
-                return mutationFence.IsRequired
-                    ? CompleteMutationAsync(response, cache!, mutationFence)
-                    : response;
-            }
-            catch (Exception error) when (core.Sentinel is not null)
-            {
-                return CaptureReadySendFailure<string?>(error, cache, mutationFence);
-            }
+            return SendOnReadyPrimaryAsync<TCommand, string?, StringReadySend>(
+                operation, readyMultiplexer, command, ct, default, cache, mutationFence);
         }
 
         return PooledResponseSource<RespireClient, string?>.Create(
@@ -5177,16 +5124,8 @@ public sealed partial class RespireClient : IRespireClient
         {
             var cache = core.ClientCache;
             var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
-            try
-            {
-                var connection = readyMultiplexer.GetConnection();
-                var response = connection.SendBytesAsync(in command, ct, operation);
-                return mutationFence.IsRequired ? CompleteMutationAsync(response, cache!, mutationFence) : response;
-            }
-            catch (Exception error) when (core.Sentinel is not null)
-            {
-                return CaptureReadySendFailure<byte[]?>(error, cache, mutationFence);
-            }
+            return SendOnReadyPrimaryAsync<TCommand, byte[]?, BytesReadySend>(
+                operation, readyMultiplexer, command, ct, default, cache, mutationFence);
         }
         return ConvertAsync(
             operation, command, ct,

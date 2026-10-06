@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Protocol;
@@ -84,20 +85,32 @@ public partial class SentinelRoutingTests
     }
 
     [Test, NotInParallel]
-    [Arguments("string", false)]
-    [Arguments("bytes", false)]
-    [Arguments("integer", false)]
-    [Arguments("raw", false)]
-    [Arguments("string", true)]
-    [Arguments("bytes", true)]
-    [Arguments("integer", true)]
-    [Arguments("raw", true)]
-    public async Task ReadySentinelKeepsPreAdmissionFailuresAsAsyncResults(string shape, bool cancellation)
+    [Arguments("string", false, true)]
+    [Arguments("bytes", false, true)]
+    [Arguments("integer", false, true)]
+    [Arguments("raw", false, true)]
+    [Arguments("string", true, true)]
+    [Arguments("bytes", true, true)]
+    [Arguments("integer", true, true)]
+    [Arguments("raw", true, true)]
+    [Arguments("string", false, false)]
+    [Arguments("bytes", false, false)]
+    [Arguments("integer", false, false)]
+    [Arguments("raw", false, false)]
+    [Arguments("string", true, false)]
+    [Arguments("bytes", true, false)]
+    [Arguments("integer", true, false)]
+    [Arguments("raw", true, false)]
+    public async Task ReadyPrimaryPreservesPreAdmissionFailureShape(string shape, bool cancellation, bool useSentinel)
     {
         await using var primary = Primary();
-        await using var sentinel = Sentinel(() => primary.Port);
-        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
-        await WaitForInitialSentinelValidationAsync(client, sentinel);
+        await using var sentinel = useSentinel ? Sentinel(() => primary.Port) : null;
+        var options = sentinel is not null ? Options(sentinel.Port)
+            : Options(primary.Port) with { SentinelPrimaryName = null };
+        await using var client = await RespireClient.ConnectAsync(options);
+        if (sentinel is not null) await WaitForInitialSentinelValidationAsync(client, sentinel);
+        var operation = shape == "integer" ? "INCR" : shape == "raw" ? "CONTROL" : "GET";
+        var expectsAsync = useSentinel || RespireTelemetry.IsOperationEnabled(operation);
         using var caller = new CancellationTokenSource();
         // An uncanceled token proves cancellation classification must follow the exception,
         // not manufacture another token or require the supplied token to be canceled.
@@ -124,14 +137,64 @@ public partial class SentinelRoutingTests
 
         async Task VerifyFailureAsync<T>(Func<ValueTask<T>> send)
         {
-            // A synchronous throw escapes this helper and fails the test.
-            var task = send().AsTask();
+            ValueTask<T> response;
+            try { response = send(); }
+            catch (Exception error)
+            {
+                if (expectsAsync) throw;
+                await Assert.That(error).IsSameReferenceAs(failure);
+                return;
+            }
+            // Consume even an unexpected asynchronous result so a failed control cannot leak it.
+            var task = response.AsTask();
             Exception? observed = null;
             try { await task; }
             catch (Exception error) { observed = error; }
+            await Assert.That(expectsAsync).IsTrue();
             await Assert.That(observed).IsSameReferenceAs(failure);
             await Assert.That(task.IsCanceled).IsEqualTo(cancellation);
         }
+    }
+
+    [Test, NotInParallel]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ReadyFailureHelperReleasesConsumedException(bool cancellation)
+    {
+        var control = CreateReadyFailureControl(cancellation);
+        CollectReadyFailureControl();
+        await Assert.That(control.Error.IsAlive).IsTrue();
+        await Assert.That(control.Response.IsCanceled).IsEqualTo(cancellation);
+        await Assert.That(ConsumeReadyFailureControl(control.Response, control.Error)).IsTrue();
+        CollectReadyFailureControl();
+        await Assert.That(control.Error.IsAlive).IsFalse();
+        // Keep the source itself alive: the assertion checks clearing, not source collection.
+        GC.KeepAlive(control.Response);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static (WeakReference Error, ValueTask<int> Response) CreateReadyFailureControl(bool cancellation)
+    {
+        Exception error = cancellation ? new OperationCanceledException() : new InvalidOperationException();
+        var factory = typeof(RespireClient).GetMethod("ReadySendFailureAsync", BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException("ReadySendFailureAsync is unavailable; update the pooled-failure control.");
+        var response = (ValueTask<int>)factory.MakeGenericMethod(typeof(int)).Invoke(null, [error])!;
+        return (new WeakReference(error), response);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool ConsumeReadyFailureControl(ValueTask<int> response, WeakReference expected)
+    {
+        try { response.GetAwaiter().GetResult(); }
+        catch (Exception error) { return ReferenceEquals(error, expected.Target); }
+        return false;
+    }
+
+    private static void CollectReadyFailureControl()
+    {
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
     }
 
     [Test, NotInParallel]
