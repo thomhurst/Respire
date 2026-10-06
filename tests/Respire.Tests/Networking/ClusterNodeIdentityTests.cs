@@ -1277,7 +1277,7 @@ public class ClusterNodeIdentityTests
         await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", 6379,
             options: options.ToConnectionOptions(enableMaintenanceNotifications: true));
         var now = 1_000L;
-        var router = new ClusterRouter(options, primary, migrationClock: () => now);
+        await using var router = new ClusterRouter(options, primary, migrationClock: () => now);
         var aEndpoint = new RespireEndpoint(disposingHost, 7000);
         var bEndpoint = new RespireEndpoint("b", 7001);
         var cEndpoint = new RespireEndpoint("c", 7002);
@@ -1285,17 +1285,32 @@ public class ClusterNodeIdentityTests
         router.SetSlotOwner(0, a);
 
         bool? disposedFromListener = null;
+        long skippedCount = 0;
+        string? skippedReason = null;
+        bool sourceRetiredBeforeListener = false;
         using var listener = new System.Diagnostics.Metrics.MeterListener();
         listener.InstrumentPublished = (instrument, meterListener) =>
         {
-            if (ReferenceEquals(instrument, RespireTelemetry.ClusterSlotMigrationsSkipped))
+            // Publication can run inside RespireTelemetry's initializer before its counter
+            // field is assigned. Match the published instrument without reading that field.
+            if (instrument.Meter.Name == RespireTelemetry.SourceName
+                && instrument.Name == "respire.cluster.slot_migrations.skipped")
                 meterListener.EnableMeasurementEvents(instrument);
         };
-        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+        listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
         {
+            string? host = null;
+            string? reason = null;
             foreach (var tag in tags)
-                if (tag.Key == "server.address" && Equals(tag.Value, disposingHost) && disposedFromListener is null)
-                    disposedFromListener = router.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5));
+            {
+                if (tag.Key == "server.address") host = tag.Value as string;
+                if (tag.Key == "reason") reason = tag.Value as string;
+            }
+            if (host != disposingHost || disposedFromListener is not null) return;
+            skippedCount += value;
+            skippedReason = reason;
+            sourceRetiredBeforeListener = a.IsRetired;
+            disposedFromListener = router.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5));
         });
         listener.Start();
 
@@ -1308,7 +1323,10 @@ public class ClusterNodeIdentityTests
             new("SMIGRATED", 2, Migrations: [new(aEndpoint, bEndpoint, "0")])));
 
         // Disposal waits for A's retirement drain, so the drain must have started first.
-        await Assert.That(disposedFromListener).IsEqualTo(true);
+        await Assert.That(skippedCount).IsEqualTo(1);
+        await Assert.That(skippedReason).IsEqualTo("deferral_expired");
+        await Assert.That(sourceRetiredBeforeListener).IsTrue();
+        await Assert.That(disposedFromListener is true).IsTrue();
         await router.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
     }
 
