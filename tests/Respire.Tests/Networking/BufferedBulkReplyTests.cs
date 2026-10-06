@@ -103,7 +103,7 @@ public class BufferedBulkReplyTests
         await stream.NextReadAsync(deadline.Token);
         using var first = await earlier.WaitAsync(deadline.Token);
         await Assert.That(first.AsInteger()).IsEqualTo(11);
-        stream.Publish(Encoding.ASCII.GetBytes(string.Concat(Enumerable.Repeat("*1\r\n", 128)) + "*0\r\n:22\r\n"));
+        stream.Publish(Encoding.ASCII.GetBytes(string.Concat(Enumerable.Repeat("*1\r\n", 512)) + "*0\r\n:22\r\n"));
         await Assert.That(async () => await malformed.WaitAsync(deadline.Token)).Throws<RespireProtocolException>();
         await Assert.That(async () => await following.WaitAsync(deadline.Token)).Throws<RespireProtocolException>();
         await Assert.That(connection.IsConnected).IsFalse();

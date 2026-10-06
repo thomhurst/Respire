@@ -6,7 +6,8 @@ namespace Respire.Protocol;
 /// <summary>Shared aggregate framing and storage rules; see docs/RESP_PARSER_LIMITS.md.</summary>
 internal static class RespAggregateStorage
 {
-    internal const int MaxDepth = 128;
+    // Preserve the existing 257-level Sentinel regression while bounding recursive work.
+    internal const int MaxDepth = 512;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static bool TryGetCount(long declaredCount, bool pairCount, out int count)

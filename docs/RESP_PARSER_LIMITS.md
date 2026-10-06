@@ -17,12 +17,15 @@ maps and attributes can contain at most `int.MaxValue / 2` pairs. Null aggregate
 retain their existing `-1` representation. Completed replies retain their normal
 pooled ownership and must still be disposed.
 
-Nesting is limited to 128 aggregate frames, including maps and attributes. This
+Nesting is limited to 512 aggregate frames, including maps and attributes. This
 bound applies to both parsers, including fully buffered replies, and protects
 recursive parsing, disposal, and owned copies. Replies beyond this depth fail with
 a protocol error. Empty aggregates count as a level too; null replies are scalars
 for depth accounting. This is a fixed protocol
-safety limit, not a per-command or Search-specific setting.
+safety limit, not a per-command or Search-specific setting. Earlier versions had
+no explicit nesting cap. The 512-level bound preserves the existing 257-level
+Sentinel reply regression; tests exercise both parsers at 512 levels and reject
+level 513. It still introduces a compatibility limit for deeper replies.
 
 ## Memory and wire limits
 

@@ -72,8 +72,14 @@ public class AggregateStorageTests
     [Test]
     [Arguments(128, false)]
     [Arguments(129, false)]
+    [Arguments(257, false)]
+    [Arguments(512, false)]
+    [Arguments(513, false)]
     [Arguments(128, true)]
     [Arguments(129, true)]
+    [Arguments(257, true)]
+    [Arguments(512, true)]
+    [Arguments(513, true)]
     public async Task DepthLimitIncludesEmptyAggregates(int depth, bool resumable)
     {
         // Mix arrays, maps, and sets; each map contributes a scalar key before its child.
@@ -85,7 +91,20 @@ public class AggregateStorageTests
             ? parser.TryParseResumable(bytes, ref pos, out var value, out _)
             : RespParser.TryParseValue(bytes, ref pos, out value);
         using (value)
-            await Assert.That(status).IsEqualTo(depth == 128 ? RespParseStatus.Done : RespParseStatus.InvalidData);
+        {
+            await Assert.That(status).IsEqualTo(depth <= 512 ? RespParseStatus.Done : RespParseStatus.InvalidData);
+            if (status == RespParseStatus.Done)
+            {
+                await Assert.That(pos).IsEqualTo(bytes.Length);
+                using var owned = value.ToOwned();
+                await Assert.That(owned.GetOwnedSize()).IsGreaterThan(0);
+                var child = owned;
+                for (var i = 0; i < depth - 1; i++)
+                    child = child.AsArray()[^1];
+                await Assert.That(child.Type).IsEqualTo(RespDataType.Array);
+                await Assert.That(child.AsArray().Length).IsEqualTo(0);
+            }
+        }
     }
 
     [Test]
@@ -93,7 +112,7 @@ public class AggregateStorageTests
     {
         using var parser = new RespParseState(int.MaxValue);
         var header = "*2147483647\r\n"u8.ToArray();
-        for (var i = 0; i < 128; i++)
+        for (var i = 0; i < 512; i++)
         {
             var pos = 0;
             await Assert.That(parser.TryParse(header, ref pos, out _, out _)).IsEqualTo(RespParseStatus.NeedMoreData);
