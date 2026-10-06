@@ -217,9 +217,26 @@ The lifecycle contract remains explicit:
 
 ## Reproduction and validation
 
+The result summaries above and the published fixture hashes below are archived
+in this repository. The hashes identify the published files; they cannot recover
+missing source or raw observations if the external evidence is removed.
+
+| Fixture file | Published SHA-256 |
+|---|---|
+| `ActualHandoffDispatchBenchmarks.cs` | `87EEB01E3BAE2623DAB5E57EC2BFED988CE31AA38812AA5BD0385426E1789E51` |
+| `ActualWaitDispatchBenchmarks.cs` | `308D9A111830899D2FFB4271873A093483B717783266BAE80C7D2333465A1504` |
+| `Diagnostics.cs` | `26212A7FF039DC70ACBFE4F4A68EAB7A14FF66F12C1648928D4E5CEDE574CEB2` |
+| `DispatchBenchmarks.cs` | `CCCF89A277171802B5AA797980A5581EF87E00E83F253DC1E4B47AE3A939F02C` |
+| `InvestigationRedis.cs` | `F46E102BAFF0E3BBE05212832D5578A7D44D98788B829577C7A3A032AD6907E4` |
+| `LifecycleBenchmarks.cs` | `AC4C3FDA1FE5C48C03C0B92301F2750B0DB73781F325493B2768E1BDEC0CD443` |
+| `Program.cs` | `3A9B358164F17AFA261E14E409F2C22800B0EAB83CFFB523376B2C4B755095D9` |
+| `Respire.Benchmarks.csproj` | `F03C4BDC1304F5A2C2081D604E310030864F6EFB508036B89FE6E81F034D8979` |
+| `Run-IsolatedRentals.ps1` | `4B912ABD28D0E9A11D6194B6334C28B49575B7F9BD10D686BC92360CA71E2FA9` |
+
 The repository alone cannot reproduce these measurements: download the nine
-temporary fixture files and verify their SHA-256 source hashes from
+temporary fixture files from
 [issue #1063](https://github.com/thomhurst/Respire/issues/1063#issuecomment-6015063619).
+Verify their SHA-256 hashes against the table above.
 The [complete 32-case Markdown reports and corrected diagnostics](https://github.com/thomhurst/Respire/issues/1063#issuecomment-6015088702)
 include delivery records, measured binary hashes, and excluded-run provenance.
 Original observations and confidence intervals are published for
