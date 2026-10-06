@@ -45,7 +45,7 @@ jobs:
       - name: Verify injected clients and HTTP caches
         run: >-
           dotnet run --project tests/Aspire.Respire.IntegrationTests -c Release --no-build --
-          --minimum-expected-tests 1 --report-trx --results-directory TestResults/aspire
+          --minimum-expected-tests 1 --report-trx --results-directory "$GITHUB_WORKSPACE/TestResults/aspire"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
