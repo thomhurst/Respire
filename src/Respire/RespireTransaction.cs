@@ -24,6 +24,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
 {
     private readonly RespireClient _client;
     private readonly RespireHashImportSession? _importSession;
+    private QueuedConnectionPolicy ConnectionPolicy => new(_importSession, _watchConnection);
     private readonly RespireConnection? _watchConnection;
     private readonly WriteBuffer _buffer = new(1024);
     private readonly List<TxOp> _ops = [];
@@ -255,8 +256,9 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
     private protected async ValueTask<bool> CommitCoreAsync(CancellationToken cancellationToken, bool validateEmptyWatch = false)
     {
         ThrowIfCompleted();
-        using var importUsage = _importSession?.EnterOperation();
-        _importSession?.Connection.ValidateTransactionCapacity(_ops.Count, includeMulti: false);
+        using var importUsage = ConnectionPolicy.EnterOperation();
+        if (ConnectionPolicy.IsImportSession)
+            ConnectionPolicy.PinnedConnection!.ValidateTransactionCapacity(_ops.Count, includeMulti: false);
         _completed = true;
         var core = _client.Core;
         var telemetryOperation = "MULTI";
@@ -268,7 +270,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             core.Endpoint,
             core.Options.Database,
             out telemetryOperation) : default;
-        RespireConnection? connection = _importSession?.Connection ?? _watchConnection;
+        RespireConnection? connection = ConnectionPolicy.PinnedConnection;
         var timeout = core.Options.CommandTimeout;
         var deadline = timeout is { } duration
             ? CommandDeadline.After(Math.Max(1L, (long)duration.TotalMilliseconds)) : default;
@@ -334,7 +336,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             if (result.IsNull)
             {
                 result.Dispose();
-                if (_importSession is not null)
+                if (ConnectionPolicy.IsImportSession)
                 {
                     var error = new RespireProtocolException("An unwatched hash import EXEC unexpectedly returned a null reply.");
                     operationError = error;
@@ -349,7 +351,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                 return false;
             }
 
-            if (_importSession is not null && result.Type != RespDataType.Array)
+            if (ConnectionPolicy.IsImportSession && result.Type != RespDataType.Array)
             {
                 var error = new RespireProtocolException("A hash import EXEC must return an array reply.");
                 operationError = error;
@@ -358,7 +360,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                 throw error;
             }
             var elements = result.AsArray();
-            if (_importSession is not null && elements.Length != _ops.Count)
+            if (ConnectionPolicy.IsImportSession && elements.Length != _ops.Count)
             {
                 var error = new RespireProtocolException($"EXEC returned {elements.Length} results for {_ops.Count} queued commands.");
                 operationError = error;
@@ -371,8 +373,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             {
                 var itemError = _ops[i].Complete(_client, in elements[i]);
                 operationError ??= itemError;
-                if (_importSession is not null && itemError is not null
-                    && RespireHashImportSession.RequiresExpiration(itemError))
+                if (itemError is not null && ConnectionPolicy.RequiresExpiration(itemError))
                     importError ??= itemError;
             }
 
@@ -394,12 +395,10 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
         {
             try
             {
-                if (_importSession is not null && operationError is not null)
+                if (operationError is not null)
                 {
-                    if (importTransactionStarted)
-                        await _importSession.ExpireAsync(importError ?? operationError).ConfigureAwait(false);
-                    else
-                        await _importSession.ExpireIfUncertainAsync(importError ?? operationError).ConfigureAwait(false);
+                    await ConnectionPolicy.ExpireAsync(importError ?? operationError,
+                        transactionStateUncertain: importTransactionStarted).ConfigureAwait(false);
                 }
             }
             finally { credentialSequence.Dispose(); }
@@ -454,7 +453,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             try
             {
                 var cluster = core.Cluster;
-                acquisition.CheckDeadline("MULTI/EXEC", core, _importSession?.Connection);
+                acquisition.CheckDeadline("MULTI/EXEC", core, ConnectionPolicy.IsImportSession ? ConnectionPolicy.PinnedConnection : null);
                 if (slot is null && cluster is { } flushCluster
                     && _ops.Exists(static operation => operation.Operation is "FLUSHDB" or "FLUSHALL"))
                     slot = await flushCluster.GetPrimaryRoutingSlotAsync(acquisition.Token).ConfigureAwait(false);
@@ -462,7 +461,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                 {
                     connection ??= await _client.AcquireConnectionAsync(slot, ref acquisition).ConfigureAwait(false);
                     acquisition.Dispose();
-                    acquisition.CheckDeadline("MULTI/EXEC", core, _importSession?.Connection);
+                    acquisition.CheckDeadline("MULTI/EXEC", core, ConnectionPolicy.IsImportSession ? ConnectionPolicy.PinnedConnection : null);
                     if (core.Sentinel is not null)
                         telemetry = RespireTelemetry.StartBatchOperation(
                             "MULTI", _ops, static op => op.Operation,
@@ -470,7 +469,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                     RespValue reply;
                     try
                     {
-                        if (_importSession is not null)
+                        if (ConnectionPolicy.IsImportSession)
                         {
                             if (!connection.TryAcquireCredentialSequence(cancellationToken, out credentialSequence))
                                 credentialSequence = await connection.AcquireCredentialSequenceAsync(
@@ -482,19 +481,19 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                             importSubmissionAttempted = true;
                             using var multi = await _client.SendOnConnectionAsync("MULTI", connection,
                                 new Cmd(RespireCommands.Transaction.MULTI.Verb), cancellationToken, commandDeadline: deadline,
-                                allowStreamingConnectionReroute: false).ConfigureAwait(false);
+                                allowStreamingConnectionReroute: ConnectionPolicy.CanReplayRejectedCommands).ConfigureAwait(false);
                             ResponseReader.ExpectOk(in multi);
                             importTransactionStarted = true;
                         }
                         reply = await connection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count,
-                                cancellationToken, includeMulti: _importSession is null, commandDeadline: deadline)
+                                cancellationToken, includeMulti: !ConnectionPolicy.IsImportSession, commandDeadline: deadline)
                             .ConfigureAwait(false);
-                        if (_importSession is not null && (reply.Type == RespDataType.Array || reply.IsNull
+                        if (ConnectionPolicy.IsImportSession && (reply.Type == RespDataType.Array || reply.IsNull
                             || reply.TransactionStateCleared))
                             importTransactionStarted = false;
                     }
-                    catch (RespireConnectionRetiredException retirement) when (_watchConnection is null && _importSession is null
-                        && cluster is not null && cluster.CanRetryRetirement(attempt, cancellationToken))
+                    catch (RespireConnectionRetiredException retirement) when (cluster is not null
+                        && ConnectionPolicy.CanRetryRetirement(cluster, attempt, cancellationToken))
                     {
                         // The transport rejects the complete MULTI/EXEC frame before accepting any part.
                         cluster.RecordRejection(ref discovery, connection, retirement);
@@ -523,13 +522,13 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                         // retain the same terminal routing rejection.
                         throw redirect;
                     }
-                    if (_watchConnection is not null)
+                    if (ConnectionPolicy.RequiresFreshWatchOnRedirect)
                     {
                         // Replaying on another connection would lose WATCH and could commit stale reads.
                         cluster.LearnWatchedRoute(redirect, connection, slot);
                         throw new RespireTransactionRetryException(redirect);
                     }
-                    if (_importSession is not null)
+                    if (!ConnectionPolicy.CanReplayRejectedCommands)
                         throw redirect; // Replaying would lose the prepared fieldsets.
                     if (ClusterRouter.IsRedirect(redirect)
                         && !ClusterRouter.TryParseRedirect(redirect, connection.Host, out _, out _))
@@ -558,7 +557,8 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                 if (error is OperationCanceledException canceled && acquisition.HasCancellation)
                 {
                     if (acquisition.IsDeadlineCancellation(canceled))
-                        failure = acquisition.CreateTimeout("MULTI/EXEC", core, _importSession?.Connection, canceled);
+                        failure = acquisition.CreateTimeout("MULTI/EXEC", core,
+                            ConnectionPolicy.IsImportSession ? ConnectionPolicy.PinnedConnection : null, canceled);
                     else if (acquisition.IsCallerCancellation(canceled))
                     {
                         OperationCanceledException callerFailure = new(error.Message, error, cancellationToken);
@@ -566,7 +566,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                             ? new RespireCommandNotSubmittedException(callerFailure) : callerFailure;
                     }
                 }
-                if (_importSession is not null)
+                if (ConnectionPolicy.IsImportSession)
                 {
                     if (error is RespireCommandNotSubmittedException) importError = error;
                     else if (!importSubmissionAttempted)
@@ -638,7 +638,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
         where TCommand : struct, IRespCommand
     {
         ThrowIfCompleted();
-        _importSession?.ValidateQueuedCommand(operation);
+        ConnectionPolicy.ValidateQueuedCommand(operation);
         var bufferMark = _buffer.Count;
         var clusterSlot = _clusterSlot;
         var hasClusterSlot = _hasClusterSlot;

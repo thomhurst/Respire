@@ -231,14 +231,8 @@ public sealed class RespireHashImportSession : IAsyncDisposable
             throw new InvalidOperationException("The hash import session lost its connection or route. Dispose it and open a new session.");
     }
 
-    internal static bool RequiresExpiration(Exception error)
-        => error is not RespireCommandNotSubmittedException
-            && error is not RespireTimeoutException { IsCommandNotSubmitted: true }
-            && (error is not RespireServerException server || ClusterRouter.IsRedirect(server)
-                || server.Code == RespireErrorCodes.ReadOnly);
-
     internal ValueTask ExpireIfUncertainAsync(Exception error)
-        => RequiresExpiration(error) ? ExpireAsync(error) : ValueTask.CompletedTask;
+        => new QueuedConnectionPolicy(this).ExpireAsync(error);
 
     internal async ValueTask ExpireAsync(Exception error)
     {

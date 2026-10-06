@@ -706,20 +706,46 @@ public class HashImportTests
     }
 
     [Test]
-    [Arguments(false, 2)]
-    [Arguments(true, 2)]
-    [Arguments(false, 3)]
-    [Arguments(true, 3)]
-    public async Task CancellationAfterSendExpiresSessionAndNeverReplays(bool afterExecution, int protocol)
+    [Arguments("immediate", false, 2)]
+    [Arguments("immediate", true, 2)]
+    [Arguments("batch", false, 2)]
+    [Arguments("batch", true, 2)]
+    [Arguments("transaction", false, 2)]
+    [Arguments("transaction", true, 2)]
+    [Arguments("immediate", false, 3)]
+    [Arguments("immediate", true, 3)]
+    [Arguments("batch", false, 3)]
+    [Arguments("batch", true, 3)]
+    [Arguments("transaction", false, 3)]
+    [Arguments("transaction", true, 3)]
+    public async Task CancellationAfterSendExpiresSessionAndNeverReplays(string mode, bool afterExecution, int protocol)
     {
         await using var server = new RespireFakeServer();
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
         var gate = new RespireFakeGate();
-        using var fault = server.InjectFault("HIMPORT", RespireFakeFault.Pause(gate, afterExecution), firstArgument: "SET"u8.ToArray());
+        using var fault = server.InjectFault(mode == "transaction" ? "EXEC" : "HIMPORT",
+            RespireFakeFault.Pause(gate, afterExecution),
+            firstArgument: mode == "transaction" ? null : (ReadOnlyMemory<byte>?)"SET"u8.ToArray());
         using var cancellation = new CancellationTokenSource();
-        var send = session.SetAsync("key", "schema", ["value"], cancellation.Token).AsTask();
+        async Task Send()
+        {
+            if (mode == "immediate") await session.SetAsync("key", "schema", ["value"], cancellation.Token);
+            else if (mode == "batch")
+            {
+                using var batch = session.CreateBatch();
+                _ = batch.Hashes.Import("key", "schema", "value");
+                await batch.ExecuteAsync(cancellation.Token);
+            }
+            else
+            {
+                await using var transaction = session.CreateTransaction();
+                _ = transaction.Hashes.Import("key", "schema", "value");
+                await transaction.CommitAsync(cancellation.Token);
+            }
+        }
+        var send = Send();
         try
         {
             await fault.Matched.WaitAsync(TimeSpan.FromSeconds(5));
@@ -778,9 +804,15 @@ public class HashImportTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task ClusterRejectsOtherSlotsAndExpiresRedirectsWithoutReplay(bool ask)
+    [Arguments("immediate", false)]
+    [Arguments("immediate", true)]
+    [Arguments("batch", false)]
+    [Arguments("batch", true)]
+    [Arguments("transaction-reply", false)]
+    [Arguments("transaction-reply", true)]
+    [Arguments("transaction-item", false)]
+    [Arguments("transaction-item", true)]
+    public async Task ClusterRejectsOtherSlotsAndExpiresRedirectsWithoutReplay(string mode, bool ask)
     {
         await using var server = new FakeRespServer(20, FakeRespServer.OkReply);
         var topology = Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{server.Port}\r\n");
@@ -803,11 +835,111 @@ public class HashImportTests
         await Assert.That(multi.Count).IsEqualTo(4);
         await session.SetAsync("{one}:key", "schema", "value");
         var slot = session.ClusterSlot!.Value;
-        server.ReplyOverride = (_, command) => command.StartsWith("HIMPORT SET", StringComparison.Ordinal)
-            ? Encoding.ASCII.GetBytes($"-{(ask ? "ASK" : "MOVED")} {slot} 127.0.0.1:{server.Port}\r\n")
-            : command == "CLUSTER SLOTS" ? topology : FakeRespServer.OkReply;
-        await Assert.That(async () => await session.SetAsync("{one}:redirect", "schema", "value")).Throws<RespireServerException>();
+        var redirect = Encoding.ASCII.GetBytes($"-{(ask ? "ASK" : "MOVED")} {slot} 127.0.0.1:{server.Port}\r\n");
+        var inMulti = false;
+        server.ReplyOverride = (_, command) =>
+        {
+            if (command == "CLUSTER SLOTS") return topology;
+            if (command == "MULTI") { inMulti = true; return FakeRespServer.OkReply; }
+            if (command == "EXEC")
+            {
+                inMulti = false;
+                return mode == "transaction-item" ? "*1\r\n"u8.ToArray().Concat(redirect).ToArray() : redirect;
+            }
+            if (inMulti) return "+QUEUED\r\n"u8.ToArray();
+            return command.StartsWith("HIMPORT SET", StringComparison.Ordinal) ? redirect : FakeRespServer.OkReply;
+        };
+        if (mode == "immediate")
+            await Assert.That(async () => await session.SetAsync("{one}:redirect", "schema", "value")).Throws<RespireServerException>();
+        else if (mode == "batch")
+        {
+            using var rejectedBatch = session.CreateBatch();
+            var pending = rejectedBatch.Hashes.Import("{one}:redirect", "schema", "value");
+            await Assert.That(async () => await rejectedBatch.ExecuteAsync()).Throws<RespireServerException>();
+            await Assert.That(pending.Error is RespireServerException).IsTrue();
+        }
+        else
+        {
+            await using var rejectedTransaction = session.CreateTransaction();
+            var pending = rejectedTransaction.Hashes.Import("{one}:redirect", "schema", "value");
+            if (mode == "transaction-item") await rejectedTransaction.CommitAsync();
+            else await Assert.That(async () => await rejectedTransaction.CommitAsync()).Throws<RespireServerException>();
+            await Assert.That(pending.Error is RespireServerException).IsTrue();
+        }
         await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("HIMPORT SET tenant:{one}:redirect", StringComparison.Ordinal))).IsEqualTo(1);
+        await Assert.That(async () => await session.SetAsync("{one}:later", "schema", "value")).Throws<ObjectDisposedException>();
+    }
+
+    [Test]
+    [Arguments("immediate")]
+    [Arguments("batch")]
+    [Arguments("transaction")]
+    public async Task RetiredImportConnectionNeverReplays(string mode)
+    {
+        await using var server = new RespireFakeServer();
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+        await using var session = await client.Hashes.CreateImportSessionAsync();
+        await session.PrepareAsync("schema", "field");
+        using var probe = server.InjectFault("HIMPORT", RespireFakeFault.Loading(), firstArgument: "SET"u8.ToArray());
+        // Keep the socket alive to exercise the admission rejection, not CheckUsable's
+        // disconnected-session guard. The queue must not acquire a replacement connection.
+        session.Connection.StopAcceptingCommands();
+        if (mode == "immediate")
+            await Assert.That(async () => await session.SetAsync("key", "schema", "value")).Throws<RespireConnectionRetiredException>();
+        else if (mode == "batch")
+        {
+            using var batch = session.CreateBatch();
+            var pending = batch.Hashes.Import("key", "schema", "value");
+            await Assert.That(async () => await batch.ExecuteAsync()).Throws<RespireConnectionRetiredException>();
+            await Assert.That(pending.Error is RespireConnectionRetiredException).IsTrue();
+        }
+        else
+        {
+            await using var transaction = session.CreateTransaction();
+            var pending = transaction.Hashes.Import("key", "schema", "value");
+            await Assert.That(async () => await transaction.CommitAsync()).Throws<RespireConnectionRetiredException>();
+            await Assert.That(pending.Error is RespireConnectionRetiredException).IsTrue();
+        }
+        await Assert.That(probe.MatchedCount).IsEqualTo(0);
+        await Assert.That(await client.Hashes.GetStringAsync("key", "field")).IsNull();
+        await Assert.That(async () => await session.SetAsync("later", "schema", "value")).Throws<ObjectDisposedException>();
+    }
+
+    [Test]
+    [Arguments("immediate")]
+    [Arguments("batch")]
+    [Arguments("transaction")]
+    public async Task RetiredClusterImportConnectionNeverReplays(string mode)
+    {
+        await using var server = new FakeRespServer(20, FakeRespServer.OkReply);
+        var topology = Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{server.Port}\r\n");
+        server.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology : FakeRespServer.OkReply;
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            UseCluster = true, Protocol = RespProtocol.Resp2, Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
+        });
+        await using var session = await client.Hashes.CreateImportSessionAsync("{one}:anchor");
+        await session.PrepareAsync("schema", "field");
+        session.Connection.StopAcceptingCommands();
+        if (mode == "immediate")
+            await Assert.That(async () => await session.SetAsync("{one}:key", "schema", "value")).Throws<RespireConnectionRetiredException>();
+        else if (mode == "batch")
+        {
+            using var batch = session.CreateBatch();
+            var pending = batch.Hashes.Import("{one}:key", "schema", "value");
+            await Assert.That(async () => await batch.ExecuteAsync()).Throws<RespireConnectionRetiredException>();
+            await Assert.That(pending.Error is RespireConnectionRetiredException).IsTrue();
+        }
+        else
+        {
+            await using var transaction = session.CreateTransaction();
+            var pending = transaction.Hashes.Import("{one}:key", "schema", "value");
+            await Assert.That(async () => await transaction.CommitAsync()).Throws<RespireConnectionRetiredException>();
+            await Assert.That(pending.Error is RespireConnectionRetiredException).IsTrue();
+        }
+        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("HIMPORT SET", StringComparison.Ordinal))).IsEqualTo(0);
+        await Assert.That(server.ReceivedCommands.Count(command => command == "MULTI")).IsEqualTo(0);
         await Assert.That(async () => await session.SetAsync("{one}:later", "schema", "value")).Throws<ObjectDisposedException>();
     }
 
