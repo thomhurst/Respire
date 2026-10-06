@@ -446,6 +446,16 @@ public sealed record RespireSearchValue(
 /// <summary>Shared readers for Redis Search replies. Malformed shapes throw instead of dropping data.</summary>
 internal static class RespireSearchReply
 {
+    internal static long ReadIntegerCount(RespireResult result, string command)
+    {
+        if (result.Type == RespDataType.Integer)
+        {
+            var count = result.AsInteger();
+            if (count >= 0) return count;
+        }
+        throw Unexpected(command, "a nonnegative integer was expected");
+    }
+
     internal static string[] ReadStringCollection(RespireResult result, string command, string expectedItem = "a string")
     {
         if (result.IsNull || result.Type is not (RespDataType.Array or RespDataType.Set))

@@ -47,7 +47,7 @@ public sealed partial class RespireSearchClient
             [increment ? (RespireValue?)"INCR" : null],
             "PAYLOAD", payload is { } bytes ? (RespireValue?)bytes : null);
         using var result = await _commands.AddSuggestionAsync(key, suggestion, score, arguments, cancellationToken).ConfigureAwait(false);
-        return ReadSuggestionCount(result, "FT.SUGADD");
+        return RespireSearchReply.ReadIntegerCount(result, "FT.SUGADD");
     }
 
     /// <summary>Deletes a suggestion with FT.SUGDEL. Returns false when the dictionary or suggestion is absent.</summary>
@@ -55,7 +55,7 @@ public sealed partial class RespireSearchClient
     {
         ArgumentNullException.ThrowIfNull(suggestion);
         using var result = await _commands.DeleteSuggestionAsync(key, suggestion, cancellationToken).ConfigureAwait(false);
-        return ReadSuggestionCount(result, "FT.SUGDEL") switch
+        return RespireSearchReply.ReadIntegerCount(result, "FT.SUGDEL") switch
         {
             0 => false,
             1 => true,
@@ -67,7 +67,7 @@ public sealed partial class RespireSearchClient
     public async ValueTask<long> GetSuggestionCountAsync(RespireKey key, CancellationToken cancellationToken = default)
     {
         using var result = await _commands.GetSuggestionCountAsync(key, cancellationToken).ConfigureAwait(false);
-        return ReadSuggestionCount(result, "FT.SUGLEN");
+        return RespireSearchReply.ReadIntegerCount(result, "FT.SUGLEN");
     }
 
     /// <summary>Returns owned autocomplete suggestions from FT.SUGGET. An empty prefix is allowed.</summary>
@@ -122,16 +122,6 @@ public sealed partial class RespireSearchClient
             arguments[offset] = pairedValue;
         }
         return arguments;
-    }
-
-    private static long ReadSuggestionCount(RespireResult result, string command)
-    {
-        if (result.Type == RespDataType.Integer)
-        {
-            var count = result.AsInteger();
-            if (count >= 0) return count;
-        }
-        throw RespireSearchReply.Unexpected(command, "a nonnegative integer was expected");
     }
 
     private static RespireResult ReadSuggestionString(RespireResult result)

@@ -74,6 +74,57 @@ var hybrid = await search.HybridSearchAsync("books", new RespireHybridSearchQuer
 
 Text fields accept `Weight` and `NoStem`. Tag fields accept `Separator` and `CaseSensitive`. Vector fields take a typed `RespireSearchVectorOptions` (algorithm, element type, dimensions, and distance metric). The client computes the algorithm argument count, and `Attributes` adds settings such as `M` or `EF_CONSTRUCTION`. `RespireSearchField.Options` remains a raw-token escape hatch for server-version-specific settings that have no typed property. A vector field uses either typed `Vector` options or raw `Options`, not both. Invalid combinations, such as `Weight` on a tag field or `Sortable` on a vector field, throw before anything is sent.
 
+## Spelling dictionaries and corrections
+
+`AddDictionaryTermsAsync` (`FT.DICTADD`) and `DeleteDictionaryTermsAsync`
+(`FT.DICTDEL`) return the number of terms inserted or removed, not the total size.
+`DumpDictionaryAsync` (`FT.DICTDUMP`) returns owned strings in unspecified order;
+an absent dictionary returns an empty list. These spelling dictionaries are separate
+from autocomplete dictionaries and do not require an index.
+
+```csharp
+using Respire;
+using Respire.Search;
+
+await using var client = await RespireClient.ConnectAsync("localhost:6379");
+var search = client.Search;
+await search.AddDictionaryTermsAsync("book-vocabulary", ["redis", "database"]);
+var terms = await search.DumpDictionaryAsync("book-vocabulary");
+
+// The books index must already exist.
+var corrections = await search.SpellCheckAsync("books", "reids", new()
+{
+    Distance = 2,
+    IncludeDictionaries = ["book-vocabulary"],
+    Dialect = 2,
+});
+foreach (var correction in corrections)
+foreach (var suggestion in correction.Suggestions)
+    Console.WriteLine($"{correction.Term}: {suggestion.Term} ({suggestion.Score})");
+
+await search.DeleteDictionaryTermsAsync("book-vocabulary", terms);
+```
+
+These commands require Search 1.4 or later; `DIALECT` requires Search 2.4.3 or later.
+Redis 8.10 integration tests cover RESP2 and RESP3. `Distance` accepts 1–4, and
+`Dialect` accepts 1–4; omitted values use server defaults. Include and exclude lists
+emit repeated `TERMS INCLUDE` / `TERMS EXCLUDE` clauses. Options copy these lists
+during initialization and expose read-only snapshots. Later changes to the input
+lists cannot affect an options instance or its record copies. Inclusion supplies extra
+suggestions. Exclusion suppresses spellchecking of matching **query terms**. For
+example, excluding a dictionary containing `reids` suppresses corrections for `reids`.
+Each correction retains its query term and scored suggestions, including empty
+suggestion lists. Returned strings and lists remain valid after later commands.
+See the [Redis command reference](https://redis.io/docs/latest/commands/ft.spellcheck/).
+
+Dictionary commands route by dictionary name; spellcheck routes by index name.
+Respire does not distribute dictionaries or combine results across nodes. Configure
+the server search coordinator and dictionary placement accordingly; plain cluster
+mode can return node-local results. Key-prefixed views reject these commands.
+Dictionary writes conservatively invalidate the local cache; dump and spellcheck
+leave it intact. Invalid options fail before sending, and server errors and
+cancellation propagate to the caller.
+
 ## Autocomplete dictionaries
 
 Suggestion dictionaries are Redis keys independent of Search indexes. They do not
