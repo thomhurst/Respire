@@ -71,7 +71,7 @@ internal sealed partial class ReadEndpointRouter
                 catch (Exception error) when (!cancellationToken.IsCancellationRequested && error is not ObjectDisposedException)
                 {
                     lastError = error;
-                    TryRecordFailure(entry, error, "Nearest read candidate unavailable at {Endpoint}");
+                    TryRecordFailure(entry, error, nearest: true);
                     continue;
                 }
             }

@@ -362,7 +362,7 @@ internal sealed partial class ClusterRouter
         var next = Volatile.Read(ref _replicaRefreshWarningNotBefore);
         if (now < next || Interlocked.CompareExchange(ref _replicaRefreshWarningNotBefore,
                 now + ClusterReplicaSet.RefreshIntervalMilliseconds, next) != next) return;
-        _logger?.LogWarning(error, "Replica route refresh for Redis Cluster slot {Slot} failed", slot);
+        _logger?.ClusterReplicaRouteRefreshFailed(slot, error);
     }
 
     /// <summary>
@@ -376,9 +376,7 @@ internal sealed partial class ClusterRouter
     {
         var readFrom = fallback.Policy;
         var error = fallback.OriginalFailure!;
-        _logger?.LogDebug(
-            "Redis Cluster slot {Slot} returned {Code} on the preferred role; {ReadFrom} read retries on the other role",
-            slot, error.Code, readFrom);
+        _logger?.ClusterReadRoleRetry(slot, error.Code, readFrom);
         try
         {
             if (fallback.ReplicaOnly == false)
@@ -427,10 +425,7 @@ internal sealed partial class ClusterRouter
         if (readFrom == RespireReadFrom.Primary || slot is not { } value) return redirected;
         if (!await RefreshTopologyFromAsync(redirected, value, cancellationToken, discovery).ConfigureAwait(false))
         {
-            _logger?.LogWarning(
-                "Unable to refresh replica routes for Redis Cluster slot {Slot} from {Host}:{Port} after a redirect; {ReadFrom} read uses {Fallback}",
-                value, redirected.Host, redirected.Port, readFrom,
-                readFrom == RespireReadFrom.Replica ? "no route" : "the redirected primary");
+            _logger?.ClusterReplicaRedirectRefreshFailed(value, redirected.Host, redirected.Port, readFrom, readFrom == RespireReadFrom.Replica ? "no route" : "the redirected primary");
             if (readFrom == RespireReadFrom.Replica)
             {
                 throw new RespireConnectionException(

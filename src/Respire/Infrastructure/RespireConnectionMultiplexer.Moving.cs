@@ -118,9 +118,7 @@ internal sealed partial class RespireConnectionMultiplexer
         if (result.HasSupersededEndpoint)
         {
             var previous = result.SupersededEndpoint;
-            _logger?.LogDebug("MOVING to {Host}:{Port} supersedes the handoff to {PreviousHost}:{PreviousPort}",
-                notification.Target?.Host ?? Host, notification.Target?.Port ?? Port,
-                previous.Host, previous.Port);
+            _logger?.MovingSuperseded(notification.Target?.Host ?? Host, notification.Target?.Port ?? Port, previous.Host, previous.Port);
         }
         return result.StartWorker;
     }
@@ -142,12 +140,11 @@ internal sealed partial class RespireConnectionMultiplexer
             catch (OperationCanceledException) when (request.Cancellation.IsCancellationRequested) { }
             catch (Exception error) when (IsOperational)
             {
-                _logger?.LogWarning(error, "MOVING handoff to {Host}:{Port} failed",
-                    request.Endpoint.Host, request.Endpoint.Port);
+                _logger?.MovingFailed(request.Endpoint.Host, request.Endpoint.Port, error);
             }
             catch (Exception error)
             {
-                _logger?.LogDebug(error, "MOVING handoff stopped by multiplexer retirement");
+                _logger?.MovingRetirementStopped(error);
             }
             finally
             {
@@ -194,12 +191,10 @@ internal sealed partial class RespireConnectionMultiplexer
                 {
                     // Nothing was published, so keep the current sockets. They stay usable until
                     // the source closes them, and normal reconnect then takes over.
-                    _logger?.LogWarning(error,
-                        "MOVING handoff to {Host}:{Port} failed within its grace period; keeping current connections",
-                        endpoint.Host, endpoint.Port);
+                    _logger?.MovingGraceAttemptFailed(endpoint.Host, endpoint.Port, error);
                     return;
                 }
-                _logger?.LogDebug(error, "MOVING handoff to {Host}:{Port} failed; retrying", endpoint.Host, endpoint.Port);
+                _logger?.MovingRetry(endpoint.Host, endpoint.Port, error);
                 var backoff = Math.Min(remaining, 50L << Math.Min(attempt, 4));
                 await Task.Delay(TimeSpan.FromMilliseconds(backoff), request.Cancellation.Token).ConfigureAwait(false);
             }
@@ -227,8 +222,7 @@ internal sealed partial class RespireConnectionMultiplexer
                     }
                     if (!IsOperational || _moving.HasPending)
                     {
-                        _logger?.LogDebug("MOVING handoff to {Host}:{Port} superseded before publication",
-                            endpoint.Host, endpoint.Port);
+                        _logger?.MovingPublicationSuperseded(endpoint.Host, endpoint.Port);
                         return;
                     }
                     // Not user code: the cache flush only updates state and queues events, and its
@@ -266,9 +260,7 @@ internal sealed partial class RespireConnectionMultiplexer
         var lateBy = Environment.TickCount64 - request.Deadline;
         if (lateBy > 0)
         {
-            _logger?.LogWarning(
-                "MOVING handoff to {Host}:{Port} published {LateMilliseconds} ms after its grace period; aborting old sockets, so commands they had accepted may fail",
-                endpoint.Host, endpoint.Port, lateBy);
+            _logger?.MovingPublishedLate(endpoint.Host, endpoint.Port, lateBy);
         }
 
         // Stop admission on the unpublished sockets before anything yields. RetireAsync takes
@@ -284,14 +276,14 @@ internal sealed partial class RespireConnectionMultiplexer
         // The handoff has published, so neither the second cache fence nor a metrics observer
         // can fail it. The fence's metrics reach MeterListener callbacks synchronously.
         try { _options.CredentialCacheRetirementFence?.Invoke(); }
-        catch (Exception error) { _logger?.LogDebug(error, "MOVING retirement cache fence observer failed"); }
+        catch (Exception error) { _logger?.MovingCacheFenceObserverFailed(error); }
 
         // Notify other connection owners and metrics listeners outside the lifecycle locks.
         MovingHandoffPublished?.Invoke();
         if (cacheEvictions is { } removed)
         {
             try { ClientSideCacheCoordinator.PublishContinuityFlushMetrics(removed); }
-            catch (Exception error) { _logger?.LogDebug(error, "Continuity flush metrics observer failed"); }
+            catch (Exception error) { _logger?.ContinuityFlushObserverFailed(error); }
         }
     }
 
@@ -304,11 +296,11 @@ internal sealed partial class RespireConnectionMultiplexer
         }
         catch (Exception error) when (IsOperational)
         {
-            _logger?.LogWarning(error, "Fencing old MOVING sockets failed");
+            _logger?.MovingSocketFenceFailed(error);
         }
         catch (Exception error)
         {
-            _logger?.LogDebug(error, "Old MOVING socket drain stopped by multiplexer retirement");
+            _logger?.MovingSocketDrainStopped(error);
         }
         finally
         {
@@ -412,22 +404,22 @@ internal sealed partial class RespireConnectionMultiplexer
             // Any unclean exit, not only the grace deadline, aborts and later fences the old
             // sockets that did not drain; a faulted drain must not leave them open.
             if (error is TimeoutException)
-                _logger?.LogWarning("MOVING handoff drain exceeded its advertised grace period; aborting remaining old sockets");
+                _logger?.MovingDrainGraceExceeded();
             else if (error is OperationCanceledException && _abortCancellation.IsCancellationRequested)
-                _logger?.LogDebug("Disposal ended the MOVING handoff drain; aborting remaining old sockets");
+                _logger?.MovingDrainDisposalStopped();
             else
-                _logger?.LogWarning(error, "MOVING handoff drain of old sockets failed; aborting remaining old sockets");
+                _logger?.MovingDrainFailed(error);
             foreach (var connection in old)
             {
                 if (connection is null || connection.DrainedSuccessfully) continue;
                 RecordRetiredConnectionIdentity(connection);
                 try { await connection.DisposeAsync().ConfigureAwait(false); }
-                catch (Exception disposeError) { _logger?.LogDebug(disposeError, "Aborting an old MOVING socket failed"); }
+                catch (Exception disposeError) { _logger?.MovingSocketAbortFailed(disposeError); }
             }
         }
 
         try { await Task.WhenAll(drains).ConfigureAwait(false); }
-        catch (Exception error) { _logger?.LogDebug(error, "Old MOVING sockets completed after drain cleanup"); }
+        catch (Exception error) { _logger?.MovingSocketDrainCleanupCompleted(error); }
         foreach (var connection in old) RecordRetiredConnectionIdentity(connection);
         if (HasPendingCorrectionFences)
             await FenceRetiredConnectionsAsync(_stopConnecting.Token).ConfigureAwait(false);

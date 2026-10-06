@@ -118,7 +118,7 @@ internal sealed partial class ClusterRouter
             if (error is RespireConfigurationException) throw;
             if (error is OperationCanceledException or RespireException or IOException)
             {
-                _logger.TryLog(LogLevel.Debug, error, "Redis Cluster READONLY recovery failed");
+                _logger.TryLog(error, static (logger, error) => logger.ClusterReadonlyRecoveryFailed(error));
                 return false;
             }
             throw;
@@ -147,7 +147,7 @@ internal sealed partial class ClusterRouter
             try { _ = await AwaitSharedRefreshAsync(flight, waiterToken, discovery: null).ConfigureAwait(false); }
             catch (Exception error) when (!waiterToken.IsCancellationRequested)
             {
-                _logger.TryLog(LogLevel.Debug, error, "Redis Cluster READONLY recovery failed before topology refresh");
+                _logger.TryLog(error, static (logger, error) => logger.ClusterReadonlyRecoveryBeforeRefreshFailed(error));
             }
             allowRecentSuccessfulResult = false;
         }
@@ -225,14 +225,13 @@ internal sealed partial class ClusterRouter
             }
             if (appliedPartialTopology) return true;
             scope.SetTerminalError(new RespireConnectionException("Redis Cluster topology refresh found no topology."));
-            _logger.TryLog(LogLevel.Debug, null,
-                "Redis Cluster topology refresh failed for all {CandidateCount} candidates", candidates.Count);
+            _logger.TryLog(candidates.Count, static (logger, count) => logger.ClusterTopologyCandidatesFailed(count));
             return false;
         }
         catch (Exception error)
         {
             scope.SetTerminalError(error);
-            _logger.TryLog(LogLevel.Debug, error, "Redis Cluster topology refresh failed");
+            _logger.TryLog(error, static (logger, error) => logger.ClusterTopologyRefreshFailed(error));
             return false;
         }
     }
@@ -726,7 +725,7 @@ internal sealed partial class ClusterRouter
     }
     private void LogDiscoveryObserverFailure(Exception error)
     {
-        try { _logger?.LogWarning(error, "Cluster discovery observer threw"); }
+        try { _logger?.ClusterDiscoveryObserverFailed(error); }
         catch (Exception) { /* A user logger must not terminate the notification dispatcher. */ }
     }
 

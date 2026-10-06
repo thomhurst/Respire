@@ -93,7 +93,7 @@ internal sealed partial class SentinelRouter
         catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
         {
             SafeLog(error, static (logger, error)
-                => logger.LogDebug(error, "Could not retire the primary named by a Sentinel switch event"));
+                => logger.SentinelSwitchPrimaryRetirementFailed(error));
         }
         finally
         {
@@ -128,9 +128,11 @@ internal sealed partial class SentinelRouter
     private void QueueDeliveryGapRediscovery(RespireEndpoint sentinel, long startupVersion, CancellationToken cancellationToken)
     {
         var initialSubscription = startupVersion > 0;
-        SafeLog((sentinel, initialSubscription), static (logger, state) => logger.LogInformation(state.initialSubscription
-            ? "Sentinel monitor established at {Sentinel}; revalidating the primary after subscription"
-            : "Sentinel event delivery from {Sentinel} had a gap; rediscovering the primary", state.sentinel));
+        SafeLog((sentinel, initialSubscription), static (logger, state) =>
+        {
+            if (state.initialSubscription) logger.SentinelMonitorEstablished(state.sentinel);
+            else logger.SentinelDeliveryGap(state.sentinel);
+        });
         // Only first-subscription gaps can be covered by a discovery begun after attachment.
         // Reconnect and overflow gaps remain independent, mandatory rediscovery hints.
         lock (_gate)
@@ -207,12 +209,13 @@ internal sealed partial class SentinelRouter
                 int loggedFailures;
                 lock (_gate) loggedFailures = _coalescer.State.GetOutcomeLogCount(failure is null);
                 if (failure is not null)
-                    SafeLog((error: failure, attempt: loggedFailures), static (logger, state) => logger.Log(
-                        state.attempt == 1 ? LogLevel.Warning : LogLevel.Debug, state.error,
-                        "Sentinel notification-triggered primary discovery failed (consecutive failure {Attempt})", state.attempt));
+                    SafeLog((error: failure, attempt: loggedFailures), static (logger, state) =>
+                    {
+                        if (state.attempt == 1) logger.SentinelNotificationFirstDiscoveryFailure(state.attempt, state.error);
+                        else logger.SentinelNotificationRepeatedDiscoveryFailure(state.attempt, state.error);
+                    });
                 else if (loggedFailures > 0)
-                    SafeLog(loggedFailures, static (logger, count) => logger.LogInformation(
-                        "Sentinel notification-triggered primary discovery succeeded after {Failures} failed attempt(s)", count));
+                    SafeLog(loggedFailures, static (logger, count) => logger.SentinelNotificationDiscoveryRecovered(count));
 
                 Task notification;
                 lock (_gate)

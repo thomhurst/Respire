@@ -370,7 +370,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             throw;
         }
 
-        logger?.LogDebug("Connected to {Host}:{Port}", host, port);
+        logger?.ConnectionConnected(host, port);
         var connection = new RespireConnection(socket, tlsStream, host, port, options, logger);
         try
         {
@@ -573,12 +573,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     : null;
                 throw CreateHandshakeException(in hello, "HELLO", hint);
             }
-            _logger?.LogInformation("HELLO 3 is unsupported by {Host}:{Port}; using RESP2 on this connection", Host, Port);
+            _logger?.HelloResp2Fallback(Host, Port);
             return RespProtocol.Resp2;
         }
         ValidateHelloProtocol(in hello);
         CaptureHelloAvailabilityZone(in hello);
-        _logger?.LogDebug("Negotiated RESP3 with {Host}:{Port}", Host, Port);
+        _logger?.HelloResp3Negotiated(Host, Port);
         return RespProtocol.Resp3;
     }
 
@@ -2268,7 +2268,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            _logger?.LogDebug(ex, "Send failed for {Host}:{Port}; aborting connection", Host, Port);
+            _logger?.ConnectionSendFailed(Host, Port, ex);
             var failure = new RespireConnectionException($"Send failed for {Host}:{Port}: {ex.Message}", ex);
             sending?.FailWrite(failure);
             Abort(failure);
@@ -2561,7 +2561,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 try { _unexpectedConnectionClosed?.Invoke(this); }
                 catch (Exception ex)
                 {
-                    try { _logger?.LogWarning(ex, "Connection close observer threw for {Host}:{Port}", Host, Port); }
+                    try { _logger?.ConnectionCloseObserverFailed(Host, Port, ex); }
                     catch { /* Diagnostics must not prevent connection cleanup. */ }
                 }
             }
@@ -2573,7 +2573,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             }
             catch (Exception ex)
             {
-                _logger?.LogWarning(ex, "Connection failure observer threw for {Host}:{Port}", Host, Port);
+                _logger?.ConnectionFailureObserverFailed(Host, Port, ex);
             }
 
             FailAllPending(Volatile.Read(ref _abortReason) ?? closeError);
@@ -3160,7 +3160,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            _logger?.LogWarning(ex, "Push handler threw for {Host}:{Port}; message dropped", Host, Port);
+            _logger?.ConnectionPushHandlerFailed(Host, Port, ex);
         }
         finally
         {
@@ -3409,10 +3409,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 }
                 else if (now - starvedSince >= _starvedRunnerMilliseconds && !_stallWatchReleased.Task.IsCompleted)
                 {
-                    _logger?.LogWarning(
-                        "Replies for {Host}:{Port} were still queued for delivery {Milliseconds} ms after the connection closed; "
-                        + "finishing disposal while their delivery runner waits for a thread-pool thread.",
-                        Host, Port, now - teardownStarted);
+                    _logger?.ConnectionQueuedDeliveryDelayed(Host, Port, now - teardownStarted);
                     _stallWatchReleased.TrySetResult();
                 }
             }
@@ -3449,11 +3446,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         var rescued = _completions.RescueStalledRunner(now, stallMilliseconds, out nextCheck);
         if (rescued)
         {
-            _logger?.LogWarning(
-                "Reply delivery for {Host}:{Port} was blocked by a continuation for over {Milliseconds} ms; "
-                + "delivering the remaining replies on another thread. Avoid blocking on Respire results "
-                + "inside continuations.",
-                Host, Port, stallMilliseconds);
+            _logger?.ConnectionContinuationDeliveryBlocked(Host, Port, stallMilliseconds);
         }
 
         return rescued;
@@ -3582,7 +3575,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         if (failed > 0)
         {
-            _logger?.LogDebug("Failed {Count} in-flight commands on {Host}:{Port}: {Reason}", failed, Host, Port, exception.Message);
+            _logger?.ConnectionInflightFailed(failed, Host, Port, exception);
         }
     }
 
@@ -3767,7 +3760,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 try { _socket?.Dispose(); }
                 finally { _watchdogCancellation.Dispose(); }
             }
-            _logger?.LogDebug("Disconnected from {Host}:{Port}", Host, Port);
+            _logger?.ConnectionDisconnected(Host, Port);
             completion.TrySetResult();
         }
         catch (Exception ex)

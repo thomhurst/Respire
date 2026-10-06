@@ -433,8 +433,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
             Stopwatch.GetElapsedTime(started).TotalSeconds);
         try
         {
-            _logger?.LogWarning("Failover candidate {Endpoint} was marked unhealthy because it duplicates another candidate's deployment: {Reason}",
-                candidate.TelemetryEndpoint.ToString(), conflict);
+            _logger?.FailoverDuplicateDeployment(candidate.TelemetryEndpoint, conflict);
         }
         catch { /* Logging must not stop health monitoring. */ }
     }
@@ -515,8 +514,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
             RespireTelemetry.RecordFailoverSwitch(switched.PreviousEndpoint, switched.CurrentEndpoint, switched.Reason);
             try
             {
-                _logger?.LogInformation("Failover group switched from {PreviousEndpoint} to {CurrentEndpoint} ({Reason})",
-                    switched.PreviousEndpoint?.ToString() ?? "none", switched.CurrentEndpoint?.ToString() ?? "none", switched.Reason);
+                _logger?.FailoverEndpointSwitched(switched.PreviousEndpoint, switched.CurrentEndpoint, switched.Reason);
             }
             catch { /* Logging must not stop health monitoring. */ }
             var handlers = EndpointSwitched;
@@ -536,8 +534,8 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         RespireTelemetry.RecordFailoverMonitorError(source, error);
         try
         {
-            if (source == "handler") _logger?.LogWarning(error, "Failover group EndpointSwitched handler threw");
-            else _logger?.LogWarning(error, "Failover group health monitor round failed");
+            if (source == "handler") _logger?.FailoverSwitchObserverFailed(error);
+            else _logger?.FailoverMonitorFailed(error);
         }
         catch { /* Logging must not stop health monitoring. */ }
     }

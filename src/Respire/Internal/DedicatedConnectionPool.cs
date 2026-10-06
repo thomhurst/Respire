@@ -283,7 +283,7 @@ internal sealed partial class DedicatedConnectionPool(
         {
             // Preserve best-effort client disposal. Retirement owners can still observe
             // the fault on the shared completion returned by RetireAsync.
-            logger?.LogWarning(error, "Failed to dispose a dedicated pool for {Host}:{Port}", host, port);
+            logger?.DedicatedPoolDisposalFailed(host, port, error);
         }
     }
 
@@ -364,7 +364,7 @@ internal sealed partial class DedicatedConnectionPool(
             CompleteIfDrainedLocked();
         }
         if (failure is not null)
-            logger?.LogWarning(failure, "Failed to close a dedicated connection to {Host}:{Port}", host, port);
+            logger?.DedicatedConnectionCloseFailed(host, port, failure);
     }
 
     private void CompleteIfDrainedLocked()

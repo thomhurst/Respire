@@ -31,6 +31,79 @@ public class PubSubReconnectPolicyTests
         while (server.CommandsSeen < count) await Task.Delay(5, token);
     }
 
+    public enum RecoveryDiagnostic { ConfiguredAttempt, ReplacementCleanup, UnconfiguredRetry }
+
+    [Test]
+    [Arguments(RecoveryDiagnostic.ConfiguredAttempt, false)]
+    [Arguments(RecoveryDiagnostic.ConfiguredAttempt, true)]
+    [Arguments(RecoveryDiagnostic.ReplacementCleanup, false)]
+    [Arguments(RecoveryDiagnostic.ReplacementCleanup, true)]
+    [Arguments(RecoveryDiagnostic.UnconfiguredRetry, false)]
+    [Arguments(RecoveryDiagnostic.UnconfiguredRetry, true)]
+    public async Task RecoveryDiagnosticFailureDoesNotPreventResubscription(RecoveryDiagnostic diagnostic, bool throwProvider)
+    {
+        using var logger = new RecoveryDiagnosticLogger(diagnostic, throwProvider);
+        var subscribed = 0;
+        var delivered = Confirmation.Concat("*3\r\n$7\r\nmessage\r\n$2\r\nch\r\n$5\r\nhello\r\n"u8.ToArray()).ToArray();
+        await using var server = new FakeRespServer(3, Confirmation)
+        {
+            ReplyOverride = (_, command) => command == "SUBSCRIBE ch"
+                ? Interlocked.Increment(ref subscribed) switch { 1 => Confirmation, 2 => Rejection, _ => delivered }
+                : null,
+        };
+        var policy = diagnostic == RecoveryDiagnostic.UnconfiguredRetry ? null : Policy();
+        await using var client = RespireClient.Create(Options(server.Port, policy) with { LoggerFactory = logger });
+        await using var subscription = await client.SubscribeAsync("ch");
+        using var deadline = new CancellationTokenSource(Deadline);
+        await using var reader = subscription.GetAsyncEnumerator(deadline.Token);
+        var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.State == RespireConnectionState.Connected) recovered.TrySetResult();
+        };
+        try
+        {
+            server.CloseConnection(server.ReceivedConnectionIds[0]);
+            await recovered.Task.WaitAsync(deadline.Token);
+            await Assert.That(Volatile.Read(ref logger.TargetCalls)).IsEqualTo(1);
+            await Assert.That(Volatile.Read(ref subscribed)).IsEqualTo(3);
+            await Assert.That(subscription.Completion.IsCompleted).IsFalse();
+            await Assert.That(await reader.MoveNextAsync()).IsTrue();
+            await Assert.That(reader.Current.Kind).IsEqualTo(RespireMessageKind.Gap);
+            await Assert.That(await reader.MoveNextAsync()).IsTrue();
+            await Assert.That(reader.Current.Text).IsEqualTo("hello");
+        }
+        finally { await client.DisposeAsync(); }
+    }
+
+    private sealed class RecoveryDiagnosticLogger(RecoveryDiagnostic diagnostic, bool throwProvider) : ILoggerFactory, ILogger
+    {
+        private int _cleanups;
+        internal int TargetCalls;
+        public ILogger CreateLogger(string categoryName) => this;
+        public void AddProvider(ILoggerProvider provider) { }
+        public void Dispose() { }
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            var template = ((IEnumerable<KeyValuePair<string, object?>>)state!).Last().Value as string;
+            if (diagnostic == RecoveryDiagnostic.ReplacementCleanup && template == "Disconnected from {Host}:{Port}"
+                && Interlocked.Increment(ref _cleanups) == 2)
+                throw new IOException("Injected replacement cleanup failure.");
+            var target = diagnostic switch
+            {
+                RecoveryDiagnostic.ConfiguredAttempt => "Pub/sub recovery attempt {Attempt} failed",
+                RecoveryDiagnostic.ReplacementCleanup => "Failed to clean up a pub/sub replacement",
+                _ => "Pub/sub reconnect failed; retrying in {Delay}",
+            };
+            if (template != target) return;
+            Interlocked.Increment(ref TargetCalls);
+            if (throwProvider) throw new InvalidOperationException("Injected recovery diagnostic failure.");
+        }
+    }
+
     [Test]
     public async Task DiscoveryTelemetryContainsListenerAndLoggerFailures()
     {

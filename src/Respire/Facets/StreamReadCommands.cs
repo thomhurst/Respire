@@ -208,7 +208,7 @@ internal sealed partial class StreamCommands
             {
                 var delayMilliseconds = 100 * (1 << Math.Min(failures, 5));
                 failures = Math.Min(failures + 1, 6);
-                client.Core.Logger?.LogWarning(error, "Stream read failed; retrying after {DelayMilliseconds} ms.", delayMilliseconds);
+                client.Core.Logger?.StreamReadRetry(delayMilliseconds, error);
                 await Task.Delay(TimeSpan.FromMilliseconds(delayMilliseconds), cancellationToken).ConfigureAwait(false);
                 continue;
             }

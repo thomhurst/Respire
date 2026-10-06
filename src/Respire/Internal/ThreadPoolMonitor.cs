@@ -166,11 +166,7 @@ internal sealed class ThreadPoolMonitor
             _lastWarning = now;
             try
             {
-                logger.LogWarning(
-                    "Thread-pool scheduling delayed by {SchedulingDelayMs} ms (probe pending: {ProbePending}); workers busy/min: {BusyWorkers}/{MinWorkers}; queued work: {PendingWorkItems}. " +
-                    "Inspect synchronous blocking and long-running work; use asynchronous I/O and diagnose runtime counters before changing minimum worker threads.",
-                    sample.SchedulingDelay.TotalMilliseconds, sample.IsPending, sample.BusyWorkerThreads,
-                    sample.MinWorkerThreads, sample.PendingWorkItems);
+                logger.ThreadPoolSchedulingDelayed(sample.SchedulingDelay.TotalMilliseconds, sample.IsPending, sample.BusyWorkerThreads, sample.MinWorkerThreads, sample.PendingWorkItems);
             }
             catch (Exception)
             {

@@ -106,8 +106,7 @@ internal static class RespireTelemetry
         try
         {
             if (succeeded == false)
-                logger?.LogWarning(new EventId(4001, "CredentialRefreshFailed"),
-                    "Credential renewal failed at {Stage} for {Host}:{Port}", stage, host, port);
+                logger?.CredentialRefreshFailed(stage, host, port);
         }
         catch { /* User loggers must not terminate renewal. */ }
     }
@@ -173,9 +172,7 @@ internal static class RespireTelemetry
         catch { /* Instrumentation must not change cleanup behaviour. */ }
         try
         {
-            logger?.LogWarning(new EventId(4101, "CoordinationCleanupAbandoned"),
-                "Background {Primitive} cleanup stopped at its {Stage} step ({Reason}); the owner may stay on Redis until it expires or is removed manually",
-                primitive, stage, reason);
+            logger?.CoordinationCleanupAbandoned(primitive, stage, reason);
         }
         catch { /* User loggers must not terminate cleanup. */ }
     }
@@ -295,7 +292,7 @@ internal static class RespireTelemetry
         catch (Exception error)
         {
             // Meter listeners are user code and must not change discovery or its budget.
-            try { logger?.LogWarning(error, "Reconnect telemetry listener threw for {Scope}", scope); }
+            try { logger?.ReconnectTelemetryObserverFailed(scope, error); }
             catch (Exception logError) when (logError is not OutOfMemoryException)
             { /* User loggers must not interrupt discovery or recovery notifications. */ }
         }

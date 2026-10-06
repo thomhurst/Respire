@@ -46,7 +46,7 @@ internal sealed class OutputCacheCleanupService(RespireOutputCacheStore store,
         {
             try { await store.CollectExpiredTagsAsync(stoppingToken).ConfigureAwait(false); }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
-            catch (Exception error) { logger.LogWarning(error, "Respire output-cache tag cleanup failed."); }
+            catch (Exception error) { logger.OutputCacheTagCleanupFailed(error); }
         }
     }
 }

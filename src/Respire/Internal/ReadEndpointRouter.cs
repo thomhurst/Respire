@@ -146,7 +146,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         catch (OperationCanceledException) { }
         catch (Exception error)
         {
-            try { core.Logger?.LogDebug(error, "Draining a removed read replica at {Endpoint} failed", entry.Endpoint); }
+            try { core.Logger?.ReadReplicaDrainFailed(entry.Endpoint, error); }
             catch (Exception) { }
         }
         // Keep the entry discoverable until cleanup finishes. Router disposal joins the same
@@ -160,7 +160,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 if (_retiring.TryRemove(entry, out _))
                     (_retirementFailures ??= new()).Add(error);
             }
-            try { core.Logger?.LogDebug(error, "Closing a removed read replica failed"); }
+            try { core.Logger?.ReadReplicaCloseFailed(error); }
             catch (Exception) { }
             return;
         }
@@ -428,7 +428,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 catch (Exception error) when (!cancellationToken.IsCancellationRequested && error is not ObjectDisposedException)
                 {
                     lastError = error;
-                    TryRecordFailure(entry, error, "Read replica unavailable at {Endpoint}");
+                    TryRecordFailure(entry, error);
                 }
             }
 
@@ -454,10 +454,14 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         finally { candidates.Dispose(); }
     }
 
-    private void TryRecordFailure(Entry entry, Exception error, string message)
+    private void TryRecordFailure(Entry entry, Exception error, bool nearest = false)
     {
         entry.MarkFailed();
-        try { core.Logger?.LogDebug(error, message, entry.Endpoint); }
+        try
+        {
+            if (nearest) core.Logger?.NearestReadCandidateUnavailable(entry.Endpoint, error);
+            else core.Logger?.ReadReplicaUnavailable(entry.Endpoint, error);
+        }
         catch (Exception) { }
     }
 
@@ -486,7 +490,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         try { await RefreshSentinelReplicasAsync(sentinel, CancellationToken.None).ConfigureAwait(false); }
         catch (Exception error)
         {
-            try { core.Logger?.LogDebug(error, "Background Sentinel replica refresh failed"); }
+            try { core.Logger?.SentinelReplicaBackgroundRefreshFailed(error); }
             catch (Exception) { }
         }
         finally { Volatile.Write(ref _backgroundRefresh, 0); }
@@ -511,11 +515,9 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 try
                 {
                     if (failures == 1)
-                        core.Logger?.LogWarning(error,
-                            "Sentinel replica discovery failed; serving the last known {Count} replica endpoint(s) until Sentinel answers",
-                            Volatile.Read(ref _replicas).Length);
+                        core.Logger?.SentinelReplicaDiscoveryFailed(Volatile.Read(ref _replicas).Length, error);
                     else
-                        core.Logger?.LogDebug(error, "Sentinel replica refresh failed; retaining current endpoints");
+                        core.Logger?.SentinelReplicaRefreshFailed(error);
                 }
                 catch (Exception) { }
                 Volatile.Write(ref _lastSentinelRefresh, Stopwatch.GetTimestamp());
@@ -524,7 +526,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             if (Volatile.Read(ref _disposed) != 0) return;
             if (Interlocked.Exchange(ref _refreshFailures, 0) != 0)
             {
-                try { core.Logger?.LogInformation("Sentinel replica discovery recovered with {Count} replica endpoint(s)", endpoints.Length); }
+                try { core.Logger?.SentinelReplicaDiscoveryRecovered(endpoints.Length); }
                 catch (Exception) { }
             }
             SetEndpoints(endpoints);
