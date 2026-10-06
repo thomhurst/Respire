@@ -1187,10 +1187,11 @@ public class ClusterNodeIdentityTests
     public async Task ThrowingMetricListenerDoesNotEscapeQueueDropsOrTheWorker()
     {
         const string throwingHost = "metric-listener-throws";
+        var skippedInstrument = RespireTelemetry.ClusterSlotMigrationsSkipped;
         using var listener = new System.Diagnostics.Metrics.MeterListener();
         listener.InstrumentPublished = (instrument, meterListener) =>
         {
-            if (ReferenceEquals(instrument, RespireTelemetry.ClusterSlotMigrationsSkipped))
+            if (ReferenceEquals(instrument, skippedInstrument))
                 meterListener.EnableMeasurementEvents(instrument);
         };
         listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>

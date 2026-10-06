@@ -266,13 +266,13 @@ internal sealed partial class RespireConnectionMultiplexer
         // Stop admission on the unpublished sockets before anything yields. RetireAsync takes
         // each socket's write gate, so it runs after the multiplexer locks are released.
         var retiredConnections = old.OfType<RespireConnection>().ToArray();
-        foreach (var connection in retiredConnections) connection.RecordConnectionHandoff();
         var drains = retiredConnections.Select(connection => connection.RetireAsync()).ToArray();
         lock (_moving.Gate)
         {
             _moving.BeginDrain();
             _ = DrainMovedConnectionsInBackgroundAsync(old, drains, request.Deadline);
         }
+        foreach (var connection in retiredConnections) connection.RecordConnectionHandoff();
 
         // The handoff has published, so neither the second cache fence nor a metrics observer
         // can fail it. The fence's metrics reach MeterListener callbacks synchronously.

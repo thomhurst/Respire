@@ -24,7 +24,6 @@ internal static class ConnectionTelemetry
 
     private static Pool ForConnection(string host, int port, RespireConnectionOptions options)
     {
-        var pubsub = options.SubscriptionConfirmationHandler is not null;
         var purpose = options switch
         {
             { SubscriptionConfirmationHandler: not null } => "pubsub",
@@ -33,13 +32,31 @@ internal static class ConnectionTelemetry
         };
         var name = host + ":" + port.ToString(CultureInfo.InvariantCulture) + "/"
             + options.Database.ToString(CultureInfo.InvariantCulture) + "/" + purpose;
-        return Pools.ForPool(name, pubsub);
+        return Pools.ForPool(name, purpose == "pubsub");
     }
 
-    internal static void ClosedBeforeHandshake(string host, int port, RespireConnectionOptions options, Exception error)
+    internal static void ClosedBeforeHandshake(string host, int port, RespireConnectionOptions options,
+        Exception error, CancellationToken callerToken)
     {
         if (RespireTelemetry.IsMetricEnabled(RespireMetricGroups.ConnectionAdvanced, RespireTelemetry.ConnectionsClosed))
-            RecordClosed(ForConnection(host, port, options), "error", error);
+        {
+            var canceled = IsCallerCancellation(error, callerToken);
+            RecordClosed(ForConnection(host, port, options), canceled ? "application_close" : "error", canceled ? null : error);
+        }
+    }
+
+    internal static bool IsCallerCancellation(Exception error, CancellationToken callerToken)
+        => callerToken.IsCancellationRequested && error is OperationCanceledException canceled
+            && canceled.CancellationToken == callerToken;
+
+    internal static bool IsPeerReset(Exception? error)
+    {
+        // TLS can wrap the socket reset in IOException. Do not classify local aborts,
+        // timeouts or arbitrary I/O errors as a peer close.
+        for (; error is not null; error = error.InnerException)
+            if (error is SocketException { SocketErrorCode: SocketError.ConnectionReset } or EndOfStreamException)
+                return true;
+        return false;
     }
 
     internal static IEnumerable<Measurement<long>> ObserveConnections()
@@ -97,6 +114,8 @@ internal static class ConnectionTelemetry
         internal void SetRented(bool rented) => Volatile.Write(ref _rented, rented ? 1 : 0);
         internal void RequestClose(string reason) => Volatile.Write(ref _requestedCloseReason, reason);
 
+        internal bool IsCollected => !_connection.TryGetTarget(out _);
+
         internal void Waited(long started)
         {
             if (!RespireTelemetry.IsMetricEnabled(RespireMetricGroups.ConnectionAdvanced, RespireTelemetry.ConnectionWaitTime)) return;
@@ -121,7 +140,8 @@ internal static class ConnectionTelemetry
             if (!RespireTelemetry.IsMetricEnabled(RespireMetricGroups.ConnectionAdvanced, RespireTelemetry.ConnectionsClosed)) return;
             var reason = "error";
             if (peerClosed) reason = "server_close";
-            else if (error is null or RespireConnectionRetiredException)
+            else if (error is null or RespireConnectionRetiredException
+                || error is OperationCanceledException && Volatile.Read(ref _requestedCloseReason) == "application_close")
                 reason = Volatile.Read(ref _requestedCloseReason) ?? "application_close";
             RecordClosed(_pool, reason, reason == "error" ? error : null);
         }
@@ -168,7 +188,7 @@ internal static class ConnectionTelemetry
     internal sealed class Pool
     {
         private readonly Lock _gate = new();
-        private State[] _connections = [];
+        private readonly HashSet<State> _connections = [];
         internal readonly bool PubSub;
         internal readonly KeyValuePair<string, object?>[] Tags;
         internal readonly KeyValuePair<string, object?>[] IdleTags;
@@ -185,18 +205,29 @@ internal static class ConnectionTelemetry
 
         internal void Add(State state)
         {
-            lock (_gate) Volatile.Write(ref _connections, [.. _connections, state]);
+            lock (_gate) _connections.Add(state);
         }
 
         internal void Remove(State state)
         {
-            lock (_gate) Volatile.Write(ref _connections, _connections.Where(item => !ReferenceEquals(item, state)).ToArray());
+            lock (_gate) _connections.Remove(state);
+        }
+
+        internal State[] SnapshotForObservation()
+        {
+            lock (_gate)
+            {
+                // Churn changes membership in O(1); only observations copy the set. Reclaim
+                // abandoned weak targets without inventing physical-close events.
+                _connections.RemoveWhere(static state => state.IsCollected);
+                return [.. _connections];
+            }
         }
 
         internal (long Idle, long Used, long Pending) Read()
         {
             long idle = 0, used = 0, pending = 0;
-            foreach (var state in Volatile.Read(ref _connections))
+            foreach (var state in SnapshotForObservation())
             {
                 if (!state.TryRead(out var busy, out var count)) continue;
                 if (busy) used++;
@@ -209,7 +240,7 @@ internal static class ConnectionTelemetry
         internal long ReadRelaxedTimeouts()
         {
             long count = 0;
-            foreach (var state in Volatile.Read(ref _connections))
+            foreach (var state in SnapshotForObservation())
                 if (state.HasRelaxedTimeout) count++;
             return count;
         }

@@ -218,6 +218,61 @@ public class ConnectionMetricTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task PeerResetIsAServerClose(bool tls)
+    {
+        using var configuration = new MetricConfigurationScope();
+        using var certificate = TestTlsCertificate.Create();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        using var capture = new Capture(port);
+        var connect = RespireConnection.ConnectAsync("127.0.0.1", port,
+            new() { Protocol = RespProtocol.Resp2, UseTls = tls,
+                TlsOptions = new() { RemoteCertificateValidationCallback = static (_, _, _, _) => true } },
+            cancellationToken: deadline.Token);
+        using var peer = await listener.AcceptSocketAsync(deadline.Token);
+        using var network = new NetworkStream(peer, ownsSocket: false);
+        using var secure = tls ? new SslStream(network, leaveInnerStreamOpen: true) : null;
+        if (secure is not null)
+            await secure.AuthenticateAsServerAsync(new SslServerAuthenticationOptions { ServerCertificate = certificate }, deadline.Token);
+        await using var connection = await connect.WaitAsync(deadline.Token);
+        var pending = connection.SendAsync(new Commands.RawCommand(FakeRespServer.PingFrame)).AsTask();
+        await Assert.That(await (secure as Stream ?? network).ReadAsync(new byte[1], deadline.Token)).IsEqualTo(1);
+        peer.LingerState = new LingerOption(true, 0);
+        peer.Dispose();
+        await Assert.That(async () => { using var reply = await pending.WaitAsync(deadline.Token); })
+            .Throws<RespireConnectionException>();
+        await connection.DisposeAsync();
+        var closed = capture.Events.Single(item => item.Name == "redis.client.connection.closed");
+        await Assert.That(closed.Tags["redis.client.connection.close.reason"]).IsEqualTo("server_close");
+        await Assert.That(closed.Tags.ContainsKey("error.type")).IsFalse();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task StreamedReplyStaysPendingUntilItsFrameDrains(bool discard)
+    {
+        using var configuration = new MetricConfigurationScope();
+        await using var server = new FakeRespServer("$6\r\nabc"u8.ToArray());
+        await using var client = await RespireClient.ConnectAsync(Options(server));
+        using var capture = new Capture(server.Port);
+        await using var stream = await client.Strings.GetStreamAsync("key");
+        await Assert.That(await stream!.ReadAtLeastAsync(new byte[3], 3)).IsEqualTo(3);
+        if (discard) await stream.DisposeAsync();
+        capture.Observe();
+        await Assert.That(capture.Current("db.client.connection.pending_requests")).IsEqualTo(1d);
+        await Assert.That(capture.Current("db.client.connection.count", "used")).IsEqualTo(1d);
+        await server.SendRawAsync("def\r\n"u8.ToArray());
+        if (!discard) await stream.CopyToAsync(Stream.Null);
+        await WaitUntil(() => { capture.Observe(); return capture.Current("db.client.connection.pending_requests") == 0; });
+        await Assert.That(capture.Current("db.client.connection.count", "idle")).IsEqualTo(1d);
+    }
+
+    [Test]
     public async Task FailedHandshakeClosesTheSocketWithoutPublishingAReadyConnection()
     {
         using var configuration = new MetricConfigurationScope();
@@ -277,13 +332,44 @@ public class ConnectionMetricTests
     }
 
     [Test]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    [Arguments(true, false)]
+    public async Task HandshakeCancellationIsClassifiedByItsSource(bool tls, bool callerCancels)
+    {
+        using var configuration = new MetricConfigurationScope();
+        using var caller = new CancellationTokenSource();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        using var capture = new Capture(port);
+        var connect = RespireConnection.ConnectAsync("127.0.0.1", port,
+            new() { Protocol = RespProtocol.Resp3, UseTls = tls,
+                ConnectTimeout = TimeSpan.FromSeconds(callerCancels ? 5 : 1) }, cancellationToken: caller.Token);
+        using var peer = await listener.AcceptSocketAsync(deadline.Token);
+        using var stream = new NetworkStream(peer, ownsSocket: false);
+        // Receiving a handshake byte proves TCP connected before cancellation.
+        await Assert.That(await stream.ReadAsync(new byte[1], deadline.Token)).IsEqualTo(1);
+        if (callerCancels) caller.Cancel();
+        var error = await Assert.That(async () => await connect.WaitAsync(deadline.Token))
+            .Throws<OperationCanceledException>();
+        await Assert.That(error!.CancellationToken == caller.Token).IsEqualTo(callerCancels);
+        var closed = capture.Events.Single(item => item.Name == "redis.client.connection.closed");
+        await Assert.That(closed.Tags["redis.client.connection.close.reason"])
+            .IsEqualTo(callerCancels ? "application_close" : "error");
+        await Assert.That(closed.Tags.ContainsKey("error.type")).IsEqualTo(!callerCancels);
+        await Assert.That(closed.Tags.ContainsKey("redis.client.errors.category")).IsEqualTo(!callerCancels);
+    }
+
+    [Test]
     public async Task PubSubConnectionsStayUsedWithoutPendingCommandReplies()
     {
         using var configuration = new MetricConfigurationScope();
         await using var server = new FakeRespServer(1, FakeRespServer.PongReply);
         using var capture = new Capture(server.Port);
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
-            new() { Protocol = RespProtocol.Resp2, SubscriptionConfirmationHandler = static (in Protocol.RespValue _) => { } });
+            new() { Protocol = RespProtocol.Resp2, SubscriptionConfirmationHandler = static (in global::Respire.Protocol.RespValue _) => { } });
         capture.Observe();
         await Assert.That(capture.Current("db.client.connection.count", "used")).IsEqualTo(1d);
         await Assert.That(capture.Current("db.client.connection.pending_requests")).IsEqualTo(0d);
@@ -369,6 +455,48 @@ public class ConnectionMetricTests
     }
 
     [Test]
+    public async Task BlockingHandoffListenerCannotDelayOldSocketRetirement()
+    {
+        using var configuration = new MetricConfigurationScope();
+        await using var source = MaintenanceServer();
+        await using var target = MaintenanceServer();
+        await using var client = await RespireClient.ConnectAsync(Options(source) with
+        { Protocol = RespProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled });
+        var old = client.Core.Multiplexer.GetConnection();
+        var sent = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        source.SuppressReply = command => { if (command != "PING") return false; sent.TrySetResult(); return true; };
+        var pending = client.PingAsync().AsTask();
+        await sent.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, current) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "redis.client.connection.handoff")
+                current.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, _, _) =>
+        {
+            entered.TrySetResult();
+            release.Task.GetAwaiter().GetResult();
+        });
+        listener.Start();
+        try
+        {
+            await source.SendRawAsync(Encoding.UTF8.GetBytes($">4\r\n+MOVING\r\n:1\r\n:1\r\n+127.0.0.1:{target.Port}\r\n"));
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(old.IsAcceptingCommands).IsFalse();
+            await source.PeerClosed.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            release.TrySetResult();
+            try { await pending.WaitAsync(TimeSpan.FromSeconds(5)); }
+            catch (RespireConnectionException) { }
+        }
+    }
+
+    [Test]
     public async Task ListenerExceptionsDoNotChangeConnectionOrDisposalOutcomes()
     {
         using var configuration = new MetricConfigurationScope();
@@ -389,6 +517,30 @@ public class ConnectionMetricTests
         await connection.DisposeAsync();
         await Assert.That(connection.IsConnected).IsFalse();
     }
+
+    [Test]
+    public async Task PoolObservationsPruneCollectedTargetsAndKeepStableSnapshots()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+            new() { Protocol = RespProtocol.Resp2 });
+        var pool = new ConnectionTelemetry.Pool("test", false);
+        var state = new ConnectionTelemetry.State(connection, pool, false);
+        pool.Add(state);
+        var snapshot = pool.SnapshotForObservation();
+        await Assert.That(snapshot.Length).IsEqualTo(1);
+        pool.Remove(state);
+        await Assert.That(pool.SnapshotForObservation()).IsEmpty();
+        await Assert.That(snapshot[0]).IsSameReferenceAs(state);
+        pool.Add(state);
+        // Clear the weak target deterministically instead of relying on GC timing while
+        // connection-owned tasks still run. Observation must remove the retained state.
+        ConnectionTarget(state).SetTarget(null!);
+        await Assert.That(pool.SnapshotForObservation()).IsEmpty();
+    }
+
+    [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_connection")]
+    private static extern ref WeakReference<RespireConnection> ConnectionTarget(ConnectionTelemetry.State state);
 
     [Test]
     public async Task EndpointLabelBudgetHasDistinctBoundedOverflowSeries()

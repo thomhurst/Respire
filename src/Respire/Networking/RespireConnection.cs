@@ -142,7 +142,18 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     internal string? AvailabilityZone { get; private set; }
     public bool IsConnected => !Volatile.Read(ref _dead);
     internal bool IsFlushLoopWaiting => _flushSignal.IsWaiting;
-    internal int PendingResponseCount => Math.Max(0, _inflight.Count);
+    internal int PendingResponseCount
+    {
+        get
+        {
+            var count = Math.Max(0, _inflight.Count);
+            var stream = Volatile.Read(ref _activeBulkStreamSource);
+            // The stream is published before dequeue. Count it separately only after
+            // it leaves the ring, until its payload and trailing CRLF finish draining.
+            if (stream is not null && (!_inflight.TryPeek(out var head) || !ReferenceEquals(head, stream))) count++;
+            return count;
+        }
+    }
     internal void SetLeaseRented(bool rented) => _connectionMetrics?.SetRented(rented);
     internal void RequestMetricCloseReason(string reason) => _connectionMetrics?.RequestClose(reason);
     internal void RecordConnectionWait(long started) => _connectionMetrics?.Waited(started);
@@ -380,7 +391,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             catch { /* Preserve the original connection failure. */ }
             finally { socket.Dispose(); }
             if (physicalConnected && !isUnixSocket)
-                ConnectionTelemetry.ClosedBeforeHandshake(host, port, options, error);
+                ConnectionTelemetry.ClosedBeforeHandshake(host, port, options, error, cancellationToken);
             throw;
         }
 
@@ -398,6 +409,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
         catch (Exception error)
         {
+            if (ConnectionTelemetry.IsCallerCancellation(error, cancellationToken))
+                connection.RequestMetricCloseReason("application_close");
             connection.Abort(error);
             try { await connection.DisposeAsync().ConfigureAwait(false); }
             catch { /* Preserve the original handshake or validation failure. */ }
@@ -2561,6 +2574,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
         catch (Exception ex)
         {
+            if (ConnectionTelemetry.IsPeerReset(ex)) Volatile.Write(ref _peerClosed, true);
             fault = TranslateReceiveFault(ex);
         }
         finally

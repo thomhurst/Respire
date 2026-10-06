@@ -238,7 +238,9 @@ do not reset the budget. Overflow aggregates endpoints and databases, retaining 
 The count adds `db.client.connection.state` and `redis.client.connection.pubsub`.
 A multiplexed connection is used while a reply remains owed; a dedicated connection is used
 while rented. Pub/sub connections are always used. A canceled command remains pending until
-its frame drains. These are transport observations, not application tasks or pool capacity.
+its frame drains. A streamed reply also stays pending until its payload and trailing frame
+delimiter drain, including when the caller disposes the stream early. These are transport
+observations, not application tasks or pool capacity.
 During replacement, both old and new ready sockets can count until the old socket closes.
 Connections still negotiating their handshake, in-memory test streams and Unix sockets are
 excluded from these TCP measurements.
@@ -257,8 +259,11 @@ A failed or superseded replacement emits no handoff. Ordinary reconnects are cre
 events and do not count as `MOVING` handoffs.
 
 Close events add `redis.client.connection.close.reason`: `application_close` for intentional
-disposal or retirement, `pool_eviction_idle` for dedicated idle-capacity overflow,
-`server_close` for observed peer EOF, or `error` for transport/handshake failure. Error closes
+disposal, retirement or caller cancellation during a handshake, `pool_eviction_idle` for
+dedicated idle-capacity overflow, `server_close` for observed peer EOF or connection reset
+(including a reset wrapped by TLS), or `error` for transport/handshake failure. An internal
+handshake timeout remains an error; caller cancellation requires the matching canceled token.
+Unknown I/O failures remain errors. Error closes
 also include `error.type` and `redis.client.errors.category` (`network`, `tls`, `auth`,
 `server`, or `other`). Respire has no separate healthcheck-driven pool eviction, so it does
 not emit `healthcheck_failed`. Close events do not count unsuccessful TCP connection attempts.
