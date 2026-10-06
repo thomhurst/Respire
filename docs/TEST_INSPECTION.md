@@ -24,20 +24,31 @@ Preserve the tests' barriers, deadlines, cancellation, import, and FIFO assertio
 `TestInspectionArchitectureTests` checks compiled factory/view metadata and rejects
 the four legacy names on both supported frameworks. The single-target analyzer-test
 host separates inventory, factory-use and resource-validation tests, sharing
-`TestInspectionSource` helpers. It reads embedded production source with the net8.0
-and net10.0 preprocessor symbols, without requiring a checkout at test runtime.
+`TestInspectionSource` helpers. At build time the harness queries the core production
+project's declared target frameworks and the SDK's evaluated `DefineConstants` for
+each framework. It embeds that configuration alongside the source, so new frameworks
+and conditional compilation symbols enter both production guards automatically.
+The test assembly does not require a checkout at runtime. Each production guard
+builds one compilation per configuration and reuses its semantic models across files.
+Runtime dependency references support binding; designated views must resolve from
+the embedded source compilation itself, so missing views cannot pass vacuously.
 The resource check rejects friend-test source and generated `bin`/`obj` paths:
 
-- `TestInspectionOwnerSurface.txt` explicitly reviews 217 source-declared member
-  signatures: 186 owner declarations and 31 accessible nested operational members.
+- `TestInspectionOwnerSurface.txt` explicitly reviews the source-declared member
+  signatures of the four owners, their production subclasses and accessible nested
+  operational types. Signatures are grouped by declaring type with a reviewed count
+  checked for each group, so large surface additions are visible in review.
   It includes public, internal, protected, and explicit interface members, recursively
-  following accessible nested types. A new accessor or overload fails comparison
-  regardless of its name. Instance members of the four designated borrowed views
+  following accessible nested types. Semantic inheritance discovery also follows
+  indirect, aliased and cross-file subclasses, which can expose protected owner state.
+  A new accessor or overload fails comparison regardless of its name. Instance
+  members of the four designated borrowed views
   remain permitted; their static members and accessible nested types require review.
   Existing operational members remain permitted. When adding or changing an
   operational declaration, review and update its inventory entry deliberately;
-  do not accept a new test-only accessor into that inventory. Put inspection state
-  in the designated nested view instead. Keys contain the owner, member kind, name,
+  update the corresponding reviewed type count as well. Do not accept a new test-only
+  accessor into that inventory. Put inspection state in the designated nested view
+  instead. Keys contain the owner, member kind, name,
   generic arity, parameter types and passing modifiers, and result or value type.
   Explicit interface names and primary constructor parameter types are included.
   Properties and indexers include accessibility and accessor kind/accessibility
@@ -67,7 +78,9 @@ The resource check rejects friend-test source and generated `bin`/`obj` paths:
   factories. The rule uses this exact reserved name, not guesses about names that
   sound like testing or inspection.
 - Direct construction of the four designated nested views is forbidden outside
-  their own owner's `InspectForTests` method. Semantic type binding covers explicit,
+  their own owner's internal, instance, nongeneric, parameterless `InspectForTests()`
+  method returning that exact view. Same-name overloads and nested methods receive
+  no exemption. Semantic type binding covers explicit,
   fully qualified, aliased and target-typed `new` expressions. Unrelated types with
   the same simple name are permitted; the factory's own construction remains valid.
 
@@ -77,7 +90,9 @@ explicit interface methods/properties/indexers/events, production calls, a metho
 and escaped, unescaped, local-function, and cross-file `nameof` helpers. Additional
 controls cover direct view construction, removed `readonly`/`ref` modifiers,
 missing qualified owners, unsupported owner declaration kinds, writable
-properties/indexers, property accessibility, and nested helper/static-view bypasses.
+properties/indexers, property accessibility, nested helper/static-view bypasses,
+same-name factory overloads, cross-file construction, missing views and privileged
+direct/indirect derived accessors.
 Negative controls cover permitted borrowed instance members, reviewed operations,
 body and accessor style changes, parameter renames, attributes, constraints, private
 implementation changes, another type with the same simple owner name, metadata
@@ -86,8 +101,11 @@ that friend-test source is excluded; missing resources report their names.
 
 These are architecture checks, not a lifetime or ownership analysis. They cannot
 detect repurposing an existing inventoried member, reflection-based state access,
-or code hidden behind other preprocessor configurations. Implementation bodies and
-compiler-synthesized members are not part of the source-declared inventory.
+or code hidden behind configurations outside the core project's evaluated framework
+and build-configuration symbols. The Roslyn syntax checks use the pinned analyzer
+host's preview language mode; they are not a replacement for production compilation.
+Implementation bodies and compiler-synthesized members are not part of the
+source-declared inventory.
 Returned references and copies still require the boundaries in the consumer table above. Update that table
 when adding consumers or inspection members; passing a guard does not establish
 quiescence, source lifetime, or ownership.

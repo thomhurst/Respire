@@ -7,6 +7,22 @@ namespace Respire.Analyzers.Tests;
 
 public class TestInspectionResourceTests
 {
+    /// <summary>Checks the embedded build manifest contains distinct, nonempty SDK framework configurations.</summary>
+    [Test]
+    public async Task EmbeddedConfigurationsHaveDistinctFrameworksAndSdkSymbols()
+    {
+        var configurations = ReadSourceConfigurations();
+        await Assert.That(configurations).IsNotEmpty();
+        await Assert.That(configurations.Select(configuration => configuration.Framework).Distinct().Count()).IsEqualTo(configurations.Length);
+        foreach (var configuration in configurations)
+        {
+            await Assert.That(configuration.Framework).IsNotEmpty();
+            await Assert.That(configuration.Symbols).Contains("NET");
+            await Assert.That(configuration.Symbols).Contains("NETCOREAPP");
+        }
+    }
+
+    /// <summary>Checks source embedding includes production inspection partials while excluding tests and generated output.</summary>
     [Test]
     public async Task EmbeddedProductionSourcesExcludeFriendTestsAndBuildOutput()
     {
@@ -19,6 +35,7 @@ public class TestInspectionResourceTests
         await Assert.That(sources.Any(source => source.Path.EndsWith("/RespireConnection.TestInspection.cs", StringComparison.Ordinal))).IsTrue();
     }
 
+    /// <summary>Checks a missing resource produces a useful named failure instead of a null dereference.</summary>
     [Test]
     public async Task MissingResourceReportsItsName()
     {

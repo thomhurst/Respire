@@ -8,6 +8,50 @@ namespace Respire.Analyzers.Tests;
 
 public class TestInspectionInventoryTests
 {
+    /// <summary>Checks an aliased indirect subclass in another file cannot expose protected owner state unnoticed.</summary>
+    [Test]
+    public async Task DerivedTypesBindAcrossFilesAndAliases()
+    {
+        var declaration = Parse("""
+            namespace Respire;
+            public class RespireTransactionBase { private protected object WatchPool => new(); }
+            public class Parent : RespireTransactionBase { }
+            """, false);
+        var caller = Parse("""
+            using Base = Respire.Parent;
+            namespace Other;
+            internal class Outer
+            {
+                internal class Child : Base { internal object BorrowedPool => WatchPool; }
+            }
+            """, false);
+        var compilation = CreateCompilation([declaration.SyntaxTree, caller.SyntaxTree]);
+        await Assert.That(compilation.GetDiagnostics().Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error)).IsEmpty();
+        await Assert.That(FindOwnerSurface(caller, compilation.GetSemanticModel(caller.SyntaxTree)))
+            .IsEquivalentTo(["Other.Outer.Child | property BorrowedPool [internal; get] : object"]);
+    }
+
+    /// <summary>Checks differently named accessors on direct and indirect subclasses require inventory review.</summary>
+    [Test]
+    [Arguments("Respire.RespireTransactionBase")]
+    [Arguments("Parent")]
+    public async Task InventoryIncludesPrivilegedDerivedMembers(string baseType)
+    {
+        var original = """
+            namespace Respire;
+            public class RespireTransactionBase { private protected object WatchPool => new(); }
+            public class Parent : RespireTransactionBase { }
+            public class Child : BASE { MEMBER }
+            """.Replace("BASE", baseType);
+        var changed = original.Replace("MEMBER", "internal object BorrowedPool => WatchPool;");
+        var root = Parse(changed, false);
+        await Assert.That(CreateCompilation([root.SyntaxTree]).GetDiagnostics()
+            .Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error)).IsEmpty();
+        await Assert.That(FindOwnerSurface(root).Except(FindOwnerSurface(Parse(original.Replace("MEMBER", ""), false))))
+            .IsEquivalentTo(["Respire.Child | property BorrowedPool [internal; get] : object"]);
+    }
+
+    /// <summary>Checks writable, initializable and more accessible property shapes change their reviewed keys.</summary>
     [Test]
     [Arguments("internal int Slots { get; set; }")]
     [Arguments("internal int Slots { get; init; }")]
@@ -21,6 +65,7 @@ public class TestInspectionInventoryTests
             .Except(FindOwnerSurface(Parse(original, false))).Count()).IsEqualTo(1);
     }
 
+    /// <summary>Checks adding an indexer setter changes its reviewed declaration.</summary>
     [Test]
     public async Task InventoryDetectsWritableIndexer()
     {
@@ -30,6 +75,7 @@ public class TestInspectionInventoryTests
             .Except(FindOwnerSurface(Parse(original, false))).Count()).IsEqualTo(1);
     }
 
+    /// <summary>Checks nested helpers and static view members cannot create an unreviewed state-access route.</summary>
     [Test]
     [Arguments("internal class Helper { MEMBER }")]
     [Arguments("internal class Helper { internal class Nested { MEMBER } }")]
@@ -45,6 +91,7 @@ public class TestInspectionInventoryTests
         await Assert.That(FindOwnerSurface(root).Except(FindOwnerSurface(Parse(original, false))).Count()).IsEqualTo(1);
     }
 
+    /// <summary>Preserves the designated borrowed view and inaccessible implementation helpers.</summary>
     [Test]
     [Arguments("internal readonly ref struct TestInspection { MEMBER }")]
     [Arguments("private class Helper { MEMBER }")]
@@ -55,6 +102,7 @@ public class TestInspectionInventoryTests
             .IsEquivalentTo(FindOwnerSurface(Parse(source.Replace("MEMBER", ""), false)));
     }
 
+    /// <summary>Checks removing readonly or ref restrictions changes the view's reviewed declaration.</summary>
     [Test]
     [Arguments("ref struct")]
     [Arguments("readonly struct")]
@@ -67,6 +115,7 @@ public class TestInspectionInventoryTests
             .Except(FindOwnerSurface(Parse(original, false))).Count()).IsEqualTo(1);
     }
 
+    /// <summary>Rejects owner declaration kinds the class-based inventory does not support.</summary>
     [Test]
     [Arguments("struct")]
     [Arguments("record")]
@@ -78,6 +127,7 @@ public class TestInspectionInventoryTests
         await Assert.That(() => FindOwnerSurface(root)).Throws<InvalidOperationException>();
     }
 
+    /// <summary>Checks missing owners and wrong-namespace names cannot silently reduce guard coverage.</summary>
     [Test]
     public async Task OwnerDiscoveryRequiresEveryQualifiedOwner()
     {
@@ -90,6 +140,7 @@ public class TestInspectionInventoryTests
             .IsEquivalentTo(Owners);
     }
 
+    /// <summary>Checks primary constructors use the same reviewed overload keys as explicit constructors.</summary>
     [Test]
     [Arguments("")]
     [Arguments("internal")]
@@ -117,6 +168,7 @@ public class TestInspectionInventoryTests
         await Assert.That(FindOwnerSurface(root)).IsEquivalentTo(FindOwnerSurface(Parse(explicitConstructor, false)));
     }
 
+    /// <summary>Covers interface methods, properties, indexers and events callable through a cast.</summary>
     [Test]
     public async Task InventoryIncludesExplicitInterfaceMembers()
     {
@@ -137,6 +189,7 @@ public class TestInspectionInventoryTests
             "Respire.Networking.RespireConnection | event IInspection.Changed : System.Action"]);
     }
 
+    /// <summary>Preserves declaration keys across implementation and non-signature maintenance edits.</summary>
     [Test]
     public async Task InventoryIgnoresBodyStyleParameterNamesAttributesAndConstraints()
     {
@@ -160,28 +213,41 @@ public class TestInspectionInventoryTests
             .IsEquivalentTo(FindOwnerSurface(Parse(original, false)));
     }
 
+    /// <summary>Requires exact reviewed signatures and per-type counts under every production framework configuration.</summary>
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task OwnerSurfaceMatchesReviewedInventory(bool net10)
+    public async Task OwnerSurfaceMatchesReviewedInventory()
     {
-        var roots = ReadLibrarySources().Select(source => Parse(source.Text, net10)).ToArray();
-        await Assert.That(FindMissingOwners(roots)).IsEmpty();
-        var actual = roots.SelectMany(FindOwnerSurface)
-            .Order(StringComparer.Ordinal).ToArray();
         using var stream = OpenResource("TestInspectionOwnerSurface.txt");
         using var reader = new StreamReader(stream);
-        var expected = (await reader.ReadToEndAsync()).Split('\n', StringSplitOptions.RemoveEmptyEntries)
-            .Select(line => line.Trim()).Where(line => !line.StartsWith('#')).ToArray();
-        // An empty inventory is deliberately a failure, never an automatic snapshot update.
-        if (expected.Length == 0)
-            throw new InvalidOperationException("Missing reviewed inventory:\n" + string.Join('\n', actual));
-        await Assert.That(actual).IsEquivalentTo(expected).Because(
-            "Review changes using docs/TEST_INSPECTION.md. Only for approved operational changes, copy the exact unreviewed lines into TestInspectionOwnerSurface.txt and remove the exact removed lines. Never accept a new inspection bypass.\n"
-            + "Unreviewed signatures:\n" + string.Join('\n', actual.Except(expected, StringComparer.Ordinal))
-            + "\nRemoved signatures:\n" + string.Join('\n', expected.Except(actual, StringComparer.Ordinal)));
+        var lines = (await reader.ReadToEndAsync()).Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(line => line.Trim()).ToArray();
+        var expected = lines.Where(line => !line.StartsWith('#')).ToArray();
+        var counts = lines.Where(line => line.StartsWith("# Count: ", StringComparison.Ordinal))
+            .Select(line => line[9..].Split(" | ")).ToDictionary(parts => parts[0], parts => int.Parse(parts[1]), StringComparer.Ordinal);
+        foreach (var configuration in ReadSourceConfigurations())
+        {
+            var roots = ReadLibrarySources().Select(source => Parse(source.Text, configuration)).ToArray();
+            await Assert.That(FindMissingOwners(roots)).IsEmpty();
+            var compilation = CreateCompilation(roots.Select(root => root.SyntaxTree));
+            var actual = roots.SelectMany(root => FindOwnerSurface(root, compilation.GetSemanticModel(root.SyntaxTree)))
+                .Order(StringComparer.Ordinal).ToArray();
+            // An empty inventory is deliberately a failure, never an automatic snapshot update.
+            if (expected.Length == 0)
+                throw new InvalidOperationException("Missing reviewed inventory:\n" + string.Join('\n', actual));
+            await Assert.That(actual).IsEquivalentTo(expected).Because(
+                $"{configuration.Framework}: Review changes using docs/TEST_INSPECTION.md. Only for approved operational changes, copy the exact unreviewed lines into TestInspectionOwnerSurface.txt and remove the exact removed lines. Never accept a new inspection bypass.\n"
+                + "Unreviewed signatures:\n" + string.Join('\n', actual.Except(expected, StringComparer.Ordinal))
+                + "\nRemoved signatures:\n" + string.Join('\n', expected.Except(actual, StringComparer.Ordinal)));
+            await Assert.That(counts).IsNotEmpty();
+            foreach (var group in actual.GroupBy(signature => signature.Split(" | ")[0], StringComparer.Ordinal))
+            {
+                await Assert.That(counts.ContainsKey(group.Key)).IsTrue().Because("Missing reviewed count for " + group.Key);
+                await Assert.That(group.Count()).IsEqualTo(counts[group.Key]).Because("Reviewed count for " + group.Key);
+            }
+            await Assert.That(counts.Keys).IsEquivalentTo(actual.Select(signature => signature.Split(" | ")[0]).Distinct());
+        }
     }
 
+    /// <summary>Checks new access paths require review while existing operations retain stable keys.</summary>
     [Test]
     public async Task InventoryDetectsRenamedAccessorAndNewOverloadButPermitsReviewedOperations()
     {
@@ -209,6 +275,7 @@ public class TestInspectionInventoryTests
             .IsEmpty();
     }
 
+    /// <summary>Checks both framework branches participate in surface and executable-use guards.</summary>
     [Test]
     [Arguments(false)]
     [Arguments(true)]

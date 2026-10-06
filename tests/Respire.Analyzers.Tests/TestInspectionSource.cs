@@ -11,11 +11,34 @@ internal static class TestInspectionSource
     internal static readonly HashSet<string> Owners = [
         "Respire.Networking.RespireConnection", "Respire.Networking.PendingResponse",
         "Respire.ClientSideCacheCoordinator", "Respire.RespireTransactionBase"];
+    private static readonly MetadataReference[] References = ((string?)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")
+        ?? throw new InvalidOperationException("Missing runtime assembly references."))
+        // Bind the embedded library definitions, never their already-built counterparts.
+        .Split(Path.PathSeparator).Where(path => !Path.GetFileName(path).StartsWith("Respire", StringComparison.Ordinal))
+        .Select(path => MetadataReference.CreateFromFile(path)).ToArray();
 
+    internal sealed record SourceConfiguration(string Framework, string[] Symbols);
+
+    /// <summary>Reads the SDK-evaluated framework and symbol manifest embedded at build time.</summary>
+    internal static SourceConfiguration[] ReadSourceConfigurations()
+    {
+        using var stream = OpenResource("TestInspectionConfigurations.txt");
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd().Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(line =>
+        {
+            var parts = line.Trim().Split('|');
+            if (parts.Length != 2 || parts[0].Length == 0 || parts[1].Length == 0)
+                throw new InvalidOperationException("Invalid source configuration: " + line);
+            return new SourceConfiguration(parts[0], parts[1].Split(',', StringSplitOptions.RemoveEmptyEntries));
+        }).ToArray();
+    }
+
+    /// <summary>Opens a required test resource and reports its name when missing.</summary>
     internal static Stream OpenResource(string resource)
         => typeof(TestInspectionSource).Assembly.GetManifestResourceStream(resource)
             ?? throw new InvalidOperationException("Missing embedded resource: " + resource);
 
+    /// <summary>Reads production source independently of a repository checkout.</summary>
     internal static IEnumerable<(string Path, string Text)> ReadLibrarySources()
     {
         var assembly = typeof(TestInspectionSource).Assembly;
@@ -29,21 +52,22 @@ internal static class TestInspectionSource
         }
     }
 
+    /// <summary>Selects an SDK-derived framework configuration for self-contained regression controls.</summary>
     internal static SyntaxNode Parse(string source, bool net10)
-    {
-        string[] symbols = ["NET", "NETCOREAPP", "NET8_0_OR_GREATER", "NET7_0_OR_GREATER",
-            "NET6_0_OR_GREATER", "NET5_0_OR_GREATER", "NETCOREAPP3_1_OR_GREATER",
-            "NETCOREAPP3_0_OR_GREATER", "NETCOREAPP2_2_OR_GREATER", "NETCOREAPP2_1_OR_GREATER",
-            "NETCOREAPP2_0_OR_GREATER", "NETCOREAPP1_1_OR_GREATER", "NETCOREAPP1_0_OR_GREATER"];
-        symbols = symbols.Concat(net10 ? ["NET10_0", "NET10_0_OR_GREATER", "NET9_0_OR_GREATER"] : new[] { "NET8_0" }).ToArray();
-        return CSharpSyntaxTree.ParseText(source, new CSharpParseOptions(LanguageVersion.Preview,
-            preprocessorSymbols: symbols)).GetRoot();
-    }
+        => Parse(source, ReadSourceConfigurations().Single(configuration => configuration.Framework == (net10 ? "net10.0" : "net8.0")));
 
-    internal static string[] FindOwnerSurface(SyntaxNode root)
+    /// <summary>Parses source under the evaluated symbols of one production framework.</summary>
+    internal static SyntaxNode Parse(string source, SourceConfiguration configuration)
+        => CSharpSyntaxTree.ParseText(source, new CSharpParseOptions(LanguageVersion.Preview,
+            preprocessorSymbols: configuration.Symbols)).GetRoot();
+
+    /// <summary>Inventories reviewable declarations on inspection owners and their privileged subclasses.</summary>
+    internal static string[] FindOwnerSurface(SyntaxNode root, SemanticModel? semanticModel = null)
     {
+        semanticModel ??= CreateCompilation([root.SyntaxTree]).GetSemanticModel(root.SyntaxTree);
         var members = new List<string>();
-        foreach (var (declaration, name) in FindOwnerDeclarations(root))
+        var declarations = FindOwnerDeclarations(root).Concat(FindDerivedDeclarations(root, semanticModel));
+        foreach (var (declaration, name) in declarations)
         {
             if (declaration is not ClassDeclarationSyntax owner)
                 throw new InvalidOperationException($"Unsupported inspection owner kind: {name} ({declaration.Kind()})");
@@ -54,6 +78,29 @@ internal static class TestInspectionSource
         return members.ToArray();
     }
 
+    /// <summary>Discovers direct and indirect subclasses while avoiding duplicate nested-type scans.</summary>
+    private static IEnumerable<(BaseTypeDeclarationSyntax Declaration, string Name)> FindDerivedDeclarations(SyntaxNode root, SemanticModel semanticModel)
+    {
+        foreach (var declaration in root.DescendantNodes().OfType<ClassDeclarationSyntax>())
+        {
+            if (semanticModel.GetDeclaredSymbol(declaration) is not { } symbol || !HasOwnerBase(symbol)) continue;
+            // Nested members of an inventoried type are already visited recursively.
+            if (declaration.Ancestors().OfType<TypeDeclarationSyntax>().Any(parent =>
+                semanticModel.GetDeclaredSymbol(parent) is { } containing
+                && (Owners.Contains(containing.ToDisplayString()) || HasOwnerBase(containing)))) continue;
+            yield return (declaration, symbol.ToDisplayString());
+        }
+    }
+
+    /// <summary>Determines whether a type inherits privileged access to a designated owner's state.</summary>
+    private static bool HasOwnerBase(INamedTypeSymbol symbol)
+    {
+        for (var parent = symbol.BaseType; parent is not null; parent = parent.BaseType)
+            if (Owners.Contains(parent.ToDisplayString())) return true;
+        return false;
+    }
+
+    /// <summary>Recursively inventories callable members while permitting borrowed instance view state.</summary>
     private static IEnumerable<string> FindAccessibleMembers(TypeDeclarationSyntax owner, string name, bool inspectionView = false)
     {
         foreach (var member in owner.Members)
@@ -77,6 +124,7 @@ internal static class TestInspectionSource
         }
     }
 
+    /// <summary>Finds the exact qualified owners without accepting similarly named unrelated types.</summary>
     internal static IEnumerable<(BaseTypeDeclarationSyntax Declaration, string Name)> FindOwnerDeclarations(SyntaxNode root)
     {
         foreach (var declaration in root.DescendantNodes().OfType<BaseTypeDeclarationSyntax>())
@@ -89,16 +137,33 @@ internal static class TestInspectionSource
         }
     }
 
+    /// <summary>Reports required owners absent from the parsed source set.</summary>
     internal static string[] FindMissingOwners(IEnumerable<SyntaxNode> roots)
         => Owners.Except(roots.SelectMany(FindOwnerDeclarations).Select(owner => owner.Name), StringComparer.Ordinal).ToArray();
 
+    /// <summary>Binds source against runtime dependencies, excluding built copies of the inspected libraries.</summary>
     internal static CSharpCompilation CreateCompilation(IEnumerable<SyntaxTree> trees)
         => CSharpCompilation.Create("InspectionGuard", trees,
-            [MetadataReference.CreateFromFile(typeof(object).Assembly.Location)],
+            References,
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
 
+    /// <summary>Rejects missing views and views resolved from an assembly other than the source compilation.</summary>
+    internal static void RequireResolvedViews(CSharpCompilation compilation, IEnumerable<string>? owners = null)
+    {
+        foreach (var owner in owners ?? Owners)
+        {
+            if (compilation.GetTypeByMetadataName(owner + "+TestInspection") is not
+                { TypeKind: TypeKind.Struct, IsRefLikeType: true } view
+                || !SymbolEqualityComparer.Default.Equals(view.ContainingAssembly, compilation.Assembly))
+                throw new InvalidOperationException("Unresolved designated inspection view: " + owner + ".TestInspection");
+        }
+    }
+
+    /// <summary>Reports executable factory references and forbidden construction while permitting bound metadata uses.</summary>
     internal static string[] FindFactoryUses(SyntaxNode root, SemanticModel? semanticModel = null)
     {
+        // Single-tree compilation is for self-contained controls. Production passes a
+        // model from the whole source set after RequireResolvedViews has succeeded.
         semanticModel ??= CreateCompilation([root.SyntaxTree]).GetSemanticModel(root.SyntaxTree);
         var factoryUses = root.DescendantNodes().OfType<SimpleNameSyntax>()
             .Where(name => name.Identifier.ValueText == FactoryName && !name.Ancestors()
@@ -111,15 +176,19 @@ internal static class TestInspectionSource
         return factoryUses.Concat(constructions).ToArray();
     }
 
+    /// <summary>Allows construction only inside the exact designated factory of the matching owner.</summary>
     private static bool IsForbiddenViewConstruction(BaseObjectCreationExpressionSyntax creation, SemanticModel semanticModel)
     {
         if (semanticModel.GetTypeInfo(creation).Type is not INamedTypeSymbol
-            { Name: "TestInspection", ContainingType: { } owner } || !Owners.Contains(owner.ToDisplayString())) return false;
+            { Name: "TestInspection", ContainingType: { } owner } view || !Owners.Contains(owner.ToDisplayString())) return false;
         var method = creation.Ancestors().OfType<MethodDeclarationSyntax>().FirstOrDefault();
-        return method is null || semanticModel.GetDeclaredSymbol(method) is not { Name: FactoryName } factory
+        return method is null || semanticModel.GetDeclaredSymbol(method) is not
+            { Name: FactoryName, IsStatic: false, Arity: 0, Parameters.Length: 0, DeclaredAccessibility: Microsoft.CodeAnalysis.Accessibility.Internal } factory
+            || !SymbolEqualityComparer.Default.Equals(factory.ReturnType, view)
             || !SymbolEqualityComparer.Default.Equals(factory.ContainingType, owner);
     }
 
+    /// <summary>Finds interface implementations callable despite lacking accessibility modifiers.</summary>
     private static ExplicitInterfaceSpecifierSyntax? ExplicitInterface(MemberDeclarationSyntax member)
         => member switch
         {
@@ -130,6 +199,7 @@ internal static class TestInspectionSource
             _ => null
         };
 
+    /// <summary>Produces stable declaration keys without incorporating implementation bodies or parameter names.</summary>
     private static IEnumerable<string> MemberKeys(MemberDeclarationSyntax member)
     {
         var prefix = ExplicitInterface(member) is { } specifier ? TypeText(specifier.Name) + "." : "";
@@ -179,9 +249,11 @@ internal static class TestInspectionSource
         }
     }
 
+    /// <summary>Records generic overload shape without including constraints.</summary>
     private static string Arity(TypeParameterListSyntax? parameters)
         => parameters is null ? "" : "`" + parameters.Parameters.Count;
 
+    /// <summary>Preserves getter, setter, initializer and accessibility changes while ignoring accessor bodies.</summary>
     private static string AccessorShape(BasePropertyDeclarationSyntax property)
     {
         var accessibility = ExplicitInterface(property) is not null ? "explicit" : Accessibility(property.Modifiers);
@@ -194,6 +266,7 @@ internal static class TestInspectionSource
         return $"[{accessibility}; {accessors}]";
     }
 
+    /// <summary>Normalizes combined accessibility modifiers for reviewed property signatures.</summary>
     private static string Accessibility(SyntaxTokenList modifiers)
     {
         if (modifiers.Any(SyntaxKind.PublicKeyword)) return "public";
@@ -204,10 +277,12 @@ internal static class TestInspectionSource
         return modifiers.Any(SyntaxKind.InternalKeyword) ? "internal" : "";
     }
 
+    /// <summary>Records parameter types and passing modifiers while excluding parameter names and defaults.</summary>
     private static string Parameters(BaseParameterListSyntax? list)
         => list is null ? "" : string.Join(", ", list.Parameters.Select(parameter =>
             string.Concat(parameter.Modifiers.Select(modifier => modifier.ValueText + " ")) + TypeText(parameter.Type!)));
 
+    /// <summary>Normalizes type syntax without whitespace or comments affecting inventory keys.</summary>
     private static string TypeText(SyntaxNode type)
         => type.ReplaceTrivia(type.DescendantTrivia(), (_, _) => default).NormalizeWhitespace().ToFullString();
 }

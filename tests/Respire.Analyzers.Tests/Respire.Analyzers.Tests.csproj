@@ -29,4 +29,26 @@
                           LogicalName="LibrarySource/%(RecursiveDir)%(Filename)%(Extension)" />
     </ItemGroup>
 
+    <Target Name="EmbedInspectionConfigurations" BeforeTargets="AssignTargetPaths">
+        <PropertyGroup>
+            <_InspectionImport>$(MSBuildThisFileDirectory)TestInspectionConfiguration.targets</_InspectionImport>
+            <_InspectionResource>$(IntermediateOutputPath)TestInspectionConfigurations.txt</_InspectionResource>
+        </PropertyGroup>
+        <MSBuild Projects="../../src/Respire/Respire.csproj" Targets="GetInspectionFrameworks"
+                 RemoveProperties="TargetFramework;TargetFrameworks"
+                 Properties="CustomAfterMicrosoftCommonCrossTargetingTargets=$(_InspectionImport);CustomAfterMicrosoftCommonTargets=$(_InspectionImport)">
+            <Output TaskParameter="TargetOutputs" ItemName="_InspectionFramework" />
+        </MSBuild>
+        <MSBuild Projects="../../src/Respire/Respire.csproj" Targets="GetInspectionConfiguration"
+                 RemoveProperties="TargetFrameworks"
+                 Properties="TargetFramework=%(_InspectionFramework.Identity);CustomAfterMicrosoftCommonTargets=$(_InspectionImport)">
+            <Output TaskParameter="TargetOutputs" ItemName="_InspectionConfiguration" />
+        </MSBuild>
+        <WriteLinesToFile File="$(_InspectionResource)" Lines="@(_InspectionConfiguration)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+        <ItemGroup>
+            <EmbeddedResource Include="$(_InspectionResource)" LogicalName="TestInspectionConfigurations.txt" />
+            <FileWrites Include="$(_InspectionResource)" />
+        </ItemGroup>
+    </Target>
+
 </Project>
