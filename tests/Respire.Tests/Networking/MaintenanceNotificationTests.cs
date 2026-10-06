@@ -827,7 +827,7 @@ public class MaintenanceNotificationTests
     public async Task MovingDrainsAcceptedReplyAndReroutesProducerParkedOnFullRing()
     {
         await using var source = Server(maxConnections: 2);
-        source.DelayReply(2, 250);
+        source.SuppressReply = command => command == "PING";
         await using var target = Server(maxConnections: 2);
         var connectionOptions = Options(source).ToConnectionOptions(enableMaintenanceNotifications: true) with
         {
@@ -849,6 +849,9 @@ public class MaintenanceNotificationTests
                 await Task.Delay(5, timeout.Token);
         }
 
+        // Hold ring capacity until the replacement is published; elapsed delays can admit
+        // the waiter on the original socket before MOVING is processed under contention.
+        await source.SendRawAsync(FakeRespServer.PongReply);
         using var acceptedReply = await accepted.WaitAsync(TimeSpan.FromSeconds(5));
         using var reroutedReply = await waitingForCapacity.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(acceptedReply.AsString()).IsEqualTo("PONG");
@@ -1736,8 +1739,9 @@ public class MaintenanceNotificationTests
         await Task.Delay(1_200);
         await server.SendRawAsync(Finish("MIGRATED", 11).Concat("+first\r\n"u8.ToArray()).ToArray());
 
-        await Assert.That(async () => { using var _ = await waiting.WaitAsync(TimeSpan.FromSeconds(5)); })
+        var error = await Assert.That(async () => { using var _ = await waiting.WaitAsync(TimeSpan.FromSeconds(5)); })
             .Throws<RespireTimeoutException>();
+        await Assert.That(error!.IsCommandNotSubmitted).IsTrue();
         using var firstReply = await first.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(firstReply.AsString()).IsEqualTo("first");
         await Assert.That(server.CommandsSeen).IsEqualTo(3);
@@ -1983,8 +1987,10 @@ public class MaintenanceNotificationTests
         await Task.Delay(1_200);
         await Assert.That(waiting.IsCompleted).IsFalse();
         await server.SendRawAsync(Finish("MIGRATED", 1));
-        await Assert.That(async () => { using var _ = await waiting.WaitAsync(TimeSpan.FromSeconds(3)); }).Throws<RespireTimeoutException>();
-        await Assert.That(async () => { using var _ = await accepted.WaitAsync(TimeSpan.FromSeconds(3)); }).Throws<RespireTimeoutException>();
+        var waitingError = await Assert.That(async () => { using var _ = await waiting.WaitAsync(TimeSpan.FromSeconds(3)); }).Throws<RespireTimeoutException>();
+        var acceptedError = await Assert.That(async () => { using var _ = await accepted.WaitAsync(TimeSpan.FromSeconds(3)); }).Throws<RespireTimeoutException>();
+        await Assert.That(waitingError!.IsCommandNotSubmitted).IsTrue();
+        await Assert.That(acceptedError!.IsCommandNotSubmitted).IsFalse();
         await Assert.That(server.ReceivedCommands.Count(command => command == "PING")).IsEqualTo(1);
     }
 

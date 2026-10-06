@@ -288,8 +288,7 @@ internal sealed partial class RespireConnection
             var now = Environment.TickCount64;
             var remaining = RemainingUntilCommandDeadline(deadline.Ticks, now, out var timeout, out var window, deadline.IsRelaxed);
             if (remaining <= 0)
-                throw new RespireTimeoutException(commandName ?? "(command)", timeout, null,
-                    CaptureTimeoutDiagnostics(stage: RespireCommandStage.WaitingForCapacity));
+                throw CreateCapacityTimeout(commandName, timeout);
             // Window expiration may restore a shorter deadline while this producer is parked.
             if (window > 0) remaining = Math.Min(remaining, window);
             try
@@ -298,8 +297,7 @@ internal sealed partial class RespireConnection
                 var resumedAt = Environment.TickCount64;
                 var resumedRemaining = RemainingUntilCommandDeadline(deadline.Ticks, resumedAt, out var resumedTimeout, out _, deadline.IsRelaxed);
                 if (resumedRemaining <= 0)
-                    throw new RespireTimeoutException(commandName ?? "(command)", resumedTimeout, null,
-                        CaptureTimeoutDiagnostics(stage: RespireCommandStage.WaitingForCapacity));
+                    throw CreateCapacityTimeout(commandName, resumedTimeout);
                 return;
             }
             catch (TimeoutException) { /* Recheck maintenance state before declaring expiry. */ }

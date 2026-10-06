@@ -2057,8 +2057,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         var remaining = deadline.Ticks - Environment.TickCount64;
         if (remaining <= 0)
         {
-            throw new RespireTimeoutException(commandName ?? "(command)", _commandTimeout!.Value, null,
-                CaptureTimeoutDiagnostics(stage: RespireCommandStage.WaitingForCapacity));
+            throw CreateCapacityTimeout(commandName, _commandTimeout!.Value);
         }
 
         try
@@ -2069,10 +2068,15 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
         catch (TimeoutException)
         {
-            throw new RespireTimeoutException(commandName ?? "(command)", _commandTimeout!.Value, null,
-                CaptureTimeoutDiagnostics(stage: RespireCommandStage.WaitingForCapacity));
+            throw CreateCapacityTimeout(commandName, _commandTimeout!.Value);
         }
     }
+
+    // Capacity waits end before ring admission, so cleanup can retain connection-local state.
+    private RespireTimeoutException CreateCapacityTimeout(string? commandName, TimeSpan timeout)
+        => new(commandName ?? "(command)", timeout, null,
+            CaptureTimeoutDiagnostics(stage: RespireCommandStage.WaitingForCapacity))
+        { IsCommandNotSubmitted = true };
 
     /// <summary>Returns a rented source that was never enqueued or exposed to a caller.</summary>
     private static void ReclaimUnpublished(PendingResponse source)
