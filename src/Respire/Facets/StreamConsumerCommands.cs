@@ -47,7 +47,7 @@ internal sealed partial class StreamCommands
         ArgumentNullException.ThrowIfNull(group);
         var count = options.Count ?? StreamPendingOptions.DefaultCount;
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(count, nameof(options.Count));
-        long? idle = options.MinIdle is { } duration ? ToMilliseconds(duration, nameof(options.MinIdle)) : null;
+        var idle = options.GetMinIdleMilliseconds();
         var args = new RespireValue[5 + (idle.HasValue ? 2 : 0) + (options.Consumer is null ? 0 : 1)];
         var index = 0;
         args[index++] = client.Key(in key);

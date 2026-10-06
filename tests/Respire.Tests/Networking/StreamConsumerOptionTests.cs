@@ -15,6 +15,21 @@ public class StreamConsumerOptionTests
     [Arguments(10000L, 1L)]
     [Arguments(10001L, 2L)]
     [Arguments(long.MaxValue, 922337203685478L)]
+    public async Task PendingIdleRoundsUpWithoutOverflow(long ticks, long milliseconds)
+    {
+        await using var server = new FakeRespServer("*0\r\n"u8.ToArray());
+        await using var client = Create(server.Port);
+        await client.Streams.PendingAsync(new StreamPendingOptions { MinIdle = TimeSpan.FromTicks(ticks) }, "events", "g");
+        await Assert.That(server.ReceivedCommands).Contains($"XPENDING events g IDLE {milliseconds} - + 10");
+    }
+
+    [Test]
+    [Arguments(0L, 0L)]
+    [Arguments(1L, 1L)]
+    [Arguments(9999L, 1L)]
+    [Arguments(10000L, 1L)]
+    [Arguments(10001L, 2L)]
+    [Arguments(long.MaxValue, 922337203685478L)]
     public async Task ClaimIdleRoundsUpWithoutOverflow(long ticks, long milliseconds)
     {
         await using var server = new FakeRespServer("*0\r\n"u8.ToArray());

@@ -14,7 +14,17 @@ public readonly record struct StreamPendingOptions
     /// <summary>Restrict results to this consumer; null includes all consumers.</summary>
     public string? Consumer { get; init; }
     /// <summary>Minimum idle duration. Requires Redis 6.2 and must be nonnegative.</summary>
+    /// <remarks>Fractional milliseconds round up so the filter never includes entries idle for less than requested.</remarks>
     public TimeSpan? MinIdle { get; init; }
+
+    internal long? GetMinIdleMilliseconds()
+    {
+        if (MinIdle is not { } idle) return null;
+        if (idle < TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(MinIdle), "Minimum idle time must be non-negative.");
+        return idle.Ticks / TimeSpan.TicksPerMillisecond
+            + (idle.Ticks % TimeSpan.TicksPerMillisecond == 0 ? 0 : 1);
+    }
 }
 
 /// <summary>Optional pending-entry changes applied by XCLAIM.</summary>
