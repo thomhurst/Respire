@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using Respire.Protocol;
 
 namespace Respire.Internal;
@@ -16,6 +17,7 @@ internal static class ScriptingEngineInfo
         if (!command.TryGetArgument(0, out var source)) return null;
         if (operation == "FUNCTION LOAD" && source.EqualsAsciiIgnoreCase("REPLACE")
             && !command.TryGetArgument(1, out source)) return null;
+        if (source.TryGetByteMemory(out var bytes)) return ExpectedByteEngine(bytes.Span, operation);
         var text = source.ToString();
         if (!text.StartsWith("#!", StringComparison.Ordinal))
             return operation is "EVAL" or "EVAL_RO" or "SCRIPT LOAD" ? "lua" : null;
@@ -29,7 +31,28 @@ internal static class ScriptingEngineInfo
             if (text[end] is '\'' or '"' or '\\' or '\0') return null;
             end++;
         }
-        return end > 2 ? text[2..end] : null;
+        if (end <= 2) return null;
+        return text.AsSpan(2, end - 2).Equals("lua", StringComparison.OrdinalIgnoreCase) ? "lua" : text[2..end];
+    }
+
+    private static string? ExpectedByteEngine(ReadOnlySpan<byte> source, string operation)
+    {
+        if (!source.StartsWith("#!"u8))
+            return operation is "EVAL" or "EVAL_RO" or "SCRIPT LOAD" ? "lua" : null;
+        var newline = source.IndexOf((byte)'\n');
+        if (newline < 0) return null;
+        var end = 2;
+        while (end < newline && source[end] is not ((byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\v' or (byte)'\f'))
+        {
+            if (source[end] is (byte)'\'' or (byte)'"' or (byte)'\\' or 0) return null;
+            end++;
+        }
+        var engine = source[2..end];
+        if (engine.IsEmpty) return null;
+        // Inspect bytes in place; never decode the script body just to identify its engine.
+        if (engine.Length == 3 && (engine[0] | 0x20) == 'l'
+            && (engine[1] | 0x20) == 'u' && (engine[2] | 0x20) == 'a') return "lua";
+        return Encoding.UTF8.GetString(engine);
     }
 
     internal static string? MissingEngine(RespireServerException error, string? expectedEngine)

@@ -1,4 +1,6 @@
 using System.Text;
+using System.Runtime.CompilerServices;
+using Respire.Commands;
 using Respire.Internal;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -8,6 +10,49 @@ namespace Respire.Tests.Networking;
 
 public class ScriptingEngineTests
 {
+    private static object? _allocationControl;
+
+    [Test]
+    [NotInParallel]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task LargeByteLuaSourceDoesNotAllocateForEngineInspection(bool header)
+    {
+        var source = new byte[1024 * 1024];
+        (header ? "#!lua\nreturn 42"u8 : "return 42"u8).CopyTo(source);
+        var command = new Cmd1(Verbs.Eval, source);
+        await Assert.That(ScriptingEngineInfo.ExpectedEngine(in command, "EVAL")).IsEqualTo("lua");
+        MeasureEngineInspection(command, false);
+        MeasureEngineInspection(command, true);
+        var (normal, control) = AllocationMeasurement.WithoutConcurrentGc(() =>
+            (MeasureEngineInspection(command, false), MeasureEngineInspection(command, true)));
+        await Assert.That(normal).IsEqualTo(0);
+        await Assert.That(control).IsGreaterThanOrEqualTo(32 * 37);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long MeasureEngineInspection(Cmd1 command, bool allocate)
+    {
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        for (var i = 0; i < 32; i++)
+        {
+            GC.KeepAlive(ScriptingEngineInfo.ExpectedEngine(in command, "EVAL"));
+            if (allocate) _allocationControl = new byte[37];
+        }
+        return GC.GetAllocatedBytesForCurrentThread() - before;
+    }
+
+    [Test]
+    [Arguments("#!python\nreturn 42", "python")]
+    [Arguments("#!LUA name=library\nreturn 42", "lua")]
+    [Arguments("#!'python'\nreturn 42", null)]
+    [Arguments("#!python", null)]
+    public async Task ByteEngineHeadersMatchTextInspection(string source, string? expected)
+    {
+        var command = new Cmd1(Verbs.Eval, Encoding.UTF8.GetBytes(source));
+        await Assert.That(ScriptingEngineInfo.ExpectedEngine(in command, "EVAL")).IsEqualTo(expected);
+    }
+
     private const string Missing = "ERR Could not find scripting engine 'lua'";
     private const string Absent = "# Scripting Engines\r\nengines_count:0\r\nengines_total_used_memory:0\r\n";
     private const string Present = "# Scripting Engines\r\nengines_count:1\r\nengine_0:name=LUA,module=lua,abi_version=4\r\n";
