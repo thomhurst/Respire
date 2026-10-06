@@ -10,6 +10,8 @@
   <Folder Name="/Samples/">
     <Project Path="samples/Respire.Samples.Azure/Respire.Samples.Azure.csproj" />
     <Project Path="samples/Respire.Samples.Basic/Respire.Samples.Basic.csproj" />
+    <Project Path="samples/Respire.Samples.Cluster/Respire.Samples.Cluster.csproj" />
+    <Project Path="samples/Respire.Samples.Sentinel/Respire.Samples.Sentinel.csproj" />
     <Project Path="samples/Respire.Samples.Testing/Respire.Samples.Testing.csproj" />
   </Folder>
   <Folder Name="/src/">

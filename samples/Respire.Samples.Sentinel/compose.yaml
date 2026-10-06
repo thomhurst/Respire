@@ -1,0 +1,18 @@
+services:
+  sentinel:
+    build: .
+    init: true
+    tmpfs:
+      - /data
+    ports:
+      - "127.0.0.1:7100:7100"
+      - "127.0.0.1:7101:7101"
+      - "127.0.0.1:27100:27100"
+      - "127.0.0.1:27101:27101"
+      - "127.0.0.1:27102:27102"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -p 27100 SENTINEL CKQUORUM sample-primary | grep -q '^OK'"]
+      interval: 1s
+      timeout: 3s
+      retries: 45
+    stop_grace_period: 5s
