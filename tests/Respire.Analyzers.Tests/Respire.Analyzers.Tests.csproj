@@ -27,6 +27,7 @@
         <!-- Test the exact library source without depending on a checkout at test runtime. -->
         <EmbeddedResource Include="../../src/**/*.cs" Exclude="../../src/**/bin/**;../../src/**/obj/**"
                           LogicalName="LibrarySource/%(RecursiveDir)%(Filename)%(Extension)" />
+        <EmbeddedResource Include="../../docs/STACKALLOC_AUDIT.md" LogicalName="StackAllocationAudit" />
     </ItemGroup>
 
     <Target Name="EmbedInspectionConfigurations" BeforeTargets="AssignTargetPaths">

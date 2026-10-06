@@ -11,6 +11,28 @@ reports a written length may expose only that prefix; exception paths must not c
 unfinished output. Audit new stack allocations and generated code before extending
 this policy. A passing test alone does not prove that an uninitialized read is safe.
 
+## Active source inventory
+
+The architecture test compares this inventory with explicit and implicit
+`stackalloc` expressions in package source under both supported target-framework
+branches. Adding a site or source file requires updating this inventory and the
+initialization reasoning below. Removing a site also requires reconciling the
+audit. Counts detect inventory drift, not reads before writes or replacements
+that retain the same count; those still require source review. Generated compiler
+output is not scanned by this source guard.
+
+| Source | Active sites |
+| --- | ---: |
+| `src/Respire/Compression/RespireValueCodec.cs` | 2 |
+| `src/Respire/Facets/BitmapCommands.cs` | 2 |
+| `src/Respire/Facets/ScriptCommands.cs` | 3 |
+| `src/Respire/Internal/ClusterHash.cs` | 2 |
+| `src/Respire/Protocol/RespWriter.cs` | 1 |
+| `src/Respire/Serialization/PrimitiveCodec.cs` | 1 |
+| `src/Respire/RespireValue.cs` | 15 |
+| `src/Respire/RespireKey.cs` | 1 |
+| `src/Respire.Json/RespireJsonClient.cs` | 1 |
+
 ## Core sites
 
 The core audit covers all 28 stack allocation expressions at base commit `f69d7ce9`.
