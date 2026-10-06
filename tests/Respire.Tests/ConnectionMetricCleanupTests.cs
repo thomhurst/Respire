@@ -42,6 +42,8 @@ public class ConnectionMetricCleanupTests
                 connection.RecordConnectionWait(System.Diagnostics.Stopwatch.GetTimestamp());
             pendingWhileBlocked = ConnectionTelemetry.PendingMeasurements;
             drops.RecordObservableInstruments();
+            // Queued measurements retain event-time selection when groups change.
+            RespireMetrics.Configure(new() { Groups = RespireMetricGroups.None });
         }
         finally { listener.Release(); }
 
@@ -51,10 +53,88 @@ public class ConnectionMetricCleanupTests
         await Assert.That(ConnectionTelemetry.DroppedMeasurements - droppedBefore).IsEqualTo(193L);
         await Assert.That(exportedWhileBlocked - droppedBefore).IsEqualTo(193L);
 
+        RespireMetrics.Configure(new() { Groups = RespireMetricGroups.All });
         connection.RecordConnectionWait(System.Diagnostics.Stopwatch.GetTimestamp());
         await WaitForDeliveries();
         await Assert.That(listener.Deliveries).IsEqualTo(65);
         await Assert.That(ConnectionTelemetry.DroppedMeasurements - droppedBefore).IsEqualTo(193L);
+    }
+
+    [Test]
+    public async Task BlockedPoolListenersDoNotSerializeOtherPoolDelivery()
+    {
+        using var configuration = new MetricConfigurationScope();
+        await using var server = new FakeRespServer(1, FakeRespServer.PongReply);
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+            new() { Protocol = RespProtocol.Resp2 });
+        var blocked = new ConnectionTelemetry.State(connection, new("blocked", false), true);
+        var available = new ConnectionTelemetry.State(connection, new("available", false), true);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var delivered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var blockedCount = 0;
+        var droppedBefore = ConnectionTelemetry.DroppedMeasurements;
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, current) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.connection.wait_time")
+                current.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<double>((_, _, tags, _) =>
+        {
+            foreach (var tag in tags)
+            {
+                if (tag.Key != "db.client.connection.pool.name") continue;
+                if (Equals(tag.Value, "available")) { delivered.TrySetResult(); return; }
+                if (!Equals(tag.Value, "blocked")) continue;
+                if (Interlocked.Increment(ref blockedCount) == 4) entered.TrySetResult();
+                release.Task.GetAwaiter().GetResult();
+            }
+        });
+        listener.Start();
+        try
+        {
+            for (var i = 0; i < 4; i++) blocked.Waited(System.Diagnostics.Stopwatch.GetTimestamp());
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            available.Waited(System.Diagnostics.Stopwatch.GetTimestamp());
+            await delivered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(ConnectionTelemetry.DroppedMeasurements).IsEqualTo(droppedBefore);
+        }
+        finally
+        {
+            release.TrySetResult();
+            await WaitForDeliveries();
+        }
+    }
+
+    [Test]
+    public async Task ThrowingLifecycleListenersReleaseDeliveryCapacity()
+    {
+        using var configuration = new MetricConfigurationScope();
+        await using var server = new FakeRespServer(1, FakeRespServer.PongReply);
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+            new() { Protocol = RespProtocol.Resp2 });
+        var delivered = 0;
+        var droppedBefore = ConnectionTelemetry.DroppedMeasurements;
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, current) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.connection.wait_time")
+                current.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<double>((_, _, _, _) =>
+        {
+            Interlocked.Increment(ref delivered);
+            throw new InvalidOperationException("Listener failure.");
+        });
+        listener.Start();
+        for (var burst = 0; burst < 2; burst++)
+        {
+            for (var i = 0; i < 64; i++) connection.RecordConnectionWait(System.Diagnostics.Stopwatch.GetTimestamp());
+            await WaitForDeliveries();
+        }
+        await Assert.That(delivered).IsEqualTo(128);
+        await Assert.That(ConnectionTelemetry.DroppedMeasurements).IsEqualTo(droppedBefore);
     }
 
     private static async Task WaitForDeliveries()

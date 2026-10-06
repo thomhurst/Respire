@@ -1154,9 +1154,11 @@ public class ConnectionMetricTests
     }
 
     [Test]
-    public async Task DisabledLifecycleMeasurementsAllocateNothingOnExistingConnections()
+    [Arguments(RespireMetricGroups.None)]
+    [Arguments(RespireMetricGroups.All)]
+    public async Task DisabledLifecycleMeasurementsAllocateNothingOnExistingConnections(RespireMetricGroups groups)
     {
-        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.None });
+        using var configuration = new MetricConfigurationScope(new() { Groups = groups });
         await using var server = new FakeRespServer(1, FakeRespServer.PongReply);
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
             new() { Protocol = RespProtocol.Resp2 });
