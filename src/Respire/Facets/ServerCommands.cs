@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using Respire.Commands;
 using Respire.Internal;
@@ -23,6 +24,8 @@ public readonly record struct RespireSlowLogEntry(
     long Id,
     DateTimeOffset Timestamp,
     TimeSpan Duration,
+    [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO retains its existing array storage without copying on access.")]
     string[] Command,
     string? ClientAddress,
     string? ClientName);
@@ -88,11 +91,15 @@ public sealed record RespireServerRole(
     RespireServerRoleKind Kind,
     string RawRole,
     long? ReplicationOffset,
+    [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO retains its existing array storage without copying on access.")]
     RespireReplicaInfo[] Replicas,
     string? MasterHost,
     int? MasterPort,
     string? ReplicationState,
     long? DataReceived,
+    [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO retains its existing array storage without copying on access.")]
     string[] MonitoredMasters);
 
 /// <summary>Server administration and introspection commands.</summary>

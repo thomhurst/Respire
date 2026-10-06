@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Net.Sockets;
 using Microsoft.Extensions.Logging;
 using System.Runtime.CompilerServices;
@@ -9,7 +10,10 @@ using Respire.Protocol;
 namespace Respire;
 
 /// <summary>Owned entries returned for one stream by XREAD. Key has the client's prefix removed.</summary>
-public readonly record struct RespireStreamReadResult(RespireKey Key, RespireStreamEntry[] Entries);
+public readonly record struct RespireStreamReadResult(RespireKey Key,
+    [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO retains its existing array storage without copying on access.")]
+    RespireStreamEntry[] Entries);
 
 /// <summary>One owned entry and its stream key, returned by a multi-stream enumeration.</summary>
 public readonly record struct RespireStreamReadEntry(RespireKey Key, RespireStreamEntry Entry);

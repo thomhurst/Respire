@@ -158,7 +158,10 @@ public sealed class RespireClusterScanCursor
 /// <summary>A caller-owned page of keys and its next immutable Cluster scan checkpoint.</summary>
 /// <remarks>An empty page does not imply completion. Inspect Cursor.IsComplete. COUNT is a server
 /// work hint, not a page-size limit. Keys uses the same string and key-prefix semantics as ScanAsync.</remarks>
-public sealed record RespireClusterScanPage(RespireClusterScanCursor Cursor, string[] Keys)
+public sealed record RespireClusterScanPage(RespireClusterScanCursor Cursor,
+    [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO retains its existing array storage without copying on access.")]
+    string[] Keys)
 {
     /// <summary>Whether every remaining slot is migrating or importing, so no scan pass can complete.</summary>
     /// <remarks>The page contains no keys. Delay before requesting the next page; cancellation or

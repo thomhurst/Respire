@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Protocol;
@@ -8,7 +9,10 @@ namespace Respire;
 /// <remarks>Record equality compares the Fields array by reference, not by its contents.
 /// Page APIs omit COUNT by default and use the server's default; ScanFieldsAsync uses a count hint of 250.
 /// COUNT is a hint, not a guaranteed page size.</remarks>
-public readonly record struct RespireHashScanPage(ulong Cursor, string[] Fields)
+public readonly record struct RespireHashScanPage(ulong Cursor,
+    [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO retains its existing array storage without copying on access.")]
+    string[] Fields)
 {
     /// <summary>Whether this page completes the scan.</summary>
     public bool IsComplete => Cursor == 0;

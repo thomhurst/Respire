@@ -48,6 +48,8 @@
   <PropertyGroup Condition="'$(IsRespirePackageProject)' == 'true' Or '$(MSBuildProjectName)' == 'Respire.Analyzers'">
     <!-- Includes the netstandard analyzer assembly, where SDK analyzers are not enabled by default. -->
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevelPerformance>latest-all</AnalysisLevelPerformance>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
 
   <!-- Runs once, in the core project, so a typo in the package list cannot silently make a project unpackable. -->
@@ -92,7 +94,6 @@
     <PackageLanguage>en-US</PackageLanguage>
     <NeutralLanguage>en-US</NeutralLanguage>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>

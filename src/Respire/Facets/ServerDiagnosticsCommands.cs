@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Protocol;
@@ -15,7 +16,10 @@ public readonly record struct RespireLatencyHistogramBucket(long UpperBoundMicro
 /// produce repeated results. Buckets are caller-owned and mutable; record equality compares array references.
 /// Unknown fields contain recursively copied GC-owned results; disposal is optional.</remarks>
 public sealed record RespireLatencyHistogram(
-    string Command, long Calls, RespireLatencyHistogramBucket[] Buckets,
+    string Command, long Calls,
+    [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO retains its existing array storage without copying on access.")]
+    RespireLatencyHistogramBucket[] Buckets,
     IReadOnlyDictionary<string, RespireResult> AdditionalFields);
 
 public partial interface IServerCommands

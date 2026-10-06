@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Respire.Commands;
 using Respire.Internal;
 
@@ -63,21 +64,35 @@ public sealed record RespireHotKeysOptions
 /// <summary>An inclusive slot range returned by HOTKEYS GET.</summary>
 public readonly record struct RespireHotKeysSlotRange(int Start, int End);
 /// <summary>A binary key and its estimated CPU execution microseconds.</summary>
-public sealed record RespireHotKeyCpuEntry(byte[] Key, long Microseconds);
+public sealed record RespireHotKeyCpuEntry(
+    [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO retains its existing array storage without copying on access.")]
+    byte[] Key, long Microseconds);
 /// <summary>A binary key and its estimated request/response bytes.</summary>
-public sealed record RespireHotKeyNetworkEntry(byte[] Key, long Bytes);
+public sealed record RespireHotKeyNetworkEntry(
+    [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO retains its existing array storage without copying on access.")]
+    byte[] Key, long Bytes);
 
 /// <summary>One owned HOTKEYS snapshot. Null optional measurements mean the server omitted them.</summary>
 /// <remarks>Arrays belong to the caller and are mutable; record equality does not compare array contents.
 /// AdditionalFields have GC-owned storage and need no disposal. No key prefix is removed from reported keys.</remarks>
 public sealed record RespireHotKeysSnapshot(
-    bool TrackingActive, long SampleRatio, RespireHotKeysSlotRange[] SelectedSlots,
+    bool TrackingActive, long SampleRatio,
+    [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO retains its existing array storage without copying on access.")]
+    RespireHotKeysSlotRange[] SelectedSlots,
     long CollectionStartUnixMilliseconds, long CollectionDurationMilliseconds,
     long AllCommandsAllSlotsMicroseconds, long NetworkBytesAllCommandsAllSlots,
     long? SampledCommandsSelectedSlotsMicroseconds, long? AllCommandsSelectedSlotsMicroseconds,
     long? NetworkBytesSampledCommandsSelectedSlots, long? NetworkBytesAllCommandsSelectedSlots,
     long? TotalCpuUserMilliseconds, long? TotalCpuSystemMilliseconds, long? TotalNetworkBytes,
-    RespireHotKeyCpuEntry[]? ByCpuTime, RespireHotKeyNetworkEntry[]? ByNetworkBytes,
+    [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO retains its existing array storage without copying on access.")]
+    RespireHotKeyCpuEntry[]? ByCpuTime,
+    [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO retains its existing array storage without copying on access.")]
+    RespireHotKeyNetworkEntry[]? ByNetworkBytes,
     IReadOnlyDictionary<string, RespireResult> AdditionalFields);
 
 internal static class HotKeysCommands

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Internal;
@@ -100,11 +101,20 @@ public enum FunctionRestorePolicy
     Replace
 }
 /// <summary>Owned metadata for a registered function.</summary>
-public sealed record RespireFunctionInfo(string Name, string? Description, string[] Flags);
+public sealed record RespireFunctionInfo(string Name, string? Description,
+    [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO retains its existing array storage without copying on access.")]
+    string[] Flags);
 /// <summary>Owned library metadata. Code is present only when WITHCODE was requested.</summary>
-public sealed record RespireFunctionLibraryInfo(string Name, string Engine, RespireFunctionInfo[] Functions, string? Code);
+public sealed record RespireFunctionLibraryInfo(string Name, string Engine,
+    [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO retains its existing array storage without copying on access.")]
+    RespireFunctionInfo[] Functions, string? Code);
 /// <summary>Owned execution details. Command arguments retain their binary representation.</summary>
-public sealed record RespireRunningFunction(string Name, byte[][] Command, long DurationMilliseconds);
+public sealed record RespireRunningFunction(string Name,
+    [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO retains its existing array storage without copying on access.")]
+    byte[][] Command, long DurationMilliseconds);
 /// <summary>Counts for one execution engine.</summary>
 public sealed record RespireFunctionEngineStats(long LibrariesCount, long FunctionsCount);
 /// <summary>Owned FUNCTION STATS result for one server.</summary>

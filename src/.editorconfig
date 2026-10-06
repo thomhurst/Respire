@@ -1,5 +1,5 @@
-# Source projects enforce these performance rules independently of test/sample policy.
-# Other Performance rules are tracked by #979 and its remaining prerequisites.
+# Directory.Build.props enables the full SDK Performance category for source projects
+# and fails builds on warnings. Keep these established rules as errors in editors too.
 [*.cs]
 dotnet_diagnostic.CA1805.severity = error
 dotnet_diagnostic.CA1822.severity = error
