@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Title>Respire.FusionCache</Title>
+    <Description>FusionCache backplane using a shared Respire client.</Description>
+    <PackageTags>$(PackageTags);fusioncache;backplane</PackageTags>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Respire/Respire.csproj" />
+    <PackageReference Include="ZiggyCreatures.FusionCache" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+</Project>

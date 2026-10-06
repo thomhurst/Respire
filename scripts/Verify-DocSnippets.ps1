@@ -42,6 +42,7 @@ $requiredPackages = @(
     'Respire.Coordination'
     'Respire.Aws'
     'Respire.Caching.Hybrid'
+    'Respire.FusionCache'
     'Respire.Probabilistic'
     'Respire.DependencyInjection'
     'Respire.DataProtection'
@@ -54,7 +55,7 @@ $requiredPackages = @(
     'Respire.Testing.Containers'
 )
 
-$allowedExternalPackages = @('Azure.Identity')
+$allowedExternalPackages = @('Azure.Identity', 'ZiggyCreatures.FusionCache.Serialization.SystemTextJson')
 
 foreach ($packageId in $requiredPackages)
 {
