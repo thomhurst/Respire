@@ -53,7 +53,7 @@ jobs:
           fixture = fixture.replace(job, '')
           for source in ('baseline', 'candidate'):
               Path(source, 'benchmarks/Respire.Benchmarks/ProtocolBenchmarks.cs').write_text(fixture)
-      - name: Compare nine single operations against bracketing baseline controls
+      - name: Compare ten single operations against bracketing baseline controls
         shell: bash
         run: |
           set -euo pipefail
@@ -70,6 +70,7 @@ jobs:
                 '*ProtocolBenchmarks.DecodeUnicodeBulkString' '*ProtocolBenchmarks.ReadUnicodeBulkString' \
                 '*ProtocolBenchmarks.FormatAsciiBulkString' '*ProtocolBenchmarks.FormatLargeAsciiBulkString' \
                 '*ProtocolBenchmarks.FormatUnicodeBulkString' \
+                '*ProtocolBenchmarks.FormatLargeUnicodeBulkString' \
                 '*ProtocolBenchmarks.BuildGetCommand' '*ProtocolBenchmarks.BuildSetCommand' \
                 --job "$job" --exporters json markdown --artifacts "$GITHUB_WORKSPACE/results/$phase"
             ) > "$GITHUB_WORKSPACE/$phase.log" 2>&1
@@ -82,14 +83,15 @@ jobs:
           from pathlib import Path
           expected = {'DecodeAsciiBulkString', 'ReadAsciiBulkString', 'DecodeUnicodeBulkString',
                       'ReadUnicodeBulkString', 'BuildGetCommand', 'BuildSetCommand',
-                      'FormatAsciiBulkString', 'FormatLargeAsciiBulkString', 'FormatUnicodeBulkString'}
+                      'FormatAsciiBulkString', 'FormatLargeAsciiBulkString', 'FormatUnicodeBulkString',
+                      'FormatLargeUnicodeBulkString'}
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
-              summary.write('## Single operations before/after\n\nCompare candidate latency, dispersion, and allocations against both controls before merge. These nine local protocol operations do not measure network throughput.\n')
+              summary.write('## Single operations before/after\n\nCompare candidate latency, dispersion, and allocations against both controls before merge. These ten local protocol operations do not measure network throughput.\n')
               for phase in ('baseline-validation', 'candidate-validation', 'baseline-a', 'candidate', 'baseline-b'):
                   reports = list(Path('results', phase, 'results').glob('*-report-full-compressed.json'))
                   assert len(reports) == 1, f'Missing or duplicate report: {phase}'
                   cases = json.loads(reports[0].read_text())['Benchmarks']
-                  assert len(cases) == 9 and {case['Method'] for case in cases} == expected, phase
+                  assert len(cases) == 10 and {case['Method'] for case in cases} == expected, phase
                   assert all(case.get('Statistics') and case['Statistics']['Mean'] > 0 for case in cases), phase
                   if 'validation' not in phase:
                       summary.write(f'\n### {phase}\n\n')

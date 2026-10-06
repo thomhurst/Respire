@@ -22,6 +22,7 @@ public class ProtocolBenchmarks
     private RespValue _asciiBulkValue;
     private RespValue _largeAsciiBulkValue;
     private RespValue _unicodeBulkValue;
+    private RespValue _largeUnicodeBulkValue;
     private readonly RespParseState _parseState = new(int.MaxValue);
     private readonly WriteBuffer _commandBuffer = new(512);
 
@@ -47,6 +48,7 @@ public class ProtocolBenchmarks
         _asciiBulkValue = RespValue.BulkString("Hello World");
         _largeAsciiBulkValue = RespValue.BulkString(new string('x', 4096));
         _unicodeBulkValue = RespValue.BulkString("Hello \u00A3 World");
+        _largeUnicodeBulkValue = RespValue.BulkString(new string('x', 4094) + "é");
 
         var fragmentedArrayBuilder = new StringBuilder();
         fragmentedArrayBuilder.Append("*1000\r\n");
@@ -245,6 +247,10 @@ public class ProtocolBenchmarks
     [Benchmark(Description = "Format Unicode bulk string")]
     [BenchmarkCategory("Conversion")]
     public string FormatUnicodeBulkString() => _unicodeBulkValue.ToString();
+
+    [Benchmark(Description = "Format large Unicode bulk string")]
+    [BenchmarkCategory("Conversion")]
+    public string FormatLargeUnicodeBulkString() => _largeUnicodeBulkValue.ToString();
 
     // ===== COMMAND BUILDING BENCHMARKS =====
 
