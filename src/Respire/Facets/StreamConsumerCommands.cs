@@ -150,6 +150,7 @@ internal sealed partial class StreamCommands
                 var values = value.AsArray();
                 if (values.Length is not (2 or 3))
                     throw new RespireProtocolException("XAUTOCLAIM JUSTID requires a two- or three-element reply.");
+                // Redis 7+ adds deleted pending IDs as the third element; Redis 6.2 returns two.
                 return new RespireStreamClaimIdsResult(new RespireStreamId(values[0].AsString()),
                     ParseStreamIds(in values[1]), values.Length == 3 ? ParseStreamIds(in values[2]) : []);
             });

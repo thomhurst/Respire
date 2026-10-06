@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace Respire;
 
 /// <summary>Filters for an extended XPENDING query.</summary>
@@ -46,4 +48,10 @@ public readonly record struct StreamClaimOptions
 /// <param name="Ids">IDs transferred to the consumer without incrementing their delivery counters.</param>
 /// <param name="DeletedIds">IDs removed from the pending list because their entries no longer exist. Empty before Redis 7.</param>
 public readonly record struct RespireStreamClaimIdsResult(
-    RespireStreamId NextStart, RespireStreamId[] Ids, RespireStreamId[] DeletedIds);
+    RespireStreamId NextStart,
+    [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO exposes owned ID storage without copying on access, matching RespireStreamClaimResult.")]
+    RespireStreamId[] Ids,
+    [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
+        Justification = "Response DTO exposes owned deleted-ID storage without copying on access, matching RespireStreamClaimResult.")]
+    RespireStreamId[] DeletedIds);

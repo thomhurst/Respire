@@ -779,6 +779,10 @@ var recoveredIds = await redis.Streams.ClaimPendingIdsAsync(
     count: 100, cancellationToken: stoppingToken);
 ```
 
+The options-based `PendingAsync`, `ClaimAsync`, and `ClaimIdsAsync` overloads put
+options before the key deliberately, preserving existing key-first call shapes
+and avoiding ambiguity with their optional parameters.
+
 `StreamClaimOptions` works with both `ClaimAsync` and `ClaimIdsAsync`. `IdleTime` sends
 `IDLE`; `DeliveryTime` sends an absolute Unix-millisecond `TIME`. Choose only one.
 `RetryCount` sets the delivery counter, `Force` creates a pending record only if the stream
