@@ -151,6 +151,8 @@ For Redis Cluster, add `?cluster=true` to the connection string. Respire handles
 and redirects. See [transactions](https://thomhurst.github.io/Respire/docs/guides/batches-and-transactions)
 and [connections](https://thomhurst.github.io/Respire/docs/fundamentals/connections).
 
+For explicit-node slot and topology operations, see [Cluster administration](docs/CLUSTER_ADMINISTRATION.md).
+
 ### ASP.NET Core
 
 ```csharp

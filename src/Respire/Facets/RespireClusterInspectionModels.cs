@@ -17,7 +17,7 @@ public sealed record RespireClusterNode(
     [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
         Justification = "Response DTO retains its existing array storage without copying on access.")]
     string[] Flags, string? PrimaryId,
-    long PingSentMilliseconds, long PongReceivedMilliseconds, long ConfigurationEpoch,
+    long PingSentMilliseconds, long PongReceivedMilliseconds, ulong ConfigurationEpoch,
     string LinkState,
     [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
         Justification = "Response DTO retains its existing array storage without copying on access.")]

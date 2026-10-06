@@ -189,6 +189,10 @@ internal static class ClusterInspectionParser
         => long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var count) && count >= 0
             ? count : throw new RespireProtocolException($"{FieldContext(field)} must be a nonnegative integer.");
 
+    private static ulong ConfigurationEpoch(string value)
+        => ulong.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var epoch)
+            ? epoch : throw new RespireProtocolException("Cluster configuration epoch must be an unsigned 64-bit integer.");
+
     internal static RespireClusterNode[] Nodes(in RespValue value)
     {
         var lines = Text(in value).Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -202,7 +206,7 @@ internal static class ClusterInspectionParser
             List<string> additional = [];
             foreach (var token in fields.AsSpan(8)) ParseSlotToken(token, slots, transitions, additional);
             result[index] = new(fields[0], fields[1], fields[2].Split(','), fields[3] == "-" ? null : fields[3],
-                TextCount(fields[4], "ping-sent"), TextCount(fields[5], "pong-recv"), TextCount(fields[6], "config-epoch"), fields[7],
+                TextCount(fields[4], "ping-sent"), TextCount(fields[5], "pong-recv"), ConfigurationEpoch(fields[6]), fields[7],
                 slots.ToArray(), transitions.ToArray(), additional.ToArray());
         }
         return result;

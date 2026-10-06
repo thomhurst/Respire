@@ -103,10 +103,12 @@ public sealed class RespireClusterScanCursor
             ReadBits(reader, state.Completed);
             state.ActiveNode = ReadText(reader);
             state.RunId = ReadText(reader);
-            state.Epoch = reader.ReadInt64();
+            // The unsigned epoch uses the same eight bytes as every previously valid
+            // nonnegative checkpoint, and now also preserves the upper half of the range.
+            state.Epoch = reader.ReadUInt64();
             state.Cursor = reader.ReadUInt64();
             ReadBits(reader, state.PassSlots);
-            if (stream.Position != stream.Length || state.Epoch < 0
+            if (stream.Position != stream.Length
                 || state.ActiveNode is not null && (!unique.Contains(state.ActiveNode) || string.IsNullOrEmpty(state.RunId))
                 || state.ActiveNode is null && (state.Cursor != 0 || state.PassSlots.Any(static bit => bit)))
                 throw new FormatException("Inconsistent Cluster scan cursor state.");
@@ -179,7 +181,7 @@ internal sealed class ClusterScanState(string? match, string? type, string? pref
     internal bool[] PassSlots { get; } = new bool[ClusterHash.SlotCount];
     internal string? ActiveNode;
     internal string? RunId;
-    internal long Epoch;
+    internal ulong Epoch;
     internal ulong Cursor;
 
     internal ClusterScanState Copy()
