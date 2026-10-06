@@ -2402,10 +2402,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                             // Only incomplete frames request direct-fill, including nested
                             // bulks. Flush before awaiting their remaining payload or CRLF.
                             _completions.Flush();
-                            var bytesSource = parser.IsIdle && directFill.Type == RespDataType.BulkString
-                                && _inflight.TryPeek(out var directHead) ? directHead as BytesPendingResponseSource : null;
+                            // Only a top-level bulk string belongs to the FIFO head. Nested values,
+                            // pushes, attributes, and errors must retain their normal parser semantics.
+                            var responseSource = parser.IsIdle && directFill.Type == RespDataType.BulkString
+                                && _inflight.TryPeek(out var directHead) ? directHead : null;
                             var filled = await ReceiveLargeBulkAsync(
-                                    buffer, start, end, directFill.Type, directFill.PayloadLength, bytesSource)
+                                    buffer, start, end, directFill.Type, directFill.PayloadLength, responseSource)
                                 .ConfigureAwait(false);
                             start = filled.Start;
                             end = filled.End;
@@ -2728,21 +2730,34 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 #endif
     private async ValueTask<(int Start, int End, RespValue Value)> ReceiveLargeBulkAsync(
         byte[] buffer, int start, int end, RespDataType type, int payloadLength,
-        BytesPendingResponseSource? bytesSource = null)
+        PendingResponse? responseSource)
     {
-        var payload = bytesSource is null
-            ? RespirePools.ResponsePayloads.Rent(payloadLength)
-            : GC.AllocateUninitializedArray<byte>(payloadLength);
+        var bytesSource = responseSource as BytesPendingResponseSource;
+        // The FIFO slot retains its receive reference until the entire frame is drained.
+        // A completed or discarded head needs no payload, but still occupies its reply slot.
+        byte[]? payload = null;
+        if (!IsBulkPayloadAbandoned(responseSource))
+        {
+            payload = bytesSource is null
+                ? RespirePools.ResponsePayloads.Rent(payloadLength)
+                : GC.AllocateUninitializedArray<byte>(payloadLength);
+        }
         try
         {
             var buffered = Math.Min(payloadLength, end - start);
-            buffer.AsSpan(start, buffered).CopyTo(payload);
+            if (payload is not null) buffer.AsSpan(start, buffered).CopyTo(payload);
             start += buffered;
             var filled = buffered;
 
             while (filled < payloadLength)
             {
-                var read = await ReceiveAsync(payload.AsMemory(filled, payloadLength - filled)).ConfigureAwait(false);
+                // Cancellation cannot reclaim a buffer still owned by an active read. Check
+                // between reads, then drain through existing receive storage without a new rent.
+                ReleaseAbandonedBulkPayload(ref payload, responseSource, bytesSource is null);
+                var destination = payload is not null
+                    ? payload.AsMemory(filled, payloadLength - filled)
+                    : buffer.AsMemory(0, Math.Min(buffer.Length, payloadLength - filled));
+                var read = await ReceiveAsync(destination).ConfigureAwait(false);
                 if (read == 0)
                 {
                     throw new RespireConnectionException($"Connection to {Host}:{Port} closed mid-frame.");
@@ -2752,7 +2767,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 filled += read;
             }
 
-            // Consume the trailing CRLF through the buffered path.
+            ReleaseAbandonedBulkPayload(ref payload, responseSource, bytesSource is null);
+            // Consume the trailing CRLF through the buffered path, even for abandoned replies.
             while (end - start < 2)
             {
                 if (start == end)
@@ -2784,6 +2800,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
             start += 2;
 
+            if (payload is null) return (start, end, default);
             if (bytesSource is not null)
             {
                 bytesSource.SetDirectResult(payload);
@@ -2800,6 +2817,18 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 RespirePools.ResponsePayloads.Return(payload);
             }
         }
+    }
+
+    // Observe current state at allocation and between reads; cancellation can win after either check.
+    private static bool IsBulkPayloadAbandoned(PendingResponse? source)
+        => source is not null && (ReferenceEquals(source, InflightRing.DiscardSentinel)
+            || PendingResponse.IsCompleted(source.State));
+
+    private static void ReleaseAbandonedBulkPayload(ref byte[]? payload, PendingResponse? source, bool pooled)
+    {
+        if (payload is null || !IsBulkPayloadAbandoned(source)) return;
+        if (pooled) RespirePools.ResponsePayloads.Return(payload);
+        payload = null;
     }
 
     private void CompleteResponse(in RespValue value)
