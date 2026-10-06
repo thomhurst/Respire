@@ -192,11 +192,7 @@ internal static class ConnectionTelemetry
                 finally { Interlocked.Decrement(ref _pendingCloseMeasurements); }
             }, (Pool: pool, Reason: reason, Error: error), preferLocal: false)) return;
         }
-        catch
-        {
-            Interlocked.Decrement(ref _pendingCloseMeasurements);
-            throw;
-        }
+        catch { /* A failed diagnostic enqueue must not replace transport or disposal outcomes. */ }
         Interlocked.Decrement(ref _pendingCloseMeasurements);
     }
 
@@ -294,7 +290,7 @@ internal static class ConnectionTelemetry
         private const int MaximumPoolNames = 64;
         private const int MaximumPoolNameLength = 256;
         private readonly Lock _gate = new();
-        private readonly Dictionary<string, Pool> _pools = new(StringComparer.Ordinal);
+        private readonly Dictionary<(string Name, bool PubSub), Pool> _pools = [];
         private Pool[] _snapshot = [];
         private Pool? _ordinaryOverflow;
         private Pool? _pubsubOverflow;
@@ -305,7 +301,8 @@ internal static class ConnectionTelemetry
             _ = RespireTelemetry.Meter;
             lock (_gate)
             {
-                if (_pools.TryGetValue(name, out var existing)) return existing;
+                var key = (name, pubsub);
+                if (_pools.TryGetValue(key, out var existing)) return existing;
                 Pool pool;
                 if (name.Length > MaximumPoolNameLength || _pools.Count >= MaximumPoolNames)
                 {
@@ -316,7 +313,7 @@ internal static class ConnectionTelemetry
                 else
                 {
                     pool = new Pool(name, pubsub);
-                    _pools.Add(name, pool);
+                    _pools.Add(key, pool);
                 }
                 Volatile.Write(ref _snapshot, [.. _snapshot, pool]);
                 return pool;

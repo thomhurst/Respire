@@ -275,7 +275,8 @@ Connection instrumentation adds no metric callbacks to command submission. Liste
 run outside transport and dedicated-pool locks; listener exceptions cannot replace connection,
 lease or disposal outcomes.
 Close counts are queued for delivery on the thread pool after the close reason and live pool
-membership are committed. Disposal does not wait for this delivery. A blocking close listener
+membership are committed. If enqueueing fails, the close event is dropped and cleanup continues.
+Disposal does not wait for this delivery. A blocking close listener
 therefore cannot stop pending replies from failing, pool cleanup, or retirement scheduling.
 An exporter can observe the live count change before the close event arrives; listeners should
 remain enabled until queued events have been collected. MOVING applies its retirement cache

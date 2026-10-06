@@ -384,14 +384,30 @@ public class ConnectionMetricTests
         // Receiving a handshake byte proves TCP connected before cancellation.
         await Assert.That(await stream.ReadAsync(new byte[1], deadline.Token)).IsEqualTo(1);
         if (callerCancels) caller.Cancel();
-        var error = await Assert.That(async () => await connect.WaitAsync(deadline.Token))
-            .Throws<OperationCanceledException>();
-        await Assert.That(error!.CancellationToken == caller.Token).IsEqualTo(callerCancels);
+        if (callerCancels)
+        {
+            var error = await Assert.That(async () => await connect.WaitAsync(deadline.Token))
+                .Throws<OperationCanceledException>();
+            await Assert.That(error!.CancellationToken).IsEqualTo(caller.Token);
+        }
+        else
+        {
+            var error = await Assert.That(async () => await connect.WaitAsync(deadline.Token))
+                .Throws<RespireTimeoutException>();
+            await Assert.That(error!.CommandName).IsEqualTo("CONNECT");
+            await Assert.That(error.Timeout).IsEqualTo(TimeSpan.FromSeconds(1));
+            await Assert.That(error.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Connecting);
+            await Assert.That(error.InnerException is OperationCanceledException).IsTrue();
+            await Assert.That(caller.IsCancellationRequested).IsFalse();
+            await Assert.That(deadline.IsCancellationRequested).IsFalse();
+        }
         var closed = await capture.WaitForCloseAsync();
         await Assert.That(closed.Tags["redis.client.connection.close.reason"])
             .IsEqualTo(callerCancels ? "application_close" : "error");
         await Assert.That(closed.Tags.ContainsKey("error.type")).IsEqualTo(!callerCancels);
         await Assert.That(closed.Tags.ContainsKey("redis.client.errors.category")).IsEqualTo(!callerCancels);
+        if (!callerCancels)
+            await Assert.That(closed.Tags["error.type"]).IsEqualTo(typeof(RespireTimeoutException).FullName);
     }
 
     [Test]
@@ -781,6 +797,22 @@ public class ConnectionMetricTests
 
     [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_connection")]
     private static extern ref WeakReference<RespireConnection> ConnectionTarget(ConnectionTelemetry.State state);
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task SamePoolNameKeepsOrdinaryAndPubSubIdentitiesSeparate(bool pubsubFirst)
+    {
+        var registry = new ConnectionTelemetry.Registry();
+        var first = registry.ForPool("same-name", pubsubFirst);
+        var second = registry.ForPool("same-name", !pubsubFirst);
+        await Assert.That(ReferenceEquals(first, second)).IsFalse();
+        await Assert.That(first.PubSub).IsEqualTo(pubsubFirst);
+        await Assert.That(second.PubSub).IsEqualTo(!pubsubFirst);
+        await Assert.That(registry.ForPool("same-name", pubsubFirst)).IsSameReferenceAs(first);
+        await Assert.That(registry.ForPool("same-name", !pubsubFirst)).IsSameReferenceAs(second);
+        await Assert.That(registry.Snapshot.Length).IsEqualTo(2);
+    }
 
     [Test]
     public async Task EndpointLabelBudgetHasDistinctBoundedOverflowSeries()
