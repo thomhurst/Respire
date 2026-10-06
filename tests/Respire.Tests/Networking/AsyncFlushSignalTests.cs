@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using Respire.Networking;
 using TUnit.Assertions;
@@ -10,6 +11,7 @@ namespace Respire.Tests.Networking;
 public class AsyncFlushSignalTests
 {
     private const int Wakes = 200;
+    private const string AllocationProbeMode = "RESPIRE_TEST_FLUSH_ALLOCATION_PROBE";
 
     [Test]
     [Arguments(false)]
@@ -85,17 +87,98 @@ public class AsyncFlushSignalTests
         await Assert.That(signal.WaitAsync().IsCompleted).IsFalse();
     }
 
-    // A writer on a non-pool thread (a blocking caller, a benchmark harness) wakes the flush
-    // loop through the thread pool on every command sent to an idle connection.
+    // Check both global (non-pool producer) and local (pool producer) dispatch queues.
     [Test, NotInParallel]
-    public async Task DispatchedWakeAllocatesNothing()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DispatchedWakeAllocatesNothing(bool poolProducer)
+    {
+        // Pool growth allocates Thread/StartHelper on the signaling thread. Isolate capacity
+        // from the test runner without changing its limits or subtracting runtime allocations.
+        var start = new ProcessStartInfo("dotnet")
+        {
+            RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        start.ArgumentList.Add(typeof(AsyncFlushSignalTests).Assembly.Location);
+        start.Environment[AllocationProbeMode] = poolProducer ? "pool" : "dedicated";
+        using var process = Process.Start(start)!;
+        var output = process.StandardOutput.ReadToEndAsync();
+        var errors = process.StandardError.ReadToEndAsync();
+        try
+        {
+            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30));
+            await Assert.That(process.ExitCode).IsEqualTo(0).Because(await output + await errors);
+        }
+        finally
+        {
+            if (!process.HasExited) { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); }
+        }
+    }
+
+    [ModuleInitializer]
+    internal static void RunIsolatedAllocationProbe()
+    {
+        var mode = Environment.GetEnvironmentVariable(AllocationProbeMode);
+        if (mode is not ("pool" or "dedicated")) return;
+        try
+        {
+            ThreadPool.GetMinThreads(out _, out var minIo);
+            ThreadPool.GetMaxThreads(out _, out var maxIo);
+            if (!ThreadPool.SetMinThreads(2, minIo) || !ThreadPool.SetMaxThreads(2, maxIo))
+                throw new InvalidOperationException("Could not configure the isolated two-worker pool.");
+
+            // Occupy both workers together so capacity is established before any measurement.
+            using var entered = new CountdownEvent(2);
+            using var release = new ManualResetEventSlim();
+            using var finished = new CountdownEvent(2);
+            for (var i = 0; i < 2; i++)
+                ThreadPool.UnsafeQueueUserWorkItem(_ =>
+                {
+                    entered.Signal();
+                    release.Wait(TimeSpan.FromSeconds(10));
+                    finished.Signal();
+                }, 0, preferLocal: false);
+            try
+            {
+                if (!entered.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Workers did not start.");
+            }
+            finally
+            {
+                release.Set();
+                if (!finished.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Workers did not finish warming.");
+            }
+
+            // Complete module-owned type/delegate initialization on the initializer thread
+            // before a worker enters this code; otherwise it can wait for this initializer.
+            MeasureSteadyState();
+            if (mode == "pool") Task.Run(MeasureSteadyState).GetAwaiter().GetResult();
+            Environment.Exit(0);
+        }
+        catch (Exception error) { Console.Error.WriteLine(error); Environment.Exit(1); }
+    }
+
+    private static void MeasureSteadyState()
     {
         var waiter = new ParkedWaiter();
         for (var i = 0; i < 20; i++) { Measure(waiter, false); Measure(waiter, true); }
         var measured = AllocationMeasurement.WithoutConcurrentGc(() =>
-            (Bytes: Measure(waiter, false), Control: Measure(waiter, true)));
-        await Assert.That(measured.Bytes).IsEqualTo(0L);
-        await Assert.That(measured.Control).IsGreaterThanOrEqualTo(37L * Wakes);
+        {
+            var gen0 = GC.CollectionCount(0);
+            var gen1 = GC.CollectionCount(1);
+            var gen2 = GC.CollectionCount(2);
+            var workers = ThreadPool.ThreadCount;
+            var bytes = Measure(waiter, false);
+            var control = Measure(waiter, true);
+            return (Bytes: bytes, Control: control, WorkersBefore: workers, WorkersAfter: ThreadPool.ThreadCount,
+                Gen0: GC.CollectionCount(0) - gen0, Gen1: GC.CollectionCount(1) - gen1, Gen2: GC.CollectionCount(2) - gen2);
+        });
+        Console.WriteLine($"poolProducer={Thread.CurrentThread.IsThreadPoolThread}; {measured}");
+        if (measured.Bytes != 0 || measured.Control < 37L * Wakes
+            || measured.WorkersBefore != 2 || measured.WorkersAfter != 2
+            || measured.Gen0 != 0 || measured.Gen1 != 0 || measured.Gen2 != 0)
+            throw new InvalidOperationException($"Expected zero wake allocations, a positive allocation control, "
+                + $"two existing workers and no collections; observed {measured}.");
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
