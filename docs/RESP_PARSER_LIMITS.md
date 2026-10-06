@@ -40,10 +40,11 @@ of the buffered bytes, across the entire tree, before pool rounding. The budget 
 not reset for nested arrays or discarded attributes. This bounds speculative
 rents even when a buffered frame is incomplete.
 
-The restartable parser passes depth by value so each branch has its own nesting
-level, while passing the remaining element budget by reference so siblings and
-attributes consume the same budget. Any future parser-context abstraction must
-preserve this distinction; copying the budget per branch would remove the bound.
+The restartable parser uses a stack-only context whose depth is copied per branch.
+Each context retains a reference to the root's stack-local remaining element budget,
+so siblings and discarded attributes consume the same budget. Child contexts
+increment depth without copying or resetting that budget. Scalar replies bypass
+the context entirely.
 
 The resumable parser's retained element capacity depends on children actually
 parsed across the entire tree, not the sum of declared counts. An incomplete frame

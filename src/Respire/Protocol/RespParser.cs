@@ -59,11 +59,40 @@ internal static class RespParser
         // Even the shortest RESP value takes three bytes. Share this rent budget across
         // nested aggregates and attributes, rather than trusting each declared count.
         var remainingElements = (buffer.Length - pos) / 3;
-        return TryParseValue(buffer, ref pos, out value, 0, ref remainingElements);
+        return TryParseValue(buffer, ref pos, out value, new ParseContext(0, ref remainingElements));
+    }
+
+    /// <summary>
+    /// Copies branch depth while every copy refers to the root's stack-local rent budget.
+    /// </summary>
+    private readonly ref struct ParseContext
+    {
+        private readonly ref int _remainingElements;
+        public int Depth { get; }
+
+        public ParseContext(int depth, ref int remainingElements)
+        {
+            Depth = depth;
+            _remainingElements = ref remainingElements;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public ParseContext ForChildren() => new(Depth + 1, ref _remainingElements);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public bool TryReserve(int count)
+        {
+            if (count > _remainingElements)
+                return false;
+
+            // Each child, including a nested aggregate header, needs three wire bytes.
+            _remainingElements -= count;
+            return true;
+        }
     }
 
     private static RespParseStatus TryParseValue(
-        ReadOnlySpan<byte> buffer, ref int pos, out RespValue value, int depth, ref int remainingElements)
+        ReadOnlySpan<byte> buffer, ref int pos, out RespValue value, ParseContext context)
     {
         value = default;
         var cursor = pos;
@@ -82,7 +111,7 @@ internal static class RespParser
             }
 
             var attrStatus = TryParseAggregate(buffer, ref cursor, RespDataType.Map, pairCount: true,
-                out var attribute, depth, ref remainingElements);
+                out var attribute, context);
             if (attrStatus != RespParseStatus.Done)
             {
                 return attrStatus;
@@ -91,7 +120,7 @@ internal static class RespParser
             attribute.Dispose();
         }
 
-        var status = TryParseCore(buffer, ref cursor, out value, ref remainingElements, depth);
+        var status = TryParseCore(buffer, ref cursor, out value, context);
         if (status == RespParseStatus.Done)
         {
             pos = cursor;
@@ -216,20 +245,20 @@ internal static class RespParser
     }
 
     private static RespParseStatus TryParseCore(
-        ReadOnlySpan<byte> buffer, ref int cursor, out RespValue value, ref int remainingElements, int depth)
+        ReadOnlySpan<byte> buffer, ref int cursor, out RespValue value, ParseContext context)
     {
         switch (buffer[cursor])
         {
             case (byte)'*':
-                return TryParseAggregate(buffer, ref cursor, RespDataType.Array, pairCount: false, out value, depth, ref remainingElements);
+                return TryParseAggregate(buffer, ref cursor, RespDataType.Array, pairCount: false, out value, context);
             case (byte)'~':
-                return TryParseAggregate(buffer, ref cursor, RespDataType.Set, pairCount: false, out value, depth, ref remainingElements);
+                return TryParseAggregate(buffer, ref cursor, RespDataType.Set, pairCount: false, out value, context);
             case (byte)'>':
-                return TryParseAggregate(buffer, ref cursor, RespDataType.Push, pairCount: false, out value, depth, ref remainingElements);
+                return TryParseAggregate(buffer, ref cursor, RespDataType.Push, pairCount: false, out value, context);
             case (byte)'%':
-                return TryParseAggregate(buffer, ref cursor, RespDataType.Map, pairCount: true, out value, depth, ref remainingElements);
+                return TryParseAggregate(buffer, ref cursor, RespDataType.Map, pairCount: true, out value, context);
             case (byte)'|':
-                return TryParseValue(buffer, ref cursor, out value, depth, ref remainingElements);
+                return TryParseValue(buffer, ref cursor, out value, context);
             default:
                 return TryParseScalar(buffer, ref cursor, out value);
         }
@@ -354,7 +383,7 @@ internal static class RespParser
 
     private static RespParseStatus TryParseAggregate(
         ReadOnlySpan<byte> buffer, ref int cursor, RespDataType type, bool pairCount, out RespValue value,
-        int depth, ref int remainingElements)
+        ParseContext context)
     {
         value = default;
         var pos = cursor + 1;
@@ -375,18 +404,16 @@ internal static class RespParser
             return RespParseStatus.Done;
         }
 
-        if (!RespAggregateStorage.TryValidate(declaredCount, pairCount, depth, out var count))
+        if (!RespAggregateStorage.TryValidate(declaredCount, pairCount, context.Depth, out var count))
         {
             return RespParseStatus.InvalidData;
         }
 
-        if (count > remainingElements)
+        if (!context.TryReserve(count))
         {
             return RespParseStatus.NeedMoreData;
         }
 
-        // Each child, including a nested aggregate header, needs at least three wire bytes.
-        remainingElements -= count;
         if (count == 0)
         {
             value = RespValue.PooledAggregate(type, [], 0);
@@ -395,6 +422,7 @@ internal static class RespParser
         }
 
         var elements = RespirePools.ValueArrays.Rent(count);
+        var childContext = context.ForChildren();
         for (var i = 0; i < count; i++)
         {
             RespParseStatus status;
@@ -404,7 +432,7 @@ internal static class RespParser
             }
             else
             {
-                status = TryParseCore(buffer, ref pos, out elements[i], ref remainingElements, depth + 1);
+                status = TryParseCore(buffer, ref pos, out elements[i], childContext);
             }
 
             if (status != RespParseStatus.Done)
