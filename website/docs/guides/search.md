@@ -74,6 +74,64 @@ var hybrid = await search.HybridSearchAsync("books", new RespireHybridSearchQuer
 
 Text fields accept `Weight` and `NoStem`. Tag fields accept `Separator` and `CaseSensitive`. Vector fields take a typed `RespireSearchVectorOptions` (algorithm, element type, dimensions, and distance metric). The client computes the algorithm argument count, and `Attributes` adds settings such as `M` or `EF_CONSTRUCTION`. `RespireSearchField.Options` remains a raw-token escape hatch for server-version-specific settings that have no typed property. A vector field uses either typed `Vector` options or raw `Options`, not both. Invalid combinations, such as `Weight` on a tag field or `Sortable` on a vector field, throw before anything is sent.
 
+Text fields also accept `Phonetic` with English, French, Portuguese, or Spanish
+double-metaphone matching. Index definitions accept `Language`, `LanguageField`,
+`Score` (0–1), `TemporarySeconds`, and `SkipInitialScan`. `StopWords = null` uses
+the server's default stopwords; an empty list emits `STOPWORDS 0` and disables them.
+**Temporary index expiry deletes its indexed documents as well as the index.**
+See [FT.CREATE](https://redis.io/docs/latest/commands/ft.create/).
+
+## Query options and returned text
+
+`RespireSearchQueryOptions` accepts binary-safe `InKeys`, text `InFields`, `Slop`,
+`InOrder`, `Language`, `Scorer`, `Verbatim`, and `NoStopWords`, alongside the existing
+projection, sorting, paging, timeout, dialect, and parameter options. Empty key and
+field lists leave the search unrestricted. A scorer name can identify a built-in
+or server-registered scorer; the server validates supported languages and scorers.
+
+Set `Highlight` to `RespireSearchHighlightOptions` and `Summarize` to
+`RespireSearchSummaryOptions`. Both accept `Fields`; an empty list selects all
+returned text fields. Highlighting accepts optional `(Open, Close)` `Tags`.
+Summaries accept positive `Fragments` and `Length`, plus an optional `Separator`.
+`NoContent` cannot be combined with highlighting or summaries. Key and text-field
+selection lists are copied when their options are initialized. Keep binary key
+memory unchanged until the search completes, as with other command arguments.
+
+Returned `Fields` retain the server-generated text. `TextResults` provides owned
+`RespireSearchTextResult` values with `Text`, `HighlightRequested`, and
+`SummaryRequested`. Those flags describe the requested presentation, not whether
+the server changed the value. With default field selection, this view includes
+returned scalar fields because only the server knows which fields are indexed
+as text. Explicit field selection limits this view to those names. The client
+preserves each complete summary string, including separators; splitting could
+misinterpret a separator already present in the original text. Highlight markup
+is not HTML-escaped. Escape or sanitize it according to your rendering context.
+
+`ExplainScore` requires `WithScores`; it retains the nested explanation in
+`ScoreExplanation` while `Score` remains numeric. `WithPayloads` retains owned
+binary `Payload` memory, preserving null versus empty. This is a legacy server
+feature, and modern indexes normally return null. `WithSortKeys` retains the
+encoded `SortKey`, such as `#5` for a numeric sort value; it can be null without
+a sortable value. Metadata also works with `NoContent`. These reply options work
+through normal, vector, and profiled searches on RESP2 and RESP3.
+See [FT.SEARCH](https://redis.io/docs/latest/commands/ft.search/).
+
+## Collecting documents within aggregate groups
+
+Redis 8.10's `COLLECT` reducer is available through `RespireSearchReducer.Collect`.
+Pass `RespireSearchCollectOptions` with either nonempty `Fields` or `AllFields`,
+optional `Distinct`, `SortBy`, and `Limit`, and an optional reducer alias.
+Field and sort names are normalized to an `@` prefix, and all argument counts
+are computed automatically. `AllFields` projects fields already materialized
+by `LOAD` or earlier pipeline stages; it does not load whole documents.
+
+Collected entries are nested values in `StructuredRows[row][alias].Items`.
+RESP2 entries are field/value arrays; RESP3 entries are maps whose `Items`
+alternate keys and values. `StructuredRows` retains their owned values after
+later commands. See [FT.AGGREGATE](https://redis.io/docs/latest/commands/ft.aggregate/).
+Native `FT.HYBRID` remains supported with typed text/vector queries, projections,
+parameters, and reciprocal-rank fusion; integration tests cover both protocols.
+
 ## Spelling dictionaries and corrections
 
 `AddDictionaryTermsAsync` (`FT.DICTADD`) and `DeleteDictionaryTermsAsync`

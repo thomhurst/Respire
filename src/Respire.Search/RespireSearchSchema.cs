@@ -146,6 +146,9 @@ public sealed record RespireSearchField(string Identifier, RespireSearchFieldTyp
     /// <summary>Disables stemming (<c>NOSTEM</c>). Only valid for text fields.</summary>
     public bool NoStem { get; init; }
 
+    /// <summary>Double-metaphone matching language. Only valid for text fields.</summary>
+    public RespireSearchPhoneticMatcher? Phonetic { get; init; }
+
     /// <summary>Tag separator character (<c>SEPARATOR</c>). Only valid for tag fields.</summary>
     public char? Separator { get; init; }
 
@@ -183,6 +186,18 @@ public sealed record RespireSearchField(string Identifier, RespireSearchFieldTyp
         }
 
         if (NoStem) args.Add("NOSTEM");
+        if (Phonetic is { } phonetic)
+        {
+            args.Add("PHONETIC");
+            args.Add(phonetic switch
+            {
+                RespireSearchPhoneticMatcher.English => "dm:en",
+                RespireSearchPhoneticMatcher.French => "dm:fr",
+                RespireSearchPhoneticMatcher.Portuguese => "dm:pt",
+                RespireSearchPhoneticMatcher.Spanish => "dm:es",
+                _ => throw new ArgumentOutOfRangeException(nameof(Phonetic)),
+            });
+        }
         if (Separator is { } separator)
         {
             args.Add("SEPARATOR");
@@ -221,13 +236,26 @@ public sealed record RespireSearchField(string Identifier, RespireSearchFieldTyp
             throw new ArgumentException("Vector options are only valid for vector fields.", nameof(Vector));
         }
 
-        if (Type != RespireSearchFieldType.Text && (Weight is not null || NoStem))
-            throw new ArgumentException("WEIGHT and NOSTEM are only valid for text fields.", nameof(Weight));
+        if (Type != RespireSearchFieldType.Text && (Weight is not null || NoStem || Phonetic is not null))
+            throw new ArgumentException("WEIGHT, NOSTEM, and PHONETIC are only valid for text fields.", nameof(Type));
         if (Weight is { } weight && (double.IsNaN(weight) || double.IsInfinity(weight) || weight < 0))
             throw new ArgumentOutOfRangeException(nameof(Weight), weight, "Weight must be a finite, non-negative number.");
         if (Type != RespireSearchFieldType.Tag && (Separator is not null || CaseSensitive))
             throw new ArgumentException("SEPARATOR and CASESENSITIVE are only valid for tag fields.", nameof(Separator));
     }
+}
+
+/// <summary>Supported PHONETIC double-metaphone matchers.</summary>
+public enum RespireSearchPhoneticMatcher
+{
+    /// <summary>English (dm:en).</summary>
+    English,
+    /// <summary>French (dm:fr).</summary>
+    French,
+    /// <summary>Portuguese (dm:pt).</summary>
+    Portuguese,
+    /// <summary>Spanish (dm:es).</summary>
+    Spanish,
 }
 
 /// <summary>Index source, key prefixes, and schema.</summary>
@@ -242,12 +270,33 @@ public sealed record RespireSearchIndexDefinition
     /// <summary>Fields indexed by this definition.</summary>
     public IReadOnlyList<RespireSearchField> Fields { get; init; } = [];
 
+    /// <summary>Custom stopwords. Null uses server defaults; an empty list disables stopwords.</summary>
+    public IReadOnlyList<string>? StopWords { get; init; }
+
+    /// <summary>Default stemming language.</summary>
+    public string? Language { get; init; }
+
+    /// <summary>Document field containing its stemming language.</summary>
+    public string? LanguageField { get; init; }
+
+    /// <summary>Default document score between zero and one, inclusive.</summary>
+    public double? Score { get; init; }
+
+    /// <summary>Temporary index idle lifetime in whole seconds. Expiry also deletes indexed documents.</summary>
+    public int? TemporarySeconds { get; init; }
+
+    /// <summary>Does not scan existing documents during index creation.</summary>
+    public bool SkipInitialScan { get; init; }
+
     /// <summary>Builds a complete FT.CREATE argument list.</summary>
     internal RespireValue[] ToArguments()
     {
         ArgumentNullException.ThrowIfNull(Prefixes);
         ArgumentNullException.ThrowIfNull(Fields);
         if (Fields.Count == 0) throw new ArgumentException("At least one schema field is required.", nameof(Fields));
+        if (Score is { } score && (!double.IsFinite(score) || score < 0 || score > 1))
+            throw new ArgumentOutOfRangeException(nameof(Score));
+        if (TemporarySeconds is <= 0) throw new ArgumentOutOfRangeException(nameof(TemporarySeconds));
         var source = Source switch
         {
             RespireSearchSource.Hash => "HASH",
@@ -266,6 +315,29 @@ public sealed record RespireSearchIndexDefinition
             }
         }
 
+        RespireSearchOptionArguments.AddText(args, "LANGUAGE", Language);
+        RespireSearchOptionArguments.AddText(args, "LANGUAGE_FIELD", LanguageField);
+        if (Score is { } defaultScore)
+        {
+            args.Add("SCORE");
+            args.Add(defaultScore.ToString("R", CultureInfo.InvariantCulture));
+        }
+        if (TemporarySeconds is { } seconds)
+        {
+            args.Add("TEMPORARY");
+            args.Add(seconds);
+        }
+        if (SkipInitialScan) args.Add("SKIPINITIALSCAN");
+        if (StopWords is not null)
+        {
+            args.Add("STOPWORDS");
+            args.Add(StopWords.Count);
+            foreach (var word in StopWords)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(word, nameof(StopWords));
+                args.Add(word);
+            }
+        }
         args.Add("SCHEMA");
         foreach (var field in Fields)
         {
