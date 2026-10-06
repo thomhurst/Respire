@@ -97,8 +97,10 @@ fails explicitly. Publishing before subscription or after disposal also fails.
 A terminal subscription end is logged, rather than reported as a reconnect notification.
 It does not clear the instance's subscription state automatically. To reuse the backplane,
 await `UnsubscribeAsync` (or call `Unsubscribe`), then call `SubscribeAsync` (or `Subscribe`)
-again once the shared client can connect. If the caller has disposed that client, create a
-replacement client and a new backplane instance instead.
+again once the shared client can connect. If the caller has disposed that client or its
+pub/sub reconnect policy has been exhausted, create a replacement client and a new
+backplane instance instead. Exhaustion permanently rejects new subscriptions on that
+client, even if Redis becomes available again.
 
 Cancellation passed to publishing reaches Respire. As with other network writes, cancellation
 after submission does not prove that Redis did not accept the notification. In-flight
