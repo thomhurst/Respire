@@ -159,7 +159,9 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
             }
 
             var cursor = pos;
-            var scalarStatus = RespParser.TryParseCore(buffer, ref cursor, out var scalar);
+            // Aggregate markers were handled above; this call only parses a scalar.
+            var unusedElementBudget = 0;
+            var scalarStatus = RespParser.TryParseCore(buffer, ref cursor, out var scalar, ref unusedElementBudget);
             if (scalarStatus != RespParseStatus.Done)
             {
                 return scalarStatus;
@@ -339,20 +341,21 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
             return RespParseStatus.InvalidData;
         }
 
-        pos = cursor;
         if (declaredCount == -1)
         {
+            pos = cursor;
             value = RespValue.Null;
             return RespParseStatus.Done;
         }
 
         var pairCount = typeByte is (byte)'%' or (byte)'|';
-        if (declaredCount < 0 || declaredCount > (pairCount ? int.MaxValue / 2 : int.MaxValue))
+        if (!RespAggregateStorage.TryGetCount(declaredCount, pairCount, out var count)
+            || _depth >= RespAggregateStorage.MaxDepth)
         {
             return RespParseStatus.InvalidData;
         }
 
-        var elementCount = pairCount ? declaredCount * 2 : declaredCount;
+        pos = cursor;
 
         var type = typeByte switch
         {
@@ -361,7 +364,6 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
             (byte)'%' or (byte)'|' => RespDataType.Map,
             _ => RespDataType.Array,
         };
-        var count = (int)elementCount;
         if (count == 0)
         {
             value = RespValue.PooledAggregate(type, [], 0);
@@ -380,7 +382,7 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
             Array.Resize(ref _frames, _frames.Length * 2);
         }
 
-        _frames[_depth++] = new AggregateFrame(type, RespirePools.ValueArrays.Rent(count), count, discard);
+        _frames[_depth++] = new AggregateFrame(type, [], count, discard);
     }
 
     private bool AcceptValue(in RespValue accepted, out RespValue value)
@@ -389,6 +391,8 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
         while (_depth > 0)
         {
             ref var frame = ref _frames[_depth - 1];
+            if (frame.Index == frame.Elements.Length)
+                RespAggregateStorage.Grow(ref frame.Elements, frame.Count);
             frame.Elements[frame.Index++] = current;
             if (frame.Index < frame.Count)
             {
@@ -422,7 +426,8 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
                 frame.Elements[j].Dispose();
             }
 
-            RespirePools.ValueArrays.Return(frame.Elements, clearArray: true);
+            if (frame.Elements.Length != 0)
+                RespirePools.ValueArrays.Return(frame.Elements, clearArray: true);
             frame = default;
         }
 

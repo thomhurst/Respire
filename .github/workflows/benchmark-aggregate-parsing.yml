@@ -1,0 +1,84 @@
+name: Aggregate parsing benchmarks
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}-${{ github.event.label.name }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    if: github.event.label.name == 'run-aggregate-benchmarks'
+    name: Aggregate parsing (${{ matrix.framework }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: [net8.0, net10.0]
+    env:
+      FRAMEWORK: ${{ matrix.framework }}
+    steps:
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: baseline
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: candidate
+          persist-credentials: false
+      - name: Validate both builds and measure baseline, candidate, baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp candidate/benchmarks/Respire.Benchmarks/AggregateParsingBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
+          for phase in baseline-validation candidate-validation baseline-a candidate baseline-b; do
+            source=baseline
+            job=Medium
+            if [[ "$phase" == candidate* ]]; then source=candidate; fi
+            if [[ "$phase" == *validation ]]; then job=Dry; fi
+            (
+              cd "$source"
+              git rev-parse HEAD
+              dotnet run --project benchmarks/Respire.Benchmarks -c Release -f "$FRAMEWORK" -- \
+                --filter '*AggregateParsingBenchmarks*' --job "$job" --exporters json markdown \
+                --artifacts "$GITHUB_WORKSPACE/results/$phase"
+            ) > "$GITHUB_WORKSPACE/$phase.log" 2>&1
+          done
+      - name: Require all cases and publish reports
+        shell: python
+        run: |
+          import json
+          import os
+          from pathlib import Path
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write('## Aggregate parsing before/after\n\nPinned base and event merge commit run on the same runner. Compare candidate with both controls; growth can add copying even when pooled allocations are unchanged.\n')
+              for phase in ('baseline-validation', 'candidate-validation', 'baseline-a', 'candidate', 'baseline-b'):
+                  reports = list(Path('results', phase, 'results').glob('*-report-full-compressed.json'))
+                  assert len(reports) == 1, f'Missing report: {phase}'
+                  cases = json.loads(reports[0].read_text())['Benchmarks']
+                  assert len(cases) == 8, f'Missing aggregate parsing cases: {phase}'
+                  assert all(case.get('Statistics') and case['Statistics']['Mean'] > 0 for case in cases), phase
+                  if 'validation' not in phase:
+                      summary.write(f'\n### {phase}\n\n')
+                      summary.write(next(Path('results', phase, 'results').glob('*-report-github.md')).read_text())
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: aggregate-parsing-${{ matrix.framework }}
+          path: |
+            results/
+            *.log
+          retention-days: 30
