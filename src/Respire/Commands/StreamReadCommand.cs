@@ -3,7 +3,8 @@ using Respire.Protocol;
 namespace Respire.Commands;
 
 internal readonly struct StreamReadCommand(RespireValue[] keys, RespireStreamId[] ids, int? count, long? blockMilliseconds,
-    long? maxCount = null, long? maxSize = null, string? group = null, string? consumer = null) : IRespCommand
+    long? maxCount = null, long? maxSize = null, string? group = null, string? consumer = null,
+    bool noAck = false, long? claimMinIdleMilliseconds = null) : IRespCommand
 {
     private static readonly ReadCommandKind ReadClassification = CommandReadMetadata.Get("XREAD").Kind;
     private static readonly ReadCommandKind GroupReadClassification = CommandReadMetadata.Get("XREADGROUP").Kind;
@@ -24,7 +25,8 @@ internal readonly struct StreamReadCommand(RespireValue[] keys, RespireStreamId[
     public void Write(ref RespWriter writer)
     {
         writer.WriteArrayHeader(2 + keys.Length * 2 + (count.HasValue ? 2 : 0) + (blockMilliseconds.HasValue ? 2 : 0)
-            + (maxCount.HasValue ? 2 : 0) + (maxSize.HasValue ? 2 : 0) + (group is null ? 0 : 3));
+            + (maxCount.HasValue ? 2 : 0) + (maxSize.HasValue ? 2 : 0) + (group is null ? 0 : 3)
+            + (noAck ? 1 : 0) + (claimMinIdleMilliseconds.HasValue ? 2 : 0));
         writer.WriteBulkString(group is null ? "XREAD"u8 : "XREADGROUP"u8);
         if (group is not null)
         {
@@ -52,6 +54,12 @@ internal readonly struct StreamReadCommand(RespireValue[] keys, RespireStreamId[
             writer.WriteBulkString("BLOCK"u8);
             writer.WriteBulkInteger(wait);
         }
+        if (claimMinIdleMilliseconds is { } idle)
+        {
+            writer.WriteBulkString("CLAIM"u8);
+            writer.WriteBulkInteger(idle);
+        }
+        if (noAck) writer.WriteBulkString("NOACK"u8);
         writer.WriteBulkString("STREAMS"u8);
         foreach (var key in keys) key.WriteTo(ref writer);
         foreach (var id in ids) writer.WriteBulkString(id.Value);
