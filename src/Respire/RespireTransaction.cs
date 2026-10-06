@@ -25,6 +25,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
     private readonly RespireClient _client;
     private readonly RespireHashImportSession? _importSession;
     private readonly RespireConnection? _watchConnection;
+    internal RespireConnection? WatchConnection => _watchConnection;
     private readonly WriteBuffer _buffer = new(1024);
     private readonly List<TxOp> _ops = [];
     private int _clusterSlot;
@@ -447,22 +448,22 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
         async ValueTask<RespValue> SendAsync()
         {
             var slot = _hasClusterSlot ? _clusterSlot : (int?)null;
-            CancellationTokenSource? acquisitionTimeout = null;
+            var acquisition = new CommandAcquisitionScope(cancellationToken, deadline, timeout);
+            var importSubmissionAttempted = false;
             ClusterRouter.DiscoveryRound? discovery = null;
             var discoveryPending = false;
             try
             {
                 var cluster = core.Cluster;
+                acquisition.CheckDeadline("MULTI/EXEC", core, _importSession?.Connection);
                 if (slot is null && cluster is { } flushCluster
                     && _ops.Exists(static operation => operation.Operation is "FLUSHDB" or "FLUSHALL"))
-                    slot = await flushCluster.GetPrimaryRoutingSlotAsync(AcquisitionToken(ref acquisitionTimeout)).ConfigureAwait(false);
+                    slot = await flushCluster.GetPrimaryRoutingSlotAsync(acquisition.Token).ConfigureAwait(false);
                 for (var attempt = 0; ; attempt++)
                 {
-                    connection ??= _client.TryAcquireReadyConnection(slot, cancellationToken)
-                        ?? await _client.AcquireConnectionAsync(slot, AcquisitionToken(ref acquisitionTimeout)).ConfigureAwait(false);
-                    acquisitionTimeout?.Dispose();
-                    acquisitionTimeout = null;
-                    CheckDeadline();
+                    connection ??= await _client.AcquireConnectionAsync(slot, ref acquisition).ConfigureAwait(false);
+                    acquisition.Dispose();
+                    acquisition.CheckDeadline("MULTI/EXEC", core, _importSession?.Connection);
                     if (core.Sentinel is not null)
                         telemetry = RespireTelemetry.StartBatchOperation(
                             "MULTI", _ops, static op => op.Operation,
@@ -474,12 +475,12 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
                         {
                             if (!connection.TryAcquireCredentialSequence(cancellationToken, out credentialSequence))
                                 credentialSequence = await connection.AcquireCredentialSequenceAsync(
-                                    AcquisitionToken(ref acquisitionTimeout)).ConfigureAwait(false);
-                            acquisitionTimeout?.Dispose();
-                            acquisitionTimeout = null;
-                            CheckDeadline();
+                                    acquisition.Token).ConfigureAwait(false);
+                            acquisition.Dispose();
+                            acquisition.CheckDeadline("MULTI/EXEC", core, connection);
                             // This lease is exclusive: confirm MULTI before any import can
                             // reach Redis, including when ACLs allow HIMPORT but deny MULTI.
+                            importSubmissionAttempted = true;
                             using var multi = await _client.SendOnConnectionAsync("MULTI", connection,
                                 new Cmd(RespireCommands.Transaction.MULTI.Verb), cancellationToken, commandDeadline: deadline,
                                 allowStreamingConnectionReroute: false).ConfigureAwait(false);
@@ -499,7 +500,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
                         // The transport rejects the complete MULTI/EXEC frame before accepting any part.
                         cluster.RecordRejection(ref discovery, connection, retirement);
                         discoveryPending = true;
-                        connection = await cluster.GetReplacementConnectionAsync(null, slot, null, AcquisitionToken(ref acquisitionTimeout), discovery)
+                        connection = await cluster.GetReplacementConnectionAsync(null, slot, null, acquisition.Token, discovery)
                             .ConfigureAwait(false);
                         discoveryPending = false;
                         continue;
@@ -547,72 +548,46 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
 
                     cluster.RecordRejection(ref discovery, connection, redirect);
                     discoveryPending = true;
-                    connection = await cluster.GetRedirectConnectionAsync(redirect, connection, AcquisitionToken(ref acquisitionTimeout), slot, discovery)
+                    connection = await cluster.GetRedirectConnectionAsync(redirect, connection, acquisition.Token, slot, discovery)
                         .ConfigureAwait(false);
                     discoveryPending = false;
                 }
             }
-            catch (OperationCanceledException error) when (acquisitionTimeout is not null
-                && RespireConnection.IsDeadlineCancellation(error, acquisitionTimeout.Token, cancellationToken))
-            {
-                if (_importSession is not null && error is RespireCommandNotSubmittedException)
-                    importError = error;
-                var failure = AcquisitionFailure(error);
-                discovery?.RecordCommandFailure(failure, discoveryPending, slot, callerToken: cancellationToken);
-                throw failure;
-            }
-            catch (OperationCanceledException error) when (acquisitionTimeout is not null
-                && CommandTimeoutCancellation.IsFromLinkedToken(error, cancellationToken, acquisitionTimeout.Token))
-            {
-                if (_importSession is not null && error is RespireCommandNotSubmittedException)
-                    importError = error;
-                OperationCanceledException failure = new(error.Message, error, cancellationToken);
-                if (error is RespireCommandNotSubmittedException)
-                    failure = new RespireCommandNotSubmittedException(failure);
-                discovery?.RecordCommandFailure(failure, discoveryPending, slot, callerToken: cancellationToken);
-                throw failure;
-            }
             catch (Exception error)
             {
-                if (_importSession is not null && error is RespireCommandNotSubmittedException)
-                    importError = error;
-                discovery?.RecordCommandFailure(error, discoveryPending, slot, callerToken: cancellationToken);
-                throw;
+                Exception failure = error;
+                if (error is OperationCanceledException canceled && acquisition.HasCancellation)
+                {
+                    if (acquisition.IsDeadlineCancellation(canceled))
+                        failure = acquisition.CreateTimeout("MULTI/EXEC", core, _importSession?.Connection, canceled);
+                    else if (acquisition.IsCallerCancellation(canceled))
+                    {
+                        OperationCanceledException callerFailure = new(error.Message, error, cancellationToken);
+                        failure = error is RespireCommandNotSubmittedException
+                            ? new RespireCommandNotSubmittedException(callerFailure) : callerFailure;
+                    }
+                }
+                if (_importSession is not null)
+                {
+                    if (error is RespireCommandNotSubmittedException) importError = error;
+                    else if (!importSubmissionAttempted)
+                    {
+                        if (failure is OperationCanceledException callerFailure)
+                            failure = importError = new RespireCommandNotSubmittedException(callerFailure);
+                        else if (failure is RespireTimeoutException)
+                            importError = new RespireCommandNotSubmittedException(
+                                new OperationCanceledException(failure.Message, failure, cancellationToken));
+                    }
+                }
+                discovery?.RecordCommandFailure(failure, discoveryPending, slot, callerToken: cancellationToken);
+                if (ReferenceEquals(failure, error)) throw;
+                throw failure;
             }
             finally
             {
-                acquisitionTimeout?.Dispose();
+                acquisition.Dispose();
                 discovery?.Finish();
             }
-        }
-
-        // Passing the source by reference avoids a second closure allocation on every commit.
-        CancellationToken AcquisitionToken(ref CancellationTokenSource? acquisitionTimeout)
-        {
-            CheckDeadline();
-            if (!deadline.IsSet) return cancellationToken;
-            acquisitionTimeout ??= CommandTimeoutCancellation.Create(cancellationToken,
-                TimeSpan.FromMilliseconds(Math.Max(1L, deadline.Ticks - Environment.TickCount64)));
-            return acquisitionTimeout.Token;
-        }
-
-        void CheckDeadline()
-        {
-            if (_importSession is not null && cancellationToken.IsCancellationRequested)
-                throw new RespireCommandNotSubmittedException(new OperationCanceledException(cancellationToken));
-            cancellationToken.ThrowIfCancellationRequested();
-            if (deadline.IsSet && Environment.TickCount64 >= deadline.Ticks)
-                throw AcquisitionFailure();
-        }
-
-        RespireTimeoutException AcquisitionFailure(Exception? cause = null)
-        {
-            var diagnostics = core.Cluster is null && core.Sentinel is null
-                ? core.Multiplexer.CaptureConnectionWait()
-                : RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting);
-            if (_importSession is not null && connection is not null)
-                diagnostics = connection.CaptureTimeoutDiagnostics(stage: RespireCommandStage.WaitingForCapacity);
-            return new("MULTI/EXEC", timeout!.Value, cause, diagnostics);
         }
     }
 

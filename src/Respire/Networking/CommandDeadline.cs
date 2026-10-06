@@ -39,6 +39,9 @@ internal readonly struct CommandDeadline
     /// <summary>The absolute deadline in ticks, or 0 when there is none.</summary>
     public long Ticks => _value & ~RelaxedFlag;
 
+    /// <summary>Milliseconds left on the TickCount64 clock; no deadline has an unbounded budget.</summary>
+    internal long RemainingMilliseconds => IsSet ? Math.Max(0L, Ticks - Environment.TickCount64) : long.MaxValue;
+
     /// <summary>True when a reroute has already added the relaxed-timeout allowance.</summary>
     public bool IsRelaxed => (_value & RelaxedFlag) != 0;
 

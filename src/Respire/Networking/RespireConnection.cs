@@ -57,6 +57,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private readonly CancellationTokenSource _closedCancellation = new();
     private readonly TaskCompletionSource _retiredSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly InflightRing _inflight;
+    internal InflightRing Inflight => _inflight;
     private readonly PendingResponsePool _sourcePool;
     private readonly ArrayPool<byte> _streamPayloadPool;
     private readonly int _receiveBufferSize;

@@ -1,6 +1,5 @@
 using System.Net;
 using System.Net.Sockets;
-using System.Reflection;
 using System.Runtime.CompilerServices;
 using Respire.Internal;
 using Respire.Networking;
@@ -50,8 +49,7 @@ public class TransactionDeadlineTests
             ? await client.CreateTransactionAsync(["k"]) : client.CreateTransaction();
         var pending = transaction.Set("k", "v");
         var connection = watched
-            ? (RespireConnection)typeof(RespireTransactionBase).GetField("_watchConnection",
-                BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(transaction)!
+            ? transaction.WatchConnection!
             : await client.AcquireConnectionAsync(cluster ? ClusterHash.GetSlot("k") : null, default);
         var earliest = Environment.TickCount64;
         var commit = transaction is RespireWatchedTransaction watch
@@ -68,9 +66,7 @@ public class TransactionDeadlineTests
             == RespireCommandStage.AwaitingReply);
         await Assert.That(source.CommandName).IsEqualTo("MULTI/EXEC");
         await Assert.That(source.Deadline.Ticks).IsGreaterThanOrEqualTo(earliest + (long)Timeout.TotalMilliseconds);
-        var registration = (CancellationTokenRegistration)typeof(PendingResponse).GetField("_cancellationRegistration",
-            BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(source)!;
-        await Assert.That(registration.Token.CanBeCanceled).IsFalse();
+        await Assert.That(source.RegisteredCancellationToken.CanBeCanceled).IsFalse();
         await Assert.That(commit.IsCompleted).IsFalse();
 
         // Advance the sweep's observation directly; no wall-clock timeout or competing timer.
@@ -173,9 +169,7 @@ public class TransactionDeadlineTests
         await WaitUntilAsync(() => ring.Count == 1);
         await Assert.That(ring.TryPeek(out var source)).IsTrue();
         await Assert.That(source.Deadline.Ticks).IsLessThanOrEqualTo(startedBy + (long)Timeout.TotalMilliseconds);
-        var registration = (CancellationTokenRegistration)typeof(PendingResponse).GetField("_cancellationRegistration",
-            BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(source)!;
-        await Assert.That(registration.Token.CanBeCanceled).IsFalse();
+        await Assert.That(source.RegisteredCancellationToken.CanBeCanceled).IsFalse();
         await server.SendRawAsync(Committed);
         await commit.WaitAsync(Limit);
     }
@@ -218,9 +212,7 @@ public class TransactionDeadlineTests
         await WaitUntilAsync(() => ring.Count == 1);
         await Assert.That(ring.TryPeek(out var source)).IsTrue();
         await Assert.That(source.Deadline.Ticks).IsLessThanOrEqualTo(startedBy + (long)Timeout.TotalMilliseconds);
-        var registration = (CancellationTokenRegistration)typeof(PendingResponse).GetField("_cancellationRegistration",
-            BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(source)!;
-        await Assert.That(registration.Token.CanBeCanceled).IsFalse();
+        await Assert.That(source.RegisteredCancellationToken.CanBeCanceled).IsFalse();
         ring.SweepExpired(source.Deadline.Ticks + 1, Timeout, connection);
         var error = await Assert.That(async () => await commit.WaitAsync(Limit)).ThrowsExactly<RespireTimeoutException>();
         await Assert.That(error!.CommandName).IsEqualTo(stopAtMulti ? "MULTI" : "MULTI/EXEC");
@@ -236,35 +228,195 @@ public class TransactionDeadlineTests
     public async Task ImportCredentialGatePreservesDeadlineAndCallerCancellation(bool cancelCaller, bool preCanceled)
     {
         await using var server = new FakeRespServer(20, FakeRespServer.OkReply);
-        await using var client = await ConnectAsync(server.Port, cancelCaller ? Timeout : TimeSpan.FromMilliseconds(200));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1,
+            CommandTimeout = cancelCaller ? Timeout : TimeSpan.FromMilliseconds(200),
+            CredentialProvider = new ExpiringCredentials(),
+            Endpoints = [new("127.0.0.1", server.Port)],
+        });
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
-        using var gate = new SemaphoreSlim(0, 1);
-        typeof(RespireConnection).GetField("_credentialSequenceGate", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .SetValue(session.Connection, gate);
+        var gate = await session.Connection.AcquireCredentialSequenceAsync(default);
         await using var transaction = session.CreateTransaction();
         var pending = transaction.Hashes.Import("k", "schema", "v");
         using var caller = new CancellationTokenSource();
         if (preCanceled) caller.Cancel();
         var commit = transaction.CommitAsync(caller.Token).AsTask();
-        if (cancelCaller)
+        try
         {
-            caller.Cancel();
-            var error = await Assert.That(async () => await commit.WaitAsync(Limit)).Throws<OperationCanceledException>();
-            await Assert.That(error!.CancellationToken).IsEqualTo(caller.Token);
-            await Assert.That(pending.Error).IsSameReferenceAs(error);
+            if (cancelCaller)
+            {
+                caller.Cancel();
+                var error = await Assert.That(async () => await commit.WaitAsync(Limit)).Throws<RespireCommandNotSubmittedException>();
+                await Assert.That(error!.CancellationToken).IsEqualTo(caller.Token);
+                await Assert.That(pending.Error).IsSameReferenceAs(error);
+            }
+            else
+            {
+                var error = await Assert.That(async () => await commit.WaitAsync(Limit)).ThrowsExactly<RespireTimeoutException>();
+                await Assert.That(error!.CommandName).IsEqualTo("MULTI/EXEC");
+                await Assert.That(error.Diagnostics.Stage).IsEqualTo(RespireCommandStage.WaitingForCapacity);
+                await Assert.That(pending.Error).IsSameReferenceAs(error);
+            }
+            await Assert.That(server.ReceivedCommands.Contains("MULTI")).IsFalse();
         }
-        else
-        {
-            var error = await Assert.That(async () => await commit.WaitAsync(Limit)).ThrowsExactly<RespireTimeoutException>();
-            await Assert.That(error!.CommandName).IsEqualTo("MULTI/EXEC");
-            await Assert.That(error.Diagnostics.Stage).IsEqualTo(RespireCommandStage.WaitingForCapacity);
-            await Assert.That(pending.Error).IsSameReferenceAs(error);
-        }
-        await Assert.That(server.ReceivedCommands.Contains("MULTI")).IsFalse();
-        gate.Release();
+        finally { gate.Dispose(); }
         // No MULTI was accepted, so prepared fieldsets and the import lease remain usable.
         await Assert.That(await session.SetAsync("later", "schema", "v")).IsTrue();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ImportFailureBeforeMultiKeepsPreparedFieldsets(bool cancelCaller)
+    {
+        var timeout = TimeSpan.FromSeconds(2);
+        await using var server = new FakeRespServer(20, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("HELLO ", StringComparison.Ordinal)
+                ? "%1\r\n+proto\r\n:3\r\n"u8.ToArray() : null,
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Connections = 1, CommandTimeout = timeout,
+            ClientSideCache = new() { CoalesceConcurrentMisses = true },
+            Endpoints = [new("127.0.0.1", server.Port)],
+        });
+        await using var session = await client.Hashes.CreateImportSessionAsync();
+        await session.PrepareAsync("schema", "field");
+        await using var transaction = session.CreateTransaction();
+        var pending = transaction.Hashes.Import("k", "schema", "v");
+        using var caller = new CancellationTokenSource();
+        var started = new TaskCompletionSource<Task>(TaskCreationOptions.RunContinuationsAsynchronously);
+        // Hold the pre-admission cache barrier until the budget is spent. No transport
+        // timer or semaphore cancellation callback can win this failure path.
+        var worker = new Thread(() =>
+        {
+            try { started.TrySetResult(transaction.CommitAsync(caller.Token).AsTask()); }
+            catch (Exception error) { started.TrySetException(error); }
+        }) { IsBackground = true };
+        using (client.Core.ClientCache!.SharedReadGate.EnterScope())
+        {
+            worker.Start();
+            if (!SpinWait.SpinUntil(() => (worker.ThreadState & ThreadState.WaitSleepJoin) != 0, Limit))
+                throw new TimeoutException("Commit did not enter the held cache barrier.");
+            if (cancelCaller) caller.Cancel();
+            else Thread.Sleep(timeout + TimeSpan.FromMilliseconds(20));
+        }
+        try
+        {
+            var commit = await started.Task.WaitAsync(Limit);
+            if (cancelCaller)
+            {
+                var error = await Assert.That(async () => await commit.WaitAsync(Limit)).Throws<RespireCommandNotSubmittedException>();
+                await Assert.That(error!.CancellationToken).IsEqualTo(caller.Token);
+                await Assert.That(pending.Error).IsSameReferenceAs(error);
+            }
+            else
+            {
+                var error = await Assert.That(async () => await commit.WaitAsync(Limit)).ThrowsExactly<RespireTimeoutException>();
+                await Assert.That(error!.CommandName).IsEqualTo("MULTI/EXEC");
+                await Assert.That(error.Diagnostics.Stage).IsEqualTo(RespireCommandStage.WaitingForCapacity);
+                await Assert.That(pending.Error).IsSameReferenceAs(error);
+            }
+        }
+        finally
+        {
+            if (!worker.Join(Limit)) throw new TimeoutException("Commit worker did not stop.");
+        }
+        await Assert.That(server.ReceivedCommands.Contains("MULTI")).IsFalse();
+        await Assert.That(await session.SetAsync("later", "schema", "v")).IsTrue();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ClusterCommitUsesPublishedOwnerDuringPendingRefresh(bool withReconnectPolicy)
+    {
+        await using var server = new FakeRespServer(100, FakeRespServer.OkReply);
+        var topology = System.Text.Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{server.Port}\r\n");
+        server.ReplyOverride = (_, command) => command switch
+        {
+            "CLUSTER SLOTS" => topology,
+            "EXEC" => Committed,
+            _ when command.StartsWith("SET ", StringComparison.Ordinal) => Queued,
+            _ => FakeRespServer.OkReply,
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 2, UseCluster = true, CommandTimeout = Timeout,
+            ReconnectPolicy = withReconnectPolicy ? new() : null,
+            Endpoints = [new("127.0.0.1", server.Port)],
+        });
+        var keys = new Dictionary<int, string>();
+        for (var index = 0; keys.Count < 2 && index < 32; index++)
+        {
+            var key = "route-" + index;
+            await client.GetStringAsync(key);
+            keys[server.ReceivedConnectionIds[^1]] = key;
+        }
+        await Assert.That(keys.Count).IsEqualTo(2);
+        var held = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        server.SuppressReply = command =>
+        {
+            if (command != "CLUSTER SLOTS") return false;
+            held.TrySetResult(server.ReceivedConnectionIds[^1]);
+            return true;
+        };
+        var router = client.Core.Cluster!;
+        var refresh = router.GetPrimaryEndpointsAsync(default).AsTask();
+        var heldConnection = await held.Task.WaitAsync(Limit);
+        try
+        {
+            // A refresh publishes only when complete. Existing connected owners remain
+            // usable meanwhile; select the other socket so the held reply cannot block FIFO.
+            var key = keys.Single(pair => pair.Key != heldConnection).Value;
+            var slot = ClusterHash.GetSlot(key);
+            var normal = await client.AcquireConnectionAsync(slot, default);
+            var acquisition = new CommandAcquisitionScope(default,
+                CommandDeadline.After((long)Timeout.TotalMilliseconds), Timeout);
+            try
+            {
+                var timed = await client.AcquireConnectionAsync(slot, ref acquisition);
+                await Assert.That(timed).IsSameReferenceAs(normal);
+                await Assert.That(acquisition.HasCancellation).IsFalse();
+            }
+            finally { acquisition.Dispose(); }
+            await using var transaction = client.CreateTransaction();
+            var pending = transaction.Set(key, "v");
+            await transaction.CommitAsync().AsTask().WaitAsync(Limit);
+            await Assert.That(pending.Result).IsTrue();
+            await Assert.That(refresh.IsCompleted).IsFalse();
+        }
+        finally
+        {
+            server.SuppressReply = null;
+            await server.SendRawAsync(topology, heldConnection);
+            await refresh.WaitAsync(Limit);
+        }
+    }
+
+    [Test]
+    public async Task AcquiredImportGateStillChecksExpiredDeadline()
+    {
+        await using var server = new FakeRespServer(20, FakeRespServer.OkReply);
+        await using var client = await ConnectAsync(server.Port, Timeout, credentialProvider: new ExpiringCredentials());
+        await using var session = await client.Hashes.CreateImportSessionAsync();
+        using var gate = await session.Connection.AcquireCredentialSequenceAsync(default);
+        var expired = CommandDeadline.At(Environment.TickCount64 - 1);
+        var acquisition = new CommandAcquisitionScope(default, expired, Timeout);
+        _ = acquisition.Token;
+        acquisition.Dispose();
+        await Assert.That(acquisition.HasCancellation).IsFalse();
+        var error = await Assert.That(() => acquisition.CheckDeadline("MULTI/EXEC", client.Core, session.Connection))
+            .ThrowsExactly<RespireTimeoutException>();
+        await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.WaitingForCapacity);
+        await Assert.That(server.ReceivedCommands.Contains("MULTI")).IsFalse();
+        await Assert.That(expired.RemainingMilliseconds).IsEqualTo(0);
+        await Assert.That(expired.Relax(1).RemainingMilliseconds).IsEqualTo(0);
+        await Assert.That(CommandDeadline.None.RemainingMilliseconds).IsEqualTo(long.MaxValue);
     }
 
     [Test, NotInParallel]
@@ -336,16 +488,23 @@ public class TransactionDeadlineTests
         },
     };
 
-    private static ValueTask<RespireClient> ConnectAsync(int port, TimeSpan? timeout, bool cluster = false)
+    private static ValueTask<RespireClient> ConnectAsync(int port, TimeSpan? timeout, bool cluster = false,
+        IRespireCredentialProvider? credentialProvider = null)
         => RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespProtocol.Resp2, Connections = 1, CommandTimeout = timeout, UseCluster = cluster,
+            CredentialProvider = credentialProvider,
             Endpoints = [new("127.0.0.1", port)],
         });
 
+    private sealed class ExpiringCredentials : IRespireCredentialProvider
+    {
+        public ValueTask<RespireCredentials> GetCredentialsAsync(CancellationToken cancellationToken = default)
+            => new(new RespireCredentials("default", "test-password", DateTimeOffset.UtcNow.AddHours(1)));
+    }
+
     private static InflightRing GetRing(RespireConnection connection)
-        => (InflightRing)typeof(RespireConnection).GetField("_inflight",
-            BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(connection)!;
+        => connection.Inflight;
 
     private static async Task<bool> CommitAsync(RespireTransaction transaction)
     {

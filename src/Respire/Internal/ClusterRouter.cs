@@ -321,12 +321,20 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     {
         cancellationToken.ThrowIfCancellationRequested();
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        if (discovery is null && _options.ReconnectPolicy is not null
-            && TryGetReadyConnection(slot) is { } ready) return new(ready);
+        if (discovery is null && TryAcquireReadyConnection(slot, cancellationToken) is { } ready) return new(ready);
         return GetConnectionWithDiscoveryAsync(slot, cancellationToken, discovery);
     }
 
-    internal RespireConnection? TryGetReadyConnection(int? slot, bool? correctionIdentity = null)
+    internal RespireConnection? TryAcquireReadyConnection(int? slot, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        // No discovery round is needed for a connected published owner, with or without
+        // an explicit reconnect policy. Pending refreshes publish their map atomically.
+        return TryGetReadyConnection(slot);
+    }
+
+    private RespireConnection? TryGetReadyConnection(int? slot, bool? correctionIdentity = null)
     {
         var node = slot is { } value ? RoutingSnapshot[value].Primary : TryGetConnectedNode();
         if (node is not { IsConnected: true, IsRetired: false }) return null;

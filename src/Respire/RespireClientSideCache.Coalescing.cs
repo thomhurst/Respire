@@ -11,6 +11,7 @@ internal sealed partial class ClientSideCacheCoordinator
     internal static long SharedReadRetirements => Interlocked.Read(ref _sharedReadRetirements);
 
     private readonly Lock _sharedReadLock = new();
+    internal Lock SharedReadGate => _sharedReadLock;
     private readonly Dictionary<ClientCacheCommandKey, SharedRead> _sharedReads = new();
     private readonly HashSet<SharedRead> _activeSharedReads = new();
     private bool _sharedReadsStopped;
