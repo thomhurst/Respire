@@ -1,4 +1,4 @@
-# Reviewed source-declared member signatures: 307 total; per-type counts include owner, derived and accessible nested declarations.
+# Reviewed source-declared member signatures: 308 total; per-type counts include owner, derived and accessible nested declarations.
 # Count: Respire.ClientSideCacheCoordinator | 49
 Respire.ClientSideCacheCoordinator | class CacheEntry(byte[]?, long, long)
 Respire.ClientSideCacheCoordinator | class CacheStore()
@@ -284,7 +284,7 @@ Respire.Networking.StringPendingResponseSource | property Task [public; get] : V
 Respire.RespireTransaction | constructor RespireTransaction(RespireClient)
 Respire.RespireTransaction | constructor RespireTransaction(RespireClient, RespireHashImportSession)
 Respire.RespireTransaction | method CommitAsync(CancellationToken) : ValueTask
-# Count: Respire.RespireTransactionBase | 42
+# Count: Respire.RespireTransactionBase | 43
 Respire.RespireTransactionBase | constructor RespireTransactionBase(RespireClient, RespireConnection?, int?, RespireHashImportSession?)
 Respire.RespireTransactionBase | method CommitCoreAsync(CancellationToken, bool) : ValueTask<bool>
 Respire.RespireTransactionBase | method Decrement(RespireKey, long) : RespirePending<long>
@@ -308,6 +308,7 @@ Respire.RespireTransactionBase | method Set(RespireKey, RespireValue, RespireExp
 Respire.RespireTransactionBase | method Set`1(RespireKey, T, RespireExpiry, SetWhen) : RespirePending<bool>
 Respire.RespireTransactionBase | method TryGet`1(RespireKey) : RespirePending<RespireGet<T>>
 Respire.RespireTransactionBase | method ValidateClusterSlot(int, ref int?) : void
+Respire.RespireTransactionBase | property Arrays [public; get] : IBatchArrayCommands
 Respire.RespireTransactionBase | property Bitmaps [public; get] : IBatchBitmapCommands
 Respire.RespireTransactionBase | property Count [public; get] : int
 Respire.RespireTransactionBase | property Functions [public; get] : IBatchFunctionCommands

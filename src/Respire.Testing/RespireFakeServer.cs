@@ -407,6 +407,7 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
             List<byte[]> => "list",
             Dictionary<byte[], double> => "zset",
             FakeStream => "stream",
+            FakeArray => "array",
             _ => throw new InvalidOperationException("Unknown fake entry type."),
         };
         internal long? ExpiresAt { get; set; } = expiresAt;

@@ -45,6 +45,7 @@ public sealed partial class RespireClient : IRespireClient
         Locks = new LockCommands(this);
         Hashes = new HashCommands(this);
         Lists = new ListCommands(this);
+        Arrays = new ArrayCommands(this);
         Sets = new SetCommands(this);
         SortedSets = new SortedSetCommands(this);
         Streams = new StreamCommands(this);
@@ -224,6 +225,9 @@ public sealed partial class RespireClient : IRespireClient
     public IHashCommands Hashes { get; }
     /// <inheritdoc/>
     public IListCommands Lists { get; }
+
+    /// <summary>Redis sparse array commands.</summary>
+    public IArrayCommands Arrays { get; }
     /// <inheritdoc/>
     public ISetCommands Sets { get; }
     /// <inheritdoc/>

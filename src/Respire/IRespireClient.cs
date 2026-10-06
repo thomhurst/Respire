@@ -36,6 +36,10 @@ public interface IRespireClient : IAsyncDisposable
     IHashCommands Hashes { get; }
     /// <summary>List commands.</summary>
     IListCommands Lists { get; }
+
+    /// <summary>Redis sparse array commands.</summary>
+    /// <remarks>The default getter throws NotSupportedException when an implementation does not support arrays.</remarks>
+    IArrayCommands Arrays => throw new NotSupportedException("This client does not support Redis arrays.");
     /// <summary>Set commands.</summary>
     ISetCommands Sets { get; }
     /// <summary>Sorted-set commands.</summary>

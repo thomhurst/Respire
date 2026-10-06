@@ -53,6 +53,9 @@ public enum RespireKeyType
 
     /// <summary>A Redis vector set.</summary>
     VectorSet,
+
+    /// <summary>A Redis sparse array.</summary>
+    Array,
 }
 
 /// <summary>Generic key management commands.</summary>
@@ -433,6 +436,7 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
             "hash" => RespireKeyType.Hash,
             "stream" => RespireKeyType.Stream,
             "vectorset" => RespireKeyType.VectorSet,
+            "array" => RespireKeyType.Array,
             _ => RespireKeyType.Unknown,
         };
 
@@ -447,6 +451,7 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
             RespireKeyType.Hash => "hash",
             RespireKeyType.Stream => "stream",
             RespireKeyType.VectorSet => "vectorset",
+            RespireKeyType.Array => "array",
             _ => throw new ArgumentOutOfRangeException(
                 nameof(type), type, "SCAN TYPE requires a concrete Redis key type."),
         };
