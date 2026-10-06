@@ -10,7 +10,7 @@ namespace Respire;
 /// an overload per representation.
 /// </summary>
 /// <remarks>Binary storage is borrowed, including through prefix views. Keep it unchanged until
-/// the command completes. Deferred command queues take owned snapshots before returning.</remarks>
+/// the command completes unless the receiving API explicitly snapshots or serializes it earlier.</remarks>
 public readonly struct RespireKey : IEquatable<RespireKey>
 {
     private readonly string? _string;
@@ -79,9 +79,7 @@ public readonly struct RespireKey : IEquatable<RespireKey>
     internal byte[] ToBytes()
     {
         if (_prefix is null) return _string is null ? _bytes.ToArray() : Encoding.UTF8.GetBytes(_string);
-        var bytes = new byte[WireLength];
-        _prefix.WritePayload(_string, _bytes, bytes);
-        return bytes;
+        return _prefix.Materialize(_string, _bytes);
     }
 
     internal int WireLength
@@ -116,7 +114,8 @@ public readonly struct RespireKey : IEquatable<RespireKey>
         // Reapplying a prefix to an already resolved key preserves the original text/binary semantics.
         if (_prefix is not null)
             return (_string is not null ? new RespireKey(ToString()) : new RespireKey(ToBytes())).Prepend(prefix);
-        return new RespireKey(prefix, _string, _bytes);
+        return new RespireKey(prefix, _string,
+            _string is null && prefix.SnapshotBinaryKeys ? _bytes.ToArray() : _bytes);
     }
 
     internal void WriteTo(ref RespWriter writer)
@@ -139,7 +138,7 @@ public readonly struct RespireKey : IEquatable<RespireKey>
     public override string ToString()
     {
         if (_prefix is null) return _string ?? Internal.Utf8String.GetString(_bytes);
-        return _string is not null ? _prefix.Text + _string : Encoding.UTF8.GetString(ToBytes());
+        return _prefix.GetString(_string, _bytes);
     }
 
     /// <inheritdoc/>

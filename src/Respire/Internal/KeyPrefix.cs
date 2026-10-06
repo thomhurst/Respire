@@ -3,10 +3,93 @@ using System.Text;
 namespace Respire.Internal;
 
 /// <summary>Immutable prefix encoding shared by every key resolved through a client view.</summary>
-internal sealed class KeyPrefix(string text)
+internal sealed class KeyPrefix
 {
-    internal string Text { get; } = text;
-    internal byte[] Bytes { get; } = Encoding.UTF8.GetBytes(text);
+    internal string Text { get; }
+    internal byte[] Bytes { get; }
+    internal bool SnapshotBinaryKeys { get; }
+    private readonly int _tagStart;
+    private readonly int _binaryTagStart;
+    private readonly int _fixedSlot;
+
+    internal KeyPrefix(string text) : this(text, Encoding.UTF8.GetBytes(text), false) { }
+
+    private KeyPrefix(string text, byte[] bytes, bool snapshotBinaryKeys)
+    {
+        Text = text;
+        Bytes = bytes;
+        SnapshotBinaryKeys = snapshotBinaryKeys;
+        _tagStart = text.IndexOf('{');
+        _binaryTagStart = bytes.AsSpan().IndexOf((byte)'{');
+        var close = _tagStart < 0 ? -1 : text.AsSpan(_tagStart + 1).IndexOf('}');
+        _fixedSlot = close > 0 ? ClusterHash.GetSlot(text) : -1;
+        // An empty first tag disables tag selection, including later tags in the suffix.
+        if (close == 0) _tagStart = _binaryTagStart = -2;
+    }
+
+    /// <summary>Shares the encoding while restoring owned binary keys for deferred batches.</summary>
+    internal KeyPrefix ForDeferredBatch() => SnapshotBinaryKeys ? this : new(Text, Bytes, true);
+
+    /// <summary>Materializes the exact wire bytes for an explicitly owned representation.</summary>
+    internal byte[] Materialize(string? key, ReadOnlyMemory<byte> bytes)
+    {
+        var payload = new byte[GetWireLength(key, bytes)];
+        WritePayload(key, bytes, payload);
+        return payload;
+    }
+
+    /// <summary>Preserves text identity and uses the shared decoder for binary keys.</summary>
+    internal string GetString(string? key, ReadOnlyMemory<byte> bytes)
+        => key is not null ? Text + key : Utf8String.GetString(Materialize(null, bytes).AsMemory());
+
+    /// <summary>Hashes only a nonempty first tag, including a tag split across the prefix boundary.</summary>
+    internal bool TryGetTaggedSlot(string? key, ReadOnlyMemory<byte> bytes, out int slot)
+    {
+        slot = _fixedSlot;
+        if (slot >= 0) return true;
+        if (_tagStart == -2) return false;
+        if (key is not null)
+        {
+            var suffix = key.AsSpan();
+            if (_tagStart >= 0)
+            {
+                var close = suffix.IndexOf('}');
+                var prefixTag = Text.AsSpan(_tagStart + 1);
+                if (close < 0 || prefixTag.IsEmpty && close == 0) return false;
+                slot = ClusterHash.GetTagSlot(prefixTag, suffix[..close]);
+            }
+            else
+            {
+                var open = suffix.IndexOf('{');
+                if (open < 0) return false;
+                var tag = suffix[(open + 1)..];
+                var close = tag.IndexOf('}');
+                if (close <= 0) return false;
+                slot = ClusterHash.GetTagSlot(tag[..close], default);
+            }
+        }
+        else
+        {
+            var suffix = bytes.Span;
+            if (_binaryTagStart >= 0)
+            {
+                var close = suffix.IndexOf((byte)'}');
+                var prefixTag = Bytes.AsSpan(_binaryTagStart + 1);
+                if (close < 0 || prefixTag.IsEmpty && close == 0) return false;
+                slot = ClusterHash.GetTagSlot(prefixTag, suffix[..close]);
+            }
+            else
+            {
+                var open = suffix.IndexOf((byte)'{');
+                if (open < 0) return false;
+                var tag = suffix[(open + 1)..];
+                var close = tag.IndexOf((byte)'}');
+                if (close <= 0) return false;
+                slot = ClusterHash.GetTagSlot(tag[..close], default);
+            }
+        }
+        return true;
+    }
 
     private bool JoinsSurrogatePair(string? key)
         => Text.Length != 0 && char.IsHighSurrogate(Text[^1])

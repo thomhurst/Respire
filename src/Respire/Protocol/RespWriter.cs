@@ -58,6 +58,24 @@ internal ref struct RespWriter
     /// <summary>Writes a resolved key directly into the coalescing buffer without concatenating its storage.</summary>
     internal void WritePrefixedKey(KeyPrefix prefix, string? text, ReadOnlyMemory<byte> bytes)
     {
+        if (text is not null && (text.Length == 0 || text[0] <= 0x7f))
+        {
+            // Match WriteBulkString's single-pass ASCII path. A non-ASCII suffix rolls
+            // back only this frame before using the UTF-8/surrogate-boundary path.
+            var mark = _buffer.Count;
+            var asciiLength = checked(prefix.Bytes.Length + text.Length);
+            WriteBulkStringHeader(asciiLength);
+            var asciiPayload = _buffer.GetSpan(checked(asciiLength + 2));
+            prefix.Bytes.CopyTo(asciiPayload);
+            if (Ascii.FromUtf16(text, asciiPayload[prefix.Bytes.Length..], out _) == OperationStatus.Done)
+            {
+                asciiPayload[asciiLength] = RespConstants.CarriageReturn;
+                asciiPayload[asciiLength + 1] = RespConstants.LineFeed;
+                _buffer.Advance(asciiLength + 2);
+                return;
+            }
+            _buffer.TruncateTo(mark);
+        }
         var length = prefix.GetWireLength(text, bytes);
         WriteBulkStringHeader(length);
         var payload = _buffer.GetSpan(checked(length + 2));

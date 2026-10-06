@@ -76,6 +76,50 @@ internal static class ClusterHash
         return GetCrcSlot(key);
     }
 
+    /// <summary>Hashes a selected binary tag without interpreting any nested braces.</summary>
+    internal static int GetTagSlot(ReadOnlySpan<byte> first, ReadOnlySpan<byte> second)
+    {
+        ushort crc = 0;
+        foreach (var value in first) crc = Update(crc, value);
+        foreach (var value in second) crc = Update(crc, value);
+        return crc & (SlotCount - 1);
+    }
+
+    /// <summary>Hashes a selected text tag, preserving UTF-16 pairs across the two segments.</summary>
+    internal static int GetTagSlot(ReadOnlySpan<char> first, ReadOnlySpan<char> second)
+    {
+        ushort crc = 0;
+        foreach (var value in first)
+        {
+            if (value > 0x7f) return GetJoinedUtf8Slot(first, second);
+            crc = Update(crc, (byte)value);
+        }
+        foreach (var value in second)
+        {
+            if (value > 0x7f) return GetJoinedUtf8Slot(first, second);
+            crc = Update(crc, (byte)value);
+        }
+        return crc & (SlotCount - 1);
+    }
+
+    private static int GetJoinedUtf8Slot(ReadOnlySpan<char> first, ReadOnlySpan<char> second)
+    {
+        var length = checked(first.Length + second.Length);
+        char[]? rented = null;
+        Span<char> tag = length <= StackallocThreshold ? stackalloc char[length]
+            : (rented = ArrayPool<char>.Shared.Rent(length));
+        try
+        {
+            first.CopyTo(tag);
+            second.CopyTo(tag[first.Length..]);
+            return GetUtf8Slot(tag[..length]);
+        }
+        finally
+        {
+            if (rented is not null) ArrayPool<char>.Shared.Return(rented, clearArray: true);
+        }
+    }
+
     /// <summary>Finds a nonempty first hash tag before any pattern metacharacter.</summary>
     internal static bool TryGetFixedPatternSlot(ReadOnlySpan<byte> pattern, out int slot)
     {

@@ -243,6 +243,7 @@ public readonly struct RespireValue : IEquatable<RespireValue>
 
     internal int GetPrefixedClusterSlot()
     {
+        if (_prefix!.TryGetTaggedSlot(_string, _bytes, out var slot)) return slot;
         var length = GetWireLength();
         byte[]? rented = null;
         Span<byte> payload = length <= StackallocThreshold ? stackalloc byte[length]
@@ -320,7 +321,7 @@ public readonly struct RespireValue : IEquatable<RespireValue>
     internal bool EqualsAsciiIgnoreCase(string value)
     {
         if (_kind == Kind.Prefixed)
-            return _string is not null ? AsKey().ToString().Equals(value, StringComparison.OrdinalIgnoreCase)
+            return _string is not null ? _prefix!.GetString(_string, _bytes).Equals(value, StringComparison.OrdinalIgnoreCase)
                 : PrefixedBytesEqualAsciiIgnoreCase(value);
         if (_kind == Kind.String)
         {
@@ -701,7 +702,7 @@ public readonly struct RespireValue : IEquatable<RespireValue>
     public override string ToString()
         => _kind switch
         {
-            Kind.Prefixed => AsKey().ToString(),
+            Kind.Prefixed => _prefix!.GetString(_string, _bytes),
             Kind.String => _string!,
             Kind.Bytes => Internal.Utf8String.GetString(_bytes),
             Kind.Integer => _number.ToString(CultureInfo.InvariantCulture),

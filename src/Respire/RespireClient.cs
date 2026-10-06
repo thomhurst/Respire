@@ -22,7 +22,6 @@ public sealed partial class RespireClient : IRespireClient
 {
     private readonly ClientCore _core;
     private readonly string? _keyPrefix;
-    private readonly byte[]? _keyPrefixBytes;
     private readonly KeyPrefix? _encodedKeyPrefix;
     private IStringCommands? _strings;
     private IKeyCommands? _keys;
@@ -55,7 +54,6 @@ public sealed partial class RespireClient : IRespireClient
         _bypassClientCache = bypassClientCache;
         _keyPrefix = keyPrefix;
         _encodedKeyPrefix = keyPrefix is null ? null : encodedKeyPrefix ?? new KeyPrefix(keyPrefix);
-        _keyPrefixBytes = _encodedKeyPrefix?.Bytes;
         _ownsCore = ownsCore;
         _readFrom = readFrom ?? core.Options.ReadFrom;
         _broadcastTracking = core.Options.ClientSideCache?.TrackingMode == RespireClientTrackingMode.Broadcast;
@@ -1466,7 +1464,13 @@ public sealed partial class RespireClient : IRespireClient
     internal ClientCore Core => _core;
 
     internal string? KeyPrefix => _keyPrefix;
-    internal ReadOnlySpan<byte> KeyPrefixBytes => _keyPrefixBytes;
+    internal ReadOnlySpan<byte> KeyPrefixBytes => _encodedKeyPrefix?.Bytes;
+
+    /// <summary>Shares routing and encoding, but snapshots prefixed binary keys as batch facets resolve them.</summary>
+    internal RespireClient ForDeferredBatch()
+        => _encodedKeyPrefix is null ? this
+            : new RespireClient(_core, _keyPrefix, ownsCore: false, readFrom: _readFrom,
+                bypassClientCache: _bypassClientCache, encodedKeyPrefix: _encodedKeyPrefix.ForDeferredBatch());
 
     /// <inheritdoc/>
     public RespireKey ResolveKey(RespireKey key)

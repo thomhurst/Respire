@@ -2,7 +2,16 @@ name: Key prefix benchmarks
 
 on:
   pull_request:
-    types: [labeled]
+    paths:
+      - 'src/Respire/RespireKey.cs'
+      - 'src/Respire/RespireValue.cs'
+      - 'src/Respire/RespireClient.cs'
+      - 'src/Respire/Internal/KeyPrefix.cs'
+      - 'src/Respire/Internal/ClusterHash.cs'
+      - 'src/Respire/Protocol/RespWriter.cs'
+      - 'benchmarks/Respire.Benchmarks/KeyPrefixBenchmarks.cs'
+      - '.github/workflows/benchmark-key-prefix.yml'
+      - '.github/workflows/benchmark-compare.yml'
 
 permissions:
   contents: read
@@ -12,94 +21,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  key-prefix-comparison:
-    if: github.event.label.name == 'run-key-prefix-benchmarks'
-    name: Compare key prefix (${{ matrix.framework }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    strategy:
-      fail-fast: false
-      matrix:
-        framework: [net8.0, net10.0]
-    steps:
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        with:
-          dotnet-version: |
-            8.0.x
-            10.0.x
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: baseline
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          path: candidate
-      - name: Compare pinned baseline, candidate, baseline on one runner
-        shell: bash
-        env:
-          FRAMEWORK: ${{ matrix.framework }}
-        run: |
-          set -euo pipefail
-          cp candidate/benchmarks/Respire.Benchmarks/KeyPrefixBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
-          for phase in validation baseline-a candidate baseline-b; do
-            source=baseline
-            job=Medium
-            if [ "$phase" = candidate ] || [ "$phase" = validation ]; then source=candidate; fi
-            if [ "$phase" = validation ]; then job=Dry; fi
-            (
-              cd "$source"
-              git rev-parse HEAD
-              dotnet run --project benchmarks/Respire.Benchmarks -c Release -f "$FRAMEWORK" -- \
-                --filter '*KeyPrefixBenchmarks*' --job "$job" --exporters json markdown \
-                --artifacts "$GITHUB_WORKSPACE/results/$phase"
-            ) > "$GITHUB_WORKSPACE/$phase.log" 2>&1
-          done
-      - name: Validate measurements and summarize both controls
-        shell: python
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          import json
-          import os
-          from pathlib import Path
-          phases = {}
-          for phase in ("validation", "baseline-a", "candidate", "baseline-b"):
-              expected_sha = os.environ["HEAD_SHA" if phase in ("validation", "candidate") else "BASE_SHA"]
-              assert Path(f"{phase}.log").read_text().splitlines()[0] == expected_sha, f"Wrong source: {phase}"
-              reports = list(Path("results", phase, "results").glob("*-report-full-compressed.json"))
-              assert len(reports) == 1, f"Missing or ambiguous report: {phase}"
-              cases = json.loads(reports[0].read_text())["Benchmarks"]
-              assert len(cases) == 6, f"Incomplete cases: {phase}"
-              assert all(case["Statistics"] and case["Statistics"]["Mean"] > 0 for case in cases), f"Failed case: {phase}"
-              phases[phase] = {case["Method"]: case for case in cases}
-          assert all(cases.keys() == phases["candidate"].keys() for cases in phases.values())
-          for method, case in phases["candidate"].items():
-              if method.endswith("Get"):
-                  assert case["Memory"]["BytesAllocatedPerOperation"] == 0, f"Key allocation: {method}"
-          lines = ["## Key prefix comparison", "",
-                   "Serialization measures command resolution and writing, excluding network I/O. Positive deltas mean slower.",
-                   "Review both controls and error bars before claiming a speed improvement.", "",
-                   "| Case | A ns | Candidate ns | B ns | Candidate/A | Candidate/B | B/A drift | Allocated B (A/candidate/B) |",
-                   "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
-          for method in sorted(phases["candidate"]):
-              cases = [phases[phase][method] for phase in ("baseline-a", "candidate", "baseline-b")]
-              a, candidate, b = [case["Statistics"]["Mean"] for case in cases]
-              allocated = "/".join(str(case["Memory"]["BytesAllocatedPerOperation"]) for case in cases)
-              lines.append(f"| {method} | {a:.3f} | {candidate:.3f} | {b:.3f} | "
-                           f"{100 * (candidate / a - 1):+.2f}% | {100 * (candidate / b - 1):+.2f}% | "
-                           f"{100 * (b / a - 1):+.2f}% | {allocated} |")
-          summary = "\n".join(lines) + "\n"
-          Path("comparison.md").write_text(summary)
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as stream:
-              stream.write(summary)
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: always()
-        with:
-          name: key-prefix-comparison-${{ matrix.framework }}
-          path: |
-            *.log
-            comparison.md
-            results/
-          retention-days: 14
+  compare:
+    uses: ./.github/workflows/benchmark-compare.yml
+    with:
+      baseline-sha: ${{ github.event.pull_request.base.sha }}
+      candidate-sha: ${{ github.event.pull_request.head.sha }}
+      fixture: benchmarks/Respire.Benchmarks/KeyPrefixBenchmarks.cs
+      filter: '*KeyPrefixBenchmarks*'
+      expected-case-count: 9
+      expected-methods: PlainStringGet,PrefixedStringGet,PlainBinaryGet,PrefixedBinaryGet,CreatePrefixView,ReadInitializedFacet,FixedTagLargeTextSlot,FixedTagLargeBinarySlot,SplitTagLargeTextSlot
+      zero-allocation-methods: PlainStringGet,PrefixedStringGet,PlainBinaryGet,PrefixedBinaryGet,FixedTagLargeTextSlot,FixedTagLargeBinarySlot,SplitTagLargeTextSlot
+      artifact-prefix: key-prefix-comparison

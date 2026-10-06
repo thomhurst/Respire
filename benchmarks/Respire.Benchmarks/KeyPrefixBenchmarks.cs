@@ -11,9 +11,14 @@ public class KeyPrefixBenchmarks
 {
     private RespireClient _client = null!;
     private RespireClient _prefixed = null!;
+    private IRespireClient _fixedTag = null!;
+    private IRespireClient _splitTag = null!;
     private WriteBuffer _buffer = null!;
     private RespireKey _text;
     private RespireKey _binary;
+    private RespireKey _largeText;
+    private RespireKey _largeBinary;
+    private RespireKey _tagRemainder;
     private string _prefix = "tenant:";
 
     [GlobalSetup]
@@ -21,9 +26,15 @@ public class KeyPrefixBenchmarks
     {
         _client = RespireClient.Create("localhost");
         _prefixed = (RespireClient)_client.WithKeyPrefix(_prefix);
+        _fixedTag = _client.WithKeyPrefix("tenant:{fixed}:");
+        _splitTag = _client.WithKeyPrefix("tenant:{split");
         _buffer = new WriteBuffer(256);
         _text = "benchmark-key";
         _binary = "benchmark-key"u8.ToArray();
+        var large = new string('x', 8192);
+        _largeText = large;
+        _largeBinary = System.Text.Encoding.UTF8.GetBytes(large);
+        _tagRemainder = "}:" + large;
         _ = _client.Strings;
     }
 
@@ -44,6 +55,15 @@ public class KeyPrefixBenchmarks
 
     [Benchmark]
     public IStringCommands ReadInitializedFacet() => _client.Strings;
+
+    [Benchmark]
+    public int FixedTagLargeTextSlot() => _fixedTag.ResolveKey(_largeText).ClusterSlot;
+
+    [Benchmark]
+    public int FixedTagLargeBinarySlot() => _fixedTag.ResolveKey(_largeBinary).ClusterSlot;
+
+    [Benchmark]
+    public int SplitTagLargeTextSlot() => _splitTag.ResolveKey(_tagRemainder).ClusterSlot;
 
     private int WriteGet(RespireClient client, in RespireKey key)
     {

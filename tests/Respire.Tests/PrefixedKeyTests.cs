@@ -1,8 +1,10 @@
+using System.Buffers;
 using System.Runtime.CompilerServices;
 using System.Text;
 using Respire.Commands;
 using Respire.Networking;
 using Respire.Protocol;
+using Respire.Tests.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -11,6 +13,44 @@ namespace Respire.Tests;
 
 public class PrefixedKeyTests
 {
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task QueuedPrefixedKeysOwnBinaryStorage(bool transaction)
+    {
+        var value = "$5\r\nvalue\r\n"u8.ToArray();
+        byte[][] replies = transaction
+            ? [FakeRespServer.OkReply, "+QUEUED\r\n"u8.ToArray(), "+QUEUED\r\n"u8.ToArray(),
+                "+QUEUED\r\n"u8.ToArray(), "+QUEUED\r\n"u8.ToArray(), "*4\r\n+OK\r\n$5\r\nvalue\r\n+OK\r\n:2\r\n"u8.ToArray()]
+            : [FakeRespServer.OkReply, value, FakeRespServer.OkReply, ":2\r\n"u8.ToArray()];
+        await using var server = new FakeRespServer(replies);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var view = client.WithKeyPrefix("tenant:");
+        using var batch = transaction ? null : view.CreateBatch();
+        await using var tx = transaction ? view.CreateTransaction() : null;
+        IRespireCommandQueue queue = tx ?? (IRespireCommandQueue)batch!;
+        var source = "source"u8.ToArray();
+        var destination = "target"u8.ToArray();
+        var set = queue.Strings.Set(source, "value");
+        var get = queue.Strings.Get<string>(source);
+        var rename = queue.Keys.Rename(source, destination);
+        var delete = queue.Keys.Delete(source, destination);
+        source[0] = (byte)'X';
+        destination[0] = (byte)'Y';
+        if (tx is not null) await tx.CommitAsync();
+        else await batch!.ExecuteAsync();
+        await Assert.That(set.Result).IsTrue();
+        await Assert.That(get.Result).IsEqualTo("value");
+        _ = rename.Result;
+        await Assert.That(delete.Result).IsEqualTo(2);
+        var commands = server.ReceivedCommands.Where(command => command is not "MULTI" and not "EXEC").ToArray();
+        await Assert.That(commands.SequenceEqual(new[]
+        {
+            "SET tenant:source value", "GET tenant:source", "RENAME tenant:source tenant:target",
+            "DEL tenant:source tenant:target",
+        })).IsTrue();
+    }
+
     [Test]
     [Arguments(0)]
     [Arguments(1)]
@@ -21,6 +61,13 @@ public class PrefixedKeyTests
     [Arguments(6)]
     [Arguments(7)]
     [Arguments(8)]
+    [Arguments(9)]
+    [Arguments(10)]
+    [Arguments(11)]
+    [Arguments(12)]
+    [Arguments(13)]
+    [Arguments(14)]
+    [Arguments(15)]
     public async Task PrefixPreservesWireIdentityAndClusterSlot(int scenario)
     {
         var (prefix, text) = scenario switch
@@ -33,6 +80,13 @@ public class PrefixedKeyTests
             5 => ("\uD800", "\uDC00tail"),
             6 => ("\uD800", "\uD801"),
             8 => ("tenant:", ""),
+            9 => ("tenant:{fixed}:", new string('x', 8192)),
+            10 => ("tenant:{outer{", "inner}:unused}"),
+            11 => ("tenant:{\uD800", "\uDC00}:unused"),
+            12 => ("tenant:", "{£}:unused"),
+            13 => ("tenant:{}:", "{later}:unused"),
+            14 => ("tenant:", "{}{later}:unused"),
+            15 => ("tenant:{" + new string('£', 512), "𐍈}:unused"),
             _ => (new string('x', 1024) + "{", "tag}:£"),
         };
         await using var client = RespireClient.Create("localhost");
@@ -225,5 +279,53 @@ public class PrefixedKeyTests
         var value = view.Key(in key);
         await Assert.That(value.EqualsAsciiIgnoreCase("tenant:�")).IsFalse();
         await Assert.That(value == (RespireValue)"tenant:�").IsFalse();
+        var expected = Internal.Utf8String.GetString("tenant:"u8.ToArray().Concat(new byte[] { 255 }).ToArray().AsMemory());
+        await Assert.That(value.ToString()).IsEqualTo(expected);
+        await Assert.That(value.AsKey().ToString()).IsEqualTo(expected);
+    }
+
+    [Test]
+    public async Task CompletePrefixTagDoesNotReadBinarySuffix()
+    {
+        await using var client = RespireClient.Create("localhost");
+        using var suffix = new GuardedSuffix();
+        var key = new RespireKey(suffix.Memory);
+        suffix.RejectReads = true;
+        var resolved = client.WithKeyPrefix("tenant:{fixed}:").ResolveKey(key);
+        await Assert.That(resolved.ClusterSlot).IsEqualTo(new RespireKey("{fixed}").ClusterSlot);
+        // Positive control: the backing memory really rejects payload access.
+        await Assert.That(() => resolved.ToBytes()).Throws<InvalidOperationException>();
+    }
+
+    private sealed class GuardedSuffix : MemoryManager<byte>
+    {
+        private readonly byte[] _bytes = new byte[8192];
+        internal bool RejectReads { get; set; }
+        public override Span<byte> GetSpan()
+            => RejectReads ? throw new InvalidOperationException("The unused suffix was read.") : _bytes;
+        public override MemoryHandle Pin(int elementIndex = 0) => throw new NotSupportedException();
+        public override void Unpin() { }
+        protected override void Dispose(bool disposing) { }
+    }
+
+    [Test]
+    public async Task AsciiFallbackPreservesEarlierFrames()
+    {
+        await using var client = RespireClient.Create("localhost");
+        var key = client.WithKeyPrefix("tenant:").ResolveKey("ascii-£-𐍈");
+        var buffer = new WriteBuffer(16);
+        try
+        {
+            var writer = new RespWriter(buffer);
+            writer.WriteBulkString("before");
+            key.WriteTo(ref writer);
+            writer.WriteBulkString("after");
+            var payload = Encoding.UTF8.GetBytes("tenant:ascii-£-𐍈");
+            var expected = "$6\r\nbefore\r\n"u8.ToArray()
+                .Concat(Encoding.ASCII.GetBytes($"${payload.Length}\r\n"))
+                .Concat(payload).Concat("\r\n$5\r\nafter\r\n"u8.ToArray());
+            await Assert.That(buffer.WrittenMemory.ToArray().SequenceEqual(expected)).IsTrue();
+        }
+        finally { buffer.Release(); }
     }
 }
