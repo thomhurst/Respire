@@ -627,6 +627,7 @@ public class ServerNodeCommandTests
             => Messages.Enqueue(formatter(state, exception) + exception?.ToString());
     }
 
+    // Single-command test connections only: no AUTH or HELLO setup writes before the observed command.
     private sealed class GatedWriteStream(Socket socket, Task received) : NetworkStream(socket, ownsSocket: true)
     {
         internal TaskCompletionSource WriteStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

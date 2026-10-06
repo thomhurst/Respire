@@ -35,6 +35,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
     private readonly List<Socket> _clientSockets = [];
     private int _commandsSeen;
     private int _disposed;
+    private volatile Task? _readGate;
 
     public int Port { get; }
     /// <summary>Completes after the first socket is recorded, even before a full command arrives.</summary>
@@ -58,7 +59,11 @@ internal sealed class FakeRespServer : IAsyncDisposable
     public Func<string, bool>? SuppressReply { get; set; }
 
     /// <summary>Pauses socket reads so tests can separate local writes from peer receipt.</summary>
-    public Task? ReadGate { get; set; }
+    public Task? ReadGate
+    {
+        get => _readGate;
+        set => _readGate = value;
+    }
 
     /// <summary>Overrides a command's scripted reply by accepted connection ID; null keeps the script.</summary>
     public Func<int, string, byte[]?>? ReplyOverride { get; set; }
