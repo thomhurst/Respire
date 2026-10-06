@@ -14,6 +14,19 @@ public class CanceledBulkDrainTests
 {
     private const int ReceiveSize = 4096;
     private const int PayloadSize = 1024 * 1024;
+    private const int DiscardReply = 3;
+
+    [Test]
+    [Arguments(false, 0)]
+    [Arguments(true, 0)]
+    [Arguments(false, 1)]
+    [Arguments(true, 1)]
+    [Arguments(false, 2)]
+    [Arguments(true, 2)]
+    [Arguments(false, 3)]
+    [Arguments(true, 3)]
+    public async Task FireAndForgetBulkDrainPreservesFramingAndFollowingReply(bool attributes, int termination)
+        => await CheckDrain(DiscardReply, duringPayload: false, attributes, termination);
 
     [Test]
     [Arguments(0, false, false)]
@@ -48,11 +61,15 @@ public class CanceledBulkDrainTests
         => await CheckDrain(mode, duringPayload, attributes: true, termination);
 
     [Test]
-    [Arguments(0)]
-    [Arguments(1)]
-    [Arguments(2)]
-    [Arguments(3)]
-    public async Task CanceledHeadDoesNotDiscardNestedPushErrorOrVerbatimPayloads(int shape)
+    [Arguments(0, false)]
+    [Arguments(1, false)]
+    [Arguments(2, false)]
+    [Arguments(3, false)]
+    [Arguments(0, true)]
+    [Arguments(1, true)]
+    [Arguments(2, true)]
+    [Arguments(3, true)]
+    public async Task AbandonedHeadDoesNotDiscardNestedPushErrorOrVerbatimPayloads(int shape, bool discard)
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         using var cancellation = new CancellationTokenSource();
@@ -61,11 +78,15 @@ public class CanceledBulkDrainTests
         await using var connection = await Connect(stream,
             (in RespValue value) => pushed.TrySetResult(value.AsArray()[1].AsSpan().Length));
         var command = new Cmd1(Verbs.Get, "key");
-        var canceled = Read(connection, command, 0, cancellation.Token);
+        var canceled = Read(connection, command, discard ? DiscardReply : 0, cancellation.Token);
+        if (discard) await canceled.WaitAsync(deadline.Token);
         var following = connection.SendAsync(command, deadline.Token).AsTask();
         await stream.NextRead(deadline.Token);
-        cancellation.Cancel();
-        await AssertCanceled(canceled, deadline.Token);
+        if (!discard)
+        {
+            cancellation.Cancel();
+            await AssertCanceled(canceled, deadline.Token);
+        }
         var prefix = shape switch { 0 => "*1\r\n$", 1 => ">2\r\n+notice\r\n$", 2 => "!", _ => "=" };
         stream.Publish(Encoding.ASCII.GetBytes($"{prefix}{PayloadSize}\r\n"));
         var request = await stream.NextRead(deadline.Token);
@@ -80,7 +101,7 @@ public class CanceledBulkDrainTests
             remaining -= count;
             request = await stream.NextRead(deadline.Token);
         }
-        // A push does not consume the canceled command's FIFO slot.
+        // A push does not consume the abandoned command's FIFO slot.
         stream.Publish(shape == 1 ? "\r\n:0\r\n:42\r\n"u8.ToArray() : "\r\n:42\r\n"u8.ToArray());
         using var reply = await following.WaitAsync(deadline.Token);
         await Assert.That(reply.AsInteger()).IsEqualTo(42);
@@ -89,20 +110,26 @@ public class CanceledBulkDrainTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task CanceledPayloadStillEnforcesResponseSizeIncludingAttributes(bool attributes)
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task AbandonedPayloadStillEnforcesResponseSizeIncludingAttributes(bool attributes, bool discard)
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         using var cancellation = new CancellationTokenSource();
         var stream = new ScriptedStream();
         await using var connection = await Connect(stream);
         var command = new Cmd1(Verbs.Get, "key");
-        var canceled = Read(connection, command, 0, cancellation.Token);
+        var canceled = Read(connection, command, discard ? DiscardReply : 0, cancellation.Token);
+        if (discard) await canceled.WaitAsync(deadline.Token);
         var following = connection.SendAsync(command, deadline.Token).AsTask();
         await stream.NextRead(deadline.Token);
-        cancellation.Cancel();
-        await AssertCanceled(canceled, deadline.Token);
+        if (!discard)
+        {
+            cancellation.Cancel();
+            await AssertCanceled(canceled, deadline.Token);
+        }
         var metadata = attributes ? "|1\r\n+meta\r\n+value\r\n" : "";
         // Payload alone fits the limit; framing and preceding attributes make it oversized.
         stream.Publish(Encoding.ASCII.GetBytes(metadata + "$536870912\r\n"));
@@ -119,9 +146,10 @@ public class CanceledBulkDrainTests
         await using var connection = await Connect(stream);
         var command = new Cmd1(Verbs.Get, "key");
         var canceled = Read(connection, command, mode, cancellation.Token);
+        if (mode == DiscardReply) await canceled.WaitAsync(deadline.Token);
         var following = connection.SendAsync(command, deadline.Token).AsTask();
         var receiveCapacity = (await stream.NextRead(deadline.Token)).BackingCapacity;
-        if (!duringPayload)
+        if (!duringPayload && mode != DiscardReply)
         {
             cancellation.Cancel();
             await AssertCanceled(canceled, deadline.Token);
@@ -185,7 +213,8 @@ public class CanceledBulkDrainTests
 
     private static async Task Read(RespireConnection connection, Cmd1 command, int mode, CancellationToken token)
     {
-        if (mode == 0) await connection.SendBytesAsync(command, token, "GET");
+        if (mode == DiscardReply) await connection.SendFireAndForgetAsync(command, token, "GET");
+        else if (mode == 0) await connection.SendBytesAsync(command, token, "GET");
         else if (mode == 2) await connection.SendStringAsync(command, token);
         else { using var value = await connection.SendAsync(command, token); }
     }

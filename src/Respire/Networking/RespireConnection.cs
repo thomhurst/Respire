@@ -2721,7 +2721,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     {
         var bytesSource = responseSource as BytesPendingResponseSource;
         // The FIFO slot retains its receive reference until the entire frame is drained.
-        // A completed head no longer needs the unparsed payload, but still owns its reply slot.
+        // A completed or discarded head needs no payload, but still occupies its reply slot.
         byte[]? payload = null;
         if (!IsBulkPayloadAbandoned(responseSource))
         {
@@ -2808,7 +2808,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
     // Observe current state at allocation and between reads; cancellation can win after either check.
     private static bool IsBulkPayloadAbandoned(PendingResponse? source)
-        => source is not null && PendingResponse.IsCompleted(source.State);
+        => source is not null && (ReferenceEquals(source, InflightRing.DiscardSentinel)
+            || PendingResponse.IsCompleted(source.State));
 
     private static void ReleaseAbandonedBulkPayload(ref byte[]? payload, PendingResponse? source, bool pooled)
     {
