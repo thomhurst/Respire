@@ -282,7 +282,8 @@ Acquisition and disposal do not wait for delivery. A blocking lifecycle listener
 stop a rental from completing, pending replies from failing, pool cleanup, or retirement scheduling.
 An exporter can observe live state changes before the corresponding events arrive, and queued
 events can arrive out of order. Listeners should remain enabled until queued events have been
-collected. MOVING applies its retirement cache fence and notifies dedicated connection owners
+collected. Queued lifecycle measurements are best effort and can be lost at process shutdown;
+client disposal does not flush them. MOVING applies its retirement cache fence and notifies dedicated connection owners
 before queueing shared handoff measurements; dedicated retirement snapshots its live sockets
 and starts idle cleanup before queueing its own handoff measurements.
 
