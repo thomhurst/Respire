@@ -8,6 +8,10 @@ on:
       - 'src/Respire/Infrastructure/**'
       - 'tests/Respire.Tests/Networking/**'
       - 'tests/Respire.Tests/TestCategories.cs'
+      - 'tests/Respire.Tests/Respire.Tests.csproj'
+      - 'Directory.Build.props'
+      - 'Directory.Packages.props'
+      - 'global.json'
       - '.github/workflows/retirement-regressions.yml'
 
 permissions:
