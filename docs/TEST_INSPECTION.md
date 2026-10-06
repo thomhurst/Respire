@@ -1,22 +1,14 @@
 # Typed friend-test inspection
 
-Use `owner.InspectForTests()` for the connection, pending-response, cache-barrier,
-and transaction inspection introduced by the transaction deadline tests. Each
-owner defines the same pattern in a separate `.TestInspection.cs` partial:
-an internal factory returning a nested `readonly ref struct TestInspection`.
-The view reads its owner's private state directly. It does not create a delegate,
-box, allocate an object, acquire a lease, or transfer ownership.
+These four owners expose `InspectForTests()` through `.TestInspection.cs` partials,
+returning nested internal `readonly ref struct TestInspection` views. They read
+private state directly without allocation, delegates, leases, or ownership transfer.
+Existing `InternalsVisibleTo` declarations remain the boundary; no public hooks
+are added. Production coordination must use ordinary owner methods.
 
-The existing `InternalsVisibleTo` declarations remain the visibility boundary.
-No public hooks are added. Production coordination must use the owner's ordinary
-methods, not this test surface. A temporary view works in an async test; a view
-cannot be boxed, captured in a lambda, stored in a heap object, or retained across
-an `await`. References returned by the view are still borrowed and require the
-following synchronization even after the temporary view has gone out of scope.
-The compiler restricts the view's lifetime, not the references or value copies
-returned by its members. Tests can retain those results; the compiler does not
-enforce their borrowing or synchronization rules. The inventory and documented
-boundaries remain the contract for that use.
+The compiler prevents boxing, capture, heap storage, and use across `await` for
+the view itself. Returned references and value copies can escape; their borrowing
+and synchronization rules remain test obligations, including after the view expires.
 
 | View member | Consumer inventory | Required boundary |
 | --- | --- | --- |
@@ -25,18 +17,12 @@ boundaries remain the contract for that use.
 | `ClientSideCacheCoordinator.TestInspection.SharedReadGate` | `TransactionDeadlineTests` | Hold an `EnterScope` lease to control the shared-read barrier or inspect protected state. Release that lease on the owning thread; do not await while holding it or dispose the borrowed gate. |
 | `RespireTransactionBase.TestInspection.WatchConnection` | `TransactionDeadlineTests` | The transaction owns the pinned lease. Do not dispose or return the connection, or race transaction disposal. A transaction without WATCH returns null. |
 
-The table lists every current consumer that reads state through these four views;
-only `TransactionDeadlineTests` and `HashImportTests` do so. Keep this inventory
-complete when adding a consumer. `TestInspectionArchitectureTests` checks the
-internal, borrowed view boundary and rejects the four legacy member names on
-their owners, with a synthetic legacy accessor as a positive control.
-This is a narrow regression guard for those four names and the factory/view
-metadata. It does not detect differently named state accessors or prove that
-every non-private member is an inspection hook. These owners also expose ordinary
-operational members, so a blanket ban on non-private members would be incorrect.
+The table lists every current state consumer of these views. Update it when adding
+one; put new inspection members in the owner's view and document their boundaries.
+Preserve the tests' barriers, deadlines, cancellation, import, and FIFO assertions.
 
-The four former direct accessors are removed. Existing tests still establish
-their server/worker barriers, inspect the same source and token, and assert the
-same deadline, caller-cancellation, import preservation, and FIFO behavior.
-Future inspection of these owners belongs in the corresponding typed view,
-with its lifetime and synchronization requirements documented next to the member.
+`TestInspectionArchitectureTests` checks factory/view metadata and rejects the four
+legacy names, with a synthetic positive control. It cannot detect differently named
+accessors or enforce returned-reference lifetimes. Ordinary operational members
+remain valid. Broader static enforcement is tracked in
+[#1045](https://github.com/thomhurst/Respire/issues/1045).
