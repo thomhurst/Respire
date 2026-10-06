@@ -132,6 +132,8 @@ public sealed class SystemTextJsonSerializer : IRespireSerializer
         var writer = s_writer;
         // A custom converter can recursively serialize on the same thread.
         s_writer = null;
+        // Default JsonWriterOptions match JsonSerializer's writer overloads; serializer
+        // options configure metadata/converters rather than the supplied writer's options.
         if (writer is null) return new Utf8JsonWriter(destination);
         writer.Reset(destination);
         return writer;
