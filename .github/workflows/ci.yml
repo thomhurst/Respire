@@ -31,6 +31,62 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  aspnet-sample:
+    name: ASP.NET Core sample (${{ matrix.framework }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: [net8.0, net10.0]
+    services:
+      redis:
+        image: redis:8.4-alpine
+        ports:
+          - 6379/tcp
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 1s
+          --health-timeout 3s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-dotnet
+      - name: Build sample
+        run: dotnet build samples/Respire.Samples.AspNetCore -c Release -f ${{ matrix.framework }}
+      - name: Verify HTTP caches against Redis
+        shell: bash
+        env:
+          ConnectionStrings__Redis: redis://127.0.0.1:${{ job.services.redis.ports['6379'] }}
+          Sample__KeyPrefix: 'respire:ci:aspnet:'
+          REDIS_CONTAINER: ${{ job.services.redis.id }}
+        run: |
+          set -euo pipefail
+          dotnet samples/Respire.Samples.AspNetCore/bin/Release/${{ matrix.framework }}/Respire.Samples.AspNetCore.dll \
+            --urls http://127.0.0.1:5084 > aspnet-sample.log 2>&1 &
+          sample_pid=$!
+          cleanup() { kill "$sample_pid" 2>/dev/null || true; wait "$sample_pid" 2>/dev/null || true; }
+          trap cleanup EXIT
+          ready=false
+          for attempt in {1..60}; do
+            if curl --max-time 5 --fail --silent http://127.0.0.1:5084/health > /dev/null; then ready=true; break; fi
+            kill -0 "$sample_pid" || { cat aspnet-sample.log; exit 1; }
+            sleep 1
+          done
+          if [[ "$ready" != true ]]; then cat aspnet-sample.log; exit 1; fi
+          # An unrelated, older demonstration entry must not make a smoke run fail.
+          curl --max-time 5 --fail --silent http://127.0.0.1:5084/hybrid > /dev/null
+          test "$(docker exec "$REDIS_CONTAINER" redis-cli PEXPIRE respire:ci:aspnet:cache:hybrid-time 1000)" = 1
+          pwsh -NoProfile -File samples/Respire.Samples.AspNetCore/Smoke.ps1
+          pwsh -NoProfile -File samples/Respire.Samples.AspNetCore/Smoke.ps1
+          grep -q 'Metric Name: db.client.operation.duration' aspnet-sample.log
+          grep -q 'Activity.DisplayName:' aspnet-sample.log
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: aspnet-sample-${{ matrix.framework }}
+          path: aspnet-sample.log
+
   build-and-test-net10:
     # The name is a required status check.
     name: Build and Test (net10.0)
@@ -60,7 +116,6 @@ jobs:
             tests/Respire.Caching.Tests \
             tests/Respire.Caching.Hybrid.Tests \
             samples/Respire.Samples.Testing \
-            samples/Respire.Samples.AspNetCore \
             samples/Respire.Samples.Azure
           do
             dotnet build "$project" -c Release -f net10.0
@@ -230,7 +285,6 @@ jobs:
           for project in \
             tests/Respire.Tests \
             samples/Respire.Samples.Testing \
-            samples/Respire.Samples.AspNetCore \
             samples/Respire.Samples.Azure
           do
             dotnet build "$project" -c Release -f net8.0

@@ -55,7 +55,11 @@ pwsh samples/Respire.Samples.AspNetCore/Smoke.ps1
 
 DI creates its client lazily, and health probes do not open connections. The
 sample explicitly sends a startup PING with a five-second bound before listening;
-startup fails if Redis is unavailable. `/health` then checks that existing
+startup fails if Redis is unavailable. This top-level warmup intentionally runs
+before the web host starts listening. A production service should choose its
+startup/readiness policy explicitly and integrate initialization with its hosted
+service lifecycle rather than copying this fail-fast policy automatically.
+`/health` then checks that existing
 connection and returns `Healthy` after a successful probe (HTTP 503 when
 unhealthy). Direct and distributed writes expire after one minute. `/redis`
 and `/distributed` return a JSON `value`, or null when absent.
@@ -63,7 +67,10 @@ and `/distributed` return a JSON `value`, or null when absent.
 `/hybrid` returns a generated `version` and timestamp. Repeated requests keep
 that version for up to one minute: L1 lives for five seconds, and subsequent
 misses can load the same value from Redis L2. The smoke script waits six seconds
-to exercise that transition. This uses standard HybridCache expiration and
+to exercise that transition. An optional `?entry=<GUID>` selects an independent
+HybridCache entry; omitting it uses the shared demonstration entry. Each smoke
+run chooses a fresh GUID so an older entry's normal expiration cannot invalidate
+the test. This uses standard HybridCache expiration and
 stampede protection. It does **not** provide cross-process server-assisted L1
 invalidation; another process changing Redis does not immediately invalidate L1.
 
@@ -71,9 +78,10 @@ invalidation; another process changing Redis does not immediately invalidate L1.
 Repeated requests return the same version while cached. Output caching follows
 ASP.NET Core's normal policy, including its restrictions on authenticated
 requests and responses that set cookies. Neither health nor write endpoints are
-output-cached.
+output-cached. Query strings vary the output-cache entry, so the smoke script
+also uses its fresh GUID on this endpoint.
 
-The direct key uses `respire:aspnet-sample:direct`. Distributed and HybridCache
+The direct key uses `respire:aspnet-sample:direct:value`. Distributed and HybridCache
 entries use the `respire:aspnet-sample:cache:` namespace; output caching uses
 `respire:aspnet-sample:output:`. Inspect this sample's keys without flushing Redis:
 
@@ -83,8 +91,10 @@ docker exec respire-aspnet-sample-redis redis-cli --scan --pattern 'respire:aspn
 
 The smoke script needs a running API and Redis. It fails on unexpected HTTP
 responses or changed cache versions. It writes only these sample values and
-does not start or stop infrastructure. CI builds the application on both target
-frameworks; a build alone is not a Redis smoke test.
+does not start or stop infrastructure. CI builds and runs the application on
+both target frameworks against Redis, then runs the smoke script twice. CI also
+expires an existing demonstration entry during the check to guard against
+false failures caused by that unrelated entry's remaining lifetime.
 
 ## Telemetry
 

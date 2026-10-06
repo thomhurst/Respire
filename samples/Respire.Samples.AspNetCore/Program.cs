@@ -50,12 +50,12 @@ app.MapHealthChecks("/health");
 app.MapPost("/redis", async (WriteValue body, IRespireClient redis, CancellationToken cancellationToken) =>
 {
     if (string.IsNullOrEmpty(body.Value) || body.Value.Length > 1024) return Results.BadRequest("Use 1–1024 characters.");
-    await redis.SetAsync(prefix + "direct", (RespireValue)body.Value,
+    await redis.SetAsync(prefix + "direct:value", (RespireValue)body.Value,
         expiry: TimeSpan.FromMinutes(1), cancellationToken: cancellationToken);
     return Results.NoContent();
 });
 app.MapGet("/redis", async (IRespireClient redis, CancellationToken cancellationToken) =>
-    Results.Ok(new { value = await redis.GetStringAsync(prefix + "direct", cancellationToken) }));
+    Results.Ok(new { value = await redis.GetStringAsync(prefix + "direct:value", cancellationToken) }));
 
 app.MapPost("/distributed", async (WriteValue body, IDistributedCache cache, CancellationToken cancellationToken) =>
 {
@@ -67,8 +67,8 @@ app.MapPost("/distributed", async (WriteValue body, IDistributedCache cache, Can
 app.MapGet("/distributed", async (IDistributedCache cache, CancellationToken cancellationToken) =>
     Results.Ok(new { value = await cache.GetStringAsync("distributed", cancellationToken) }));
 
-app.MapGet("/hybrid", async (HybridCache cache, CancellationToken cancellationToken) =>
-    await cache.GetOrCreateAsync("hybrid-time",
+app.MapGet("/hybrid", async (Guid? entry, HybridCache cache, CancellationToken cancellationToken) =>
+    await cache.GetOrCreateAsync(entry is { } id ? $"hybrid-time:{id:N}" : "hybrid-time",
         _ => ValueTask.FromResult(new CachedTime(Guid.NewGuid(), DateTimeOffset.UtcNow)),
         cancellationToken: cancellationToken));
 app.MapGet("/output", () => new CachedTime(Guid.NewGuid(), DateTimeOffset.UtcNow))
