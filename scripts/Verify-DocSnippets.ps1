@@ -34,6 +34,10 @@ $documentPaths = @(
 )
 
 $requiredPackages = @(
+    'Aspire.Respire'
+    'Aspire.Respire.DistributedCaching'
+    'Aspire.Respire.HybridCaching'
+    'Aspire.Respire.OutputCaching'
     'Respire.Compression.Lz4'
     'Respire.Compression.Zstd'
     'Respire'
@@ -242,6 +246,7 @@ $builder = [Text.StringBuilder]::new()
 [void]$builder.AppendLine('using Microsoft.Extensions.Configuration;')
 [void]$builder.AppendLine('using Microsoft.Extensions.DependencyInjection;')
 [void]$builder.AppendLine('using Microsoft.Extensions.Logging;')
+[void]$builder.AppendLine('using Microsoft.Extensions.Hosting;')
 [void]$builder.AppendLine('using OpenTelemetry.Metrics;')
 [void]$builder.AppendLine('using OpenTelemetry.Trace;')
 [void]$builder.AppendLine('using Respire;')

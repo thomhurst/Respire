@@ -8,6 +8,8 @@
     <Project Path="benchmarks/Respire.ComparisonBenchmarks/Respire.ComparisonBenchmarks.csproj" />
   </Folder>
   <Folder Name="/Samples/">
+    <Project Path="samples/Respire.Samples.Aspire.AppHost/Respire.Samples.Aspire.AppHost.csproj" />
+    <Project Path="samples/Respire.Samples.Aspire.Api/Respire.Samples.Aspire.Api.csproj" />
     <Project Path="samples/Respire.Samples.AspNetCore/Respire.Samples.AspNetCore.csproj" />
     <Project Path="samples/Respire.Samples.Azure/Respire.Samples.Azure.csproj" />
     <Project Path="samples/Respire.Samples.Basic/Respire.Samples.Basic.csproj" />
@@ -16,6 +18,10 @@
     <Project Path="samples/Respire.Samples.Testing/Respire.Samples.Testing.csproj" />
   </Folder>
   <Folder Name="/src/">
+    <Project Path="src/Aspire.Respire/Aspire.Respire.csproj" />
+    <Project Path="src/Aspire.Respire.DistributedCaching/Aspire.Respire.DistributedCaching.csproj" />
+    <Project Path="src/Aspire.Respire.HybridCaching/Aspire.Respire.HybridCaching.csproj" />
+    <Project Path="src/Aspire.Respire.OutputCaching/Aspire.Respire.OutputCaching.csproj" />
     <Project Path="benchmarks/Respire.Benchmarks/Respire.Benchmarks.csproj" />
     <Project Path="src/Respire.Analyzers/Respire.Analyzers.csproj" />
     <Project Path="src/Respire.Compression.Lz4/Respire.Compression.Lz4.csproj" />
@@ -39,6 +45,8 @@
     <Project Path="src/Respire.Testing/Respire.Testing.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Aspire.Respire.IntegrationTests/Aspire.Respire.IntegrationTests.csproj" />
+    <Project Path="tests/Aspire.Respire.Tests/Aspire.Respire.Tests.csproj" />
     <Project Path="tests/Respire.HealthChecks.Tests/Respire.HealthChecks.Tests.csproj" />
     <Project Path="tests/Respire.Azure.Tests/Respire.Azure.Tests.csproj" />
     <Project Path="tests/Respire.Analyzers.Tests/Respire.Analyzers.Tests.csproj" />

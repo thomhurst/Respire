@@ -18,6 +18,10 @@
       src/, or when a src/ project is neither listed nor in RespireNonPackageProjects.
     -->
     <RespirePackageProjects>
+      Aspire.Respire;
+      Aspire.Respire.DistributedCaching;
+      Aspire.Respire.HybridCaching;
+      Aspire.Respire.OutputCaching;
       Respire;
       Respire.Compression.Lz4;
       Respire.Compression.Zstd;

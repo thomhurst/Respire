@@ -47,6 +47,7 @@ User? user = await redis.GetAsync<User>("user:1");
 | [Stream consumer groups](https://thomhurst.github.io/Respire/docs/commands/collections#consumer-groups) | `await foreach` over `redis.Streams.ReadGroupAsync(...)` |
 | [Hot reads without a round trip](https://thomhurst.github.io/Respire/docs/fundamentals/client-side-caching) | `ClientSideCache = new()` |
 | [`IDistributedCache` and `HybridCache`](https://thomhurst.github.io/Respire/docs/integrations/caching) | `services.AddRespireHybridCache(connectionString)` |
+| [.NET Aspire](docs/ASPIRE.md) | `builder.AddRespireClient("cache")` |
 | [Tests without Docker](https://thomhurst.github.io/Respire/docs/guides/in-memory-testing) | `new RespireFakeServer()` |
 
 ### Distributed locks
