@@ -93,7 +93,7 @@ internal sealed partial class StreamCommands
         ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams, StreamReadOptions options,
         bool queued = false, string? group = null, string? consumer = null)
     {
-        options.Validate(queued);
+        options.Validate(queued, group is not null);
         var milliseconds = options.GetBlockMilliseconds();
         var snapshots = SnapshotStreams(client, streams, group is not null);
         var keys = new RespireValue[snapshots.Length];
@@ -103,7 +103,8 @@ internal sealed partial class StreamCommands
             keys[i] = client.Key(snapshots[i].Key);
             ids[i] = snapshots[i].After;
         }
-        return new StreamReadCommand(keys, ids, options.Count, milliseconds, options.MaxCount, options.MaxSize, group, consumer);
+        return new StreamReadCommand(keys, ids, options.Count, milliseconds, options.MaxCount, options.MaxSize, group, consumer,
+            options.NoAck, options.ClaimMinIdle?.Ticks / TimeSpan.TicksPerMillisecond);
     }
 
     private static (RespireKey Key, RespireStreamId After)[] SnapshotStreams(RespireClient client,

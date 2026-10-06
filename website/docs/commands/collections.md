@@ -731,6 +731,71 @@ Use `ClaimAsync` when the pending ids are already known. `ClaimPendingAsync` exp
 consumer's own pending-entry list, call `ReadGroupAsync` with an explicit `startAt`; that replay
 is non-blocking and completes after the pending entries are exhausted.
 
+### Consumer recovery options
+
+`StreamReadOptions.NoAck` delivers new group entries without adding them to the pending
+entry list. It does not acknowledge existing pending entries. `ClaimMinIdle` adds Redis
+8.4's `XREADGROUP CLAIM`: eligible pending entries arrive before new entries, with the
+longest-idle entries first. Both options work with single-stream pages, multi-stream
+pages, the options-first consumer loop, and nonblocking batch/transaction reads.
+Ordinary `XREAD` methods reject these group-only options before sending a command.
+
+```csharp
+var page = await redis.Streams.ReadGroupAsync(
+    [("{events}:one", ">"), ("{events}:two", ">")], "processors", "worker-2",
+    new StreamReadOptions
+    {
+        Count = 100,
+        ClaimMinIdle = TimeSpan.FromMinutes(1),
+        WaitFor = TimeSpan.FromSeconds(5),
+    }, stoppingToken);
+```
+
+`PreviousIdleTime` and `PreviousDeliveryCount` on each reclaimed entry describe its
+state before this delivery. They are null when the server omits this metadata. Redis 8.4
+also supplies both values as zero for new entries delivered with `CLAIM`. Respire preserves
+the server's values. Reclaimed entries retain `AckAsync` support. Redis ignores `CLAIM`, `NOACK`, and `BLOCK` for numeric
+pending-history cursors. With `CLAIM` and `NOACK` together, only new entries bypass
+the pending list; reclaimed entries still need acknowledgement. Blocking reads use the
+dedicated pool, including when pending entries become eligible while the call waits.
+
+Use options-first `PendingAsync` to filter by idle time (Redis 6.2+), consumer, and ID bounds:
+
+```csharp
+var pending = await redis.Streams.PendingAsync(
+    new StreamPendingOptions { MinIdle = TimeSpan.FromMinutes(1), Count = 100 },
+    "events", "processors", stoppingToken);
+
+if (pending.Length > 0)
+{
+    var ids = await redis.Streams.ClaimIdsAsync(
+        new StreamClaimOptions { IdleTime = TimeSpan.Zero, RetryCount = 1 },
+        "events", "processors", "worker-2", TimeSpan.FromMinutes(1),
+        pending.Select(entry => entry.Id).ToArray(), stoppingToken);
+}
+
+var recoveredIds = await redis.Streams.ClaimPendingIdsAsync(
+    "events", "processors", "worker-2", TimeSpan.FromMinutes(1),
+    count: 100, cancellationToken: stoppingToken);
+```
+
+`StreamClaimOptions` works with both `ClaimAsync` and `ClaimIdsAsync`. `IdleTime` sends
+`IDLE`; `DeliveryTime` sends an absolute Unix-millisecond `TIME`. Choose only one.
+`RetryCount` sets the delivery counter, `Force` creates a pending record only if the stream
+entry exists, and `LastId` advances the group's last-delivered ID when greater.
+Durations and counters must be nonnegative; durations use whole milliseconds.
+
+The IDs-only methods send `JUSTID`, avoiding field payloads and automatic delivery-counter
+increments. An explicit `RetryCount` still sets the counter. `ClaimPendingIdsAsync` requires
+Redis 6.2 and returns `NextStart`, `Ids`, and `DeletedIds`; continue scanning until `NextStart`
+is `0-0`, even when a page has no IDs. `DeletedIds` is populated on Redis 7+ and empty on
+older servers. Recovery commands remain immediate-only. The in-memory fake does not
+implement these recovery options; use Redis containers for their integration tests.
+
+See [XCLAIM](https://redis.io/docs/latest/commands/xclaim/),
+[XAUTOCLAIM](https://redis.io/docs/latest/commands/xautoclaim/), and
+[XPENDING](https://redis.io/docs/latest/commands/xpending/) for server semantics.
+
 ### Stream metadata
 
 `Streams.CreateConsumerAsync(key, group, consumer)` explicitly creates a consumer in

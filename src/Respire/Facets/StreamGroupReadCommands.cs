@@ -52,7 +52,7 @@ internal sealed partial class StreamCommands
         string group, string consumer, RespireStreamId? startAt = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        options.Validate();
+        options.Validate(group: true);
         key = key.Snapshot();
         options = options with { WaitFor = startAt is null ? options.WaitFor ?? BlockInterval : null };
         var cursor = startAt;

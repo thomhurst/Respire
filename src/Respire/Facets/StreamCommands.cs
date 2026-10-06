@@ -139,10 +139,14 @@ public readonly record struct RespireStreamEntry
         KeyValuePair<string, byte[]>[] fields,
         RespireClient? client = null,
         RespireValue resolvedKey = default,
-        string? group = null)
+        string? group = null,
+        TimeSpan? previousIdleTime = null,
+        long? previousDeliveryCount = null)
     {
         Id = id;
         Fields = fields;
+        PreviousIdleTime = previousIdleTime;
+        PreviousDeliveryCount = previousDeliveryCount;
         _client = client;
         _resolvedKey = resolvedKey;
         _group = group;
@@ -150,6 +154,14 @@ public readonly record struct RespireStreamEntry
 
     /// <summary>The entry id.</summary>
     public RespireStreamId Id { get; }
+
+    /// <summary>Idle time before this delivery from XREADGROUP CLAIM; null when the server omits this metadata.</summary>
+    /// <remarks>Redis 8.4 also supplies zero for new entries delivered with CLAIM.</remarks>
+    public TimeSpan? PreviousIdleTime { get; }
+
+    /// <summary>Delivery count before this delivery from XREADGROUP CLAIM; null when the server omits this metadata.</summary>
+    /// <remarks>Redis 8.4 also supplies zero for new entries delivered with CLAIM.</remarks>
+    public long? PreviousDeliveryCount { get; }
 
     /// <summary>The entry's field/value pairs.</summary>
     public IReadOnlyList<KeyValuePair<string, byte[]>> Fields { get; }
@@ -829,17 +841,8 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
         int count = 10,
         string? consumer = null,
         CancellationToken cancellationToken = default)
-    {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(count);
-        var from = (start ?? RespireStreamId.Min).Value;
-        var to = (end ?? RespireStreamId.Max).Value;
-        RespireValue[] args = consumer is null
-            ? [client.Key(in key), group, from, to, count]
-            : [client.Key(in key), group, from, to, count, consumer];
-        return client.ConvertResponseAsync(
-            "XPENDING", new CmdN(XPending, args), cancellationToken, this,
-            static (StreamCommands _, in RespValue value) => ParsePendingEntries(in value));
-    }
+        => PendingAsync(new StreamPendingOptions { Start = start, End = end, Count = count, Consumer = consumer },
+            key, group, cancellationToken);
 
     public ValueTask<RespireStreamEntry[]> ClaimAsync(
         RespireKey key,
@@ -856,20 +859,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
         TimeSpan minIdle,
         ReadOnlySpan<RespireStreamId> ids,
         CancellationToken cancellationToken)
-    {
-        RequireIds(ids);
-        var resolvedKey = client.Key(in key);
-        var args = new RespireValue[3 + ids.Length];
-        args[0] = group;
-        args[1] = consumer;
-        args[2] = ToMilliseconds(minIdle, nameof(minIdle));
-        for (var i = 0; i < ids.Length; i++)
-        {
-            args[3 + i] = ids[i].Value;
-        }
-
-        return ClaimCoreAsync(new Cmd1N(XClaim, resolvedKey, args), resolvedKey, group, cancellationToken);
-    }
+        => ClaimAsync(default, key, group, consumer, minIdle, ids, cancellationToken);
 
     private ValueTask<RespireStreamEntry[]> ClaimCoreAsync(
         Cmd1N command, RespireValue resolvedKey, string group, CancellationToken cancellationToken)
@@ -887,20 +877,10 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
         int count = 100,
         CancellationToken cancellationToken = default)
     {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(count);
         var resolvedKey = client.Key(in key);
         return client.ConvertResponseAsync(
             "XAUTOCLAIM",
-            new CmdN(XAutoClaim,
-            [
-                resolvedKey,
-                group,
-                consumer,
-                ToMilliseconds(minIdle, nameof(minIdle)),
-                (start ?? RespireStreamId.Beginning).Value,
-                "COUNT",
-                count,
-            ]),
+            BuildAutoClaimCommand(resolvedKey, group, consumer, minIdle, start, count, justIds: false),
             cancellationToken,
             new StreamParseState(client, resolvedKey, group),
             static (StreamParseState state, in RespValue value) =>
@@ -1119,7 +1099,11 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
             }
         }
 
-        return new RespireStreamEntry(id, fields, client, resolvedKey, group);
+        if (entry.Length == 3 || entry.Length > 4)
+            throw new RespireProtocolException("A stream entry must contain either two or four elements.");
+        return new RespireStreamEntry(id, fields, client, resolvedKey, group,
+            entry.Length == 4 ? TimeSpan.FromMilliseconds(entry[2].AsInteger()) : null,
+            entry.Length == 4 ? entry[3].AsInteger() : null);
     }
 
     private static RespireStreamEntry? ParseNullableEntry(in RespValue entryValue)

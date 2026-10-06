@@ -84,6 +84,7 @@ public class DeferredFacetParityTests
             nameof(IStreamCommands.CreateConsumerAsync), nameof(IStreamCommands.SetLastIdAsync),
             nameof(IStreamCommands.PendingSummaryAsync), nameof(IStreamCommands.PendingAsync),
             nameof(IStreamCommands.ClaimAsync), nameof(IStreamCommands.ClaimPendingAsync),
+            nameof(IStreamCommands.ClaimIdsAsync), nameof(IStreamCommands.ClaimPendingIdsAsync),
             nameof(IStreamCommands.InfoAsync), nameof(IStreamCommands.GroupInfoAsync),
             nameof(IStreamCommands.ConsumerInfoAsync),
             nameof(IStreamCommands.ReadAllAsync),

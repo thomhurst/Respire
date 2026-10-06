@@ -195,7 +195,7 @@ raw `SCAN` reaches one node only, so it does not enumerate keys on every primary
 keeps issuing blocking `XREADGROUP` calls on a dedicated connection and ends only when its
 cancellation token is canceled. Use `Streams.ReadGroupOnceAsync` for a single batch, or the
 multi-stream `Streams.ReadGroupAsync` overload for one page across streams. `StreamReadOptions`
-supports cumulative Redis 8.10 reply limits. Options such as `NOACK` still require raw `XREADGROUP`.
+supports cumulative Redis 8.10 reply limits, `NoAck`, and Redis 8.4 `ClaimMinIdle`.
 
 See [strings and keys](./commands/strings-and-keys), [collections](./commands/collections), and
 [raw commands](./guides/raw-commands) for the full surface.
