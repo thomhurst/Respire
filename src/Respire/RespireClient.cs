@@ -4996,16 +4996,23 @@ public sealed partial class RespireClient : IRespireClient
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         if (CanUseDirectReplySource(operation, in command)
-            && command is not IStreamingRespCommand
-            && core.TryGetReadyPrimaryMultiplexer(out var readyMultiplexer))
+            && command is not IStreamingRespCommand)
         {
-            // CommandTimeout is enforced by the connection's deadline sweep and covers the
-            // Redis response, not user converter work (conversion runs at the caller).
-            var cache = core.ClientCache;
-            var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
-            return SendOnReadyPrimaryAsync<TCommand, TResult, ConvertedReadySend<TState, TResult>>(
-                operation, readyMultiplexer, command, ct,
-                new ConvertedReadySend<TState, TResult>(state, converter, transferOwnership), cache, mutationFence);
+            if (TryGetDirectReplyCluster(in command, out var cluster))
+            {
+                return SendOnReadyClusterAsync<TCommand, TResult, ClusterConvertedReadySend<TState, TResult>>(
+                    operation, cluster, command, ct, new(state, converter, transferOwnership));
+            }
+            else if (core.Cluster is null && core.TryGetReadyPrimaryMultiplexer(out var readyMultiplexer))
+            {
+                // CommandTimeout is enforced by the connection's deadline sweep and covers the
+                // Redis response, not user converter work (conversion runs at the caller).
+                var cache = core.ClientCache;
+                var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
+                return SendOnReadyPrimaryAsync<TCommand, TResult, ConvertedReadySend<TState, TResult>>(
+                    operation, readyMultiplexer, command, ct,
+                    new ConvertedReadySend<TState, TResult>(state, converter, transferOwnership), cache, mutationFence);
+            }
         }
 
         return PooledResponseSource<TState, TResult>.Create(
@@ -5089,16 +5096,22 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
-        if (CanUseDirectReplySource(operation, in command)
-            && core.TryGetReadyPrimaryMultiplexer(out var readyMultiplexer))
+        if (CanUseDirectReplySource(operation, in command))
         {
-            // Specialized bulk-string source: small buffered replies decode straight from the
-            // receive buffer instead of round-tripping through a pooled RespValue payload.
-            // CommandTimeout is enforced by the connection's deadline sweep.
-            var cache = core.ClientCache;
-            var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
-            return SendOnReadyPrimaryAsync<TCommand, string?, StringReadySend>(
-                operation, readyMultiplexer, command, ct, default, cache, mutationFence);
+            if (TryGetDirectReplyCluster(in command, out var cluster))
+            {
+                return SendOnReadyClusterAsync<TCommand, string?, StringReadySend>(operation, cluster, command, ct, default);
+            }
+            else if (core.Cluster is null && core.TryGetReadyPrimaryMultiplexer(out var readyMultiplexer))
+            {
+                // Specialized bulk-string source: small buffered replies decode straight from the
+                // receive buffer instead of round-tripping through a pooled RespValue payload.
+                // CommandTimeout is enforced by the connection's deadline sweep.
+                var cache = core.ClientCache;
+                var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
+                return SendOnReadyPrimaryAsync<TCommand, string?, StringReadySend>(
+                    operation, readyMultiplexer, command, ct, default, cache, mutationFence);
+            }
         }
 
         return PooledResponseSource<RespireClient, string?>.Create(
@@ -5113,13 +5126,19 @@ public sealed partial class RespireClient : IRespireClient
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         if (CanUseDirectReplySource(operation, in command)
-            && command is not IStreamingRespCommand
-            && core.TryGetReadyPrimaryMultiplexer(out var readyMultiplexer))
+            && command is not IStreamingRespCommand)
         {
-            var cache = core.ClientCache;
-            var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
-            return SendOnReadyPrimaryAsync<TCommand, byte[]?, BytesReadySend>(
-                operation, readyMultiplexer, command, ct, default, cache, mutationFence);
+            if (TryGetDirectReplyCluster(in command, out var cluster))
+            {
+                return SendOnReadyClusterAsync<TCommand, byte[]?, BytesReadySend>(operation, cluster, command, ct, default);
+            }
+            else if (core.Cluster is null && core.TryGetReadyPrimaryMultiplexer(out var readyMultiplexer))
+            {
+                var cache = core.ClientCache;
+                var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
+                return SendOnReadyPrimaryAsync<TCommand, byte[]?, BytesReadySend>(
+                    operation, readyMultiplexer, command, ct, default, cache, mutationFence);
+            }
         }
         return ConvertAsync(
             operation, command, ct,
