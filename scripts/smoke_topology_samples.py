@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import signal
 import subprocess
+import sys
 import time
 import uuid
 
@@ -28,15 +29,21 @@ def validate_cluster(output):
         raise RuntimeError("Cluster sample completion is missing.")
 
 
+def primary_rows(output, port):
+    return re.finditer(rf"^PASS \d+: primary 127\.0\.0\.1:{port}\s*$", output, re.M)
+
+
 def has_primary(output, port):
-    return re.search(rf"^PASS \d+: primary 127\.0\.0\.1:{port}\s*$", output, re.M) is not None
+    return next(primary_rows(output, port), None) is not None
 
 
 def validate_sentinel(output, before, after):
     if before == after or {before, after} != {7100, 7101}:
         raise RuntimeError("Sentinel did not promote the other configured primary endpoint.")
-    if not all(has_primary(output, port) for port in (before, after)):
-        raise RuntimeError("The same sample process must report success from both primary endpoints.")
+    initial = next(primary_rows(output, before), None)
+    promoted = primary_rows(output, after)
+    if initial is None or not any(row.start() > initial.start() for row in promoted):
+        raise RuntimeError("The sample must succeed on the promoted primary after success on the initial primary.")
     if not re.search(r"^Sentinel sample completed: [1-9]\d* successful round trips\.\s*$", output, re.M):
         raise RuntimeError("Sentinel sample completion is missing.")
 
@@ -55,11 +62,12 @@ class Smoke:
         self.sample_log = self.logs / "sample.log"
 
     def start(self, command, log, environment=None):
+        if sys.platform != "linux":
+            raise RuntimeError("Topology smoke process supervision requires Linux.")
         stream = log.open("w", encoding="utf-8")
         try:
             process = subprocess.Popen(command, cwd=ROOT, stdout=stream, stderr=subprocess.STDOUT,
-                                       env=environment, start_new_session=os.name != "nt",
-                                       creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+                                       env=environment, start_new_session=True)
         except BaseException:
             stream.close()
             raise
@@ -71,27 +79,23 @@ class Smoke:
         try:
             if process.poll() is None:
                 try:
-                    if os.name == "nt":
-                        # The PowerShell guard owns a kill-on-close Windows job for its .NET child.
-                        process.kill()
-                    else:
-                        os.killpg(process.pid, signal.SIGINT)
+                    os.killpg(process.pid, signal.SIGINT)
                 except ProcessLookupError:
                     pass
                 try:
                     process.wait(timeout=10)
                 except subprocess.TimeoutExpired:
-                    if os.name == "nt":
-                        process.kill()
-                    else:
-                        os.killpg(process.pid, signal.SIGKILL)
+                    os.killpg(process.pid, signal.SIGKILL)
                     process.wait(timeout=5)
         finally:
             stream.close()
 
-    def run(self, command, name, timeout=15):
-        self.sequence += 1
-        log = self.logs / f"{self.sequence:03d}-{name}.log"
+    def run(self, command, name, timeout=15, *, keep_log=True):
+        if keep_log:
+            self.sequence += 1
+            log = self.logs / f"{self.sequence:03d}-{name}.log"
+        else:
+            log = self.logs / f"{name}-latest.log"
         handle = self.start(command, log)
         try:
             code = handle[0].wait(timeout=timeout)
@@ -102,32 +106,63 @@ class Smoke:
         return log.read_text(encoding="utf-8", errors="replace").strip()
 
     @staticmethod
-    def dotnet(arguments, timeout):
+    def dotnet(arguments, timeout, *, dotnet_path="dotnet"):
         def quote(value):
             return "'" + str(value).replace("'", "''") + "'"
         guard = quote(ROOT / "scripts" / "Invoke-AgentDotNet.ps1")
-        # Invoke the existing guard in-process in PowerShell on both platforms.
-        command = f"& {guard} -SingleNode -TimeoutSeconds {timeout} -DotNetArguments @(" + ",".join(map(quote, arguments)) + ")"
+        # Invoke the existing guard in-process in PowerShell.
+        command = (f"& {guard} -SingleNode -TimeoutSeconds {timeout} -DotNetPath {quote(dotnet_path)} -DotNetArguments @("
+                   + ",".join(map(quote, arguments)) + ")")
         return ["pwsh", "-NoProfile", "-Command", command]
 
-    def redis(self, *arguments):
-        return self.run(self.compose + ["exec", "-T", self.service, "redis-cli", *arguments], "redis")
+    def redis(self, *arguments, keep_log=True):
+        return self.run(self.compose + ["exec", "-T", self.service, "redis-cli", *arguments], "redis", keep_log=keep_log)
 
     def primary(self):
-        address = json.loads(self.redis("--json", "-p", "27100", "SENTINEL", "GET-MASTER-ADDR-BY-NAME", "sample-primary"))
+        address = json.loads(self.redis("--json", "-p", "27100", "SENTINEL", "GET-MASTER-ADDR-BY-NAME", "sample-primary", keep_log=False))
         if len(address) != 2 or address[0] != "127.0.0.1" or int(address[1]) not in (7100, 7101):
             raise RuntimeError(f"Unexpected Sentinel primary: {address}")
         return int(address[1])
 
-    def wait_for(self, predicate, seconds, description):
+    def wait_for(self, predicate, seconds, description, *, retry_errors=()):
         deadline = time.monotonic() + seconds
+        last_error = None
         while time.monotonic() < deadline:
-            if predicate():
-                return
+            try:
+                if predicate():
+                    return
+            except retry_errors as error:
+                last_error = error
             if self.sample and self.sample[0].poll() is not None:
                 raise RuntimeError(f"Sample exited before {description}; see {self.sample_log}")
-            time.sleep(0.2)
-        raise TimeoutError(f"Timed out waiting for {description} after {seconds} seconds.")
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                time.sleep(min(1, remaining))
+        raise TimeoutError(f"Timed out waiting for {description} after {seconds} seconds.") from last_error
+
+    def follow_promotion(self, before):
+        promotion = {"before": before, "after": None}
+
+        def record():
+            temporary = self.logs / "promotion.json.tmp"
+            temporary.write_text(json.dumps(promotion), encoding="utf-8")
+            temporary.replace(self.logs / "promotion.json")
+
+        def changed():
+            after = self.primary()
+            if after == before:
+                return False
+            promotion["after"] = after
+            record()
+            return True
+
+        record()
+        if self.redis("--raw", "-p", "27100", "SENTINEL", "FAILOVER", "sample-primary") != "OK":
+            raise RuntimeError("Sentinel rejected the promotion request.")
+        self.wait_for(changed, 30, "Sentinel promotion", retry_errors=(RuntimeError, subprocess.TimeoutExpired))
+        after = promotion["after"]
+        self.wait_for(lambda: has_primary(self.output(), after), 30, "same-client success on promoted primary")
+        return after
 
     def output(self):
         return self.sample_log.read_text(encoding="utf-8", errors="replace")
@@ -140,6 +175,8 @@ class Smoke:
             command += ["--filter", selector, "--format", "{{.Name}}" if resource == "volume" else "{{.ID}}"]
             if self.run(command, f"existing-{resource}"):
                 raise RuntimeError("Compose project already exists; refusing to reuse or clean it.")
+        if self.run(["docker", "image", "ls", "--format", "{{.ID}}", f"{self.args.project}-{self.service}:latest"], "existing-image"):
+            raise RuntimeError("Compose build image already exists; refusing to replace or remove it.")
         self.owned = True
         (self.logs / "owned-project.txt").write_text(self.args.project, encoding="utf-8")
         project = f"samples/Respire.Samples.{self.args.sample}"
@@ -155,12 +192,7 @@ class Smoke:
         self.sample = self.start(self.dotnet(arguments, 100), self.sample_log, environment)
         if before is not None:
             self.wait_for(lambda: has_primary(self.output(), before), 20, "initial primary success")
-            if self.redis("--raw", "-p", "27100", "SENTINEL", "FAILOVER", "sample-primary") != "OK":
-                raise RuntimeError("Sentinel rejected the promotion request.")
-            self.wait_for(lambda: self.primary() != before, 30, "Sentinel promotion")
-            after = self.primary()
-            self.wait_for(lambda: has_primary(self.output(), after), 30, "same-client success on promoted primary")
-            (self.logs / "promotion.json").write_text(json.dumps({"before": before, "after": after}), encoding="utf-8")
+            after = self.follow_promotion(before)
         code = self.sample[0].wait(timeout=110)
         if code:
             raise RuntimeError(f"Sample exited {code}; see {self.sample_log}")
@@ -172,12 +204,18 @@ class Smoke:
         print(f"PASS: {self.args.sample} {self.args.framework} smoke", flush=True)
 
     def cleanup(self):
+        # Signals stay ignored only through the bounded process stop and Compose commands below.
+        previous = {kind: signal.signal(kind, signal.SIG_IGN) for kind in (signal.SIGINT, signal.SIGTERM)}
         try:
-            if self.sample:
-                self.stop(self.sample)
+            try:
+                if self.sample:
+                    self.stop(self.sample)
+            finally:
+                if self.owned:
+                    self.cleanup_compose()
         finally:
-            if self.owned:
-                self.cleanup_compose()
+            for kind, handler in previous.items():
+                signal.signal(kind, handler)
 
     def cleanup_compose(self):
         for arguments, name in ((["logs", "--no-color"], "compose-logs"),
@@ -186,7 +224,7 @@ class Smoke:
                 self.run(self.compose + arguments, name)
             except Exception as error:
                 print(f"Diagnostic capture: {error}", flush=True)
-        self.run(self.compose + ["down", "--volumes", "--remove-orphans", "--timeout", "10"], "compose-down", 45)
+        self.run(self.compose + ["down", "--volumes", "--remove-orphans", "--rmi", "local", "--timeout", "10"], "compose-down", 45)
 
 
 def main():
@@ -196,6 +234,8 @@ def main():
     parser.add_argument("--project", default="respire-smoke-" + uuid.uuid4().hex)
     parser.add_argument("--artifacts", type=Path, required=True)
     args = parser.parse_args()
+    if sys.platform != "linux":
+        parser.error("Run this controller on Linux, as in the GitHub Actions jobs.")
     if not re.fullmatch(r"[a-z0-9][a-z0-9_-]+", args.project):
         parser.error("Use a lowercase Compose project name with letters, numbers, hyphens, or underscores.")
     def cancel(_signal, _frame):

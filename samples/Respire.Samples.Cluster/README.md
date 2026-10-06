@@ -63,7 +63,7 @@ The project name scopes cleanup to this sample. `/data` is tmpfs, so stopping
 the container discards the topology and keys; startup creates a fresh cluster.
 There are no shared volumes to preserve. Host bindings are loopback-only; the
 unauthenticated container network is still a local development boundary.
-Ordinary CI builds the sample. The separate manual [topology smoke workflow](../TopologySmoke.md)
+Ordinary CI builds the sample. The separate [topology smoke workflow](../TopologySmoke.md), triggered on demand and on PRs touching the sample,
 runs it against its owned Compose project on both frameworks and requires successful
 round trips in all three slot ranges. The same controller runs locally.
 

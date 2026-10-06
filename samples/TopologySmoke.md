@@ -18,18 +18,23 @@ gh run download RUN_ID --dir topology-smoke-results
 Each of the four jobs uploads a `topology-sample-<sample>-<framework>` artifact,
 including build output, Compose startup and cleanup output, Redis commands,
 server logs, and `sample.log`. Sentinel also records the old and new primary
-ports in `promotion.json`. Failed commands retain their output. Read the failing
+ports in `promotion.json`, including failed runs: the initial port is saved before
+requesting promotion, and the new port is saved immediately when observed. A null
+new port means promotion was not observed. Polling overwrites `redis-latest.log`
+instead of creating one file per inspection. Failed commands retain their output. Read the failing
 step and logs even if some sample operations succeeded.
 
 ## Run the same checks locally
 
-Install Python 3.10 or later, PowerShell 7, the SDK selected by `global.json`,
+On Linux, install Python 3.10 or later, PowerShell 7, the SDK selected by `global.json`,
 both target runtimes, and Docker Compose v2 with Linux containers. Use a local
 Docker engine. The samples advertise loopback addresses and require their
 documented ports: Cluster 7000–7002, Sentinel 7100–7101 and 27100–27102.
 Run the commands sequentially: they share build outputs, and two copies of the
 same topology cannot bind the same host ports. CI jobs have separate workspaces
-and Docker hosts.
+and Docker hosts. The controller rejects Windows and macOS before starting work;
+its process-group cleanup is tested on Linux. The sample applications themselves
+can still be run directly on other supported .NET platforms.
 
 From the repository root:
 
@@ -53,18 +58,21 @@ can extend that poll by at most 15 seconds.
 Cluster must discover three shards and print one successful round trip in each
 configured slot range. Sentinel starts one 60-iteration sample process, waits
 for success on the initial primary, requests promotion, observes the other
-primary, and requires success there plus normal sample completion. A success
+primary, and requires success there after initial-primary success, plus normal sample completion. A success
 count alone cannot pass. Transient iteration failures remain in the log; the
 controller does not replay failed writes or promise lossless failover.
 
 Each invocation chooses a fresh Compose project name. `--project` can override
 it, but existing containers (including stopped ones), networks, or volumes with
-that project label cause refusal before cleanup ownership is acquired. Cleanup
-removes only that project's containers, networks, and volumes in a `finally`
+that project label cause refusal before cleanup ownership is acquired. An existing
+default Compose build image also causes refusal. Cleanup removes only that project's
+containers, networks, volumes, and locally built images in a `finally`
 block. The workflow has an additional `always()` cleanup step gated by the
-controller's ownership marker for cancellation recovery. It never removes
+controller's ownership marker for cancellation recovery. Repeated interruption signals
+are ignored during primary cleanup. It never removes
 another sample project or stops shared Redis services.
 
 If the Docker daemon itself is unavailable during cleanup, the run fails and
 retains `owned-project.txt` and cleanup logs. Once Docker recovers, use the exact
-recorded project with the matching sample Compose file and `down --volumes`.
+recorded project with the matching sample Compose file and
+`down --volumes --remove-orphans --rmi local --timeout 10`.
