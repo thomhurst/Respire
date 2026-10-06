@@ -21,6 +21,17 @@ audit. Counts detect inventory drift, not reads before writes or replacements
 that retain the same count; those still require source review. Generated compiler
 output is not scanned by this source guard.
 
+An adjacent marker is not evidence of initialization: formatters, hashes, and
+encoders below initialize a reported prefix rather than clearing an entire buffer.
+Requiring `Clear()` at these sites would restore the redundant writes this policy
+removes. The inventory deliberately requires manual review of those read boundaries;
+a future data-flow analyzer would need to understand written-length and exception
+contracts, not merely check for a comment or a nearby assignment.
+
+The module policy and decoder implementation are independently reversible. Removing
+the shared `SkipLocalsInit.cs` compile item from `Directory.Build.props` restores
+initialization in every package without changing the decoder or any public API.
+
 | Source | Active sites |
 | --- | ---: |
 | `src/Respire/Compression/RespireValueCodec.cs` | 2 |
@@ -72,6 +83,15 @@ Acceptance requires the small-span gain without a repeatable regression in the
 other operations; compare each candidate with both controls and their dispersion.
 These measurements describe the tested build and runner, not a universal latency
 guarantee. Reassess current-head reports after decoder or module-policy changes.
+
+Run [37409904018](https://github.com/thomhurst/Respire/actions/runs/37409904018)
+completed both frameworks at exact head `d2d296de` against `5c9bd765`. Small net8
+ASCII formatting improved to 9.05 ns from 13.63/13.81 ns, but net10 large Unicode
+formatting regressed to 677.99 ns from 640.27/622.84 ns with disjoint intervals.
+This does not pass the flat-or-better gate. The follow-up restores the original
+branch structure for the unchanged memory and net10 paths, retaining only net8's
+direct-string implementation change. JIT listings show branch-layout differences,
+but do not establish them as the latency cause; fresh measurements remain required.
 
 ## Satellite packages
 
