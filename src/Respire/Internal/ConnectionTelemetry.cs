@@ -46,9 +46,7 @@ internal static class ConnectionTelemetry
             { IsDedicatedConnection: true } => "dedicated",
             _ => "shared",
         };
-        var name = host + ":" + port.ToString(CultureInfo.InvariantCulture) + "/"
-            + options.Database.ToString(CultureInfo.InvariantCulture) + "/" + purpose;
-        return Pools.ForPool(name, purpose == "pubsub");
+        return Pools.ForPool(host, port, options.Database, purpose);
     }
 
     internal static void ClosedBeforeHandshake(string host, int port, RespireConnectionOptions options,
@@ -258,6 +256,7 @@ internal static class ConnectionTelemetry
     {
         private readonly Lock _gate = new();
         private readonly HashSet<State> _connections = [];
+        private int _nextPruneCount = 64;
         internal readonly bool PubSub;
         internal readonly KeyValuePair<string, object?>[] Tags;
         internal readonly KeyValuePair<string, object?>[] IdleTags;
@@ -274,7 +273,13 @@ internal static class ConnectionTelemetry
 
         internal void Add(State state)
         {
-            lock (_gate) _connections.Add(state);
+            lock (_gate)
+            {
+                _connections.Add(state);
+                // Geometric growth amortizes scans while bounding abandoned records even
+                // when no listener ever observes the pool. Live targets remain untouched.
+                if (_connections.Count >= _nextPruneCount) PruneCollected();
+            }
         }
 
         internal void Remove(State state)
@@ -288,9 +293,15 @@ internal static class ConnectionTelemetry
             {
                 // Churn changes membership in O(1); only observations copy the set. Reclaim
                 // abandoned weak targets without inventing physical-close events.
-                _connections.RemoveWhere(static state => state.IsCollected);
+                PruneCollected();
                 return [.. _connections];
             }
+        }
+
+        private void PruneCollected()
+        {
+            _connections.RemoveWhere(static state => state.IsCollected);
+            _nextPruneCount = (int)Math.Min(int.MaxValue, Math.Max(64L, 2L * _connections.Count));
         }
 
         internal (long Idle, long Used, long Pending) Read()
@@ -321,21 +332,27 @@ internal static class ConnectionTelemetry
         private const int MaximumPoolNames = 64;
         private const int MaximumPoolNameLength = 256;
         private readonly Lock _gate = new();
-        private readonly Dictionary<(string Name, bool PubSub), Pool> _pools = [];
+        private readonly Dictionary<(string Host, int Port, int Database, string Purpose), Pool> _pools = [];
         private Pool[] _snapshot = [];
         private Pool? _ordinaryOverflow;
         private Pool? _pubsubOverflow;
         internal Pool[] Snapshot => Volatile.Read(ref _snapshot);
 
-        internal Pool ForPool(string name, bool pubsub)
+        internal Pool ForPool(string host, int port, int database, string purpose)
         {
             _ = RespireTelemetry.Meter;
             lock (_gate)
             {
-                var key = (name, pubsub);
+                var key = (host, port, database, purpose);
                 if (_pools.TryGetValue(key, out var existing)) return existing;
+                // Format tags only for a new identity that can fit the lifetime budget.
+                var name = host.Length <= MaximumPoolNameLength && _pools.Count < MaximumPoolNames
+                    ? host + ":" + port.ToString(CultureInfo.InvariantCulture) + "/"
+                        + database.ToString(CultureInfo.InvariantCulture) + "/" + purpose
+                    : null;
+                var pubsub = purpose == "pubsub";
                 Pool pool;
-                if (name.Length > MaximumPoolNameLength || _pools.Count >= MaximumPoolNames)
+                if (name is null || name.Length > MaximumPoolNameLength)
                 {
                     ref var overflow = ref (pubsub ? ref _pubsubOverflow : ref _ordinaryOverflow);
                     if (overflow is not null) return overflow;

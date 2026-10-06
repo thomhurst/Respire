@@ -233,7 +233,11 @@ including connections owned by separate clients. No credential, key or payload e
 name. The process retains at most 64 distinct pool identities and two overflow identities,
 `overflow/shared` and `overflow/pubsub`. Names longer than 256 characters also overflow.
 Zero-valued series remain observable after closure within that bound; configuration changes
-do not reset the budget. Overflow aggregates endpoints and databases, retaining pub/sub identity.
+do not reset the budget. The first 64 identities are never evicted during the process lifetime.
+After endpoint churn fills that budget, later endpoints use overflow even when the original
+endpoints have no live connections. Restarting the process resets the budget; preserving old
+series avoids reassigning their history to new endpoints. Overflow aggregates endpoints and
+databases, retaining pub/sub identity.
 
 The count adds `db.client.connection.state` and `redis.client.connection.pubsub`.
 A multiplexed connection is used while a reply remains owed; a dedicated connection is used
@@ -283,18 +287,22 @@ allocating another work item. If enqueueing fails, the measurement is also dropp
 Capacity becomes available when a callback returns, including after it throws. A listener
 that never returns can exhaust this delivery capacity; live observable counts and transport
 cleanup still continue, while lifecycle event counts may under-report during saturation.
-The internal cumulative `ConnectionTelemetry.DroppedMeasurements` diagnostic counts
-capacity and enqueue drops. It does not count listener exceptions or unflushed shutdown
-events; no public lifecycle-drop instrument is exported. The delivery budget is shared by
+The `Respire` meter exports `respire.connection.measurements.dropped`, an observable
+counter with unit `{measurement}` and no tags. It reports cumulative process-wide capacity
+and enqueue drops, including drops before a listener subscribes. It does not count listener
+exceptions or unflushed shutdown events. This Respire diagnostic is separate from the Redis
+standard metric groups. Scraping reads the stored total directly, so saturation cannot drop
+the diagnostic itself and no listener callback runs on the transport path. The delivery budget is shared by
 all clients and pools, so blocked listeners on one pool can consume capacity needed by others.
 Acquisition and disposal do not wait for delivery. A blocking lifecycle listener therefore cannot
 stop a rental from completing, pending replies from failing, pool cleanup, or retirement scheduling.
 An exporter can observe live state changes before the corresponding events arrive, and queued
 events can arrive out of order. Listeners should remain enabled until queued events have been
 collected. Queued lifecycle measurements are best effort and can be lost at process shutdown;
-client disposal does not flush them. MOVING applies its retirement cache fence and notifies dedicated connection owners
-before queueing shared handoff measurements; dedicated retirement snapshots its live sockets
-and starts idle cleanup before queueing its own handoff measurements.
+client disposal does not flush them. MOVING captures both shared and dedicated live sockets
+at publication, so a lease closed afterwards still counts and a handshake completed afterwards
+does not. The retirement cache fence, dedicated-owner notification and idle cleanup precede
+queueing handoff measurements.
 
 ## Reads by availability zone
 

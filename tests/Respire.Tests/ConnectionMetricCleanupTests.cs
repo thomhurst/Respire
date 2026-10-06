@@ -23,6 +23,15 @@ public class ConnectionMetricCleanupTests
         using var listener = new BlockingListener("db.client.connection.wait_time");
         var pendingWhileBlocked = 0;
         var droppedBefore = ConnectionTelemetry.DroppedMeasurements;
+        var exportedWhileBlocked = -1L;
+        using var drops = new MeterListener();
+        drops.InstrumentPublished = (instrument, current) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.connection.measurements.dropped")
+                current.EnableMeasurementEvents(instrument);
+        };
+        drops.SetMeasurementEventCallback<long>((_, value, _, _) => exportedWhileBlocked = value);
+        drops.Start();
         try
         {
             connection.RecordConnectionWait(System.Diagnostics.Stopwatch.GetTimestamp());
@@ -32,6 +41,7 @@ public class ConnectionMetricCleanupTests
             for (var i = 0; i < 256; i++)
                 connection.RecordConnectionWait(System.Diagnostics.Stopwatch.GetTimestamp());
             pendingWhileBlocked = ConnectionTelemetry.PendingMeasurements;
+            drops.RecordObservableInstruments();
         }
         finally { listener.Release(); }
 
@@ -39,6 +49,7 @@ public class ConnectionMetricCleanupTests
         await Assert.That(pendingWhileBlocked).IsEqualTo(64);
         await Assert.That(listener.Deliveries).IsEqualTo(64);
         await Assert.That(ConnectionTelemetry.DroppedMeasurements - droppedBefore).IsEqualTo(193L);
+        await Assert.That(exportedWhileBlocked - droppedBefore).IsEqualTo(193L);
 
         connection.RecordConnectionWait(System.Diagnostics.Stopwatch.GetTimestamp());
         await WaitForDeliveries();

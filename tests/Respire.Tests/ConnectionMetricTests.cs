@@ -6,6 +6,7 @@ using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Security.Authentication;
 using System.Text;
+using Respire.Infrastructure;
 using Respire.Internal;
 using Respire.Networking;
 using Respire.Tests.Networking;
@@ -767,6 +768,145 @@ public class ConnectionMetricTests
         await Assert.That(handoffs.Length).IsEqualTo(moving ? 2 : 0);
     }
 
+    [Test]
+    [Arguments("standalone", false)]
+    [Arguments("standalone", true)]
+    [Arguments("sentinel", false)]
+    [Arguments("sentinel", true)]
+    [Arguments("cluster", false)]
+    [Arguments("cluster", true)]
+    public async Task DedicatedHandoffsUsePublicationLiveness(string mode, bool lateHandshake)
+    {
+        using var configuration = new MetricConfigurationScope();
+        await using var source = RoutingMaintenanceServer();
+        await using var target = RoutingMaintenanceServer();
+        await using var sentinel = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR", StringComparison.Ordinal)
+                ? Encoding.ASCII.GetBytes("*2\r\n$9\r\n127.0.0.1\r\n" + "$"
+                    + $"{source.Port.ToString().Length}\r\n{source.Port}\r\n")
+                : "*0\r\n"u8.ToArray(),
+        };
+        var options = Options(source) with
+        {
+            Protocol = RespProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            UseCluster = mode == "cluster", SentinelPrimaryName = mode == "sentinel" ? "mymaster" : null,
+        };
+        if (mode == "sentinel")
+        {
+            options.Endpoints.Clear();
+            options.Endpoints.Add(new("127.0.0.1", sentinel.Port));
+        }
+        await using var client = await RespireClient.ConnectAsync(options);
+        var pool = client.Core.Cluster is { } cluster
+            ? await cluster.GetDedicatedPoolAsync(ClusterHash.GetSlot("lease"), default, discovery: null)
+            : await client.Core.GetDedicatedPoolAsync(default);
+        var multiplexer = pool.MovingOwner!;
+        var originalOptions = multiplexer.Options;
+        var fenceEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFence = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handshakeEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        RespireConnection? lease = null;
+        Task<RespireConnection>? rental = null;
+        using var capture = new Capture(source.Port);
+        var expectedHandoffs = multiplexer.ConnectionCount + (lateHandshake ? 0 : 1);
+        try
+        {
+            // Control scheduling after shared publication and before dedicated retirement.
+            // The real fence changes cache state only; the pause models a preempted worker.
+            MultiplexerOptions(multiplexer) = originalOptions with
+            {
+                CredentialCacheRetirementFence = () =>
+                {
+                    originalOptions.CredentialCacheRetirementFence?.Invoke();
+                    fenceEntered.TrySetResult();
+                    releaseFence.Task.GetAwaiter().GetResult();
+                },
+            };
+            if (lateHandshake)
+            {
+                source.SuppressReply = command =>
+                {
+                    if (command != "HELLO 3") return false;
+                    handshakeEntered.TrySetResult();
+                    return true;
+                };
+                rental = pool.RentAsync(default).AsTask();
+                await handshakeEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            else lease = await pool.RentAsync(default);
+
+            await source.SendRawAsync(Encoding.UTF8.GetBytes($">4\r\n+MOVING\r\n:1\r\n:5\r\n+127.0.0.1:{target.Port}\r\n"));
+            await fenceEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var coordinator = MultiplexerMoving(multiplexer);
+            Task worker;
+            lock (coordinator.Gate) worker = coordinator.WorkerCompletion!;
+            if (lateHandshake)
+            {
+                var commands = source.ReceivedCommands;
+                var index = Enumerable.Range(0, commands.Count).Last(i => commands[i] == "HELLO 3");
+                source.SuppressReply = null;
+                await source.SendRawAsync("%1\r\n+proto\r\n:3\r\n"u8.ToArray(), source.ReceivedConnectionIds[index]);
+                lease = await rental!.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            else
+            {
+                await pool.DiscardAsync(lease!);
+                lease = null;
+            }
+            releaseFence.TrySetResult();
+            await worker.WaitAsync(TimeSpan.FromSeconds(5));
+            await WaitUntil(() => pool.IsStopping);
+            await WaitUntil(() => capture.Events.Any(item => item.Name == "redis.client.connection.handoff"));
+            await WaitUntil(() => ConnectionTelemetry.PendingMeasurements == 0);
+            await Assert.That(capture.Events.Count(item => item.Name == "redis.client.connection.handoff"))
+                .IsEqualTo(expectedHandoffs);
+        }
+        finally
+        {
+            releaseFence.TrySetResult();
+            source.SuppressReply = null;
+            MultiplexerOptions(multiplexer) = originalOptions;
+            if (lease is not null) pool.Return(lease);
+            else if (rental is not null)
+            {
+                await pool.DisposeAsync();
+                try { await rental; }
+                catch (Exception) { /* Observe acquisition failure during cleanup. */ }
+            }
+        }
+    }
+
+    [Test]
+    public async Task PoolRegisteredAfterPublicationDoesNotCountLateLeases()
+    {
+        using var configuration = new MetricConfigurationScope();
+        await using var server = RoutingMaintenanceServer();
+        await using var client = await RespireClient.ConnectAsync(Options(server));
+        var owner = client.Core.Multiplexer;
+        await using var pool = new DedicatedConnectionPool("127.0.0.1", server.Port, owner.Options, null)
+        {
+            MovingOwner = owner,
+            // Model an owner factory whose endpoint snapshot preceded a publication.
+            MovingPublication = new object(),
+        };
+        owner.RegisterMovingDedicatedPool(pool);
+        using var capture = new Capture(server.Port);
+        var lease = await pool.RentAsync(default);
+        var retirement = pool.RetireAsync(moving: true);
+        pool.Return(lease);
+        await retirement;
+        await WaitUntil(() => ConnectionTelemetry.PendingMeasurements == 0);
+        await Assert.That(capture.Events.Count(item => item.Name == "redis.client.connection.handoff"))
+            .IsEqualTo(0);
+    }
+
+    [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_options")]
+    private static extern ref RespireConnectionOptions MultiplexerOptions(RespireConnectionMultiplexer multiplexer);
+
+    [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_moving")]
+    private static extern ref MovingHandoffCoordinator MultiplexerMoving(RespireConnectionMultiplexer multiplexer);
+
     private static FakeRespServer RoutingMaintenanceServer()
     {
         var server = new FakeRespServer(8, FakeRespServer.PongReply);
@@ -874,18 +1014,49 @@ public class ConnectionMetricTests
     private static extern ref WeakReference<RespireConnection> ConnectionTarget(ConnectionTelemetry.State state);
 
     [Test]
+    public async Task NewConnectionsPruneCollectedTargetsWithoutObservation()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+            new() { Protocol = RespProtocol.Resp2 });
+        var pool = new ConnectionTelemetry.Pool("unobserved", false);
+        var abandoned = new ConnectionTelemetry.State[64];
+        for (var i = 0; i < abandoned.Length; i++)
+        {
+            abandoned[i] = new(connection, pool, false);
+            pool.Add(abandoned[i]);
+        }
+        foreach (var state in abandoned) ConnectionTarget(state).SetTarget(null!);
+        var live = new ConnectionTelemetry.State[64];
+        for (var i = 0; i < live.Length; i++)
+        {
+            live[i] = new(connection, pool, false);
+            pool.Add(live[i]);
+        }
+
+        // Read this test-owned set without invoking the observation path that also prunes.
+        await Assert.That(PoolConnections(pool).Count).IsEqualTo(live.Length);
+        await Assert.That(pool.SnapshotForObservation()).IsEquivalentTo(live);
+    }
+
+    [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_connections")]
+    private static extern ref HashSet<ConnectionTelemetry.State> PoolConnections(ConnectionTelemetry.Pool pool);
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task SamePoolNameKeepsOrdinaryAndPubSubIdentitiesSeparate(bool pubsubFirst)
+    public async Task SameEndpointKeepsOrdinaryAndPubSubIdentitiesSeparate(bool pubsubFirst)
     {
         var registry = new ConnectionTelemetry.Registry();
-        var first = registry.ForPool("same-name", pubsubFirst);
-        var second = registry.ForPool("same-name", !pubsubFirst);
+        var firstPurpose = pubsubFirst ? "pubsub" : "shared";
+        var secondPurpose = pubsubFirst ? "shared" : "pubsub";
+        var first = registry.ForPool("same-host", 6379, 0, firstPurpose);
+        var second = registry.ForPool("same-host", 6379, 0, secondPurpose);
         await Assert.That(ReferenceEquals(first, second)).IsFalse();
         await Assert.That(first.PubSub).IsEqualTo(pubsubFirst);
         await Assert.That(second.PubSub).IsEqualTo(!pubsubFirst);
-        await Assert.That(registry.ForPool("same-name", pubsubFirst)).IsSameReferenceAs(first);
-        await Assert.That(registry.ForPool("same-name", !pubsubFirst)).IsSameReferenceAs(second);
+        await Assert.That(registry.ForPool("same-host", 6379, 0, firstPurpose)).IsSameReferenceAs(first);
+        await Assert.That(registry.ForPool("same-host", 6379, 0, secondPurpose)).IsSameReferenceAs(second);
         await Assert.That(registry.Snapshot.Length).IsEqualTo(2);
     }
 
@@ -895,12 +1066,37 @@ public class ConnectionMetricTests
         var registry = new ConnectionTelemetry.Registry();
         for (var i = 0; i < 1000; i++)
         {
-            registry.ForPool($"host:{i}/0/shared", false);
-            registry.ForPool($"host:{i}/0/pubsub", true);
+            registry.ForPool("host", i, 0, "shared");
+            registry.ForPool("host", i, 0, "pubsub");
         }
         await Assert.That(registry.Snapshot.Length).IsEqualTo(66);
         await Assert.That(registry.Snapshot.Select(pool => pool.Tags.Last().Value).Distinct().Count()).IsEqualTo(66);
-        await Assert.That(registry.ForPool(new string('x', 257), false).Tags.Last().Value).IsEqualTo("overflow/shared");
+        await Assert.That(registry.ForPool(new string('x', 257), 6379, 0, "shared").Tags.Last().Value).IsEqualTo("overflow/shared");
+    }
+
+    [Test]
+    public async Task ReusedEndpointIdentitiesAllocateNothing()
+    {
+        var registry = new ConnectionTelemetry.Registry();
+        var shared = registry.ForPool("host", 6379, 0, "shared");
+        await Assert.That(shared.Tags.Last().Value).IsEqualTo("host:6379/0/shared");
+        await Assert.That(registry.ForPool("host", 6380, 0, "shared")).IsNotSameReferenceAs(shared);
+        await Assert.That(registry.ForPool("host", 6379, 1, "shared")).IsNotSameReferenceAs(shared);
+        await Assert.That(registry.ForPool("host", 6379, 0, "dedicated")).IsNotSameReferenceAs(shared);
+        for (var i = 0; i < 20; i++) MeasurePoolLookup(registry);
+        MeasurePositiveControl();
+        var measured = AllocationMeasurement.WithoutConcurrentGc(() => (MeasurePoolLookup(registry), MeasurePositiveControl()));
+        await Assert.That(measured.Item1).IsEqualTo(0L);
+        await Assert.That(measured.Item2).IsGreaterThan(0L);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long MeasurePoolLookup(ConnectionTelemetry.Registry registry)
+    {
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        for (var i = 0; i < 1000; i++)
+            GC.KeepAlive(registry.ForPool("host", 6379, 0, "shared"));
+        return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
     [Test]

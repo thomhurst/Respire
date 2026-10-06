@@ -53,6 +53,7 @@ internal sealed partial class DedicatedConnectionPool(
     private Exception? _closeError;
     private int _connecting;
     private bool _stopping;
+    private bool _movingHandoffsCaptured;
     private bool _cancellationComplete;
 
     /// <summary>True for a Cluster replica pool, whose connections enter READONLY mode.</summary>
@@ -297,6 +298,21 @@ internal sealed partial class DedicatedConnectionPool(
         }
     }
 
+    internal List<RespireConnection>? CaptureMovingHandoffs()
+    {
+        lock (_gate)
+        {
+            if (_stopping || _movingHandoffsCaptured) return null;
+            List<RespireConnection>? handedOff = null;
+            foreach (var entry in _connections.Values)
+                if (entry.State != State.Closing && entry.Connection.IsConnected)
+                    (handedOff ??= []).Add(entry.Connection);
+            // Even an empty publication excludes handshakes that finish afterwards.
+            _movingHandoffsCaptured = true;
+            return handedOff;
+        }
+    }
+
     private ValueTask Stop(bool abortBorrowed, bool moving = false)
     {
         List<Entry>? closing = null;
@@ -313,7 +329,7 @@ internal sealed partial class DedicatedConnectionPool(
             {
                 // Count only live members of this retired publication. Closing entries and
                 // connections whose handshake finishes after retirement were not handed off.
-                if (cancel && moving && entry.State != State.Closing && entry.Connection.IsConnected)
+                if (cancel && moving && !_movingHandoffsCaptured && entry.State != State.Closing && entry.Connection.IsConnected)
                     (handedOff ??= []).Add(entry.Connection);
                 if (entry.State == State.Idle || (abortBorrowed && entry.State == State.Rented))
                 {

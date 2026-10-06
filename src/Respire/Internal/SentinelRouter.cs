@@ -552,6 +552,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
                     connection.MovingNotification += OnMoving;
                     if (connection.LastMovingAnnouncement is { } announcement) OnMoving(announcement);
                 }) { MovingOwner = Multiplexer, MovingPublication = publication.Publication };
+            Multiplexer.RegisterMovingDedicatedPool(pool);
             return pool;
         }
 

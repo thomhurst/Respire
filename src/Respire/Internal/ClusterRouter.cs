@@ -2218,6 +2218,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                     connection.MovingNotification += OnMoving;
                     if (connection.LastMovingAnnouncement is { } announcement) OnMoving(announcement);
                 }) { MovingOwner = node, MovingPublication = publication.Publication };
+            node.RegisterMovingDedicatedPool(created);
             pool = created;
             _dedicatedPools[node] = pool;
             _ownedPools.Add(pool);

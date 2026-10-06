@@ -45,6 +45,9 @@ internal static class RespireTelemetry
         "Connections whose configured timeout allowance is currently increased by maintenance.");
     internal static readonly Counter<long> ConnectionHandoffs = Meter.CreateCounter<long>(
         "redis.client.connection.handoff", "1", "Old physical connections replaced by a published MOVING handoff.");
+    internal static readonly ObservableCounter<long> ConnectionMeasurementsDropped = Meter.CreateObservableCounter(
+        "respire.connection.measurements.dropped", () => ConnectionTelemetry.DroppedMeasurements,
+        "{measurement}", "Process-wide lifecycle measurements rejected by delivery capacity or enqueue failure.");
 
     private static readonly Counter<long> TransactionConflicts = Meter.CreateCounter<long>(
         "respire.transaction.watch.conflicts", "{attempt}", "Watched transaction attempts discarded by Redis.");
