@@ -1,0 +1,16 @@
+<Project>
+    <!-- Imported only by the inspection harness's metadata queries, never by normal builds. -->
+    <Target Name="GetInspectionFrameworks" Returns="@(_InspectionFramework)">
+        <ItemGroup>
+            <_InspectionFramework Include="$(TargetFrameworks)" Condition="'$(TargetFrameworks)' != ''" />
+            <_InspectionFramework Include="$(TargetFramework)" Condition="'$(TargetFrameworks)' == ''" />
+        </ItemGroup>
+        <Error Condition="'@(_InspectionFramework)' == ''" Text="The production project declares no inspection frameworks." />
+    </Target>
+
+    <Target Name="GetInspectionConfiguration" DependsOnTargets="AddImplicitDefineConstants" Returns="@(_InspectionConfiguration)">
+        <ItemGroup>
+            <_InspectionConfiguration Include="$(TargetFramework)|$(DefineConstants.Replace(';', ','))" />
+        </ItemGroup>
+    </Target>
+</Project>

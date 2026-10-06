@@ -1,0 +1,337 @@
+# Reviewed source-declared member signatures: 307 total; per-type counts include owner, derived and accessible nested declarations.
+# Count: Respire.ClientSideCacheCoordinator | 49
+Respire.ClientSideCacheCoordinator | class CacheEntry(byte[]?, long, long)
+Respire.ClientSideCacheCoordinator | class CacheStore()
+Respire.ClientSideCacheCoordinator | class InflightRead(RespireKey, bool)
+Respire.ClientSideCacheCoordinator | class QueryCacheEntry(RespValue, RespireKey[], long, long)
+Respire.ClientSideCacheCoordinator | constructor ClientSideCacheCoordinator(RespireClientSideCacheOptions)
+Respire.ClientSideCacheCoordinator | enum CacheRemoval : int
+Respire.ClientSideCacheCoordinator | enum MutationFenceKind : byte
+Respire.ClientSideCacheCoordinator | method BeforeCommand`1(string, in TCommand) : MutationFence
+Respire.ClientSideCacheCoordinator | method BeginRead(in RespireKey) : ReadToken
+Respire.ClientSideCacheCoordinator | method BeginRead(string, in QueryRequest) : QueryReadToken
+Respire.ClientSideCacheCoordinator | method BeginUnknownMutation() : MutationFence
+Respire.ClientSideCacheCoordinator | method CanCacheOperation(string) : bool
+Respire.ClientSideCacheCoordinator | method CanTrack(in RespireKey) : bool
+Respire.ClientSideCacheCoordinator | method Clear() : void
+Respire.ClientSideCacheCoordinator | method CoalesceReadAsync`1(ClientCacheCommandKey, TState, Func<TState, CancellationToken, ValueTask<RespValue>>, CancellationToken) : ValueTask<RespValue>
+Respire.ClientSideCacheCoordinator | method CompleteMutation(in MutationFence) : void
+Respire.ClientSideCacheCoordinator | method CompleteRead(in QueryReadToken, in RespValue, bool) : void
+Respire.ClientSideCacheCoordinator | method CompleteRead(in ReadToken, in RespValue, bool) : void
+Respire.ClientSideCacheCoordinator | method FlushForContinuityLoss() : void
+Respire.ClientSideCacheCoordinator | method FlushForContinuityLossWithoutMetrics() : int
+Respire.ClientSideCacheCoordinator | method FlushForMovingRetirementFence() : void
+Respire.ClientSideCacheCoordinator | method FlushForUnknownCommand() : void
+Respire.ClientSideCacheCoordinator | method GetStatistics() : RespireClientSideCacheStatistics
+Respire.ClientSideCacheCoordinator | method HandlePush(in RespValue) : void
+# Designated test-inspection factory. New inspection access belongs in its nested view.
+Respire.ClientSideCacheCoordinator | method InspectForTests() : TestInspection
+Respire.ClientSideCacheCoordinator | method Invalidate(in RespireKey, RespireClientCacheInvalidationReason) : void
+Respire.ClientSideCacheCoordinator | method PublishContinuityFlushMetrics(int) : void
+Respire.ClientSideCacheCoordinator | method RebaseRead(in QueryReadToken) : QueryReadToken
+Respire.ClientSideCacheCoordinator | method RebaseRead(in ReadToken) : ReadToken
+Respire.ClientSideCacheCoordinator | method RemoveInvalidationObserver(RespireClientCacheInvalidationSubscription) : void
+Respire.ClientSideCacheCoordinator | method StopInvalidationObservers() : void
+Respire.ClientSideCacheCoordinator | method StopSharedReads() : void
+Respire.ClientSideCacheCoordinator | method SubscribeInvalidations(RespireKey, Action<RespireClientCacheInvalidation>, CancellationToken) : IRespireClientCacheInvalidationSubscription
+Respire.ClientSideCacheCoordinator | method TryCreateQuery`1(string, in TCommand, out QueryRequest) : bool
+Respire.ClientSideCacheCoordinator | method TryGet(in QueryRequest, out RespValue) : bool
+Respire.ClientSideCacheCoordinator | method TryGet(in RespireKey, out RespValue) : bool
+Respire.ClientSideCacheCoordinator | method TryPeek(in QueryRequest, out RespValue) : bool
+Respire.ClientSideCacheCoordinator | method TryPeek(in RespireKey, out RespValue) : bool
+Respire.ClientSideCacheCoordinator | property ActiveSharedReadCount [internal; get] : int
+Respire.ClientSideCacheCoordinator | property CoalesceConcurrentMisses [internal; get] : bool
+Respire.ClientSideCacheCoordinator | property Count [public; get] : int
+Respire.ClientSideCacheCoordinator | property ReuseHashFields [internal; get] : bool
+Respire.ClientSideCacheCoordinator | property SharedReadRetirements [internal; get] : long
+Respire.ClientSideCacheCoordinator | property SizeBytes [public; get] : long
+Respire.ClientSideCacheCoordinator | readonly record struct QueryReadToken(ClientCacheCommandKey, RespireKey[], long, long, CacheStore, bool)
+Respire.ClientSideCacheCoordinator | readonly record struct QueryRequest(ClientCacheCommandKey, RespireKey)
+Respire.ClientSideCacheCoordinator | readonly record struct ReadToken(InflightRead, long, long, CacheStore)
+# Designated borrowed view; source keys retain readonly/ref and compiled metadata checks stack-only visibility.
+Respire.ClientSideCacheCoordinator | readonly ref struct TestInspection(ClientSideCacheCoordinator)
+Respire.ClientSideCacheCoordinator | readonly struct MutationFence()
+# Count: Respire.ClientSideCacheCoordinator.CacheEntry | 3
+# Reviewed accessible nested operational members; new inspection state belongs in the designated borrowed view.
+Respire.ClientSideCacheCoordinator.CacheEntry | property ExpiresAt [public; get] : long
+Respire.ClientSideCacheCoordinator.CacheEntry | property Payload [public; get] : byte[]?
+Respire.ClientSideCacheCoordinator.CacheEntry | property Size [public; get] : long
+# Count: Respire.ClientSideCacheCoordinator.CacheStore | 11
+Respire.ClientSideCacheCoordinator.CacheStore | constructor CacheStore(RespireClientSideCacheOptions, Action<CacheRemoval>)
+Respire.ClientSideCacheCoordinator.CacheStore | method Invalidate(in RespireKey) : int
+Respire.ClientSideCacheCoordinator.CacheStore | method Retire() : int
+Respire.ClientSideCacheCoordinator.CacheStore | method Set(RespireKey, in RespValue) : void
+Respire.ClientSideCacheCoordinator.CacheStore | method Set(in ClientCacheCommandKey, QueryCacheEntry) : bool
+Respire.ClientSideCacheCoordinator.CacheStore | method Trim() : void
+Respire.ClientSideCacheCoordinator.CacheStore | method TryCreateEntry(in ClientCacheCommandKey, RespireKey[], in RespValue, out QueryCacheEntry?) : bool
+Respire.ClientSideCacheCoordinator.CacheStore | method TryGet(in ClientCacheCommandKey, out RespValue) : bool
+Respire.ClientSideCacheCoordinator.CacheStore | method TryGet(in RespireKey, out byte[]?) : bool
+Respire.ClientSideCacheCoordinator.CacheStore | property Count [public; get] : int
+Respire.ClientSideCacheCoordinator.CacheStore | property SizeBytes [public; get] : long
+# Count: Respire.ClientSideCacheCoordinator.InflightRead | 5
+Respire.ClientSideCacheCoordinator.InflightRead | field Generation : long
+Respire.ClientSideCacheCoordinator.InflightRead | field Readers : int
+Respire.ClientSideCacheCoordinator.InflightRead | field Retired : bool
+Respire.ClientSideCacheCoordinator.InflightRead | property CanCache [public; get] : bool
+Respire.ClientSideCacheCoordinator.InflightRead | property Key [public; get] : RespireKey
+# Count: Respire.ClientSideCacheCoordinator.MutationFence | 7
+Respire.ClientSideCacheCoordinator.MutationFence | method ForKey(RespireKey) : MutationFence
+Respire.ClientSideCacheCoordinator.MutationFence | method ForKeys(RespireKey[]) : MutationFence
+Respire.ClientSideCacheCoordinator.MutationFence | property All [internal; get] : MutationFence
+Respire.ClientSideCacheCoordinator.MutationFence | property IsRequired [internal; get] : bool
+Respire.ClientSideCacheCoordinator.MutationFence | property Key [internal; get] : RespireKey
+Respire.ClientSideCacheCoordinator.MutationFence | property Keys [internal; get] : RespireKey[]?
+Respire.ClientSideCacheCoordinator.MutationFence | property Kind [internal; get] : MutationFenceKind
+# Count: Respire.ClientSideCacheCoordinator.QueryCacheEntry | 4
+Respire.ClientSideCacheCoordinator.QueryCacheEntry | property Dependencies [public; get] : RespireKey[]
+Respire.ClientSideCacheCoordinator.QueryCacheEntry | property ExpiresAt [public; get] : long
+Respire.ClientSideCacheCoordinator.QueryCacheEntry | property Size [public; get] : long
+Respire.ClientSideCacheCoordinator.QueryCacheEntry | property Value [public; get] : RespValue
+# Count: Respire.Networking.BulkStreamPendingResponseSource | 26
+Respire.Networking.BulkStreamPendingResponseSource | constructor BulkStreamPendingResponseSource(string?, bool, Action<Exception?>?, CancellationToken, Action?)
+Respire.Networking.BulkStreamPendingResponseSource | method AbortPayload(Exception) : void
+Respire.Networking.BulkStreamPendingResponseSource | method BeginPayload() : RespBulkPayloadPipe?
+Respire.Networking.BulkStreamPendingResponseSource | method CompleteDiscardedPayload() : void
+Respire.Networking.BulkStreamPendingResponseSource | method CompleteMissing() : void
+Respire.Networking.BulkStreamPendingResponseSource | method CompletePayload(Exception?) : void
+Respire.Networking.BulkStreamPendingResponseSource | method CompleteReservedResult(in RespValue) : bool
+Respire.Networking.BulkStreamPendingResponseSource | method HasStalledReader(TimeSpan) : bool
+Respire.Networking.BulkStreamPendingResponseSource | method IValueTaskSource<Stream?>.GetResult(short) : Stream?
+Respire.Networking.BulkStreamPendingResponseSource | method IValueTaskSource<Stream?>.GetStatus(short) : ValueTaskSourceStatus
+Respire.Networking.BulkStreamPendingResponseSource | method IValueTaskSource<Stream?>.OnCompleted(Action<object?>, object?, short, ValueTaskSourceOnCompletedFlags) : void
+Respire.Networking.BulkStreamPendingResponseSource | method ObservePrefix(in RespValue) : void
+Respire.Networking.BulkStreamPendingResponseSource | method PrepareException(Exception) : Exception
+Respire.Networking.BulkStreamPendingResponseSource | method ResetAndReturn() : void
+Respire.Networking.BulkStreamPendingResponseSource | method SetExceptionCore(Exception) : void
+Respire.Networking.BulkStreamPendingResponseSource | method SetResultCore(in RespValue) : void
+Respire.Networking.BulkStreamPendingResponseSource | method TryReserveResult() : bool
+Respire.Networking.BulkStreamPendingResponseSource | method TrySetResult(in RespValue) : bool
+Respire.Networking.BulkStreamPendingResponseSource | property CanStartStream [internal; get] : bool
+Respire.Networking.BulkStreamPendingResponseSource | property CommandName [internal; get] : string?
+Respire.Networking.BulkStreamPendingResponseSource | property HasPrefixReply [internal; get] : bool
+Respire.Networking.BulkStreamPendingResponseSource | property IsFinalReply [internal; get] : bool
+Respire.Networking.BulkStreamPendingResponseSource | property IsPayloadAborted [internal; get] : bool
+Respire.Networking.BulkStreamPendingResponseSource | property OnFrameCompleted [internal; get] : Action<Exception?>?
+Respire.Networking.BulkStreamPendingResponseSource | property StreamCancellationToken [internal; get] : CancellationToken
+Respire.Networking.BulkStreamPendingResponseSource | property Task [internal; get] : ValueTask<Stream?>
+# Count: Respire.Networking.BytesPendingResponseSource | 10
+Respire.Networking.BytesPendingResponseSource | method IValueTaskSource<byte[]?>.GetResult(short) : byte[]?
+Respire.Networking.BytesPendingResponseSource | method IValueTaskSource<byte[]?>.GetStatus(short) : ValueTaskSourceStatus
+Respire.Networking.BytesPendingResponseSource | method IValueTaskSource<byte[]?>.OnCompleted(Action<object?>, object?, short, ValueTaskSourceOnCompletedFlags) : void
+Respire.Networking.BytesPendingResponseSource | method Rent(string?) : BytesPendingResponseSource
+Respire.Networking.BytesPendingResponseSource | method ResetAndReturn() : void
+Respire.Networking.BytesPendingResponseSource | method SetDirectResult(byte[]?) : void
+Respire.Networking.BytesPendingResponseSource | method SetExceptionCore(Exception) : void
+Respire.Networking.BytesPendingResponseSource | method SetResultCore(in RespValue) : void
+Respire.Networking.BytesPendingResponseSource | property CommandName [internal; get] : string?
+Respire.Networking.BytesPendingResponseSource | property Task [public; get] : ValueTask<byte[]?>
+# Count: Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | 9
+Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | method IValueTaskSource<TResult>.GetResult(short) : TResult
+Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | method IValueTaskSource<TResult>.GetStatus(short) : ValueTaskSourceStatus
+Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | method IValueTaskSource<TResult>.OnCompleted(Action<object?>, object?, short, ValueTaskSourceOnCompletedFlags) : void
+Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | method Rent(TState, ResponseConverter<TState, TResult>, bool, string?) : ConvertedPendingResponseSource<TState, TResult>
+Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | method ResetAndReturn() : void
+Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | method SetExceptionCore(Exception) : void
+Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | method SetResultCore(in RespValue) : void
+Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | property CommandName [internal; get] : string?
+Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | property Task [public; get] : ValueTask<TResult>
+# Count: Respire.Networking.MultiReplyPendingResponseSource | 14
+Respire.Networking.MultiReplyPendingResponseSource | method CompleteReservedResult(in RespValue) : bool
+Respire.Networking.MultiReplyPendingResponseSource | method ConfigureTimeout(RespireConnection, TimeSpan?, CancellationToken, CancellationToken) : void
+Respire.Networking.MultiReplyPendingResponseSource | method IValueTaskSource<RespValue>.GetResult(short) : RespValue
+Respire.Networking.MultiReplyPendingResponseSource | method IValueTaskSource<RespValue>.GetStatus(short) : ValueTaskSourceStatus
+Respire.Networking.MultiReplyPendingResponseSource | method IValueTaskSource<RespValue>.OnCompleted(Action<object?>, object?, short, ValueTaskSourceOnCompletedFlags) : void
+Respire.Networking.MultiReplyPendingResponseSource | method PrepareException(Exception) : Exception
+Respire.Networking.MultiReplyPendingResponseSource | method Rent(int, int, string) : MultiReplyPendingResponseSource
+Respire.Networking.MultiReplyPendingResponseSource | method ResetAndReturn() : void
+Respire.Networking.MultiReplyPendingResponseSource | method SetExceptionCore(Exception) : void
+Respire.Networking.MultiReplyPendingResponseSource | method SetResultCore(in RespValue) : void
+Respire.Networking.MultiReplyPendingResponseSource | method TryReserveResult() : bool
+Respire.Networking.MultiReplyPendingResponseSource | method TrySetResult(in RespValue) : bool
+Respire.Networking.MultiReplyPendingResponseSource | property CommandName [internal; get] : string?
+Respire.Networking.MultiReplyPendingResponseSource | property Task [internal; get] : ValueTask<RespValue>
+# Count: Respire.Networking.PendingResponse | 22
+Respire.Networking.PendingResponse | field WriteEnd : long
+Respire.Networking.PendingResponse | field WriteStart : long
+Respire.Networking.PendingResponse | method CompleteReservedResult(in RespValue) : bool
+# Designated test-inspection factory. New inspection access belongs in its nested view.
+Respire.Networking.PendingResponse | method InspectForTests() : TestInspection
+Respire.Networking.PendingResponse | method IsCompleted(long) : bool
+Respire.Networking.PendingResponse | method PrepareException(Exception) : Exception
+Respire.Networking.PendingResponse | method PrepareForUse(int) : void
+Respire.Networking.PendingResponse | method RegisterCancellation(CancellationToken) : void
+Respire.Networking.PendingResponse | method ReleaseCallerRef() : void
+Respire.Networking.PendingResponse | method ReleaseRef() : void
+Respire.Networking.PendingResponse | method ResetAndReturn() : void
+Respire.Networking.PendingResponse | method SetExceptionCore(Exception) : void
+Respire.Networking.PendingResponse | method SetResultCore(in RespValue) : void
+Respire.Networking.PendingResponse | method TryReserveResult() : bool
+Respire.Networking.PendingResponse | method TrySetCanceled(CancellationToken) : bool
+Respire.Networking.PendingResponse | method TrySetException(Exception) : bool
+Respire.Networking.PendingResponse | method TrySetResult(in RespValue) : bool
+Respire.Networking.PendingResponse | method TrySetTimedOut(long, TimeSpan, ref RespireTimeoutDiagnostics?, RespireConnection?) : bool
+Respire.Networking.PendingResponse | property CommandName [internal; get] : string?
+Respire.Networking.PendingResponse | property Deadline [internal; get, set] : CommandDeadline
+Respire.Networking.PendingResponse | property State [internal; get] : long
+# Designated borrowed view; source keys retain readonly/ref and compiled metadata checks stack-only visibility.
+Respire.Networking.PendingResponse | readonly ref struct TestInspection(PendingResponse)
+# Count: Respire.Networking.PendingResponseSource | 11
+Respire.Networking.PendingResponseSource | constructor PendingResponseSource()
+Respire.Networking.PendingResponseSource | method Configure(bool, string?) : void
+Respire.Networking.PendingResponseSource | method IValueTaskSource<RespValue>.GetResult(short) : RespValue
+Respire.Networking.PendingResponseSource | method IValueTaskSource<RespValue>.GetStatus(short) : ValueTaskSourceStatus
+Respire.Networking.PendingResponseSource | method IValueTaskSource<RespValue>.OnCompleted(Action<object?>, object?, short, ValueTaskSourceOnCompletedFlags) : void
+Respire.Networking.PendingResponseSource | method ResetAndReturn() : void
+Respire.Networking.PendingResponseSource | method SetExceptionCore(Exception) : void
+Respire.Networking.PendingResponseSource | method SetResultCore(in RespValue) : void
+Respire.Networking.PendingResponseSource | property CommandName [internal; get] : string?
+Respire.Networking.PendingResponseSource | property Task [public; get] : ValueTask<RespValue>
+Respire.Networking.PendingResponseSource | readonly struct PoolPolicy(PendingResponsePool)
+# Count: Respire.Networking.PendingResponseSource.PoolPolicy | 2
+Respire.Networking.PendingResponseSource.PoolPolicy | method Create() : PendingResponseSource
+Respire.Networking.PendingResponseSource.PoolPolicy | method TryReset(PendingResponseSource) : bool
+# Count: Respire.Networking.RespireConnection | 73
+Respire.Networking.RespireConnection | event MovingNotification : Action<Respire.Infrastructure.MovingAnnouncement>?
+Respire.Networking.RespireConnection | event PendingCommandsFailing : Action?
+Respire.Networking.RespireConnection | field LastQueuedMovingSequence : long
+Respire.Networking.RespireConnection | field MovingPublicationGeneration : long
+Respire.Networking.RespireConnection | field StreamChunkSize : int
+Respire.Networking.RespireConnection | method AcquireCredentialSequenceAsync(CancellationToken) : ValueTask<CredentialSequenceLease>
+Respire.Networking.RespireConnection | method ApplyTcpKeepAlive(Socket, RespireConnectionOptions) : void
+Respire.Networking.RespireConnection | method CaptureDedicatedTimeoutDiagnostics() : RespireTimeoutDiagnostics
+Respire.Networking.RespireConnection | method CaptureTimeoutDiagnostics(long, long, RespireCommandStage) : RespireTimeoutDiagnostics
+Respire.Networking.RespireConnection | method ConnectAsync(string, int, RespireConnectionOptions?, ILogger?, CancellationToken, bool) : Task<RespireConnection>
+Respire.Networking.RespireConnection | method CreateTlsOptions(SslClientAuthenticationOptions?, string, bool) : SslClientAuthenticationOptions
+Respire.Networking.RespireConnection | method DisposeAsync() : ValueTask
+Respire.Networking.RespireConnection | method DrainPendingMaintenanceNotificationsAsync(CancellationToken) : Task
+Respire.Networking.RespireConnection | method EnqueuePinnedAsync`1(TCommand, CancellationToken, string) : ValueTask<ValueTask<RespValue>>
+Respire.Networking.RespireConnection | method EnsureServerClientIdAsync(CancellationToken) : ValueTask<long>
+# Legacy test-only hook retained as baseline, not precedent for new hooks.
+Respire.Networking.RespireConnection | method ExpireOldestCommandForTesting() : bool
+Respire.Networking.RespireConnection | method GetReroutedCommandDeadline(CommandDeadline) : CommandDeadline
+Respire.Networking.RespireConnection | method GetWatchdogDelay(TimeSpan, TimeSpan) : TimeSpan
+Respire.Networking.RespireConnection | method HasStalledBulkStream(TimeSpan) : bool
+# Designated test-inspection factory. New inspection access belongs in its nested view.
+Respire.Networking.RespireConnection | method InspectForTests() : TestInspection
+Respire.Networking.RespireConnection | method IsDeadlineCancellation(OperationCanceledException, CancellationToken, CancellationToken) : bool
+Respire.Networking.RespireConnection | method ReplayUnpublishedMigrations() : void
+Respire.Networking.RespireConnection | method RetireAsync() : Task
+Respire.Networking.RespireConnection | method SendAskingStreamedSetAsync(in RawCommand, StreamedSetCommand, CancellationToken, CommandDeadline, DedicatedStreamRoute) : ValueTask<RespValue>
+Respire.Networking.RespireConnection | method SendAsync`1(in TCommand, CancellationToken, bool, string?, bool, string?) : ValueTask<RespValue>
+Respire.Networking.RespireConnection | method SendBulkStreamAsync`1(in TCommand, CancellationToken, string?, Action<Exception?>?, string?) : ValueTask<Stream?>
+Respire.Networking.RespireConnection | method SendBytesAsync`1(in TCommand, CancellationToken, string?, CommandDeadline) : ValueTask<byte[]?>
+Respire.Networking.RespireConnection | method SendCheckedAsync`1(in TCommand, CancellationToken, string?, CommandDeadline, bool, DedicatedStreamRoute, string?, bool) : ValueTask<RespValue>
+Respire.Networking.RespireConnection | method SendConvertedAsync`3(in TCommand, TState, ResponseConverter<TState, TResult>, bool, CancellationToken, string?, CommandDeadline) : ValueTask<TResult>
+Respire.Networking.RespireConnection | method SendFireAndForgetAsync`1(in TCommand, CancellationToken, string?, CommandDeadline, string?) : ValueTask
+Respire.Networking.RespireConnection | method SendPrefixedAsync`2(in TPrefix, in TCommand, bool, CancellationToken, string?, bool, bool, CommandDeadline, bool, string?) : ValueTask<RespValue>
+Respire.Networking.RespireConnection | method SendPrefixedBulkStreamAsync`2(in TPrefix, in TCommand, CancellationToken, string?, Action<Exception?>?, string?) : ValueTask<Stream?>
+Respire.Networking.RespireConnection | method SendPrefixedCheckedAsync`2(in TPrefix, in TCommand, CancellationToken, string?, CommandDeadline, bool, string?) : ValueTask<RespValue>
+Respire.Networking.RespireConnection | method SendPrefixedWithoutResponseTimeoutAsync`2(TPrefix, TCommand, bool, CancellationToken) : ValueTask<RespValue>
+Respire.Networking.RespireConnection | method SendStringAsync`1(in TCommand, CancellationToken, string?, CommandDeadline) : ValueTask<string?>
+Respire.Networking.RespireConnection | method SendTransactionAsync(ReadOnlyMemory<byte>, int, CancellationToken, TimeSpan?, CancellationToken, bool, CommandDeadline) : ValueTask<RespValue>
+Respire.Networking.RespireConnection | method SendValidatedPrefixedAsync`2(in TPrefix, in TCommand, CancellationToken, string, string?) : ValueTask<RespValue>
+Respire.Networking.RespireConnection | method SendValidatedPrefixedAsync`3(in TFirstPrefix, in TSecondPrefix, in TCommand, CancellationToken, string, string?) : ValueTask<RespValue>
+Respire.Networking.RespireConnection | method SendWithoutResponseTimeoutAsync`1(TCommand, CancellationToken) : ValueTask<RespValue>
+Respire.Networking.RespireConnection | method StopAcceptingCommands() : void
+Respire.Networking.RespireConnection | method TryAcquireCredentialSequence(CancellationToken, out CredentialSequenceLease) : bool
+Respire.Networking.RespireConnection | method ValidateBulkResponseSize(long, long) : void
+Respire.Networking.RespireConnection | method ValidateTransactionCapacity(int, bool) : void
+Respire.Networking.RespireConnection | method WaitForActiveBulkStreamToCompleteAsync(TimeSpan, CancellationToken) : Task<bool>
+Respire.Networking.RespireConnection | method WaitForFinalFrameWriteAsync(Task, CancellationToken) : ValueTask
+Respire.Networking.RespireConnection | method WaitForOtherCommandsToCompleteAsync(CancellationToken) : Task
+Respire.Networking.RespireConnection | property AvailabilityZone [internal; get, private set] : string?
+Respire.Networking.RespireConnection | property CloseError [internal; get] : Exception?
+Respire.Networking.RespireConnection | property Closed [internal; get] : Task
+Respire.Networking.RespireConnection | property CredentialRefreshCompletion [internal; get] : Task?
+Respire.Networking.RespireConnection | property DrainedSuccessfully [internal; get] : bool
+Respire.Networking.RespireConnection | property HasActiveBulkStream [internal; get] : bool
+Respire.Networking.RespireConnection | property HasMaintenanceWindow [internal; get] : bool
+Respire.Networking.RespireConnection | property HasOtherIncompleteCommandThanMaintenanceBarrier [internal; get] : bool
+Respire.Networking.RespireConnection | property HasOutstandingMaintenanceBarrier [internal; get] : bool
+Respire.Networking.RespireConnection | property HasUndeliveredReplies [internal; get] : bool
+Respire.Networking.RespireConnection | property Host [public; get] : string
+Respire.Networking.RespireConnection | property IsAcceptingCommands [internal; get] : bool
+Respire.Networking.RespireConnection | property IsConnected [public; get] : bool
+Respire.Networking.RespireConnection | property IsFlushLoopWaiting [internal; get] : bool
+Respire.Networking.RespireConnection | property IsStreamingWriteActive [internal; get] : bool
+Respire.Networking.RespireConnection | property LastMovingAnnouncement [internal; get] : Respire.Infrastructure.MovingAnnouncement?
+Respire.Networking.RespireConnection | property Multiplexer [internal; get, set] : Respire.Infrastructure.RespireConnectionMultiplexer?
+Respire.Networking.RespireConnection | property MultiplexerSlot [internal; get, set] : int
+Respire.Networking.RespireConnection | property NetworkPeerAddress [internal; get] : string?
+Respire.Networking.RespireConnection | property NetworkPeerPort [internal; get] : int?
+Respire.Networking.RespireConnection | property PeerKey [internal; get] : (string Host, int Port)
+Respire.Networking.RespireConnection | property Port [public; get] : int
+Respire.Networking.RespireConnection | property ServerClientId [internal; get] : long
+Respire.Networking.RespireConnection | property UndeliveredReplyCount [internal; get] : int
+Respire.Networking.RespireConnection | property WriteBufferCapacity [internal; get] : int
+# Designated borrowed view; source keys retain readonly/ref and compiled metadata checks stack-only visibility.
+Respire.Networking.RespireConnection | readonly ref struct TestInspection(RespireConnection)
+Respire.Networking.RespireConnection | readonly struct CredentialSequenceLease(SemaphoreSlim?)
+# Count: Respire.Networking.RespireConnection.CredentialSequenceLease | 1
+Respire.Networking.RespireConnection.CredentialSequenceLease | method Dispose() : void
+# Count: Respire.Networking.StringPendingResponseSource | 10
+Respire.Networking.StringPendingResponseSource | method IValueTaskSource<string?>.GetResult(short) : string?
+Respire.Networking.StringPendingResponseSource | method IValueTaskSource<string?>.GetStatus(short) : ValueTaskSourceStatus
+Respire.Networking.StringPendingResponseSource | method IValueTaskSource<string?>.OnCompleted(Action<object?>, object?, short, ValueTaskSourceOnCompletedFlags) : void
+Respire.Networking.StringPendingResponseSource | method Rent(string?) : StringPendingResponseSource
+Respire.Networking.StringPendingResponseSource | method ResetAndReturn() : void
+Respire.Networking.StringPendingResponseSource | method SetDirectResult(string?) : void
+Respire.Networking.StringPendingResponseSource | method SetExceptionCore(Exception) : void
+Respire.Networking.StringPendingResponseSource | method SetResultCore(in RespValue) : void
+Respire.Networking.StringPendingResponseSource | property CommandName [internal; get] : string?
+Respire.Networking.StringPendingResponseSource | property Task [public; get] : ValueTask<string?>
+# Count: Respire.RespireTransaction | 3
+Respire.RespireTransaction | constructor RespireTransaction(RespireClient)
+Respire.RespireTransaction | constructor RespireTransaction(RespireClient, RespireHashImportSession)
+Respire.RespireTransaction | method CommitAsync(CancellationToken) : ValueTask
+# Count: Respire.RespireTransactionBase | 42
+Respire.RespireTransactionBase | constructor RespireTransactionBase(RespireClient, RespireConnection?, int?, RespireHashImportSession?)
+Respire.RespireTransactionBase | method CommitCoreAsync(CancellationToken, bool) : ValueTask<bool>
+Respire.RespireTransactionBase | method Decrement(RespireKey, long) : RespirePending<long>
+Respire.RespireTransactionBase | method Delete(params ReadOnlySpan<RespireKey>) : RespirePending<long>
+Respire.RespireTransactionBase | method DisposeAsync() : ValueTask
+Respire.RespireTransactionBase | method Execute(RespireCommand, params RespireValue[]) : RespirePending<RespireResult>
+Respire.RespireTransactionBase | method Exists(RespireKey) : RespirePending<bool>
+Respire.RespireTransactionBase | method Expire(RespireKey, RespireExpiry, ExpireWhen) : RespirePending<bool>
+Respire.RespireTransactionBase | method GetBytes(RespireKey) : RespirePending<byte[]?>
+Respire.RespireTransactionBase | method GetString(RespireKey) : RespirePending<string?>
+Respire.RespireTransactionBase | method Get`1(RespireKey) : RespirePending<T?>
+Respire.RespireTransactionBase | method IPendingSink.Add`2(string, in TCommand, Func<RespireClient, RespValue, T>) : RespirePending<T>
+Respire.RespireTransactionBase | method IPendingSink.Add`2(string, in TCommand, ReadOnlySpan<(RespireKey Key, RespireValue Value)>, Func<RespireClient, RespValue, T>) : RespirePending<T>
+Respire.RespireTransactionBase | method IPendingSink.Add`2(string, in TCommand, ReadOnlySpan<RespireKey>, Func<RespireClient, RespValue, T>) : RespirePending<T>
+Respire.RespireTransactionBase | method IPendingSink.Add`2(string, in TCommand, RespireKey, ReadOnlySpan<RespireKey>, Func<RespireClient, RespValue, T>) : RespirePending<T>
+Respire.RespireTransactionBase | method IPendingSink.Add`2(string, in TCommand, RespireKey, RespireKey, Func<RespireClient, RespValue, T>) : RespirePending<T>
+Respire.RespireTransactionBase | method Increment(RespireKey, long) : RespirePending<long>
+# Designated test-inspection factory. New inspection access belongs in its nested view.
+Respire.RespireTransactionBase | method InspectForTests() : TestInspection
+Respire.RespireTransactionBase | method Set(RespireKey, RespireValue, RespireExpiry, SetWhen) : RespirePending<bool>
+Respire.RespireTransactionBase | method Set`1(RespireKey, T, RespireExpiry, SetWhen) : RespirePending<bool>
+Respire.RespireTransactionBase | method TryGet`1(RespireKey) : RespirePending<RespireGet<T>>
+Respire.RespireTransactionBase | method ValidateClusterSlot(int, ref int?) : void
+Respire.RespireTransactionBase | property Bitmaps [public; get] : IBatchBitmapCommands
+Respire.RespireTransactionBase | property Count [public; get] : int
+Respire.RespireTransactionBase | property Functions [public; get] : IBatchFunctionCommands
+Respire.RespireTransactionBase | property Geo [public; get] : IBatchGeoCommands
+Respire.RespireTransactionBase | property Hashes [public; get] : IBatchHashCommands
+Respire.RespireTransactionBase | property HyperLogLog [public; get] : IBatchHyperLogLogCommands
+Respire.RespireTransactionBase | property IPendingSink.Client [explicit; get] : RespireClient
+Respire.RespireTransactionBase | property IPendingSink.DefersSerialization [explicit; get] : bool
+Respire.RespireTransactionBase | property IPendingSink.ImportSession [explicit; get] : RespireHashImportSession?
+Respire.RespireTransactionBase | property Keys [public; get] : IBatchKeyCommands
+Respire.RespireTransactionBase | property Lists [public; get] : IBatchListCommands
+Respire.RespireTransactionBase | property Scripts [public; get] : IBatchScriptCommands
+Respire.RespireTransactionBase | property Server [public; get] : IBatchServerCommands
+Respire.RespireTransactionBase | property Sets [public; get] : IBatchSetCommands
+Respire.RespireTransactionBase | property SortedSets [public; get] : IBatchSortedSetCommands
+Respire.RespireTransactionBase | property Streams [public; get] : IBatchStreamCommands
+Respire.RespireTransactionBase | property Strings [public; get] : IBatchStringCommands
+Respire.RespireTransactionBase | property VectorSets [public; get] : IBatchVectorSetCommands
+Respire.RespireTransactionBase | property WatchPool [private protected; get] : DedicatedConnectionPool?
+# Designated borrowed view; source keys retain readonly/ref and compiled metadata checks stack-only visibility.
+Respire.RespireTransactionBase | readonly ref struct TestInspection(RespireTransactionBase)
+# Count: Respire.RespireWatchedTransaction | 5
+Respire.RespireWatchedTransaction | constructor RespireWatchedTransaction(RespireClient)
+Respire.RespireWatchedTransaction | constructor RespireWatchedTransaction(RespireClient, RespireConnection, DedicatedConnectionPool, int?)
+Respire.RespireWatchedTransaction | method CommitAsync(CancellationToken) : ValueTask<bool>
+Respire.RespireWatchedTransaction | method CommitWithWatchValidationAsync(CancellationToken) : ValueTask<bool>
+Respire.RespireWatchedTransaction | property WatchPool [private protected; get] : DedicatedConnectionPool?
