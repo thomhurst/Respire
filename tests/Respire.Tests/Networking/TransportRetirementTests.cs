@@ -11,9 +11,13 @@ using TUnit.Core;
 
 namespace Respire.Tests.Networking;
 
+// Tests that deliberately block pool callbacks run alone, as in StalledDeliveryTests.
+// The remaining cases await their gates and cleanup instead of synchronously blocking
+// reply/reconnect callbacks, so they do not need exclusive thread-pool access.
+[Category(TestCategories.ConstrainedRetirement)]
 public class TransportRetirementTests
 {
-    [Test]
+    [Test, NotInParallel]
     public async Task ReplyContinuationCanSynchronouslyRetireItsConnection()
     {
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -41,7 +45,7 @@ public class TransportRetirementTests
         await Assert.That(connection.DrainedSuccessfully).IsTrue();
     }
 
-    [Test]
+    [Test, NotInParallel]
     [Arguments(false)]
     [Arguments(true)]
     public async Task ReentrantCompletionHandoffPreservesRemainingReplyOrder(bool queuedBatch)
@@ -98,7 +102,7 @@ public class TransportRetirementTests
         }
     }
 
-    [Test]
+    [Test, NotInParallel]
     [Arguments(RespireConnectionState.Reconnecting, false)]
     [Arguments(RespireConnectionState.Connected, false)]
     [Arguments(RespireConnectionState.Disconnected, false)]

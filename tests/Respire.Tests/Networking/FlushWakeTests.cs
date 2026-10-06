@@ -11,6 +11,7 @@ namespace Respire.Tests.Networking;
 /// Commands written from threads outside the pool dispatch the flush wake to the pool instead
 /// of sending inline; they must still be sent and answered.
 /// </summary>
+[Category(TestCategories.ConstrainedRetirement)]
 public class FlushWakeTests
 {
     [Test]
@@ -75,6 +76,7 @@ public class FlushWakeTests
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
         var replies = new List<string>();
         Exception? failure = null;
+        var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var writer = new Thread(() =>
         {
             try
@@ -90,10 +92,12 @@ public class FlushWakeTests
                 }
             }
             catch (Exception error) { failure = error; }
+            finally { finished.TrySetResult(); }
         }) { IsBackground = true };
         writer.Start();
 
-        await Assert.That(writer.Join(TimeSpan.FromSeconds(30))).IsTrue();
+        // Waiting for the dedicated writer must not occupy a pool worker needed by its replies.
+        await finished.Task.WaitAsync(TimeSpan.FromSeconds(30));
         await Assert.That(failure).IsNull();
         await Assert.That(replies.Count).IsEqualTo(20);
         await Assert.That(replies.All(reply => reply == "PONG")).IsTrue();

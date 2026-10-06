@@ -6,6 +6,7 @@ using TUnit.Core;
 
 namespace Respire.Tests.Networking;
 
+[Category(TestCategories.ConstrainedRetirement)]
 public class AsyncFlushSignalTests
 {
     private const int Wakes = 200;

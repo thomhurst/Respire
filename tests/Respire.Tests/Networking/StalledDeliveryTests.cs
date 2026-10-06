@@ -16,6 +16,7 @@ namespace Respire.Tests.Networking;
 /// that, on small CI runners, they neither starve one another nor the rest of the suite.
 /// </remarks>
 [NotInParallel]
+[Category(TestCategories.ConstrainedRetirement)]
 public class StalledDeliveryTests
 {
     [Test]

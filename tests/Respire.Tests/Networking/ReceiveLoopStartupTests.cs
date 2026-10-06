@@ -7,9 +7,11 @@ using TUnit.Core;
 
 namespace Respire.Tests.Networking;
 
+[Category(TestCategories.ConstrainedRetirement)]
 public class ReceiveLoopStartupTests
 {
-    [Test]
+    // The scripted first read and reply continuation deliberately block pool workers.
+    [Test, NotInParallel]
     public async Task RetiringFromTheFirstInlineDeliveryCompletesDisposal()
     {
         // The receive loop's first read completes synchronously, so its first suspension is the
