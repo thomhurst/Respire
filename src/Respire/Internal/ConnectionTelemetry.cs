@@ -14,9 +14,12 @@ internal static class ConnectionTelemetry
     private static readonly Registry Pools = new();
     private const int MaximumPendingMeasurements = 64;
     private static int _pendingMeasurements;
+    private static long _droppedMeasurements;
 
     // Diagnostic delivery has its own lifetime; transport disposal never waits for it.
     internal static int PendingMeasurements => Volatile.Read(ref _pendingMeasurements);
+    // Counts rejected delivery attempts, not listener failures or shutdown loss.
+    internal static long DroppedMeasurements => Interlocked.Read(ref _droppedMeasurements);
 
     internal static class CloseReason
     {
@@ -201,7 +204,11 @@ internal static class ConnectionTelemetry
         var pending = Volatile.Read(ref _pendingMeasurements);
         while (true)
         {
-            if (pending >= MaximumPendingMeasurements) return;
+            if (pending >= MaximumPendingMeasurements)
+            {
+                Interlocked.Increment(ref _droppedMeasurements);
+                return;
+            }
             var observed = Interlocked.CompareExchange(ref _pendingMeasurements, pending + 1, pending);
             if (observed == pending) break;
             pending = observed;
@@ -217,6 +224,7 @@ internal static class ConnectionTelemetry
         }
         catch { /* A failed diagnostic enqueue must not replace transport or disposal outcomes. */ }
         Interlocked.Decrement(ref _pendingMeasurements);
+        Interlocked.Increment(ref _droppedMeasurements);
     }
 
     private static void RecordClosed(Pool pool, string reason, Exception? error)

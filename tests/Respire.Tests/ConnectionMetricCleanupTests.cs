@@ -22,6 +22,7 @@ public class ConnectionMetricCleanupTests
             new() { Protocol = RespProtocol.Resp2 });
         using var listener = new BlockingListener("db.client.connection.wait_time");
         var pendingWhileBlocked = 0;
+        var droppedBefore = ConnectionTelemetry.DroppedMeasurements;
         try
         {
             connection.RecordConnectionWait(System.Diagnostics.Stopwatch.GetTimestamp());
@@ -37,10 +38,12 @@ public class ConnectionMetricCleanupTests
         await WaitForDeliveries();
         await Assert.That(pendingWhileBlocked).IsEqualTo(64);
         await Assert.That(listener.Deliveries).IsEqualTo(64);
+        await Assert.That(ConnectionTelemetry.DroppedMeasurements - droppedBefore).IsEqualTo(193L);
 
         connection.RecordConnectionWait(System.Diagnostics.Stopwatch.GetTimestamp());
         await WaitForDeliveries();
         await Assert.That(listener.Deliveries).IsEqualTo(65);
+        await Assert.That(ConnectionTelemetry.DroppedMeasurements - droppedBefore).IsEqualTo(193L);
     }
 
     private static async Task WaitForDeliveries()

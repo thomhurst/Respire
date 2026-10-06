@@ -283,6 +283,10 @@ allocating another work item. If enqueueing fails, the measurement is also dropp
 Capacity becomes available when a callback returns, including after it throws. A listener
 that never returns can exhaust this delivery capacity; live observable counts and transport
 cleanup still continue, while lifecycle event counts may under-report during saturation.
+The internal cumulative `ConnectionTelemetry.DroppedMeasurements` diagnostic counts
+capacity and enqueue drops. It does not count listener exceptions or unflushed shutdown
+events; no public lifecycle-drop instrument is exported. The delivery budget is shared by
+all clients and pools, so blocked listeners on one pool can consume capacity needed by others.
 Acquisition and disposal do not wait for delivery. A blocking lifecycle listener therefore cannot
 stop a rental from completing, pending replies from failing, pool cleanup, or retirement scheduling.
 An exporter can observe live state changes before the corresponding events arrive, and queued

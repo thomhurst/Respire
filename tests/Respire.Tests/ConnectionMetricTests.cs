@@ -775,12 +775,15 @@ public class ConnectionMetricTests
         listener.SetMeasurementEventCallback<long>(static (_, _, _, _) => throw new InvalidOperationException("listener"));
         listener.SetMeasurementEventCallback<double>(static (_, _, _, _) => throw new InvalidOperationException("listener"));
         listener.Start();
+        var droppedBefore = ConnectionTelemetry.DroppedMeasurements;
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
             new() { Protocol = RespProtocol.Resp2 });
         using var reply = await connection.SendAsync(new Commands.RawCommand(FakeRespServer.PingFrame));
         await Assert.That(reply.ToString()).IsEqualTo("PONG");
         await connection.DisposeAsync();
         await Assert.That(connection.IsConnected).IsFalse();
+        await WaitUntil(() => ConnectionTelemetry.PendingMeasurements == 0);
+        await Assert.That(ConnectionTelemetry.DroppedMeasurements).IsEqualTo(droppedBefore);
     }
 
     [Test]
