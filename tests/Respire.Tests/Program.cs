@@ -11,6 +11,7 @@ internal static class Program
     {
         // Enter probes after module initialization, before the runner changes pool capacity.
         var probeResult = AsyncFlushSignalTests.RunIsolatedAllocationProbe();
+        // TUnit 1.72.16 supplies this helper; keep the centrally pinned package and entry point in sync.
         return probeResult is { } exitCode
             ? Task.FromResult(exitCode)
             : MicrosoftTestingPlatformApplication.RunAsync(args);

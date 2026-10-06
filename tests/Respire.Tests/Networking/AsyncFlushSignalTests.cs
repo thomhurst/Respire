@@ -155,10 +155,12 @@ public class AsyncFlushSignalTests
         var start = CreateProbeStartInfo(Environment.ProcessPath,
             Environment.GetEnvironmentVariable("DOTNET_HOST_PATH"), typeof(AsyncFlushSignalTests).Assembly.Location);
         start.Environment[AllocationProbeMode] = timeout ? "timeout-control" : "failure-control";
-        var error = await Assert.That(() => RunProbeAsync(start, TimeSpan.FromSeconds(5)))
+        // Leave room for runtime and coverage startup on loaded CI workers.
+        var error = await Assert.That(() => RunProbeAsync(start, TimeSpan.FromSeconds(30)))
             .Throws<InvalidOperationException>();
         await Assert.That(error!.Message).Contains("probe control stdout");
         await Assert.That(error.Message).Contains("probe control stderr");
+        await Assert.That(error.Message).Contains($"{Environment.NewLine}stderr: probe control stderr");
         if (timeout) await Assert.That(error.InnerException is TimeoutException).IsTrue();
         else await Assert.That(error.Message).Contains("code 17");
     }
@@ -193,7 +195,7 @@ public class AsyncFlushSignalTests
         try { await Task.WhenAll(output, errors); }
         catch (Exception error) { failure = failure is null ? error : new AggregateException(failure, error); }
         var diagnostics = $"stdout: {(output.IsCompletedSuccessfully ? output.Result : "<unavailable>")}"
-            + $"stderr: {(errors.IsCompletedSuccessfully ? errors.Result : "<unavailable>")}";
+            + $"{Environment.NewLine}stderr: {(errors.IsCompletedSuccessfully ? errors.Result : "<unavailable>")}";
         if (failure is not null) throw new InvalidOperationException($"Allocation probe failed. {diagnostics}", failure);
         if (process.ExitCode != 0)
             throw new InvalidOperationException($"Allocation probe exited with code {process.ExitCode}. {diagnostics}");
@@ -204,8 +206,9 @@ public class AsyncFlushSignalTests
         var mode = Environment.GetEnvironmentVariable(AllocationProbeMode);
         if (mode is "timeout-control" or "failure-control")
         {
-            Console.WriteLine("probe control stdout");
-            Console.Error.WriteLine("probe control stderr");
+            // Neither stream supplies a newline: the parent must separate their diagnostics.
+            Console.Write("probe control stdout");
+            Console.Error.Write("probe control stderr");
             if (mode == "timeout-control") Thread.Sleep(Timeout.Infinite);
             return 17;
         }
