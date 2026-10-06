@@ -18,6 +18,102 @@ public class SearchIntegrationTests(ModernRedisTestContainer fixture)
     [Test]
     [Arguments(2)]
     [Arguments(3)]
+    public async Task TextPresentationAndScorerMetadataUseRealServerReplies(int protocol)
+    {
+        await using var client = await ConnectAsync(protocol);
+        var search = client.Search;
+        var index = NewIndex();
+        try
+        {
+            await search.CreateIndexAsync(index, new()
+            {
+                Prefixes = [index + ":doc:"], StopWords = [], Language = "english", LanguageField = "language",
+                Score = 0.5, SkipInitialScan = true,
+                Fields =
+                [
+                    new("title", RespireSearchFieldType.Text) { Phonetic = RespireSearchPhoneticMatcher.English },
+                    new("body", RespireSearchFieldType.Text),
+                    new("rating", RespireSearchFieldType.Numeric, Sortable: true),
+                ],
+            });
+            await client.Hashes.SetAsync(index + ":doc:1", ("title", "Dogs and cats"),
+                ("body", "Dogs chase cats in the garden. Cats chase dogs."), ("rating", "5"), ("language", "english"));
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            while ((await search.GetIndexInfoAsync(index, deadline.Token)).DocumentCount != 1)
+                await Task.Delay(20, deadline.Token);
+            var options = new RespireSearchQueryOptions
+            {
+                InKeys = [index + ":doc:1"], InFields = ["title", "body"], WithScores = true, ExplainScore = true,
+                WithPayloads = true, WithSortKeys = true, SortBy = ("rating", RespireSearchSortDirection.Descending),
+                Scorer = "DISMAX", Language = "english", Verbatim = true, NoStopWords = true, Slop = 0, InOrder = true,
+                Highlight = new() { Fields = ["title"], Tags = ("<mark>", "</mark>") },
+                Summarize = new() { Fields = ["body"], Fragments = 1, Length = 5, Separator = " | " },
+                ReturnFields = ["title", "body", "rating"],
+            };
+            var result = await search.SearchAsync(index, new(RespireSearchQueryBuilder.Text("dogs"), options));
+            var document = result.Documents.Should().ContainSingle().Which;
+            document.Score.Should().BeGreaterThan(0);
+            document.ScoreExplanation.Should().NotBeNull();
+            document.TextResults["title"].Text.Should().Be("<mark>Dogs</mark> and cats");
+            document.TextResults["title"].HighlightRequested.Should().BeTrue();
+            document.TextResults["body"].SummaryRequested.Should().BeTrue();
+            document.TextResults["body"].Text.Should().Contain("Dogs").And.EndWith(" | ");
+            document.TextResults.Should().NotContainKey("rating");
+            document.SortKey!.Scalar.Should().Be("#5");
+            document.Payload.Should().BeNull();
+            await client.PingAsync();
+            document.TextResults["title"].Text.Should().Contain("<mark>Dogs</mark>");
+            // Profile uses the same query options and result parser as a normal search.
+            var profiled = await search.ProfileSearchAsync(index, new(RespireSearchQueryBuilder.Text("dogs"), options));
+            profiled.Result.Documents.Should().ContainSingle().Which.ScoreExplanation.Should().NotBeNull();
+        }
+        finally { await DropIndexIfPresentAsync(search, index); }
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task CollectProjectsSortsLimitsAndDeduplicatesRealGroupEntries(int protocol)
+    {
+        await using var client = await ConnectAsync(protocol);
+        var search = client.Search;
+        var index = NewIndex();
+        try
+        {
+            await CreateDocumentsAsync(client, search, index);
+            var result = await search.AggregateAsync(index, All, new()
+            {
+                Stages =
+                [
+                    RespireSearchAggregateStage.Load("@title", "@year"),
+                    RespireSearchAggregateStage.GroupBy([], RespireSearchReducer.Collect(new()
+                    {
+                        Fields = ["title", "year"], Distinct = true,
+                        SortBy = [new("year", RespireSearchSortDirection.Descending)], Limit = (0, 1),
+                    }, "top")),
+                ],
+            });
+            var entries = result.StructuredRows.Should().ContainSingle().Which["top"].Items;
+            entries.Should().ContainSingle();
+            entries[0].Items.Should().HaveCount(4);
+            var fields = entries[0].Items.Chunk(2).ToDictionary(pair => pair[0].Scalar!, pair => pair[1].Scalar);
+            fields["title"].Should().Be("redis");
+            fields["year"].Should().Be("2025");
+            // FIELDS * means loaded pipeline fields, not an implicit full-document load.
+            var distinct = await search.AggregateAsync(index, All, new()
+            {
+                Stages = [RespireSearchAggregateStage.Load("@title"),
+                    RespireSearchAggregateStage.GroupBy([], RespireSearchReducer.Collect(new() { AllFields = true, Distinct = true }, "all"))],
+            });
+            distinct.StructuredRows[0]["all"].Items.Should().ContainSingle();
+            distinct.StructuredRows[0]["all"].Items[0].Items.Should().HaveCount(2);
+        }
+        finally { await DropIndexIfPresentAsync(search, index); }
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
     public async Task IndexInventoryAndAliasSwapUseRealServerReplies(int protocol)
     {
         await using var client = await ConnectAsync(protocol);

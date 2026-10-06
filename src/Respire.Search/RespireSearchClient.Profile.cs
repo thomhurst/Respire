@@ -14,7 +14,7 @@ public sealed partial class RespireSearchClient
         using var reply = await _commands.ProfileAsync(RequireName(index), "SEARCH", ProfileOptions(limited),
             [query.Expression.Value, .. options.ToArguments()], cancellationToken).ConfigureAwait(false);
         var parts = ReadProfileEnvelope(reply);
-        return new(RespireSearchResult.Parse(parts.Result, options.NoContent, options.WithScores), parts.Profile);
+        return new(RespireSearchResult.Parse(parts.Result, options), parts.Profile);
     }
 
     /// <summary>Runs AGGREGATE with profiling, reusing the existing pipeline and option encoding.</summary>

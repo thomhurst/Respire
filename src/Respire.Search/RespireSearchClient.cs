@@ -119,7 +119,7 @@ public sealed partial class RespireSearchClient
         ArgumentNullException.ThrowIfNull(query);
         var options = query.Options ?? RespireSearchQueryOptions.Default;
         using var result = await _commands.SearchAsync(RequireName(index), query.Expression.Value, options.ToArguments(), cancellationToken).ConfigureAwait(false);
-        return RespireSearchResult.Parse(result, options.NoContent, options.WithScores);
+        return RespireSearchResult.Parse(result, options);
     }
 
     /// <summary>Runs an ordered aggregation pipeline. Each row contains named values.</summary>
@@ -320,7 +320,7 @@ public sealed partial class RespireSearchClient
         var arguments = selected.ToArguments(
             new KeyValuePair<string, RespireValue>(RespireVectorSearchRequest.VectorParameterName, vector.Vector));
         using var result = await _commands.SearchAsync(RequireName(index), vector.Expression.Value, arguments, cancellationToken).ConfigureAwait(false);
-        return RespireSearchResult.Parse(result, selected.NoContent, selected.WithScores);
+        return RespireSearchResult.Parse(result, selected);
     }
 
     /// <summary>Runs an FT.HYBRID query. Redis Open Source 8.4.0 or later is required.</summary>

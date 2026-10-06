@@ -173,6 +173,58 @@ public sealed record RespireSearchQueryOptions
     /// <summary>Include scores in server response.</summary>
     public bool WithScores { get; init; }
 
+    /// <summary>Restricts matches to these document keys. Empty means no key restriction.</summary>
+    /// <remarks>The list is copied. Keep any binary key memory unchanged until the search completes.</remarks>
+    public IReadOnlyList<RespireKey> InKeys
+    {
+        get;
+        init
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            field = Array.AsReadOnly(value.ToArray());
+        }
+    } = [];
+
+    /// <summary>Restricts matching to these text fields. Empty means all indexed text fields.</summary>
+    public IReadOnlyList<string> InFields
+    {
+        get;
+        init => field = RespireSearchOptionArguments.SnapshotFields(value);
+    } = [];
+
+    /// <summary>Highlights matching terms in returned text.</summary>
+    public RespireSearchHighlightOptions? Highlight { get; init; }
+
+    /// <summary>Returns excerpts containing matching terms.</summary>
+    public RespireSearchSummaryOptions? Summarize { get; init; }
+
+    /// <summary>Maximum intervening words. Zero requires adjacent terms; null uses the server default.</summary>
+    public int? Slop { get; init; }
+
+    /// <summary>Requires query terms to occur in query order.</summary>
+    public bool InOrder { get; init; }
+
+    /// <summary>Server stemming language. Null uses the server default.</summary>
+    public string? Language { get; init; }
+
+    /// <summary>Built-in or registered server scorer name.</summary>
+    public string? Scorer { get; init; }
+
+    /// <summary>Includes the score explanation tree. Requires <see cref="WithScores"/>.</summary>
+    public bool ExplainScore { get; init; }
+
+    /// <summary>Disables query expansion and stemming.</summary>
+    public bool Verbatim { get; init; }
+
+    /// <summary>Includes stopwords in the query.</summary>
+    public bool NoStopWords { get; init; }
+
+    /// <summary>Requests legacy document payloads. Modern indexes normally return null.</summary>
+    public bool WithPayloads { get; init; }
+
+    /// <summary>Includes the server's encoded sort key, or null when no sort key is available.</summary>
+    public bool WithSortKeys { get; init; }
+
     /// <summary>Zero-based offset and result count.</summary>
     public (int Offset, int Count)? Limit { get; init; }
 
@@ -192,16 +244,48 @@ public sealed record RespireSearchQueryOptions
     {
         ArgumentNullException.ThrowIfNull(ReturnFields);
         ArgumentNullException.ThrowIfNull(Parameters);
+        ArgumentNullException.ThrowIfNull(InKeys);
+        if (ExplainScore && !WithScores)
+            throw new ArgumentException("EXPLAINSCORE requires WITHSCORES.", nameof(ExplainScore));
+        if (NoContent && (Highlight is not null || Summarize is not null))
+            throw new ArgumentException("NOCONTENT cannot be combined with highlighting or summaries.", nameof(NoContent));
+        if (Slop is < 0) throw new ArgumentOutOfRangeException(nameof(Slop));
         if (reservedParameter is not null) RespireSearchParameters.RejectReserved(Parameters, nameof(Parameters));
         RespireSearchDialect.Validate(Dialect, requiresParameters: Parameters.Count > 0 || reservedParameter is not null);
         var args = new List<RespireValue>();
         if (NoContent) args.Add("NOCONTENT");
         if (WithScores) args.Add("WITHSCORES");
+        if (WithPayloads) args.Add("WITHPAYLOADS");
+        if (WithSortKeys) args.Add("WITHSORTKEYS");
+        if (ExplainScore) args.Add("EXPLAINSCORE");
+        if (Verbatim) args.Add("VERBATIM");
+        if (NoStopWords) args.Add("NOSTOPWORDS");
+        if (InOrder) args.Add("INORDER");
+        if (InKeys.Count > 0)
+        {
+            args.Add("INKEYS");
+            args.Add(InKeys.Count);
+            foreach (var key in InKeys) args.Add(key);
+        }
+        RespireSearchOptionArguments.AddFields(args, "INFIELDS", InFields);
+        Highlight?.AddArguments(args);
+        Summarize?.AddArguments(args);
+        if (Slop is { } slop)
+        {
+            args.Add("SLOP");
+            args.Add(slop);
+        }
+        RespireSearchOptionArguments.AddText(args, "LANGUAGE", Language);
+        RespireSearchOptionArguments.AddText(args, "SCORER", Scorer);
         if (ReturnFields.Count > 0)
         {
             args.Add("RETURN");
             args.Add(ReturnFields.Count);
-            foreach (var field in ReturnFields) args.Add(field);
+            foreach (var field in ReturnFields)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(field, nameof(ReturnFields));
+                args.Add(field);
+            }
         }
 
         if (SortBy is { } sort)
@@ -471,4 +555,5 @@ internal static class RespireSearchEmpty
     internal static readonly IReadOnlyDictionary<string, string> Strings = ReadOnlyDictionary<string, string>.Empty;
     internal static readonly IReadOnlyDictionary<string, string?> NullableStrings = ReadOnlyDictionary<string, string?>.Empty;
     internal static readonly IReadOnlyDictionary<string, RespireSearchValue> SearchValues = ReadOnlyDictionary<string, RespireSearchValue>.Empty;
+    internal static readonly IReadOnlyDictionary<string, RespireSearchTextResult> TextResults = ReadOnlyDictionary<string, RespireSearchTextResult>.Empty;
 }

@@ -31,16 +31,39 @@ public sealed record RespireSearchDocument(string Id, IReadOnlyDictionary<string
 
     /// <summary>Typed projected values, including binary string fields.</summary>
     public IReadOnlyDictionary<string, RespireSearchValue> StructuredFields { get; init; } = RespireSearchEmpty.SearchValues;
+
+    /// <summary>Owned nested explanation returned by EXPLAINSCORE, or null when not requested.</summary>
+    public RespireSearchValue? ScoreExplanation { get; init; }
+
+    /// <summary>Owned legacy document payload. Null means absent or unrequested; empty memory preserves an empty payload.</summary>
+    public ReadOnlyMemory<byte>? Payload { get; init; }
+
+    /// <summary>Owned server-encoded sort key (for example #5 for a number), or null when unavailable.</summary>
+    public RespireSearchValue? SortKey { get; init; }
+
+    /// <summary>
+    /// Returned scalar fields selected for highlighting or summarization. Flags describe the request;
+    /// the server can return unchanged text for a field without matching terms. Default field selection
+    /// includes returned scalar fields; only the server knows which fields are indexed as text.
+    /// </summary>
+    public IReadOnlyDictionary<string, RespireSearchTextResult> TextResults { get; init; }
+        = RespireSearchEmpty.TextResults;
 }
+
+/// <summary>Owned returned text with its requested presentation. Markup is not HTML-escaped; fragment separators are preserved.</summary>
+/// <param name="Text">The complete server-returned value; fragments are not split because a separator can also occur in the text.</param>
+/// <param name="HighlightRequested">Whether this field is selected by HIGHLIGHT.</param>
+/// <param name="SummaryRequested">Whether this field is selected by SUMMARIZE.</param>
+public sealed record RespireSearchTextResult(string Text, bool HighlightRequested, bool SummaryRequested);
 
 /// <summary>Parsed FT.SEARCH or FT.HYBRID results.</summary>
 public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearchDocument> Documents, IReadOnlyList<string> Warnings)
 {
-    // RESP2 FT.SEARCH replies are positional ([total, id, score?, fields?, ...]); which slots exist
-    // depends on the NOCONTENT and WITHSCORES request flags, so the parser needs them.
-    internal static RespireSearchResult Parse(RespireResult result, bool noContent, bool withScores)
+    // RESP2 rows are positional: id, score?, payload?, sort key?, fields?. Request flags determine
+    // the slots even when fields are omitted, so all reply flags must reach this parser.
+    internal static RespireSearchResult Parse(RespireResult result, RespireSearchQueryOptions options)
     {
-        if (result.Type == RespDataType.Map) return ParseResp3(result);
+        if (result.Type == RespDataType.Map) return ParseResp3(result, options);
         if (result.Count == 0) throw RespireSearchReply.Unexpected("FT.SEARCH", "an empty reply");
         var total = result[0].AsInteger();
         var docs = new List<RespireSearchDocument>();
@@ -50,28 +73,37 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
             var id = idValue.AsString();
             var documentKey = new RespireKey(idValue.AsBytes());
             double? score = null;
-            if (withScores)
+            RespireSearchValue? explanation = null;
+            if (options.WithScores)
             {
                 if (i == result.Count) throw RespireSearchReply.Unexpected("FT.SEARCH", "a document without its score");
-                score = result[i++].AsDouble();
+                (score, explanation) = ReadScore(result[i++]);
             }
-
-            if (noContent)
+            ReadOnlyMemory<byte>? payload = null;
+            RespireSearchValue? sortKey = null;
+            if (options.WithPayloads)
             {
-                docs.Add(new(id, RespireSearchEmpty.NullableStrings, score) { DocumentKey = documentKey });
-                continue;
+                var value = ReadSlot(result, ref i, "payload");
+                if (!value.IsNull) payload = value.AsBytes().AsMemory();
             }
-
-            if (i == result.Count) throw RespireSearchReply.Unexpected("FT.SEARCH", "a document without its fields");
-            var fieldsValue = result[i++];
-            if (fieldsValue.IsNull)
+            if (options.WithSortKeys)
             {
-                docs.Add(new(id, RespireSearchEmpty.NullableStrings, score) { DocumentKey = documentKey });
-                continue;
+                var value = ReadSlot(result, ref i, "sort key");
+                if (!value.IsNull) sortKey = RespireSearchValue.From(value);
             }
-
-            var fields = RespireSearchReply.ReadFields(fieldsValue, "FT.SEARCH");
-            docs.Add(new(id, fields.Fields, score) { StructuredFields = fields.Structured, DocumentKey = documentKey });
+            IReadOnlyDictionary<string, string?> fields = RespireSearchEmpty.NullableStrings;
+            IReadOnlyDictionary<string, RespireSearchValue> structured = RespireSearchEmpty.SearchValues;
+            if (!options.NoContent)
+            {
+                var fieldsValue = ReadSlot(result, ref i, "fields");
+                if (!fieldsValue.IsNull) (fields, structured) = RespireSearchReply.ReadFields(fieldsValue, "FT.SEARCH");
+            }
+            docs.Add(new(id, fields, score)
+            {
+                StructuredFields = structured, DocumentKey = documentKey,
+                ScoreExplanation = explanation, Payload = payload, SortKey = sortKey,
+                TextResults = ReadTextResults(fields, structured, options),
+            });
         }
 
         return new(total, docs, []);
@@ -109,7 +141,7 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
         return new(total, documents, warnings);
     }
 
-    private static RespireSearchResult ParseResp3(RespireResult result)
+    private static RespireSearchResult ParseResp3(RespireResult result, RespireSearchQueryOptions options)
     {
         long total = 0;
         var docs = new List<RespireSearchDocument>();
@@ -127,7 +159,7 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
                     RespireSearchReply.AddStrings(value, warnings);
                     break;
                 case "results":
-                    for (var j = 0; j < value.Count; j++) AddResp3Document(value[j], docs);
+                    for (var j = 0; j < value.Count; j++) AddResp3Document(value[j], docs, options);
                     break;
             }
         }
@@ -135,12 +167,15 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
         return new(total, docs, warnings);
     }
 
-    private static void AddResp3Document(RespireResult item, List<RespireSearchDocument> docs)
+    private static void AddResp3Document(RespireResult item, List<RespireSearchDocument> docs, RespireSearchQueryOptions options)
     {
         RespireSearchReply.RequirePairs(item, "FT.SEARCH");
         string? id = null;
         RespireKey documentKey = default;
         double? score = null;
+        RespireSearchValue? explanation = null;
+        ReadOnlyMemory<byte>? payload = null;
+        RespireSearchValue? sortKey = null;
         IReadOnlyDictionary<string, string?> fields = RespireSearchEmpty.NullableStrings;
         IReadOnlyDictionary<string, RespireSearchValue> structured = RespireSearchEmpty.SearchValues;
         for (var k = 0; k < item.Count; k += 2)
@@ -154,7 +189,13 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
                     documentKey = new RespireKey(itemValue.AsBytes());
                     break;
                 case "score" or "__score":
-                    score = itemValue.AsDouble();
+                    (score, explanation) = ReadScore(itemValue);
+                    break;
+                case "payload":
+                    if (!itemValue.IsNull) payload = itemValue.AsBytes().AsMemory();
+                    break;
+                case "sortkey":
+                    if (!itemValue.IsNull) sortKey = RespireSearchValue.From(itemValue);
                     break;
                 case "extra_attributes":
                     var parsed = RespireSearchReply.ReadFields(itemValue, "FT.SEARCH");
@@ -165,8 +206,48 @@ public sealed record RespireSearchResult(long Total, IReadOnlyList<RespireSearch
         }
 
         if (id is null) throw RespireSearchReply.Unexpected("FT.SEARCH", "a result row without an id");
-        docs.Add(new(id, fields, score) { StructuredFields = structured, DocumentKey = documentKey });
+        docs.Add(new(id, fields, score)
+        {
+            StructuredFields = structured, DocumentKey = documentKey,
+            ScoreExplanation = explanation, Payload = payload, SortKey = sortKey,
+            TextResults = ReadTextResults(fields, structured, options),
+        });
     }
+
+    private static RespireResult ReadSlot(RespireResult result, ref int index, string name)
+    {
+        if (index == result.Count) throw RespireSearchReply.Unexpected("FT.SEARCH", $"a document without its {name}");
+        return result[index++];
+    }
+
+    private static (double Score, RespireSearchValue? Explanation) ReadScore(RespireResult value)
+    {
+        if (value.Type != RespDataType.Array) return (value.AsDouble(), null);
+        if (value.Count != 2) throw RespireSearchReply.Unexpected("FT.SEARCH", "an invalid score/explanation pair");
+        return (value[0].AsDouble(), RespireSearchValue.From(value[1]));
+    }
+
+    private static IReadOnlyDictionary<string, RespireSearchTextResult> ReadTextResults(
+        IReadOnlyDictionary<string, string?> fields,
+        IReadOnlyDictionary<string, RespireSearchValue> structured,
+        RespireSearchQueryOptions options)
+    {
+        if (options.Highlight is null && options.Summarize is null) return RespireSearchEmpty.TextResults;
+        var text = new Dictionary<string, RespireSearchTextResult>(StringComparer.Ordinal);
+        foreach (var field in fields)
+        {
+            if (structured[field.Key].Type is RespDataType.Array or RespDataType.Map or RespDataType.Set or RespDataType.Push or RespDataType.Attribute)
+                continue;
+            var highlighted = options.Highlight is { } highlight && Selected(highlight.Fields, field.Key);
+            var summarized = options.Summarize is { } summary && Selected(summary.Fields, field.Key);
+            if (field.Value is not null && (highlighted || summarized))
+                text.Add(field.Key, new(field.Value, highlighted, summarized));
+        }
+        return text;
+    }
+
+    private static bool Selected(IReadOnlyList<string> fields, string name)
+        => fields.Count == 0 || fields.Contains(name, StringComparer.Ordinal);
 
     // FT.HYBRID rows carry the reserved __key and __score names. When they are present, names such
     // as id or score are ordinary loaded fields and must not replace the document identity.

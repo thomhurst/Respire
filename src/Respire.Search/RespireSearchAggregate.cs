@@ -184,6 +184,13 @@ public sealed record RespireSearchAggregateLimit(int Offset, int Count) : Respir
 /// <summary>One Redis Search aggregation reducer.</summary>
 public sealed record RespireSearchReducer(string Function, IReadOnlyList<string> Arguments, string? Alias = null)
 {
+    /// <summary>Creates a Redis 8.10 COLLECT reducer. Fields must already be loaded or generated in the pipeline.</summary>
+    public static RespireSearchReducer Collect(RespireSearchCollectOptions options, string? alias = null)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        return new("COLLECT", options.ToArguments(), alias);
+    }
+
     internal void AddArguments(List<RespireValue> args)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(Function);
@@ -197,6 +204,68 @@ public sealed record RespireSearchReducer(string Function, IReadOnlyList<string>
             args.Add("AS");
             args.Add(Alias);
         }
+    }
+}
+
+/// <summary>Projects and optionally sorts and limits documents within each aggregate group.</summary>
+public sealed record RespireSearchCollectOptions
+{
+    /// <summary>Fields to collect. Names are normalized to an @ prefix.</summary>
+    public IReadOnlyList<string> Fields { get; init; } = [];
+
+    /// <summary>Collects all fields materialized in the pipeline. Cannot be combined with <see cref="Fields"/>.</summary>
+    public bool AllFields { get; init; }
+
+    /// <summary>Deduplicates collected entries.</summary>
+    public bool Distinct { get; init; }
+
+    /// <summary>Sort keys within each group.</summary>
+    public IReadOnlyList<RespireSearchAggregateSort> SortBy { get; init; } = [];
+
+    /// <summary>Offset and count within each group, applied after sorting.</summary>
+    public (int Offset, int Count)? Limit { get; init; }
+
+    internal string[] ToArguments()
+    {
+        ArgumentNullException.ThrowIfNull(Fields);
+        ArgumentNullException.ThrowIfNull(SortBy);
+        if (AllFields == (Fields.Count > 0))
+            throw new ArgumentException("Choose AllFields or a nonempty Fields list.", nameof(Fields));
+        var args = new List<string> { "FIELDS" };
+        if (AllFields) args.Add("*");
+        else
+        {
+            args.Add(Fields.Count.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            foreach (var field in Fields) args.Add(Property(field));
+        }
+        if (Distinct) args.Add("DISTINCT");
+        if (SortBy.Count > 0)
+        {
+            args.Add("SORTBY");
+            args.Add(checked(SortBy.Count * 2).ToString(System.Globalization.CultureInfo.InvariantCulture));
+            foreach (var sort in SortBy)
+            {
+                ArgumentNullException.ThrowIfNull(sort);
+                args.Add(Property(sort.Field));
+                args.Add(RespireSearchSort.Token(sort.Direction));
+            }
+        }
+        if (Limit is { } limit)
+        {
+            if (limit.Offset < 0 || limit.Count < 0) throw new ArgumentOutOfRangeException(nameof(Limit));
+            args.Add("LIMIT");
+            args.Add(limit.Offset.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            args.Add(limit.Count.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+        return [.. args];
+    }
+
+    private static string Property(string name)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        var field = name.TrimStart('@');
+        ArgumentException.ThrowIfNullOrWhiteSpace(field, nameof(name));
+        return "@" + field;
     }
 }
 
