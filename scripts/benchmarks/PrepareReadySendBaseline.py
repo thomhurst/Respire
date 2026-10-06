@@ -32,7 +32,17 @@ def prepare(checkout: Path, evidence: Path) -> None:
                 if (checkout / path).exists() else None for path in sorted(paths)}
 
     before = hashes()
-    git('apply', '--reverse', '--check', str(patch))
+    try:
+        git('apply', '--reverse', '--check', str(patch))
+    except subprocess.CalledProcessError as error:
+        raise RuntimeError(
+            'ReadySendStrategy.patch no longer matches the baseline. In a separate clean checkout '
+            'of the new baseline, manually restore only the pre-strategy dispatch from '
+            '445869b2f3284ee82c7fcf40537eb4f498b104e2^ and remove the strategy file, preserving '
+            'unrelated changes. Save git diff --binary -R for the two production paths as the '
+            'replacement patch. Build and validate both frameworks and inspect the recorded '
+            'source hashes before accepting that regenerated control; do not copy an entire historical client file.'
+        ) from error
     git('apply', '--reverse', str(patch))
     if set(git('diff', '--name-only').splitlines()) != paths:
         raise RuntimeError('The control changed an unexpected set of production files.')

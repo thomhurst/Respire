@@ -7,22 +7,41 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
-
 jobs:
-  compare:
+  select:
     if: >-
       (github.event.action == 'labeled' && (github.event.label.name == 'run-sentinel-benchmarks' || github.event.label.name == 'run-ready-strategy-benchmarks')) ||
       (github.event.action == 'synchronize' && (contains(github.event.pull_request.labels.*.name, 'run-sentinel-benchmarks') || contains(github.event.pull_request.labels.*.name, 'run-ready-strategy-benchmarks')))
-    name: Sentinel ready routing (${{ matrix.framework }}, ${{ contains(github.event.pull_request.labels.*.name, 'run-ready-strategy-benchmarks') && 'pre-strategy' || 'main' }})
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.modes.outputs.enabled }}
+      modes: ${{ steps.modes.outputs.modes }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Check comparison selection
+        run: python -B -m unittest discover -s scripts/benchmarks -p SelectSentinelBenchmarkModesTests.py
+      - name: Select requested comparisons
+        id: modes
+        run: python scripts/benchmarks/SelectSentinelBenchmarkModes.py
+
+  compare:
+    needs: select
+    if: needs.select.outputs.enabled == 'true'
+    name: Sentinel ready routing (${{ matrix.framework }}, ${{ matrix.baseline }})
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    concurrency:
+      # Requesting one control must not cancel the other control's in-progress run.
+      group: ${{ github.workflow }}-${{ github.event.pull_request.number }}-${{ matrix.framework }}-${{ matrix.baseline }}
+      cancel-in-progress: true
     strategy:
       fail-fast: false
       matrix:
         framework: [net8.0, net10.0]
+        baseline: ${{ fromJSON(needs.select.outputs.modes) }}
     services:
       redis:
         image: redis:8.10@sha256:8aee6591ee8c2b26e9e01ad4913fbc804ea6b79a9bc675ee1824d80ea5dd9856
@@ -40,7 +59,7 @@ jobs:
       EXPECTED_MERGE_SHA: ${{ github.sha }}
       EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
       EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-      PRE_STRATEGY_BASELINE: ${{ contains(github.event.pull_request.labels.*.name, 'run-ready-strategy-benchmarks') }}
+      PRE_STRATEGY_BASELINE: ${{ matrix.baseline == 'pre-strategy' }}
     steps:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
@@ -116,8 +135,12 @@ jobs:
           test "$(git -C candidate rev-parse HEAD^1)" = "$EXPECTED_BASE_SHA"
           test "$(git -C candidate rev-parse HEAD^2)" = "$EXPECTED_HEAD_SHA"
           cp candidate/benchmarks/Respire.Benchmarks/SentinelReadyRoutingBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
-          diagnostics=()
-          if [[ "$PRE_STRATEGY_BASELINE" == true ]]; then diagnostics=(--disasm --disasmDepth 6); fi
+          if [[ "$PRE_STRATEGY_BASELINE" == true ]]; then
+            # Keep dispatch code-generation evidence without the attached disassembler:
+            # the net8 diagnostic run exited 139 after a completed Dry workload in #1074.
+            export DOTNET_JitDisasm='Respire.RespireClient:* Respire.RespireClient+*:*'
+            export DOTNET_JitDisasmDiffable=1
+          fi
           for phase in baseline-validation candidate-validation baseline-a candidate baseline-b; do
             source=baseline
             job=Medium
@@ -127,7 +150,7 @@ jobs:
               cd "$source"
               git rev-parse HEAD
               dotnet run --project benchmarks/Respire.Benchmarks -c Release -f "$FRAMEWORK" -- \
-                --filter '*SentinelReadyRoutingBenchmarks*' --job "$job" --exporters json markdown "${diagnostics[@]}" \
+                --filter '*SentinelReadyRoutingBenchmarks*' --job "$job" --exporters json markdown \
                 --artifacts "$GITHUB_WORKSPACE/results/$phase"
             ) > "$GITHUB_WORKSPACE/$phase.log" 2>&1
           done
@@ -142,8 +165,11 @@ jobs:
               summary.write('## Stable Sentinel routing before/after\n\nPinned base and matching merge candidate use the same primary. Assess paired Sentinel/standalone ratios, absolute latency, confidence intervals, allocations, and both baseline controls. A material regression blocks the change.\n')
               if os.environ['PRE_STRATEGY_BASELINE'] == 'true':
                   summary.write('\nThis baseline restores pre-strategy dispatch with a production-only reverse patch; it is not an unmodified main build. All other baseline source is unchanged.\n\n```json\n' + Path('baseline-control.json').read_text() + '```\n')
+                  summary.write('\nRuntime JIT dispatch listings are retained in every phase log and require inspection before merge. No attached disassembler is used.\n')
               summary.write('\nCandidate merge and its base/head parents:\n\n' + Path('comparison-revisions.txt').read_text() + '\n')
               for phase in ('baseline-validation', 'candidate-validation', 'baseline-a', 'candidate', 'baseline-b'):
+                  if os.environ['PRE_STRATEGY_BASELINE'] == 'true':
+                      assert 'Assembly listing for method Respire.RespireClient:SendOnReadyPrimaryAsync' in Path(f'{phase}.log').read_text(), f'Missing dispatch JIT evidence: {phase}'
                   reports = list(Path('results', phase, 'results').glob('*-report-full-compressed.json'))
                   assert len(reports) == 1, f'Missing report: {phase}'
                   cases = json.loads(reports[0].read_text())['Benchmarks']
@@ -155,7 +181,7 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
-          name: sentinel-ready-routing-${{ matrix.framework }}
+          name: sentinel-ready-routing-${{ matrix.framework }}-${{ matrix.baseline }}
           path: |
             results/
             *.log
