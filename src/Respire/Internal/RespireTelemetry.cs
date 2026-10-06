@@ -3,6 +3,7 @@ using System.Diagnostics.Metrics;
 using System.Globalization;
 using Microsoft.Extensions.Logging;
 using Respire.Networking;
+using Respire.Protocol;
 
 namespace Respire.Internal;
 
@@ -313,6 +314,59 @@ internal static class RespireTelemetry
         "respire.pubsub.messages.dropped",
         unit: "{message}",
         description: "Messages discarded because a subscription buffer was full.");
+
+    private static readonly Counter<long> PubSubMessages = Meter.CreateCounter<long>(
+        "redis.client.pubsub.messages", "{message}", "Confirmed publications and accepted incoming pub/sub frames, before local fan-out.");
+    private static readonly Histogram<double> StreamLag = Meter.CreateHistogram<double>(
+        "redis.client.stream.lag", "s", "Entry timestamp to explicitly reported application processing start.");
+    private static readonly KeyValuePair<string, object?> PublishedTag = new("redis.client.pubsub.message.direction", "out");
+    private static readonly KeyValuePair<string, object?> ReceivedTag = new("redis.client.pubsub.message.direction", "in");
+    private static readonly KeyValuePair<string, object?> ShardedTag = new("redis.client.pubsub.sharded", true);
+    private static readonly KeyValuePair<string, object?> RegularTag = new("redis.client.pubsub.sharded", false);
+
+    internal static bool ShouldRetainPublication(string? operation)
+        => IsMetricEnabled(RespireMetricGroups.PubSub, PubSubMessages) && TryGetPublicationKind(operation, out _);
+
+    internal static void RecordPublication(string? operation, in RespValue response)
+    {
+        if (!IsMetricEnabled(RespireMetricGroups.PubSub, PubSubMessages)
+            || response.Type != RespDataType.Integer || response.AsInteger() < 0
+            || !TryGetPublicationKind(operation, out var sharded)) return;
+        AddPubSubMessage(received: false, sharded);
+    }
+
+    private static bool TryGetPublicationKind(string? operation, out bool sharded)
+    {
+        sharded = string.Equals(operation, "SPUBLISH", StringComparison.OrdinalIgnoreCase);
+        return sharded || string.Equals(operation, "PUBLISH", StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static void RecordReceivedMessage(bool sharded)
+    {
+        if (IsMetricEnabled(RespireMetricGroups.PubSub, PubSubMessages)) AddPubSubMessage(received: true, sharded);
+    }
+
+    private static void AddPubSubMessage(bool received, bool sharded)
+    {
+        var tags = new TagList { LibraryTag, SystemTag, received ? ReceivedTag : PublishedTag, sharded ? ShardedTag : RegularTag };
+        try { PubSubMessages.Add(1, in tags); }
+        catch { /* A listener must not change publication or subscription outcomes. */ }
+    }
+
+    internal static void RecordStreamProcessingStart(RespireStreamId id, TimeProvider? clock = null)
+    {
+        if (!IsMetricEnabled(RespireMetricGroups.Streaming, StreamLag)) return;
+        var text = id.Value.AsSpan();
+        var separator = text.IndexOf('-');
+        if (separator <= 0 || separator == text.Length - 1
+            || !ulong.TryParse(text[..separator], NumberStyles.None, CultureInfo.InvariantCulture, out var milliseconds)
+            || !ulong.TryParse(text[(separator + 1)..], NumberStyles.None, CultureInfo.InvariantCulture, out _)) return;
+        var now = (clock ?? TimeProvider.System).GetUtcNow().ToUnixTimeMilliseconds();
+        if (now < 0 || milliseconds > (ulong)now) return;
+        var seconds = (now - (long)milliseconds) / 1000d;
+        try { StreamLag.Record(seconds, LibraryTag, SystemTag); }
+        catch { /* Observability must not prevent the application from processing an entry. */ }
+    }
 
     public static readonly Counter<long> SubscriptionGaps = Meter.CreateCounter<long>(
         "respire.pubsub.delivery.gaps",

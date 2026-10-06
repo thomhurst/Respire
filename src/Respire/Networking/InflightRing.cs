@@ -58,8 +58,8 @@ internal sealed class InflightRing
         return true;
     }
 
-    // Generation-owned connections retain discarded-reply metadata in a lazily allocated,
-    // bounded array. Ordinary rings allocate no metadata array; the slot layout is unchanged.
+    // Generation bookkeeping and enabled publication metrics retain discarded-reply metadata
+    // in a lazily allocated, bounded array. Other rings allocate none; the slot layout is unchanged.
     internal bool TryEnqueueDiscard(string operation, long writeEnd)
     {
         var tail = _tail;

@@ -544,7 +544,8 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
         _converter = null;
         _hasResponse = false;
         _transferOwnership = false;
-        _commandName = null;
+        // The receive loop still needs the operation when a canceled caller finishes first.
+        // Clear it only after both references are released and the source returns to its pool.
     }
 
     private readonly struct PoolPolicy : IPooledObjectPolicy<ConvertedPendingResponseSource<TState, TResult>>
@@ -554,6 +555,7 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
         public bool TryReset(ConvertedPendingResponseSource<TState, TResult> source)
         {
             source.ClearResponse();
+            source._commandName = null;
             source._core.Reset();
             return true;
         }
