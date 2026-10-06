@@ -24,7 +24,7 @@ public static class RespireServerNodeExtensions
 /// <remarks>Uses the client's authentication, TLS, timeouts, protocol, and database. Key arguments and returned keys
 /// are physical server keys: key prefixes on client views are not applied. BUSY controls use RESP2 and database zero
 /// without setup commands other than authentication. The handle owns no persistent socket and follows client disposal.</remarks>
-public sealed class RespireServerNode
+public sealed partial class RespireServerNode
 {
     private readonly RespireClient _client;
 
