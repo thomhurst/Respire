@@ -98,6 +98,10 @@ internal interface IRespireSearchCommands
     [RespireCommand("FT.HYBRID", Mutation = RespireCacheMutation.ReadOnly)]
     ValueTask<RespireResult> HybridAsync(string index, RespireValue[] queryArguments, CancellationToken cancellationToken = default);
 
+    /// <summary>Profiles a Search, Aggregate, or Hybrid query.</summary>
+    [RespireCommand("FT.PROFILE", Mutation = RespireCacheMutation.ReadOnly)]
+    ValueTask<RespireResult> ProfileAsync(string index, string mode, string[] profileOptions, RespireValue[] queryArguments, CancellationToken cancellationToken = default);
+
     /// <summary>Explains a search query.</summary>
     [RespireCommand("FT.EXPLAIN", Mutation = RespireCacheMutation.ReadOnly)]
     ValueTask<RespireResult> ExplainAsync(string index, string query, string[] options, CancellationToken cancellationToken = default);
