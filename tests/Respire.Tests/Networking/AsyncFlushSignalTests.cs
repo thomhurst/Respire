@@ -12,6 +12,7 @@ public class AsyncFlushSignalTests
 {
     private const int Wakes = 200;
     private const string AllocationProbeMode = "RESPIRE_TEST_FLUSH_ALLOCATION_PROBE";
+    private const string AllocationProbeRuntime = "RESPIRE_TEST_FLUSH_ALLOCATION_RUNTIME";
 
     [Test]
     [Arguments(false)]
@@ -95,34 +96,128 @@ public class AsyncFlushSignalTests
     {
         // Pool growth allocates Thread/StartHelper on the signaling thread. Isolate capacity
         // from the test runner without changing its limits or subtracting runtime allocations.
-        var start = new ProcessStartInfo("dotnet")
+        var start = CreateProbeStartInfo(Environment.ProcessPath,
+            Environment.GetEnvironmentVariable("DOTNET_HOST_PATH"), typeof(AsyncFlushSignalTests).Assembly.Location);
+        start.Environment[AllocationProbeMode] = poolProducer ? "pool" : "dedicated";
+        start.Environment[AllocationProbeRuntime] = Environment.Version.ToString();
+        await RunProbeAsync(start, TimeSpan.FromSeconds(30));
+    }
+
+    private static ProcessStartInfo CreateProbeStartInfo(string? processPath, string? dotnetHostPath, string assemblyPath)
+    {
+        var processName = Path.GetFileName(processPath);
+        // Unix apphosts have no executable suffix; dots in the assembly name are significant.
+        if (processName?.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) == true)
+            processName = processName[..^4];
+        var isAppHost = processName == Path.GetFileNameWithoutExtension(assemblyPath);
+        var host = isAppHost || string.Equals(processName, "dotnet", StringComparison.OrdinalIgnoreCase)
+            ? processPath : dotnetHostPath;
+        if (string.IsNullOrEmpty(host) || !Path.IsPathFullyQualified(host))
+            throw new InvalidOperationException("The probe needs the current apphost or an absolute DOTNET_HOST_PATH.");
+        var start = new ProcessStartInfo(host)
         {
             RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false,
             CreateNoWindow = true,
         };
-        start.ArgumentList.Add(typeof(AsyncFlushSignalTests).Assembly.Location);
-        start.Environment[AllocationProbeMode] = poolProducer ? "pool" : "dedicated";
-        using var process = Process.Start(start)!;
-        var output = process.StandardOutput.ReadToEndAsync();
-        var errors = process.StandardError.ReadToEndAsync();
-        try
-        {
-            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30));
-            await Assert.That(process.ExitCode).IsEqualTo(0).Because(await output + await errors);
-        }
-        finally
-        {
-            if (!process.HasExited) { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); }
-        }
+        if (!isAppHost) start.ArgumentList.Add(assemblyPath);
+        return start;
     }
 
-    [ModuleInitializer]
-    internal static void RunIsolatedAllocationProbe()
+    [Test]
+    [Arguments("dotnet", false)]
+    [Arguments("dotnet.exe", false)]
+    [Arguments("Respire.Tests", true)]
+    [Arguments("Respire.Tests.exe", true)]
+    [Arguments("coverage-host", false)]
+    public async Task ProbeUsesExplicitHostWithoutDependingOnPath(string executable, bool appHost)
     {
-        var mode = Environment.GetEnvironmentVariable(AllocationProbeMode);
-        if (mode is not ("pool" or "dedicated")) return;
+        var assembly = Path.GetFullPath("Respire.Tests.dll");
+        var process = Path.GetFullPath(executable);
+        var fallback = Path.GetFullPath("selected-host/dotnet");
+        var start = CreateProbeStartInfo(process, fallback, assembly);
+        await Assert.That(start.FileName).IsEqualTo(executable == "coverage-host" ? fallback : process);
+        await Assert.That(start.ArgumentList.Count).IsEqualTo(appHost ? 0 : 1);
+        if (!appHost) await Assert.That(start.ArgumentList[0]).IsEqualTo(assembly);
+    }
+
+    [Test]
+    public async Task ProbeRejectsUnknownHostWithoutAnExplicitFallback()
+    {
+        await Assert.That(() => CreateProbeStartInfo(Path.GetFullPath("coverage-host"), null,
+            Path.GetFullPath("Respire.Tests.dll"))).Throws<InvalidOperationException>();
+    }
+
+    [Test, NotInParallel]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ProbeFailuresIncludeBothOutputStreams(bool timeout)
+    {
+        var start = CreateProbeStartInfo(Environment.ProcessPath,
+            Environment.GetEnvironmentVariable("DOTNET_HOST_PATH"), typeof(AsyncFlushSignalTests).Assembly.Location);
+        start.Environment[AllocationProbeMode] = timeout ? "timeout-control" : "failure-control";
+        // Leave room for runtime and coverage startup on loaded CI workers.
+        var error = await Assert.That(() => RunProbeAsync(start, TimeSpan.FromSeconds(30)))
+            .Throws<InvalidOperationException>();
+        await Assert.That(error!.Message).Contains("probe control stdout");
+        await Assert.That(error.Message).Contains("probe control stderr");
+        await Assert.That(error.Message).Contains($"{Environment.NewLine}stderr: probe control stderr");
+        if (timeout) await Assert.That(error.InnerException is TimeoutException).IsTrue();
+        else await Assert.That(error.Message).Contains("code 17");
+    }
+
+    private static async Task RunProbeAsync(ProcessStartInfo start, TimeSpan timeout)
+    {
+        using var process = Process.Start(start)!;
+        using var readDeadline = new CancellationTokenSource();
+        var output = process.StandardOutput.ReadToEndAsync(readDeadline.Token);
+        var errors = process.StandardError.ReadToEndAsync(readDeadline.Token);
+        Exception? failure = null;
         try
         {
+            await process.WaitForExitAsync().WaitAsync(timeout);
+        }
+        catch (Exception error) { failure = error; }
+        finally
+        {
+            try
+            {
+                if (!process.HasExited)
+                {
+                    process.Kill(entireProcessTree: true);
+                    await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+                }
+            }
+            catch (Exception error) { failure = failure is null ? error : new AggregateException(failure, error); }
+        }
+
+        // Always observe both readers, including after timeout/kill. Pipe cleanup has its own bound.
+        readDeadline.CancelAfter(TimeSpan.FromSeconds(5));
+        try { await Task.WhenAll(output, errors); }
+        catch (Exception error) { failure = failure is null ? error : new AggregateException(failure, error); }
+        var diagnostics = $"stdout: {(output.IsCompletedSuccessfully ? output.Result : "<unavailable>")}"
+            + $"{Environment.NewLine}stderr: {(errors.IsCompletedSuccessfully ? errors.Result : "<unavailable>")}";
+        if (failure is not null) throw new InvalidOperationException($"Allocation probe failed. {diagnostics}", failure);
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException($"Allocation probe exited with code {process.ExitCode}. {diagnostics}");
+    }
+
+    internal static int? RunIsolatedAllocationProbe()
+    {
+        var mode = Environment.GetEnvironmentVariable(AllocationProbeMode);
+        if (mode is "timeout-control" or "failure-control")
+        {
+            // Neither stream supplies a newline: the parent must separate their diagnostics.
+            Console.Write("probe control stdout");
+            Console.Error.Write("probe control stderr");
+            if (mode == "timeout-control") Thread.Sleep(Timeout.Infinite);
+            return 17;
+        }
+        if (mode is not ("pool" or "dedicated")) return null;
+        try
+        {
+            var expectedRuntime = Environment.GetEnvironmentVariable(AllocationProbeRuntime);
+            if (expectedRuntime != Environment.Version.ToString())
+                throw new InvalidOperationException($"Probe runtime {Environment.Version} differs from parent {expectedRuntime}.");
             ThreadPool.GetMinThreads(out _, out var minIo);
             ThreadPool.GetMaxThreads(out _, out var maxIo);
             if (!ThreadPool.SetMinThreads(2, minIo) || !ThreadPool.SetMaxThreads(2, maxIo))
@@ -149,13 +244,11 @@ public class AsyncFlushSignalTests
                 if (!finished.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Workers did not finish warming.");
             }
 
-            // Complete module-owned type/delegate initialization on the initializer thread
-            // before a worker enters this code; otherwise it can wait for this initializer.
             MeasureSteadyState();
             if (mode == "pool") Task.Run(MeasureSteadyState).GetAwaiter().GetResult();
-            Environment.Exit(0);
+            return 0;
         }
-        catch (Exception error) { Console.Error.WriteLine(error); Environment.Exit(1); }
+        catch (Exception error) { Console.Error.WriteLine(error); return 1; }
     }
 
     private static void MeasureSteadyState()

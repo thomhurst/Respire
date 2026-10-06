@@ -3,6 +3,8 @@
     <PropertyGroup>
         <OutputType>Exe</OutputType>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <GenerateTestingPlatformEntryPoint>false</GenerateTestingPlatformEntryPoint>
+        <GenerateTestingPlatformApplicationHelper>true</GenerateTestingPlatformApplicationHelper>
     </PropertyGroup>
 
     <ItemGroup>
