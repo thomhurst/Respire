@@ -523,14 +523,17 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                         // retain the same terminal routing rejection.
                         throw redirect;
                     }
-                    if (ConnectionPolicy.RequiresFreshWatchOnRedirect)
+                    switch (ConnectionPolicy.RedirectBehavior)
                     {
-                        // Replaying on another connection would lose WATCH and could commit stale reads.
-                        cluster.LearnWatchedRoute(redirect, connection, slot);
-                        throw new RespireTransactionRetryException(redirect);
+                        case QueuedRedirectBehavior.RequireFreshWatch:
+                            // Replaying on another connection would lose WATCH and could commit stale reads.
+                            cluster.LearnWatchedRoute(redirect, connection, slot);
+                            throw new RespireTransactionRetryException(redirect);
+                        case QueuedRedirectBehavior.Reject:
+                            throw redirect; // Replaying would lose the prepared fieldsets.
+                        case QueuedRedirectBehavior.Recover:
+                            break;
                     }
-                    if (!ConnectionPolicy.CanReplayRejectedCommands)
-                        throw redirect; // Replaying would lose the prepared fieldsets.
                     if (ClusterRouter.IsRedirect(redirect)
                         && !ClusterRouter.TryParseRedirect(redirect, connection.Host, out _, out _))
                     {

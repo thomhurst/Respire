@@ -264,7 +264,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             cacheToInvalidate = null;
         cacheToInvalidate?.FlushForUnknownCommand();
 
-        if (core.Cluster is not null && ConnectionPolicy.CanRouteClusterBatch)
+        if (core.Cluster is not null && ConnectionPolicy.CanReplayRejectedCommands)
         {
             var groups = new List<(int? Slot, List<Op> Operations)>();
             var groupIndexes = new Dictionary<int, int>();

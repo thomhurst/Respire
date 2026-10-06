@@ -14,13 +14,18 @@ internal readonly struct QueuedConnectionPolicy(RespireHashImportSession? import
 
     public bool IsImportSession => importSession is not null;
 
-    public bool RequiresFreshWatchOnRedirect => watchConnection is not null;
+    public QueuedRedirectBehavior RedirectBehavior
+    {
+        get
+        {
+            if (watchConnection is not null) return QueuedRedirectBehavior.RequireFreshWatch;
+            return IsImportSession ? QueuedRedirectBehavior.Reject : QueuedRedirectBehavior.Recover;
+        }
+    }
 
     // Ordinary queues can recover only transport/server rejections proved safe by their
     // existing routing helpers. WATCH and HIMPORT state cannot move to another connection.
     public bool CanReplayRejectedCommands => importSession is null && watchConnection is null;
-
-    public bool CanRouteClusterBatch => CanReplayRejectedCommands;
 
     public RespireHashImportSession.Usage? EnterOperation() => importSession?.EnterOperation();
 
@@ -50,4 +55,11 @@ internal readonly struct QueuedConnectionPolicy(RespireHashImportSession? import
     public ValueTask ExpireAsync(Exception error, bool transactionStateUncertain = false)
         => importSession is not null && (transactionStateUncertain || RequiresExpiration(error))
             ? importSession.ExpireAsync(error) : ValueTask.CompletedTask;
+}
+
+internal enum QueuedRedirectBehavior
+{
+    Recover,
+    RequireFreshWatch,
+    Reject,
 }
