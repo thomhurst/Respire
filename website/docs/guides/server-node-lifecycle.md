@@ -170,3 +170,68 @@ Every request uses a short-lived connection to exactly the selected endpoint. Im
 cancellation conservatively fence the local client cache, including error paths. These
 requests never redirect or replay. A client timeout, cancellation, or disconnect after
 submission may leave an import running; inspect task status before deciding what to do next.
+
+## Valkey slot migration and deletion
+
+Valkey 9.0 and later support a separate atomic slot migration protocol. These methods
+target exactly the endpoint selected by `Server.OnNode`; they do not use Redis's
+`CLUSTER MIGRATION` command family and are not supported by Redis.
+
+```csharp
+RespireServerNode source = redis.Server.OnNode(new RespireEndpoint("valkey-source", 6379));
+// Replace these placeholders with primary IDs from CLUSTER NODES.
+string firstTargetId = "<first-target-node-id>";
+string secondTargetId = "<second-target-node-id>";
+await source.ClusterMigrateSlotsAsync([
+    new RespireValkeySlotMigrationGroup(firstTargetId, [new(0, 99), new(200, 299)]),
+    new RespireValkeySlotMigrationGroup(secondTargetId, [new(100, 199)]),
+]);
+RespireValkeySlotMigration[] jobs = await source.ClusterGetSlotMigrationsAsync();
+```
+
+`ClusterMigrateSlotsAsync` sends one `SLOTSRANGE ... NODE ...` group per destination.
+Ranges are inclusive, must lie within 0–16383, and cannot overlap within or across
+groups. All groups must be admitted together, but an `OK` reply only starts the
+asynchronous work. Inspect status for completion before relying on changed ownership.
+Client cancellation stops waiting; it does not cancel server jobs. Ambiguous transport
+failures are not retried or redirected.
+
+`ClusterCancelSlotMigrationsAsync` cancels active exports started on the selected
+**source** node. Calling it on a target does not cancel that target's imports.
+Valkey returns `ERR No migrations ongoing` when that node has no active exports;
+the method preserves this server error rather than treating cancellation as idempotent.
+Start, cancellation, and flush require `AllowAdmin`; status is read-only under the
+client policy. Server ACL permissions apply independently to every operation.
+
+Status snapshots own their strings and nested `AdditionalFields`, so they remain
+usable after connections and the client are disposed. `success`, `failed`, and
+`cancelled` are terminal states; other states remain active. Operation and state strings
+preserve future values. Source and target IDs are absent on tracking replicas.
+Timestamps are Unix **seconds**, represented as `DateTimeOffset`. Valkey 9.1 adds
+`RemainingReplicationBytes`; it is null when the server omits `remaining_repl_size`.
+The server retains only a bounded history of inactive jobs, in memory; snapshots are
+not a durable audit log. See [Valkey's status documentation](https://valkey.io/commands/cluster-getslotmigrations/).
+
+`ClusterFlushSlotAsync(slot, ServerFlushMode.Default/Sync/Async)` implements the
+supported Valkey 9+ **FLUSHSLOT** command. It destructively deletes the selected slot's
+keys across databases on that node. It does not remove slot ownership and is distinct
+from **FLUSHSLOTS**, which clears ownership metadata. Default follows the server's
+`lazyfree-lazy-user-flush` setting. Use only on a deliberately selected endpoint.
+The [Valkey 9.0 command schema](https://github.com/valkey-io/valkey/blob/a100149d56208209c03f8af9840afe2efa7fb8d1/src/commands/cluster-flushslot.json)
+and [implementation](https://github.com/valkey-io/valkey/blob/a100149d56208209c03f8af9840afe2efa7fb8d1/src/cluster.c)
+establish this supported user-facing boundary.
+
+There is deliberately no typed `SYNCSLOTS` request API. Valkey documents it as an
+[internal state-machine command](https://valkey.io/commands/cluster-syncslots/).
+Its [implementation](https://github.com/valkey-io/valkey/blob/a100149d56208209c03f8af9840afe2efa7fb8d1/src/cluster_migrateslots.c)
+uses migration-owned connections, disabled ordinary replies, and pushed protocol
+messages. A normal one-request/one-reply wrapper cannot implement that protocol.
+The raw-command API remains available for server-specific ordinary commands, but
+does not turn `SYNCSLOTS` into a supported RPC.
+
+Current online MIGRATESLOTS documentation also shows per-group `AUTH`. The released
+[9.0 implementation](https://github.com/valkey-io/valkey/blob/a100149d56208209c03f8af9840afe2efa7fb8d1/src/cluster_migrateslots.c)
+and [9.1 grammar](https://github.com/valkey-io/valkey/blob/7f1dffedff6de73058b2c2a389422b6ecd56c8fb/src/commands/cluster-migrateslots.json)
+do not accept that option. This typed API targets their shared grammar; configure
+server-to-server migration authentication on the servers. Client authentication still
+comes from the client's normal options.
