@@ -38,24 +38,22 @@ public sealed record RespireClientIncludeFilters
 
     internal static void AppendArguments(RespireClientFilterOptions options, ref ClientFilterArguments writer)
     {
-        var group = options.Include;
-        writer.AddType("TYPE", group is null ? options.Type : group.Type, group is null ? "Type" : "Include.Type");
-        writer.AddIds("ID", group is null ? options.Ids : group.Ids, group is null ? "Ids" : "Include.Ids");
-        writer.Add("USER", group is null ? options.User : group.User);
-        writer.Add("ADDR", group is null ? options.Address : group.Address);
-        writer.Add("LADDR", group is null ? options.LocalAddress : group.LocalAddress);
+        var selectors = ClientFilterSelectors.ForInclude(options);
+        writer.PropertyPrefix = selectors.PropertyPrefix;
+        writer.AddType("TYPE", selectors.Type, nameof(selectors.Type));
+        writer.AddIds("ID", selectors.Ids, nameof(selectors.Ids));
+        writer.Add("USER", selectors.User);
+        writer.Add("ADDR", selectors.Address);
+        writer.Add("LADDR", selectors.LocalAddress);
         if (options.SkipMe is { } skip) writer.Add("SKIPME", skip ? "yes" : "no", isSelector: false);
-        writer.AddNumber("MAXAGE", group is null ? options.MaximumAgeSeconds : group.MaximumAgeSeconds,
-            group is null ? "MaximumAgeSeconds" : "Include.MaximumAgeSeconds", positive: true);
-        writer.Add("NAME", group is null ? options.Name : group.Name);
-        writer.AddNumber("IDLE", group is null ? options.IdleSeconds : group.IdleSeconds,
-            group is null ? "IdleSeconds" : "Include.IdleSeconds", positive: true);
-        writer.AddNonEmpty("FLAGS", group is null ? options.Flags : group.Flags, group is null ? "Flags" : "Include.Flags");
-        writer.Add("LIB-NAME", group is null ? options.LibraryName : group.LibraryName);
-        writer.Add("LIB-VER", group is null ? options.LibraryVersion : group.LibraryVersion);
-        writer.AddNumber("DB", group is null ? options.Database : group.Database, group is null ? "Database" : "Include.Database");
-        writer.AddNonEmpty("CAPA", group is null ? options.Capabilities : group.Capabilities,
-            group is null ? "Capabilities" : "Include.Capabilities");
-        writer.Add("IP", group is null ? options.Ip : group.Ip);
+        writer.AddNumber("MAXAGE", selectors.MaximumAgeSeconds, nameof(selectors.MaximumAgeSeconds), positive: true);
+        writer.Add("NAME", selectors.Name);
+        writer.AddNumber("IDLE", selectors.IdleSeconds, nameof(selectors.IdleSeconds), positive: true);
+        writer.AddNonEmpty("FLAGS", selectors.Flags, nameof(selectors.Flags));
+        writer.Add("LIB-NAME", selectors.LibraryName);
+        writer.Add("LIB-VER", selectors.LibraryVersion);
+        writer.AddNumber("DB", selectors.Database, nameof(selectors.Database));
+        writer.AddNonEmpty("CAPA", selectors.Capabilities, nameof(selectors.Capabilities));
+        writer.Add("IP", selectors.Ip);
     }
 }

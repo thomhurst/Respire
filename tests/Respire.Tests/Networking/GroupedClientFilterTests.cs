@@ -18,36 +18,57 @@ public class GroupedClientFilterTests
         var handle = await client.Server.GetClientConnectionAsync();
         using var batch = client.CreateBatch();
         await using var tx = client.CreateTransaction();
-        RespireClientFilterOptions[] flat =
-        [
-            new() { Type = RespireClientType.Normal }, new() { Ids = [1] },
-            new() { Ids = null! }, new() { User = "worker" }, new() { Address = "remote:1" },
-            new() { LocalAddress = "local:1" }, new() { MaximumAgeSeconds = 1 },
-            new() { Name = "worker" }, new() { IdleSeconds = 1 }, new() { Flags = "N" },
-            new() { LibraryName = "lib" }, new() { LibraryVersion = "1" },
-            new() { Database = 0 }, new() { Capabilities = "r" }, new() { Ip = "127.0.0.1" },
-            new() { ExcludedType = RespireClientType.Normal }, new() { ExcludedIds = [1] },
-            new() { ExcludedIds = null! }, new() { ExcludedUser = "worker" },
-            new() { ExcludedAddress = "remote:1" }, new() { ExcludedLocalAddress = "local:1" },
-            new() { ExcludedName = "worker" }, new() { ExcludedFlags = "" },
-            new() { ExcludedLibraryName = "lib" }, new() { ExcludedLibraryVersion = "1" },
-            new() { ExcludedDatabase = 0 }, new() { ExcludedCapabilities = "" }, new() { ExcludedIp = "127.0.0.1" },
-        ];
-        foreach (var legacy in flat)
+        foreach (var property in typeof(RespireClientFilterOptions).GetProperties())
         {
-            var options = legacy with { Include = new(), Exclude = new() };
-            await Assert.That(() => { _ = client.Server.ClientsAsync(options, default); }).ThrowsExactly<ArgumentException>();
-            await Assert.That(() => { _ = client.Server.ClientsOnAllNodesAsync(options, default); }).ThrowsExactly<ArgumentException>();
-            await Assert.That(() => { _ = client.Server.KillClientsAsync(options); }).ThrowsExactly<ArgumentException>();
-            await Assert.That(() => { _ = handle.ClientsAsync(options); }).ThrowsExactly<ArgumentException>();
-            await Assert.That(() => { _ = handle.KillClientsAsync(options); }).ThrowsExactly<ArgumentException>();
-            foreach (IRespireCommandQueue queue in new IRespireCommandQueue[] { batch, tx })
+            if (property.Name is nameof(RespireClientFilterOptions.Include) or nameof(RespireClientFilterOptions.Exclude)
+                or nameof(RespireClientFilterOptions.SkipMe) or nameof(RespireClientFilterOptions.AllowUnfilteredKill))
+                continue;
+            var type = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
+            object[] values = type == typeof(string) ? ["selected", ""] : [SelectorValue(type)];
+            foreach (var value in values)
             {
-                await Assert.That(() => queue.Server.Clients(options)).ThrowsExactly<ArgumentException>();
-                await Assert.That(() => queue.Server.KillClients(options)).ThrowsExactly<ArgumentException>();
+                var options = new RespireClientFilterOptions { Include = new(), Exclude = new() };
+                property.SetValue(options, value);
+                var error = await Assert.That(() => { _ = client.Server.ClientsAsync(options, default); }).ThrowsExactly<ArgumentException>();
+                await Assert.That(error!.Message).Contains("cannot be combined");
+                await Assert.That(() => { _ = client.Server.ClientsOnAllNodesAsync(options, default); }).ThrowsExactly<ArgumentException>();
+                await Assert.That(() => { _ = client.Server.KillClientsAsync(options); }).ThrowsExactly<ArgumentException>();
+                await Assert.That(() => { _ = handle.ClientsAsync(options); }).ThrowsExactly<ArgumentException>();
+                await Assert.That(() => { _ = handle.KillClientsAsync(options); }).ThrowsExactly<ArgumentException>();
+                foreach (IRespireCommandQueue queue in new IRespireCommandQueue[] { batch, tx })
+                {
+                    await Assert.That(() => queue.Server.Clients(options)).ThrowsExactly<ArgumentException>();
+                    await Assert.That(() => queue.Server.KillClients(options)).ThrowsExactly<ArgumentException>();
+                }
             }
         }
         await Assert.That(server.ReceivedCommands.ToArray()).IsEquivalentTo(["CLIENT ID"]);
+
+        static object SelectorValue(Type type)
+        {
+            if (type == typeof(long)) return 1L;
+            if (type == typeof(int)) return 0;
+            if (type == typeof(RespireClientType)) return RespireClientType.Normal;
+            if (type == typeof(IReadOnlyList<long>)) return new long[] { 1 };
+            throw new InvalidOperationException($"Add a selector value for {type}.");
+        }
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task NullFlatIdsReportTheirPropertyEvenWithGroups(bool exclude, bool grouped)
+    {
+        var options = exclude ? new RespireClientFilterOptions { ExcludedIds = null! }
+            : new RespireClientFilterOptions { Ids = null! };
+        if (grouped) options = options with { Include = new(), Exclude = new() };
+        foreach (var kill in new[] { false, true })
+        {
+            var error = await Assert.That(() => ClientFilterArguments.Build(options, kill)).ThrowsExactly<ArgumentNullException>();
+            await Assert.That(error!.ParamName).IsEqualTo(exclude ? "ExcludedIds" : "Ids");
+        }
     }
 
     [Test]

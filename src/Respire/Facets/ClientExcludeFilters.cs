@@ -35,28 +35,20 @@ public sealed record RespireClientExcludeFilters
 
     internal static void AppendArguments(RespireClientFilterOptions options, ref ClientFilterArguments writer)
     {
-        var group = options.Exclude;
-        writer.AddType("NOT-TYPE", group is null ? options.ExcludedType : group.Type,
-            group is null ? "ExcludedType" : "Exclude.Type");
-        writer.AddIds("NOT-ID", group is null ? options.ExcludedIds : group.Ids,
-            group is null ? "ExcludedIds" : "Exclude.Ids");
-        writer.Add("NOT-USER", group is null ? options.ExcludedUser : group.User);
+        var selectors = ClientFilterSelectors.ForExclude(options);
+        writer.PropertyPrefix = selectors.PropertyPrefix;
+        writer.AddType("NOT-TYPE", selectors.Type, nameof(selectors.Type));
+        writer.AddIds("NOT-ID", selectors.Ids, nameof(selectors.Ids));
+        writer.Add("NOT-USER", selectors.User);
         // Empty address/metadata exclusions can exclude nobody; empty flag/capability sets exclude everybody.
-        writer.AddNonEmpty("NOT-ADDR", group is null ? options.ExcludedAddress : group.Address,
-            group is null ? "ExcludedAddress" : "Exclude.Address");
-        writer.AddNonEmpty("NOT-LADDR", group is null ? options.ExcludedLocalAddress : group.LocalAddress,
-            group is null ? "ExcludedLocalAddress" : "Exclude.LocalAddress");
-        writer.AddNonEmpty("NOT-NAME", group is null ? options.ExcludedName : group.Name,
-            group is null ? "ExcludedName" : "Exclude.Name");
-        writer.Add("NOT-FLAGS", group is null ? options.ExcludedFlags : group.Flags);
-        writer.AddNonEmpty("NOT-LIB-NAME", group is null ? options.ExcludedLibraryName : group.LibraryName,
-            group is null ? "ExcludedLibraryName" : "Exclude.LibraryName");
-        writer.AddNonEmpty("NOT-LIB-VER", group is null ? options.ExcludedLibraryVersion : group.LibraryVersion,
-            group is null ? "ExcludedLibraryVersion" : "Exclude.LibraryVersion");
-        writer.AddNumber("NOT-DB", group is null ? options.ExcludedDatabase : group.Database,
-            group is null ? "ExcludedDatabase" : "Exclude.Database");
-        writer.Add("NOT-CAPA", group is null ? options.ExcludedCapabilities : group.Capabilities);
-        writer.AddNonEmpty("NOT-IP", group is null ? options.ExcludedIp : group.Ip,
-            group is null ? "ExcludedIp" : "Exclude.Ip");
+        writer.AddNonEmpty("NOT-ADDR", selectors.Address, nameof(selectors.Address));
+        writer.AddNonEmpty("NOT-LADDR", selectors.LocalAddress, nameof(selectors.LocalAddress));
+        writer.AddNonEmpty("NOT-NAME", selectors.Name, nameof(selectors.Name));
+        writer.Add("NOT-FLAGS", selectors.Flags);
+        writer.AddNonEmpty("NOT-LIB-NAME", selectors.LibraryName, nameof(selectors.LibraryName));
+        writer.AddNonEmpty("NOT-LIB-VER", selectors.LibraryVersion, nameof(selectors.LibraryVersion));
+        writer.AddNumber("NOT-DB", selectors.Database, nameof(selectors.Database));
+        writer.Add("NOT-CAPA", selectors.Capabilities);
+        writer.AddNonEmpty("NOT-IP", selectors.Ip, nameof(selectors.Ip));
     }
 }

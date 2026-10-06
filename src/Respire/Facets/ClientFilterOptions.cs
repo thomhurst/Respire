@@ -103,10 +103,13 @@ internal ref struct ClientFilterArguments(bool kill)
 {
     private readonly List<RespireValue> _arguments = [];
     private bool _hasSelector;
+    internal string PropertyPrefix { get; set; } = "";
 
     internal static CmdN Build(RespireClientFilterOptions options, bool kill)
     {
         ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(options.Ids, nameof(options.Ids));
+        ArgumentNullException.ThrowIfNull(options.ExcludedIds, nameof(options.ExcludedIds));
         if ((options.Include is not null || options.Exclude is not null) && options.HasFlatSelectors)
             throw new ArgumentException("Include/Exclude cannot be combined with legacy flat selector properties.", nameof(options));
         var writer = new ClientFilterArguments(kill);
@@ -124,15 +127,14 @@ internal ref struct ClientFilterArguments(bool kill)
     internal void Add(string token, string? value, bool isSelector = true)
     {
         if (value is null) return;
-        _arguments.Add(token);
+        AddToken(token, isSelector);
         _arguments.Add(value);
-        _hasSelector |= isSelector;
     }
 
     internal void AddNonEmpty(string token, string? value, string propertyName)
     {
         if (value is "")
-            throw new ArgumentException($"{propertyName} must be nonempty when specified.", "options");
+            throw new ArgumentException($"{PropertyPrefix}{propertyName} must be nonempty when specified.", "options");
         Add(token, value);
     }
 
@@ -141,10 +143,9 @@ internal ref struct ClientFilterArguments(bool kill)
         if (value is not { } number) return;
         if (number < 0 || (positive && number == 0))
             throw new ArgumentOutOfRangeException("options", number,
-                $"{propertyName} must be {(positive ? "positive" : "nonnegative")}.");
-        _arguments.Add(token);
+                $"{PropertyPrefix}{propertyName} must be {(positive ? "positive" : "nonnegative")}.");
+        AddToken(token);
         _arguments.Add(number);
-        _hasSelector = true;
     }
 
     internal void AddType(string token, RespireClientType? type, string propertyName)
@@ -156,21 +157,26 @@ internal ref struct ClientFilterArguments(bool kill)
             RespireClientType.Primary => "master",
             RespireClientType.Replica => kill ? "slave" : "replica",
             RespireClientType.PubSub => "pubsub",
-            _ => throw new ArgumentOutOfRangeException("options", type, $"{propertyName} is an unknown client type."),
+            _ => throw new ArgumentOutOfRangeException("options", type, $"{PropertyPrefix}{propertyName} is an unknown client type."),
         });
     }
 
     internal void AddIds(string token, IReadOnlyList<long> ids, string propertyName)
     {
-        ArgumentNullException.ThrowIfNull(ids);
+        if (ids is null) throw new ArgumentNullException(PropertyPrefix + propertyName);
         if (ids.Count == 0) return;
-        _arguments.Add(token);
+        AddToken(token);
         foreach (var id in ids)
         {
             if (id <= 0)
-                throw new ArgumentOutOfRangeException("options", id, $"{propertyName} must contain only positive client IDs.");
+                throw new ArgumentOutOfRangeException("options", id, $"{PropertyPrefix}{propertyName} must contain only positive client IDs.");
             _arguments.Add(id);
         }
-        _hasSelector = true;
+    }
+
+    private void AddToken(string token, bool isSelector = true)
+    {
+        _arguments.Add(token);
+        _hasSelector |= isSelector;
     }
 }
