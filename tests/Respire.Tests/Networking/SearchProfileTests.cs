@@ -223,6 +223,78 @@ public class SearchProfileTests
     }
 
     [Test]
+    [Arguments(2, false)]
+    [Arguments(3, false)]
+    [Arguments(2, true)]
+    [Arguments(3, true)]
+    public async Task ProfileNestingLimitCoversTypedChildrenAndUnknownValues(int protocol, bool unknown)
+    {
+        object Nested(int levels)
+        {
+            if (unknown)
+            {
+                object raw = "1";
+                for (var i = 1; i < levels; i++) raw = new object[] { raw };
+                return Object("Future field", raw);
+            }
+            object value = Object("Time", 1d);
+            for (var i = 1; i < levels; i++)
+                value = Object("Child iterator", value);
+            return value;
+        }
+
+        var replies = new Queue<object>([Nested(64), Nested(65), Object("Time", 2d)]);
+        await using var server = Server(_ => Frame(Envelope(protocol, "SEARCH", replies.Dequeue()), protocol));
+        await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+        var accepted = await client.Search.ProfileSearchAsync("idx", new(All, new() { WithScores = true }));
+        var owned = accepted.Profile.Properties.Values.Single();
+        for (var i = 1; i < 64; i++) owned = owned.Items[unknown ? 0 : 1];
+        await Assert.That(owned.Scalar).IsEqualTo("1");
+        var error = await Assert.That(async () => await client.Search.ProfileSearchAsync("idx", new(All, new() { WithScores = true })))
+            .Throws<InvalidOperationException>();
+        await Assert.That(error!.Message).Contains("profile nesting exceeds 64 collection levels");
+        var next = await client.Search.ProfileSearchAsync("idx", new(All, new() { WithScores = true }));
+        await Assert.That(next.Profile.TimeMilliseconds).IsEqualTo(2d);
+    }
+
+    [Test]
+    public async Task HybridRejectsAdditionalUnlabelledProfileTailsWithLayoutDetails()
+    {
+        var fields = ((Fields)QueryResult(2, "HYBRID")).Values;
+        var envelope = fields.Concat(new object[] { Profile(2), Object(), Object() }).ToArray();
+        await using var server = Server(_ => Frame(envelope, 2));
+        await using var client = await RespireClient.ConnectAsync(Options(server, 2));
+        var error = await Assert.That(async () => await client.Search.ProfileHybridSearchAsync("idx", Hybrid()))
+            .Throws<InvalidOperationException>();
+        await Assert.That(error!.Message).Contains("unsupported HYBRID profile layout");
+        await Assert.That(error.Message).Contains("type Array, element count 9");
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task KnownMetricFieldsKeepNumericValidation(int protocol)
+    {
+        string[] fields =
+        [
+            "Total profile time", "Parsing time", "Workers queue time", "Pipeline creation time",
+            "Total GIL time", "Time", "GIL-Time", "Number of reading operations",
+            "Estimated number of matches", "Results processed", "Internal cursor reads",
+        ];
+        foreach (var field in fields)
+        {
+            var replies = new Queue<object>([Object(field, "1.25"), Object(field, "not numeric")]);
+            await using var server = Server(_ => Frame(Envelope(protocol, "SEARCH", replies.Dequeue()), protocol));
+            await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+            var result = await client.Search.ProfileSearchAsync("idx", new(All, new() { WithScores = true }));
+            await Assert.That(result.Profile.Metrics[field]).IsEqualTo(1.25);
+            var error = await Assert.That(async () => await client.Search.ProfileSearchAsync("idx", new(All, new() { WithScores = true })))
+                .Throws<InvalidOperationException>();
+            await Assert.That(error!.Message).Contains("a non-numeric metric " + field);
+        }
+    }
+
+    [Test]
     [Arguments(2)]
     [Arguments(3)]
     public async Task ValidationCancellationAndPrefixesSendNoProfileCommand(int protocol)

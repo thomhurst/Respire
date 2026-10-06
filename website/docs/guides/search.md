@@ -303,6 +303,8 @@ are tested against Redis 8.10 over RESP2 and RESP3. Server errors pass through u
 including errors from older servers that do not support the selected profile form.
 The typed profile reader targets the Redis 8.10 field/value layouts; incompatible
 older profile layouts raise `InvalidOperationException` rather than dropping fields.
+Profiles allow at most 64 nested collection levels, counting the profile root and
+unknown fields. Deeper replies raise `InvalidOperationException` before the tree is copied.
 
 ```csharp
 await using var client = await RespireClient.ConnectAsync("redis://localhost:6379");

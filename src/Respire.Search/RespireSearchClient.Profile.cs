@@ -39,9 +39,18 @@ public sealed partial class RespireSearchClient
         using var reply = await _commands.ProfileAsync(RequireName(index), "HYBRID", ProfileOptions(limited),
             query.ToArguments(), cancellationToken).ConfigureAwait(false);
         // Redis 8.10 RESP2 is [name, value, ..., profile], with exactly one unlabelled profile tail.
+        // Extra unlabelled tails violate the preceding field/value pairs; report that layout explicitly.
         // RESP3 instead adds a named Profile field to the normal hybrid result map.
         if (reply.Type == RespDataType.Array && (reply.Count & 1) != 0 && reply.Count >= 3)
+        {
+            for (var i = 0; i < reply.Count - 1; i += 2)
+            {
+                if (reply[i].IsNull || reply[i].Type is not (RespDataType.BulkString or RespDataType.SimpleString))
+                    throw RespireSearchReply.Unexpected("FT.PROFILE",
+                        $"an unsupported HYBRID profile layout (type {reply.Type}, element count {reply.Count}); expected field/value pairs and one profile tail");
+            }
             return new(RespireSearchResult.ParseHybrid(reply, reply.Count - 1), RespireSearchProfileNode.Parse(reply[^1]));
+        }
         if (reply.Type == RespDataType.Map && TryReadProfileField(reply, "Profile", out var profile) &&
             !TryReadProfileField(reply, "Results", out _))
             return new(RespireSearchResult.ParseHybrid(reply), RespireSearchProfileNode.Parse(profile));
