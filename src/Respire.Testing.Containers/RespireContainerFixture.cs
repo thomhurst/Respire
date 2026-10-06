@@ -174,8 +174,9 @@ public sealed class RespireContainerFixture : IAsyncDisposable
                     throw new OperationCanceledException("Fixture startup was cancelled.", startupError, cancellationToken);
                 if (deadline.IsCancellationRequested)
                     throw new TimeoutException($"Fixture {options.Server}/{options.Topology} did not become ready within {options.StartupTimeout}; step: {fixture?._startupStep}; last reply: {fixture?._lastReadinessResponse}", startupError);
-                if (startingContainer && options.Topology != RespireContainerTopology.Standalone
-                    && attempt < MaximumStartupAttempts && ContainerPortCollision.IsMatch(startupError, ports))
+                if (startingContainer && attempt < MaximumStartupAttempts
+                    && ContainerPortCollision.IsMatch(startupError, ports,
+                        randomHostPort: options.Topology == RespireContainerTopology.Standalone))
                 {
                     collisions.Add(startupError);
                     excludedPorts.UnionWith(ports);

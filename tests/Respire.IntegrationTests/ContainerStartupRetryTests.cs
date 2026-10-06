@@ -84,7 +84,7 @@ public class ContainerStartupRetryTests
     [Arguments(1)]
     [Arguments(2)]
     [Arguments(3)]
-    public async Task UnrelatedErrorsAndStandaloneNeverRetry(int kind)
+    public async Task UnrelatedErrorsAndFixedPortMessagesForStandaloneNeverRetry(int kind)
     {
         var probes = new List<ContainerProbe>();
         Exception? expected = null;

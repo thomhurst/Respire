@@ -74,16 +74,22 @@ fixtures use Docker-assigned random host ports. Cluster and Sentinel discovery a
 loopback addresses, and each client port is the same inside and outside the container.
 Cluster bus ports remain inside the container and are not published. Ports are chosen from the operating
 system's ephemeral range rather than fixed service ports. A small race exists between releasing
-the temporary port reservations and Docker binding them. Cluster and Sentinel fixtures retry
-recognized Docker host-port collisions at most twice (three container attempts total). Each
-failed owned container is fully removed before a fresh container uses new ports; ports from
-earlier attempts are excluded. Other fixtures and existing services are never stopped.
+the temporary port reservations and Docker binding them. Docker-assigned standalone ports
+can also lose a bind race. All topologies retry recognized Docker host-port collisions at
+most twice (three container attempts total). Each failed owned container is fully removed
+before a fresh container starts. Cluster and Sentinel exclude previously selected ports;
+standalone asks Docker for another random host port while retaining container port 6379.
+Other fixtures and existing services are never stopped.
 
 Retry requires a Docker API HTTP 500 response with a known port-allocation or TCP
-address-in-use bind message naming one of the selected `127.0.0.1` ports. The recognized
+address-in-use bind message naming one of the selected `127.0.0.1` ports, or the recognized
+Linux TCP socket bind format that omits the address. Standalone recognizes the specific
+Linux networking error with an empty loopback host port and an IPv4 container destination
+on port 6379 (`127.0.0.1::<container-address>:6379/tcp: address already in use`). The recognized
 formats cover Moby's allocator/Linux bind errors and Docker Desktop's TCP bind errors on
 Windows and macOS. Unknown formats, permission/reserved-port errors, image/authentication
-errors, readiness failures, and standalone startup failures are returned without retry.
+errors, and readiness failures are returned without retry. The same message from container
+creation or post-start initialization does not trigger a retry.
 This conservative recognition cannot guarantee recovery for every Docker version or network
 backend. The [Moby bind implementation](https://github.com/moby/moby/blob/v28.5.2/libnetwork/drivers/bridge/port_mapping_linux.go),
 [Moby port allocator](https://github.com/moby/moby/blob/v28.5.2/libnetwork/portallocator/portallocator.go),
