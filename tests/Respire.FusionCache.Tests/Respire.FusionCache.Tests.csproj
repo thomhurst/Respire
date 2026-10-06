@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsTestProject>true</IsTestProject>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="Testcontainers.Redis" />
+    <PackageReference Include="ZiggyCreatures.FusionCache.Backplane.StackExchangeRedis" />
+    <PackageReference Include="ZiggyCreatures.FusionCache.Serialization.SystemTextJson" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <ProjectReference Include="../../src/Respire.FusionCache/Respire.FusionCache.csproj" />
+    <ProjectReference Include="../../src/Respire.Caching/Respire.Caching.csproj" />
+    <ProjectReference Include="../../src/Respire.Testing.Containers/Respire.Testing.Containers.csproj" />
+    <Compile Include="../RedisTestContainer.cs" Link="RedisTestContainer.cs" />
+    <Using Include="Respire.Testing" />
+  </ItemGroup>
+</Project>

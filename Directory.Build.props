@@ -25,6 +25,7 @@
       Respire.Azure;
       Respire.Caching;
       Respire.Caching.Hybrid;
+      Respire.FusionCache;
       Respire.Coordination;
       Respire.DataProtection;
       Respire.DependencyInjection;

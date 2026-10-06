@@ -126,6 +126,7 @@ jobs:
             tests/Respire.DataProtection.Tests \
             tests/Respire.Caching.Tests \
             tests/Respire.Caching.Hybrid.Tests \
+            tests/Respire.FusionCache.Tests \
             samples/Respire.Samples.Testing \
             samples/Respire.Samples.Cluster \
             samples/Respire.Samples.Sentinel \
@@ -189,6 +190,7 @@ jobs:
         run: |
           dotnet run --project tests/Respire.Caching.Tests -c Release -f net10.0 --no-build
           dotnet run --project tests/Respire.Caching.Hybrid.Tests -c Release -f net10.0 --no-build
+          dotnet run --project tests/Respire.FusionCache.Tests -c Release -f net10.0 --no-build
 
       - name: Run Caching Tests on Redis 7.4
         env:
