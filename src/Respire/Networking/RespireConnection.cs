@@ -125,6 +125,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private Exception? _abortReason;
     private readonly IConnectionGeneration? _generation;
     private BulkStreamPendingResponseSource? _activeBulkStreamSource;
+    private long _activeBulkStreamPosition = -1;
 
     // Set by the multiplexer before publication; endpoint aliases may later change owners.
     private Respire.Infrastructure.RespireConnectionMultiplexer? _multiplexer;
@@ -146,12 +147,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     {
         get
         {
-            var count = Math.Max(0, _inflight.Count);
-            var stream = Volatile.Read(ref _activeBulkStreamSource);
-            // The stream is published before dequeue. Count it separately only after
-            // it leaves the ring, until its payload and trailing CRLF finish draining.
-            if (stream is not null && (!_inflight.TryPeek(out var head) || !ReferenceEquals(head, stream))) count++;
-            return count;
+            while (true)
+            {
+                var position = Volatile.Read(ref _activeBulkStreamPosition);
+                var count = _inflight.CountIncludingActiveReply(position);
+                // A transition to another stream or completed drainage invalidates this sample.
+                if (position == Volatile.Read(ref _activeBulkStreamPosition)) return count;
+            }
         }
     }
     internal void SetLeaseRented(bool rented) => _connectionMetrics?.SetRented(rented);
@@ -2360,6 +2362,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                         {
                             // Publish the active stream before dequeuing it so retirement drain
                             // never observes an empty ring while the payload is still being read.
+                            Volatile.Write(ref _activeBulkStreamPosition, _inflight.ConsumerPosition);
                             Volatile.Write(ref _activeBulkStreamSource, streamSource);
                             try
                             {
@@ -2390,6 +2393,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                             finally
                             {
                                 Interlocked.CompareExchange(ref _activeBulkStreamSource, null, streamSource);
+                                Volatile.Write(ref _activeBulkStreamPosition, -1);
                                 // Wake a retirement drain that saw the frame still active.
                                 _capacitySignal.Signal();
                             }

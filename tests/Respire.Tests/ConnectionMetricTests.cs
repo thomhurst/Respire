@@ -279,6 +279,69 @@ public class ConnectionMetricTests
     }
 
     [Test]
+    public async Task ActiveReplyCountSurvivesDequeueAndSlotReuseWithoutDoubleCounting()
+    {
+        var ring = new InflightRing(2);
+        for (var i = 0; i < 8; i++)
+        {
+            var activePosition = ring.ConsumerPosition;
+            await Assert.That(ring.TryEnqueue(InflightRing.DiscardSentinel)).IsTrue();
+            await Assert.That(ring.CountIncludingActiveReply(activePosition)).IsEqualTo(1);
+            await Assert.That(ring.TryDequeue(out _)).IsTrue();
+            await Assert.That(ring.Count).IsEqualTo(0);
+            await Assert.That(ring.CountIncludingActiveReply(activePosition)).IsEqualTo(1);
+            await Assert.That(ring.TryEnqueue(InflightRing.DiscardSentinel)).IsTrue();
+            await Assert.That(ring.CountIncludingActiveReply(activePosition)).IsEqualTo(2);
+            // Completing the stream leaves only the subsequently queued reply.
+            await Assert.That(ring.CountIncludingActiveReply(-1)).IsEqualTo(1);
+            await Assert.That(ring.TryDequeue(out _)).IsTrue();
+            await Assert.That(ring.CountIncludingActiveReply(-1)).IsEqualTo(0);
+        }
+    }
+
+    [Test]
+    public async Task ConcurrentStreamTransitionsNeverInventASecondPendingReply()
+    {
+        using var configuration = new MetricConfigurationScope();
+        await using var server = new FakeRespServer("$1\r\nx\r\n"u8.ToArray());
+        await using var client = await RespireClient.ConnectAsync(Options(server));
+        var connection = client.Core.Multiplexer.GetConnection();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var sampling = new CancellationTokenSource();
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var samples = 0L;
+        var invalidCount = 0;
+        var observer = Task.Factory.StartNew(() =>
+        {
+            ready.TrySetResult();
+            while (!sampling.IsCancellationRequested)
+            {
+                var count = connection.PendingResponseCount;
+                samples++;
+                if (count is < 0 or > 1) invalidCount = count;
+            }
+        }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        try
+        {
+            await ready.Task.WaitAsync(deadline.Token);
+            for (var i = 0; i < 2000; i++)
+            {
+                await using var stream = await client.Strings.GetStreamAsync("key", deadline.Token);
+                await stream!.CopyToAsync(Stream.Null, deadline.Token);
+                // Keep admission quiescent until the receive loop finishes this frame.
+                await WaitUntil(() => connection.PendingResponseCount == 0);
+            }
+        }
+        finally
+        {
+            sampling.Cancel();
+            await observer.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        await Assert.That(samples).IsGreaterThan(0L);
+        await Assert.That(invalidCount).IsEqualTo(0);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task StreamedReplyStaysPendingUntilItsFrameDrains(bool discard)

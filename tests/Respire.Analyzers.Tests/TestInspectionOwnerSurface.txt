@@ -190,7 +190,7 @@ Respire.Networking.PendingResponseSource | readonly struct PoolPolicy(PendingRes
 # Count: Respire.Networking.PendingResponseSource.PoolPolicy | 2
 Respire.Networking.PendingResponseSource.PoolPolicy | method Create() : PendingResponseSource
 Respire.Networking.PendingResponseSource.PoolPolicy | method TryReset(PendingResponseSource) : bool
-# Count: Respire.Networking.RespireConnection | 73
+# Count: Respire.Networking.RespireConnection | 79
 Respire.Networking.RespireConnection | event MovingNotification : Action<Respire.Infrastructure.MovingAnnouncement>?
 Respire.Networking.RespireConnection | event PendingCommandsFailing : Action?
 Respire.Networking.RespireConnection | field LastQueuedMovingSequence : long
@@ -214,7 +214,10 @@ Respire.Networking.RespireConnection | method HasStalledBulkStream(TimeSpan) : b
 # Designated test-inspection factory. New inspection access belongs in its nested view.
 Respire.Networking.RespireConnection | method InspectForTests() : TestInspection
 Respire.Networking.RespireConnection | method IsDeadlineCancellation(OperationCanceledException, CancellationToken, CancellationToken) : bool
+Respire.Networking.RespireConnection | method RecordConnectionHandoff() : void
+Respire.Networking.RespireConnection | method RecordConnectionWait(long) : void
 Respire.Networking.RespireConnection | method ReplayUnpublishedMigrations() : void
+Respire.Networking.RespireConnection | method RequestMetricCloseReason(string) : void
 Respire.Networking.RespireConnection | method RetireAsync() : Task
 Respire.Networking.RespireConnection | method SendAskingStreamedSetAsync(in RawCommand, StreamedSetCommand, CancellationToken, CommandDeadline, DedicatedStreamRoute) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendAsync`1(in TCommand, CancellationToken, bool, string?, bool, string?) : ValueTask<RespValue>
@@ -232,6 +235,7 @@ Respire.Networking.RespireConnection | method SendTransactionAsync(ReadOnlyMemor
 Respire.Networking.RespireConnection | method SendValidatedPrefixedAsync`2(in TPrefix, in TCommand, CancellationToken, string, string?) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendValidatedPrefixedAsync`3(in TFirstPrefix, in TSecondPrefix, in TCommand, CancellationToken, string, string?) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendWithoutResponseTimeoutAsync`1(TCommand, CancellationToken) : ValueTask<RespValue>
+Respire.Networking.RespireConnection | method SetLeaseRented(bool) : void
 Respire.Networking.RespireConnection | method StopAcceptingCommands() : void
 Respire.Networking.RespireConnection | method TryAcquireCredentialSequence(CancellationToken, out CredentialSequenceLease) : bool
 Respire.Networking.RespireConnection | method ValidateBulkResponseSize(long, long) : void
@@ -248,6 +252,7 @@ Respire.Networking.RespireConnection | property HasActiveBulkStream [internal; g
 Respire.Networking.RespireConnection | property HasMaintenanceWindow [internal; get] : bool
 Respire.Networking.RespireConnection | property HasOtherIncompleteCommandThanMaintenanceBarrier [internal; get] : bool
 Respire.Networking.RespireConnection | property HasOutstandingMaintenanceBarrier [internal; get] : bool
+Respire.Networking.RespireConnection | property HasRelaxedTimeoutAllowance [internal; get] : bool
 Respire.Networking.RespireConnection | property HasUndeliveredReplies [internal; get] : bool
 Respire.Networking.RespireConnection | property Host [public; get] : string
 Respire.Networking.RespireConnection | property IsAcceptingCommands [internal; get] : bool
@@ -260,6 +265,7 @@ Respire.Networking.RespireConnection | property MultiplexerSlot [internal; get, 
 Respire.Networking.RespireConnection | property NetworkPeerAddress [internal; get] : string?
 Respire.Networking.RespireConnection | property NetworkPeerPort [internal; get] : int?
 Respire.Networking.RespireConnection | property PeerKey [internal; get] : (string Host, int Port)
+Respire.Networking.RespireConnection | property PendingResponseCount [internal; get] : int
 Respire.Networking.RespireConnection | property Port [public; get] : int
 Respire.Networking.RespireConnection | property ServerClientId [internal; get] : long
 Respire.Networking.RespireConnection | property UndeliveredReplyCount [internal; get] : int
