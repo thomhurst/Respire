@@ -31,7 +31,7 @@ internal sealed class RedisEndpoint : IAsyncDisposable
             return new RedisEndpoint(host, port, container: null);
         }
 
-        var container = new RedisBuilder("redis:8.0").Build();
+        var container = new RedisBuilder("redis:8.10").Build();
         await container.StartAsync().ConfigureAwait(false);
         return new RedisEndpoint("localhost", container.GetMappedPublicPort(6379), container);
     }

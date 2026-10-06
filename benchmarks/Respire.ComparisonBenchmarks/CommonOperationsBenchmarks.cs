@@ -46,7 +46,7 @@ public class CommonOperationsBenchmarks
 
         if (string.IsNullOrEmpty(host))
         {
-            _redisContainer = new RedisBuilder("redis:8.0").Build();
+            _redisContainer = new RedisBuilder("redis:8.10").Build();
             await _redisContainer.StartAsync();
             host = "localhost";
             port = _redisContainer.GetMappedPublicPort(6379);

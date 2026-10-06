@@ -8,13 +8,15 @@ namespace Respire.IntegrationTests;
 public class ServerClusterInspectionIntegrationTests
 {
     [Test]
-    [Arguments(2, false)]
-    [Arguments(3, false)]
-    [Arguments(2, true)]
-    [Arguments(3, true)]
-    public async Task InspectAnIsolatedClusterWithoutChangingItsTopology(int protocol, bool modern)
+    [Arguments(2, false, "redis:7.0.15")]
+    [Arguments(3, false, "redis:7.0.15")]
+    [Arguments(2, true, "redis:8.4-alpine")]
+    [Arguments(3, true, "redis:8.4-alpine")]
+    [Arguments(2, true, "redis:8.10-alpine")]
+    [Arguments(3, true, "redis:8.10-alpine")]
+    public async Task InspectAnIsolatedClusterWithoutChangingItsTopology(int protocol, bool modern, string image)
     {
-        await using var container = new ContainerBuilder(modern ? "redis:8.4-alpine" : "redis:7.0.15")
+        await using var container = new ContainerBuilder(image)
             .WithPortBinding(6379, true)
             .WithCommand("redis-server", "--cluster-enabled", "yes", "--cluster-config-file", "nodes.conf",
                 "--cluster-announce-ip", "127.0.0.1", "--appendonly", "no")
