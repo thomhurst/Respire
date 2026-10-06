@@ -55,6 +55,55 @@ public class SynchronizationGateArchitectureTests
             .Where(name => name.StartsWith('_') && name.EndsWith("Gate", StringComparison.OrdinalIgnoreCase))
             .ToArray();
 
+    [Test]
+    public async Task ContainerFixtureObjectAliasUsesOnlyLockStatementsOnNet8()
+    {
+        var assembly = typeof(SynchronizationGateArchitectureTests).Assembly;
+        var resource = assembly.GetManifestResourceNames().Single(name => name.Replace('\\', '/')
+            == "LibrarySource/Respire.Testing.Containers/RespireContainerFixture.cs");
+        using var stream = assembly.GetManifestResourceStream(resource)!;
+        using var reader = new StreamReader(stream);
+        var source = await reader.ReadToEndAsync();
+        var net8 = CSharpSyntaxTree.ParseText(source).GetRoot();
+        var net9 = CSharpSyntaxTree.ParseText(source,
+            new CSharpParseOptions(preprocessorSymbols: ["NET9_0_OR_GREATER"])).GetRoot();
+        var alias = net8.DescendantNodes().OfType<UsingDirectiveSyntax>()
+            .Single(usingDirective => usingDirective.Alias?.Name.Identifier.ValueText == "Lock");
+        await Assert.That(alias.Name!.ToString()).IsEqualTo("System.Object");
+        await Assert.That(net9.DescendantNodes().OfType<UsingDirectiveSyntax>()
+            .Any(usingDirective => usingDirective.Alias?.Name.Identifier.ValueText == "Lock")).IsFalse();
+        await Assert.That(net8.DescendantNodes().OfType<LockStatementSyntax>()
+            .Any(statement => statement.Expression is IdentifierNameSyntax { Identifier.ValueText: "_disposeGate" }))
+            .IsTrue();
+        await Assert.That(FindDisposeGateMemberUses(net8)).IsEmpty();
+    }
+
+    [Test]
+    public async Task ContainerAliasGuardDetectsNativeLockMemberCalls()
+    {
+        const string source = """
+            class Example
+            {
+                void Dispose()
+                {
+                    using var scope = _disposeGate.EnterScope();
+                    // _disposeGate.Exit();
+                    var text = "_disposeGate.TryEnter()";
+            #if NET9_0_OR_GREATER
+                    _disposeGate.Enter();
+            #endif
+                }
+            }
+            """;
+        await Assert.That(FindDisposeGateMemberUses(CSharpSyntaxTree.ParseText(source).GetRoot()))
+            .IsEquivalentTo(["EnterScope"]);
+    }
+
+    private static string[] FindDisposeGateMemberUses(SyntaxNode root)
+        => root.DescendantNodes().OfType<MemberAccessExpressionSyntax>()
+            .Where(member => member.Expression is IdentifierNameSyntax { Identifier.ValueText: "_disposeGate" })
+            .Select(member => member.Name.Identifier.ValueText).ToArray();
+
     private static bool IsObjectType(TypeSyntax type)
         => type is NullableTypeSyntax nullable
             ? IsObjectType(nullable.ElementType)

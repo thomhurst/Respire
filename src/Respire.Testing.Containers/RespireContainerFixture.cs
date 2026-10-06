@@ -1,5 +1,6 @@
 #if !NET9_0_OR_GREATER
-// This package does not use the core library's internal Lock polyfill.
+// This package cannot access the core library's internal Lock polyfill.
+// On net8, use only lock statements; native Lock member APIs are unavailable.
 using Lock = System.Object;
 #endif
 
