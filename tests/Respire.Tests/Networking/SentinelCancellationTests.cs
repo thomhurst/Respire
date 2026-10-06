@@ -25,13 +25,14 @@ public class SentinelCancellationTests
         using var unrelated = new CancellationTokenSource();
         unrelated.Cancel();
         OperationCanceledException? original = null;
+        CancellationTokenSource? primaryTimeout = null;
         var options = new RespireOptions
         {
             Protocol = RespProtocol.Resp2,
             Endpoints = [new("127.0.0.1", sentinel.Port)],
             SentinelPrimaryName = "mymaster",
             CommandTimeout = primary ? TimeSpan.FromSeconds(5) : TimeSpan.FromMilliseconds(200),
-            ConnectTimeout = primary ? TimeSpan.FromMilliseconds(200) : TimeSpan.FromSeconds(5),
+            ConnectTimeout = TimeSpan.FromSeconds(5),
             TestingStreamFactory = primary ? null : async (_, _, token) =>
             {
                 await FailAsync(token);
@@ -42,7 +43,8 @@ public class SentinelCancellationTests
         {
             await FailAsync(token);
             return 0;
-        }, caller.Token).AsTask();
+        }, caller.Token, createConnectTimeout: (token, _) =>
+            primaryTimeout = CancellationTokenSource.CreateLinkedTokenSource(token)).AsTask();
 
         if (callerCancelled)
         {
@@ -73,6 +75,9 @@ public class SentinelCancellationTests
         async Task FailAsync(CancellationToken token)
         {
             if (callerCancelled) caller.Cancel();
+            // Cancel the primary deadline only after discovery reaches the controlled callback.
+            // A short ConnectTimeout also bounds Sentinel setup and can expire before this point.
+            else if (primary) primaryTimeout!.Cancel();
             try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { }
             original = new OperationCanceledException(ownedToken ? token : unrelated.Token);

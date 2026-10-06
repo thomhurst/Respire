@@ -15,7 +15,6 @@ public sealed partial class RespireClient
     private bool CanUseDirectReplySource<TCommand>(string operation, in TCommand command)
         where TCommand : struct, IRespCommand
         => !RespireTelemetry.IsOperationEnabled(operation)
-            && _core.Cluster is null
             && (_readFrom == RespireReadFrom.Primary || command.ReadKind == ReadCommandKind.None)
             && (ReadCache is null || !ClientSideCacheCoordinator.CanCacheOperation(operation));
 
@@ -59,15 +58,21 @@ public sealed partial class RespireClient
             => client.SendOnConnectionAsync(operation, connection, command, cancellationToken);
     }
 
-    private readonly struct StringReadySend : IReadySend<string?>
+    private readonly struct StringReadySend : IClusterReadySend<string?>
     {
+        public bool TransferOwnership => false;
+        public string? Convert(in RespValue response) => ResponseReader.StringOrNull(in response);
+
         public ValueTask<string?> Send<TCommand>(RespireConnection connection, string operation,
             in TCommand command, CancellationToken cancellationToken) where TCommand : struct, IRespCommand
             => connection.SendStringAsync(in command, cancellationToken, operation);
     }
 
-    private readonly struct BytesReadySend : IReadySend<byte[]?>
+    private readonly struct BytesReadySend : IClusterReadySend<byte[]?>
     {
+        public bool TransferOwnership => false;
+        public byte[]? Convert(in RespValue response) => ResponseReader.BytesOrNull(in response);
+
         public ValueTask<byte[]?> Send<TCommand>(RespireConnection connection, string operation,
             in TCommand command, CancellationToken cancellationToken) where TCommand : struct, IRespCommand
             => connection.SendBytesAsync(in command, cancellationToken, operation);
