@@ -367,7 +367,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
         catch
         {
-            tlsStream?.Dispose();
+            if (tlsStream is not null) await tlsStream.DisposeAsync().ConfigureAwait(false);
             socket.Dispose();
             throw;
         }
@@ -414,7 +414,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
         catch
         {
-            stream?.Dispose();
+            if (stream is not null) await stream.DisposeAsync().ConfigureAwait(false);
             throw;
         }
         var connection = new RespireConnection(null, stream, host, port, options, logger);
@@ -3727,7 +3727,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 _activeBuffer.Release();
                 _spareBuffer.Release();
             }
-            _stream?.Dispose();
+            if (_stream is not null) await _stream.DisposeAsync().ConfigureAwait(false);
             _socket?.Dispose();
             _watchdogCancellation.Dispose();
             _logger?.LogDebug("Disconnected from {Host}:{Port}", Host, Port);

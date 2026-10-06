@@ -92,7 +92,7 @@ internal sealed class CoordinationCleanupQueue : IAsyncDisposable
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
 
         _queue.Writer.TryComplete();
-        _stopping.Cancel();
+        await _stopping.CancelAsync().ConfigureAwait(false);
         Task[] workers;
         lock (_workerGate) workers = _workers ?? [];
         try { await Task.WhenAll(workers).ConfigureAwait(false); }

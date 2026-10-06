@@ -74,7 +74,10 @@ internal sealed partial class ClusterRouter
         finally
         {
             var cancellation = _sharedRefreshCoordinator.ReleaseWaiter(flight);
-            try { cancellation?.Cancel(); }
+            try
+            {
+                if (cancellation is not null) await cancellation.CancelAsync().ConfigureAwait(false);
+            }
             catch (ObjectDisposedException) { }
             // The flight owns this discovery round while its cancellation unwinds, even when this
             // was the last waiter. The caller must not mutate the round concurrently.

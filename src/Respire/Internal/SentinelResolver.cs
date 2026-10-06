@@ -580,7 +580,7 @@ internal static class SentinelResolver
         }
         finally
         {
-            aliasTimeout.Cancel();
+            await aliasTimeout.CancelAsync().ConfigureAwait(false);
             if (pending.Count > 0) await Task.WhenAll(pending).ConfigureAwait(false);
         }
 

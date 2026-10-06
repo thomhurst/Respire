@@ -426,7 +426,7 @@ internal sealed partial class RespireConnection
         var gateWait = _streamingGate.WaitAsync(gateCancellation.Token);
         if (await Task.WhenAny(gateWait, _retiredSignal.Task).ConfigureAwait(false) == _retiredSignal.Task)
         {
-            gateCancellation.Cancel();
+            await gateCancellation.CancelAsync().ConfigureAwait(false);
             try
             {
                 await gateWait.ConfigureAwait(false);

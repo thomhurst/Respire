@@ -552,13 +552,14 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
             _disposed = true;
             Volatile.Write(ref _active, null);
             _activeEndpoint = null;
-            _stop.Cancel();
         }
         finally
         {
             _gate.Release();
         }
 
+        // Selection is already closed. Cancellation callbacks must not run while holding its gate.
+        await _stop.CancelAsync().ConfigureAwait(false);
         List<Exception>? failures = null;
         try
         {

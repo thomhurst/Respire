@@ -395,10 +395,10 @@ internal sealed class RedisRateLimiter : RateLimiter
             await Task.WhenAny(timer, changed).ConfigureAwait(false);
             if (!timer.IsCompleted)
             {
-                wakeCancellation.Cancel();
+                await wakeCancellation.CancelAsync().ConfigureAwait(false);
                 continue;
             }
-            wakeCancellation.Cancel();
+            await wakeCancellation.CancelAsync().ConfigureAwait(false);
             lock (_queueGate)
             {
                 if (request.Node?.List is null || request.Node != _queue.First) continue;

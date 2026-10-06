@@ -9,6 +9,60 @@ namespace Respire.Tests.Networking;
 public class TestingTransportHandshakeTests
 {
     [Test]
+    public async Task LateFactoryStreamCleanupAwaitsAsynchronousDisposal()
+    {
+        using var caller = new CancellationTokenSource();
+        using var stream = new GatedDisposalStream();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFactory = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var options = new RespireConnectionOptions
+        {
+            ConnectTimeout = TimeSpan.FromMinutes(1),
+            TestingStreamFactory = async (_, _, _) =>
+            {
+                entered.TrySetResult();
+                await releaseFactory.Task;
+                return stream;
+            },
+        };
+        var pending = RespireConnection.ConnectAsync("testing", 6379, options, cancellationToken: caller.Token);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            caller.Cancel();
+            releaseFactory.TrySetResult();
+            var first = await Task.WhenAny(stream.DisposalStarted.Task, pending).WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(ReferenceEquals(first, stream.DisposalStarted.Task)).IsTrue();
+            await Assert.That(pending.IsCompleted).IsFalse();
+            stream.ReleaseDisposal.TrySetResult();
+            var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Throws<OperationCanceledException>();
+            await Assert.That(error!.CancellationToken).IsEqualTo(caller.Token);
+            await Assert.That(stream.CanRead).IsFalse();
+        }
+        finally
+        {
+            releaseFactory.TrySetResult();
+            stream.ReleaseDisposal.TrySetResult();
+            try { await using var connection = await pending.WaitAsync(TimeSpan.FromSeconds(5)); }
+            catch (OperationCanceledException) { }
+        }
+    }
+
+    private sealed class GatedDisposalStream : MemoryStream
+    {
+        internal TaskCompletionSource DisposalStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource ReleaseDisposal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override async ValueTask DisposeAsync()
+        {
+            DisposalStarted.TrySetResult();
+            await ReleaseDisposal.Task;
+            await base.DisposeAsync();
+        }
+    }
+
+    [Test]
     [Arguments(false, false)]
     [Arguments(false, true)]
     [Arguments(true, false)]

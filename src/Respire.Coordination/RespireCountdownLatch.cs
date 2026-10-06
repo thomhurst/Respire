@@ -56,7 +56,7 @@ public sealed class RespireCountdownLatch
                 {
                     var delay = Task.Delay(ResyncInterval, resync.Token);
                     var completed = await Task.WhenAny(pending, delay).ConfigureAwait(false);
-                    resync.Cancel();
+                    await resync.CancelAsync().ConfigureAwait(false);
                     if (completed != pending)
                     {
                         // A notification can be lost across a Pub/Sub reconnect; Redis remains authoritative.
