@@ -226,6 +226,14 @@ dedicated connection acquisition. Caller cancellation remains `OperationCanceled
 with the caller's token. Pool retirement keeps its separate cancellation identity so routing
 can select a replacement. Redis handshake replies retain their command timeout behavior.
 
+This changes the exception type for independent connect deadlines that previously surfaced
+as `OperationCanceledException`. Catch `RespireTimeoutException` for connect timeouts;
+a catch for `OperationCanceledException` alone no longer handles those deadlines.
+If caller cancellation and the deadline have both fired when classified, caller cancellation wins.
+Routing samples pool retirement when handling the failure. A CONNECT timeout can therefore
+trigger bounded reselection even if the timeout preceded retirement; this never replays an
+admitted application command. Active-pool and Redis handshake timeouts remain failures.
+
 `AllowAdmin = false` is the default safety setting. Set it to `true` only for callers that are allowed to run high-risk server administration commands such as `FLUSHDB`, `FLUSHALL`, and `CONFIG SET`.
 
 For expiring passwords or access tokens, use a caller-owned

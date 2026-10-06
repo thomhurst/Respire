@@ -433,12 +433,14 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
     }
 
+    /// <summary>Creates the owned connect deadline, using the controlled factory in friend tests.</summary>
     private static CancellationTokenSource CreateConnectTimeout(
         RespireConnectionOptions options, CancellationToken cancellationToken)
         => options.TestingConnectTimeoutFactory is { } factory
             ? factory(cancellationToken, options.ConnectTimeout)
             : CommandTimeoutCancellation.Create(cancellationToken, options.ConnectTimeout);
 
+    /// <summary>Preserves initiating cancellation or reports an independent transport deadline.</summary>
     private static Exception TranslateConnectCancellation(
         OperationCanceledException error, CancellationToken cancellationToken,
         RespireConnectionOptions options, string host, int port)
@@ -446,6 +448,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         // Only cancellation from our canceled source reaches this boundary. Caller/pool
         // cancellation keeps its initiating token; an independent transport deadline is a
         // connect timeout, even when TCP completed just before that deadline fired.
+        // If both sources have fired by classification, the initiating token takes precedence.
         if (cancellationToken.IsCancellationRequested)
             return new OperationCanceledException(error.Message, error, cancellationToken);
         return new RespireTimeoutException("CONNECT", options.ConnectTimeout, error,
@@ -3773,8 +3776,12 @@ internal sealed record RespireConnectionOptions
     internal IConnectionGeneration? Generation { get; init; }
 
     internal Func<string, int, CancellationToken, ValueTask<Stream>>? TestingStreamFactory { get; init; }
-    // Friend tests can expire this owned source at a controlled transport boundary. The factory
-    // must link the initiating token; ConnectAsync owns disposal, just as for the ordinary source.
+    /// <summary>
+    /// Lets friend tests expire the owned source at a controlled transport boundary. The factory
+    /// must link the initiating token, with caller-cancellation controls in the fixture proving
+    /// that contract; CancellationTokenSource does not expose its links for inspection.
+    /// ConnectAsync owns disposal, just as for the ordinary source.
+    /// </summary>
     internal Func<CancellationToken, TimeSpan, CancellationTokenSource>? TestingConnectTimeoutFactory { get; init; }
     internal ArrayPool<byte>? StreamPayloadPool { get; init; }
 

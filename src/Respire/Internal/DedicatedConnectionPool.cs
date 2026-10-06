@@ -62,9 +62,11 @@ internal sealed partial class DedicatedConnectionPool(
         get { lock (_gate) return _stopping; }
     }
 
-    // A private connect timeout can be selected just before this pool's retirement is
-    // published. Preserve topology reselection for that race, without replaying a command
-    // or turning a Redis handshake timeout into a retirement failure.
+    /// <summary>
+    /// Classifies acquisition errors eligible for bounded reselection when the caller observes
+    /// a stopping pool. A CONNECT timeout may predate retirement; no causal ordering is inferred.
+    /// This does not classify Redis handshake timeouts or authorize replay of an admitted command.
+    /// </summary>
     internal static bool IsRetirementFailure(Exception error)
         => error is ObjectDisposedException or OperationCanceledException
             or RespireTimeoutException { CommandName: "CONNECT", Diagnostics.Stage: RespireCommandStage.Connecting };

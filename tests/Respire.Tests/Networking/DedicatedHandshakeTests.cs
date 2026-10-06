@@ -13,6 +13,7 @@ public class DedicatedHandshakeTests
     {
         OwnedDeadline,
         Caller,
+        CallerAndDeadline,
         PoolRetirement,
         PoolDisposal,
         UnrelatedCancellation,
@@ -20,17 +21,47 @@ public class DedicatedHandshakeTests
     }
 
     [Test]
-    [Arguments(false, ConnectCancellation.OwnedDeadline)]
-    [Arguments(true, ConnectCancellation.OwnedDeadline)]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DeadlineAfterTcpConnectDoesNotStartHandshake(bool pooled)
+    {
+        var result = await CancelAfterTcpConnect(pooled, ConnectCancellation.OwnedDeadline);
+        var error = (await Assert.That(result.Error).IsTypeOf<RespireTimeoutException>())!;
+        await Assert.That(error.CommandName).IsEqualTo("CONNECT");
+        await Assert.That(error.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Connecting);
+        await Assert.That(error.InnerException is OperationCanceledException).IsTrue();
+        await Assert.That(((OperationCanceledException)error.InnerException!).CancellationToken)
+            .IsEqualTo(result.TimeoutToken);
+    }
+
+    [Test]
     [Arguments(false, ConnectCancellation.Caller)]
     [Arguments(true, ConnectCancellation.Caller)]
+    [Arguments(false, ConnectCancellation.CallerAndDeadline)]
+    [Arguments(true, ConnectCancellation.CallerAndDeadline)]
     [Arguments(true, ConnectCancellation.PoolRetirement)]
     [Arguments(true, ConnectCancellation.PoolDisposal)]
     [Arguments(false, ConnectCancellation.UnrelatedCancellation)]
     [Arguments(true, ConnectCancellation.UnrelatedCancellation)]
     [Arguments(false, ConnectCancellation.UncanceledOwnedToken)]
     [Arguments(true, ConnectCancellation.UncanceledOwnedToken)]
-    public async Task CancellationAfterTcpConnectDoesNotStartHandshake(bool pooled, ConnectCancellation cancellation)
+    public async Task CancellationAfterTcpConnectRetainsToken(bool pooled, ConnectCancellation cancellation)
+    {
+        var result = await CancelAfterTcpConnect(pooled, cancellation);
+        await Assert.That(result.Error is OperationCanceledException).IsTrue();
+        var error = (OperationCanceledException)result.Error;
+        if (cancellation is ConnectCancellation.Caller or ConnectCancellation.CallerAndDeadline)
+            await Assert.That(error.CancellationToken).IsEqualTo(result.CallerToken);
+        else if (cancellation == ConnectCancellation.UnrelatedCancellation)
+            await Assert.That(error.CancellationToken).IsEqualTo(result.UnrelatedToken);
+        else
+            await Assert.That(error.CancellationToken == result.CallerToken).IsFalse();
+    }
+
+    private sealed record ConnectCancellationResult(
+        Exception Error, CancellationToken CallerToken, CancellationToken TimeoutToken, CancellationToken UnrelatedToken);
+
+    private static async Task<ConnectCancellationResult> CancelAfterTcpConnect(bool pooled, ConnectCancellation cancellation)
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         using var caller = new CancellationTokenSource();
@@ -86,6 +117,11 @@ public class DedicatedHandshakeTests
             {
                 case ConnectCancellation.OwnedDeadline: connectTimeout.Cancel(); break;
                 case ConnectCancellation.Caller: caller.Cancel(); break;
+                case ConnectCancellation.CallerAndDeadline:
+                    // Both sources fire before classification; caller cancellation must win.
+                    connectTimeout.Cancel();
+                    caller.Cancel();
+                    break;
                 case ConnectCancellation.PoolRetirement: cleanup = pool.RetireAsync().AsTask(); break;
                 case ConnectCancellation.PoolDisposal: cleanup = pool.DisposeAsync().AsTask(); break;
                 case ConnectCancellation.UnrelatedCancellation: unrelated.Cancel(); connectTimeout.Cancel(); break;
@@ -93,29 +129,15 @@ public class DedicatedHandshakeTests
             if (cancellation != ConnectCancellation.UncanceledOwnedToken) await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
             await Assert.That(server.CommandsSeen).IsEqualTo(0);
             release.TrySetResult();
-            if (cancellation == ConnectCancellation.OwnedDeadline)
-            {
-                var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
-                    .Throws<RespireTimeoutException>();
-                await Assert.That(error!.CommandName).IsEqualTo("CONNECT");
-                await Assert.That(error.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Connecting);
-                await Assert.That(error.InnerException is OperationCanceledException).IsTrue();
-                await Assert.That(((OperationCanceledException)error.InnerException!).CancellationToken)
-                    .IsEqualTo(timeoutToken);
-            }
-            else
-            {
-                var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
-                    .Throws<OperationCanceledException>();
-                if (cancellation == ConnectCancellation.Caller) await Assert.That(error!.CancellationToken).IsEqualTo(caller.Token);
-                else if (cancellation == ConnectCancellation.UnrelatedCancellation) await Assert.That(error!.CancellationToken).IsEqualTo(unrelated.Token);
-                else await Assert.That(error!.CancellationToken == caller.Token).IsFalse();
-            }
-            await Assert.That(caller.IsCancellationRequested).IsEqualTo(cancellation == ConnectCancellation.Caller);
+            var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Throws<Exception>();
+            await Assert.That(caller.IsCancellationRequested)
+                .IsEqualTo(cancellation is ConnectCancellation.Caller or ConnectCancellation.CallerAndDeadline);
             await Assert.That(server.CommandsSeen).IsEqualTo(0);
             await Assert.That(transport!.CanRead).IsFalse();
             if (cleanup is not null) await cleanup.WaitAsync(TimeSpan.FromSeconds(5));
             await Assert.That(pool.CaptureRetirementState().Connecting).IsEqualTo(0);
+            return new(error!, caller.Token, timeoutToken, unrelated.Token);
         }
         finally
         {
