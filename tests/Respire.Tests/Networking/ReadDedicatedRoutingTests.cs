@@ -324,8 +324,8 @@ public partial class ReadDedicatedRoutingTests
         }
         var failedNode = failPrimary ? primary : replica;
         var failDedicated = false;
-        // A failed dedicated primary retires its Sentinel generation. Fence background
-        // connections while counting read attempts; restore the advertisement for recovery.
+        // Fence discovery while counting failed dedicated attempts; restore the
+        // advertisement for recovery without disturbing the healthy shared connection.
         SuppressPrimaryAdvertisement(sentinel, () => Volatile.Read(ref failDedicated));
         var failedNodeConnections = 0;
         var connecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -351,6 +351,8 @@ public partial class ReadDedicatedRoutingTests
         if (useSentinel) await SentinelTestSetup.CompleteReadSetupAsync(client);
         var selected = await router.SelectAsync(RespireReadFrom.Nearest, default);
         await Assert.That(selected.Connection.Port).IsEqualTo(failedNode.Port);
+        var sentinelGeneration = client.Core.Sentinel?.Current;
+        if (useSentinel) await Assert.That(sentinelGeneration).IsNotNull();
         var handshakesBefore = failedNode.ReceivedCommands.Count(command => command == "HELLO 3");
         var connectionsBefore = Volatile.Read(ref failedNodeConnections);
         Volatile.Write(ref failDedicated, true);
@@ -374,10 +376,16 @@ public partial class ReadDedicatedRoutingTests
         if (failure != 0) await Assert.That(failedNodeConnections).IsEqualTo(connectionsBefore + 1);
         await Assert.That(replica.ReceivedCommands.Any(command => command.StartsWith("XREAD "))).IsFalse();
         await Assert.That(fast.ReceivedCommands.Count(command => command.StartsWith("XREAD "))).IsEqualTo(failure == 2 ? 0 : 1);
-        // A failed Sentinel socket invalidates its generation. A connection attempt canceled
-        // before transport creation leaves the existing shared connection healthy.
-        if (useSentinel && failPrimary && failure == 0) await Assert.That(client.Core.Sentinel!.Current!.IsRetired).IsTrue();
-        else await Assert.That(selected.Connection.IsConnected).IsTrue();
+        // The failed dedicated handshake never passed ROLE validation. Closing it must
+        // preserve the admitted shared connection and its Sentinel generation.
+        if (sentinelGeneration is not null)
+        {
+            await Assert.That(client.Core.Sentinel!.Current).IsSameReferenceAs(sentinelGeneration);
+            await Assert.That(sentinelGeneration.IsRetired).IsFalse();
+        }
+        await Assert.That(selected.Connection.IsConnected).IsTrue();
+        using (var reply = await selected.Connection.SendAsync(new Respire.Commands.RawCommand(FakeRespServer.PingFrame)))
+            await Assert.That(reply.AsString()).IsEqualTo("PONG");
         if (selected.Primary is { } primaryOwner)
             await Assert.That(router.NearestLatency.CanConnect(primaryOwner)).IsEqualTo(failure == 2);
         else await Assert.That(selected.Replica!.IsCoolingDown).IsEqualTo(failure != 2);
@@ -747,6 +755,7 @@ public partial class ReadDedicatedRoutingTests
         {
             ReplyOverride = (_, command) => command switch
             {
+                "PING" => FakeRespServer.PongReply,
                 "HELLO 3" => "%1\r\n+proto\r\n:3\r\n"u8.ToArray(),
                 "ROLE" => replica ? "*5\r\n$5\r\nslave\r\n$9\r\n127.0.0.1\r\n:6379\r\n$9\r\nconnected\r\n:0\r\n"u8.ToArray()
                     : "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray(),
