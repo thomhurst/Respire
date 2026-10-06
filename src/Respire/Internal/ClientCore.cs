@@ -686,12 +686,23 @@ internal sealed class ClientCore : IAsyncDisposable
         }
     }
 
-    internal DedicatedConnectionPool CreateServerPool(RespireEndpoint endpoint)
+    internal DedicatedConnectionPool CreateServerPool(RespireEndpoint endpoint, bool controlConnection = false)
     {
         lock (_hubGate)
         {
             ObjectDisposedException.ThrowIf(Disposed, this);
-            var pool = new DedicatedConnectionPool(endpoint.Host, endpoint.Port, Options.ToConnectionOptions(enableMaintenanceNotifications: true), Logger,
+            var options = Options.ToConnectionOptions(enableMaintenanceNotifications: !controlConnection);
+            if (controlConnection)
+            {
+                // AUTH is permitted during BUSY. Other setup commands can fail or wait behind
+                // the operation this socket must cancel. KILL and SHUTDOWN are database-independent.
+                options = options with
+                {
+                    Protocol = RespProtocol.Resp2, Database = 0, ClientName = null,
+                    RequireClusterDatabaseSupport = false, DiscoverAvailabilityZone = false,
+                };
+            }
+            var pool = new DedicatedConnectionPool(endpoint.Host, endpoint.Port, options, Logger,
                 NotifyRecoveryStateChanged);
             _ownedPools.Add(pool);
             return pool;

@@ -38,6 +38,8 @@ public sealed class RespireServerResult<T>
 
 internal sealed partial class ServerCommands
 {
+    internal RespireServerNode CreateNode(RespireEndpoint endpoint) => new(client, endpoint);
+
     private const int MaxFanOutConcurrency = 8;
     private static readonly Verb ClusterNodes = new(-1, "CLUSTER", "NODES");
 
