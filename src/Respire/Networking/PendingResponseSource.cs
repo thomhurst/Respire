@@ -18,6 +18,8 @@ namespace Respire.Networking;
 internal abstract class PendingResponse
 {
     private CancellationTokenRegistration _cancellationRegistration;
+    // Friend-test inspection of admission cancellation; not a production coordination API.
+    internal CancellationToken RegisteredCancellationToken => _cancellationRegistration.Token;
 
     // Low bit: completed. Upper bits: reuse epoch, bumped every time the source goes back to
     // its pool. Completion is a CAS on the whole word so the deadline sweep — which peeks

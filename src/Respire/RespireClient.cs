@@ -3830,13 +3830,47 @@ public sealed partial class RespireClient : IRespireClient
     internal ValueTask<RespireConnection> AcquireConnectionAsync(CancellationToken cancellationToken)
         => AcquireConnectionAsync(slot: null, cancellationToken);
 
+    // Transactions arm an acquisition timer only when connection discovery can suspend.
+    private RespireConnection? TryAcquireReadyConnection(int? slot, CancellationToken cancellationToken)
+    {
+        ObjectDisposedException.ThrowIf(_core.Disposed, this);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_core.Cluster is { } cluster)
+            return cluster.TryAcquireReadyConnection(slot, cancellationToken);
+
+        var multiplexer = _core.Multiplexer;
+        if (_core.Sentinel is { } sentinel)
+        {
+            if (sentinel.Current is not { IsRetired: false } generation) return null;
+            multiplexer = generation.Multiplexer;
+        }
+        if (multiplexer is not { IsConnected: true }) return null;
+        try { return multiplexer.GetConnection(); }
+        catch (Exception error) when (error is RespireConnectionException or RespireConnectionRetiredException)
+        {
+            // Retirement can race the ready snapshot. The common cold path selects its replacement.
+            return null;
+        }
+    }
+
     internal ValueTask<RespireConnection> AcquireConnectionAsync(
         int? slot, CancellationToken cancellationToken, RespireReadFrom readFrom)
         => _core.Cluster is { } cluster
             ? cluster.GetReadConnectionAsync(slot, readFrom, cancellationToken)
             : AcquireConnectionAsync(slot, cancellationToken);
 
-    internal async ValueTask<RespireConnection> AcquireConnectionAsync(
+    internal ValueTask<RespireConnection> AcquireConnectionAsync(
+        int? slot, CancellationToken cancellationToken)
+    {
+        var acquisition = new CommandAcquisitionScope(cancellationToken, default, timeout: null);
+        return AcquireConnectionAsync(slot, ref acquisition);
+    }
+
+    internal ValueTask<RespireConnection> AcquireConnectionAsync(int? slot, ref CommandAcquisitionScope acquisition)
+        => TryAcquireReadyConnection(slot, acquisition.CallerToken) is { } ready
+            ? new(ready) : AcquireConnectionSlowAsync(slot, acquisition.Token);
+
+    private async ValueTask<RespireConnection> AcquireConnectionSlowAsync(
         int? slot, CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(_core.Disposed, this);

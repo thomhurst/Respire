@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Networking;
@@ -24,6 +25,8 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
     private readonly RespireClient _client;
     private readonly RespireHashImportSession? _importSession;
     private readonly RespireConnection? _watchConnection;
+    // Friend-test inspection of the pinned connection; ownership remains with the transaction.
+    internal RespireConnection? WatchConnection => _watchConnection;
     private readonly WriteBuffer _buffer = new(1024);
     private readonly List<TxOp> _ops = [];
     private int _clusterSlot;
@@ -250,6 +253,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
     }
 
     /// <summary>Executes the shared transaction path and reports a watched abort.</summary>
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private protected async ValueTask<bool> CommitCoreAsync(CancellationToken cancellationToken, bool validateEmptyWatch = false)
     {
         ThrowIfCompleted();
@@ -267,6 +271,9 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
             core.Options.Database,
             out telemetryOperation) : default;
         RespireConnection? connection = _importSession?.Connection ?? _watchConnection;
+        var timeout = core.Options.CommandTimeout;
+        var deadline = timeout is { } duration
+            ? CommandDeadline.After(Math.Max(1L, (long)duration.TotalMilliseconds)) : default;
         Exception? operationError = null;
         Exception? importError = null;
         var importTransactionStarted = false;
@@ -291,31 +298,9 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
             RespValue result;
             try
             {
-                // Transactions are not intentionally blocking, so CommandTimeout applies here
-                // exactly as it does on the regular send path.
-                if (_client.Core.Options.CommandTimeout is { } timeout)
-                {
-                    using var timeoutSource = CommandTimeoutCancellation.Create(
-                        cancellationToken,
-                        timeout);
-                    try
-                    {
-                        result = await SendAsync(timeoutSource.Token).ConfigureAwait(false);
-                    }
-                    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-                    {
-                        var diagnostics = core.Cluster is null && core.Sentinel is null
-                            ? core.Multiplexer.CaptureConnectionWait()
-                            : RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting);
-                        if (core.Sentinel is not null && connection is not null)
-                            diagnostics = connection.CaptureTimeoutDiagnostics();
-                        throw new RespireTimeoutException("MULTI/EXEC", timeout, null, diagnostics);
-                    }
-                }
-                else
-                {
-                    result = await SendAsync(cancellationToken).ConfigureAwait(false);
-                }
+                // The connection sweep owns EXEC's timeout. Acquisition alone needs a timer
+                // when it cannot use a ready connection; both stages share one absolute budget.
+                result = await SendAsync().ConfigureAwait(false);
 
                 // SendTransactionAsync drains through EXEC before completing, including when it
                 // returns a queue error or a null watched-abort reply. Redis has therefore cleared
@@ -460,21 +445,26 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
             }
         }
 
-        async ValueTask<RespValue> SendAsync(CancellationToken token)
+        [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+        async ValueTask<RespValue> SendAsync()
         {
             var slot = _hasClusterSlot ? _clusterSlot : (int?)null;
-            if (slot is null && core.Cluster is { } flushCluster
-                && _ops.Exists(static operation => operation.Operation is "FLUSHDB" or "FLUSHALL"))
-                slot = await flushCluster.GetPrimaryRoutingSlotAsync(token).ConfigureAwait(false);
+            var acquisition = new CommandAcquisitionScope(cancellationToken, deadline, timeout);
+            var importSubmissionAttempted = false;
             ClusterRouter.DiscoveryRound? discovery = null;
             var discoveryPending = false;
             try
             {
                 var cluster = core.Cluster;
+                acquisition.CheckDeadline("MULTI/EXEC", core, _importSession?.Connection);
+                if (slot is null && cluster is { } flushCluster
+                    && _ops.Exists(static operation => operation.Operation is "FLUSHDB" or "FLUSHALL"))
+                    slot = await flushCluster.GetPrimaryRoutingSlotAsync(acquisition.Token).ConfigureAwait(false);
                 for (var attempt = 0; ; attempt++)
                 {
-                    connection ??= await _client.AcquireConnectionAsync(slot, token)
-                        .ConfigureAwait(false);
+                    connection ??= await _client.AcquireConnectionAsync(slot, ref acquisition).ConfigureAwait(false);
+                    acquisition.Dispose();
+                    acquisition.CheckDeadline("MULTI/EXEC", core, _importSession?.Connection);
                     if (core.Sentinel is not null)
                         telemetry = RespireTelemetry.StartBatchOperation(
                             "MULTI", _ops, static op => op.Operation,
@@ -484,29 +474,34 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
                     {
                         if (_importSession is not null)
                         {
-                            credentialSequence = await connection.AcquireCredentialSequenceAsync(token).ConfigureAwait(false);
+                            if (!connection.TryAcquireCredentialSequence(cancellationToken, out credentialSequence))
+                                credentialSequence = await connection.AcquireCredentialSequenceAsync(
+                                    acquisition.Token).ConfigureAwait(false);
+                            acquisition.Dispose();
+                            acquisition.CheckDeadline("MULTI/EXEC", core, connection);
                             // This lease is exclusive: confirm MULTI before any import can
                             // reach Redis, including when ACLs allow HIMPORT but deny MULTI.
+                            importSubmissionAttempted = true;
                             using var multi = await _client.SendOnConnectionAsync("MULTI", connection,
-                                new Cmd(RespireCommands.Transaction.MULTI.Verb), token,
+                                new Cmd(RespireCommands.Transaction.MULTI.Verb), cancellationToken, commandDeadline: deadline,
                                 allowStreamingConnectionReroute: false).ConfigureAwait(false);
                             ResponseReader.ExpectOk(in multi);
                             importTransactionStarted = true;
                         }
-                        reply = await connection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count, token,
-                                core.Options.CommandTimeout, cancellationToken, includeMulti: _importSession is null)
+                        reply = await connection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count,
+                                cancellationToken, includeMulti: _importSession is null, commandDeadline: deadline)
                             .ConfigureAwait(false);
                         if (_importSession is not null && (reply.Type == RespDataType.Array || reply.IsNull
                             || reply.TransactionStateCleared))
                             importTransactionStarted = false;
                     }
                     catch (RespireConnectionRetiredException retirement) when (_watchConnection is null && _importSession is null
-                        && cluster is not null && cluster.CanRetryRetirement(attempt, token))
+                        && cluster is not null && cluster.CanRetryRetirement(attempt, cancellationToken))
                     {
                         // The transport rejects the complete MULTI/EXEC frame before accepting any part.
                         cluster.RecordRejection(ref discovery, connection, retirement);
                         discoveryPending = true;
-                        connection = await cluster.GetReplacementConnectionAsync(null, slot, null, token, discovery)
+                        connection = await cluster.GetReplacementConnectionAsync(null, slot, null, acquisition.Token, discovery)
                             .ConfigureAwait(false);
                         discoveryPending = false;
                         continue;
@@ -554,19 +549,46 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
 
                     cluster.RecordRejection(ref discovery, connection, redirect);
                     discoveryPending = true;
-                    connection = await cluster.GetRedirectConnectionAsync(redirect, connection, token, slot, discovery)
+                    connection = await cluster.GetRedirectConnectionAsync(redirect, connection, acquisition.Token, slot, discovery)
                         .ConfigureAwait(false);
                     discoveryPending = false;
                 }
             }
             catch (Exception error)
             {
-                if (_importSession is not null && error is RespireCommandNotSubmittedException)
-                    importError = error;
-                discovery?.RecordCommandFailure(error, discoveryPending, slot, callerToken: cancellationToken);
-                throw;
+                Exception failure = error;
+                if (error is OperationCanceledException canceled && acquisition.HasCancellation)
+                {
+                    if (acquisition.IsDeadlineCancellation(canceled))
+                        failure = acquisition.CreateTimeout("MULTI/EXEC", core, _importSession?.Connection, canceled);
+                    else if (acquisition.IsCallerCancellation(canceled))
+                    {
+                        OperationCanceledException callerFailure = new(error.Message, error, cancellationToken);
+                        failure = error is RespireCommandNotSubmittedException
+                            ? new RespireCommandNotSubmittedException(callerFailure) : callerFailure;
+                    }
+                }
+                if (_importSession is not null)
+                {
+                    if (error is RespireCommandNotSubmittedException) importError = error;
+                    else if (!importSubmissionAttempted)
+                    {
+                        if (failure is OperationCanceledException callerFailure)
+                            failure = importError = new RespireCommandNotSubmittedException(callerFailure);
+                        else if (failure is RespireTimeoutException)
+                            importError = new RespireCommandNotSubmittedException(
+                                new OperationCanceledException(failure.Message, failure, cancellationToken));
+                    }
+                }
+                discovery?.RecordCommandFailure(failure, discoveryPending, slot, callerToken: cancellationToken);
+                if (ReferenceEquals(failure, error)) throw;
+                throw failure;
             }
-            finally { discovery?.Finish(); }
+            finally
+            {
+                acquisition.Dispose();
+                discovery?.Finish();
+            }
         }
     }
 
@@ -764,6 +786,7 @@ public sealed class RespireTransaction : RespireTransactionBase
     /// Executes the transaction. Pendings hold their results after EXEC; per-command runtime
     /// errors fault only that command's pending.
     /// </summary>
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
     public async ValueTask CommitAsync(CancellationToken cancellationToken = default)
     {
         if (!await CommitCoreAsync(cancellationToken).ConfigureAwait(false))

@@ -57,6 +57,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private readonly CancellationTokenSource _closedCancellation = new();
     private readonly TaskCompletionSource _retiredSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly InflightRing _inflight;
+    // Friend tests inspect admitted sources; callers must arrange a quiescent connection.
+    internal InflightRing Inflight => _inflight;
     private readonly PendingResponsePool _sourcePool;
     private readonly ArrayPool<byte> _streamPayloadPool;
     private readonly int _receiveBufferSize;
@@ -1195,13 +1197,15 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// </summary>
     public ValueTask<RespValue> SendTransactionAsync(
         ReadOnlyMemory<byte> serializedCommands, int commandCount, CancellationToken cancellationToken = default,
-        TimeSpan? cancellationTimeout = null, CancellationToken callerCancellationToken = default, bool includeMulti = true)
+        TimeSpan? cancellationTimeout = null, CancellationToken callerCancellationToken = default, bool includeMulti = true,
+        CommandDeadline commandDeadline = default)
     {
         ValidateTransactionCapacity(commandCount, includeMulti);
         var prefixReplies = includeMulti ? 1 : 0;
         return SendMultiReplyCoreAsync(
             new TransactionCommand(serializedCommands, includeMulti), repliesBeforeFinal: commandCount + prefixReplies,
-            firstQueueReply: prefixReplies, cancellationToken, commandName: "MULTI/EXEC", cancellationTimeout, callerCancellationToken);
+            firstQueueReply: prefixReplies, cancellationToken, commandName: "MULTI/EXEC", cancellationTimeout, callerCancellationToken,
+            commandDeadline);
     }
 
     internal void ValidateTransactionCapacity(int commandCount, bool includeMulti = true)
@@ -2066,8 +2070,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         var remaining = deadline.Ticks - Environment.TickCount64;
         if (remaining <= 0)
         {
-            throw new RespireTimeoutException(commandName ?? "(command)", _commandTimeout!.Value, null,
-                CaptureTimeoutDiagnostics(stage: RespireCommandStage.WaitingForCapacity));
+            throw CreateCapacityTimeout(commandName, _commandTimeout!.Value);
         }
 
         try
@@ -2078,10 +2081,15 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
         catch (TimeoutException)
         {
-            throw new RespireTimeoutException(commandName ?? "(command)", _commandTimeout!.Value, null,
-                CaptureTimeoutDiagnostics(stage: RespireCommandStage.WaitingForCapacity));
+            throw CreateCapacityTimeout(commandName, _commandTimeout!.Value);
         }
     }
+
+    // Capacity waits end before ring admission, so cleanup can retain connection-local state.
+    private RespireTimeoutException CreateCapacityTimeout(string? commandName, TimeSpan timeout)
+        => new(commandName ?? "(command)", timeout, null,
+            CaptureTimeoutDiagnostics(stage: RespireCommandStage.WaitingForCapacity))
+        { IsCommandNotSubmitted = true };
 
     /// <summary>Returns a rented source that was never enqueued or exposed to a caller.</summary>
     private static void ReclaimUnpublished(PendingResponse source)

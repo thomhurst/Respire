@@ -1,3 +1,5 @@
+using Respire.Commands;
+using Respire.Networking;
 using Respire.Testing;
 using Respire.Tests.Networking;
 using System.Text;
@@ -9,6 +11,118 @@ namespace Respire.Tests;
 
 public class HashImportTests
 {
+    [Test]
+    [Arguments(false, false, 2)]
+    [Arguments(false, true, 2)]
+    [Arguments(true, false, 2)]
+    [Arguments(true, true, 2)]
+    [Arguments(false, false, 3)]
+    [Arguments(false, true, 3)]
+    [Arguments(true, false, 3)]
+    [Arguments(true, true, 3)]
+    public async Task FullRingFailurePreservesPreparedFieldsets(bool transaction, bool cancelCaller, int protocol)
+    {
+        var limit = TimeSpan.FromSeconds(10);
+        await using var server = new RespireFakeServer();
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with
+        {
+            Protocol = (RespProtocol)protocol, MaxInflightCommands = 2,
+            CommandTimeout = TimeSpan.FromSeconds(2),
+        });
+        await using var session = await client.Hashes.CreateImportSessionAsync();
+        await session.PrepareAsync("schema", "field");
+        var gate = new RespireFakeGate();
+        using var pause = server.InjectFault("PING", RespireFakeFault.Pause(gate));
+        using var multiProbe = server.InjectFault("MULTI", RespireFakeFault.Loading());
+        using var importProbe = server.InjectFault("HIMPORT", RespireFakeFault.Loading(), firstArgument: "SET"u8.ToArray());
+        var ping = new RawCommand(FakeRespServer.PingFrame);
+        var blockers = new[]
+        {
+            session.Connection.SendAsync(ping, armCommandDeadline: false).AsTask(),
+            session.Connection.SendAsync(ping, armCommandDeadline: false).AsTask(),
+        };
+        await pause.Matched.WaitAsync(limit);
+        await Assert.That(session.Connection.Inflight.Count).IsEqualTo(2);
+        using var caller = new CancellationTokenSource();
+        try
+        {
+            await using var multi = transaction ? session.CreateTransaction() : null;
+            var pending = multi?.Hashes.Import("unsent", "schema", "value");
+            Task operation = multi is null
+                ? session.SetAsync("unsent", "schema", ["value"], caller.Token).AsTask()
+                : multi.CommitAsync(caller.Token).AsTask();
+            if (cancelCaller)
+            {
+                caller.Cancel();
+                var error = await Assert.That(async () => await operation.WaitAsync(limit))
+                    .Throws<RespireCommandNotSubmittedException>();
+                await Assert.That(error!.CancellationToken).IsEqualTo(caller.Token);
+                if (pending is not null) await Assert.That(pending.Error).IsSameReferenceAs(error);
+            }
+            else
+            {
+                var error = await Assert.That(async () => await operation.WaitAsync(limit))
+                    .ThrowsExactly<RespireTimeoutException>();
+                await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.WaitingForCapacity);
+                await Assert.That(error.Diagnostics.InflightCount).IsEqualTo(2);
+                await Assert.That(error.IsCommandNotSubmitted).IsTrue();
+                if (pending is not null) await Assert.That(pending.Error).IsSameReferenceAs(error);
+            }
+        }
+        finally
+        {
+            gate.Release();
+            foreach (var reply in await Task.WhenAll(blockers).WaitAsync(limit))
+            {
+                using (reply) await Assert.That(reply.AsString()).IsEqualTo("PONG");
+            }
+        }
+        await Assert.That(multiProbe.MatchedCount).IsEqualTo(0);
+        await Assert.That(importProbe.MatchedCount).IsEqualTo(0);
+        importProbe.Dispose();
+        // These values depend on the previously prepared connection-local schema.
+        await Assert.That(await session.SetAsync("after", "schema", "retained")).IsTrue();
+        await Assert.That(await client.Hashes.GetStringAsync("after", "field")).IsEqualTo("retained");
+
+    }
+
+    [Test]
+    [Arguments(false, 2)]
+    [Arguments(true, 2)]
+    [Arguments(false, 3)]
+    [Arguments(true, 3)]
+    public async Task DeadlineAfterAdmissionExpiresSession(bool transaction, int protocol)
+    {
+        var limit = TimeSpan.FromSeconds(10);
+        await using var server = new RespireFakeServer();
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with
+        {
+            Protocol = (RespProtocol)protocol, CommandTimeout = TimeSpan.FromSeconds(2),
+        });
+        await using var session = await client.Hashes.CreateImportSessionAsync();
+        await session.PrepareAsync("schema", "field");
+        var gate = new RespireFakeGate();
+        using var pause = server.InjectFault(transaction ? "MULTI" : "HIMPORT",
+            RespireFakeFault.Pause(gate, afterExecution: true));
+        await using var multi = transaction ? session.CreateTransaction() : null;
+        var pending = multi?.Hashes.Import("key", "schema", "value");
+        Task operation = multi is null ? session.SetAsync("key", "schema", "value").AsTask() : multi.CommitAsync().AsTask();
+        try
+        {
+            await pause.Matched.WaitAsync(limit);
+            var error = await Assert.That(async () => await operation.WaitAsync(limit))
+                .ThrowsExactly<RespireTimeoutException>();
+            await Assert.That(error!.IsCommandNotSubmitted).IsFalse();
+            if (pending is not null) await Assert.That(pending.Error).IsSameReferenceAs(error);
+            await Assert.That(async () => await session.SetAsync("later", "schema", "value"))
+                .Throws<ObjectDisposedException>();
+            await Assert.That(pause.MatchedCount).IsEqualTo(1);
+            await Assert.That(await client.Hashes.GetStringAsync("key", "field"))
+                .IsEqualTo(transaction ? null : "value");
+        }
+        finally { gate.Release(); }
+    }
+
     [Test]
     [Arguments(2)]
     [Arguments(3)]

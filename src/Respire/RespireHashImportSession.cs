@@ -233,6 +233,7 @@ public sealed class RespireHashImportSession : IAsyncDisposable
 
     internal static bool RequiresExpiration(Exception error)
         => error is not RespireCommandNotSubmittedException
+            && error is not RespireTimeoutException { IsCommandNotSubmitted: true }
             && (error is not RespireServerException server || ClusterRouter.IsRedirect(server)
                 || server.Code == RespireErrorCodes.ReadOnly);
 
