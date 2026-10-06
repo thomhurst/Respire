@@ -489,17 +489,62 @@ public class ClusterReadOnlyTests
     [Test]
     public async Task StaleTopology_PreservesReadOnlyWithoutResendingWrite()
     {
+        var clock = new ClusterRecoveryTestClock();
         await using var replica = new FakeRespServer(ReadOnlyReply);
         await using var seed = new FakeRespServer(Topology(replica.Port));
-        await using var client = await ConnectAsync(seed.Port);
+        await using var client = await ConnectAsync(seed.Port, RecoveryRound, clock);
+        var refreshing = ObserveCommand(seed, "CLUSTER SLOTS");
+        var write = client.SetAsync("key", "value").AsTask();
 
-        var error = await Assert.That(async () => await client.SetAsync("key", "value").AsTask()
+        // This case must exercise a stale discovery reply, not deadline exhaustion
+        // before discovery. Keep recovery time frozen until the request is observed.
+        await refreshing.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(write.IsCompleted).IsFalse();
+        await seed.SendRawAsync(Topology(replica.Port));
+        var error = await Assert.That(async () => await write
             .WaitAsync(TimeSpan.FromSeconds(5))).Throws<RespireServerException>();
 
         await Assert.That(error!.Code).IsEqualTo(RespireErrorCodes.ReadOnly);
         await Assert.That(error.CommandName).IsEqualTo("SET");
         await Assert.That(replica.ReceivedCommands.Count(command => command.StartsWith("SET "))).IsEqualTo(1);
         await Assert.That(seed.CommandsSeen).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task ExpiredRecoveryDeadline_PreservesReadOnlyBeforeSeedDiscovery()
+    {
+        await using var replica = new FakeRespServer(ReadOnlyReply);
+        await using var seed = new FakeRespServer(Topology(replica.Port));
+        await using var client = await ConnectAsync(seed.Port, RecoveryRound, new ExpiredRecoveryClock());
+
+        var error = await Assert.That(async () => await client.SetAsync("key", "value").AsTask()
+            .WaitAsync(TimeSpan.FromSeconds(5))).Throws<RespireServerException>();
+
+        await Assert.That(error!.Code).IsEqualTo(RespireErrorCodes.ReadOnly);
+        await Assert.That(error.CommandName).IsEqualTo("SET");
+        await Assert.That(replica.ReceivedCommands).IsEquivalentTo(["SET key value"]);
+        // Negative control: expiration may preserve the same error without querying
+        // the seed again, so error preservation alone cannot prove stale discovery.
+        await Assert.That(seed.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
+    }
+
+    // Simulate a scheduling pause that spends the whole recovery deadline before the
+    // initiating continuation can query a seed. No wall-clock delay is needed.
+    private sealed class ExpiredRecoveryClock : TimeProvider
+    {
+        private readonly ClusterRecoveryTestClock _clock = new();
+        private int _expired;
+
+        public override long TimestampFrequency => _clock.TimestampFrequency;
+        public override long GetTimestamp() => _clock.GetTimestamp();
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = _clock.CreateTimer(callback, state, dueTime, period);
+            if (Interlocked.Exchange(ref _expired, 1) == 0)
+                _clock.Advance(dueTime);
+            return timer;
+        }
     }
 
     [Test]
@@ -1027,13 +1072,15 @@ public class ClusterReadOnlyTests
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(["SET key value"]);
     }
 
-    private static ValueTask<RespireClient> ConnectAsync(int port, TimeSpan? connectTimeout = null)
+    private static ValueTask<RespireClient> ConnectAsync(int port, TimeSpan? connectTimeout = null,
+        TimeProvider? recoveryClock = null)
         => RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Connections = 1,
             ConnectTimeout = connectTimeout ?? TimeSpan.FromSeconds(1),
+            ClusterRecoveryClock = recoveryClock ?? TimeProvider.System,
             CommandTimeout = null,
             Endpoints = { new RespireEndpoint("127.0.0.1", port) },
         });
