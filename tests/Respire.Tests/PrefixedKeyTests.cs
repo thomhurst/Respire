@@ -165,6 +165,7 @@ public class PrefixedKeyTests
             4 => ("before{", "unfinished"),
             5 => ("\uD800", "\uDC00tail"),
             6 => ("\uD800", "\uD801"),
+            7 => (new string('x', 1024) + "{", "tag}:£"),
             8 => ("tenant:", ""),
             9 => ("tenant:{fixed}:", new string('x', 8192)),
             10 => ("tenant:{outer{", "inner}:unused}"),
@@ -173,7 +174,7 @@ public class PrefixedKeyTests
             13 => ("tenant:{}:", "{later}:unused"),
             14 => ("tenant:", "{}{later}:unused"),
             15 => ("tenant:{" + new string('£', 512), "𐍈}:unused"),
-            _ => (new string('x', 1024) + "{", "tag}:£"),
+            _ => throw new ArgumentOutOfRangeException(nameof(scenario)),
         };
         await using var client = RespireClient.Create("localhost");
         var view = (RespireClient)client.WithKeyPrefix(prefix);

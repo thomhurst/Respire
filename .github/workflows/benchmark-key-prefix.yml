@@ -9,6 +9,7 @@ on:
       - 'src/Respire/Internal/KeyPrefix.cs'
       - 'src/Respire/Internal/ClusterHash.cs'
       - 'src/Respire/Protocol/RespWriter.cs'
+      - 'src/Respire/RespireBatch.cs'
       - 'benchmarks/Respire.Benchmarks/KeyPrefixBenchmarks.cs'
       - '.github/workflows/benchmark-key-prefix.yml'
       - '.github/workflows/benchmark-compare.yml'
@@ -24,8 +25,9 @@ jobs:
   compare:
     uses: ./.github/workflows/benchmark-compare.yml
     with:
-      baseline-sha: ${{ github.event.pull_request.base.sha }}
-      candidate-sha: ${{ github.event.pull_request.head.sha }}
+      event-base-sha: ${{ github.event.pull_request.base.sha }}
+      candidate-sha: ${{ github.sha }}
+      expected-head-sha: ${{ github.event.pull_request.head.sha }}
       fixture: benchmarks/Respire.Benchmarks/KeyPrefixBenchmarks.cs
       filter: '*KeyPrefixBenchmarks*'
       expected-case-count: 11
