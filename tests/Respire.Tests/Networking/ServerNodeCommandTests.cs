@@ -1,4 +1,9 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using System.Text;
+using Microsoft.Extensions.Logging;
+using Respire.Internal;
 using Respire.Protocol;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -8,6 +13,103 @@ namespace Respire.Tests.Networking;
 
 public class ServerNodeCommandTests
 {
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task ForcedFailoverPreservesEveryArgumentBoundaryAndOrder(int protocol)
+    {
+        await using var seed = Server(1);
+        await using var target = Server(1);
+        await using var client = await Connect(seed.Port, protocol, admin: true);
+        await client.Server.OnNode(new("127.0.0.1", target.Port)).FailoverAsync(new()
+        {
+            Target = new("replica", 6380), Force = true, Timeout = TimeSpan.FromMilliseconds(123),
+        });
+        byte[][] expected = ["FAILOVER"u8.ToArray(), "TO"u8.ToArray(), "replica"u8.ToArray(), "6380"u8.ToArray(),
+            "FORCE"u8.ToArray(), "TIMEOUT"u8.ToArray(), "123"u8.ToArray()];
+        var actual = target.ReceivedArguments[^1];
+        await Assert.That(actual.Length).IsEqualTo(expected.Length);
+        for (var index = 0; index < expected.Length; index++)
+            await Assert.That(actual[index].AsSpan().SequenceEqual(expected[index])).IsTrue();
+        await Assert.That(Commands(seed)).IsEmpty();
+    }
+
+    [Test]
+    [NotInParallel] // Activity and meter listeners are process-wide.
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task MigrateCredentialsStayOutOfClientTelemetryAndDiagnostics(bool auth2, bool fail)
+    {
+        const string password = "destination-password-unique";
+        const string username = "destination-user-unique";
+        await using var seed = Server(1);
+        await using var target = Server(1);
+        target.ReplyOverride = (_, command) =>
+        {
+            if (!command.StartsWith("MIGRATE ", StringComparison.Ordinal)) return null;
+            return fail ? "-ERR migration refused\r\n"u8.ToArray() : FakeRespServer.OkReply;
+        };
+        using var logger = new DiagnosticCapture();
+        using var metrics = new MetricConfigurationScope();
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", seed.Port)], Connections = 1, Protocol = RespProtocol.Resp2,
+            AllowAdmin = true, LoggerFactory = logger,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
+        });
+        var activities = new ConcurrentQueue<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == RespireTelemetry.Source.Name,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activity =>
+            {
+                if (activity.GetTagItem("db.operation.name") as string == "MIGRATE" && TestTelemetry.IsFrom(activity, target.Port))
+                    activities.Enqueue(activity);
+            },
+        };
+        ActivitySource.AddActivityListener(listener);
+        var measurements = new ConcurrentQueue<string>();
+        using var meter = new MeterListener();
+        meter.InstrumentPublished = (instrument, owner) =>
+        {
+            if (instrument.Meter.Name == RespireTelemetry.Meter.Name && instrument.Name == "db.client.operation.duration")
+                owner.EnableMeasurementEvents(instrument);
+        };
+        meter.SetMeasurementEventCallback<double>((_, _, tags, _) =>
+        {
+            if (TestTelemetry.IsFrom(tags, target.Port))
+                measurements.Enqueue(string.Join('\n', tags.ToArray().Select(tag => $"{tag.Key}={tag.Value}")));
+        });
+        meter.Start();
+        RespireServerException? error = null;
+        try
+        {
+            await client.Server.OnNode(new("127.0.0.1", target.Port)).MigrateAsync(new("destination", 6382), ["key"],
+                0, TimeSpan.FromSeconds(1), new() { Password = password, Username = auth2 ? username : null });
+        }
+        catch (RespireServerException caught) { error = caught; }
+        await Assert.That(error is not null).IsEqualTo(fail);
+        if (error is not null) await Assert.That(error.CommandName).IsEqualTo("MIGRATE");
+        var activity = activities.Single();
+        await Assert.That(activity.DisplayName).IsEqualTo("MIGRATE");
+        await Assert.That(activity.Status).IsEqualTo(fail ? ActivityStatusCode.Error : ActivityStatusCode.Unset);
+        await Assert.That(measurements.Count).IsEqualTo(1);
+        await Assert.That(logger.Messages).IsNotEmpty();
+        var diagnostics = string.Join('\n', logger.Messages.Concat(measurements)
+            .Concat(activity.TagObjects.Select(tag => $"{tag.Key}={tag.Value}"))
+            .Concat(activity.Events.SelectMany(item => item.Tags.Select(tag => $"{tag.Key}={tag.Value}"))))
+            + activity.StatusDescription + error?.ToString();
+        await Assert.That(diagnostics.Contains(password, StringComparison.Ordinal)).IsFalse();
+        await Assert.That(diagnostics.Contains(username, StringComparison.Ordinal)).IsFalse();
+        // Positive controls: authentication really travels on the wire, and capture is enabled.
+        var arguments = target.ReceivedArguments[^1];
+        await Assert.That(arguments.Any(argument => Encoding.UTF8.GetString(argument) == password)).IsTrue();
+        await Assert.That(arguments.Any(argument => Encoding.UTF8.GetString(argument) == username)).IsEqualTo(auth2);
+    }
+
     [Test]
     [Arguments(2)]
     [Arguments(3)]
@@ -222,7 +324,7 @@ public class ServerNodeCommandTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         target.SuppressReply = _ => { received.TrySetResult(); return true; };
         await using var client = await Connect(seed.Port, 3, admin: true);
-        await client.Server.OnNode(new("127.0.0.1", target.Port)).RequestShutdownAsync(new()
+        await client.Server.OnNode(new("127.0.0.1", target.Port)).SendShutdownAsync(new()
         { SaveMode = RespireShutdownSaveMode.NoSave, Now = true, Force = true }).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(target.ReceivedCommands).IsEquivalentTo(["SHUTDOWN NOSAVE NOW FORCE"]);
@@ -281,7 +383,7 @@ public class ServerNodeCommandTests
     private static Task Mutate(RespireServerNode node, string operation) => operation switch
     {
         "load" => node.AclLoadAsync().AsTask(), "save" => node.AclSaveAsync().AsTask(),
-        "shutdown" => node.RequestShutdownAsync().AsTask(), "abort-shutdown" => node.AbortShutdownAsync().AsTask(),
+        "shutdown" => node.SendShutdownAsync().AsTask(), "abort-shutdown" => node.AbortShutdownAsync().AsTask(),
         "failover" => node.FailoverAsync().AsTask(), "abort-failover" => node.AbortFailoverAsync().AsTask(),
         "replica" => node.ReplicaOfAsync(new("primary", 6379)).AsTask(), "promote" => node.PromoteToPrimaryAsync().AsTask(),
         "swap" => node.SwapDatabasesAsync(0, 1).AsTask(), "module-load" => node.ModuleLoadAsync("/module.so", []).AsTask(),
@@ -310,4 +412,17 @@ public class ServerNodeCommandTests
             Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
+
+    private sealed class DiagnosticCapture : ILoggerFactory, ILogger
+    {
+        internal ConcurrentQueue<string> Messages { get; } = new();
+        public ILogger CreateLogger(string categoryName) => this;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public void AddProvider(ILoggerProvider provider) { }
+        public void Dispose() { }
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+            => Messages.Enqueue(formatter(state, exception) + exception?.ToString());
+    }
 }

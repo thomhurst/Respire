@@ -61,7 +61,7 @@ including a failed or cancelled mutation.
 | `ModuleLoadAsync`, `ModuleLoadExtendedAsync`, `ModuleUnloadAsync` | `MODULE LOAD`, `MODULE LOADEX`, `MODULE UNLOAD` |
 | `BackupStartAsync`, `BackupSealAsync`, `BackupAbortAsync`, `BackupCleanupAsync` | `BACKUP START`, `SEAL`, `ABORT`, `CLEANUP` |
 | `ScriptKillAsync`, `FunctionKillAsync` | `SCRIPT KILL`, `FUNCTION KILL` |
-| `RequestShutdownAsync`, `AbortShutdownAsync` | `SHUTDOWN`, `SHUTDOWN ABORT` |
+| `SendShutdownAsync`, `AbortShutdownAsync` | `SHUTDOWN`, `SHUTDOWN ABORT` |
 | `MigrateAsync` | `MIGRATE` with `KEYS` |
 
 `FAILOVER` requires Redis 6.2; forced failover requires both a target and positive timeout.
@@ -87,14 +87,15 @@ Redis refuses to kill a script or function that has already written data. `NOTBU
 ## Shutdown and ambiguous outcomes
 
 ```csharp
-await node.RequestShutdownAsync(new RespireShutdownOptions
+RespireServerNode node = redis.Server.OnNode(new RespireEndpoint("redis-primary", 6379));
+await node.SendShutdownAsync(new RespireShutdownOptions
 {
     SaveMode = RespireShutdownSaveMode.NoSave,
     Now = true,
 });
 ```
 
-Redis sends **no success reply** for a normal shutdown. `RequestShutdownAsync` completes
+Redis sends **no success reply** for a normal shutdown. `SendShutdownAsync` completes
 after the command is written to the local socket. It does not confirm server acceptance
 or observe server-side errors. Verify shutdown separately. `NOW` skips waiting for replicas;
 `FORCE` can lose data when persistence fails. Both modifiers and `AbortShutdownAsync`
@@ -104,6 +105,20 @@ control handshake as the kill methods; a BUSY script requires `NOSAVE`.
 `MigrateAsync` accepts one or more physical keys, a TCP destination, destination database,
 and positive server timeout. `RespireMigrateOptions` selects `COPY`, `REPLACE`, and
 destination `AUTH` or `AUTH2`. The result distinguishes acknowledged `OK` from `NOKEY`.
+The [server timeout](https://redis.io/docs/latest/commands/migrate/) limits idle time during
+communication with the destination, not the total transfer duration. Respire's
+`CommandTimeout` and caller cancellation still apply independently; `MigrateAsync` does
+not extend them. Configure the client timeout for the expected total transfer time,
+including time spent transferring large values and waiting for replies. A client timeout
+can expire while Redis is still transferring keys, even when it exceeds the server timeout.
+For example, choose a five-second server idle timeout and a thirty-second client command
+budget only when thirty seconds covers the expected whole transfer.
+
+Respire's command telemetry records the operation name without MIGRATE arguments.
+Destination authentication credentials are not included. Client-generated diagnostics do not
+format those arguments. Original server errors are preserved; treat their text and
+server-side command logs according to the server's handling of sensitive data.
+
 Timeouts, errors, cancellation, and disconnects can leave a transfer or other lifecycle
 mutation partially applied. Inspect the affected servers before retrying. Respire never
 replays these operations automatically.

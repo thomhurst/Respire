@@ -1,5 +1,6 @@
 using Respire.Commands;
 using Respire.Internal;
+using Respire.Networking;
 using Respire.Protocol;
 
 namespace Respire;
@@ -62,7 +63,7 @@ public sealed class RespireServerNode
     /// <remarks>Completion confirms only the local socket write, not server acceptance or shutdown. Redis sends no
     /// success reply; server-side errors are not observed by this request API. Verify shutdown independently.
     /// Cancellation or transport failure after submission has an ambiguous outcome. The request is never replayed.</remarks>
-    public ValueTask RequestShutdownAsync(RespireShutdownOptions? options = null, CancellationToken cancellationToken = default)
+    public ValueTask SendShutdownAsync(RespireShutdownOptions? options = null, CancellationToken cancellationToken = default)
     {
         options ??= new();
         var arguments = new List<RespireValue>(3);
@@ -204,8 +205,10 @@ public sealed class RespireServerNode
         => ExecuteAsync("KEYS", [Snapshot(pattern, nameof(pattern))], AclParser.ByteStrings, cancellationToken);
 
     /// <summary>Migrates physical source keys to a TCP destination. Requires AllowAdmin. Redis: MIGRATE.</summary>
-    /// <remarks>Keys are snapshotted before I/O. Timeout is a positive server timeout in milliseconds. COPY/REPLACE and
-    /// destination authentication are optional. Errors, cancellation, and disconnects can leave keys at either server;
+    /// <remarks>Keys are snapshotted before I/O. Timeout is the positive server-side maximum idle transfer time,
+    /// not an overall transfer deadline. The client's CommandTimeout and caller cancellation apply independently;
+    /// configure them for the entire expected transfer duration. This method does not extend the client's timeout.
+    /// COPY/REPLACE and destination authentication are optional. Errors, cancellation, and disconnects can leave keys at either server;
     /// this method never redirects or replays. Reconcile both servers before retrying an ambiguous transfer.</remarks>
     public ValueTask<RespireMigrateResult> MigrateAsync(RespireEndpoint destination, ReadOnlySpan<RespireKey> keys,
         int database, TimeSpan timeout, RespireMigrateOptions? options = null, CancellationToken cancellationToken = default)
@@ -233,8 +236,20 @@ public sealed class RespireServerNode
 
     private delegate T ReplyParser<T>(in RespValue reply);
 
-    private async ValueTask<T> ExecuteAsync<T>(string operation, RespireValue[] arguments, ReplyParser<T> parser,
+    private ValueTask<T> ExecuteAsync<T>(string operation, RespireValue[] arguments, ReplyParser<T> parser,
         CancellationToken cancellationToken, bool mutation = false, bool controlConnection = false)
+        => WithNodeConnectionAsync(operation, mutation, controlConnection,
+            (Client: _client, Operation: operation, Arguments: arguments, Parser: parser),
+            static async (connection, state, token) =>
+            {
+                using var reply = await state.Client.SendOnPinnedConnectionAsync(state.Operation, connection,
+                    new CmdN(new Verb(-1, state.Operation), state.Arguments), token).ConfigureAwait(false);
+                return state.Parser(in reply);
+            }, cancellationToken);
+
+    private async ValueTask<T> WithNodeConnectionAsync<TState, T>(string operation, bool mutation, bool controlConnection,
+        TState state, Func<RespireConnection, TState, CancellationToken, ValueTask<T>> execute,
+        CancellationToken cancellationToken)
     {
         if (mutation) ServerCommands.EnsureAdminAllowed(_client, operation);
         ObjectDisposedException.ThrowIf(_client.Core.Disposed, _client);
@@ -246,9 +261,7 @@ public sealed class RespireServerNode
         {
             pool = _client.Core.CreateServerPool(Endpoint, controlConnection);
             var connection = await pool.RentAsync(cancellationToken).ConfigureAwait(false);
-            using var reply = await _client.SendOnPinnedConnectionAsync(operation, connection,
-                new CmdN(new Verb(-1, operation), arguments), cancellationToken).ConfigureAwait(false);
-            return parser(in reply);
+            return await execute(connection, state, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -262,25 +275,12 @@ public sealed class RespireServerNode
         => _ = await ExecuteAsync(operation, arguments, ServerNodeParser.Ok, cancellationToken, mutation: true, controlConnection).ConfigureAwait(false);
 
     private async ValueTask ShutdownWriteAsync(RespireValue[] arguments, CancellationToken cancellationToken)
-    {
-        ServerCommands.EnsureAdminAllowed(_client, "SHUTDOWN");
-        ObjectDisposedException.ThrowIf(_client.Core.Disposed, _client);
-        cancellationToken.ThrowIfCancellationRequested();
-        var cache = _client.Core.ClientCache;
-        var fence = cache is null ? default : cache.BeginUnknownMutation();
-        DedicatedConnectionPool? pool = null;
-        try
-        {
-            pool = _client.Core.CreateServerPool(Endpoint, controlConnection: true);
-            var connection = await pool.RentAsync(cancellationToken).ConfigureAwait(false);
-            await connection.SendFireAndForgetAsync(new CmdN(new Verb(-1, "SHUTDOWN"), arguments), cancellationToken, "SHUTDOWN").ConfigureAwait(false);
-        }
-        finally
-        {
-            try { if (pool is not null) await _client.Core.ReleaseServerPoolAsync(pool).ConfigureAwait(false); }
-            finally { if (fence.IsRequired) cache!.CompleteMutation(in fence); }
-        }
-    }
+        => _ = await WithNodeConnectionAsync("SHUTDOWN", mutation: true, controlConnection: true, arguments,
+            static async (connection, tokens, token) =>
+            {
+                await connection.SendFireAndForgetAsync(new CmdN(new Verb(-1, "SHUTDOWN"), tokens), token, "SHUTDOWN").ConfigureAwait(false);
+                return true;
+            }, cancellationToken).ConfigureAwait(false);
 
     private static RespireValue Snapshot(RespireValue value, string name)
     {
