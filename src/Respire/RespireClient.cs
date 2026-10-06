@@ -1474,7 +1474,7 @@ public sealed partial class RespireClient : IRespireClient
     /// <summary>Shares routing and encoding, but snapshots prefixed binary keys as batch facets resolve them.</summary>
     internal RespireClient ForDeferredBatch()
     {
-        if (_encodedKeyPrefix is null || _snapshotPrefixedBinaryKeys) return this;
+        if (_snapshotPrefixedBinaryKeys) return this;
         var cached = Volatile.Read(ref _deferredBatchClient);
         if (cached is not null) return cached;
         var created = new RespireClient(_core, _keyPrefix, ownsCore: false, readFrom: _readFrom,
@@ -1484,11 +1484,17 @@ public sealed partial class RespireClient : IRespireClient
 
     /// <inheritdoc/>
     public RespireKey ResolveKey(RespireKey key)
-        => _encodedKeyPrefix is null ? key : key.Prepend(_encodedKeyPrefix, _snapshotPrefixedBinaryKeys);
+    {
+        if (_encodedKeyPrefix is not null) return key.Prepend(_encodedKeyPrefix, _snapshotPrefixedBinaryKeys);
+        return _snapshotPrefixedBinaryKeys ? key.SnapshotIfPrefixed() : key;
+    }
 
     /// <summary>Resolves a user key to a command argument, applying this view's key prefix.</summary>
     internal RespireValue Key(in RespireKey key)
-        => _encodedKeyPrefix is null ? key.AsValue() : key.Prepend(_encodedKeyPrefix, _snapshotPrefixedBinaryKeys).AsValue();
+    {
+        if (_encodedKeyPrefix is not null) return key.Prepend(_encodedKeyPrefix, _snapshotPrefixedBinaryKeys).AsValue();
+        return _snapshotPrefixedBinaryKeys ? key.SnapshotIfPrefixed().AsValue() : key.AsValue();
+    }
 
     internal RespireValue[] MapKeys(ReadOnlySpan<RespireKey> keys)
     {

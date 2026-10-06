@@ -25,7 +25,8 @@ namespace Respire;
 /// (<c>ScanAsync</c>, <c>GetLeaseAsync</c>) have no deferred form. Script commands use
 /// <c>Evaluate</c> rather than the client's <c>ExecuteAsync</c> name and return owned results.
 /// Raw Execute supports known nonblocking key layouts and owned results. Unknown layouts are rejected.
-/// Prefixed binary keys are snapshotted when queued. Other binary arguments remain borrowed
+/// Prefixed binary keys are snapshotted when queued, including resolved keys passed to an
+/// unprefixed batch. Other binary arguments remain borrowed
 /// until execution completes unless their command explicitly snapshots them.
 /// Stream append, range, count, remove, trim, and acknowledge commands support deferred execution.
 /// Server flush commands affect only their execution node. Other server administration,

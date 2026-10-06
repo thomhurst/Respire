@@ -76,6 +76,9 @@ public readonly struct RespireKey : IEquatable<RespireKey>
         return _prefix is not null ? new RespireKey(_prefix, null, bytes) : new RespireKey(bytes);
     }
 
+    /// <summary>Owns an already-prefixed binary suffix while retaining ordinary keys' borrowing contract.</summary>
+    internal RespireKey SnapshotIfPrefixed() => _prefix is null ? this : Snapshot();
+
     internal byte[] ToBytes()
     {
         if (_prefix is null) return _string is null ? _bytes.ToArray() : Encoding.UTF8.GetBytes(_string);

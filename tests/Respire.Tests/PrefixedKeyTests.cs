@@ -14,10 +14,12 @@ namespace Respire.Tests;
 public class PrefixedKeyTests
 {
     [Test, NotInParallel]
-    public async Task CachedDeferredPrefixViewAllocatesNothing()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CachedDeferredViewAllocatesNothing(bool prefixed)
     {
         await using var client = RespireClient.Create("localhost");
-        var view = (RespireClient)client.WithKeyPrefix("tenant:{fixed}:");
+        var view = prefixed ? (RespireClient)client.WithKeyPrefix("tenant:{fixed}:") : client;
         _ = MeasureDeferredView(view, false);
         _ = MeasureDeferredView(view, true);
         var result = AllocationMeasurement.WithoutConcurrentGc(() => (
@@ -67,9 +69,37 @@ public class PrefixedKeyTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task QueuedPrefixedKeysOwnBinaryStorage(bool transaction)
+    public async Task RootDeferredViewsOwnResolvedPrefixesAndRetainOrdinaryBorrowing()
+    {
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", 1)], ReplicaEndpoints = [new("127.0.0.1", 2)],
+            ClientSideCache = new(),
+        });
+        var siblings = await Task.WhenAll(Enumerable.Range(0, 32).Select(_ => Task.Run(client.ForDeferredBatch)));
+        var deferred = siblings[0];
+        await Assert.That(siblings.All(sibling => ReferenceEquals(sibling, deferred))).IsTrue();
+        await Assert.That(ReferenceEquals(deferred, deferred.ForDeferredBatch())).IsTrue();
+        await Assert.That(ReferenceEquals(deferred.Core, client.Core)).IsTrue();
+        var replica = (RespireClient)deferred.WithReadFrom(RespireReadFrom.Replica);
+        RespireClient[] variants = [deferred, replica, replica.PrimaryReadView,
+            (RespireClient)deferred.WithoutClientCache()];
+        var bytes = "source"u8.ToArray();
+        var resolved = client.WithKeyPrefix("tenant:").ResolveKey(bytes);
+        var owned = variants.Select(variant => variant.ResolveKey(resolved)).ToArray();
+        var borrowed = variants.Select(variant => variant.ResolveKey(bytes)).ToArray();
+        bytes[0] = (byte)'X';
+        foreach (var key in owned) await Assert.That(key.ToString()).IsEqualTo("tenant:source");
+        foreach (var key in borrowed) await Assert.That(key.ToString()).IsEqualTo("Xource");
+        await Assert.That(resolved.ToString()).IsEqualTo("tenant:Xource");
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task QueuedPrefixedKeysOwnBinaryStorage(bool transaction, bool resolveBeforeQueueing)
     {
         var value = "$5\r\nvalue\r\n"u8.ToArray();
         byte[][] replies = transaction
@@ -79,15 +109,18 @@ public class PrefixedKeyTests
         await using var server = new FakeRespServer(replies);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var view = client.WithKeyPrefix("tenant:");
-        using var batch = transaction ? null : view.CreateBatch();
-        await using var tx = transaction ? view.CreateTransaction() : null;
+        var queueView = resolveBeforeQueueing ? client : view;
+        using var batch = transaction ? null : queueView.CreateBatch();
+        await using var tx = transaction ? queueView.CreateTransaction() : null;
         IRespireCommandQueue queue = tx ?? (IRespireCommandQueue)batch!;
         var source = "source"u8.ToArray();
         var destination = "target"u8.ToArray();
-        var set = queue.Strings.Set(source, "value");
-        var get = queue.Strings.Get<string>(source);
-        var rename = queue.Keys.Rename(source, destination);
-        var delete = queue.Keys.Delete(source, destination);
+        RespireKey sourceKey = resolveBeforeQueueing ? view.ResolveKey(source) : source;
+        RespireKey destinationKey = resolveBeforeQueueing ? view.ResolveKey(destination) : destination;
+        var set = queue.Strings.Set(sourceKey, "value");
+        var get = queue.Strings.Get<string>(sourceKey);
+        var rename = queue.Keys.Rename(sourceKey, destinationKey);
+        var delete = queue.Keys.Delete(sourceKey, destinationKey);
         source[0] = (byte)'X';
         destination[0] = (byte)'Y';
         if (tx is not null) await tx.CommitAsync();

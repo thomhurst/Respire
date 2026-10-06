@@ -28,7 +28,7 @@ jobs:
       candidate-sha: ${{ github.event.pull_request.head.sha }}
       fixture: benchmarks/Respire.Benchmarks/KeyPrefixBenchmarks.cs
       filter: '*KeyPrefixBenchmarks*'
-      expected-case-count: 10
-      expected-methods: PlainStringGet,PrefixedStringGet,PlainBinaryGet,PrefixedBinaryGet,CreatePrefixView,CreatePrefixedBatch,ReadInitializedFacet,FixedTagLargeTextSlot,FixedTagLargeBinarySlot,SplitTagLargeTextSlot
+      expected-case-count: 11
+      expected-methods: PlainStringGet,PrefixedStringGet,PlainBinaryGet,PrefixedBinaryGet,CreatePrefixView,CreatePlainBatch,CreatePrefixedBatch,ReadInitializedFacet,FixedTagLargeTextSlot,FixedTagLargeBinarySlot,SplitTagLargeTextSlot
       zero-allocation-methods: PlainStringGet,PrefixedStringGet,PlainBinaryGet,PrefixedBinaryGet,FixedTagLargeTextSlot,FixedTagLargeBinarySlot,SplitTagLargeTextSlot
       artifact-prefix: key-prefix-comparison
