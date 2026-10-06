@@ -107,8 +107,12 @@ and positive server timeout. `RespireMigrateOptions` selects `COPY`, `REPLACE`, 
 destination `AUTH` or `AUTH2`. The result distinguishes acknowledged `OK` from `NOKEY`.
 The [server timeout](https://redis.io/docs/latest/commands/migrate/) limits idle time during
 communication with the destination, not the total transfer duration. Respire's
-`CommandTimeout` and caller cancellation still apply independently; `MigrateAsync` does
-not extend them. Configure the client timeout for the expected total transfer time,
+`CommandTimeout` and caller cancellation still apply independently. Set
+`RespireMigrateOptions.CommandTimeout` to override the client response budget for this
+call and its dedicated connection setup; null inherits the shared client's setting.
+The override must be at least one millisecond and does not change other operations,
+`ConnectionIdleReadTimeout`, or caller cancellation. Respire never extends these budgets
+automatically. Configure the client timeout for the expected total transfer time,
 including time spent transferring large values and waiting for replies. A client timeout
 can expire while Redis is still transferring keys, even when it exceeds the server timeout.
 For example, choose a five-second server idle timeout and a thirty-second client command

@@ -38,6 +38,10 @@ public sealed record RespireFailoverOptions
 /// <summary>Options for MIGRATE. Credentials authenticate to the destination server.</summary>
 public sealed record RespireMigrateOptions
 {
+    /// <summary>Optional client response budget for this migration and its dedicated connection setup.
+    /// Must be at least one millisecond. Null inherits RespireOptions.CommandTimeout.
+    /// Does not change the server idle timeout, connection idle-read timeout, or caller cancellation.</summary>
+    public TimeSpan? CommandTimeout { get; init; }
     /// <summary>Leaves source keys in place after transfer.</summary>
     public bool Copy { get; init; }
     /// <summary>Replaces existing destination keys.</summary>

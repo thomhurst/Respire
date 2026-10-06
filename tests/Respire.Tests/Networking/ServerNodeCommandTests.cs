@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Net.Sockets;
 using System.Text;
 using Microsoft.Extensions.Logging;
 using Respire.Internal;
@@ -13,6 +14,173 @@ namespace Respire.Tests.Networking;
 
 public class ServerNodeCommandTests
 {
+    [Test]
+    public async Task ControlOptionsPreserveTransportAndAuthenticationWithoutOrdinarySetup()
+    {
+        var options = new RespireOptions
+        {
+            Protocol = RespProtocol.Resp3, Database = 4, ClientName = "configured", UseCluster = true,
+            ClientAvailabilityZone = "zone", ClientSideCache = new(),
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            Username = "user", Password = "password", UseTls = true,
+            ConnectTimeout = TimeSpan.FromSeconds(7), CommandTimeout = TimeSpan.FromSeconds(11),
+            ConnectionIdleReadTimeout = TimeSpan.FromSeconds(13),
+        };
+        var ordinary = options.ToConnectionOptions(enableClientTracking: true, enableMaintenanceNotifications: true);
+        var control = options.ToControlConnectionOptions();
+        await Assert.That(ordinary.Protocol).IsEqualTo(RespProtocol.Resp3);
+        await Assert.That(ordinary.Database).IsEqualTo(4);
+        await Assert.That(ordinary.RequireClusterDatabaseSupport && ordinary.DiscoverAvailabilityZone
+            && ordinary.EnableClientTracking).IsTrue();
+        await Assert.That(ordinary.MaintenanceNotifications).IsEqualTo(RespireMaintenanceNotificationMode.Enabled);
+        await Assert.That(control.Protocol).IsEqualTo(RespProtocol.Resp2);
+        await Assert.That(control.Database).IsEqualTo(0);
+        await Assert.That(control.ClientName).IsNull();
+        await Assert.That(control.RequireClusterDatabaseSupport || control.DiscoverAvailabilityZone
+            || control.EnableClientTracking || control.ReadOnly).IsFalse();
+        await Assert.That(control.MaintenanceNotifications).IsEqualTo(RespireMaintenanceNotificationMode.Disabled);
+        await Assert.That(control.PushHandler).IsNull();
+        await Assert.That(control.Username).IsEqualTo(options.Username);
+        await Assert.That(control.Password).IsEqualTo(options.Password);
+        await Assert.That(control.UseTls).IsTrue();
+        await Assert.That(control.ConnectTimeout).IsEqualTo(options.ConnectTimeout);
+        await Assert.That(control.CommandTimeout).IsEqualTo(options.CommandTimeout);
+        await Assert.That(control.ResponseTimeout).IsEqualTo(options.ConnectionIdleReadTimeout);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task UnixNodeHandlesFromTcpClientsDoNotNegotiateMaintenance(bool control)
+    {
+        await using var target = Server(1);
+        var opened = new TaskCompletionSource<RespireEndpoint>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", 6379)], Protocol = RespProtocol.Resp3, AllowAdmin = true,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            TestingStreamFactory = async (host, port, token) =>
+            {
+                opened.TrySetResult(new(host, port));
+                var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+                try
+                {
+                    await socket.ConnectAsync("127.0.0.1", target.Port, token);
+                    return new NetworkStream(socket, ownsSocket: true);
+                }
+                catch { socket.Dispose(); throw; }
+            },
+        });
+        var endpoint = RespireEndpoint.UnixSocket("/tmp/respire-node.sock");
+        var node = client.Server.OnNode(endpoint);
+        await (control ? node.ScriptKillAsync() : node.AclSaveAsync());
+        await Assert.That(await opened.Task).IsEqualTo(endpoint);
+        await Assert.That(Commands(target)).IsEquivalentTo([control ? "SCRIPT KILL" : "ACL SAVE"]);
+        await Assert.That(target.ReceivedCommands.Count(command => command == "HELLO 3")).IsEqualTo(control ? 0 : 1);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task MigrateTimeoutOverrideCanShortenOrExtendOnlyItsOwnConnection(bool extend)
+    {
+        await using var target = Server(2);
+        var received = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        target.SuppressReply = command =>
+        {
+            if (!command.StartsWith("MIGRATE ", StringComparison.Ordinal)) return extend && command == "SCRIPT KILL";
+            received.TrySetResult(target.ReceivedConnectionIds[^1]);
+            return true;
+        };
+        var shortBudget = TimeSpan.FromMilliseconds(100);
+        var longBudget = TimeSpan.FromSeconds(30);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", 6379)], Protocol = RespProtocol.Resp2, AllowAdmin = true,
+            CommandTimeout = extend ? shortBudget : longBudget,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
+        });
+        var node = client.Server.OnNode(new("127.0.0.1", target.Port));
+        var migration = node.MigrateAsync(new("destination", 6382), ["key"], 0, TimeSpan.FromSeconds(1),
+            new() { CommandTimeout = extend ? longBudget : shortBudget }).AsTask();
+        var connection = await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        if (extend)
+        {
+            // A real inherited deadline expires before releasing the overridden migration.
+            await Assert.That(async () => await node.ScriptKillAsync()).ThrowsExactly<RespireTimeoutException>();
+            await Assert.That(migration.IsCompleted).IsFalse();
+            await target.SendRawAsync(FakeRespServer.OkReply, connection);
+            await Assert.That(await migration).IsEqualTo(RespireMigrateResult.Migrated);
+        }
+        else
+        {
+            var error = await Assert.That(async () => await migration).ThrowsExactly<RespireTimeoutException>();
+            await Assert.That(error!.CommandName).IsEqualTo("MIGRATE");
+            await node.ScriptKillAsync();
+        }
+        await Assert.That(client.Core.Options.CommandTimeout).IsEqualTo(extend ? shortBudget : longBudget);
+        await Assert.That(target.ReceivedCommands).IsEquivalentTo([
+            "MIGRATE destination 6382  0 1000 KEYS key", "SCRIPT KILL"]);
+    }
+
+    [Test]
+    [Arguments(-1L)]
+    [Arguments(0L)]
+    [Arguments(9999L)]
+    public async Task InvalidMigrateClientTimeoutDoesNotConnect(long ticks)
+    {
+        await using var target = Server(1);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", 6379)], AllowAdmin = true,
+        });
+        var error = await Assert.That(async () => await client.Server.OnNode(new("127.0.0.1", target.Port))
+            .MigrateAsync(new("destination", 6382), ["key"], 0, TimeSpan.FromSeconds(1),
+                new() { CommandTimeout = TimeSpan.FromTicks(ticks) })).ThrowsExactly<ArgumentOutOfRangeException>();
+        await Assert.That(error!.Message).Contains("MIGRATE CommandTimeout must be at least one millisecond.");
+        await Assert.That(target.ConnectionAccepted.IsCompleted).IsFalse();
+    }
+
+    [Test]
+    public async Task ShutdownDoesNotCompleteOrDisposeBeforeSocketWriteFinishes()
+    {
+        await using var target = Server(1);
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        target.SuppressReply = _ => { received.TrySetResult(); return true; };
+        var opened = new TaskCompletionSource<GatedWriteStream>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", 6379)], AllowAdmin = true,
+            TestingStreamFactory = async (host, port, token) =>
+            {
+                var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+                try
+                {
+                    await socket.ConnectAsync(host, port, token);
+                    var stream = new GatedWriteStream(socket);
+                    opened.TrySetResult(stream);
+                    return stream;
+                }
+                catch { socket.Dispose(); throw; }
+            },
+        });
+        var pending = client.Server.OnNode(new("127.0.0.1", target.Port)).SendShutdownAsync().AsTask();
+        var transport = await opened.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            await transport.WriteStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(pending.IsCompleted).IsFalse();
+            await Assert.That(transport.Disposed).IsFalse();
+            await Assert.That(target.ReceivedCommands).IsEmpty();
+        }
+        finally { transport.ReleaseWrite.TrySetResult(); }
+        await pending.WaitAsync(TimeSpan.FromSeconds(5));
+        await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await target.PeerClosed.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(target.ReceivedCommands).IsEquivalentTo(["SHUTDOWN"]);
+        await Assert.That(transport.Disposed).IsTrue();
+    }
+
     [Test]
     [Arguments(2)]
     [Arguments(3)]
@@ -424,5 +592,26 @@ public class ServerNodeCommandTests
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
             Func<TState, Exception?, string> formatter)
             => Messages.Enqueue(formatter(state, exception) + exception?.ToString());
+    }
+
+    private sealed class GatedWriteStream(Socket socket) : NetworkStream(socket, ownsSocket: true)
+    {
+        internal TaskCompletionSource WriteStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource ReleaseWrite { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal bool Disposed { get; private set; }
+
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            WriteStarted.TrySetResult();
+            await ReleaseWrite.Task.WaitAsync(cancellationToken);
+            await base.WriteAsync(buffer, cancellationToken);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            Disposed = true;
+            ReleaseWrite.TrySetResult();
+            base.Dispose(disposing);
+        }
     }
 }

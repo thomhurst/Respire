@@ -207,7 +207,8 @@ public sealed class RespireServerNode
     /// <summary>Migrates physical source keys to a TCP destination. Requires AllowAdmin. Redis: MIGRATE.</summary>
     /// <remarks>Keys are snapshotted before I/O. Timeout is the positive server-side maximum idle transfer time,
     /// not an overall transfer deadline. The client's CommandTimeout and caller cancellation apply independently;
-    /// configure them for the entire expected transfer duration. This method does not extend the client's timeout.
+    /// configure them for the entire expected transfer duration. RespireMigrateOptions.CommandTimeout can override
+    /// the client response budget for this call without changing the shared client's timeout.
     /// COPY/REPLACE and destination authentication are optional. Errors, cancellation, and disconnects can leave keys at either server;
     /// this method never redirects or replays. Reconcile both servers before retrying an ambiguous transfer.</remarks>
     public ValueTask<RespireMigrateResult> MigrateAsync(RespireEndpoint destination, ReadOnlySpan<RespireKey> keys,
@@ -217,6 +218,8 @@ public sealed class RespireServerNode
         ArgumentOutOfRangeException.ThrowIfNegative(database);
         if (keys.IsEmpty) throw new ArgumentException("At least one key is required.", nameof(keys));
         options ??= new();
+        if (options.CommandTimeout is { } commandTimeout && commandTimeout < TimeSpan.FromMilliseconds(1))
+            throw new ArgumentOutOfRangeException(nameof(options), "MIGRATE CommandTimeout must be at least one millisecond.");
         if (options.Username is not null && options.Password is null)
             throw new ArgumentException("Destination username requires a password.", nameof(options));
         var tokens = new List<RespireValue>(keys.Length + 12)
@@ -231,13 +234,15 @@ public sealed class RespireServerNode
         }
         tokens.Add("KEYS");
         foreach (var key in keys) tokens.Add(key.AsValue().Snapshot());
-        return ExecuteAsync("MIGRATE", tokens.ToArray(), ServerNodeParser.Migration, cancellationToken, mutation: true);
+        return ExecuteAsync("MIGRATE", tokens.ToArray(), ServerNodeParser.Migration, cancellationToken, mutation: true,
+            commandTimeout: options.CommandTimeout);
     }
 
     private delegate T ReplyParser<T>(in RespValue reply);
 
     private ValueTask<T> ExecuteAsync<T>(string operation, RespireValue[] arguments, ReplyParser<T> parser,
-        CancellationToken cancellationToken, bool mutation = false, bool controlConnection = false)
+        CancellationToken cancellationToken, bool mutation = false, bool controlConnection = false,
+        TimeSpan? commandTimeout = null)
         => WithNodeConnectionAsync(operation, mutation, controlConnection,
             (Client: _client, Operation: operation, Arguments: arguments, Parser: parser),
             static async (connection, state, token) =>
@@ -245,11 +250,11 @@ public sealed class RespireServerNode
                 using var reply = await state.Client.SendOnPinnedConnectionAsync(state.Operation, connection,
                     new CmdN(new Verb(-1, state.Operation), state.Arguments), token).ConfigureAwait(false);
                 return state.Parser(in reply);
-            }, cancellationToken);
+            }, cancellationToken, commandTimeout);
 
     private async ValueTask<T> WithNodeConnectionAsync<TState, T>(string operation, bool mutation, bool controlConnection,
         TState state, Func<RespireConnection, TState, CancellationToken, ValueTask<T>> execute,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, TimeSpan? commandTimeout = null)
     {
         if (mutation) ServerCommands.EnsureAdminAllowed(_client, operation);
         ObjectDisposedException.ThrowIf(_client.Core.Disposed, _client);
@@ -259,7 +264,7 @@ public sealed class RespireServerNode
         DedicatedConnectionPool? pool = null;
         try
         {
-            pool = _client.Core.CreateServerPool(Endpoint, controlConnection);
+            pool = _client.Core.CreateServerPool(Endpoint, controlConnection, commandTimeout);
             var connection = await pool.RentAsync(cancellationToken).ConfigureAwait(false);
             return await execute(connection, state, cancellationToken).ConfigureAwait(false);
         }

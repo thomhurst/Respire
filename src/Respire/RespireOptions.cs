@@ -580,9 +580,28 @@ public sealed record RespireOptions
         RespirePushHandler? pushHandler = null,
         bool enableClientTracking = false,
         bool enableMaintenanceNotifications = false)
-        => new()
+        => ToTransportConnectionOptions() with
         {
             MaintenanceNotifications = enableMaintenanceNotifications ? MaintenanceNotifications : RespireMaintenanceNotificationMode.Disabled,
+            ClientName = ClientName,
+            Database = Database,
+            RequireClusterDatabaseSupport = UseCluster && Database != 0,
+            DiscoverAvailabilityZone = ClientAvailabilityZone is not null,
+            Protocol = Protocol,
+            PushHandler = pushHandler,
+            EnableClientTracking = enableClientTracking,
+            ClientTrackingOptions = enableClientTracking && ClientSideCache is { } cache
+                ? new(cache.TrackingMode, cache.KeyPrefixes) : default,
+        };
+
+    // BUSY permits AUTH but can block all other setup. Construct control options from
+    // transport/authentication fields only, so new ordinary setup is not inherited.
+    internal RespireConnectionOptions ToControlConnectionOptions()
+        => ToTransportConnectionOptions() with { Protocol = RespProtocol.Resp2 };
+
+    private RespireConnectionOptions ToTransportConnectionOptions()
+        => new()
+        {
             MaintenanceRelaxedTimeout = MaintenanceRelaxedTimeout,
             MaintenanceWindowTimeout = MaintenanceWindowTimeout,
             TestingStreamFactory = TestingStreamFactory,
@@ -598,21 +617,12 @@ public sealed record RespireOptions
             CredentialRefreshBeforeExpiry = CredentialRefreshBeforeExpiry,
             CredentialRefreshRetryDelay = CredentialRefreshRetryDelay,
             CredentialTimeProvider = CredentialTimeProvider,
-            ClientName = ClientName,
-            Database = Database,
-            RequireClusterDatabaseSupport = UseCluster && Database != 0,
-            DiscoverAvailabilityZone = ClientAvailabilityZone is not null,
-            Protocol = Protocol,
             TcpKeepAliveTime = TcpKeepAliveTime,
             TcpKeepAliveInterval = TcpKeepAliveInterval,
             TcpKeepAliveRetryCount = TcpKeepAliveRetryCount,
             ReceiveBufferSize = ReceiveBufferSize,
             WriteBufferSize = WriteBufferSize,
             MaxInflightCommands = MaxInflightCommands,
-            PushHandler = pushHandler,
-            EnableClientTracking = enableClientTracking,
-            ClientTrackingOptions = enableClientTracking && ClientSideCache is { } cache
-                ? new(cache.TrackingMode, cache.KeyPrefixes) : default,
         };
 
     /// <summary>
