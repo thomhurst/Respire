@@ -28,6 +28,7 @@ public sealed partial class RespireClient
             var response = sender.Send(multiplexer.GetConnection(), operation, in command, cancellationToken);
             return mutationFence.IsRequired ? CompleteMutationAsync(response, cache!, mutationFence) : response;
         }
+        // _core is readonly: this filter observes the same core captured by the caller.
         catch (Exception error) when (_core.Sentinel is not null)
         {
             return CaptureReadySendFailure<TResult>(error, cache, mutationFence);
