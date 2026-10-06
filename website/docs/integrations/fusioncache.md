@@ -94,6 +94,12 @@ complete. Concurrent teardown callers join the same work. Disposing the shared c
 exhausting its reconnect policy ends the subscription; publishing on that ended subscription
 fails explicitly. Publishing before subscription or after disposal also fails.
 
+A terminal subscription end is logged, rather than reported as a reconnect notification.
+It does not clear the instance's subscription state automatically. To reuse the backplane,
+await `UnsubscribeAsync` (or call `Unsubscribe`), then call `SubscribeAsync` (or `Subscribe`)
+again once the shared client can connect. If the caller has disposed that client, create a
+replacement client and a new backplane instance instead.
+
 Cancellation passed to publishing reaches Respire. As with other network writes, cancellation
 after submission does not prove that Redis did not accept the notification. In-flight
 publishes may complete while teardown starts.
