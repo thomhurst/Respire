@@ -29,15 +29,19 @@ def validate_cluster(output):
         raise RuntimeError("Cluster sample completion is missing.")
 
 
+def primary_rows(output, port):
+    return re.finditer(rf"^PASS \d+: primary 127\.0\.0\.1:{port}\s*$", output, re.M)
+
+
 def has_primary(output, port):
-    return re.search(rf"^PASS \d+: primary 127\.0\.0\.1:{port}\s*$", output, re.M) is not None
+    return next(primary_rows(output, port), None) is not None
 
 
 def validate_sentinel(output, before, after):
     if before == after or {before, after} != {7100, 7101}:
         raise RuntimeError("Sentinel did not promote the other configured primary endpoint.")
-    initial = re.search(rf"^PASS \d+: primary 127\.0\.0\.1:{before}\s*$", output, re.M)
-    promoted = list(re.finditer(rf"^PASS \d+: primary 127\.0\.0\.1:{after}\s*$", output, re.M))
+    initial = next(primary_rows(output, before), None)
+    promoted = primary_rows(output, after)
     if initial is None or not any(row.start() > initial.start() for row in promoted):
         raise RuntimeError("The sample must succeed on the promoted primary after success on the initial primary.")
     if not re.search(r"^Sentinel sample completed: [1-9]\d* successful round trips\.\s*$", output, re.M):
