@@ -291,14 +291,17 @@ public class PrefixedKeyTests
     }
 
     [Test]
-    public async Task ConcurrentFacetAccessReturnsOneInstanceOwnedByItsView()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ConcurrentFacetAccessReturnsOneInstanceOwnedByItsView(bool arrays)
     {
         await using var client = RespireClient.Create("localhost");
         var first = client.WithKeyPrefix("first:");
         var second = client.WithKeyPrefix("second:");
-        var facets = await Task.WhenAll(Enumerable.Range(0, 32).Select(_ => Task.Run(() => first.Strings)));
-        await Assert.That(facets.All(facet => ReferenceEquals(facet, first.Strings))).IsTrue();
-        await Assert.That(ReferenceEquals(first.Strings, second.Strings)).IsFalse();
+        object Facet(IRespireClient view) => arrays ? view.Arrays : view.Strings;
+        var facets = await Task.WhenAll(Enumerable.Range(0, 32).Select(_ => Task.Run(() => Facet(first))));
+        await Assert.That(facets.All(facet => ReferenceEquals(facet, Facet(first)))).IsTrue();
+        await Assert.That(ReferenceEquals(Facet(first), Facet(second))).IsFalse();
         await Assert.That(ReferenceEquals(first.Keys, first.Keys)).IsTrue();
     }
 
@@ -308,25 +311,31 @@ public class PrefixedKeyTests
         await using var client = RespireClient.Create("localhost");
         _ = MeasureView(client, false);
         _ = MeasureView(client, true);
+        _ = MeasureView(client, false, arraysOnly: true);
         var result = AllocationMeasurement.WithoutConcurrentGc(() => (
-            View: MeasureView(client, false), WithFacets: MeasureView(client, true)));
-        // Each facet is a distinct object holding its view. Accessing all fifteen must
-        // allocate at least fifteen pointer-sized fields beyond creating the view alone.
-        await Assert.That(result.WithFacets - result.View).IsGreaterThanOrEqualTo(15 * IntPtr.Size);
+            View: MeasureView(client, false), WithArray: MeasureView(client, false, arraysOnly: true),
+            WithFacets: MeasureView(client, true)));
+        // The newly added array facet must also be deferred until first access.
+        await Assert.That(result.WithArray).IsGreaterThan(result.View);
+        // Each facet is a distinct object holding its view. Accessing all sixteen must
+        // allocate at least sixteen pointer-sized fields beyond creating the view alone.
+        await Assert.That(result.WithFacets - result.View).IsGreaterThanOrEqualTo(16 * IntPtr.Size);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static long MeasureView(RespireClient client, bool facets)
+    private static long MeasureView(RespireClient client, bool facets, bool arraysOnly = false)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
         var view = client.WithKeyPrefix("tenant:");
-        if (facets)
+        if (arraysOnly) GC.KeepAlive(view.Arrays);
+        else if (facets)
         {
             GC.KeepAlive(view.Strings);
             GC.KeepAlive(view.Keys);
             GC.KeepAlive(view.Locks);
             GC.KeepAlive(view.Hashes);
             GC.KeepAlive(view.Lists);
+            GC.KeepAlive(view.Arrays);
             GC.KeepAlive(view.Sets);
             GC.KeepAlive(view.SortedSets);
             GC.KeepAlive(view.Streams);
