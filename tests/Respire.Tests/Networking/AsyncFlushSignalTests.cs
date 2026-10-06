@@ -29,19 +29,22 @@ public class AsyncFlushSignalTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task ConcurrentPublicationAndRearmingDoNotLoseTheFinalWake(bool preferInline)
+    public async Task ConcurrentPublicationAndRearmingDrainEveryPublishedItem(bool preferInline)
     {
         const int producers = 8;
         const int perProducer = 1_000;
         var signal = new AsyncFlushSignal();
-        var published = 0;
+        var gate = new object();
+        var buffer = new Queue<int>();
+        var observed = new bool[producers * perProducer];
+        var drained = 0;
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         var pending = signal.WaitAsync();
-        var writers = Enumerable.Range(0, producers).Select(_ => Task.Run(() =>
+        var writers = Enumerable.Range(0, producers).Select(producer => Task.Run(() =>
         {
             for (var i = 0; i < perProducer; i++)
             {
-                Interlocked.Increment(ref published);
+                lock (gate) buffer.Enqueue(producer * perProducer + i);
                 signal.Signal(preferInline);
                 if (i % 16 == 0) Thread.Yield();
             }
@@ -50,11 +53,21 @@ public class AsyncFlushSignalTests
         do
         {
             await pending.AsTask().WaitAsync(deadline.Token);
-            if (Volatile.Read(ref published) == producers * perProducer) break;
+            lock (gate)
+            {
+                while (buffer.TryDequeue(out var item))
+                {
+                    if (observed[item]) throw new InvalidOperationException("A published item was drained twice.");
+                    observed[item] = true;
+                    drained++;
+                }
+            }
+            if (drained == observed.Length) break;
             pending = signal.WaitAsync();
         } while (true);
         await Task.WhenAll(writers).WaitAsync(deadline.Token);
-        await Assert.That(published).IsEqualTo(producers * perProducer);
+        await Assert.That(drained).IsEqualTo(producers * perProducer);
+        await Assert.That(observed.All(item => item)).IsTrue();
     }
 
     [Test]
