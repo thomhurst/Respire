@@ -375,8 +375,7 @@ internal static class RespParser
             return RespParseStatus.Done;
         }
 
-        if (!RespAggregateStorage.TryGetCount(declaredCount, pairCount, out var count)
-            || depth >= RespAggregateStorage.MaxDepth)
+        if (!RespAggregateStorage.TryValidate(declaredCount, pairCount, depth, out var count))
         {
             return RespParseStatus.InvalidData;
         }
@@ -386,6 +385,7 @@ internal static class RespParser
             return RespParseStatus.NeedMoreData;
         }
 
+        // Each child, including a nested aggregate header, needs at least three wire bytes.
         remainingElements -= count;
         if (count == 0)
         {

@@ -48,7 +48,8 @@ preserve this distinction; copying the budget per branch would remove the bound.
 The resumable parser's retained element capacity depends on children actually
 parsed across the entire tree, not the sum of declared counts. An incomplete frame
 with no complete child holds no element array. The first completed child uses the pool's minimum bucket
-(16 slots); subsequent growth doubles capacity, capped by the declared count,
+(16 slots); subsequent growth doubles capacity below 256 slots, then quadruples
+capacity once at least 256 children have completed, capped by the declared count,
 with pool rounding. A growth operation temporarily holds the old and replacement
 arrays, transfers ownership of completed children, then clears and returns the old
 array. This bounds speculative storage while preserving large replies; it does

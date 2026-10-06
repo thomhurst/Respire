@@ -348,8 +348,7 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
         }
 
         var pairCount = typeByte is (byte)'%' or (byte)'|';
-        if (!RespAggregateStorage.TryGetCount(declaredCount, pairCount, out var count)
-            || _depth >= RespAggregateStorage.MaxDepth)
+        if (!RespAggregateStorage.TryValidate(declaredCount, pairCount, _depth, out var count))
         {
             return RespParseStatus.InvalidData;
         }

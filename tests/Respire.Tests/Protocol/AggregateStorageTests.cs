@@ -218,10 +218,12 @@ public class AggregateStorageTests
     }
 
     [Test, NotInParallel]
-    public async Task GrowthAndDisposalClearReturnedArraysWithoutDisposingTransferredChildren()
+    [Arguments(16, 32)]
+    [Arguments(256, 1024)]
+    public async Task GrowthAndDisposalClearReturnedArraysWithoutDisposingTransferredChildren(int completedChildren, int expectedCapacity)
     {
         using var parser = new RespParseState(int.MaxValue);
-        var initial = Encoding.ASCII.GetBytes("*33\r\n" + string.Concat(Enumerable.Repeat("*1\r\n$7\r\npayload\r\n", 16)));
+        var initial = Encoding.ASCII.GetBytes($"*{completedChildren * 2 + 1}\r\n" + string.Concat(Enumerable.Repeat("*1\r\n$7\r\npayload\r\n", completedChildren)));
         var pos = 0;
         await Assert.That(parser.TryParse(initial, ref pos, out _, out _)).IsEqualTo(RespParseStatus.NeedMoreData);
         var old = FrameArrays(parser).Single(array => array.Length != 0);
@@ -229,9 +231,10 @@ public class AggregateStorageTests
         pos = 0;
         await Assert.That(parser.TryParse(":17\r\n"u8, ref pos, out _, out _)).IsEqualTo(RespParseStatus.NeedMoreData);
         var grown = FrameArrays(parser).Single(array => array.Length != 0);
-        await Assert.That(grown.Length).IsEqualTo(32);
+        await Assert.That(grown.Length).IsEqualTo(expectedCapacity);
         await Assert.That(old.All(value => value.Type == default)).IsTrue();
-        await Assert.That(grown[0].AsArray()[0].AsString()).IsEqualTo("payload");
+        for (var i = 0; i < completedChildren; i++)
+            await Assert.That(grown[i].AsArray()[0].AsString()).IsEqualTo("payload");
         pos = 0;
         await Assert.That(parser.TryParse("?\r\n"u8, ref pos, out _, out _)).IsEqualTo(RespParseStatus.InvalidData);
         parser.Dispose();

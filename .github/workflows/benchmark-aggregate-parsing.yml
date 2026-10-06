@@ -23,6 +23,8 @@ jobs:
         framework: [net8.0, net10.0]
     env:
       FRAMEWORK: ${{ matrix.framework }}
+      EXPECTED_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
@@ -43,6 +45,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test "$(git -C baseline rev-parse HEAD)" = "$EXPECTED_BASE_SHA"
+          test "$(git -C candidate rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
           cp candidate/benchmarks/Respire.Benchmarks/AggregateParsingBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
           for phase in baseline-validation candidate-validation baseline-a candidate baseline-b; do
             source=baseline
