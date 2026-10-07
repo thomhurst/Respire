@@ -1,0 +1,14 @@
+[
+  {
+    "File": "src/Respire/bin/Release/net10.0/Respire.dll",
+    "Hash": "4B7C49D8C40835ABF57BA98524B3F5BE01A13B17E9EC18B0EEA35E601A725876"
+  },
+  {
+    "File": "src/Respire.TimeSeries/bin/Release/net10.0/Respire.TimeSeries.dll",
+    "Hash": "8FAA701E96A37AC8BD3F39512F9B2F1707B3614369C5D069C2142E3DCD0539DB"
+  },
+  {
+    "File": "artifacts/issue-944-investigation/bin/Release/net10.0/Issue944.Benchmarks.dll",
+    "Hash": "571ECDDF2ECBEED3C27BD18DA2ECB940C7AF5CB9CE03321DB076E774C13D27B1"
+  }
+]
