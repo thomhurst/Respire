@@ -3,7 +3,8 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <DefineConstants>$(DefineConstants);FENCED_LOCKS</DefineConstants>
+    <!-- Copied fixtures still compile against baselines with the immediate writer contract. -->
+    <DefineConstants>$(DefineConstants);FENCED_LOCKS;RESERVED_RESP_WRITER</DefineConstants>
     <DefineConstants Condition="'$(RateLimiterApiBenchmark)' == 'true'">$(DefineConstants);RATE_LIMITER_API</DefineConstants>
   </PropertyGroup>
 

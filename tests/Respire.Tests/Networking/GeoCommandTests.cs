@@ -220,6 +220,7 @@ public class GeoCommandTests
                 default,
                 destination: null,
                 storeDistance: false).Write(ref writer);
+            writer.Complete();
             var position = 0;
             var status = RespParser.TryParseValue(buffer.WrittenMemory.Span, ref position, out var frame);
             if (status != RespParseStatus.Done || position != buffer.Count)

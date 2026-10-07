@@ -316,8 +316,9 @@ internal sealed partial class RespireConnection
                 startedBatch = start == 0 && _inflight.Count == 0;
                 try
                 {
-                    var writer = new RespWriter(_activeBuffer);
+                    var writer = new RespWriter(_activeBuffer, command.GetWriteSizeHint());
                     command.Write(ref writer);
+                    writer.Complete();
                 }
                 catch
                 {
@@ -633,8 +634,9 @@ internal sealed partial class RespireConnection
             requestWriteStart = _producerProgress.EnqueuedBytes;
             try
             {
-                var writer = new RespWriter(_activeBuffer);
+                var writer = new RespWriter(_activeBuffer, command.GetStartWriteSizeHint());
                 command.WriteStart(ref writer);
+                writer.Complete();
             }
             catch
             {
@@ -684,8 +686,9 @@ internal sealed partial class RespireConnection
             Debug.Assert(_inflight.Capacity - _inflight.Count > 0, "Streamed SET lost its reserved in-flight slot.");
             var start = _activeBuffer.Count;
             startedBatch = start == 0 && _inflight.Count == 0;
-            var writer = new RespWriter(_activeBuffer);
+            var writer = new RespWriter(_activeBuffer, StreamedSetCommand.GetEndWriteSizeHint());
             command.WriteEnd(ref writer);
+            writer.Complete();
             // The request's write range spans the header, payload and trailer appends, so it is
             // stamped here rather than by the single-append StampWritePosition helper.
             var requestWriteEnd = _producerProgress.EnqueuedBytes + _activeBuffer.Count - start;
