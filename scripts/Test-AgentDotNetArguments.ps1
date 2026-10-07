@@ -3,6 +3,9 @@ $guardScript = Join-Path $PSScriptRoot 'Invoke-AgentDotNet.ps1'
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ("agent-dotnet-arguments-{0}" -f [guid]::NewGuid())
 $previousCapturePath = $env:RESPIRE_GUARD_TEST_CAPTURE
 $previousDirectoryCapturePath = $env:RESPIRE_GUARD_TEST_DIRECTORY
+$previousTestRunner = $env:DOTNET_TEST_RUNNER
+$previousSdkVersion = $env:RESPIRE_GUARD_TEST_SDK_VERSION
+$env:DOTNET_TEST_RUNNER = $null
 New-Item -ItemType Directory -Path $testRoot | Out-Null
 $configuration = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../global.json') -Raw | ConvertFrom-Json
 $configuration.test.runner = 'VSTest'
@@ -23,6 +26,11 @@ try {
 using System.Text.Json;
 if (Environment.GetEnvironmentVariable("RESPIRE_AGENT_DOTNET_INVOCATION") is not null)
     return 7;
+if (args is ["--version"])
+{
+    Console.WriteLine(Environment.GetEnvironmentVariable("RESPIRE_GUARD_TEST_SDK_VERSION") ?? "10.0.401");
+    return 0;
+}
 File.WriteAllText(Environment.GetEnvironmentVariable("RESPIRE_GUARD_TEST_CAPTURE")!, JsonSerializer.Serialize(args));
 File.WriteAllText(Environment.GetEnvironmentVariable("RESPIRE_GUARD_TEST_DIRECTORY")!, Environment.CurrentDirectory);
 return 0;
@@ -120,6 +128,54 @@ return 0;
     Push-Location $aliasRoot
     try { Assert-Arguments @('test', 'project') @('test', 'project') -SingleNode }
     finally { Pop-Location }
+
+    # The custom executable reports its effective SDK. Its version, rather than the
+    # .NET 10 global.json pin, must decide whether the runner override is supported.
+    foreach ($sdkCase in @(
+        @{ Version = '10.0.401'; SupportsOverride = $false },
+        @{ Version = '11.0.100-preview.5.26301.1'; SupportsOverride = $false },
+        @{ Version = '11.0.100-preview.6'; SupportsOverride = $true },
+        @{ Version = '11.0.100-preview.7.26381.103'; SupportsOverride = $true },
+        @{ Version = '11.0.100-preview.10.1'; SupportsOverride = $true },
+        @{ Version = '11.0.100-rc.1.1'; SupportsOverride = $true },
+        @{ Version = '11.0.100'; SupportsOverride = $true },
+        @{ Version = '12.0.100-preview.1'; SupportsOverride = $true }
+    )) {
+        foreach ($globalMtp in @($false, $true)) {
+            $configuration.test.runner = if ($globalMtp) { 'Microsoft.Testing.Platform' } else { 'VSTest' }
+            $configuration | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $testRoot 'global.json')
+            $env:RESPIRE_GUARD_TEST_SDK_VERSION = $sdkCase.Version
+            $env:DOTNET_TEST_RUNNER = if ($globalMtp) { 'vStEsT' } else { 'mIcRoSoFt.TeStInG.PLaTfOrM' }
+            $effectiveMtp = if ($sdkCase.SupportsOverride) { -not $globalMtp } else { $globalMtp }
+            $expected = if ($effectiveMtp) { @('test', 'project') } else { @('test', 'project', '-m:1') }
+            Assert-Arguments @('test', 'project') $expected -SingleNode
+        }
+    }
+    # Empty/unrecognized overrides need no SDK process and use the nearest file.
+    $env:RESPIRE_GUARD_TEST_SDK_VERSION = 'not-a-version'
+    foreach ($globalMtp in @($false, $true)) {
+        $configuration.test.runner = if ($globalMtp) { 'Microsoft.Testing.Platform' } else { 'VSTest' }
+        $configuration | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $testRoot 'global.json')
+        foreach ($runnerValue in @('', 'unrecognized')) {
+            $env:DOTNET_TEST_RUNNER = $runnerValue
+            $expected = if ($globalMtp) { @('test', 'project') } else { @('test', 'project', '-m:1') }
+            Assert-Arguments @('test', 'project') $expected -SingleNode
+        }
+    }
+    $env:DOTNET_TEST_RUNNER = 'VSTest'
+    $env:RESPIRE_GUARD_TEST_SDK_VERSION = '11.0.100-preview.7.26381.103'
+    Assert-Arguments @('test', '-m:4') @('test', '-m:4') -SingleNode
+    Assert-Arguments @('test', '--', '-m:4') @('test', '-m:1', '--', '-m:4') -SingleNode
+    Assert-Arguments @('build', 'project') @('build', 'project', '-m:1') -SingleNode
+    $env:RESPIRE_GUARD_TEST_SDK_VERSION = 'not-a-version'
+    Remove-Item -LiteralPath $env:RESPIRE_GUARD_TEST_CAPTURE
+    & $guardScript -TimeoutSeconds 30 -SingleNode -DotNetPath $probe -DotNetArguments @('test', 'project')
+    if ($LASTEXITCODE -ne 1 -or (Test-Path -LiteralPath $env:RESPIRE_GUARD_TEST_CAPTURE)) {
+        throw 'Unrecognized effective SDK did not fail before launching the workload.'
+    }
+    $configuration.test.runner = 'VSTest'
+    $configuration | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $testRoot 'global.json')
+    $env:DOTNET_TEST_RUNNER = $null
     $longArgument = 'x' * 8192
     Assert-Arguments @('build', $longArgument) @('build', $longArgument, '-m:1') -SingleNode
 
@@ -133,12 +189,14 @@ return 0;
     # Exercise real MSBuild with the injected switch, not only the probe.
     & $guardScript -SingleNode -TimeoutSeconds 60 -DotNetArguments @('pack', $project, '--no-restore', '--nologo')
     if ($LASTEXITCODE -ne 0) { throw 'SingleNode pack failed.' }
-    Write-Output 'OK native argument preservation, VSTest SingleNode injection, nearest MTP configuration, existing switches, separator, and pack passed.'
+    Write-Output 'OK native arguments, SDK-aware runner overrides, nearest MTP configuration, existing switches, separator, and pack passed.'
 }
 finally {
     Pop-Location
     $env:RESPIRE_GUARD_TEST_CAPTURE = $previousCapturePath
     $env:RESPIRE_GUARD_TEST_DIRECTORY = $previousDirectoryCapturePath
+    $env:DOTNET_TEST_RUNNER = $previousTestRunner
+    $env:RESPIRE_GUARD_TEST_SDK_VERSION = $previousSdkVersion
     $resolvedRoot = [IO.Path]::GetFullPath($testRoot)
     $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
     if (-not $resolvedRoot.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase)) {
@@ -146,4 +204,6 @@ finally {
     }
     Remove-Item -LiteralPath $resolvedRoot -Recurse -Force
 }
+
+exit 0
 

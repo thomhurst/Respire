@@ -6,6 +6,9 @@ Runs a local dotnet command with workstation-safe limits for autonomous agents.
 Disables reusable MSBuild/Roslyn servers, optionally limits MSBuild to one node,
 uses below-normal priority, and kills the full process tree when time or memory
 limits are exceeded. Exit 124 means timeout; exit 137 means memory limit.
+For SingleNode tests, recognized DOTNET_TEST_RUNNER overrides apply on .NET 11
+Preview 6 and later. A contained probe resolves the effective SDK; older SDKs,
+empty overrides, and unknown values retain nearest-global.json runner selection.
 
 .EXAMPLE
 & scripts/Invoke-AgentDotNet.ps1 -SingleNode `
@@ -16,8 +19,9 @@ SingleNode adds -m:1 for MSBuild commands and VSTest-mode dotnet test.
 For Microsoft.Testing.Platform selected by the nearest global.json, build
 separately with SingleNode, then invoke test --no-build; MTP test arguments
 are forwarded unchanged. All modes retain the same process/resource guard.
-Runner detection targets the repository's .NET 10 SDK. That SDK ignores
-DOTNET_TEST_RUNNER; SDK-aware .NET 11 override support is tracked in #1163.
+Recognized DOTNET_TEST_RUNNER values override global.json on .NET 11 Preview 6
+and later. A probe inside the containment boundary resolves the executable's
+effective SDK; .NET 10 ignores the environment override.
 
 .EXAMPLE
 & scripts/Invoke-AgentDotNet.ps1 -SingleNode -DotNetArguments @(
@@ -55,12 +59,145 @@ if ($IsWindows) {
     Add-Type -TypeDefinition @'
 using System;
 using System.ComponentModel;
+using System.Diagnostics;
+using System.Linq;
 using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 
 public static class AgentDotNetWindowsJob
 {
     private const int JobObjectExtendedLimitInformation = 9;
     private const uint JobObjectLimitKillOnJobClose = 0x00002000;
+    private const int ErrorInsufficientBuffer = 122;
+    private const int AppModelErrorNoPackage = 15700;
+    private const uint ProcThreadAttributeJobList = 0x0002000D;
+    private const uint ProcThreadAttributeDesktopAppPolicy = 0x00020012;
+    private const int DesktopAppBreakawayDisableProcessTree = 2;
+    private const uint StartfUseStdHandles = 0x00000100;
+    private const uint ExtendedStartupInfoPresent = 0x00080000;
+    private const uint CreateUnicodeEnvironment = 0x00000400;
+    private const uint CreateNoWindow = 0x08000000;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct StartupInfo
+    {
+        public uint Size;
+        public IntPtr Reserved, Desktop, Title;
+        public uint X, Y, XSize, YSize, XCountChars, YCountChars, FillAttribute, Flags;
+        public ushort ShowWindow, ReservedSize;
+        public IntPtr ReservedBytes, StandardInput, StandardOutput, StandardError;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct StartupInfoEx
+    {
+        public StartupInfo Startup;
+        public IntPtr Attributes;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ProcessInformation
+    {
+        public IntPtr Process, Thread;
+        public uint ProcessId, ThreadId;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern int InitializeProcThreadAttributeList(IntPtr list, uint count, uint flags, ref UIntPtr size);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern int UpdateProcThreadAttribute(IntPtr list, uint flags, UIntPtr attribute, IntPtr value, UIntPtr size, IntPtr previous, IntPtr returnedSize);
+
+    [DllImport("kernel32.dll")]
+    private static extern void DeleteProcThreadAttributeList(IntPtr list);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr GetStdHandle(int which);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetCurrentPackageFullName(ref uint length, IntPtr name);
+
+    [DllImport("kernel32.dll", EntryPoint = "CreateProcessW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern int CreateProcess(string application, [In, Out, MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.U2)] char[] commandLine,
+        IntPtr processAttributes, IntPtr threadAttributes, int inheritHandles, uint flags,
+        IntPtr environment, string directory, ref StartupInfoEx startup, out ProcessInformation information);
+
+    public static Process StartWrapper(ProcessStartInfo info, IntPtr job)
+    {
+        // Associate at creation, before any managed runtime or child-process launch.
+        // The named start gate still delays the workload until priority is lowered.
+        uint packageNameLength = 0;
+        int packageStatus = GetCurrentPackageFullName(ref packageNameLength, IntPtr.Zero);
+        bool packaged = packageStatus == ErrorInsufficientBuffer;
+        if (!packaged && packageStatus != AppModelErrorNoPackage) throw new Win32Exception(packageStatus);
+        uint attributeCount = packaged ? 2u : 1u;
+        UIntPtr attributeSize = UIntPtr.Zero;
+        InitializeProcThreadAttributeList(IntPtr.Zero, attributeCount, 0, ref attributeSize);
+        int sizeError = Marshal.GetLastWin32Error();
+        if (attributeSize == UIntPtr.Zero || sizeError != ErrorInsufficientBuffer) throw new Win32Exception(sizeError);
+        IntPtr attributes = Marshal.AllocHGlobal(checked((int)attributeSize.ToUInt64()));
+        IntPtr jobList = IntPtr.Zero;
+        IntPtr desktopPolicy = IntPtr.Zero;
+        IntPtr environment = IntPtr.Zero;
+        bool initialized = false;
+        try
+        {
+            if (InitializeProcThreadAttributeList(attributes, attributeCount, 0, ref attributeSize) == 0) throw new Win32Exception(Marshal.GetLastWin32Error());
+            initialized = true;
+            jobList = Marshal.AllocHGlobal(IntPtr.Size);
+            Marshal.WriteIntPtr(jobList, job);
+            if (UpdateProcThreadAttribute(attributes, 0, new UIntPtr(ProcThreadAttributeJobList), jobList,
+                new UIntPtr((uint)IntPtr.Size), IntPtr.Zero, IntPtr.Zero) == 0) throw new Win32Exception(Marshal.GetLastWin32Error());
+            if (packaged)
+            {
+                // Store-installed PowerShell otherwise breaks native children away
+                // from its job. Keep the entire guarded tree in the same environment.
+                desktopPolicy = Marshal.AllocHGlobal(sizeof(uint));
+                Marshal.WriteInt32(desktopPolicy, DesktopAppBreakawayDisableProcessTree);
+                if (UpdateProcThreadAttribute(attributes, 0, new UIntPtr(ProcThreadAttributeDesktopAppPolicy), desktopPolicy,
+                    new UIntPtr(sizeof(uint)), IntPtr.Zero, IntPtr.Zero) == 0) throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+            string environmentBlock = string.Concat(info.Environment.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(pair => pair.Key + "=" + pair.Value + '\0')) + '\0';
+            environment = Marshal.StringToHGlobalUni(environmentBlock);
+            var startup = new StartupInfoEx
+            {
+                Startup = new StartupInfo
+                {
+                    Size = (uint)Marshal.SizeOf<StartupInfoEx>(), Flags = StartfUseStdHandles,
+                    StandardInput = GetStdHandle(-10), StandardOutput = GetStdHandle(-11), StandardError = GetStdHandle(-12),
+                },
+                Attributes = attributes,
+            };
+            // Only the generated wrapper path, fixed switches, and random gate name
+            // enter this command line. Workload argv remains in the JSON payload.
+            string commandLine = string.Join(" ", new[] { info.FileName }.Concat(info.ArgumentList).Select(QuoteWrapperArgument)) + '\0';
+            if (CreateProcess(info.FileName, commandLine.ToCharArray(), IntPtr.Zero, IntPtr.Zero, 1,
+                ExtendedStartupInfoPresent | CreateUnicodeEnvironment | CreateNoWindow, environment, info.WorkingDirectory,
+                ref startup, out ProcessInformation created) == 0) throw new Win32Exception(Marshal.GetLastWin32Error());
+            using var processHandle = new SafeProcessHandle(created.Process, ownsHandle: true);
+            using var threadHandle = new SafeWaitHandle(created.Thread, ownsHandle: true);
+            Process result = Process.GetProcessById(checked((int)created.ProcessId));
+            try { _ = result.SafeHandle; return result; }
+            catch { result.Dispose(); throw; }
+        }
+        finally
+        {
+            if (initialized) DeleteProcThreadAttributeList(attributes);
+            Marshal.FreeHGlobal(attributes);
+            Marshal.FreeHGlobal(jobList);
+            Marshal.FreeHGlobal(desktopPolicy);
+            Marshal.FreeHGlobal(environment);
+        }
+    }
+
+    private static string QuoteWrapperArgument(string value)
+    {
+        // Windows filenames cannot contain quotes. These generated arguments do
+        // not end in a separator; never use this helper for arbitrary workload argv.
+        if (value.Contains('"') || value.EndsWith('\\')) throw new ArgumentException("Invalid wrapper launch argument.");
+        return "\"" + value + "\"";
+    }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct BasicLimitInformation
@@ -109,9 +246,6 @@ public static class AgentDotNetWindowsJob
         uint informationLength);
 
     [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr handle);
 
     public static IntPtr CreateKillOnClose()
@@ -148,14 +282,6 @@ public static class AgentDotNetWindowsJob
         finally
         {
             Marshal.FreeHGlobal(information);
-        }
-    }
-
-    public static void Assign(IntPtr job, IntPtr process)
-    {
-        if (!AssignProcessToJobObject(job, process))
-        {
-            throw new Win32Exception();
         }
     }
 
@@ -600,7 +726,7 @@ function Test-MicrosoftTestingPlatform {
     return $false
 }
 
-function Add-SingleNodeArgument([string[]]$Arguments) {
+function Add-SingleNodeArgument([string[]]$Arguments, [bool]$TestUsesMicrosoftTestingPlatform) {
     if (-not $SingleNode -or $Arguments.Count -eq 0) {
         return $Arguments
     }
@@ -611,7 +737,7 @@ function Add-SingleNodeArgument([string[]]$Arguments) {
     }
     # MTP forwards unknown switches to test applications. -m:1 is not an MTP option.
     # Build separately with SingleNode, then use test --no-build in this mode.
-    if ($verb -eq 'test' -and (Test-MicrosoftTestingPlatform)) {
+    if ($verb -eq 'test' -and $TestUsesMicrosoftTestingPlatform) {
         return $Arguments
     }
     $separatorIndex = [Array]::IndexOf($Arguments, '--')
@@ -632,7 +758,14 @@ function Add-SingleNodeArgument([string[]]$Arguments) {
         @($Arguments[$separatorIndex..($Arguments.Count - 1)])
 }
 
-$effectiveArguments = @(Add-SingleNodeArgument $DotNetArguments)
+$isSingleNodeTest = $SingleNode -and $DotNetArguments.Count -gt 0 -and $DotNetArguments[0] -eq 'test'
+$globalRunnerIsMtp = $isSingleNodeTest -and (Test-MicrosoftTestingPlatform)
+$effectiveArguments = @(Add-SingleNodeArgument $DotNetArguments $globalRunnerIsMtp)
+$probeSdk = $isSingleNodeTest -and $env:DOTNET_TEST_RUNNER -in @('VSTest', 'Microsoft.Testing.Platform')
+$overrideArguments = if ($probeSdk) {
+    @(Add-SingleNodeArgument $DotNetArguments ($env:DOTNET_TEST_RUNNER -eq 'Microsoft.Testing.Platform'))
+}
+else { @() }
 $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
 $startInfo.UseShellExecute = $false
 # Match the PowerShell location used to resolve global.json and relative paths.
@@ -654,8 +787,8 @@ $wrapperPath = [System.IO.Path]::Combine(
 )
 
 if ($IsWindows) {
-    # The wrapper waits on a gate, allowing the guard to assign it to the Job Object
-    # and lower its priority before it can launch dotnet or any descendants.
+    # Job association is atomic at creation. The wrapper waits on a gate so the
+    # guard can lower its priority before it launches dotnet or any descendants.
     $wrapperScript = @'
 $startGate = [Threading.EventWaitHandle]::OpenExisting($args[0])
 try {
@@ -719,6 +852,7 @@ $wrapperScript += @'
 $ErrorActionPreference = 'Stop'
 $startInfo = [Diagnostics.ProcessStartInfo]::new()
 $startInfo.UseShellExecute = $false
+$startInfo.WorkingDirectory = [Environment]::CurrentDirectory
 $invocationPath = $env:RESPIRE_AGENT_DOTNET_INVOCATION
 $startInfo.Environment.Remove('RESPIRE_AGENT_DOTNET_INVOCATION') | Out-Null
 try {
@@ -729,6 +863,9 @@ try {
         foreach ($argument in $invocation.RootElement.GetProperty('Arguments').EnumerateArray()) {
             $startInfo.ArgumentList.Add($argument.GetString())
         }
+        $probeSdk = $invocation.RootElement.GetProperty('ProbeSdk').GetBoolean()
+        $overrideArguments = @($invocation.RootElement.GetProperty('RunnerOverrideArguments').EnumerateArray() |
+            ForEach-Object { $_.GetString() })
     }
     finally {
         $invocation.Dispose()
@@ -737,6 +874,40 @@ try {
 finally {
     # The workload never needs the payload. The parent also cleans up launch failures.
     [IO.File]::Delete($invocationPath)
+}
+
+if ($probeSdk) {
+    # Run only after the wrapper has entered its Job Object/Unix session. The same
+    # timeout, memory limit, priority, and descendant cleanup cover probe and command.
+    # Ask the actual executable in the actual cwd; pins alone cannot resolve roll-forward.
+    $probeInfo = [Diagnostics.ProcessStartInfo]::new()
+    $probeInfo.FileName = $startInfo.FileName
+    $probeInfo.UseShellExecute = $false
+    $probeInfo.WorkingDirectory = $startInfo.WorkingDirectory
+    $probeInfo.Environment.Remove('RESPIRE_AGENT_DOTNET_INVOCATION') | Out-Null
+    $probeInfo.RedirectStandardOutput = $true
+    $probeInfo.RedirectStandardError = $true
+    $probeInfo.ArgumentList.Add('--version')
+    $probe = [Diagnostics.Process]::Start($probeInfo)
+    try {
+        # --version emits one line. A surviving probe descendant can inherit the
+        # pipe, so waiting for EOF would prevent the workload from starting.
+        $output = $probe.StandardOutput.ReadLineAsync()
+        $errorOutput = $probe.StandardError.ReadLineAsync()
+        $probe.WaitForExit()
+        if ($probe.ExitCode -ne 0) {
+            $errorText = if ($errorOutput.IsCompletedSuccessfully) { $errorOutput.GetAwaiter().GetResult() } else { '' }
+            throw "SDK runner probe failed with exit $($probe.ExitCode): $errorText"
+        }
+        $versionText = ($output.GetAwaiter().GetResult() ?? '').Trim()
+        try { $sdkVersion = [semver]$versionText }
+        catch { throw "Cannot determine effective SDK from '$versionText'." }
+        if ($sdkVersion -ge [semver]'11.0.100-preview.6') {
+            $startInfo.ArgumentList.Clear()
+            foreach ($argument in $overrideArguments) { $startInfo.ArgumentList.Add($argument) }
+        }
+    }
+    finally { $probe.Dispose() }
 }
 
 $child = [Diagnostics.Process]::Start($startInfo)
@@ -767,6 +938,8 @@ try {
     $invocationBytes = [Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -Compress -Depth 3 -InputObject @{
         Executable = $DotNetPath
         Arguments = $effectiveArguments
+        ProbeSdk = [bool]$probeSdk
+        RunnerOverrideArguments = @($overrideArguments)
     }))
     $payloadOptions = [IO.FileStreamOptions]::new()
     $payloadOptions.Mode = [IO.FileMode]::CreateNew
@@ -802,17 +975,15 @@ try {
         $startInfo.ArgumentList[$gateArgumentIndex] = $windowsStartGateName
     }
 
-    if (-not $process.Start()) {
-        throw "Failed to start '$DotNetPath'."
-    }
-
-    $processStarted = $true
     if ($IsWindows) {
-        [AgentDotNetWindowsJob]::Assign($windowsJobHandle, $process.Handle)
+        $process.Dispose()
+        $process = [AgentDotNetWindowsJob]::StartWrapper($startInfo, $windowsJobHandle)
     }
     else {
+        if (-not $process.Start()) { throw "Failed to start '$DotNetPath'." }
         $unixProcessGroupId = $process.Id
     }
+    $processStarted = $true
 
     try {
         $process.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal

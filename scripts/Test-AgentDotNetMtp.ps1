@@ -1,3 +1,5 @@
+param([string]$SdkVersion, [switch]$RollForwardAcrossMajor)
+
 $ErrorActionPreference = 'Stop'
 $guardScript = Join-Path $PSScriptRoot 'Invoke-AgentDotNet.ps1'
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ("agent-dotnet-mtp-{0}" -f [guid]::NewGuid())
@@ -7,7 +9,18 @@ $previousTestRunner = $env:DOTNET_TEST_RUNNER
 New-Item -ItemType Directory -Path $testRoot | Out-Null
 Push-Location $testRoot
 try {
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot '../global.json') -Destination (Join-Path $testRoot 'global.json')
+    $configuration = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../global.json') -Raw | ConvertFrom-Json
+    if ($SdkVersion) {
+        $configuration.sdk.version = $SdkVersion
+        $configuration.sdk.rollForward = 'disable'
+    }
+    if ($RollForwardAcrossMajor) {
+        $configuration.sdk.rollForward = 'latestMajor'
+        $configuration.sdk | Add-Member -NotePropertyName allowPrerelease -NotePropertyValue $true -Force
+    }
+    $supportsOverride = $RollForwardAcrossMajor -or [semver]$configuration.sdk.version -ge [semver]'11.0.100-preview.6'
+    $configuration.test.runner = if ($supportsOverride) { 'VSTest' } else { 'Microsoft.Testing.Platform' }
+    $configuration | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $testRoot 'global.json')
     [xml]$packages = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../Directory.Packages.props')
     $tunitVersion = ($packages.Project.ItemGroup.PackageVersion | Where-Object Include -eq 'TUnit').Version
     $project = Join-Path $testRoot 'GuardMtp.csproj'
@@ -36,9 +49,9 @@ public class GuardMtpTests
 '@ | Set-Content -LiteralPath (Join-Path $testRoot 'GuardMtpTests.cs')
     $env:RESPIRE_MTP_GUARD_TEST_MARKER = Join-Path $testRoot 'executed.txt'
     $env:TUNIT_DISABLE_HTML_REPORTER = 'true'
-    # This fixture pins the repository's .NET 10 SDK. That SDK ignores the .NET 11
-    # runner override, so global.json must still select MTP with an opposite value.
-    $env:DOTNET_TEST_RUNNER = 'VSTest'
+    # Use conflicting settings on both SDKs: .NET 10 follows global.json;
+    # supporting SDKs follow the case-insensitive environment override.
+    $env:DOTNET_TEST_RUNNER = if ($supportsOverride) { 'mIcRoSoFt.TeStInG.PLaTfOrM' } else { 'VSTest' }
     & $guardScript -SingleNode -DotNetArguments @('build', $project, '-c', 'Release', '--nologo')
     if ($LASTEXITCODE -ne 0) { throw "MTP fixture build failed: $LASTEXITCODE" }
 
@@ -54,13 +67,16 @@ exit $LASTEXITCODE
 '@ | Set-Content -LiteralPath $captureScript
     $pwshPath = (Get-Process -Id $PID).Path
     $filter = '/*/*/GuardMtpTests/SelectedTestExecutes'
+    # .NET 11 accepts an optional discovery format; specify it so the following
+    # extension switch cannot be parsed as the format value.
+    $listArguments = if ($supportsOverride) { @('--list-tests', 'text') } else { @('--list-tests') }
     foreach ($separator in @($false, $true)) {
         $extensionSeparator = if ($separator) { @('--') } else { @() }
         $payloadPath = Join-Path $testRoot 'discovery.json'
-        @{ GuardScript = $guardScript; Arguments = $baseArguments + '--list-tests' + $extensionSeparator + @('--treenode-filter', $filter) } |
+        @{ GuardScript = $guardScript; Arguments = $baseArguments + $listArguments + $extensionSeparator + @('--treenode-filter', $filter) } |
             ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $payloadPath
         $discovery = @(& $pwshPath -NoProfile -File $captureScript $payloadPath 2>&1)
-        if ($LASTEXITCODE -ne 0) { throw "MTP discovery failed (separator=$separator): $LASTEXITCODE" }
+        if ($LASTEXITCODE -ne 0) { throw "MTP discovery failed (separator=$separator): $LASTEXITCODE. $($discovery -join [Environment]::NewLine)" }
         # CI enables ANSI color even on redirected SDK output. Remove presentation
         # sequences before checking the same exact method name and global count.
         $discovery = @($discovery | ForEach-Object { [regex]::Replace([string]$_, '\x1b\[[0-?]*[ -/]*[@-~]', '') })
