@@ -252,7 +252,11 @@ public class DistributedLockerWireTests
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
         await using var locker = new RespireFusionCacheDistributedLocker(client,
-            new() { LeaseDuration = TimeSpan.FromSeconds(1), ReleaseOnCallerCancellation = releaseOnCancellation });
+            new()
+            {
+                LeaseDuration = TimeSpan.FromSeconds(1), ReleaseOnCallerCancellation = releaseOnCancellation,
+                MaximumIndependentLeaseLifetime = releaseOnCancellation ? null : TimeSpan.MaxValue,
+            });
         var owner = (RespireFusionCacheLock)(await DistributedLockerTests.AcquireAsync(locker, "cache", TimeSpan.Zero))!;
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (!owner.OwnershipCancellationToken.IsCancellationRequested) await Task.Delay(10, timeout.Token);
@@ -286,7 +290,11 @@ public class DistributedLockerWireTests
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
         await using var locker = new RespireFusionCacheDistributedLocker(client,
-            new() { ReleaseOnCallerCancellation = releaseOnCancellation });
+            new()
+            {
+                ReleaseOnCallerCancellation = releaseOnCancellation,
+                MaximumIndependentLeaseLifetime = releaseOnCancellation ? null : TimeSpan.FromSeconds(1),
+            });
         using var cancellation = new CancellationTokenSource();
         using var listener = new ActivityListener
         {

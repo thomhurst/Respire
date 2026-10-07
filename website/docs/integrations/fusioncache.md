@@ -196,9 +196,47 @@ Foreground cancellation still makes FusionCache explicitly release its handle; t
 not delay that explicit release. See the pinned [factory timeout helper](https://github.com/ZiggyCreatures/FusionCache/blob/v2.9.0/src/ZiggyCreatures.FusionCache/Internals/RunUtils.cs)
 and [background handoff and cleanup](https://github.com/ZiggyCreatures/FusionCache/blob/v2.9.0/src/ZiggyCreatures.FusionCache/FusionCache.cs).
 If background completion never finishes, an independent lease can keep renewing until
-locker disposal or ownership loss; the server lease duration bounds each renewal, not the
-total time a live handle can remain active. Always release handles and dispose the locker.
-Neither policy stops factories or enforces fencing on their writes.
+locker disposal or ownership loss. The default remains unlimited: the server `LeaseDuration`
+bounds each renewal, not the total time a live handle can remain active. Always release handles
+and dispose the locker.
+
+Applications that prefer eventual availability over keeping a stuck background factory's lock
+can opt into `MaximumIndependentLeaseLifetime`:
+
+```csharp
+var lockerOptions = new RespireFusionCacheDistributedLockerOptions
+{
+    ReleaseOnCallerCancellation = false,
+    LeaseDuration = TimeSpan.FromSeconds(30),
+    MaximumIndependentLeaseLifetime = TimeSpan.FromMinutes(5),
+};
+builder.WithRespireDistributedLocker(lockerOptions);
+```
+
+The option defaults to `null` (no total limit). A configured value must be at least one
+millisecond and requires `ReleaseOnCallerCancellation = false`; invalid combinations fail
+in direct construction and both registration methods. All positive values up to
+`TimeSpan.MaxValue` are supported by chunking long timer waits. The monotonic client-side
+clock starts immediately before the successful acquisition returns its handle, after
+cancellation and shutdown checks. Time spent waiting for acquisition does not consume this
+budget. The budget covers foreground work and any subsequent background completion together;
+moving work into the background does not restart it. It is separate from FusionCache's lock
+acquisition timeout and each server lease duration.
+
+When the budget expires, `RespireFusionCacheLock.LifetimeLimitExpired` becomes `true`, its
+`OwnershipCancellationToken` signals cancellation, renewal stops, and automatic owner-checked
+release begins. Expiry alone does not set `OwnershipLost` or `RenewalFailure`. Release and
+locker disposal join the same cleanup; early explicit release, shutdown, or ownership loss
+stops the lifetime timer. Scheduling or an in-flight command can delay cleanup, so this is
+not a hard real-time server expiry guarantee. The existing cleanup-failure warning and server
+expiry fallback still apply. Cleanup never releases a replacement owner's lease.
+
+Choose a total budget that allows the background completion your application expects. A
+finite limit prevents an abandoned live handle from monopolizing its key indefinitely, but
+permits another node to acquire it while the original factory still runs. FusionCache can
+still publish that original factory's result after the limit, and its later explicit release
+joins the already-completed handle cleanup. Neither lifetime policy cancels factories or
+enforces fencing on their writes.
 
 A slow factory or background factory completion can continue after expiry, cancellation,
 or a connection failure and overlap a new owner. The diagnostic `RespireFusionCacheLock`
