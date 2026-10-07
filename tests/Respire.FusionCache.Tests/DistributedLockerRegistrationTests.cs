@@ -66,7 +66,7 @@ public class DistributedLockerRegistrationTests(RedisTestContainer fixture)
             }
             else
             {
-                await Task.Delay(TimeSpan.FromSeconds(3));
+                await DistributedLockerTests.WaitPastLeaseExpiryAsync(TimeSpan.FromSeconds(2));
                 await Assert.That(await client.GetBytesAsync(leases[0])).IsNotNull();
             }
             finish.TrySetResult();

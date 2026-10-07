@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -41,7 +42,7 @@ public class DistributedLockerTests(RedisTestContainer fixture)
         else
         {
             // Outlive the original server lease to prove renewal survives caller cancellation.
-            await Task.Delay(TimeSpan.FromSeconds(3));
+            await WaitPastLeaseExpiryAsync(TimeSpan.FromSeconds(2));
             await Assert.That(owner.OwnershipCancellationToken.IsCancellationRequested).IsFalse();
             await Assert.That(await client.GetBytesAsync(owner.LeaseKey)).IsNotNull();
             await Assert.That(await AcquireAsync(locker, name, TimeSpan.Zero)).IsNull();
@@ -52,6 +53,14 @@ public class DistributedLockerTests(RedisTestContainer fixture)
         await Assert.That(await client.GetBytesAsync(owner.LeaseKey)).IsNull();
         await Assert.That(await client.GetStringAsync(owner.FencingCounterKey)).IsEqualTo("1");
         await client.SetAsync("client-survives", "yes");
+    }
+
+    /// <summary>Waits beyond a full server lease after handoff without adding a fixed extra second.</summary>
+    internal static async Task WaitPastLeaseExpiryAsync(TimeSpan leaseDuration)
+    {
+        var started = Stopwatch.GetTimestamp();
+        while (Stopwatch.GetElapsedTime(started) <= leaseDuration)
+            await Task.Delay(10);
     }
 
     [Test]
