@@ -3,6 +3,10 @@ $guardScript = Join-Path $PSScriptRoot 'Invoke-AgentDotNet.ps1'
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ("agent-dotnet-arguments-{0}" -f [guid]::NewGuid())
 $previousCapturePath = $env:RESPIRE_GUARD_TEST_CAPTURE
 New-Item -ItemType Directory -Path $testRoot | Out-Null
+$configuration = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../global.json') -Raw | ConvertFrom-Json
+$configuration.test.runner = 'VSTest'
+$configuration | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $testRoot 'global.json')
+Push-Location $testRoot
 try {
     $project = Join-Path $testRoot 'ArgumentProbe.csproj'
     @'
@@ -60,6 +64,28 @@ return 0;
     Assert-Arguments @('run', '--', '-m:4') @('run', '--', '-m:4') -SingleNode
     Assert-Arguments @('version') @('version') -SingleNode
     Assert-Arguments @('--', '-m:4') @('--', '-m:4') -SingleNode
+    $mtpRoot = Join-Path $testRoot 'mtp'
+    $nestedRoot = Join-Path $mtpRoot 'nested'
+    $overrideRoot = Join-Path $nestedRoot 'override'
+    New-Item -ItemType Directory -Path $overrideRoot | Out-Null
+    @'
+{
+  // Match SDK-supported global.json comments and trailing commas.
+  "test": { "runner": "Microsoft.Testing.Platform", },
+}
+'@ | Set-Content -LiteralPath (Join-Path $mtpRoot 'global.json')
+    Push-Location $nestedRoot
+    try {
+        Assert-Arguments @('test', '--project', $project, '--list-tests') @('test', '--project', $project, '--list-tests') -SingleNode
+        Assert-Arguments @('test', '--', '-m:4') @('test', '--', '-m:4') -SingleNode
+        Assert-Arguments @('test', '-m:4') @('test', '-m:4') -SingleNode
+        Assert-Arguments @('build', $project) @('build', $project, '-m:1') -SingleNode
+        '{}' | Set-Content -LiteralPath (Join-Path $overrideRoot 'global.json')
+        Push-Location $overrideRoot
+        try { Assert-Arguments @('test', 'project') @('test', 'project', '-m:1') -SingleNode }
+        finally { Pop-Location }
+    }
+    finally { Pop-Location }
     $longArgument = 'x' * 8192
     Assert-Arguments @('build', $longArgument) @('build', $longArgument, '-m:1') -SingleNode
 
@@ -73,9 +99,10 @@ return 0;
     # Exercise real MSBuild with the injected switch, not only the probe.
     & $guardScript -SingleNode -TimeoutSeconds 60 -DotNetArguments @('pack', $project, '--no-restore', '--nologo')
     if ($LASTEXITCODE -ne 0) { throw 'SingleNode pack failed.' }
-    Write-Output 'OK native argument preservation, SingleNode injection, existing switches, separator, and pack passed.'
+    Write-Output 'OK native argument preservation, VSTest SingleNode injection, nearest MTP configuration, existing switches, separator, and pack passed.'
 }
 finally {
+    Pop-Location
     $env:RESPIRE_GUARD_TEST_CAPTURE = $previousCapturePath
     $resolvedRoot = [IO.Path]::GetFullPath($testRoot)
     $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
