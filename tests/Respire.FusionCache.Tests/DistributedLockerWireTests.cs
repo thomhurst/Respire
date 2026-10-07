@@ -20,8 +20,26 @@ public class DistributedLockerWireTests
         var pending = DistributedLockerTests.AcquireAsync(locker, "cache", TimeSpan.FromMilliseconds(timeoutMs)).AsTask();
         // The smallest uncapped jittered poll is 900 ms. A finite budget must end before it.
         await Assert.That(await pending.WaitAsync(TimeSpan.FromMilliseconds(500))).IsNull();
-        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(1);
-        await Assert.That(server.ReceivedCommands[0].StartsWith("EVALSHA ", StringComparison.Ordinal)).IsTrue();
+        if (timeoutMs == 0)
+        {
+            await Assert.That(server.ReceivedCommands.Count).IsEqualTo(1);
+            await Assert.That(server.ReceivedCommands[0].StartsWith("EVALSHA ", StringComparison.Ordinal)).IsTrue();
+        }
+        // Finite cancellation can win before receipt, or after the capped delay permits a
+        // further attempt. The command count is not a contract for a positive wait budget.
+    }
+
+    [Test]
+    public async Task FiniteBudgetCanExpireBeforePeerReadsCommand()
+    {
+        var readGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer("$-1\r\n"u8.ToArray()) { ReadGate = readGate.Task };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await using var locker = new RespireFusionCacheDistributedLocker(client,
+            new() { PollInterval = TimeSpan.FromSeconds(1) });
+        var pending = DistributedLockerTests.AcquireAsync(locker, "cache", TimeSpan.FromMilliseconds(30)).AsTask();
+        await Assert.That(await pending.WaitAsync(TimeSpan.FromMilliseconds(500))).IsNull();
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(0);
     }
 
     [Test]
