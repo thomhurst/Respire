@@ -112,11 +112,15 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     }
 
     [StructLayout(LayoutKind.Explicit, Size = 128)]
-    private sealed class ReceiveProgress
+    private sealed partial class ReceiveProgress
     {
         [FieldOffset(0)] internal readonly Lock DeadlineGate = new();
         [FieldOffset(8)] internal readonly AsyncCapacitySignal CapacitySignal = new();
         [FieldOffset(16)] internal readonly CompletionScheduler Completions = new();
+        [FieldOffset(24)] internal long SentReplyCount;
+        // Received count, or TimeoutClaimed (-1) after the watchdog's terminal CAS.
+        [FieldOffset(32)] internal long ReceivedReplyCount;
+        [FieldOffset(40)] internal long DeadlineTimestamp;
         [FieldOffset(64)] internal long LastReadTimestamp = -1;
     }
 
@@ -144,11 +148,6 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private AvailabilityZoneTelemetry.Counter? _zoneReads;
     private static long _nextDiagnosticId;
     private readonly long _diagnosticId = Interlocked.Increment(ref _nextDiagnosticId);
-    // These watchdog counters form one locked state transition; their communication is
-    // intentional, unlike the independently written progress counters in the role holders.
-    private long _sentReplyCount;
-    private long _receivedReplyCount;
-    private long _receiveDeadlineTimestamp;
     private int _responseTimeoutSuppressions;
     private Exception? _abortReason;
     private readonly IConnectionGeneration? _generation;
@@ -3142,14 +3141,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     {
         if (_responseTimeout is not null)
         {
-            lock (_receiveDeadlineGate)
-            {
-                _receivedReplyCount++;
-                if (_receivedReplyCount >= _sentReplyCount)
-                {
-                    _receiveDeadlineTimestamp = 0;
-                }
-            }
+            _receiveProgress.MarkReplyReceived();
         }
 
         _capacitySignal.Signal();
@@ -3315,7 +3307,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     continue;
                 }
 
-                var deadlineStart = Volatile.Read(ref _receiveDeadlineTimestamp);
+                var deadlineStart = Volatile.Read(ref _receiveProgress.DeadlineTimestamp);
                 if (deadlineStart == 0)
                 {
                     await DelayWatchdogAsync(timeout, cancellationToken).ConfigureAwait(false);
@@ -3340,10 +3332,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 bool closed;
                 lock (_receiveDeadlineGate)
                 {
-                    if (deadlineStart != _receiveDeadlineTimestamp
-                        || _sentReplyCount <= _receivedReplyCount
+                    var receivedReplies = Volatile.Read(ref _receiveProgress.ReceivedReplyCount);
+                    if (deadlineStart != _receiveProgress.DeadlineTimestamp
+                        || _receiveProgress.SentReplyCount <= receivedReplies
                         || Volatile.Read(ref _responseTimeoutSuppressions) != 0
-                        || Stopwatch.GetElapsedTime(deadlineStart) < MaintenanceTimeout(timeout, Environment.TickCount64, out _, out _))
+                        || Stopwatch.GetElapsedTime(deadlineStart) < MaintenanceTimeout(timeout, Environment.TickCount64, out _, out _)
+                        || !_receiveProgress.TryClaimTimeout(receivedReplies))
                     {
                         continue;
                     }
@@ -3554,13 +3548,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             return;
         }
 
-        lock (_receiveDeadlineGate)
-        {
-            if (_sentReplyCount > _receivedReplyCount)
-            {
-                _receiveDeadlineTimestamp = Stopwatch.GetTimestamp();
-            }
-        }
+        _receiveProgress.RestartDeadline();
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -3571,14 +3559,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             return;
         }
 
-        lock (_receiveDeadlineGate)
-        {
-            _sentReplyCount += count;
-            if (_sentReplyCount > _receivedReplyCount && _receiveDeadlineTimestamp == 0)
-            {
-                _receiveDeadlineTimestamp = Stopwatch.GetTimestamp();
-            }
-        }
+        _receiveProgress.MarkRepliesSent(count);
     }
 
     private bool Abort(Exception? reason = null, bool publishConnectionMetrics = true)
