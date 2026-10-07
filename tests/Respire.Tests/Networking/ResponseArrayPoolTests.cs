@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using Respire.Networking;
 using Respire.Protocol;
@@ -80,6 +81,111 @@ public class ResponseArrayPoolTests
             await Assert.That(next.Distinct(ReferenceEqualityComparer.Instance).Count()).IsEqualTo(next.Length);
         }
         finally { foreach (var array in next) if (array is not null) pool.Return(array); }
+    }
+
+    [Test]
+    [Arguments(1, 16)]
+    [Arguments(16, 16)]
+    [Arguments(17, 32)]
+    [Arguments(65, 128)]
+    [Arguments(129, 256)]
+    [Arguments(257, 257)]
+    public async Task RentsUseOnlyTheirOwnBucketOrAnExactOverMaximumArray(int requested, int expected)
+    {
+        var pool = new BoundedResponseArrayPool<object>(64, 128, 256);
+        var first = pool.Rent(requested);
+        await Assert.That(first.Length).IsEqualTo(expected);
+        first[0] = new object();
+        pool.Return(first, clearArray: true);
+        await Assert.That(first.All(value => value is null)).IsTrue();
+        var next = pool.Rent(requested);
+        try
+        {
+            await Assert.That(ReferenceEquals(first, next)).IsEqualTo(requested <= 256);
+            await Assert.That(next.All(value => value is null)).IsTrue();
+        }
+        finally { pool.Return(next); }
+    }
+
+    [Test]
+    public async Task OverMaximumProductionPayloadsAreNeverRetained()
+    {
+        var pool = RespirePools.CreateResponsePayloadPool();
+        var length = RespirePools.MaxPooledResponsePayloadLength + 1;
+        var first = pool.Rent(length);
+        await Assert.That(first.Length).IsEqualTo(length);
+        pool.Return(first);
+        var next = pool.Rent(length);
+        try { await Assert.That(next).IsNotSameReferenceAs(first); }
+        finally { pool.Return(next); }
+    }
+
+    [Test]
+    public async Task FullAndOverMaximumBucketsStillHonorClearing()
+    {
+        var pool = new BoundedResponseArrayPool<object>(64, 128, 256);
+        var arrays = Enumerable.Range(0, 3).Select(_ => pool.Rent(256)).ToArray();
+        foreach (var array in arrays)
+        {
+            Array.Fill(array, new object());
+            pool.Return(array, clearArray: true);
+            await Assert.That(array.All(value => value is null)).IsTrue();
+        }
+        await CheckRetention(new BoundedResponseArrayPool<object>(64, 128, 256), 256, 1);
+    }
+
+    [Test]
+    public async Task ConcurrentMixedSizeRentAndCrossThreadReturnKeepExclusiveOwnership()
+    {
+        var pool = new BoundedResponseArrayPool<object>(64, 128, 256);
+        var owners = new ConcurrentDictionary<object[], byte>(ReferenceEqualityComparer.Instance);
+        Parallel.For(0, 50, new ParallelOptions { MaxDegreeOfParallelism = 50 }, worker =>
+        {
+            for (var iteration = 0; iteration < 128; iteration++)
+            {
+                var length = 16 << ((worker + iteration) % 5);
+                var array = pool.Rent(length);
+                if (!owners.TryAdd(array, 0)) throw new InvalidOperationException("A response array has two live owners.");
+                if (array.Any(value => value is not null)) throw new InvalidOperationException("A returned reference was not cleared.");
+                array[0] = new object();
+                if (!owners.TryRemove(array, out _)) throw new InvalidOperationException("A response owner was lost.");
+                pool.Return(array, clearArray: true);
+            }
+        });
+        await Assert.That(owners.IsEmpty).IsTrue();
+
+        var held = Enumerable.Range(0, 256).Select(_ => pool.Rent(16)).ToArray();
+        var identities = new HashSet<object[]>(held, ReferenceEqualityComparer.Instance);
+        // A dedicated other thread returns every buffer; renting remains on this thread.
+        Exception? failure = null;
+        var returner = new Thread(() =>
+        {
+            try { foreach (var array in held) pool.Return(array, clearArray: true); }
+            catch (Exception error) { failure = error; }
+        });
+        returner.Start();
+        await Assert.That(returner.Join(TimeSpan.FromSeconds(5))).IsTrue();
+        if (failure is not null) throw failure;
+        var rented = new object[256][];
+        try
+        {
+            for (var index = 0; index < rented.Length; index++) rented[index] = pool.Rent(16);
+            await Assert.That(rented.All(identities.Contains)).IsTrue();
+            await Assert.That(rented.Distinct(ReferenceEqualityComparer.Instance).Count()).IsEqualTo(256);
+        }
+        finally { foreach (var array in rented) if (array is not null) pool.Return(array, clearArray: true); }
+    }
+
+    [Test]
+    public async Task InvalidRequestsAndForeignBucketSizesFailBeforeChangingStorage()
+    {
+        var pool = new BoundedResponseArrayPool<byte>(64, 128, 256);
+        await Assert.That(() => pool.Rent(-1)).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(() => pool.Return(null!)).Throws<ArgumentNullException>();
+        await Assert.That(() => pool.Return(new byte[17])).Throws<ArgumentException>();
+        await Assert.That(pool.Rent(0)).IsSameReferenceAs(Array.Empty<byte>());
+        pool.Return(Array.Empty<byte>());
+        await CheckRetention(pool, 16, 256);
     }
 
 }

@@ -208,7 +208,7 @@ jobs:
                       failures.append(f'No demonstrated improvement against both controls: {label}')
           if os.environ['RETAINED_MEMORY'].lower() == 'true':
               lines.extend(['', '## Whole-process retained memory', '',
-                            'Full-GC snapshots include the identical in-process peer, 51 client receive loops, and pools. POH size includes fragmentation; medians across fixture processes are descriptive. Working-set variation requires manual review.', '',
+                            'Full-GC snapshots describe the benchmark process; see the identical fixture for its clients, pools, and peer scope. POH size includes fragmentation; medians across fixture processes are descriptive. Working-set variation requires manual review.', '',
                             '| Phase | Stage | Samples | Managed bytes | POH bytes | POH fragmented bytes | Working-set bytes |',
                             '| --- | --- | ---: | ---: | ---: | ---: | ---: |'])
               for phase in ('baseline-validation', 'candidate-validation', 'baseline-a', 'candidate', 'baseline-b'):
