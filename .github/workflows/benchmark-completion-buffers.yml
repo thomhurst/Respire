@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'src/Respire/Networking/CompletionScheduler.cs'
+      - 'benchmarks/Respire.Benchmarks/ByteGetBenchmarks.cs'
       - '.github/workflows/benchmark-completion-buffers.yml'
       - '.github/workflows/benchmark-compare.yml'
 
