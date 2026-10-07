@@ -1435,7 +1435,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         ClampDeadline(source, commandDeadline);
-        source.RegisterCancellation(cancellationToken);
+        source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
         if (command is TransactionCommand transactionCommand) transactionCommand.RecordConnection(this);
         ScheduleFlush(startedBatch);
         return ObserveScriptingReply(source.Task, in command, commandName, cancellationToken, commandDeadline);
@@ -1972,7 +1972,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             throw;
         }
 
-        source.RegisterCancellation(cancellationToken);
+        source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
         if (command is TransactionCommand transactionCommand) transactionCommand.RecordConnection(this);
         ScheduleFlush(startedBatch);
         return await ObserveScriptingReply(source.Task, in command, commandName, cancellationToken, commandDeadline).ConfigureAwait(false);

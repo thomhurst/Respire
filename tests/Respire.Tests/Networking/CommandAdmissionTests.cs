@@ -55,6 +55,8 @@ public class CommandAdmissionTests
     [Arguments(true, "timestamp")]
     [Arguments(false, "prefix")]
     [Arguments(true, "prefix")]
+    [Arguments(false, "validated-prefix")]
+    [Arguments(true, "validated-prefix")]
     public async Task RejectedAdmissionPublishesNeitherBytesNorResponseSlots(bool direct, string wrapper)
     {
         await using var server = new FakeRespServer("+unexpected\r\n"u8.ToArray())
@@ -89,19 +91,27 @@ public class CommandAdmissionTests
     }
 
     [Test]
-    [Arguments("timestamp", false)]
-    [Arguments("prefix", false)]
-    [Arguments("timestamp", true)]
-    [Arguments("prefix", true)]
-    public async Task AcceptedWrapperUsesResponseToken(string wrapper, bool cancelCaller)
+    [Arguments("timestamp", false, false)]
+    [Arguments("prefix", false, false)]
+    [Arguments("timestamp", true, false)]
+    [Arguments("prefix", true, false)]
+    [Arguments("validated-prefix", false, false)]
+    [Arguments("validated-prefix", true, false)]
+    [Arguments("validated-prefix", false, true)]
+    [Arguments("validated-prefix", true, true)]
+    public async Task AcceptedWrapperUsesResponseToken(string wrapper, bool cancelCaller, bool waitForCapacity)
     {
         var arrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var capacityFilled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var received = 0;
         await using var server = new FakeRespServer(FakeRespServer.OkReply)
         {
             SuppressReply = command =>
             {
                 if (command != "PING") return false;
-                arrived.TrySetResult();
+                var count = Interlocked.Increment(ref received);
+                if (waitForCapacity && count == 2) capacityFilled.TrySetResult();
+                if (count == (waitForCapacity ? 3 : 1)) arrived.TrySetResult();
                 return true;
             },
         };
@@ -110,7 +120,17 @@ public class CommandAdmissionTests
         using var caller = new CancellationTokenSource();
         var state = new AdmissionState { ResponseToken = caller.Token };
         var execution = new RespireClient.TrackedScriptExecution(connection, default);
+        var first = waitForCapacity ? connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask() : null;
+        var second = waitForCapacity ? connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask() : null;
+        if (waitForCapacity) await capacityFilled.Task.WaitAsync(Limit);
         var pending = StartSend(connection, new AdmissionCommand(state), execution, false, wrapper, admission.Token).AsTask();
+        if (waitForCapacity)
+        {
+            await Assert.That(pending.IsCompleted).IsFalse();
+            await server.SendRawAsync("+PONG\r\n+PONG\r\n"u8.ToArray());
+            using var firstReply = await first!.WaitAsync(Limit);
+            using var secondReply = await second!.WaitAsync(Limit);
+        }
         await arrived.Task.WaitAsync(Limit);
         admission.Cancel();
         await Assert.That(pending.IsCompleted).IsFalse();
@@ -171,6 +191,7 @@ public class CommandAdmissionTests
             {
                 "timestamp" => connection.SendAsync(new RespireClient.SendTimestampCommand<AdmissionCommand>(command, execution), token),
                 "prefix" => connection.SendPrefixedCheckedAsync(new RawCommand("*1\r\n$6\r\nASKING\r\n"u8.ToArray()), command, token),
+                "validated-prefix" => connection.SendValidatedPrefixedAsync(new RawCommand("*1\r\n$6\r\nASKING\r\n"u8.ToArray()), command, token),
                 _ => connection.SendAsync(command, token),
             };
         }

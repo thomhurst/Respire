@@ -12,6 +12,8 @@ public class ClusterScanCapabilityTests
     [Test]
     [Arguments("-NOPERM metadata denied\r\n")]
     [Arguments("-ERR unknown command 'COMMAND'\r\n")]
+    [Arguments("-ERR unsupported operation: COMMAND INFO\r\n")]
+    [Arguments("-ERR metadata temporarily unavailable\r\n")]
     [Arguments("+malformed\r\n")]
     public async Task UnknownMetadataIsProbedOncePerRecoveryAndRecheckedNextPage(string unknown)
     {
@@ -63,5 +65,14 @@ public class ClusterScanCapabilityTests
         await Assert.That(ClusterScanCapabilityCache.ReadSupport(absent)).IsFalse();
         await Assert.That(ClusterScanCapabilityCache.ReadSupport(supported)).IsTrue();
         await Assert.That(ClusterScanCapabilityCache.ReadSupport(malformed)).IsNull();
+    }
+
+    [Test]
+    public async Task MetadataFallbackDoesNotHideOperationalErrors()
+    {
+        await Assert.That(ClusterScanCommandErrors.IsMetadataUnavailable(
+            new RespireServerException("LOADING dataset is loading"))).IsFalse();
+        await Assert.That(ClusterScanCommandErrors.IsMetadataUnavailable(
+            new RespireServerException("CLUSTERDOWN cluster is unavailable"))).IsFalse();
     }
 }
