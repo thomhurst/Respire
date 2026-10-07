@@ -75,7 +75,9 @@ internal static class RespParser
         private readonly ref int _remainingElements;
         private readonly ref int _deferredPayloads;
         public int Depth { get; }
-        // Constructed contexts defer payloads; default is the immediate-copy sentinel.
+        // Constructed contexts defer payloads; ImmediateCopy is only for scalar/bulk
+        // entry points and has no aggregate budget for ForChildren/TryReserve.
+        public static ParseContext ImmediateCopy => default;
         public bool DeferPayloads { get; }
         public int DeferredPayloads { get => _deferredPayloads; set => _deferredPayloads = value; }
 
@@ -194,7 +196,7 @@ internal static class RespParser
         long payloadLength,
         int headerEnd,
         out RespValue value)
-        => TryParseBulkValue(buffer, ref pos, type, payloadLength, headerEnd, out value, default);
+        => TryParseBulkValue(buffer, ref pos, type, payloadLength, headerEnd, out value, ParseContext.ImmediateCopy);
 
     private static RespParseStatus TryParseBulkValue(
         ReadOnlySpan<byte> buffer, ref int pos, RespDataType type, long payloadLength, int headerEnd,
@@ -233,7 +235,7 @@ internal static class RespParser
     }
 
     internal static RespParseStatus TryParseScalar(ReadOnlySpan<byte> buffer, ref int cursor, out RespValue value)
-        => TryParseScalar(buffer, ref cursor, out value, default);
+        => TryParseScalar(buffer, ref cursor, out value, ParseContext.ImmediateCopy);
 
     private static RespParseStatus TryParseScalar(ReadOnlySpan<byte> buffer, ref int cursor, out RespValue value, ParseContext context)
     {

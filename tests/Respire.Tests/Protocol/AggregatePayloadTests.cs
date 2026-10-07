@@ -69,10 +69,11 @@ public class AggregatePayloadTests
     }
 
     [Test]
-    public async Task SharedChildPublicViewRejectsAccessAfterRootDisposal()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ChildPublicViewRejectsAccessAfterRootDisposal(bool fragmented)
     {
-        var pos = 0;
-        await Assert.That(RespParser.TryParseValue("*1\r\n$3\r\none\r\n"u8, ref pos, out var value)).IsEqualTo(RespParseStatus.Done);
+        var value = await ParseAggregateAsync("*1\r\n$3\r\none\r\n"u8.ToArray(), fragmented);
         using var result = new RespireResult(in value);
         var child = result[0];
         var bytes = child.AsBytes();
@@ -84,14 +85,15 @@ public class AggregatePayloadTests
     }
 
     [Test]
-    public async Task BorrowedDeserializationMaterializesSharedChildren()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task BorrowedDeserializationMaterializesChildren(bool fragmented)
     {
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", 1)],
         });
-        var pos = 0;
-        await Assert.That(RespParser.TryParseValue("*3\r\n$3\r\none\r\n$2\r\n42\r\n$7\r\n[1,2,3]\r\n"u8, ref pos, out var value)).IsEqualTo(RespParseStatus.Done);
+        var value = await ParseAggregateAsync("*3\r\n$3\r\none\r\n$2\r\n42\r\n$7\r\n[1,2,3]\r\n"u8.ToArray(), fragmented);
         string? text;
         byte[]? bytes;
         int number;
@@ -105,13 +107,31 @@ public class AggregatePayloadTests
             MemoryMarshal.TryGetArray(value.AsArray()[0].AsMemory(), out var payload);
             await Assert.That(bytes).IsNotSameReferenceAs(payload.Array);
             // Deterministically model receive-pool reuse after materialization.
-            payload.Array!.AsSpan().Fill(0);
+            foreach (ref readonly var child in value.AsArray())
+            {
+                MemoryMarshal.TryGetArray(child.AsMemory(), out var storage);
+                storage.Array!.AsSpan().Fill(0);
+            }
         }
         finally { value.Dispose(); }
         await Assert.That(text).IsEqualTo("one");
         await Assert.That(bytes).IsEquivalentTo("one"u8.ToArray());
         await Assert.That(number).IsEqualTo(42);
         await Assert.That(numbers).IsEquivalentTo(new[] { 1, 2, 3 });
+    }
+
+    private static async Task<RespValue> ParseAggregateAsync(byte[] frame, bool fragmented)
+    {
+        var pos = 0;
+        if (!fragmented)
+        {
+            await Assert.That(RespParser.TryParseValue(frame, ref pos, out var complete)).IsEqualTo(RespParseStatus.Done);
+            return complete;
+        }
+        using var parser = new RespParseState(int.MaxValue);
+        await Assert.That(parser.TryParse(frame.AsSpan(0, 4), ref pos, out _, out _)).IsEqualTo(RespParseStatus.NeedMoreData);
+        await Assert.That(parser.TryParse(frame, ref pos, out var value, out _)).IsEqualTo(RespParseStatus.Done);
+        return value;
     }
 
     [Test]

@@ -32,6 +32,12 @@ Debug builds poison a returned shared frame to expose invalid internal child
 reads; release builds add no poisoning work. Deserialization materializes strings,
 byte arrays, primitives, and serializer results while the root remains alive.
 
+Batch and transaction converters finish materializing typed results before disposing
+the reply; deferred raw, script, and function results explicitly use `ToOwned()`.
+Pub/sub dispatch copies payload bytes before placing messages in subscription buffers.
+Scan pages and synchronous response parsers materialize their output before disposal;
+protocol-shaped additional fields use owned copies when they escape that parse.
+
 Nesting is limited to 512 aggregate frames, including maps and attributes. This
 bound applies to both parsers, including fully buffered replies, and protects
 recursive parsing, disposal, and owned copies. Replies beyond this depth fail with
