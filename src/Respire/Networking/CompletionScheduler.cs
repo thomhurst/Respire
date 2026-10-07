@@ -36,6 +36,13 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
     /// first reply's added latency and the recycled buffer size.</summary>
     private const int MaxBatchSize = 256;
 
+    // Deep drains can reuse more small batches without retaining more entry storage
+    // than four maximum-size batches. Both limits apply under the handoff gate.
+    // Only cleared spares count here; pending, filling and active arrays own live
+    // work. Array headers and the reference list are additional storage.
+    private const int MaxSpareBuffers = 16;
+    private const int MaxSpareEntries = 4 * MaxBatchSize;
+
     private readonly Lock _gate = new();
 
     // Producer-owned; touched only by the receive loop, never under the gate.
@@ -48,6 +55,30 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
     private int _pendingCount;
     private Entry[]?[] _spares = new Entry[]?[4];
     private int _spareCount;
+    private int _spareEntryCount;
+
+    /// <summary>Copies spare-storage facts for friend tests without exposing pooled arrays or entries.</summary>
+    internal SpareStorageSnapshot InspectSpareStorageForTests()
+    {
+        lock (_gate)
+        {
+            var lengths = new List<int>();
+            var cleared = true;
+            foreach (var buffer in _spares)
+            {
+                if (buffer is null) continue;
+                lengths.Add(buffer.Length);
+                foreach (var entry in buffer)
+                    if (entry.Source is not null || !entry.Value.Equals(default(RespValue)))
+                        cleared = false;
+            }
+            return new(lengths.ToArray(), Unsafe.SizeOf<Entry>(), cleared, _spareCount, _spareEntryCount);
+        }
+    }
+
+    internal readonly record struct SpareStorageSnapshot(
+        int[] BufferLengths, int EntrySize, bool EntriesCleared, int TrackedBufferCount, int TrackedEntryCount);
+
     private bool _running;
     private bool _executing;
     private TaskCompletionSource? _idleWaiter;
@@ -102,7 +133,7 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
         }
         if (_fillingCount == _filling.Length)
         {
-            Array.Resize(ref _filling, _filling.Length * 2);
+            Array.Resize(ref _filling, Math.Min(MaxBatchSize, _filling.Length * 2));
         }
 
         ref var entry = ref _filling[_fillingCount++];
@@ -156,6 +187,7 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
             {
                 replacement = _spares[--_spareCount];
                 _spares[_spareCount] = null;
+                _spareEntryCount -= replacement!.Length;
             }
 
             schedule = !_running;
@@ -200,10 +232,7 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
             {
                 if (delivered is not null)
                 {
-                    if (_spareCount < _spares.Length)
-                    {
-                        _spares[_spareCount++] = delivered;
-                    }
+                    RetainSpareLocked(delivered);
 
                     // Handed off while delivering: the replacement runner owns what is left.
                     if (_generation != generation) return;
@@ -270,6 +299,35 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
             }
 
             delivered = items;
+        }
+    }
+
+    private void RetainSpareLocked(Entry[] delivered)
+    {
+        if (_spareCount < MaxSpareBuffers && delivered.Length <= MaxSpareEntries - _spareEntryCount)
+        {
+            if (_spareCount == _spares.Length)
+                Array.Resize(ref _spares, Math.Min(MaxSpareBuffers, _spares.Length * 2));
+            _spares[_spareCount++] = delivered;
+            _spareEntryCount += delivered.Length;
+            return;
+        }
+
+        // A prior large drain must not permanently consume the budget needed by
+        // later small drains. Replace only a cleared, larger spare; live arrays
+        // remain with their runner. Scan at most 16 slots, only on a cache miss.
+        var largest = -1;
+        var largestLength = delivered.Length;
+        for (var index = 0; index < _spareCount; index++)
+        {
+            if (_spares[index]!.Length <= largestLength) continue;
+            largest = index;
+            largestLength = _spares[index]!.Length;
+        }
+        if (largest >= 0)
+        {
+            _spareEntryCount += delivered.Length - largestLength;
+            _spares[largest] = delivered;
         }
     }
 
