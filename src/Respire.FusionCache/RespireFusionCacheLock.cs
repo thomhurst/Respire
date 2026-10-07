@@ -43,7 +43,7 @@ public sealed partial class RespireFusionCacheLock : IAsyncDisposable
     public bool OwnershipLost => _keepAlive.OwnershipLost;
     /// <summary>The renewal exception that made ownership uncertain, when present.</summary>
     public Exception? RenewalFailure => _keepAlive.Failure;
-    /// <summary>Signals ownership loss, caller cancellation, or teardown; it cannot cancel FusionCache's factory automatically.</summary>
+    /// <summary>Signals ownership loss, teardown, or caller cancellation when configured; it cannot cancel FusionCache's factory automatically.</summary>
     public CancellationToken OwnershipCancellationToken { get; }
 
     internal bool BelongsTo(RespireFusionCacheDistributedLocker owner) => ReferenceEquals(_owner, owner);

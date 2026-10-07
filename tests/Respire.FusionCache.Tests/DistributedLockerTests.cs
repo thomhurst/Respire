@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -7,6 +8,61 @@ namespace Respire.FusionCache.Tests;
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
 public class DistributedLockerTests(RedisTestContainer fixture)
 {
+    [Test]
+    [Arguments(2, true)]
+    [Arguments(3, true)]
+    [Arguments(2, false)]
+    [Arguments(3, false)]
+    public async Task CallerCancellationPolicyPreservesWaitingAndAcquiredLeaseContracts(int protocol, bool releaseOnCancellation)
+    {
+        await using var client = await ConnectAsync(protocol);
+        await using var locker = new RespireFusionCacheDistributedLocker(client,
+            new() { LeaseDuration = TimeSpan.FromSeconds(2), ReleaseOnCallerCancellation = releaseOnCancellation });
+        var name = Guid.NewGuid().ToString();
+        using var caller = new CancellationTokenSource();
+        caller.Cancel();
+        var before = await Assert.That(async () => await AcquireAsync(locker, name, TimeSpan.Zero, caller.Token))
+            .Throws<OperationCanceledException>();
+        await Assert.That(before!.CancellationToken).IsEqualTo(caller.Token);
+        using var lifetime = new CancellationTokenSource();
+        var owner = (RespireFusionCacheLock)(await AcquireAsync(locker, name, TimeSpan.Zero, lifetime.Token))!;
+        using var contender = new CancellationTokenSource();
+        var waiting = AcquireAsync(locker, name, Timeout.InfiniteTimeSpan, contender.Token).AsTask();
+        await contender.CancelAsync();
+        var during = await Assert.That(async () => await waiting.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<OperationCanceledException>();
+        await Assert.That(during!.CancellationToken).IsEqualTo(contender.Token);
+        await lifetime.CancelAsync();
+        if (releaseOnCancellation)
+        {
+            await owner.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(owner.OwnershipCancellationToken.IsCancellationRequested).IsTrue();
+            await Assert.That(await client.GetBytesAsync(owner.LeaseKey)).IsNull();
+        }
+        else
+        {
+            // Outlive the original server lease to prove renewal survives caller cancellation.
+            await WaitPastLeaseExpiryAsync(TimeSpan.FromSeconds(2));
+            await Assert.That(owner.OwnershipCancellationToken.IsCancellationRequested).IsFalse();
+            await Assert.That(await client.GetBytesAsync(owner.LeaseKey)).IsNotNull();
+            await Assert.That(await AcquireAsync(locker, name, TimeSpan.Zero)).IsNull();
+        }
+        await Task.WhenAll(locker.DisposeAsync().AsTask(), locker.DisposeAsync().AsTask(),
+            ReleaseAsync(locker, name, owner, lifetime.Token).AsTask()).WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(owner.OwnershipCancellationToken.IsCancellationRequested).IsTrue();
+        await Assert.That(await client.GetBytesAsync(owner.LeaseKey)).IsNull();
+        await Assert.That(await client.GetStringAsync(owner.FencingCounterKey)).IsEqualTo("1");
+        await client.SetAsync("client-survives", "yes");
+    }
+
+    /// <summary>Waits beyond a full server lease after handoff without adding a fixed extra second.</summary>
+    internal static async Task WaitPastLeaseExpiryAsync(TimeSpan leaseDuration)
+    {
+        var started = Stopwatch.GetTimestamp();
+        while (Stopwatch.GetElapsedTime(started) <= leaseDuration)
+            await Task.Delay(10);
+    }
+
     [Test]
     [Arguments(2)]
     [Arguments(3)]
