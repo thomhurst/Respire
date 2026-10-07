@@ -13,6 +13,64 @@ namespace Respire.IntegrationTests;
 public class ValkeyClusterScanIntegrationTests
 {
     [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task ResumableScanSelectsModernAndLegacyValkeyInOneRun(int protocol)
+    {
+        foreach (var image in new[] { "valkey/valkey:9.0-alpine", "valkey/valkey:9.1-alpine" })
+        {
+            await using var cluster = await OwnedCluster.StartAsync(image);
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+            var token = deadline.Token;
+            var options = new RespireOptions
+            {
+                UseCluster = true, Database = 1, Connections = 1, Endpoints = [cluster.Endpoint(0)],
+                Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3,
+                ConnectTimeout = TimeSpan.FromSeconds(5), CommandTimeout = TimeSpan.FromSeconds(5),
+                MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
+            };
+            byte[] prefix = [255, (byte)'*', 0];
+            var expected = new[] { 0, 6000, 12000 }.Select(slot => $"{{{Tag(slot)}}}:selected").ToArray();
+            RespireClusterScanCursor checkpoint;
+            var found = new HashSet<string>(StringComparer.Ordinal);
+            await using (var producer = await RespireClient.ConnectAsync(options, token))
+            {
+                var view = producer.WithKeyPrefix((RespireKey)prefix);
+                foreach (var key in expected) await view.SetAsync(key, "selected-db", cancellationToken: token);
+                await view.Lists.RightPushAsync($"{{{Tag(0)}}}:selected-list", ["wrong-type"], token);
+                await producer.SetAsync($"outside:{{{Tag(0)}}}:selected", "wrong-prefix", cancellationToken: token);
+                await using (var zero = await RespireClient.ConnectAsync(options with { Database = 0 }, token))
+                    await zero.WithKeyPrefix((RespireKey)prefix).SetAsync($"{{{Tag(6000)}}}:selected", "wrong-db", cancellationToken: token);
+                var evidence = await producer.Server.CommandInfoAsync([RespireCommands.Cluster.CLUSTERSCAN], token);
+                (evidence[0] is not null).Should().Be(image.Contains("9.1", StringComparison.Ordinal));
+                var first = await view.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start,
+                    match: "*:selected", type: RespireKeyType.String, countHint: 1, cancellationToken: token);
+                found.UnionWith(first.Keys);
+                checkpoint = RespireClusterScanCursor.Parse(first.Cursor.ToString());
+                // Modern Valkey bootstraps an opaque slot cursor; older Valkey finishes
+                // a numeric primary pass, preserving the same public checkpoint API.
+                (checkpoint.State!.ValkeyCursor is not null).Should().Be(image.Contains("9.1", StringComparison.Ordinal),
+                    $"{image}: active={checkpoint.State.ActiveNode}, completed={checkpoint.CompletedSlotCount}, numeric={checkpoint.State.Cursor}");
+            }
+            await using var resumed = await RespireClient.ConnectAsync(options, token);
+            var resumedView = resumed.WithKeyPrefix((RespireKey)prefix.ToArray());
+            var cursor = checkpoint;
+            while (!cursor.IsComplete)
+            {
+                var page = await resumedView.Keys.ScanClusterPageAsync(cursor, match: "*:selected",
+                    type: RespireKeyType.String, countHint: 1, cancellationToken: token);
+                found.UnionWith(page.Keys);
+                cursor = RespireClusterScanCursor.Parse(page.Cursor.ToString());
+            }
+            found.Should().BeEquivalentTo(expected);
+            await using var wrongDatabase = await RespireClient.ConnectAsync(options with { Database = 0 }, token);
+            var mismatch = async () => await wrongDatabase.WithKeyPrefix((RespireKey)prefix).Keys.ScanClusterPageAsync(checkpoint,
+                match: "*:selected", type: RespireKeyType.String, cancellationToken: token);
+            await mismatch.Should().ThrowAsync<ArgumentException>();
+        }
+    }
+
+    [Test]
     [Arguments("valkey/valkey:9.0-alpine", 2)]
     [Arguments("valkey/valkey:9.0-alpine", 3)]
     [Arguments("valkey/valkey:9.1-alpine", 2)]

@@ -82,24 +82,14 @@ internal static class ValkeyClusterScanParser
 
     internal static RespireValkeyClusterScanPage ParseWithPrefix(in RespValue reply, KeyPrefix? prefix, string? match = null)
     {
-        if (reply.Type != RespDataType.Array || reply.AsArray().Length != 2)
-            throw new RespireProtocolException("CLUSTERSCAN must return a cursor and a key array.");
-        var fields = reply.AsArray();
-        if (fields[0].Type != RespDataType.BulkString || fields[0].AsSpan().IsEmpty || fields[1].Type != RespDataType.Array)
-            throw new RespireProtocolException("CLUSTERSCAN returned an invalid cursor or key array.");
-        string cursor;
-        try { cursor = CursorEncoding.GetString(fields[0].AsSpan()); }
-        catch (DecoderFallbackException error)
-        {
-            throw new RespireProtocolException("CLUSTERSCAN cursor is not valid UTF-8.", error);
-        }
-        var values = fields[1].AsArray();
+        var cursor = ReadCursor(in reply);
+        var values = reply.AsArray()[1].AsArray();
         var pattern = prefix is { HasSurrogateBoundary: true } && match is not null
             ? Encoding.UTF8.GetBytes(match) : null;
         var keys = new List<RespireKey>(values.Length);
         foreach (ref readonly var key in values)
         {
-            if (key.Type != RespDataType.BulkString) throw new RespireProtocolException("CLUSTERSCAN keys must be bulk strings.");
+            if (key.Type != RespDataType.BulkString || key.IsNull) throw new RespireProtocolException("CLUSTERSCAN keys must be bulk strings.");
             var bytes = key.AsSpan();
             RespireKey owned;
             if (prefix is null) owned = new RespireKey(bytes.ToArray());
@@ -107,5 +97,19 @@ internal static class ValkeyClusterScanParser
             if (pattern is null || ByteGlob.IsMatch(owned.ToBytes(), pattern)) keys.Add(owned);
         }
         return new(cursor, keys.ToArray());
+    }
+
+    internal static string ReadCursor(in RespValue reply)
+    {
+        if (reply.Type != RespDataType.Array || reply.AsArray().Length != 2)
+            throw new RespireProtocolException("CLUSTERSCAN must return a cursor and a key array.");
+        var fields = reply.AsArray();
+        if (fields[0].Type != RespDataType.BulkString || fields[0].AsSpan().IsEmpty || fields[1].Type != RespDataType.Array)
+            throw new RespireProtocolException("CLUSTERSCAN returned an invalid cursor or key array.");
+        try { return CursorEncoding.GetString(fields[0].AsSpan()); }
+        catch (DecoderFallbackException error)
+        {
+            throw new RespireProtocolException("CLUSTERSCAN cursor is not valid UTF-8.", error);
+        }
     }
 }

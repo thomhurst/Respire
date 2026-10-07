@@ -12,6 +12,7 @@ public sealed class RespireClusterScanCursor
 {
     private const int FormatMagic = 0x31435352; // RSC1
     private const int BinaryPrefixFormatMagic = 0x32435352; // RSC2
+    private const int ExtendedFormatMagic = 0x33435352; // RSC3
     private const int MaximumEncodedLength = 6 * 1024 * 1024;
     internal ClusterScanState? State { get; }
     internal RespireClusterScanCursor(ClusterScanState? state)
@@ -32,16 +33,21 @@ public sealed class RespireClusterScanCursor
     {
         using var stream = new MemoryStream();
         using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
-        writer.Write(State?.BinaryPrefix is null ? FormatMagic : BinaryPrefixFormatMagic);
+        var format = FormatMagic;
+        if (State?.BinaryPrefix is not null) format = BinaryPrefixFormatMagic;
+        if (State?.Database is not null || State?.ValkeyCursor is not null) format = ExtendedFormatMagic;
+        writer.Write(format);
         writer.Write(State is not null);
         if (State is { } state)
         {
-            WriteText(writer, state.Match);
-            WriteText(writer, state.Type);
-            WriteText(writer, state.Prefix);
+            WriteFilter(writer, state.Match, format);
+            WriteFilter(writer, state.Type, format);
+            WriteFilter(writer, state.Prefix, format);
+            if (format == ExtendedFormatMagic)
+                writer.Write(state.BinaryPrefix?.Length ?? 0);
             if (state.BinaryPrefix is { } prefix)
             {
-                writer.Write(prefix.Length);
+                if (format != ExtendedFormatMagic) writer.Write(prefix.Length);
                 writer.Write(prefix);
             }
             var identities = state.Owners.Distinct(StringComparer.Ordinal).ToArray();
@@ -64,6 +70,11 @@ public sealed class RespireClusterScanCursor
             writer.Write(state.Epoch);
             writer.Write(state.Cursor);
             WriteBits(writer, state.PassSlots);
+            if (format == ExtendedFormatMagic)
+            {
+                writer.Write(state.Database ?? 0);
+                WriteText(writer, state.ValkeyCursor);
+            }
         }
         var encoded = Convert.ToBase64String(stream.GetBuffer(), 0, checked((int)stream.Length));
         if (encoded.Length > MaximumEncodedLength) throw new InvalidOperationException("Cluster scan cursor exceeds its serialization limit.");
@@ -81,21 +92,22 @@ public sealed class RespireClusterScanCursor
             using var stream = new MemoryStream(Convert.FromBase64String(value), writable: false);
             using var reader = new BinaryReader(stream, new UTF8Encoding(false, true));
             var format = reader.ReadInt32();
-            if (format is not FormatMagic and not BinaryPrefixFormatMagic)
+            if (format is not FormatMagic and not BinaryPrefixFormatMagic and not ExtendedFormatMagic)
                 throw new FormatException("Unsupported Cluster scan cursor version.");
             if (!reader.ReadBoolean())
             {
-                if (format == BinaryPrefixFormatMagic) throw new FormatException("Binary Cluster scan cursors require scan state.");
+                if (format != FormatMagic) throw new FormatException("Extended Cluster scan cursors require scan state.");
                 if (stream.Position != stream.Length) throw new FormatException("Unexpected cursor data.");
                 return Start;
             }
-            var state = new ClusterScanState(ReadText(reader), ReadText(reader), ReadText(reader));
-            if (format == BinaryPrefixFormatMagic)
+            var state = new ClusterScanState(ReadFilter(reader, format), ReadFilter(reader, format), ReadFilter(reader, format));
+            if (format is BinaryPrefixFormatMagic or ExtendedFormatMagic)
             {
                 var prefixLength = reader.ReadInt32();
-                if (state.Prefix is not null || prefixLength <= 0 || prefixLength > stream.Length - stream.Position)
+                if (prefixLength < 0 || format == BinaryPrefixFormatMagic && prefixLength == 0
+                    || prefixLength > 0 && state.Prefix is not null || prefixLength > stream.Length - stream.Position)
                     throw new FormatException("Invalid binary Cluster scan prefix.");
-                state.BinaryPrefix = reader.ReadBytes(prefixLength);
+                if (prefixLength > 0) state.BinaryPrefix = reader.ReadBytes(prefixLength);
             }
             var count = reader.ReadInt32();
             if (count is < 1 or > ClusterHash.SlotCount) throw new FormatException("Invalid cursor node count.");
@@ -124,6 +136,15 @@ public sealed class RespireClusterScanCursor
             state.Epoch = reader.ReadUInt64();
             state.Cursor = reader.ReadUInt64();
             ReadBits(reader, state.PassSlots);
+            if (format == ExtendedFormatMagic)
+            {
+                state.Database = reader.ReadInt32();
+                state.ValkeyCursor = ReadText(reader);
+                if (state.Database < 0 || state.ValkeyCursor is { } opaque
+                    && (opaque.Length == 0 || opaque == "0" || state.Cursor != 0
+                        || state.ActiveNode is null || !state.PassSlots[ClusterHash.GetSlot(opaque)]))
+                    throw new FormatException("Inconsistent Valkey Cluster scan cursor state.");
+            }
             if (stream.Position != stream.Length
                 || state.ActiveNode is not null && (!unique.Contains(state.ActiveNode) || string.IsNullOrEmpty(state.RunId))
                 || state.ActiveNode is null && (state.Cursor != 0 || state.PassSlots.Any(static bit => bit)))
@@ -154,6 +175,27 @@ public sealed class RespireClusterScanCursor
         if (text is not null) writer.Write(text);
     }
     private static string? ReadText(BinaryReader reader) => reader.ReadBoolean() ? reader.ReadString() : null;
+    private static void WriteFilter(BinaryWriter writer, string? text, int format)
+    {
+        if (format != ExtendedFormatMagic) { WriteText(writer, text); return; }
+        writer.Write(text is not null);
+        if (text is null) return;
+        // Filters and text prefixes have UTF-16 identity, including unpaired surrogates.
+        // Encoding them as UTF-8 would silently change a persisted checkpoint's filters.
+        writer.Write(text.Length);
+        foreach (var character in text) writer.Write((ushort)character);
+    }
+    private static string? ReadFilter(BinaryReader reader, int format)
+    {
+        if (format != ExtendedFormatMagic) return ReadText(reader);
+        if (!reader.ReadBoolean()) return null;
+        var length = reader.ReadInt32();
+        if (length < 0 || length > (reader.BaseStream.Length - reader.BaseStream.Position) / 2)
+            throw new FormatException("Invalid Cluster scan filter length.");
+        var characters = new char[length];
+        for (var index = 0; index < characters.Length; index++) characters[index] = (char)reader.ReadUInt16();
+        return new string(characters);
+    }
     private static void WriteBits(BinaryWriter writer, bool[] bits)
     {
         for (var index = 0; index < bits.Length; index += 8)
@@ -200,6 +242,8 @@ internal sealed class ClusterScanState(string? match, string? type, string? pref
     internal string? RunId;
     internal ulong Epoch;
     internal ulong Cursor;
+    internal string? ValkeyCursor;
+    internal int? Database;
 
     internal bool MatchesKeyPrefix(KeyPrefix? prefix)
         => Prefix == prefix?.Text
@@ -210,6 +254,8 @@ internal sealed class ClusterScanState(string? match, string? type, string? pref
         var copy = new ClusterScanState(Match, Type, Prefix)
         {
             ActiveNode = ActiveNode, RunId = RunId, Epoch = Epoch, Cursor = Cursor, BinaryPrefix = BinaryPrefix,
+            ValkeyCursor = ValkeyCursor,
+            Database = Database,
         };
         Owners.CopyTo(copy.Owners, 0);
         Completed.CopyTo(copy.Completed, 0);
@@ -223,6 +269,7 @@ internal sealed class ClusterScanState(string? match, string? type, string? pref
         RunId = null;
         Epoch = 0;
         Cursor = 0;
+        ValkeyCursor = null;
         Array.Clear(PassSlots);
     }
 }
