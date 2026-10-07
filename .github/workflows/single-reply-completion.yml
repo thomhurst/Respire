@@ -35,7 +35,7 @@ jobs:
         run: >-
           dotnet run --project tests/Respire.Tests -c Release -f ${{ matrix.framework }} --
           --treenode-filter '/*/*/(PendingResponseLifetimeTests)|(CompletionSchedulerTests)|(StalledDeliveryTests)|(TransportRetirementTests)|(DeadlinePublicationTests)|(TransactionDeadlineTests)|(CommandTimeoutCancellationTests)|(FakeTransactionTests)|(TransactionTests)|(FunctionCommandTests)|(DeferredStreamCommandTests)|(StreamedSetTests)|(TimeoutDiagnosticsTests)|(TestInspectionArchitectureTests)/*'
-          --minimum-expected-tests 329 --report-trx --results-directory completion-lifetime
+          --minimum-expected-tests 333 --report-trx --results-directory completion-lifetime
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:

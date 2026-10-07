@@ -9,6 +9,39 @@ namespace Respire.Tests.Networking;
 public class PendingResponseLifetimeTests
 {
     [Test]
+    [Arguments(0)]
+    [Arguments(1)]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task CallerCleanupCannotCancelTheNextRental(int tokenState)
+    {
+        using var cancellation = new CancellationTokenSource();
+        if (tokenState == 3) cancellation.Cancel();
+        var pool = new PendingResponsePool(1);
+        var source = pool.Rent();
+        var pending = source.Task;
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        pending.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(() => ready.TrySetResult());
+        source.RegisterCancellation(tokenState == 0 ? CancellationToken.None : cancellation.Token);
+        if (tokenState == 2) cancellation.Dispose();
+        source.TrySetResult(RespValue.Integer(42));
+        await ready.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await ConsumeAsync(pending, tokenState == 3 ? 2 : 0);
+
+        // The receiver still owns the source, so inspection cannot race with recycling.
+        await Assert.That(source.InspectForTests().RegisteredCancellationToken.CanBeCanceled).IsFalse();
+        source.ReleaseRef();
+        var recycled = pool.Rent();
+        await Assert.That(ReferenceEquals(source, recycled)).IsTrue();
+        var next = recycled.Task;
+        if (tokenState != 2) cancellation.Cancel();
+        await Assert.That(recycled.TrySetResult(RespValue.Integer(42))).IsTrue();
+        using var reply = await next;
+        await Assert.That(reply.AsInteger()).IsEqualTo(42);
+        recycled.ReleaseRef();
+    }
+
+    [Test]
     [Arguments(false, 0)]
     [Arguments(true, 0)]
     [Arguments(false, 1)]

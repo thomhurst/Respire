@@ -156,8 +156,13 @@ internal abstract partial class PendingResponse
 
     protected void ReleaseCallerRef()
     {
-        _cancellationRegistration.Dispose();
-        _cancellationRegistration = default;
+        // The common non-cancellable command never installs a registration. Preserve its
+        // empty slot rather than writing it again on every successful completion.
+        if (_cancellationRegistration.Token.CanBeCanceled)
+        {
+            _cancellationRegistration.Dispose();
+            _cancellationRegistration = default;
+        }
         ReleaseRef();
     }
 
@@ -187,6 +192,8 @@ internal abstract partial class PendingResponse
             ReturnToPool();
     }
 
+    // Keep pool reset/storage out of each release site's hot reference-count check.
+    [MethodImpl(MethodImplOptions.NoInlining)]
     private void ReturnToPool()
     {
         // Clear the deadline before the epoch store publishes this source as reusable. The
