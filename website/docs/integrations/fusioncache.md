@@ -147,7 +147,10 @@ Counters grow with the number of distinct lock identities. Redis asynchronous fa
 restoration, or history loss can roll back counters, and a lost acquisition reply can consume
 a token and leave a lease until its bounded expiry. This is not a consensus-backed service.
 
-Release, caller cancellation, renewal loss, and locker disposal stop renewal and join cleanup.
+Release, renewal loss, and locker disposal stop renewal and join cleanup. With the default
+`ReleaseOnCallerCancellation = true` policy, caller cancellation also stops renewal and joins
+cleanup. With `false`, caller cancellation does not end an acquired lease after successful handoff;
+see the independent lease policy below.
 Release ignores its supplied cancellation token, including an already-cancelled token, so a
 successful release does not replace the factory's result or exception with cancellation.
 Cleanup uses its own token even when the factory's token is already cancelled; a transport
