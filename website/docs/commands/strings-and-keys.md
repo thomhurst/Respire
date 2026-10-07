@@ -424,6 +424,8 @@ Values are percent-decoded exactly once and encoded as UTF-8 text. Use
 `Uri.EscapeDataString(prefixText)` when constructing a value, including for literal `%`,
 commas, `&`, `=`, NUL, or leading/trailing spaces. A literal `+` stays `+`;
 use `%20` for a space. Comma-delimited values are trimmed before decoding.
+Decoding follows `Uri.UnescapeDataString`: malformed escapes and undecodable UTF-8
+bytes remain escaped literal text (`%FF` stays `%FF`); they do not encode arbitrary binary keys.
 Option names are case-insensitive, repeated `keyPrefix` entries use the last value,
 and `keyPrefix=` disables prefixing. Unknown options still throw. There is no
 connection-string serializer; binary prefixes that are not UTF-8 text require structured
