@@ -80,6 +80,6 @@ See [Coming from StackExchange.Redis](./stackexchange-redis) for a feature compa
 
 ## Design source
 
-The full surface, tradeoffs, wire architecture, and future work live in the repository's [API design specification](https://github.com/thomhurst/Respire/blob/main/docs/API_DESIGN.md). The longer [Why Respire](https://github.com/thomhurst/Respire/blob/main/docs/WHY_RESPIRE.md) document explains the product bets and where the client fits.
+The guides linked above describe the full surface and its tradeoffs. The longer [Why Respire](https://github.com/thomhurst/Respire/blob/main/docs/WHY_RESPIRE.md) document explains the product bets and where the client fits.
 
 Track changes and contribute through [GitHub issues](https://github.com/thomhurst/Respire/issues).

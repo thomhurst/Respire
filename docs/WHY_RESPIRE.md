@@ -122,8 +122,9 @@ older API styles force on you.
 | Throwing server errors | Error-as-value inspection | One error model; `.Code` carries the Redis error class |
 | `Async` suffix kept | Dropping it | Analyzer ecosystem and reader expectations beat the keystrokes |
 
-The full surface, conventions, and roadmap live in
-[API_DESIGN.md](API_DESIGN.md).
+The full surface, conventions, and roadmap live in the
+[documentation site](https://thomhurst.github.io/Respire/docs/intro) and its
+[status and roadmap](https://thomhurst.github.io/Respire/docs/roadmap) page.
 
 ## Coming from StackExchange.Redis
 
