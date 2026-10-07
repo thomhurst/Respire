@@ -7,6 +7,7 @@ using System.Net.Security;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
+using System.Runtime.InteropServices;
 using Microsoft.Extensions.Logging;
 using Respire.Commands;
 using Respire.Internal;
@@ -83,12 +84,40 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private readonly long _teardownRescueBudgetMilliseconds;
     private readonly long _starvedRunnerMilliseconds;
     private readonly long _commandTimeoutMilliseconds;
-    // Sent/received counters and the deadline are one state transition: a reply must not clear
-    // a deadline concurrently armed for a later batch.
-    private readonly Lock _receiveDeadlineGate = new();
-    private readonly AsyncFlushSignal _flushSignal = new();
-    private readonly AsyncCapacitySignal _capacitySignal = new();
-    private readonly CompletionScheduler _completions = new();
+    private readonly ProducerProgress _producerProgress = new();
+    private readonly FlushProgress _flushProgress = new();
+    private readonly ReceiveProgress _receiveProgress = new();
+    // Cache the role's coordination handles so hot paths need no extra holder load.
+    private readonly Lock _receiveDeadlineGate;
+    private readonly AsyncFlushSignal _flushSignal;
+    private readonly AsyncCapacitySignal _capacitySignal;
+    private readonly CompletionScheduler _completions;
+
+    // Separate role-owned counters by at least 128 bytes even when the GC places
+    // these holders next to each other. Signals remain shared coordination objects;
+    // padding cannot remove the necessary producer/consumer communication through them.
+    [StructLayout(LayoutKind.Explicit, Size = 128)]
+    private sealed class ProducerProgress
+    {
+        [FieldOffset(64)] internal long EnqueuedBytes;
+    }
+
+    [StructLayout(LayoutKind.Explicit, Size = 128)]
+    private sealed class FlushProgress
+    {
+        [FieldOffset(0)] internal readonly AsyncFlushSignal Signal = new();
+        [FieldOffset(64)] internal long SentBytes;
+        [FieldOffset(72)] internal long LastWriteTimestamp;
+    }
+
+    [StructLayout(LayoutKind.Explicit, Size = 128)]
+    private sealed class ReceiveProgress
+    {
+        [FieldOffset(0)] internal readonly Lock DeadlineGate = new();
+        [FieldOffset(8)] internal readonly AsyncCapacitySignal CapacitySignal = new();
+        [FieldOffset(16)] internal readonly CompletionScheduler Completions = new();
+        [FieldOffset(64)] internal long LastReadTimestamp;
+    }
 
     // Delivery before the next receive on an idle connection (see DeliverThenReceive).
     // _receiveDeferred is set under the write gate while the receive loop delivers with no
@@ -114,10 +143,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private AvailabilityZoneTelemetry.Counter? _zoneReads;
     private static long _nextDiagnosticId;
     private readonly long _diagnosticId = Interlocked.Increment(ref _nextDiagnosticId);
-    private long _enqueuedBytes;
-    private long _sentBytes;
-    private long _lastReadTimestamp;
-    private long _lastWriteTimestamp;
+    // These watchdog counters form one locked state transition; their communication is
+    // intentional, unlike the independently written progress counters in the role holders.
     private long _sentReplyCount;
     private long _receivedReplyCount;
     private long _receiveDeadlineTimestamp;
@@ -237,6 +264,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private RespireConnection(
         Socket? socket, Stream? stream, string host, int port, RespireConnectionOptions options, ILogger? logger)
     {
+        _receiveDeadlineGate = _receiveProgress.DeadlineGate;
+        _flushSignal = _flushProgress.Signal;
+        _capacitySignal = _receiveProgress.CapacitySignal;
+        _completions = _receiveProgress.Completions;
         _socket = socket;
         _stream = stream;
         if (socket?.RemoteEndPoint is IPEndPoint remoteEndpoint)
@@ -1682,7 +1713,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
                 if (_streamingActive
                     || (_credentialRenewalPending && typeof(TCommand) != typeof(CredentialRenewalAuthCommand))
-                    || _inflight.Capacity - _inflight.Count < discardRepliesBefore + 1)
+                    || !_inflight.HasCapacity(discardRepliesBefore + 1))
                 {
                     return false;
                 }
@@ -1706,8 +1737,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     _inflight.TryEnqueue(retainRepliesBefore ? source : InflightRing.DiscardSentinel, writeStart);
                 }
 
-                if (discardedOperation is not null) _inflight.TryEnqueueDiscard(discardedOperation, _enqueuedBytes);
-                else _inflight.TryEnqueue(source, _enqueuedBytes);
+                if (discardedOperation is not null) _inflight.TryEnqueueDiscard(discardedOperation, _producerProgress.EnqueuedBytes);
+                else _inflight.TryEnqueue(source, _producerProgress.EnqueuedBytes);
                 command.OnAccepted();
                 if (_zoneReads is not null && command.ReadKind != ReadCommandKind.None) _zoneReads.Increment();
                 if (trackWrite)
@@ -1760,7 +1791,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
             if (_streamingActive
                 || (_credentialRenewalPending && typeof(TCommand) != typeof(CredentialRenewalAuthCommand))
-                || _inflight.Capacity - _inflight.Count < discardRepliesBefore + 1)
+                || !_inflight.HasCapacity(discardRepliesBefore + 1))
             {
                 return false;
             }
@@ -1796,8 +1827,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 _inflight.TryEnqueue(retainRepliesBefore ? source : InflightRing.DiscardSentinel, writeStart);
             }
 
-            if (discardedOperation is not null) _inflight.TryEnqueueDiscard(discardedOperation, _enqueuedBytes);
-            else _inflight.TryEnqueue(source, _enqueuedBytes);
+            if (discardedOperation is not null) _inflight.TryEnqueueDiscard(discardedOperation, _producerProgress.EnqueuedBytes);
+            else _inflight.TryEnqueue(source, _producerProgress.EnqueuedBytes);
             command.OnAccepted();
             if (_zoneReads is not null && command.ReadKind != ReadCommandKind.None) _zoneReads.Increment();
             if (trackWrite)
@@ -1812,8 +1843,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     // Stamp byte offsets under the write gate before publishing reply slots.
     private long StampWritePosition(PendingResponse source, int length)
     {
-        var start = _enqueuedBytes;
-        Volatile.Write(ref _enqueuedBytes, start + length);
+        var start = _producerProgress.EnqueuedBytes;
+        Volatile.Write(ref _producerProgress.EnqueuedBytes, start + length);
         if (!ReferenceEquals(source, InflightRing.DiscardSentinel))
         {
             source.WriteStart = start;
@@ -1825,8 +1856,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private void RecordWrite(int bytes)
     {
         // Only the persistent FlushLoopAsync sender calls this method, including TLS writes.
-        Volatile.Write(ref _sentBytes, _sentBytes + bytes);
-        Volatile.Write(ref _lastWriteTimestamp, Stopwatch.GetTimestamp());
+        Volatile.Write(ref _flushProgress.SentBytes, _flushProgress.SentBytes + bytes);
+        Volatile.Write(ref _flushProgress.LastWriteTimestamp, Stopwatch.GetTimestamp());
     }
 
     /// <summary>Captures the sole outstanding frame on an exclusively rented connection.</summary>
@@ -1836,7 +1867,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         // reply watermark therefore starts the current frame, including an ASKING prefix.
         // If the reply won the race after cancellation, retain counters but leave stage unknown.
         var start = _inflight.CompletedWriteEnd;
-        var end = Volatile.Read(ref _enqueuedBytes);
+        var end = Volatile.Read(ref _producerProgress.EnqueuedBytes);
         return end > start
             ? CaptureTimeoutDiagnostics(start, end)
             : CaptureTimeoutDiagnostics();
@@ -1845,14 +1876,14 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     internal RespireTimeoutDiagnostics CaptureTimeoutDiagnostics(
         long writeStart = 0, long writeEnd = 0, RespireCommandStage stage = RespireCommandStage.Unknown)
     {
-        var sent = Volatile.Read(ref _sentBytes);
-        var enqueued = Volatile.Read(ref _enqueuedBytes);
+        var sent = Volatile.Read(ref _flushProgress.SentBytes);
+        var enqueued = Volatile.Read(ref _producerProgress.EnqueuedBytes);
         if (writeEnd > 0)
         {
             stage = RespireTimeoutDiagnostics.ComputeStage(sent, writeStart, writeEnd);
         }
-        var read = Volatile.Read(ref _lastReadTimestamp);
-        var write = Volatile.Read(ref _lastWriteTimestamp);
+        var read = Volatile.Read(ref _receiveProgress.LastReadTimestamp);
+        var write = Volatile.Read(ref _flushProgress.LastWriteTimestamp);
         var serverId = ServerClientId;
         // Counters advance independently; clamp differences that cross concurrent observations.
         return RespireTimeoutDiagnostics.Capture(
@@ -3521,7 +3552,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void ResetReceiveDeadline()
     {
-        Volatile.Write(ref _lastReadTimestamp, Stopwatch.GetTimestamp());
+        Volatile.Write(ref _receiveProgress.LastReadTimestamp, Stopwatch.GetTimestamp());
         RestartResponseDeadline();
     }
 
