@@ -65,6 +65,9 @@ public class VectorEncodingBenchmarks
         _buffer.Reset();
         var writer = new RespWriter(_buffer);
         _direct.Write(ref writer);
+#if RESERVED_RESP_WRITER
+        writer.Complete();
+#endif
         return _buffer.Count;
     }
 
@@ -84,6 +87,9 @@ public class VectorEncodingBenchmarks
         _buffer.Reset();
         var writer = new RespWriter(_buffer);
         _intermediate.Write(ref writer);
+#if RESERVED_RESP_WRITER
+        writer.Complete();
+#endif
         return _buffer.Count;
     }
 
@@ -93,6 +99,9 @@ public class VectorEncodingBenchmarks
         _buffer.Reset();
         var writer = new RespWriter(_buffer);
         _values.Write(ref writer);
+#if RESERVED_RESP_WRITER
+        writer.Complete();
+#endif
         return _buffer.Count;
     }
 

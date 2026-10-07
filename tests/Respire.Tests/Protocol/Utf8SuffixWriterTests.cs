@@ -42,6 +42,7 @@ public class Utf8SuffixWriterTests
             if (prefix is null) writer.WriteBulkString(value);
             else writer.WritePrefixedKey(prefix, value, default);
             writer.WriteRaw("+NEXT\r\n"u8);
+            writer.Complete();
             actual = buffer.WrittenMemory.ToArray();
         }
         finally { buffer.Release(); }
@@ -73,6 +74,7 @@ public class Utf8SuffixWriterTests
             writer.WriteRaw(leading);
             if (prefix is null) writer.WriteBulkString(value);
             else writer.WritePrefixedKey(prefix, value, default);
+            writer.Complete();
             actual = buffer.WrittenMemory.ToArray();
             await Assert.That(buffer.Capacity).IsGreaterThan(capacity);
         }
@@ -97,6 +99,7 @@ public class Utf8SuffixWriterTests
         {
             var writer = new RespWriter(buffer);
             writer.WritePrefixedKey(prefix, null, suffix);
+            writer.Complete();
             actual = buffer.WrittenMemory.ToArray();
         }
         finally { buffer.Release(); }
@@ -135,6 +138,7 @@ public class Utf8SuffixWriterTests
             var writer = new RespWriter(buffer);
             if (prefix is null) writer.WriteBulkString(value);
             else writer.WritePrefixedKey(prefix, value, default);
+            writer.Complete();
             if (control) GC.KeepAlive(new byte[37]);
         }
         return GC.GetAllocatedBytesForCurrentThread() - start;

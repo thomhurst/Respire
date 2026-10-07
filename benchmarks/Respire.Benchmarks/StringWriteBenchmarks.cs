@@ -31,6 +31,9 @@ public class StringWriteBenchmarks
         _buffer.Reset();
         var writer = new RespWriter(_buffer);
         writer.WriteBulkString(_ascii);
+#if RESERVED_RESP_WRITER
+        writer.Complete();
+#endif
         return _buffer.Count;
     }
 
@@ -40,6 +43,9 @@ public class StringWriteBenchmarks
         _buffer.Reset();
         var writer = new RespWriter(_buffer);
         writer.WriteBulkString(_unicode);
+#if RESERVED_RESP_WRITER
+        writer.Complete();
+#endif
         return _buffer.Count;
     }
 }

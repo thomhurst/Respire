@@ -23,6 +23,7 @@ public class CommandAdmissionTests
 
     private readonly struct AdmissionCommand(AdmissionState state) : IRespCommand
     {
+        public int GetWriteSizeHint() => FakeRespServer.PingFrame.Length;
         public ReadCommandKind ReadKind => ReadCommandKind.None;
         public void Write(ref RespWriter writer) => writer.WriteRaw(FakeRespServer.PingFrame);
         public void OnAccepted() => state.Accepted++;

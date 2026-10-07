@@ -14,6 +14,7 @@ internal sealed partial class RespireConnection
 
     private readonly struct MaintenanceDrainBarrierCommand : IRespCommand
     {
+        public int GetWriteSizeHint() => "*1\r\n$4\r\nPING\r\n"u8.Length;
         public ReadCommandKind ReadKind => ReadCommandKind.None;
 
         public void Write(ref RespWriter writer)

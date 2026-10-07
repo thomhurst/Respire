@@ -4173,6 +4173,7 @@ public sealed partial class RespireClient : IRespireClient
     internal readonly struct SendTimestampCommand<TCommand>(TCommand command, TrackedScriptExecution execution) : IRespCommandWrapper
         where TCommand : struct, IRespCommand
     {
+        public int GetWriteSizeHint() => command.GetWriteSizeHint();
         public void Write(ref RespWriter writer)
         {
             command.Write(ref writer);

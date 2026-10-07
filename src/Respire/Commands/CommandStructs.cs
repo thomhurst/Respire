@@ -20,8 +20,9 @@ internal readonly struct SnapshotCommand(byte[] frame, int? clusterSlot, ReadCom
         var buffer = new WriteBuffer(256);
         try
         {
-            var writer = new RespWriter(buffer);
+            var writer = new RespWriter(buffer, command.GetWriteSizeHint());
             command.Write(ref writer);
+            writer.Complete();
             return new SnapshotCommand(buffer.WrittenMemory.ToArray(), slot, command.ReadKind, command.CursorArgumentIndex);
         }
         finally
@@ -39,6 +40,8 @@ internal readonly struct SnapshotCommand(byte[] frame, int? clusterSlot, ReadCom
     public ReadCommandKind ReadKind => readKind;
     public int CursorArgumentIndex => cursorArgumentIndex;
 
+    public int GetWriteSizeHint() => frame.Length;
+
     public void Write(ref RespWriter writer) => writer.WriteRaw(frame);
 }
 
@@ -47,6 +50,7 @@ internal readonly struct SnapshotCommand(byte[] frame, int? clusterSlot, ReadCom
 
 internal readonly struct Cmd(Verb verb) : IRespCommand
 {
+    public int GetWriteSizeHint() => CommandWriteSizeHint.For(verb);
     public ReadCommandKind ReadKind => verb.ReadKind;
     public int CursorArgumentIndex => verb.CursorArgumentIndex;
 
@@ -70,6 +74,7 @@ internal readonly struct Cmd(Verb verb) : IRespCommand
 
 internal readonly struct Cmd1(Verb verb, RespireValue a1) : IRespCommand
 {
+    public int GetWriteSizeHint() => CommandWriteSizeHint.For(verb, a1.GetWriteSizeHint());
     public bool TryGetArgument(int index, out RespireValue value)
     {
         value = index == 0 ? a1 : default;
@@ -100,6 +105,7 @@ internal readonly struct Cmd1(Verb verb, RespireValue a1) : IRespCommand
 
 internal readonly struct Cmd2(Verb verb, RespireValue a1, RespireValue a2) : IRespCommand
 {
+    public int GetWriteSizeHint() => CommandWriteSizeHint.For(verb, a1.GetWriteSizeHint(), a2.GetWriteSizeHint());
     public ReadCommandKind ReadKind => verb.ReadKind;
     public int CursorArgumentIndex => verb.CursorArgumentIndex;
 
@@ -127,6 +133,8 @@ internal readonly struct Cmd2(Verb verb, RespireValue a1, RespireValue a2) : IRe
 
 internal readonly struct Cmd3(Verb verb, RespireValue a1, RespireValue a2, RespireValue a3) : IRespCommand
 {
+    public int GetWriteSizeHint() => CommandWriteSizeHint.For(verb,
+        a1.GetWriteSizeHint(), a2.GetWriteSizeHint(), a3.GetWriteSizeHint());
     public ReadCommandKind ReadKind => verb.ReadKind;
     public int CursorArgumentIndex => verb.CursorArgumentIndex;
 
@@ -157,6 +165,8 @@ internal readonly struct Cmd3(Verb verb, RespireValue a1, RespireValue a2, Respi
 
 internal readonly struct Cmd4(Verb verb, RespireValue a1, RespireValue a2, RespireValue a3, RespireValue a4) : IRespCommand
 {
+    public int GetWriteSizeHint() => CommandWriteSizeHint.For(verb,
+        a1.GetWriteSizeHint(), a2.GetWriteSizeHint(), a3.GetWriteSizeHint(), a4.GetWriteSizeHint());
     public ReadCommandKind ReadKind => verb.ReadKind;
     public int CursorArgumentIndex => verb.CursorArgumentIndex;
 
@@ -190,6 +200,8 @@ internal readonly struct Cmd4(Verb verb, RespireValue a1, RespireValue a2, Respi
 
 internal readonly struct Cmd5(Verb verb, RespireValue a1, RespireValue a2, RespireValue a3, RespireValue a4, RespireValue a5) : IRespCommand
 {
+    public int GetWriteSizeHint() => CommandWriteSizeHint.For(verb,
+        a1.GetWriteSizeHint(), a2.GetWriteSizeHint(), a3.GetWriteSizeHint(), a4.GetWriteSizeHint(), a5.GetWriteSizeHint());
     public ReadCommandKind ReadKind => verb.ReadKind;
     public int CursorArgumentIndex => verb.CursorArgumentIndex;
 
@@ -227,6 +239,7 @@ internal readonly struct Cmd5(Verb verb, RespireValue a1, RespireValue a2, Respi
 /// <summary>VERB args… — fully dynamic argument list.</summary>
 internal readonly struct CmdN(Verb verb, RespireValue[] args) : IRespCommand
 {
+    public int GetWriteSizeHint() => CommandWriteSizeHint.For(verb, args);
     public ReadCommandKind ReadKind => verb.ReadKind;
     public int CursorArgumentIndex => verb.CursorArgumentIndex;
 
@@ -284,6 +297,8 @@ internal readonly struct CmdN(Verb verb, RespireValue[] args) : IRespCommand
 /// <summary>VERB fixed rest… (e.g. SADD key member…).</summary>
 internal readonly struct Cmd1N(Verb verb, RespireValue a1, RespireValue[] rest) : IRespCommand
 {
+    public int GetWriteSizeHint() => CommandWriteSizeHint.Add(
+        CommandWriteSizeHint.For(verb, a1.GetWriteSizeHint()), rest);
     public ReadCommandKind ReadKind => verb.ReadKind;
     public int CursorArgumentIndex => verb.CursorArgumentIndex;
 
@@ -375,6 +390,8 @@ internal static class CommandRouting
 /// <summary>VERB a1 a2 rest… (e.g. XACK key group id…).</summary>
 internal readonly struct Cmd2N(Verb verb, RespireValue a1, RespireValue a2, RespireValue[] rest) : IRespCommand
 {
+    public int GetWriteSizeHint() => CommandWriteSizeHint.Add(
+        CommandWriteSizeHint.For(verb, a1.GetWriteSizeHint(), a2.GetWriteSizeHint()), rest);
     public bool TryGetArgument(int index, out RespireValue value)
     {
         if (index == 0) { value = a1; return true; }
@@ -462,6 +479,7 @@ internal readonly struct DynamicCommand(
     int cursorArgumentIndex = -1,
     bool hasExplicitCacheMutation = false) : IRespCommand
 {
+    public int GetWriteSizeHint() => CommandWriteSizeHint.Add(CommandWriteSizeHint.HeaderLength, tokens);
     public ReadCommandKind ReadKind => readKind;
     public int CursorArgumentIndex => cursorArgumentIndex;
 
@@ -674,6 +692,7 @@ internal static class DynamicCommandRouting
 internal readonly struct CatalogCommand(RespireCommand command, RespireValue[] args,
     RawCommandKeyLayouts.KeyRouting routing = default) : IRespCommand
 {
+    public int GetWriteSizeHint() => CommandWriteSizeHint.For(command.Verb, args);
     private readonly ReadCommandKind readKind = command.ReadKind != ReadCommandKind.None
         ? command.ReadKind : RawCommandDescriptorLookup.GetReadKind(command.Name, args);
     public ReadCommandKind ReadKind => readKind;
@@ -749,6 +768,7 @@ internal readonly struct CatalogCommand(RespireCommand command, RespireValue[] a
 /// <summary>MSETEX numkeys key value... options — routes by the first key after numkeys.</summary>
 internal readonly struct MSetExCommand(Verb verb, RespireValue[] args) : IRespCommand
 {
+    public int GetWriteSizeHint() => CommandWriteSizeHint.For(verb, args);
     public ReadCommandKind ReadKind => verb.ReadKind;
     public int CursorArgumentIndex => verb.CursorArgumentIndex;
 
@@ -799,6 +819,8 @@ internal readonly struct MSetExCommand(Verb verb, RespireValue[] args) : IRespCo
 /// </summary>
 internal readonly struct IncrementCommand(Verb one, Verb by, RespireValue key, long delta) : IRespCommand
 {
+    public int GetWriteSizeHint() => CommandWriteSizeHint.For(delta == 1 ? one : by,
+        key.GetWriteSizeHint(), delta == 1 ? 0 : CommandWriteSizeHint.Bulk(20));
     public ReadCommandKind ReadKind => ReadCommandKind.None;
 
     public bool TryGetPrimaryKey(out RespireValue primaryKey)
@@ -831,6 +853,8 @@ internal readonly struct IncrementCommand(Verb one, Verb by, RespireValue key, l
 internal readonly struct SetCommand(
     RespireValue key, RespireValue value, RespireExpiry expiry, SetWhen when, bool returnOld) : IRespCommand
 {
+    public int GetWriteSizeHint() => CommandWriteSizeHint.For(Verbs.Set,
+        key.GetWriteSizeHint(), value.GetWriteSizeHint(), CommandWriteSizeHint.SetOptions);
     public ReadCommandKind ReadKind => ReadCommandKind.None;
 
     public bool TryGetPrimaryKey(out RespireValue primaryKey)
@@ -910,6 +934,8 @@ internal readonly struct SetCommand(
 /// <summary>GETEX key PX milliseconds | PXAT unix-milliseconds | PERSIST.</summary>
 internal readonly struct GetExCommand(RespireValue key, RespireExpiry expiry) : IRespCommand
 {
+    public int GetWriteSizeHint() => CommandWriteSizeHint.For(RespireCommands.String.GETEX.Verb,
+        key.GetWriteSizeHint(), CommandWriteSizeHint.ExpiryOptions + CommandOptionFrames.PERSIST.Length);
     public ReadCommandKind ReadKind => ReadCommandKind.None;
 
     public bool TryGetPrimaryKey(out RespireValue primaryKey)

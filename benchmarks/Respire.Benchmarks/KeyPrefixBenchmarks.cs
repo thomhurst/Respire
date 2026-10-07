@@ -84,9 +84,16 @@ public class KeyPrefixBenchmarks
     private int WriteGet(RespireClient client, in RespireKey key)
     {
         _buffer.Reset();
-        var writer = new RespWriter(_buffer);
         var command = new Cmd1(RespireCommands.String.GET.Verb, client.Key(in key));
+#if RESERVED_RESP_WRITER
+        var writer = new RespWriter(_buffer, command.GetWriteSizeHint());
+#else
+        var writer = new RespWriter(_buffer);
+#endif
         command.Write(ref writer);
+#if RESERVED_RESP_WRITER
+        writer.Complete();
+#endif
         return _buffer.Count;
     }
 

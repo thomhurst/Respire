@@ -32,8 +32,15 @@ public class RespFramingSerializationBenchmarks
     public int WriteBulkInteger(long value)
     {
         _buffer.Reset();
+#if RESERVED_RESP_WRITER
+        var writer = new RespWriter(_buffer, CommandWriteSizeHint.Bulk(20));
+#else
         var writer = new RespWriter(_buffer);
+#endif
         writer.WriteBulkInteger(value);
+#if RESERVED_RESP_WRITER
+        writer.Complete();
+#endif
         return _buffer.Count;
     }
 
@@ -41,8 +48,16 @@ public class RespFramingSerializationBenchmarks
     public int WriteGetCommand()
     {
         _buffer.Reset();
+        var command = new Cmd1(Verbs.Get, _key);
+#if RESERVED_RESP_WRITER
+        var writer = new RespWriter(_buffer, command.GetWriteSizeHint());
+#else
         var writer = new RespWriter(_buffer);
-        new Cmd1(Verbs.Get, _key).Write(ref writer);
+#endif
+        command.Write(ref writer);
+#if RESERVED_RESP_WRITER
+        writer.Complete();
+#endif
         return _buffer.Count;
     }
 
@@ -50,8 +65,16 @@ public class RespFramingSerializationBenchmarks
     public int WriteSetOptions()
     {
         _buffer.Reset();
+        var command = new SetCommand(_key, _value, _expiry, SetWhen.Exists, returnOld: true);
+#if RESERVED_RESP_WRITER
+        var writer = new RespWriter(_buffer, command.GetWriteSizeHint());
+#else
         var writer = new RespWriter(_buffer);
-        new SetCommand(_key, _value, _expiry, SetWhen.Exists, returnOld: true).Write(ref writer);
+#endif
+        command.Write(ref writer);
+#if RESERVED_RESP_WRITER
+        writer.Complete();
+#endif
         return _buffer.Count;
     }
 

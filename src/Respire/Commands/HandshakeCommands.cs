@@ -5,6 +5,7 @@ namespace Respire.Commands;
 /// <summary>A fully pre-encoded command frame (PING, FLUSHDB, ...).</summary>
 internal readonly struct RawCommand(byte[] preEncoded, ReadCommandKind readKind = ReadCommandKind.None) : IRespCommand
 {
+    public int GetWriteSizeHint() => preEncoded.Length;
     public ReadCommandKind ReadKind => readKind;
 
     public void Write(ref RespWriter writer) => writer.WriteRaw(preEncoded);
@@ -13,6 +14,9 @@ internal readonly struct RawCommand(byte[] preEncoded, ReadCommandKind readKind 
 /// <summary>HELLO 3 [AUTH username password] — RESP3 protocol negotiation.</summary>
 internal readonly struct HelloCommand(string? username, string? password) : IRespCommand
 {
+    public int GetWriteSizeHint() => password is null ? "*2\r\n$5\r\nHELLO\r\n$1\r\n3\r\n"u8.Length
+        : CommandWriteSizeHint.For("*5\r\n$5\r\nHELLO\r\n$1\r\n3\r\n$4\r\nAUTH\r\n"u8.Length,
+            ((RespireValue)(username ?? "default")).GetWriteSizeHint(), ((RespireValue)password).GetWriteSizeHint());
     public ReadCommandKind ReadKind => ReadCommandKind.None;
 
     public void Write(ref RespWriter writer)
@@ -32,6 +36,8 @@ internal readonly struct HelloCommand(string? username, string? password) : IRes
 /// <summary>AUTH [username] password — RESP2 authentication.</summary>
 internal readonly struct AuthCommand(string? username, string password) : IRespCommand
 {
+    public int GetWriteSizeHint() => CommandWriteSizeHint.For("*2\r\n$4\r\nAUTH\r\n"u8.Length,
+        username is null ? 0 : ((RespireValue)username).GetWriteSizeHint(), ((RespireValue)password).GetWriteSizeHint());
     public ReadCommandKind ReadKind => ReadCommandKind.None;
 
     public void Write(ref RespWriter writer)
@@ -53,6 +59,8 @@ internal readonly struct AuthCommand(string? username, string password) : IRespC
 /// <summary>CLIENT SETNAME name.</summary>
 internal readonly struct ClientSetNameCommand(string name) : IRespCommand
 {
+    public int GetWriteSizeHint() => CommandWriteSizeHint.For("*3\r\n$6\r\nCLIENT\r\n$7\r\nSETNAME\r\n"u8.Length,
+        ((RespireValue)name).GetWriteSizeHint());
     public ReadCommandKind ReadKind => ReadCommandKind.None;
 
     public void Write(ref RespWriter writer)
@@ -108,6 +116,7 @@ internal readonly struct ClientTrackingCommand(ClientTrackingConfiguration confi
 /// </remarks>
 internal readonly struct ClientCachingCommand : IRespCommand
 {
+    public int GetWriteSizeHint() => "*3\r\n$6\r\nCLIENT\r\n$7\r\nCACHING\r\n$3\r\nYES\r\n"u8.Length;
     public ReadCommandKind ReadKind => ReadCommandKind.None;
 
     public void Write(ref RespWriter writer)
@@ -117,6 +126,7 @@ internal readonly struct ClientCachingCommand : IRespCommand
 /// <summary>CLIENT ID.</summary>
 internal readonly struct ClientIdCommand : IRespCommand
 {
+    public int GetWriteSizeHint() => "*2\r\n$6\r\nCLIENT\r\n$2\r\nID\r\n"u8.Length;
     public ReadCommandKind ReadKind => ReadCommandKind.None;
 
     public void Write(ref RespWriter writer)
@@ -150,6 +160,8 @@ internal readonly struct ClientKillIdCommand(long id, bool skipMe = false) : IRe
 /// <summary>SELECT database.</summary>
 internal readonly struct SelectCommand(int database) : IRespCommand
 {
+    public int GetWriteSizeHint() => CommandWriteSizeHint.For("*2\r\n$6\r\nSELECT\r\n"u8.Length,
+        CommandWriteSizeHint.Bulk(20));
     public ReadCommandKind ReadKind => ReadCommandKind.None;
 
     public void Write(ref RespWriter writer)

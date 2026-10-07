@@ -47,6 +47,7 @@ internal sealed partial class RespireConnection
 
     private readonly struct CredentialRenewalAuthCommand(RespireCredentials credentials) : IRespCommand
     {
+        public int GetWriteSizeHint() => new AuthCommand(credentials.Username, credentials.Password).GetWriteSizeHint();
         public ReadCommandKind ReadKind => ReadCommandKind.None;
 
         public void Write(ref RespWriter writer)
