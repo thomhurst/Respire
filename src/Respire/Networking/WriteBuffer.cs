@@ -48,6 +48,22 @@ internal sealed class WriteBuffer
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Advance(int count) => _count += count;
 
+    /// <summary>Reserves a frame for rewriting while retaining bytes written beyond the committed count.</summary>
+    /// <remarks>
+    /// The returned span aliases the current buffer array. Consume it before another reservation
+    /// that can grow the buffer, or before disposing the buffer; growth can return that array to the pool.
+    /// </remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public Span<byte> GetSpanForRewrite(int position, int uncommittedLength, int frameLength)
+    {
+        // Growth copies only committed bytes. Include the unpublished suffix before
+        // reserving, then reacquire the span after the old array can return to the pool.
+        Advance(uncommittedLength);
+        GetSpan(checked(position + frameLength - _count));
+        TruncateTo(position);
+        return GetSpan(frameLength);
+    }
+
     public void Reset() => _count = 0;
 
     public void CompleteWrite() => Interlocked.Exchange(ref _writeCompletion, null)?.TrySetResult();

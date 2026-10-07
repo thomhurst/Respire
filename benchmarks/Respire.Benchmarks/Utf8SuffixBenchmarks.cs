@@ -23,7 +23,7 @@ public class Utf8SuffixBenchmarks
     private string _text = null!;
     private RespireKey _key;
     private RespireValue _value;
-    private long _offset = 0;
+    private readonly long _offset = 0;
 
     [GlobalSetup]
     public async Task Setup()
