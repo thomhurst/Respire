@@ -1,5 +1,6 @@
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 
 namespace Respire.Networking;
 
@@ -23,9 +24,18 @@ internal sealed class InflightRing
     private readonly Slot[] _slots;
     private string?[]? _discardedOperations;
     private readonly int _mask;
-    private long _completedWriteEnd;
-    private long _head;
-    private long _tail;
+    private Positions _positions;
+
+    // The regions need not start on a cache-line boundary: 128 bytes between the
+    // producer and consumer counters prevents sharing on 64/128-byte cache lines.
+    [StructLayout(LayoutKind.Explicit, Size = 272)]
+    private struct Positions
+    {
+        [FieldOffset(0)] internal long Tail;
+        [FieldOffset(8)] internal long CachedHead;
+        [FieldOffset(144)] internal long Head;
+        [FieldOffset(152)] internal long CompletedWriteEnd;
+    }
 
     public InflightRing(int capacity)
     {
@@ -37,12 +47,12 @@ internal sealed class InflightRing
 
     public int Capacity => _slots.Length;
 
-    internal long CompletedWriteEnd => Volatile.Read(ref _completedWriteEnd);
+    internal long CompletedWriteEnd => Volatile.Read(ref _positions.CompletedWriteEnd);
 
-    public int Count => (int)(Volatile.Read(ref _tail) - Volatile.Read(ref _head));
+    public int Count => (int)(Volatile.Read(ref _positions.Tail) - Volatile.Read(ref _positions.Head));
 
     /// <summary>Monotonic head position; only the consumer can advance it.</summary>
-    internal long ConsumerPosition => Volatile.Read(ref _head);
+    internal long ConsumerPosition => Volatile.Read(ref _positions.Head);
 
     /// <summary>
     /// Counts queued replies and an active streamed reply using the same head snapshot.
@@ -51,8 +61,8 @@ internal sealed class InflightRing
     /// </summary>
     internal int CountIncludingActiveReply(long activeReplyPosition)
     {
-        var tail = Volatile.Read(ref _tail);
-        var head = Volatile.Read(ref _head);
+        var tail = Volatile.Read(ref _positions.Tail);
+        var head = Volatile.Read(ref _positions.Head);
         var count = Math.Max(0, (int)(tail - head));
         return activeReplyPosition >= 0 && activeReplyPosition < head ? count + 1 : count;
     }
@@ -61,8 +71,8 @@ internal sealed class InflightRing
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryEnqueue(PendingResponse source, long writeEnd = 0)
     {
-        var tail = _tail;
-        if (tail - Volatile.Read(ref _head) >= _slots.Length)
+        var tail = _positions.Tail;
+        if (!HasCapacity(1))
         {
             return false;
         }
@@ -70,7 +80,7 @@ internal sealed class InflightRing
         ref var slot = ref _slots[tail & _mask];
         slot.Source = source;
         slot.WriteEnd = writeEnd;
-        Volatile.Write(ref _tail, tail + 1);
+        Volatile.Write(ref _positions.Tail, tail + 1);
         return true;
     }
 
@@ -78,16 +88,26 @@ internal sealed class InflightRing
     // in a lazily allocated, bounded array. Other rings allocate none; the slot layout is unchanged.
     internal bool TryEnqueueDiscard(string operation, long writeEnd)
     {
-        var tail = _tail;
-        if (tail - Volatile.Read(ref _head) >= _slots.Length) return false;
+        var tail = _positions.Tail;
+        if (!HasCapacity(1)) return false;
         (_discardedOperations ??= new string?[_slots.Length])[tail & _mask] = operation;
         return TryEnqueue(DiscardSentinel, writeEnd);
     }
 
+    /// <summary>Producer only, under the write gate. Refreshes the cached head only when capacity looks insufficient.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal bool HasCapacity(int count)
+    {
+        var tail = _positions.Tail;
+        if (_slots.Length - (tail - _positions.CachedHead) >= count) return true;
+        _positions.CachedHead = Volatile.Read(ref _positions.Head);
+        return _slots.Length - (tail - _positions.CachedHead) >= count;
+    }
+
     internal bool TryDequeue(out PendingResponse source, out string? discardedOperation)
     {
-        var head = _head;
-        if (Volatile.Read(ref _tail) == head)
+        var head = _positions.Head;
+        if (Volatile.Read(ref _positions.Tail) == head)
         {
             source = null!;
             discardedOperation = null;
@@ -109,8 +129,8 @@ internal sealed class InflightRing
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryPeek(out PendingResponse source)
     {
-        var head = _head;
-        if (Volatile.Read(ref _tail) == head)
+        var head = _positions.Head;
+        if (Volatile.Read(ref _positions.Tail) == head)
         {
             source = null!;
             return false;
@@ -122,8 +142,8 @@ internal sealed class InflightRing
 
     internal bool HasOtherIncompleteCommand(string commandName)
     {
-        var head = Volatile.Read(ref _head);
-        var tail = Volatile.Read(ref _tail);
+        var head = Volatile.Read(ref _positions.Head);
+        var tail = Volatile.Read(ref _positions.Tail);
         for (var position = head; position < tail; position++)
         {
             var source = Volatile.Read(ref _slots[position & _mask].Source);
@@ -149,8 +169,8 @@ internal sealed class InflightRing
     public long SweepExpired(long nowMilliseconds, TimeSpan timeout, RespireConnection? connection, long deadlineExtension = 0,
         long maintenanceStarted = long.MinValue, TimeSpan? alreadyRelaxedTimeout = null)
     {
-        var head = Volatile.Read(ref _head);
-        var tail = Volatile.Read(ref _tail);
+        var head = Volatile.Read(ref _positions.Head);
+        var tail = Volatile.Read(ref _positions.Tail);
         long next = -1;
         RespireTimeoutDiagnostics? diagnostics = null;
         for (var position = head; position < tail; position++)
@@ -205,8 +225,8 @@ internal sealed class InflightRing
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryDequeue(out PendingResponse source)
     {
-        var head = _head;
-        if (Volatile.Read(ref _tail) == head)
+        var head = _positions.Head;
+        if (Volatile.Read(ref _positions.Tail) == head)
         {
             source = null!;
             return false;
@@ -216,9 +236,9 @@ internal sealed class InflightRing
         source = slot.Source!;
         // Intermediate replies carry the frame start; only the final reply advances past
         // the complete frame. This offset never retreats across FIFO-ordered frames.
-        Volatile.Write(ref _completedWriteEnd, slot.WriteEnd);
+        Volatile.Write(ref _positions.CompletedWriteEnd, slot.WriteEnd);
         slot.Source = null;
-        Volatile.Write(ref _head, head + 1);
+        Volatile.Write(ref _positions.Head, head + 1);
         return true;
     }
 
