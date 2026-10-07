@@ -17,6 +17,8 @@ namespace Respire.Protocol;
 /// collected by the GC instead of being reused.
 /// Complete aggregate string children borrow slices of the root's payload. Keep the root alive
 /// while reading children; use <see cref="ToOwned"/> to retain a child beyond the root's disposal.
+/// Fragmented replies may own separate child buffers. The same root lifetime contract applies
+/// to both parse paths; callers must not depend on an individual child's storage ownership.
 /// </remarks>
 internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
 {
@@ -180,12 +182,13 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
     /// <summary>Approximate bytes retained by an owned copy of this value.</summary>
     internal long GetOwnedSize()
     {
-        long size = 32 + _payload.Length;
         if (_elements is null)
         {
-            return size;
+            return 32L + _payload.Length;
         }
 
+        // ToOwned copies children, not the aggregate's shared wire frame.
+        long size = 32;
         for (var index = 0; index < _elementCount; index++)
         {
             size += _elements[index].GetOwnedSize();
@@ -283,6 +286,11 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
             && MemoryMarshal.TryGetArray(_payload, out var segment)
             && segment.Array is { Length: > 0 } array)
         {
+#if DEBUG
+            // Expose invalid borrowed-child reads during development without release-path work.
+            if (_elements is not null)
+                array.AsSpan(segment.Offset, _payload.Length).Fill(0xDD);
+#endif
             RespirePools.ResponsePayloads.Return(array);
         }
 

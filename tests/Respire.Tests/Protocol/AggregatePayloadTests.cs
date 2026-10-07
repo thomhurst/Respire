@@ -9,6 +9,111 @@ namespace Respire.Tests.Protocol;
 
 public class AggregatePayloadTests
 {
+#if DEBUG
+    [Test]
+    [NotInParallel]
+    public async Task RootDisposalPoisonsSharedPayloadForInvalidChildReads()
+    {
+        var pos = 0;
+        await Assert.That(RespParser.TryParseValue("*1\r\n$3\r\none\r\n"u8, ref pos, out var value)).IsEqualTo(RespParseStatus.Done);
+        var child = value.AsArray()[0];
+        value.Dispose();
+        // This is an intentionally invalid internal read, checked only in Debug builds.
+        await Assert.That(child.AsSpan().SequenceEqual(new byte[] { 0xDD, 0xDD, 0xDD })).IsTrue();
+    }
+#endif
+
+    [Test]
+    [Arguments('*')]
+    [Arguments('~')]
+    [Arguments('>')]
+    [Arguments('%')]
+    public async Task OwnedSizeMatchesCompleteFragmentedAndOwnedReplies(char marker)
+    {
+        var frame = Encoding.ASCII.GetBytes($"{marker}{(marker == '%' ? 1 : 2)}\r\n$3\r\none\r\n*2\r\n:7\r\n$3\r\ntwo\r\n");
+        var pos = 0;
+        await Assert.That(RespParser.TryParseValue(frame, ref pos, out var complete)).IsEqualTo(RespParseStatus.Done);
+        using (complete)
+        using (var owned = complete.ToOwned())
+        using (var parser = new RespParseState(int.MaxValue))
+        {
+            pos = 0;
+            await Assert.That(parser.TryParse(frame.AsSpan(0, 4), ref pos, out _, out _)).IsEqualTo(RespParseStatus.NeedMoreData);
+            await Assert.That(parser.TryParse(frame, ref pos, out var fragmented, out _)).IsEqualTo(RespParseStatus.Done);
+            using (fragmented)
+            {
+                await Assert.That(complete.GetOwnedSize()).IsEqualTo(owned.GetOwnedSize());
+                await Assert.That(fragmented.GetOwnedSize()).IsEqualTo(owned.GetOwnedSize());
+                await Assert.That(owned.GetOwnedSize()).IsEqualTo(5 * 32L + 6);
+            }
+        }
+    }
+
+    [Test]
+    public async Task LeadingAttributesAreExcludedFromSharedFrame()
+    {
+        var attributes = "|1\r\n+meta\r\n+ignored\r\n|1\r\n+more\r\n+ignored\r\n"u8.ToArray();
+        var root = "*1\r\n$3\r\none\r\n"u8.ToArray();
+        var input = new byte[3 + attributes.Length + root.Length];
+        attributes.CopyTo(input, 3);
+        root.CopyTo(input, 3 + attributes.Length);
+        var pos = 3;
+        await Assert.That(RespParser.TryParseValue(input, ref pos, out var value)).IsEqualTo(RespParseStatus.Done);
+        using (value)
+        {
+            MemoryMarshal.TryGetArray(value.AsArray()[0].AsMemory(), out var payload);
+            await Assert.That(payload.Offset).IsEqualTo(8);
+            await Assert.That(payload.Array!.AsSpan(0, root.Length).SequenceEqual(root)).IsTrue();
+            await Assert.That(pos).IsEqualTo(input.Length);
+        }
+    }
+
+    [Test]
+    public async Task SharedChildPublicViewRejectsAccessAfterRootDisposal()
+    {
+        var pos = 0;
+        await Assert.That(RespParser.TryParseValue("*1\r\n$3\r\none\r\n"u8, ref pos, out var value)).IsEqualTo(RespParseStatus.Done);
+        using var result = new RespireResult(in value);
+        var child = result[0];
+        var bytes = child.AsBytes();
+        result.Dispose();
+        await Assert.That(child.IsDisposed).IsTrue();
+        await Assert.That(() => child.AsString()).ThrowsExactly<ObjectDisposedException>();
+        await Assert.That(() => child.AsBytes()).ThrowsExactly<ObjectDisposedException>();
+        await Assert.That(bytes).IsEquivalentTo("one"u8.ToArray());
+    }
+
+    [Test]
+    public async Task BorrowedDeserializationMaterializesSharedChildren()
+    {
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", 1)],
+        });
+        var pos = 0;
+        await Assert.That(RespParser.TryParseValue("*3\r\n$3\r\none\r\n$2\r\n42\r\n$7\r\n[1,2,3]\r\n"u8, ref pos, out var value)).IsEqualTo(RespParseStatus.Done);
+        string? text;
+        byte[]? bytes;
+        int number;
+        int[]? numbers;
+        try
+        {
+            text = client.DeserializeBorrowed<string>(in value.AsArray()[0]);
+            bytes = client.DeserializeBorrowed<byte[]>(in value.AsArray()[0]);
+            number = client.DeserializeBorrowed<int>(in value.AsArray()[1]);
+            numbers = client.DeserializeBorrowed<int[]>(in value.AsArray()[2]);
+            MemoryMarshal.TryGetArray(value.AsArray()[0].AsMemory(), out var payload);
+            await Assert.That(bytes).IsNotSameReferenceAs(payload.Array);
+            // Deterministically model receive-pool reuse after materialization.
+            payload.Array!.AsSpan().Fill(0);
+        }
+        finally { value.Dispose(); }
+        await Assert.That(text).IsEqualTo("one");
+        await Assert.That(bytes).IsEquivalentTo("one"u8.ToArray());
+        await Assert.That(number).IsEqualTo(42);
+        await Assert.That(numbers).IsEquivalentTo(new[] { 1, 2, 3 });
+    }
+
     [Test]
     public async Task SeededAggregateCorpusMatchesFragmentedParser()
     {

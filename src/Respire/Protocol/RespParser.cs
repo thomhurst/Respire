@@ -60,9 +60,8 @@ internal static class RespParser
         // nested aggregates and attributes, rather than trusting each declared count.
         var remainingElements = (buffer.Length - pos) / 3;
         var deferredPayloads = 0;
-        var start = pos;
         var aggregateStatus = TryParseValue(buffer, ref pos, out value,
-            new ParseContext(0, ref remainingElements, ref deferredPayloads));
+            new ParseContext(0, ref remainingElements, ref deferredPayloads), out var start);
         if (aggregateStatus == RespParseStatus.Done && deferredPayloads != 0)
             value = value.CopyDeferredPayloads(buffer, start, pos - start);
         return aggregateStatus;
@@ -103,10 +102,11 @@ internal static class RespParser
     }
 
     private static RespParseStatus TryParseValue(
-        ReadOnlySpan<byte> buffer, ref int pos, out RespValue value, ParseContext context)
+        ReadOnlySpan<byte> buffer, ref int pos, out RespValue value, ParseContext context, out int valueStart)
     {
         value = default;
         var cursor = pos;
+        valueStart = cursor;
 
         // RESP3 attribute frames ("|") annotate the reply that follows; parse and discard them.
         while (true)
@@ -133,6 +133,7 @@ internal static class RespParser
             context.DeferredPayloads = priorPayloads;
         }
 
+        valueStart = cursor;
         var status = TryParseCore(buffer, ref cursor, out value, context);
         if (status == RespParseStatus.Done)
         {
@@ -279,7 +280,7 @@ internal static class RespParser
             case (byte)'%':
                 return TryParseAggregate(buffer, ref cursor, RespDataType.Map, pairCount: true, out value, context);
             case (byte)'|':
-                return TryParseValue(buffer, ref cursor, out value, context);
+                return TryParseValue(buffer, ref cursor, out value, context, out _);
             default:
                 return TryParseScalar(buffer, ref cursor, out value, context);
         }

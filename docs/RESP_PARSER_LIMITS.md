@@ -17,14 +17,20 @@ maps and attributes can contain at most `int.MaxValue / 2` pairs. Null aggregate
 retain their existing `-1` representation. Completed replies retain their normal
 pooled ownership and must still be disposed.
 
-Fully buffered aggregates copy their consumed wire frame once into a payload
-buffer owned by the root. Nonempty string children borrow slices of that copy,
+Fully buffered aggregates copy their consumed wire frame once, excluding leading
+discarded attributes, into a payload buffer owned by the root. Nonempty string
+children borrow slices of that copy,
 including children of nested arrays and maps. Receive-buffer reuse therefore
 cannot change a completed reply. Keep the root alive while reading its children;
 use `ToOwned()` for a retained root or child. Integer-only aggregates need no
 payload copy, and common simple replies remain interned. Fragmented resumable
 aggregates retain their existing per-child payload ownership. Element arrays
 clear only their used slots before returning to the pool.
+The root lifetime contract applies to children on both parse paths. Public
+`RespireResult` child views check the root's disposed state before reading.
+Debug builds poison a returned shared frame to expose invalid internal child
+reads; release builds add no poisoning work. Deserialization materializes strings,
+byte arrays, primitives, and serializer results while the root remains alive.
 
 Nesting is limited to 512 aggregate frames, including maps and attributes. This
 bound applies to both parsers, including fully buffered replies, and protects
@@ -43,6 +49,15 @@ element count and depth checks. It is not a 512 MiB managed-memory budget. Eleme
 arrays store `RespValue` structures, which can cost more than compact RESP tokens;
 payload buffers, receive buffers, object headers, pool rounding, and owned result
 copies also consume memory.
+
+The response payload pool retains buffers up to 64 MiB. A larger complete frame
+requires an unpooled allocation even if its individual string children would fit
+the pool. Shared-frame copies also include integer tokens and framing, so a mostly
+integer aggregate with a few strings can copy more bytes than separate payload
+copies. Integer-only aggregates still copy no payload. These are storage tradeoffs,
+not a guarantee of lower allocation or latency for every aggregate shape.
+The 100-item payload benchmark uses 1,906-byte MGET and 3,806-byte HGETALL frames,
+both well within the pool's limit; its retained cases hold 50 such replies.
 
 The restartable parser's total requested element slots cannot exceed one third
 of the buffered bytes, across the entire tree, before pool rounding. The budget is
