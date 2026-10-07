@@ -12,6 +12,53 @@ namespace Respire.Tests.Networking;
 public class BufferedBulkReplyTests
 {
     [Test]
+    [Arguments(4096, false)]
+    [Arguments(4095, false)]
+    [Arguments(1, false)]
+    [Arguments(4096, true)]
+    [Arguments(4095, true)]
+    [Arguments(1, true)]
+    public async Task SmallReceiveTailIsReclaimedBeforeReadingAnIncompleteReply(int freeTail, bool nested)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var stream = new SegmentedStream();
+        await using var connection = await RespireConnection.ConnectAsync("scripted", 6379,
+            new RespireConnectionOptions
+            {
+                Protocol = RespProtocol.Resp2, ReceiveBufferSize = 64 * 1024,
+                TestingStreamFactory = (_, _, _) => ValueTask.FromResult<Stream>(stream),
+            });
+        var command = new Cmd1(Verbs.Get, "key");
+        var earlier = connection.SendAsync(command, deadline.Token).AsTask();
+        var partial = connection.SendAsync(command, deadline.Token).AsTask();
+        var following = connection.SendAsync(command, deadline.Token).AsTask();
+        var capacity = await stream.NextReadSizeAsync(deadline.Token);
+        var prefix = nested ? "|1\r\n+source\r\n+test\r\n*2\r\n:11\r\n$7\r\nab" : "$7\r\nab";
+        var length = capacity - freeTail - 10 - prefix.Length;
+        var payload = new string('x', length);
+        stream.Publish(Encoding.ASCII.GetBytes($"${length}\r\n{payload}\r\n{prefix}"));
+        var nextWindow = await stream.NextReadSizeAsync(deadline.Token);
+        // A real outstanding read observes the destination length; no timing or TCP
+        // packet assumptions determine whether compaction ran.
+        await Assert.That(nextWindow).IsEqualTo(freeTail < 4096 ? capacity - 2 : freeTail);
+        using var first = await earlier.WaitAsync(deadline.Token);
+        await Assert.That(first.AsSpan().SequenceEqual(Encoding.ASCII.GetBytes(payload))).IsTrue();
+        await Assert.That(partial.IsCompleted).IsFalse();
+        await Assert.That(following.IsCompleted).IsFalse();
+        stream.Publish("cdefg\r\n:22\r\n"u8.ToArray());
+        using var second = await partial.WaitAsync(deadline.Token);
+        if (nested)
+        {
+            await Assert.That(second.AsArray()[0].AsInteger()).IsEqualTo(11L);
+            await Assert.That(second.AsArray()[1].AsSpan().SequenceEqual("abcdefg"u8)).IsTrue();
+        }
+        else await Assert.That(second.AsSpan().SequenceEqual("abcdefg"u8)).IsTrue();
+        using var last = await following.WaitAsync(deadline.Token);
+        await Assert.That(last.AsInteger()).IsEqualTo(22L);
+        await Assert.That(connection.IsConnected).IsTrue();
+    }
+
+    [Test]
     [Arguments(4096, 0)]
     [Arguments(16384, 0)]
     [Arguments(64512, 0)]
@@ -144,13 +191,14 @@ public class BufferedBulkReplyTests
     private sealed class SegmentedStream : Stream
     {
         private readonly Channel<ReadOnlyMemory<byte>> _segments = Channel.CreateUnbounded<ReadOnlyMemory<byte>>();
-        private readonly Channel<bool> _reads = Channel.CreateUnbounded<bool>();
+        private readonly Channel<int> _reads = Channel.CreateUnbounded<int>();
         private readonly Channel<bool> _writes = Channel.CreateUnbounded<bool>();
         private long _writtenBytes;
         private ReadOnlyMemory<byte> _remaining;
 
         public void Publish(byte[] bytes) => _segments.Writer.TryWrite(bytes);
-        public async Task NextReadAsync(CancellationToken token) => await _reads.Reader.ReadAsync(token);
+        public async Task NextReadAsync(CancellationToken token) => await NextReadSizeAsync(token);
+        public async Task<int> NextReadSizeAsync(CancellationToken token) => await _reads.Reader.ReadAsync(token);
         public async Task WaitForWrittenAsync(int count, CancellationToken token)
         {
             while (Interlocked.Read(ref _writtenBytes) < count)
@@ -159,7 +207,7 @@ public class BufferedBulkReplyTests
 
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
-            _reads.Writer.TryWrite(true);
+            _reads.Writer.TryWrite(buffer.Length);
             if (_remaining.IsEmpty)
             {
                 try { _remaining = await _segments.Reader.ReadAsync(cancellationToken); }
