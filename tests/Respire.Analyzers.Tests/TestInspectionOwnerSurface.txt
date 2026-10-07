@@ -135,13 +135,14 @@ Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | method SetE
 Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | method SetResultCore(in RespValue) : void
 Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | property CommandName [internal; get] : string?
 Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | property Task [public; get] : ValueTask<TResult>
-# Count: Respire.Networking.MultiReplyPendingResponseSource | 14
+# Count: Respire.Networking.MultiReplyPendingResponseSource | 15
 Respire.Networking.MultiReplyPendingResponseSource | method CompleteReservedResult(in RespValue) : bool
 Respire.Networking.MultiReplyPendingResponseSource | method ConfigureTimeout(RespireConnection, TimeSpan?, CancellationToken, CancellationToken) : void
 Respire.Networking.MultiReplyPendingResponseSource | method IValueTaskSource<RespValue>.GetResult(short) : RespValue
 Respire.Networking.MultiReplyPendingResponseSource | method IValueTaskSource<RespValue>.GetStatus(short) : ValueTaskSourceStatus
 Respire.Networking.MultiReplyPendingResponseSource | method IValueTaskSource<RespValue>.OnCompleted(Action<object?>, object?, short, ValueTaskSourceOnCompletedFlags) : void
 Respire.Networking.MultiReplyPendingResponseSource | method PrepareException(Exception) : Exception
+Respire.Networking.MultiReplyPendingResponseSource | method ReleaseRef() : void
 Respire.Networking.MultiReplyPendingResponseSource | method Rent(int, int, string) : MultiReplyPendingResponseSource
 Respire.Networking.MultiReplyPendingResponseSource | method ResetAndReturn() : void
 Respire.Networking.MultiReplyPendingResponseSource | method SetExceptionCore(Exception) : void
@@ -150,7 +151,7 @@ Respire.Networking.MultiReplyPendingResponseSource | method TryReserveResult() :
 Respire.Networking.MultiReplyPendingResponseSource | method TrySetResult(in RespValue) : bool
 Respire.Networking.MultiReplyPendingResponseSource | property CommandName [internal; get] : string?
 Respire.Networking.MultiReplyPendingResponseSource | property Task [internal; get] : ValueTask<RespValue>
-# Count: Respire.Networking.PendingResponse | 22
+# Count: Respire.Networking.PendingResponse | 23
 Respire.Networking.PendingResponse | field WriteEnd : long
 Respire.Networking.PendingResponse | field WriteStart : long
 Respire.Networking.PendingResponse | method CompleteReservedResult(in RespValue) : bool
@@ -162,6 +163,7 @@ Respire.Networking.PendingResponse | method PrepareForUse(int) : void
 Respire.Networking.PendingResponse | method RegisterCancellation(CancellationToken) : void
 Respire.Networking.PendingResponse | method ReleaseCallerRef() : void
 Respire.Networking.PendingResponse | method ReleaseRef() : void
+Respire.Networking.PendingResponse | method ReleaseRefAtomic() : void
 Respire.Networking.PendingResponse | method ResetAndReturn() : void
 Respire.Networking.PendingResponse | method SetExceptionCore(Exception) : void
 Respire.Networking.PendingResponse | method SetResultCore(in RespValue) : void
