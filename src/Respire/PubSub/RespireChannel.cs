@@ -132,4 +132,12 @@ public readonly partial struct RespireChannel : IEquatable<RespireChannel>
     }
     private RespireChannel(byte[]? bytes, ChannelMetadata metadata) => (_bytes, _metadata) = (bytes, metadata);
     internal RespireValue AsValue() => new(Bytes);
+
+    internal RespireChannel Prepend(ReadOnlySpan<byte> prefix)
+    {
+        var bytes = new byte[checked(prefix.Length + Bytes.Length)];
+        prefix.CopyTo(bytes);
+        Span.CopyTo(bytes.AsSpan(prefix.Length));
+        return new(bytes, _metadata);
+    }
 }
