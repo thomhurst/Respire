@@ -75,6 +75,7 @@ internal static class RespParser
         private readonly ref int _remainingElements;
         private readonly ref int _deferredPayloads;
         public int Depth { get; }
+        // Constructed contexts defer payloads; default is the immediate-copy sentinel.
         public bool DeferPayloads { get; }
         public int DeferredPayloads { get => _deferredPayloads; set => _deferredPayloads = value; }
 
