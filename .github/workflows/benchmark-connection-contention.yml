@@ -26,5 +26,7 @@ jobs:
       filter: '*ConnectionContentionBenchmarks*'
       expected-case-count: 2
       expected-methods: GetPipeline,ConcurrentGetPipelines
-      improvement-methods: GetPipeline,ConcurrentGetPipelines
+      # PR #1152 validates the cache-line optimization in #973. Later networking
+      # changes still produce comparisons without requiring a new speedup.
+      improvement-methods: ${{ github.event.pull_request.number == 1152 && 'GetPipeline,ConcurrentGetPipelines' || '' }}
       artifact-prefix: connection-contention-comparison
