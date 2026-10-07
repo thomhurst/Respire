@@ -36,6 +36,11 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
     /// first reply's added latency and the recycled buffer size.</summary>
     private const int MaxBatchSize = 256;
 
+    // Deep drains can reuse more small batches without retaining more entry storage
+    // than four maximum-size batches. Both limits apply under the handoff gate.
+    private const int MaxSpareBuffers = 16;
+    private const int MaxSpareEntries = 4 * MaxBatchSize;
+
     private readonly Lock _gate = new();
 
     // Producer-owned; touched only by the receive loop, never under the gate.
@@ -48,6 +53,7 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
     private int _pendingCount;
     private Entry[]?[] _spares = new Entry[]?[4];
     private int _spareCount;
+    private int _spareEntryCount;
     private bool _running;
     private bool _executing;
     private TaskCompletionSource? _idleWaiter;
@@ -102,7 +108,7 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
         }
         if (_fillingCount == _filling.Length)
         {
-            Array.Resize(ref _filling, _filling.Length * 2);
+            Array.Resize(ref _filling, Math.Min(MaxBatchSize, _filling.Length * 2));
         }
 
         ref var entry = ref _filling[_fillingCount++];
@@ -156,6 +162,7 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
             {
                 replacement = _spares[--_spareCount];
                 _spares[_spareCount] = null;
+                _spareEntryCount -= replacement!.Length;
             }
 
             schedule = !_running;
@@ -200,9 +207,14 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
             {
                 if (delivered is not null)
                 {
-                    if (_spareCount < _spares.Length)
+                    if (_spareCount < MaxSpareBuffers && delivered.Length <= MaxSpareEntries - _spareEntryCount)
                     {
+                        if (_spareCount == _spares.Length)
+                        {
+                            Array.Resize(ref _spares, Math.Min(MaxSpareBuffers, _spares.Length * 2));
+                        }
                         _spares[_spareCount++] = delivered;
+                        _spareEntryCount += delivered.Length;
                     }
 
                     // Handed off while delivering: the replacement runner owns what is left.
