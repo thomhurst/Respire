@@ -38,6 +38,7 @@ Pull request benchmark workflows start only when someone adds their label. They 
 | `benchmark-dedicated-pool.yml` | `run-dedicated-pool-benchmarks` |
 | `benchmark-fenced-locks.yml` | `run-fenced-locks-benchmarks` |
 | `benchmark-hash-partial-reads.yml` | `run-hash-partial-reads-benchmarks` |
+| `benchmark-idle-read-watchdog.yml` | `run-idle-read-watchdog-benchmarks` |
 | `benchmark-inflight.yml` | `run-inflight-benchmarks` |
 | `benchmark-key-prefix.yml` | `run-key-prefix-benchmarks` |
 | `benchmark-pinned-receive.yml` | `run-pinned-receive-benchmarks` |

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks.Sources;
 using Reservoir;
@@ -161,13 +162,33 @@ internal abstract partial class PendingResponse
     }
 
     /// <summary>Returns source to its pool after caller and receive loop both release it.</summary>
-    internal void ReleaseRef()
+    internal virtual void ReleaseRef()
     {
-        if (Interlocked.Decrement(ref _refs) != 0)
+        Debug.Assert(Volatile.Read(ref _refs) >= 1, "Only a live owner can release a response reference.");
+        // References are initialized before publication and never added while rented. A
+        // count of one therefore belongs exclusively to this owner; the other owners have
+        // finished touching the source. Concurrent releases still use the atomic decrement.
+        if (Volatile.Read(ref _refs) == 1)
+        {
+            _refs = 0;
+        }
+        else if (Interlocked.Decrement(ref _refs) != 0)
         {
             return;
         }
 
+        ReturnToPool();
+    }
+
+    protected void ReleaseRefAtomic()
+    {
+        Debug.Assert(Volatile.Read(ref _refs) >= 1, "Only a live owner can release a response reference.");
+        if (Interlocked.Decrement(ref _refs) == 0)
+            ReturnToPool();
+    }
+
+    private void ReturnToPool()
+    {
         // Clear the deadline before the epoch store publishes this source as reusable. The
         // sweep reads State before Deadline, so the release/acquire pairing on _state
         // guarantees that a sweep observing the new epoch can no longer read the previous
@@ -225,6 +246,10 @@ internal sealed class MultiReplyPendingResponseSource : PendingResponse, IValueT
     }
 
     internal override string? CommandName => _commandName;
+
+    // Multi-reply operations release one reference per reply. Keep their intermediate
+    // releases on the original atomic path rather than adding a final-owner probe.
+    internal override void ReleaseRef() => ReleaseRefAtomic();
 
     internal ValueTask<RespValue> Task => new(this, _core.Version);
 
