@@ -165,12 +165,7 @@ internal ref struct RespWriter
         header[digits + 2] = RespConstants.LineFeed;
         var frameLength = checked(headerLength + byteCount + 2);
 
-        // Growth copies only committed bytes. Include the encoded prefix before reserving,
-        // then reacquire the span: the old array may already have returned to the pool.
-        _buffer.Advance(encodedPrefixLength);
-        _buffer.GetSpan(checked(mark + frameLength - _buffer.Count));
-        _buffer.TruncateTo(mark);
-        var frame = _buffer.GetSpan(frameLength);
+        var frame = _buffer.GetSpanForRewrite(mark, encodedPrefixLength, frameLength);
         if (headerLength != oldHeaderLength)
             frame.Slice(oldHeaderLength, encodedPrefixLength).CopyTo(frame[headerLength..]);
         header[..headerLength].CopyTo(frame);
