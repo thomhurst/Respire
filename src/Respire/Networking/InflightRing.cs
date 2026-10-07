@@ -77,10 +77,7 @@ internal sealed class InflightRing
             return false;
         }
 
-        ref var slot = ref _slots[tail & _mask];
-        slot.Source = source;
-        slot.WriteEnd = writeEnd;
-        Volatile.Write(ref _positions.Tail, tail + 1);
+        PublishSlot(tail, source, writeEnd);
         return true;
     }
 
@@ -91,7 +88,19 @@ internal sealed class InflightRing
         var tail = _positions.Tail;
         if (!HasCapacity(1)) return false;
         (_discardedOperations ??= new string?[_slots.Length])[tail & _mask] = operation;
-        return TryEnqueue(DiscardSentinel, writeEnd);
+        PublishSlot(tail, DiscardSentinel, writeEnd);
+        return true;
+    }
+
+    // Both callers admit capacity under the write gate before publishing. The consumer
+    // can only free slots in between; no other producer can consume the admitted slot.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void PublishSlot(long tail, PendingResponse source, long writeEnd)
+    {
+        ref var slot = ref _slots[tail & _mask];
+        slot.Source = source;
+        slot.WriteEnd = writeEnd;
+        Volatile.Write(ref _positions.Tail, tail + 1);
     }
 
     /// <summary>Producer only, under the write gate. Refreshes the cached head only when capacity looks insufficient.</summary>
