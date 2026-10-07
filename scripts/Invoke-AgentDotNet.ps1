@@ -16,6 +16,8 @@ SingleNode adds -m:1 for MSBuild commands and VSTest-mode dotnet test.
 For Microsoft.Testing.Platform selected by the nearest global.json, build
 separately with SingleNode, then invoke test --no-build; MTP test arguments
 are forwarded unchanged. All modes retain the same process/resource guard.
+Runner detection targets the repository's .NET 10 SDK. That SDK ignores
+DOTNET_TEST_RUNNER; SDK-aware .NET 11 override support is tracked in #1163.
 
 .EXAMPLE
 & scripts/Invoke-AgentDotNet.ps1 -SingleNode -DotNetArguments @(
@@ -585,7 +587,12 @@ function Test-MicrosoftTestingPlatform {
     while ($null -ne $directory) {
         $globalJson = Join-Path $directory.FullName 'global.json'
         if (Test-Path -LiteralPath $globalJson -PathType Leaf) {
-            $configuration = Get-Content -LiteralPath $globalJson -Raw | ConvertFrom-Json
+            try {
+                $configuration = Get-Content -LiteralPath $globalJson -Raw | ConvertFrom-Json
+            }
+            catch {
+                throw "Cannot read test runner configuration '$globalJson': $($_.Exception.Message)"
+            }
             return $configuration.test.runner -eq 'Microsoft.Testing.Platform'
         }
         $directory = $directory.Parent
@@ -628,6 +635,8 @@ function Add-SingleNodeArgument([string[]]$Arguments) {
 $effectiveArguments = @(Add-SingleNodeArgument $DotNetArguments)
 $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
 $startInfo.UseShellExecute = $false
+# Match the PowerShell location used to resolve global.json and relative paths.
+$startInfo.WorkingDirectory = (Get-Location).ProviderPath
 $startInfo.Environment['BuildInParallel'] = 'false'
 $startInfo.Environment['DOTNET_CLI_TELEMETRY_OPTOUT'] = '1'
 $startInfo.Environment['DOTNET_CLI_USE_MSBUILD_SERVER'] = '0'

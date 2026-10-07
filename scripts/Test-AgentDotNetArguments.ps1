@@ -2,6 +2,7 @@ $ErrorActionPreference = 'Stop'
 $guardScript = Join-Path $PSScriptRoot 'Invoke-AgentDotNet.ps1'
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ("agent-dotnet-arguments-{0}" -f [guid]::NewGuid())
 $previousCapturePath = $env:RESPIRE_GUARD_TEST_CAPTURE
+$previousDirectoryCapturePath = $env:RESPIRE_GUARD_TEST_DIRECTORY
 New-Item -ItemType Directory -Path $testRoot | Out-Null
 $configuration = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../global.json') -Raw | ConvertFrom-Json
 $configuration.test.runner = 'VSTest'
@@ -23,6 +24,7 @@ using System.Text.Json;
 if (Environment.GetEnvironmentVariable("RESPIRE_AGENT_DOTNET_INVOCATION") is not null)
     return 7;
 File.WriteAllText(Environment.GetEnvironmentVariable("RESPIRE_GUARD_TEST_CAPTURE")!, JsonSerializer.Serialize(args));
+File.WriteAllText(Environment.GetEnvironmentVariable("RESPIRE_GUARD_TEST_DIRECTORY")!, Environment.CurrentDirectory);
 return 0;
 '@ | Set-Content -LiteralPath (Join-Path $testRoot 'Program.cs')
     # Build the native probe without relying on SingleNode injection under test.
@@ -31,10 +33,15 @@ return 0;
     $probeName = if ($IsWindows) { 'ArgumentProbe.exe' } else { 'ArgumentProbe' }
     $probe = Join-Path $testRoot "bin/Debug/net10.0/$probeName"
     $env:RESPIRE_GUARD_TEST_CAPTURE = Join-Path $testRoot 'arguments.json'
+    $env:RESPIRE_GUARD_TEST_DIRECTORY = Join-Path $testRoot 'directory.txt'
 
     function Assert-Arguments([string[]]$InputArguments, [string[]]$Expected, [switch]$SingleNode) {
         & $guardScript -TimeoutSeconds 30 -DotNetPath $probe -SingleNode:$SingleNode -DotNetArguments $InputArguments
         if ($LASTEXITCODE -ne 0) { throw "Argument probe failed: $LASTEXITCODE" }
+        $actualDirectory = [IO.File]::ReadAllText($env:RESPIRE_GUARD_TEST_DIRECTORY)
+        if ($actualDirectory -ne (Get-Location).ProviderPath) {
+            throw "Child directory: expected '$((Get-Location).ProviderPath)', actual '$actualDirectory'."
+        }
         $capture = [Text.Json.JsonDocument]::Parse([IO.File]::ReadAllText($env:RESPIRE_GUARD_TEST_CAPTURE))
         try {
             $actual = @($capture.RootElement.EnumerateArray() | ForEach-Object { $_.GetString() })
@@ -82,7 +89,21 @@ return 0;
         Assert-Arguments @('build', $project) @('build', $project, '-m:1') -SingleNode
         '{}' | Set-Content -LiteralPath (Join-Path $overrideRoot 'global.json')
         Push-Location $overrideRoot
-        try { Assert-Arguments @('test', 'project') @('test', 'project', '-m:1') -SingleNode }
+        try {
+            Assert-Arguments @('test', 'project') @('test', 'project', '-m:1') -SingleNode
+            $malformedPath = Join-Path $overrideRoot 'global.json'
+            '{ invalid json' | Set-Content -LiteralPath $malformedPath
+            Remove-Item -LiteralPath $env:RESPIRE_GUARD_TEST_CAPTURE
+            $configurationRejected = $false
+            try { & $guardScript -SingleNode -DotNetPath $probe -DotNetArguments @('test', 'project') }
+            catch {
+                if (-not $_.Exception.Message.StartsWith("Cannot read test runner configuration '$malformedPath':")) { throw }
+                $configurationRejected = $true
+            }
+            if (-not $configurationRejected -or (Test-Path -LiteralPath $env:RESPIRE_GUARD_TEST_CAPTURE)) {
+                throw 'Malformed runner configuration did not fail before launching the child.'
+            }
+        }
         finally { Pop-Location }
     }
     finally { Pop-Location }
@@ -104,6 +125,7 @@ return 0;
 finally {
     Pop-Location
     $env:RESPIRE_GUARD_TEST_CAPTURE = $previousCapturePath
+    $env:RESPIRE_GUARD_TEST_DIRECTORY = $previousDirectoryCapturePath
     $resolvedRoot = [IO.Path]::GetFullPath($testRoot)
     $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
     if (-not $resolvedRoot.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase)) {

@@ -3,6 +3,7 @@ $guardScript = Join-Path $PSScriptRoot 'Invoke-AgentDotNet.ps1'
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ("agent-dotnet-mtp-{0}" -f [guid]::NewGuid())
 $previousMarker = $env:RESPIRE_MTP_GUARD_TEST_MARKER
 $previousHtmlReporter = $env:TUNIT_DISABLE_HTML_REPORTER
+$previousTestRunner = $env:DOTNET_TEST_RUNNER
 New-Item -ItemType Directory -Path $testRoot | Out-Null
 Push-Location $testRoot
 try {
@@ -35,6 +36,9 @@ public class GuardMtpTests
 '@ | Set-Content -LiteralPath (Join-Path $testRoot 'GuardMtpTests.cs')
     $env:RESPIRE_MTP_GUARD_TEST_MARKER = Join-Path $testRoot 'executed.txt'
     $env:TUNIT_DISABLE_HTML_REPORTER = 'true'
+    # This fixture pins the repository's .NET 10 SDK. That SDK ignores the .NET 11
+    # runner override, so global.json must still select MTP with an opposite value.
+    $env:DOTNET_TEST_RUNNER = 'VSTest'
     & $guardScript -SingleNode -DotNetArguments @('build', $project, '-c', 'Release', '--nologo')
     if ($LASTEXITCODE -ne 0) { throw "MTP fixture build failed: $LASTEXITCODE" }
 
@@ -57,6 +61,9 @@ exit $LASTEXITCODE
             ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $payloadPath
         $discovery = @(& $pwshPath -NoProfile -File $captureScript $payloadPath 2>&1)
         if ($LASTEXITCODE -ne 0) { throw "MTP discovery failed (separator=$separator): $LASTEXITCODE" }
+        # CI enables ANSI color even on redirected SDK output. Remove presentation
+        # sequences before checking the same exact method name and global count.
+        $discovery = @($discovery | ForEach-Object { [regex]::Replace([string]$_, '\x1b\[[0-?]*[ -/]*[@-~]', '') })
         $listed = @($discovery | Where-Object { $_ -match '^\s*SelectedTestExecutes\s*$' })
         $countSummary = @($discovery | Where-Object { $_ -match '^\s*Discovered 1 tests\.\s*$' })
         if ($listed.Count -ne 1 -or $countSummary.Count -ne 1) {
@@ -87,6 +94,7 @@ finally {
     Pop-Location
     $env:RESPIRE_MTP_GUARD_TEST_MARKER = $previousMarker
     $env:TUNIT_DISABLE_HTML_REPORTER = $previousHtmlReporter
+    $env:DOTNET_TEST_RUNNER = $previousTestRunner
     $resolvedRoot = [IO.Path]::GetFullPath($testRoot)
     $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
     if (-not $resolvedRoot.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase)) { throw "Refusing cleanup outside temp root: $resolvedRoot" }
