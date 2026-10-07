@@ -165,6 +165,8 @@ public static class AgentDotNetWindowsJob
 
     private static SafeFileHandle DuplicateStandardHandle(int identifier, uint access)
     {
+        // access selects the NUL fallback's direction. DUPLICATE_SAME_ACCESS preserves
+        // a real standard handle's existing rights; its source need not be inheritable.
         IntPtr original = GetStdHandle(identifier);
         using var fallback = original == IntPtr.Zero || original == new IntPtr(-1)
             ? CreateFile("NUL", access, FileShareReadWrite, IntPtr.Zero, OpenExisting, FileAttributeNormal, IntPtr.Zero)
@@ -180,6 +182,8 @@ public static class AgentDotNetWindowsJob
         {
             int duplicateError = Marshal.GetLastWin32Error();
             inherited?.Dispose();
+            // Missing handles use NUL above. A broken real handle fails closed instead
+            // of silently discarding redirected build output or replacing input with EOF.
             throw new Win32Exception(duplicateError);
         }
         return inherited;

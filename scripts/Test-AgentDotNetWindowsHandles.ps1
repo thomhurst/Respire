@@ -39,6 +39,12 @@ public static class AgentGuardHandleProbe
         => GetHandleInformation(GetStdHandle(-10), out _) != 0
         && GetHandleInformation(GetStdHandle(-11), out _) != 0
         && GetHandleInformation(GetStdHandle(-12), out _) != 0;
+    public static bool IsInheritable(IntPtr handle)
+    {
+        if (GetHandleInformation(handle, out uint flags) == 0)
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        return (flags & 1) != 0;
+    }
 }
 '@ | Set-Content -LiteralPath $nativeSource
     Add-Type -Path $nativeSource
@@ -67,10 +73,13 @@ $result = @{
         if (-not [AgentGuardHandleProbe]::Inherited($sentinel.SafeWaitHandle.DangerousGetHandle().ToInt64(), $eventName)) {
             throw 'Sentinel identity positive control failed.'
         }
-        foreach ($missingHandles in @($false, $true)) {
-            $inputPipe = [IO.Pipes.AnonymousPipeServerStream]::new([IO.Pipes.PipeDirection]::Out, [IO.HandleInheritability]::Inheritable)
-            $outputPipe = [IO.Pipes.AnonymousPipeServerStream]::new([IO.Pipes.PipeDirection]::In, [IO.HandleInheritability]::Inheritable)
-            $errorPipe = [IO.Pipes.AnonymousPipeServerStream]::new([IO.Pipes.PipeDirection]::In, [IO.HandleInheritability]::Inheritable)
+        foreach ($handleMode in @('inheritable', 'non-inheritable', 'missing')) {
+            $missingHandles = $handleMode -eq 'missing'
+            $inheritability = if ($handleMode -eq 'non-inheritable') { [IO.HandleInheritability]::None }
+                else { [IO.HandleInheritability]::Inheritable }
+            $inputPipe = [IO.Pipes.AnonymousPipeServerStream]::new([IO.Pipes.PipeDirection]::Out, $inheritability)
+            $outputPipe = [IO.Pipes.AnonymousPipeServerStream]::new([IO.Pipes.PipeDirection]::In, $inheritability)
+            $errorPipe = [IO.Pipes.AnonymousPipeServerStream]::new([IO.Pipes.PipeDirection]::In, $inheritability)
             $job = [AgentDotNetWindowsJob]::CreateKillOnClose()
             $process = $null
             $original = @(-10, -11, -12 | ForEach-Object { [AgentGuardHandleProbe]::GetStdHandle($_) })
@@ -80,7 +89,14 @@ $result = @{
                 finally { $writer.Dispose() }
                 $handles = if ($missingHandles) { @([IntPtr]::Zero, [IntPtr]::new(-1), [IntPtr]::Zero) }
                     else { @($inputPipe.ClientSafePipeHandle.DangerousGetHandle(), $outputPipe.ClientSafePipeHandle.DangerousGetHandle(), $errorPipe.ClientSafePipeHandle.DangerousGetHandle()) }
-                $report = Join-Path $testRoot "result-$missingHandles.json"
+                if (-not $missingHandles) {
+                    foreach ($handle in $handles) {
+                        if ([AgentGuardHandleProbe]::IsInheritable($handle) -ne ($inheritability -eq [IO.HandleInheritability]::Inheritable)) {
+                            throw 'Source standard-handle inheritability control failed.'
+                        }
+                    }
+                }
+                $report = Join-Path $testRoot "result-$handleMode.json"
                 $info = [Diagnostics.ProcessStartInfo]::new((Get-Process -Id $PID).Path)
                 $info.UseShellExecute = $false
                 $info.WorkingDirectory = $testRoot
@@ -131,7 +147,7 @@ $result = @{
         }
     }
     finally { $sentinel.Dispose() }
-    Write-Output 'OK unrelated inheritable handles excluded; redirected stdin/stdout/stderr and missing console handles preserved.'
+    Write-Output 'OK unrelated inheritable handles excluded; inheritable and non-inheritable redirected stdin/stdout/stderr and missing console handles preserved.'
 }
 finally {
     $resolvedRoot = [IO.Path]::GetFullPath($testRoot)
