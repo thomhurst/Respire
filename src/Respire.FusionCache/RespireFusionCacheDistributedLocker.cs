@@ -160,8 +160,8 @@ public sealed class RespireFusionCacheDistributedLocker : IFusionCacheDistribute
         if (lockObj is null) return;
         if (lockObj is not RespireFusionCacheLock handle || !handle.BelongsTo(this))
             throw new ArgumentException("The lock handle was not acquired by this locker.", nameof(lockObj));
+        // FusionCache releases from finally with the factory token; cleanup must outlive it.
         await handle.DisposeAsync().ConfigureAwait(false);
-        token.ThrowIfCancellationRequested();
     }
 
     internal void Forget(RespireFusionCacheLock handle)
@@ -182,6 +182,7 @@ public sealed class RespireFusionCacheDistributedLocker : IFusionCacheDistribute
 
     private static void AppendIdentity(IncrementalHash hash, string value)
     {
+        // This persisted identity format must remain stable; changing it orphans fencing counters.
         Span<byte> buffer = stackalloc byte[256];
         BinaryPrimitives.WriteInt32BigEndian(buffer, value.Length);
         hash.AppendData(buffer[..4]);
@@ -244,7 +245,11 @@ public sealed class RespireFusionCacheDistributedLocker : IFusionCacheDistribute
             completion.TrySetResult();
         }
         catch (Exception error) { completion.TrySetException(error); }
-        finally { _shutdown.Dispose(); }
+        finally
+        {
+            // Admitted acquisitions are drained before disposing the shutdown source they use.
+            _shutdown.Dispose();
+        }
     }
 
     /// <summary>Synchronously stops and joins acquisitions and owned handles, preserving the caller's client.</summary>

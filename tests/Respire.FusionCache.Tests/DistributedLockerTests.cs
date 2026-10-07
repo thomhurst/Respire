@@ -73,8 +73,45 @@ public class DistributedLockerTests(RedisTestContainer fixture)
         await Assert.That(owner.OwnershipCancellationToken.IsCancellationRequested).IsTrue();
         await Assert.That(await client.GetBytesAsync(owner.LeaseKey)).IsNull();
         await Assert.That(await client.GetStringAsync(owner.FencingCounterKey)).IsEqualTo("1");
-        await Assert.That(async () => await ReleaseAsync(locker, name, owner, ownerCancellation.Token)).Throws<OperationCanceledException>();
+        await ReleaseAsync(locker, name, owner, ownerCancellation.Token);
         await Assert.That(await client.GetBytesAsync(owner.LeaseKey)).IsNull();
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task CancelledCallerReleasesLeaseWhileBackgroundFactoryContinues(int protocol)
+    {
+        await using var client = await ConnectAsync(protocol);
+        await using var first = new RespireFusionCacheDistributedLocker(client);
+        await using var second = new RespireFusionCacheDistributedLocker(client);
+        var name = Guid.NewGuid().ToString();
+        using var caller = new CancellationTokenSource();
+        var owner = (RespireFusionCacheLock)(await AcquireAsync(first, name, TimeSpan.Zero, caller.Token))!;
+        var factoryStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var factoryCanComplete = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        async Task<int> BackgroundFactory()
+        {
+            factoryStarted.TrySetResult();
+            await factoryCanComplete.Task;
+            return 42;
+        }
+        var background = BackgroundFactory();
+        try
+        {
+            await factoryStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await caller.CancelAsync();
+            await owner.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(owner.OwnershipCancellationToken.IsCancellationRequested).IsTrue();
+            await Assert.That(background.IsCompleted).IsFalse();
+            var replacement = (RespireFusionCacheLock)(await AcquireAsync(second, name, TimeSpan.Zero))!;
+            await Assert.That(replacement.FencingToken).IsEqualTo(2);
+            await Assert.That(background.IsCompleted).IsFalse();
+            await ReleaseAsync(second, name, replacement);
+            await ReleaseAsync(first, name, owner, caller.Token);
+        }
+        finally { factoryCanComplete.TrySetResult(); }
+        await Assert.That(await background.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(42);
     }
 
     [Test]
@@ -173,8 +210,7 @@ public class DistributedLockerTests(RedisTestContainer fixture)
         var next = await pending.WaitAsync(TimeSpan.FromSeconds(5));
         using var cancelled = new CancellationTokenSource();
         cancelled.Cancel();
-        await Assert.That(() => second.ReleaseLock(name, "second", "other", "key", "lock", next, null, cancelled.Token))
-            .Throws<OperationCanceledException>();
+        second.ReleaseLock(name, "second", "other", "key", "lock", next, null, cancelled.Token);
         await Assert.That(await client.GetBytesAsync(owner.LeaseKey)).IsNull();
         await Assert.That(() => first.AcquireLock(name, "first", "operation", "key", "lock", TimeSpan.Zero, null, cancelled.Token))
             .Throws<OperationCanceledException>();

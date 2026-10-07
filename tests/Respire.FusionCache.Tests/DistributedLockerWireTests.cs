@@ -9,6 +9,40 @@ namespace Respire.FusionCache.Tests;
 public class DistributedLockerWireTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task SuccessfulReleaseIgnoresCancellationBeforeAndDuringCleanup(bool cancelDuringCleanup)
+    {
+        var releaseArrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer("$1\r\n1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray())
+        {
+            SuppressReply = command =>
+            {
+                if (!command.StartsWith("DELEX ", StringComparison.Ordinal)) return false;
+                releaseArrived.TrySetResult();
+                return true;
+            },
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await using var locker = new RespireFusionCacheDistributedLocker(client);
+        var owner = (RespireFusionCacheLock)(await DistributedLockerTests.AcquireAsync(locker, "cache", TimeSpan.Zero))!;
+        using var cancellation = new CancellationTokenSource();
+        if (!cancelDuringCleanup) cancellation.Cancel();
+        var release = DistributedLockerTests.ReleaseAsync(locker, "cache", owner, cancellation.Token).AsTask();
+        await releaseArrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            if (cancelDuringCleanup) cancellation.Cancel();
+            await Assert.That(release.IsCompleted).IsFalse();
+        }
+        finally { await server.SendRawAsync(":1\r\n"u8.ToArray()); }
+        await release.WaitAsync(TimeSpan.FromSeconds(5));
+        await DistributedLockerTests.ReleaseAsync(locker, "cache", owner, cancellation.Token);
+        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("DELEX ", StringComparison.Ordinal)))
+            .IsEqualTo(1);
+    }
+
+    [Test]
     public async Task LockerDisposalJoinsUnreturnedLeaseCleanup()
     {
         var releaseArrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -78,7 +112,7 @@ public class DistributedLockerWireTests
         using var cancellation = new CancellationTokenSource();
         var owner = (RespireFusionCacheLock)(await DistributedLockerTests.AcquireAsync(locker, "cache", TimeSpan.Zero, cancellation.Token))!;
         if (cancelAfterHandoff) await cancellation.CancelAsync();
-        var first = DistributedLockerTests.ReleaseAsync(locker, "cache", owner).AsTask();
+        var first = DistributedLockerTests.ReleaseAsync(locker, "cache", owner, cancellation.Token).AsTask();
         var second = owner.DisposeAsync().AsTask();
         var error = await Assert.That(async () => await first.WaitAsync(TimeSpan.FromSeconds(5)))
             .Throws<RespireServerException>();
