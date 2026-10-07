@@ -34,14 +34,21 @@ return 0;
     $probe = Join-Path $testRoot "bin/Debug/net10.0/$probeName"
     $env:RESPIRE_GUARD_TEST_CAPTURE = Join-Path $testRoot 'arguments.json'
     $env:RESPIRE_GUARD_TEST_DIRECTORY = Join-Path $testRoot 'directory.txt'
+    $directoryMarkerName = "guard-location-$([guid]::NewGuid()).txt"
 
     function Assert-Arguments([string[]]$InputArguments, [string[]]$Expected, [switch]$SingleNode) {
+        $markerPath = Join-Path (Get-Location).ProviderPath $directoryMarkerName
+        [IO.File]::WriteAllText($markerPath, $directoryMarkerName)
         & $guardScript -TimeoutSeconds 30 -DotNetPath $probe -SingleNode:$SingleNode -DotNetArguments $InputArguments
         if ($LASTEXITCODE -ne 0) { throw "Argument probe failed: $LASTEXITCODE" }
         $actualDirectory = [IO.File]::ReadAllText($env:RESPIRE_GUARD_TEST_DIRECTORY)
-        if ($actualDirectory -ne (Get-Location).ProviderPath) {
+        # Native cwd may resolve aliases such as macOS /var to /private/var.
+        # A unique marker proves directory identity without assuming path spelling.
+        $actualMarkerPath = Join-Path $actualDirectory $directoryMarkerName
+        if (-not [IO.File]::Exists($actualMarkerPath) -or [IO.File]::ReadAllText($actualMarkerPath) -ne $directoryMarkerName) {
             throw "Child directory: expected '$((Get-Location).ProviderPath)', actual '$actualDirectory'."
         }
+        Remove-Item -LiteralPath $markerPath
         $capture = [Text.Json.JsonDocument]::Parse([IO.File]::ReadAllText($env:RESPIRE_GUARD_TEST_CAPTURE))
         try {
             $actual = @($capture.RootElement.EnumerateArray() | ForEach-Object { $_.GetString() })
@@ -106,6 +113,12 @@ return 0;
         }
         finally { Pop-Location }
     }
+    finally { Pop-Location }
+    $aliasRoot = Join-Path $testRoot 'mtp-alias'
+    $linkType = if ($IsWindows) { 'Junction' } else { 'SymbolicLink' }
+    New-Item -ItemType $linkType -Path $aliasRoot -Target $mtpRoot | Out-Null
+    Push-Location $aliasRoot
+    try { Assert-Arguments @('test', 'project') @('test', 'project') -SingleNode }
     finally { Pop-Location }
     $longArgument = 'x' * 8192
     Assert-Arguments @('build', $longArgument) @('build', $longArgument, '-m:1') -SingleNode

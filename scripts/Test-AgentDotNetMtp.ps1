@@ -100,3 +100,7 @@ finally {
     if (-not $resolvedRoot.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase)) { throw "Refusing cleanup outside temp root: $resolvedRoot" }
     Remove-Item -LiteralPath $resolvedRoot -Recurse -Force
 }
+
+# All unexpected outcomes throw above. The expected failure/empty-filter native
+# exits must not leak into the Actions pwsh check after the script succeeds.
+exit 0
