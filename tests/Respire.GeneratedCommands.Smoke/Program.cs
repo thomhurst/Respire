@@ -44,14 +44,28 @@ foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
         });
         try
         {
+            // Match the integration fixture: writes racing the initial scan can be indexed twice.
+            using var indexingDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            while ((await search.GetIndexInfoAsync(index, indexingDeadline.Token)).Properties["indexing"].Scalar != "0")
+                await Task.Delay(20, indexingDeadline.Token);
             await client.Hashes.SetAsync(documentPrefix + "1",
                 ("title", "redis search"), ("category", "cache"), ("embedding", vector));
             await client.Hashes.SetAsync(documentPrefix + "2",
                 ("title", "redis client"), ("category", "client"), ("embedding", vector));
 
+            // HSET completion does not guarantee Search's asynchronous vector index is visible.
+            while (true)
+            {
+                var indexedInfo = await search.GetIndexInfoAsync(index, indexingDeadline.Token);
+                if (indexedInfo.DocumentCount == 2 && indexedInfo.Properties["indexing"].Scalar == "0"
+                    && (await search.VectorSearchAsync(index, new("embedding", vector, 2),
+                        cancellationToken: indexingDeadline.Token)).Documents.Count == 2)
+                    break;
+                await Task.Delay(20, indexingDeadline.Token);
+            }
             var found = await search.SearchAsync(index, new(RespireSearchQueryBuilder.Text("redis"), new() { Limit = (0, 10) }));
             if (found.Total != 2 || found.Documents.Count != 2)
-                throw new InvalidOperationException("Respire.Search FT.SEARCH failed.");
+                throw new InvalidOperationException($"Respire.Search FT.SEARCH failed: total={found.Total}, documents={found.Documents.Count}, protocol={protocol}.");
 
             var groups = await search.AggregateAsync(index, RespireSearchExpression.FromRaw("*"), new()
             {

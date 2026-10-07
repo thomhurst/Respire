@@ -326,8 +326,7 @@ internal sealed partial class RespireConnection
                 }
 
                 var writeStart = StampWritePosition(source, _activeBuffer.Count - start);
-                StampDeadline(source, armCommandDeadline: true);
-                ClampDeadline(source, deadline);
+                StampDeadline(source, deadline);
                 // Streaming admission reserved a slot and blocks competing writers; keep the
                 // checked enqueue as the single runtime guard for invariant violations.
                 if (!_inflight.TryEnqueue(source, _producerProgress.EnqueuedBytes))

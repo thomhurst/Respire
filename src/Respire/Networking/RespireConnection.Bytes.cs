@@ -17,7 +17,7 @@ internal sealed partial class RespireConnection
         bool startedBatch;
         try
         {
-            enqueued = TryEnqueue(in command, source, out startedBatch);
+            enqueued = TryEnqueue(in command, source, commandDeadline, out startedBatch);
         }
         catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, commandDeadline, out var target, out var rerouted, preferredZone: null))
         {
@@ -31,7 +31,6 @@ internal sealed partial class RespireConnection
         }
         if (enqueued)
         {
-            ClampDeadline(source, commandDeadline);
             source.RegisterCancellation(cancellationToken);
             ScheduleFlush(startedBatch);
             return source.Task;

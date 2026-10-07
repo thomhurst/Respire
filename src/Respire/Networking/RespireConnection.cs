@@ -108,7 +108,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     {
         [FieldOffset(0)] internal readonly AsyncFlushSignal Signal = new();
         [FieldOffset(64)] internal long SentBytes;
-        [FieldOffset(72)] internal long LastWriteTimestamp;
+        [FieldOffset(72)] internal long LastWriteTimestamp = -1;
     }
 
     [StructLayout(LayoutKind.Explicit, Size = 128)]
@@ -117,7 +117,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         [FieldOffset(0)] internal readonly Lock DeadlineGate = new();
         [FieldOffset(8)] internal readonly AsyncCapacitySignal CapacitySignal = new();
         [FieldOffset(16)] internal readonly CompletionScheduler Completions = new();
-        [FieldOffset(64)] internal long LastReadTimestamp;
+        [FieldOffset(64)] internal long LastReadTimestamp = -1;
     }
 
     // Delivery before the next receive on an idle connection (see DeliverThenReceive).
@@ -964,10 +964,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         var source = _sourcePool.Rent(throwOnError: false, commandName);
         bool enqueued;
         bool startedBatch;
-        try { enqueued = TryEnqueue(in command, source, out startedBatch); }
+        try { enqueued = TryEnqueue(in command, source, deadline, out startedBatch); }
         catch { ReclaimUnpublished(source); throw; }
-        if (enqueued) ClampDeadline(source, deadline);
-        else
+        if (!enqueued)
             startedBatch = await WaitForInflightCapacityAsync(command, source, discardRepliesBefore: 0,
                 cancellationToken, commandDeadline: deadline).ConfigureAwait(false);
         source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
@@ -1061,7 +1060,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         bool startedBatch;
         try
         {
-            enqueued = TryEnqueue(in command, source, out startedBatch);
+            enqueued = TryEnqueue(in command, source, commandDeadline, out startedBatch);
         }
         catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, commandDeadline, out var target, out var rerouted, preferredZone: null))
         {
@@ -1077,7 +1076,6 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         if (enqueued)
         {
-            ClampDeadline(source, commandDeadline);
             source.RegisterCancellation(cancellationToken);
             ScheduleFlush(startedBatch);
             return source.Task;
@@ -1106,7 +1104,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         bool startedBatch;
         try
         {
-            enqueued = TryEnqueue(in command, source, out startedBatch);
+            enqueued = TryEnqueue(in command, source, commandDeadline, out startedBatch);
         }
         catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, commandDeadline, out var target, out var rerouted, preferredZone: null))
         {
@@ -1122,7 +1120,6 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         if (enqueued)
         {
-            ClampDeadline(source, commandDeadline);
             source.RegisterCancellation(cancellationToken);
             ScheduleFlush(startedBatch);
             return source.Task;
@@ -1175,7 +1172,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         bool startedBatch;
         try
         {
-            enqueued = TryEnqueue(in command, source, out startedBatch,
+            enqueued = TryEnqueue(in command, source, commandDeadline, out startedBatch,
                 discardRepliesBefore, retainRepliesBefore);
         }
         catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, commandDeadline, out var target, out var rerouted, preferredZone))
@@ -1194,7 +1191,6 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         if (enqueued)
         {
-            ClampDeadline(source, commandDeadline);
             source.RegisterCancellation(cancellationToken);
             ScheduleFlush(startedBatch);
             return source.Task;
@@ -1444,7 +1440,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         try
         {
             enqueued = TryEnqueue(
-                in command, source, out startedBatch, repliesBeforeFinal, retainRepliesBefore: true);
+                in command, source, commandDeadline, out startedBatch, repliesBeforeFinal, retainRepliesBefore: true);
         }
         catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone))
         {
@@ -1466,7 +1462,6 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 commandName, cancellationTimeout, callerCancellationToken, commandDeadline, preferredZone, pinToConnection);
         }
 
-        ClampDeadline(source, commandDeadline);
         source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
         if (command is TransactionCommand transactionCommand) transactionCommand.RecordConnection(this);
         ScheduleFlush(startedBatch);
@@ -1507,8 +1502,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         try
         {
             enqueued = TryEnqueue(
-                in command, source, out startedBatch, discardRepliesBefore,
-                retainRepliesBefore: false, armCommandDeadline);
+                in command, source, commandDeadline, out startedBatch, discardRepliesBefore,
+                retainRepliesBefore: false);
         }
         catch (RespireConnectionRetiredException) when (!IsMaintenanceDrainBarrier<TCommand>()
             && TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone))
@@ -1525,7 +1520,6 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         if (enqueued)
         {
-            ClampDeadline(source, commandDeadline);
             source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
             ScheduleFlush(startedBatch);
             return ObserveScriptingReply(source.Task, in command, commandName, cancellationToken, commandDeadline);
@@ -1625,20 +1619,20 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private bool TryEnqueue<TCommand>(
         in TCommand command,
         PendingResponse source,
+        CommandDeadline commandDeadline,
         out bool startedBatch,
         int discardRepliesBefore = 0,
-        bool retainRepliesBefore = false,
-        bool armCommandDeadline = true)
+        bool retainRepliesBefore = false)
         where TCommand : struct, IRespCommand
         => TryEnqueue(
             in command,
             source,
+            commandDeadline,
             out startedBatch,
             out _,
             trackWrite: false,
             discardRepliesBefore,
-            retainRepliesBefore,
-            armCommandDeadline);
+            retainRepliesBefore);
 
     private bool TryEnqueueForWrite<TCommand>(
         in TCommand command,
@@ -1650,6 +1644,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         var enqueued = TryEnqueue(
             in command,
             InflightRing.DiscardSentinel,
+            CommandDeadline.None,
             out startedBatch,
             out var trackedWrite,
             trackWrite: true,
@@ -1661,12 +1656,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private bool TryEnqueue<TCommand>(
         in TCommand command,
         PendingResponse source,
+        CommandDeadline commandDeadline,
         out bool startedBatch,
         out Task? writeTask,
         bool trackWrite,
         int discardRepliesBefore = 0,
         bool retainRepliesBefore = false,
-        bool armCommandDeadline = true,
         string? discardedOperation = null)
         where TCommand : struct, IRespCommand
     {
@@ -1687,12 +1682,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             return TryEnqueueDirect(
                 in command,
                 source,
+                commandDeadline,
                 out startedBatch,
                 out writeTask,
                 trackWrite,
                 discardRepliesBefore,
                 retainRepliesBefore,
-                armCommandDeadline,
                 discardedOperation);
         }
 
@@ -1732,7 +1727,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 }
 
                 var writeStart = StampWritePosition(source, frame.Length);
-                StampDeadline(source, armCommandDeadline);
+                StampDeadline(source, commandDeadline);
                 for (var i = 0; i < discardRepliesBefore; i++)
                 {
                     _inflight.TryEnqueue(retainRepliesBefore ? source : InflightRing.DiscardSentinel, writeStart);
@@ -1771,12 +1766,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private bool TryEnqueueDirect<TCommand>(
         in TCommand command,
         PendingResponse source,
+        CommandDeadline commandDeadline,
         out bool startedBatch,
         out Task? writeTask,
         bool trackWrite,
         int discardRepliesBefore,
         bool retainRepliesBefore,
-        bool armCommandDeadline,
         string? discardedOperation)
         where TCommand : struct, IRespCommand
     {
@@ -1822,7 +1817,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             }
 
             var writeStart = StampWritePosition(source, _activeBuffer.Count - mark);
-            StampDeadline(source, armCommandDeadline);
+            StampDeadline(source, commandDeadline);
             for (var i = 0; i < discardRepliesBefore; i++)
             {
                 _inflight.TryEnqueue(retainRepliesBefore ? source : InflightRing.DiscardSentinel, writeStart);
@@ -1858,7 +1853,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     {
         // Only the persistent FlushLoopAsync sender calls this method, including TLS writes.
         Volatile.Write(ref _flushProgress.SentBytes, _flushProgress.SentBytes + bytes);
-        Volatile.Write(ref _flushProgress.LastWriteTimestamp, Stopwatch.GetTimestamp());
+        Volatile.Write(ref _flushProgress.LastWriteTimestamp, Environment.TickCount64);
     }
 
     /// <summary>Captures the sole outstanding frame on an exclusively rented connection.</summary>
@@ -1885,6 +1880,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
         var read = Volatile.Read(ref _receiveProgress.LastReadTimestamp);
         var write = Volatile.Read(ref _flushProgress.LastWriteTimestamp);
+        var now = Environment.TickCount64;
         var serverId = ServerClientId;
         // Counters advance independently; clamp differences that cross concurrent observations.
         return RespireTimeoutDiagnostics.Capture(
@@ -1892,8 +1888,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             serverClientId: serverId == 0 ? null : serverId, inflightCount: Math.Max(0, _inflight.Count),
             inflightBytes: Math.Max(0, enqueued - _inflight.CompletedWriteEnd),
             pendingWriteBytes: Math.Max(0, enqueued - sent),
-            timeSinceLastRead: read == 0 ? null : Stopwatch.GetElapsedTime(read),
-            timeSinceLastWrite: write == 0 ? null : Stopwatch.GetElapsedTime(write),
+            timeSinceLastRead: GetDiagnosticElapsed(read, now),
+            timeSinceLastWrite: GetDiagnosticElapsed(write, now),
             isConnected: IsConnected, isReconnecting: Multiplexer?.GetReconnectState(this), writtenBytes: sent);
     }
 
@@ -1902,17 +1898,22 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// deadline before the source is published to the ring. The shared discard sentinel is
     /// never written: it sits in many slots at once and the sweep skips it by reference.
     /// </summary>
-    private void StampDeadline(PendingResponse source, bool armCommandDeadline)
+    private static void StampDeadline(PendingResponse source, CommandDeadline deadline)
     {
         if (ReferenceEquals(source, InflightRing.DiscardSentinel))
         {
             return;
         }
 
-        source.Deadline = armCommandDeadline
-            ? CommandDeadline.After(_commandTimeoutMilliseconds)
-            : CommandDeadline.None;
+        source.Deadline = deadline;
     }
+
+    // Diagnostic ages use TickCount64's platform-dependent millisecond resolution, not the
+    // high-resolution clock retained by the response watchdog. -1 means no observation;
+    // tick zero is valid. Unchecked subtraction tolerates signed wrap for ordinary intervals
+    // shorter than Int64.MaxValue milliseconds. Clamp an inconsistent concurrent sample to zero.
+    private static TimeSpan? GetDiagnosticElapsed(long timestamp, long now)
+        => timestamp == -1 ? null : TimeSpan.FromMilliseconds(Math.Max(0L, unchecked(now - timestamp)));
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
@@ -1933,7 +1934,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         try
         {
             startedBatch = await WaitForInflightCapacityAsync(
-                    command, source, discardRepliesBefore, cancellationToken, armCommandDeadline,
+                    command, source, discardRepliesBefore, cancellationToken,
                     commandDeadline: commandDeadline)
                 .ConfigureAwait(false);
         }
@@ -1973,9 +1974,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 cancellationToken.ThrowIfCancellationRequested();
                 var capacityAvailable = _capacitySignal.WaitAsync(cancellationToken);
                 if (TryEnqueue(
-                    in command, source, out startedBatch, repliesBeforeFinal, retainRepliesBefore: true))
+                    in command, source, deadline, out startedBatch, repliesBeforeFinal, retainRepliesBefore: true))
                 {
-                    ClampDeadline(source, deadline);
                     break;
                 }
 
@@ -2090,16 +2090,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         PendingResponse source,
         int discardRepliesBefore,
         CancellationToken cancellationToken,
-        bool armCommandDeadline = true,
-        bool retainRepliesBefore = false,
-        CommandDeadline commandDeadline = default)
+        CommandDeadline commandDeadline,
+        bool retainRepliesBefore = false)
         where TCommand : struct, IRespCommand
     {
         try
         {
-            var deadline = commandDeadline.IsSet || !armCommandDeadline
-                ? commandDeadline
-                : CommandDeadline.After(_commandTimeoutMilliseconds);
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -2108,15 +2104,14 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 // Arm before retrying so a concurrent dequeue cannot pulse between the
                 // failed enqueue and waiter registration.
                 if (TryEnqueue(
-                    in command, source, out var startedBatch, discardRepliesBefore,
-                    retainRepliesBefore, armCommandDeadline))
+                    in command, source, commandDeadline, out var startedBatch, discardRepliesBefore,
+                    retainRepliesBefore))
                 {
-                    ClampDeadline(source, deadline);
                     return startedBatch;
                 }
 
                 ScheduleFlush(startedBatch: false);
-                await WaitForCapacityAsync(capacityAvailable, deadline, source.CommandName, cancellationToken)
+                await WaitForCapacityAsync(capacityAvailable, commandDeadline, source.CommandName, cancellationToken)
                     .ConfigureAwait(false);
             }
         }
@@ -2133,17 +2128,6 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             ReclaimUnpublished(source, retainRepliesBefore ? discardRepliesBefore + 2 : 2);
             throw;
         }
-    }
-
-    /// <summary>
-    /// Re-stamps a source enqueued after a capacity wait with the effective deadline computed
-    /// when the send began. This also carries a maintenance-relaxed deadline across reroutes.
-    /// The store may race a sweep that already read the fresher stamp; that only delays the
-    /// timeout, by at most one sweep granularity interval.
-    /// </summary>
-    private static void ClampDeadline(PendingResponse source, CommandDeadline deadline)
-    {
-        if (deadline.IsSet) source.Deadline = deadline;
     }
 
     /// <summary>
@@ -3553,7 +3537,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void ResetReceiveDeadline()
     {
-        Volatile.Write(ref _receiveProgress.LastReadTimestamp, Stopwatch.GetTimestamp());
+        Volatile.Write(ref _receiveProgress.LastReadTimestamp, Environment.TickCount64);
         RestartResponseDeadline();
     }
 
