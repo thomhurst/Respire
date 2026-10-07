@@ -13,6 +13,42 @@ public class ClusterShardedPubSubIntegrationTests(SharedRedisClusterFixture fixt
     [Test]
     [Arguments(2)]
     [Arguments(3)]
+    public async Task ExplicitPrefixRoutesByPhysicalChannel(int protocol)
+    {
+        var cluster = fixture.Cluster;
+        await using var root = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            UseCluster = true, Protocol = (RespProtocol)protocol, Connections = 1,
+            Endpoints = [new(cluster.Host, cluster.Port(0))],
+        });
+        byte[] prefix = [.. Encoding.UTF8.GetBytes($"{{{fixture.ReserveSlot(node: 0)}}}:"), 255, 0, (byte)'*'];
+        var view = root.WithPubSubPrefix((RespireKey)prefix).WithKeyPrefix("keys:");
+        RespireChannel logical = $"{{{fixture.ReserveSlot(node: 1)}}}:item";
+        var physical = view.ResolveChannel(logical);
+        physical.ClusterSlot.Should().NotBe(logical.ClusterSlot);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await using var subscription = await view.SubscribeShardedAsync(logical, deadline.Token);
+        await using var reader = subscription.GetAsyncEnumerator(deadline.Token);
+        (await view.PublishShardedAsync(logical, "before", deadline.Token)).Should().Be(1);
+        (await reader.MoveNextAsync()).Should().BeTrue();
+        reader.Current.Channel.Should().Be(physical);
+        subscription.Targets.Single().Should().Be(physical);
+        await cluster.MoveKeysAsync(physical.ClusterSlot, source: 0, target: 2);
+        await cluster.FinishMoveAsync(physical.ClusterSlot, target: 2);
+        (await reader.MoveNextAsync()).Should().BeTrue();
+        reader.Current.Kind.Should().Be(RespireMessageKind.Gap);
+        reader.Current.Gap!.Reason.Should().Be(RespireSubscriptionGapReason.Reconnect);
+        (await view.PublishShardedAsync(logical, "after", deadline.Token)).Should().Be(1);
+        (await reader.MoveNextAsync()).Should().BeTrue();
+        reader.Current.Channel.Should().Be(physical);
+        reader.Current.Text.Should().Be("after");
+        await subscription.DisposeAsync();
+        (await root.PublishShardedAsync(physical, "removed", deadline.Token)).Should().Be(0);
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
     public async Task ThreePrimariesDeliverBinaryChannelsAndReshardWithoutReplacingSubscription(int protocol)
     {
         var cluster = fixture.Cluster;

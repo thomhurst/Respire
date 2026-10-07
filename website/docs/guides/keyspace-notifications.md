@@ -48,6 +48,10 @@ await foreach (var message in subscription)
 
 The factory's prefix is physical; the parser's explicit prefix filters and strips that prefix.
 `WithKeyPrefix` does not alter notification descriptors or ordinary Pub/Sub channels.
+`WithPubSubPrefix` also leaves notification descriptors unchanged. With configured and nested
+key prefixes, pass `redis.ResolveKey(RespireKey.Empty).ToBytes()` from the effective view to
+`TryParseKeyNotification`; this filters and strips the entire physical key namespace, rather
+than only its last component. Resolve descriptor keys and prefixes through that same view.
 `Key`/`KeyBytes` expose the stripped logical key; `Channel` and `RawValue` retain the original
 physical message. `KeyStartsWith` and `TryCopyKey` operate on the exposed key.
 

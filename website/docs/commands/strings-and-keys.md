@@ -373,6 +373,8 @@ root client. Read-routing and cache-bypass policies survive composition. Keys ar
 before Cluster slot selection, including hash tags that cross prefix boundaries. Cache
 invalidation and keyspace notification filters use physical keys; `ResolveKey` returns that
 physical identity. Regular pub/sub channels and notification descriptors remain unchanged.
+Use [WithPubSubPrefix](../guides/pub-sub.md#explicit-pubsub-prefixes) to opt application channels
+into a separate namespace; composing either view preserves the other namespace.
 
 Typed key arguments, script keys, streams, batches, and transactions use the same prefix.
 Supported deferred raw layouts and explicitly registered immediate module layouts also

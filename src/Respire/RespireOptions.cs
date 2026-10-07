@@ -167,6 +167,12 @@ public sealed record RespireOptions
     /// Regular pub/sub channels and server-wide operations are unchanged.</remarks>
     public RespireKey KeyPrefix { get; init; }
 
+    /// <summary>Optional, separate namespace for typed pub/sub publishes and subscriptions. Empty disables prefixing.</summary>
+    /// <remarks>Binary storage is copied at client creation. Derived pub/sub views append to this prefix.
+    /// Text must be valid UTF-16. Keys, notification descriptors and raw/server commands are unchanged.
+    /// Received messages and subscription targets retain physical wire identity.</remarks>
+    public RespireKey PubSubPrefix { get; init; }
+
     /// <summary>Default routing policy for catalog commands whose metadata confirms they are read-only.</summary>
     public RespireReadFrom ReadFrom { get; init; } = RespireReadFrom.Primary;
 
@@ -556,6 +562,7 @@ public sealed record RespireOptions
                 throw new RespireConfigurationException($"RespireOptions.ReplicaEndpoints contains invalid TCP port {endpoint.Port}.");
         }
 
+        if (PubSubPrefix.Text is { } pubSubPrefixText) Internal.Utf8RouteName.Validate(pubSubPrefixText);
         return this with
         {
             Endpoints = new List<RespireEndpoint>(Endpoints),
@@ -563,6 +570,7 @@ public sealed record RespireOptions
             Protocol = effectiveProtocol,
             ClientSideCache = ClientSideCache?.ValidateAndSnapshot(),
             KeyPrefix = KeyPrefix.IsEmpty ? default : KeyPrefix.Snapshot(),
+            PubSubPrefix = PubSubPrefix.IsEmpty ? default : PubSubPrefix.Snapshot(),
         };
     }
 
@@ -639,14 +647,14 @@ public sealed record RespireOptions
     /// <c>serviceName</c>. Options include <c>user</c>, <c>password</c>, <c>ssl</c>,
     /// <c>sslHost</c>, <c>sslProtocols</c>, <c>checkCertificateRevocation</c>, <c>clientName</c>
     /// (or <c>name</c>), <c>defaultDatabase</c>, <c>connectTimeout</c>, <c>asyncTimeout</c>,
-    /// <c>syncTimeout</c>, <c>protocol</c>, <c>allowAdmin</c>, <c>keyPrefix</c>, and Sentinel credentials/TLS.
+    /// <c>syncTimeout</c>, <c>protocol</c>, <c>allowAdmin</c>, <c>keyPrefix</c>, <c>pubSubPrefix</c>, and Sentinel credentials/TLS.
     /// Recognized URI query parameters:
     /// <c>clientName</c>, <c>connections</c>, <c>connectTimeoutMs</c>, <c>commandTimeoutMs</c>,
     /// <c>connectionIdleReadTimeoutMs</c>, <c>protocol</c> (2/resp2 or 3/resp3), <c>db</c>,
     /// <c>useCluster</c> (true or false), <c>sentinelPrimaryName</c>, <c>sentinelUser</c>,
     /// <c>sentinelPassword</c>, <c>sentinelTls</c> (true or false),
-    /// <c>allowAdmin</c> (true or false), and <c>keyPrefix</c>.
-    /// In both forms, <c>keyPrefix</c> is percent-decoded once and used as a UTF-8 text prefix.
+    /// <c>allowAdmin</c> (true or false), <c>keyPrefix</c>, and <c>pubSubPrefix</c>.
+    /// In both forms, each prefix is percent-decoded once and used as an independent UTF-8 text namespace.
     /// Empty disables prefixing; duplicate values use the last entry. Escape delimiters and literal percent signs.
     /// Use <c>rediss://</c> to enable TLS. Unix sockets accept <c>unix:///path</c>,
     /// <c>redis+unix:///path</c>, or <c>!/path</c> in comma-delimited strings.
@@ -715,6 +723,7 @@ public sealed record RespireOptions
 
         string? clientName = null;
         RespireKey keyPrefix = default;
+        RespireKey pubSubPrefix = default;
         var connections = 1;
         TimeSpan connectTimeout = TimeSpan.FromSeconds(10);
         TimeSpan? commandTimeout = DefaultCommandTimeout;
@@ -740,6 +749,9 @@ public sealed record RespireOptions
                     break;
                 case "keyprefix":
                     keyPrefix = value;
+                    break;
+                case "pubsubprefix":
+                    pubSubPrefix = value;
                     break;
                 case "connections":
                     connections = ParseIntegerOption(name, value);
@@ -787,6 +799,7 @@ public sealed record RespireOptions
             SentinelUseTls = mode.SentinelUseTls,
             ClientName = clientName,
             KeyPrefix = keyPrefix,
+            PubSubPrefix = pubSubPrefix,
             Database = database,
             Connections = connections,
             ConnectTimeout = connectTimeout,
@@ -925,6 +938,7 @@ public sealed record RespireOptions
         string? password = null;
         string? clientName = null;
         RespireKey keyPrefix = default;
+        RespireKey pubSubPrefix = default;
         var database = 0;
         bool? useTls = null;
         var connectTimeout = TimeSpan.FromSeconds(10);
@@ -972,6 +986,9 @@ public sealed record RespireOptions
                     break;
                 case "keyprefix":
                     keyPrefix = Uri.UnescapeDataString(value);
+                    break;
+                case "pubsubprefix":
+                    pubSubPrefix = Uri.UnescapeDataString(value);
                     break;
                 case "defaultdatabase":
                 case "db":
@@ -1044,6 +1061,7 @@ public sealed record RespireOptions
             Password = password,
             ClientName = clientName,
             KeyPrefix = keyPrefix,
+            PubSubPrefix = pubSubPrefix,
             Database = database,
             ConnectTimeout = connectTimeout,
             UseTls = useTls ?? !string.IsNullOrEmpty(tlsOptions?.TargetHost),

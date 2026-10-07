@@ -31,6 +31,7 @@ internal static class RespireConfiguration
         ClientName = section.GetValue("ClientName", options.ClientName),
         Database = section.GetValue("Database", options.Database),
         KeyPrefix = section["KeyPrefix"] is { } prefix ? (RespireKey)prefix : options.KeyPrefix,
+        PubSubPrefix = section["PubSubPrefix"] is { } pubSubPrefix ? (RespireKey)pubSubPrefix : options.PubSubPrefix,
         AllowAdmin = section.GetValue("AllowAdmin", options.AllowAdmin),
         Protocol = section.GetValue("Protocol", options.Protocol),
         MaintenanceNotifications = section.GetValue("MaintenanceNotifications", options.MaintenanceNotifications),

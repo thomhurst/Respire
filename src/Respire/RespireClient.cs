@@ -22,6 +22,8 @@ public sealed partial class RespireClient : IRespireClient
 {
     private readonly ClientCore _core;
     private readonly KeyPrefix? _keyPrefix;
+    private readonly KeyPrefix? _pubSubPrefix;
+    private readonly byte[]? _pubSubPatternPrefix;
     private RespireClient? _deferredBatchClient;
     private IStringCommands? _strings;
     private IKeyCommands? _keys;
@@ -49,12 +51,14 @@ public sealed partial class RespireClient : IRespireClient
 
     private RespireClient(
         ClientCore core, KeyPrefix? keyPrefix, bool ownsCore, RespireReadFrom? readFrom = null, bool bypassClientCache = false,
-        bool snapshotPrefixedBinaryKeys = false)
+        bool snapshotPrefixedBinaryKeys = false, KeyPrefix? pubSubPrefix = null)
     {
         _core = core;
         _bypassClientCache = bypassClientCache;
         _snapshotPrefixedBinaryKeys = snapshotPrefixedBinaryKeys;
         _keyPrefix = keyPrefix;
+        _pubSubPrefix = pubSubPrefix;
+        _pubSubPatternPrefix = pubSubPrefix is null ? null : RespireChannel.EscapePattern(pubSubPrefix.Bytes);
         _ownsCore = ownsCore;
         _readFrom = readFrom ?? core.Options.ReadFrom;
         _broadcastTracking = core.Options.ClientSideCache?.TrackingMode == RespireClientTrackingMode.Broadcast;
@@ -185,7 +189,11 @@ public sealed partial class RespireClient : IRespireClient
         KeyPrefix? prefix = null;
         if (!options.KeyPrefix.IsEmpty)
             prefix = options.KeyPrefix.Text is { } text ? new KeyPrefix(text) : new KeyPrefix(options.KeyPrefix.ToBytes());
-        return new RespireClient(new ClientCore(options), keyPrefix: prefix, ownsCore: true);
+        KeyPrefix? pubSubPrefix = null;
+        if (!options.PubSubPrefix.IsEmpty)
+            pubSubPrefix = options.PubSubPrefix.Text is { } pubSubText
+                ? new KeyPrefix(pubSubText) : new KeyPrefix(options.PubSubPrefix.ToBytes());
+        return new RespireClient(new ClientCore(options), keyPrefix: prefix, ownsCore: true, pubSubPrefix: pubSubPrefix);
     }
 
     /// <inheritdoc/>
@@ -271,7 +279,7 @@ public sealed partial class RespireClient : IRespireClient
         ArgumentException.ThrowIfNullOrEmpty(prefix);
         return new RespireClient(_core, _keyPrefix is null ? new KeyPrefix(prefix) : _keyPrefix.Append(prefix),
             ownsCore: false, readFrom: _readFrom, bypassClientCache: _bypassClientCache,
-            snapshotPrefixedBinaryKeys: _snapshotPrefixedBinaryKeys);
+            snapshotPrefixedBinaryKeys: _snapshotPrefixedBinaryKeys, pubSubPrefix: _pubSubPrefix);
     }
 
     /// <inheritdoc/>
@@ -281,8 +289,33 @@ public sealed partial class RespireClient : IRespireClient
         if (prefix.Text is { } text) return WithKeyPrefix(text);
         return new RespireClient(_core, _keyPrefix is null ? new KeyPrefix(prefix.ToBytes()) : _keyPrefix.Append(prefix),
             ownsCore: false, readFrom: _readFrom, bypassClientCache: _bypassClientCache,
-            snapshotPrefixedBinaryKeys: _snapshotPrefixedBinaryKeys);
+            snapshotPrefixedBinaryKeys: _snapshotPrefixedBinaryKeys, pubSubPrefix: _pubSubPrefix);
     }
+
+    /// <inheritdoc/>
+    public IRespireClient WithPubSubPrefix(string prefix)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(prefix);
+        Utf8RouteName.Validate(prefix);
+        return new RespireClient(_core, _keyPrefix, ownsCore: false, readFrom: _readFrom,
+            bypassClientCache: _bypassClientCache, snapshotPrefixedBinaryKeys: _snapshotPrefixedBinaryKeys,
+            pubSubPrefix: _pubSubPrefix is null ? new KeyPrefix(prefix) : _pubSubPrefix.Append(prefix));
+    }
+
+    /// <inheritdoc/>
+    public IRespireClient WithPubSubPrefix(RespireKey prefix)
+    {
+        if (prefix.IsEmpty) throw new ArgumentException("A pub/sub prefix cannot be empty.", nameof(prefix));
+        if (prefix.Text is { } text) return WithPubSubPrefix(text);
+        return new RespireClient(_core, _keyPrefix, ownsCore: false, readFrom: _readFrom,
+            bypassClientCache: _bypassClientCache, snapshotPrefixedBinaryKeys: _snapshotPrefixedBinaryKeys,
+            pubSubPrefix: _pubSubPrefix is null ? new KeyPrefix(prefix.ToBytes()) : _pubSubPrefix.Append(prefix));
+    }
+
+    /// <inheritdoc/>
+    public RespireChannel ResolveChannel(RespireChannel channel)
+        => _pubSubPrefix is null || channel.IsNotification ? channel
+            : channel.Prepend(channel.Kind == SubscriptionKind.Pattern ? _pubSubPatternPrefix! : _pubSubPrefix.Bytes);
 
     /// <summary>Returns a view that applies a read-routing policy to metadata-confirmed read-only commands.</summary>
     /// <remarks>
@@ -305,7 +338,7 @@ public sealed partial class RespireClient : IRespireClient
             throw new InvalidOperationException("Replica read routing requires Cluster, Sentinel discovery, or configured ReplicaEndpoints.");
         return new RespireClient(_core, _keyPrefix, ownsCore: false, readFrom: readFrom,
             bypassClientCache: _bypassClientCache,
-            snapshotPrefixedBinaryKeys: _snapshotPrefixedBinaryKeys);
+            snapshotPrefixedBinaryKeys: _snapshotPrefixedBinaryKeys, pubSubPrefix: _pubSubPrefix);
     }
 
     /// <summary>
@@ -317,7 +350,7 @@ public sealed partial class RespireClient : IRespireClient
         => ReadCache is null
             ? this
             : new RespireClient(_core, _keyPrefix, ownsCore: false, readFrom: _readFrom, bypassClientCache: true,
-                snapshotPrefixedBinaryKeys: _snapshotPrefixedBinaryKeys);
+                snapshotPrefixedBinaryKeys: _snapshotPrefixedBinaryKeys, pubSubPrefix: _pubSubPrefix);
 
     /// <summary>The cache consulted for reads; null when caching is disabled or bypassed by this view.</summary>
     internal ClientSideCacheCoordinator? ReadCache => _bypassClientCache ? null : _core.ClientCache;
@@ -1239,9 +1272,13 @@ public sealed partial class RespireClient : IRespireClient
         RespireChannel[] names,
         RespireSubscriptionOptions options,
         CancellationToken cancellationToken)
-        => _core.Hub.SubscribeAsync(kind, names, options, cancellationToken);
+    {
+        if (_pubSubPrefix is not null)
+            for (var i = 0; i < names.Length; i++) names[i] = ResolveChannel(names[i]);
+        return _core.Hub.SubscribeAsync(kind, names, options, cancellationToken);
+    }
 
-    /// <summary>Publishes raw channel bytes; sharded metadata selects SPUBLISH. Patterns cannot be published.</summary>
+    /// <summary>Publishes channel bytes using this view's explicit pub/sub prefix; sharded metadata selects SPUBLISH. Patterns cannot be published.</summary>
     public ValueTask<long> PublishAsync(RespireChannel channel, RespireValue message, CancellationToken cancellationToken = default)
     {
         if (channel.IsNotification)
@@ -1252,10 +1289,10 @@ public sealed partial class RespireClient : IRespireClient
         }
         return channel.Kind == SubscriptionKind.Sharded
             ? PublishShardedAsync(channel, message, cancellationToken)
-            : IntegerAsync("PUBLISH", new Cmd2(Verbs.Publish, channel.AsValue(), message), cancellationToken);
+            : IntegerAsync("PUBLISH", new Cmd2(Verbs.Publish, ResolveChannel(channel).AsValue(), message), cancellationToken);
     }
 
-    /// <summary>Publishes raw bytes with SPUBLISH. Channel names are not prefixed.</summary>
+    /// <summary>Publishes with SPUBLISH using this view's explicit pub/sub prefix.</summary>
     public ValueTask<long> PublishShardedAsync(RespireChannel channel, RespireValue message, CancellationToken cancellationToken = default)
     {
         if (channel.IsNotification)
@@ -1264,7 +1301,7 @@ public sealed partial class RespireClient : IRespireClient
         {
             throw new ArgumentException("A pattern cannot be published; use a sharded channel.", nameof(channel));
         }
-        return IntegerAsync("SPUBLISH", new Cmd2(Verbs.SPublish, channel.AsValue(), message), cancellationToken);
+        return IntegerAsync("SPUBLISH", new Cmd2(Verbs.SPublish, ResolveChannel(channel).AsValue(), message), cancellationToken);
     }
 
     /// <summary>Subscribes using the channel's explicit literal, pattern, or sharded kind.</summary>
@@ -1500,7 +1537,7 @@ public sealed partial class RespireClient : IRespireClient
         var cached = Volatile.Read(ref _deferredBatchClient);
         if (cached is not null) return cached;
         var created = new RespireClient(_core, _keyPrefix, ownsCore: false, readFrom: _readFrom,
-            bypassClientCache: _bypassClientCache, snapshotPrefixedBinaryKeys: true);
+            bypassClientCache: _bypassClientCache, snapshotPrefixedBinaryKeys: true, pubSubPrefix: _pubSubPrefix);
         return Interlocked.CompareExchange(ref _deferredBatchClient, created, null) ?? created;
     }
 
@@ -2454,7 +2491,7 @@ public sealed partial class RespireClient : IRespireClient
             ? this
             : new RespireClient(_core, _keyPrefix, ownsCore: false, readFrom: RespireReadFrom.Primary,
                 bypassClientCache: _bypassClientCache,
-                snapshotPrefixedBinaryKeys: _snapshotPrefixedBinaryKeys);
+                snapshotPrefixedBinaryKeys: _snapshotPrefixedBinaryKeys, pubSubPrefix: _pubSubPrefix);
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]

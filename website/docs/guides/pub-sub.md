@@ -90,6 +90,62 @@ now contain `RespireChannel` values. Use `.Bytes` for lossless identity and `.To
 display. Display replaces invalid UTF-8 and can make distinct channels look identical. For exact
 diagnostics use `Convert.ToHexString(channel.Bytes.Span)`; channel bytes are not telemetry tags.
 
+## Explicit pub/sub prefixes
+
+Key prefixes leave channels unchanged. Opt in separately when application channels need a namespace:
+
+```csharp
+IRespireClient tenant = redis.WithKeyPrefix("keys:42:").WithPubSubPrefix("events:42:");
+await using var subscription = await tenant.SubscribeAsync("orders", stoppingToken);
+await tenant.PublishAsync("orders", orderJson, stoppingToken); // events:42:orders
+RespireChannel physical = tenant.ResolveChannel("orders");
+```
+
+`WithPubSubPrefix(string)` validates UTF-16 and encodes UTF-8. The `RespireKey` overload
+accepts arbitrary bytes, including NUL and invalid UTF-8, and snapshots binary storage:
+
+```csharp
+RespireKey prefix = new byte[] { 0xff, 0x00, (byte)':' };
+IRespireClient binaryTenant = redis.WithPubSubPrefix(prefix);
+```
+
+Both overloads reject empty prefixes. Nested views append prefixes in order. Key-prefix,
+read-routing, and cache-bypass views preserve the pub/sub prefix. Views share the root's
+connections and subscription hub; disposing a view leaves the root and other subscriptions
+usable. Byte-equivalent physical routes share one server subscription until the last consumer
+disposes. Reconnect restores those physical routes and emits the usual gap markers.
+
+Literal and sharded channels receive the exact prefix bytes. Pattern subscriptions escape
+`*`, `?`, `[`, `]`, and `\` in the prefix before appending the caller's glob pattern. For example,
+prefix `tenant*:` and pattern `order*` subscribe to `tenant\*:order*`; the prefix stays literal.
+`RespireMessage.Channel`, nullable `Pattern`, and subscription `Targets` retain physical wire
+identities, including the prefix and escaped pattern. Gap markers still have an empty channel
+and null pattern. No automatic stripping occurs.
+
+Set `RespireOptions.PubSubPrefix` for a default root channel namespace. It is independent of
+`KeyPrefix` and defaults to empty. URI and comma-delimited connection strings accept
+`pubSubPrefix=events%3A`; text is percent-decoded once, the last entry wins, and empty clears it.
+Use structured options for binary prefixes. Dependency-injection builders expose `PubSubPrefix`;
+Aspire configuration accepts `Aspire:Respire:Options:PubSubPrefix` and the named
+`Aspire:Respire:<connectionName>:Options:PubSubPrefix` override. Configuration callbacks can
+replace or clear the option, including with binary bytes.
+
+Only typed subscription and publication methods apply this prefix. Raw, catalog, and
+interpolated commands and the [Server PUBSUB queries](pub-sub-introspection.md) use explicit
+physical names. `ResolveChannel` returns the physical literal, pattern, or sharded target;
+pass that result to an unprefixed client or a Server query. Passing it back to a prefixed
+publication or subscription prefixes it again. Prefixes do not alter key arguments or
+automatically change a backplane's configured channel names: backplanes use a prefix only
+when their supplied client explicitly opts in.
+
+[Notification descriptors](keyspace-notifications.md) keep their server-owned channel names
+and routing metadata unchanged. Build descriptors from physical keys with `ResolveKey`, then
+explicitly filter and strip the complete key namespace during notification parsing. An ordinary
+channel whose bytes happen to resemble a reserved notification name still receives the prefix.
+
+Redis pub/sub is shared across logical databases. A channel prefix is a naming convention,
+not an authorization boundary; use Redis ACLs for access control.
+
 ## Sharded subscriptions in Redis Cluster
 
 With `UseCluster = true`, `SubscribeShardedAsync` groups channels by their hash-slot owner and
@@ -97,6 +153,8 @@ uses one dedicated subscription connection per primary. Channels on different sl
 one subscription; channels on the same primary share its connection. Duplicate consumers share
 one server-side subscription until the last consumer disposes. `SPUBLISH` uses the command
 connection for the channel's slot. Channel names are never affected by a client's key prefix.
+An explicit pub/sub prefix applies before slot selection, so hash tags in the complete physical
+channel determine both SSUBSCRIBE and SPUBLISH routing, including after resharding.
 
 `MOVED` and `ASK` replies, unsolicited `SUNSUBSCRIBE` frames during resharding, and refreshed topology
 all trigger routing to the current owner. Socket failures restore the affected channels without

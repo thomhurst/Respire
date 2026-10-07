@@ -22,7 +22,9 @@ empty name lists, and an omitted versus empty pattern remain distinct. The
 `sharded` argument selects the command family; the input channel's subscription
 kind does not change the query. Returned sharded names have `SubscriptionKind.Sharded`.
 
-Server introspection does not apply `WithKeyPrefix` to channel names or patterns.
+Server introspection does not apply `WithKeyPrefix` or `WithPubSubPrefix` to channel names or patterns.
+Pass `view.ResolveChannel(logicalChannel)` for a prefixed literal or sharded subscriber count;
+pass `view.ResolveChannel(RespireChannel.Pattern(logicalPattern))` for a prefixed CHANNELS pattern.
 It inspects the server's pub/sub namespace. CHANNELS lists channels with literal
 subscribers, excluding channels with only pattern subscribers. NUMSUB counts
 literal subscribers, excluding pattern subscribers. NUMPAT counts unique patterns,

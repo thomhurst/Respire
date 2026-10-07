@@ -584,6 +584,15 @@ await tenant.SetAsync("cart", cart);     // key = "t:42:cart"
 Cheap decorator over the same connections; composes (`WithKeyPrefix` on a prefixed view
 concatenates). Client-side caching is configured through `RespireOptions.ClientSideCache`, not a separate view.
 
+`WithPubSubPrefix(string|RespireKey)` independently opts typed pub/sub methods into an owned
+channel namespace; `RespireOptions.PubSubPrefix` configures the root default. Nested views
+append bytes and preserve key, read, and cache policies. Pattern prefixes escape literal glob
+metacharacters; sharded routing uses the complete physical channel. `ResolveChannel` and
+message/subscription identities retain physical bytes. Notification descriptors and raw,
+catalog, interpolated, and Server PUBSUB commands remain explicit physical operations.
+Disposing a view leaves the shared core and other subscriptions usable. Redis pub/sub spans
+logical databases; neither prefix is an authorization boundary.
+
 ## 13. Resilience
 
 - **Reconnect**: failed multiplexed connections are replaced automatically, with failed attempts

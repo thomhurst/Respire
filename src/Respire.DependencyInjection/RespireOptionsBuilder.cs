@@ -74,6 +74,9 @@ public sealed class RespireOptionsBuilder
     /// <inheritdoc cref="RespireOptions.Database"/>
     public int Database { get; set; }
 
+    /// <inheritdoc cref="RespireOptions.PubSubPrefix"/>
+    public RespireKey PubSubPrefix { get; set; }
+
     /// <inheritdoc cref="RespireOptions.AllowAdmin"/>
     public bool AllowAdmin { get; set; }
 
@@ -168,6 +171,7 @@ public sealed class RespireOptionsBuilder
         SentinelTlsOptions = SentinelTlsOptions,
         ClientName = ClientName,
         Database = Database,
+        PubSubPrefix = PubSubPrefix,
         AllowAdmin = AllowAdmin,
         Protocol = Protocol,
         ConnectTimeout = ConnectTimeout,

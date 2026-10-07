@@ -32,11 +32,11 @@ public readonly struct RespireMessage
     public RespireSubscriptionGap? Gap { get; }
 
     /// <summary>The published channel; empty for a gap marker. Use ToString() for UTF-8 display.</summary>
-    /// <remarks>Contains wire identity, without subscription-descriptor routing or database metadata.</remarks>
+    /// <remarks>Contains physical wire identity, including an explicit pub/sub prefix, without subscription-descriptor routing or database metadata.</remarks>
     public RespireChannel Channel { get; }
 
     /// <summary>The glob pattern that matched, for pattern subscriptions; otherwise null.</summary>
-    /// <remarks>Contains wire identity and pattern kind, without subscription-descriptor metadata.</remarks>
+    /// <remarks>Contains physical wire identity and pattern kind, including an escaped pub/sub prefix, without subscription-descriptor metadata.</remarks>
     public RespireChannel? Pattern { get; }
 
     /// <summary>The raw message payload as owned memory; empty for a gap marker.</summary>

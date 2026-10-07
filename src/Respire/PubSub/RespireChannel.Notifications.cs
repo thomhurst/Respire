@@ -108,7 +108,7 @@ public readonly partial struct RespireChannel
         return bytes;
     }
     private static byte[] PrefixPattern(RespireKey key) => EscapePattern(key.ToBytes(), appendWildcard: true);
-    private static byte[] EscapePattern(ReadOnlySpan<byte> bytes, bool appendWildcard = false)
+    internal static byte[] EscapePattern(ReadOnlySpan<byte> bytes, bool appendWildcard = false)
     {
         var extra = 0;
         foreach (var value in bytes) if (IsGlob(value)) extra++;

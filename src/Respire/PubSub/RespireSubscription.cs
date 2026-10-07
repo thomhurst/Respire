@@ -98,6 +98,7 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
     public SubscriptionKind Kind { get; }
 
     /// <summary>The channels or patterns covered by this subscription. The collection is immutable.</summary>
+    /// <remarks>Contains physical targets, including explicit pub/sub prefixes; notification descriptors retain their routing metadata.</remarks>
     public IReadOnlyList<RespireChannel> Targets { get; }
 
     /// <summary>Whether this subscription ended through disposal or exhausted reconnect attempts.</summary>

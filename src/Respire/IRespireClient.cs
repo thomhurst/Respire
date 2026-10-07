@@ -213,11 +213,11 @@ public interface IRespireClient : IAsyncDisposable
         RespireSubscriptionOptions options,
         CancellationToken cancellationToken);
 
-    /// <summary>Publishes raw channel bytes; sharded metadata selects SPUBLISH. Patterns cannot be published.</summary>
+    /// <summary>Publishes channel bytes using this view's explicit pub/sub prefix; sharded metadata selects SPUBLISH. Patterns cannot be published.</summary>
     /// <remarks>Implicit conversion to RespireChannel snapshots byte buffers and encodes strings, throwing ArgumentException for invalid UTF-16 and ArgumentNullException for null strings or byte arrays. Reuse a channel value to avoid repeated copies.</remarks>
     ValueTask<long> PublishAsync(RespireChannel channel, RespireValue message, CancellationToken cancellationToken = default);
 
-    /// <summary>Publishes raw bytes with SPUBLISH. Channel names are not prefixed.</summary>
+    /// <summary>Publishes with SPUBLISH using this view's explicit pub/sub prefix.</summary>
     /// <remarks>Implicit conversion to RespireChannel snapshots byte buffers and encodes strings, throwing ArgumentException for invalid UTF-16 and ArgumentNullException for null strings or byte arrays. Reuse a channel value to avoid repeated copies.</remarks>
     ValueTask<long> PublishShardedAsync(RespireChannel channel, RespireValue message, CancellationToken cancellationToken = default);
 
@@ -344,6 +344,29 @@ public interface IRespireClient : IAsyncDisposable
         return prefix.Text is { } text ? WithKeyPrefix(text)
             : throw new NotSupportedException("This client does not support binary key-prefix views.");
     }
+
+    /// <summary>Returns a view with a separate namespace for typed pub/sub publishes and subscriptions.</summary>
+    /// <remarks>Appends to this view's pub/sub prefix without changing keys. Messages, subscription targets
+    /// and matching patterns retain physical wire identity. Pattern subscriptions escape glob characters
+    /// in the prefix. Notification descriptors, raw commands and administrative PUBSUB queries are physical
+    /// and unchanged. Views share connections; disposing a view does not dispose the root client.</remarks>
+    /// <exception cref="ArgumentException">The prefix is empty or contains an unpaired UTF-16 surrogate.</exception>
+    /// <exception cref="ArgumentNullException">The prefix is null.</exception>
+    IRespireClient WithPubSubPrefix(string prefix)
+        => throw new NotSupportedException("This client does not support pub/sub-prefix views.");
+
+    /// <summary>Returns a view with an owned, binary-safe pub/sub prefix. Empty prefixes are rejected.</summary>
+    IRespireClient WithPubSubPrefix(RespireKey prefix)
+    {
+        if (prefix.IsEmpty) throw new ArgumentException("A pub/sub prefix cannot be empty.", nameof(prefix));
+        return prefix.Text is { } text ? WithPubSubPrefix(text)
+            : throw new NotSupportedException("This client does not support binary pub/sub-prefix views.");
+    }
+
+    /// <summary>Resolves a logical typed pub/sub target to its physical channel or escaped pattern.</summary>
+    /// <remarks>Notification descriptors are already physical and remain unchanged. Do not pass the result
+    /// back through a prefixed view: resolution is not idempotent. Custom prefixed implementations must override this member.</remarks>
+    RespireChannel ResolveChannel(RespireChannel channel) => channel;
 
     /// <summary>Returns a view that applies a read-routing policy to metadata-confirmed read-only commands.</summary>
     /// <remarks>
