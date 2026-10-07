@@ -38,6 +38,8 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
 
     // Deep drains can reuse more small batches without retaining more entry storage
     // than four maximum-size batches. Both limits apply under the handoff gate.
+    // Only cleared spares count here; pending, filling and active arrays own live
+    // work. Array headers and the reference list are additional storage.
     private const int MaxSpareBuffers = 16;
     private const int MaxSpareEntries = 4 * MaxBatchSize;
 
@@ -207,15 +209,7 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
             {
                 if (delivered is not null)
                 {
-                    if (_spareCount < MaxSpareBuffers && delivered.Length <= MaxSpareEntries - _spareEntryCount)
-                    {
-                        if (_spareCount == _spares.Length)
-                        {
-                            Array.Resize(ref _spares, Math.Min(MaxSpareBuffers, _spares.Length * 2));
-                        }
-                        _spares[_spareCount++] = delivered;
-                        _spareEntryCount += delivered.Length;
-                    }
+                    RetainSpareLocked(delivered);
 
                     // Handed off while delivering: the replacement runner owns what is left.
                     if (_generation != generation) return;
@@ -282,6 +276,35 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
             }
 
             delivered = items;
+        }
+    }
+
+    private void RetainSpareLocked(Entry[] delivered)
+    {
+        if (_spareCount < MaxSpareBuffers && delivered.Length <= MaxSpareEntries - _spareEntryCount)
+        {
+            if (_spareCount == _spares.Length)
+                Array.Resize(ref _spares, Math.Min(MaxSpareBuffers, _spares.Length * 2));
+            _spares[_spareCount++] = delivered;
+            _spareEntryCount += delivered.Length;
+            return;
+        }
+
+        // A prior large drain must not permanently consume the budget needed by
+        // later small drains. Replace only a cleared, larger spare; live arrays
+        // remain with their runner. Scan at most 16 slots, only on a cache miss.
+        var largest = -1;
+        var largestLength = delivered.Length;
+        for (var index = 0; index < _spareCount; index++)
+        {
+            if (_spares[index]!.Length <= largestLength) continue;
+            largest = index;
+            largestLength = _spares[index]!.Length;
+        }
+        if (largest >= 0)
+        {
+            _spareEntryCount += delivered.Length - largestLength;
+            _spares[largest] = delivered;
         }
     }
 
