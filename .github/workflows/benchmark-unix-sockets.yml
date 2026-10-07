@@ -9,7 +9,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: unix-sockets-${{ github.event.pull_request.number || github.ref }}
+  # Manual runs keep their branch/matrix scope with an empty label segment.
+  group: unix-sockets-${{ github.event.pull_request.number || github.ref }}-${{ github.event.label.name }}
   cancel-in-progress: true
 
 jobs:

@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: utf8-decoder-${{ github.event.pull_request.number }}
+  group: utf8-decoder-${{ github.event.pull_request.number }}-${{ github.event.label.name }}
   cancel-in-progress: true
 
 jobs:
