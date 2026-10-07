@@ -1,13 +1,13 @@
 ---
 title: FusionCache
-description: Share a Respire client between FusionCache's distributed cache and backplane.
+description: Share a Respire client between FusionCache's distributed cache, backplane, and distributed locker.
 ---
 
 # FusionCache
 
-`Respire.FusionCache` provides an `IFusionCacheBackplane` for FusionCache 2.9.0 or later
-compatible releases. `Respire.Caching` supplies its `IDistributedCache` L2. Both adapters
-can share the same caller-owned `IRespireClient`.
+`Respire.FusionCache` provides an `IFusionCacheBackplane` and `IFusionCacheDistributedLocker`
+for FusionCache 2.9.0 or later compatible releases. `Respire.Caching` supplies its
+`IDistributedCache` L2. All three adapters can share the same caller-owned `IRespireClient`.
 
 ```bash
 dotnet add package Respire.FusionCache
@@ -36,15 +36,16 @@ services.AddFusionCache()
     })
     .WithSerializer(new FusionCacheSystemTextJsonSerializer())
     .WithRegisteredDistributedCache()
-    .WithRespireBackplane();
+    .WithRespireBackplane()
+    .WithRespireDistributedLocker();
 
 await using var provider = services.BuildServiceProvider();
 var cache = provider.GetRequiredService<IFusionCache>();
-await cache.SetAsync("product:42", 42);
+await cache.GetOrSetAsync("product:42", _ => Task.FromResult(42));
 ```
 
-The service provider disposes the cache and its backplane before the caller disposes
-`client`. Neither adapter disposes that externally supplied client. The backplane uses
+The service provider disposes the cache, its backplane, and its locker before the caller
+disposes `client`. None of the adapters disposes that externally supplied client. The backplane uses
 Respire's shared subscription infrastructure; it does not create another command client.
 The serializer above is supplied by FusionCache. Configure its serialization separately
 from Respire's serializer, including any application-specific AOT requirements.
@@ -106,5 +107,76 @@ Cancellation passed to publishing reaches Respire. As with other network writes,
 after submission does not prove that Redis did not accept the notification. In-flight
 publishes may complete while teardown starts.
 
-The distributed locker is tracked separately in [#1114](https://github.com/thomhurst/Respire/issues/1114).
-This package's backplane does not yet implement that contract.
+## Distributed locking
+
+`RespireFusionCacheDistributedLocker` implements the sync and async acquisition/release
+contract verified against [FusionCache 2.9.0](https://github.com/ZiggyCreatures/FusionCache/blob/v2.9.0/src/ZiggyCreatures.FusionCache/Locking/Distributed/IFusionCacheDistributedLocker.cs).
+It uses `Respire.Coordination` fenced leases on the supplied client. Contended acquisitions
+poll with a bounded delay; both RESP2 and RESP3 work without client-side tracking. Zero
+timeout makes one immediate attempt, a positive timeout bounds the wait including Redis
+attempts, and `Timeout.InfiniteTimeSpan` waits until acquisition, cancellation, or disposal.
+Contention/timeout returns `null`; caller cancellation throws `OperationCanceledException`.
+Network failures retain Respire's normal error behavior. Cleanup can outlast the acquisition
+budget because an acquired lease must stop renewal and release safely.
+Synchronous acquisition, release, and disposal block the calling thread until their asynchronous
+operations, including cleanup, finish.
+An infinite acquisition timeout therefore occupies that thread until acquisition, cancellation,
+or locker disposal ends the wait.
+
+The default lease is 30 seconds and is renewed halfway through each duration. Set
+`RespireFusionCacheDistributedLockerOptions.LeaseDuration` between one second and five minutes;
+`PollInterval` defaults to 50 milliseconds and accepts one millisecond to one second. These
+options apply to the constructor, `WithRespireDistributedLocker`, and
+`AddFusionCacheRespireDistributedLocker`. The wait timeout does not set the server lease duration.
+Managed renewal fences uncertain commands with `CLIENT ID` and `CLIENT KILL`; Redis ACLs
+must permit them as well as the underlying script, counter, and owner-checked lock commands.
+
+Lease identity combines the cache name and FusionCache's lock name, which already includes
+its cache key prefix and lock suffix. Cache instance IDs and operation IDs are diagnostics,
+so different nodes contend for the same lease. Length-framed UTF-16 code units are hashed
+with SHA-256, producing `respire:fusioncache:lock:{HASH}:lease` and
+`respire:fusioncache:lock:{HASH}:counter` before the client's key prefix. Both keys share a
+Cluster slot. Use the same cache name, lock-name settings, client prefix, and database on
+communicating nodes. Different cache names isolate leases; L2 data and backplane traffic
+still need their own prefixes as described above.
+
+Each acquisition increments a persistent counter. Release and renewal compare the generated
+owner token, so a stale handle cannot delete or extend a replacement lease. Never delete,
+expire, evict, or reset the counter: configure retention and memory capacity accordingly.
+Counters grow with the number of distinct lock identities. Redis asynchronous failover,
+restoration, or history loss can roll back counters, and a lost acquisition reply can consume
+a token and leave a lease until its bounded expiry. This is not a consensus-backed service.
+
+Release, caller cancellation, renewal loss, and locker disposal stop renewal and join cleanup.
+Release ignores its supplied cancellation token, including an already-cancelled token, so a
+successful release does not replace the factory's result or exception with cancellation.
+Cleanup uses its own token even when the factory's token is already cancelled; a transport
+failure leaves server expiry as the fallback. Concurrent teardown callers join the same work.
+Explicit release propagates server or protocol rejection to FusionCache, including when
+`ReThrowDistributedLockerExceptions` is enabled. Locker disposal propagates cleanup failures
+from handles still tracked when disposal starts. Automatic cancellation cleanup observes
+failures in the background and logs them when a logger is configured; completed handles are
+removed from the locker, so later locker disposal does not report their earlier failures.
+Explicit release of that handle still observes its recorded failure. Configure a logger to
+observe automatic cleanup failures when there is no later explicit release.
+Locker disposal also joins acquisitions still returning or releasing a lease. Await disposal
+before closing the shared client.
+The provider owns the locker created by `WithRespireDistributedLocker`, including renewal
+handles left active by an interrupted operation. `AddFusionCacheRespireDistributedLocker`
+registers transient provider-owned lockers for `WithRegisteredDistributedLocker` discovery.
+Neither registration creates or disposes a command client. For direct construction, retain
+and dispose your `RespireFusionCacheDistributedLocker` after using `SetupDistributedLocker`:
+FusionCache's own disposal only detaches its locker.
+
+This reduces cross-node cache stampedes while ownership remains valid. FusionCache's
+object-based locker interface does **not** pass the fencing token to a factory, atomically
+enforce that token on arbitrary cache or database writes, or cancel a factory after ownership
+loss. The token passed to acquisition also controls the acquired lease's lifetime: cancelling
+a request-scoped token after acquisition releases the lease even if its factory keeps running.
+A slow factory or background factory completion can continue after expiry, cancellation,
+or a connection failure and overlap a new owner. The diagnostic `RespireFusionCacheLock`
+handle exposes its token and ownership cancellation token, but FusionCache cannot enforce
+them automatically. There is no exactly-once execution guarantee. For writes that require
+fencing, use `Respire.Coordination` directly and make the protected resource atomically reject
+stale fencing tokens. Configure FusionCache's fail-safe, lock timeout, exception, and background
+completion policies for your application's tolerance for duplicate factory execution.
