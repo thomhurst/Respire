@@ -9,6 +9,125 @@ namespace Respire.FusionCache.Tests;
 public class DistributedLockerWireTests
 {
     [Test]
+    public async Task LockerDisposalJoinsUnreturnedLeaseCleanup()
+    {
+        var releaseArrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer("$1\r\n1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray())
+        {
+            SuppressReply = command =>
+            {
+                if (!command.StartsWith("DELEX ", StringComparison.Ordinal)) return false;
+                releaseArrived.TrySetResult();
+                return true;
+            },
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await using var locker = new RespireFusionCacheDistributedLocker(client);
+        Task? disposal = null;
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "Respire",
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+            ActivityStopped = activity =>
+            {
+                if (disposal is null && activity.GetTagItem("db.operation.name") is "EVALSHA"
+                    && activity.GetTagItem("server.port") is int port && port == server.Port)
+                    disposal = locker.DisposeAsync().AsTask();
+            },
+        };
+        ActivitySource.AddActivityListener(listener);
+        var pending = DistributedLockerTests.AcquireAsync(locker, "cache", TimeSpan.Zero).AsTask();
+        try { await releaseArrived.Task.WaitAsync(TimeSpan.FromSeconds(5)); }
+        catch (TimeoutException error)
+        {
+            throw new InvalidOperationException(string.Join(" | ", server.ReceivedCommands), error);
+        }
+        try
+        {
+            await Assert.That(disposal).IsNotNull();
+            await Assert.That(disposal!.IsCompleted).IsFalse();
+            await Assert.That(locker.DisposeAsync().AsTask()).IsSameReferenceAs(disposal);
+        }
+        finally
+        {
+            await server.SendRawAsync(":1\r\n"u8.ToArray());
+            await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Throws<ObjectDisposedException>();
+            await disposal!.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        await Assert.That(await client.Strings.IncrementAsync("client-survives")).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ExplicitReleasePreservesServerFailureForConcurrentCallers(bool cancelAfterHandoff)
+    {
+        var releaseCalls = 0;
+        await using var server = new FakeRespServer("$1\r\n1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) =>
+            {
+                if (!command.StartsWith("DELEX ", StringComparison.Ordinal)) return null;
+                Interlocked.Increment(ref releaseCalls);
+                return "-NOPERM release denied\r\n"u8.ToArray();
+            },
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await using var locker = new RespireFusionCacheDistributedLocker(client);
+        using var cancellation = new CancellationTokenSource();
+        var owner = (RespireFusionCacheLock)(await DistributedLockerTests.AcquireAsync(locker, "cache", TimeSpan.Zero, cancellation.Token))!;
+        if (cancelAfterHandoff) await cancellation.CancelAsync();
+        var first = DistributedLockerTests.ReleaseAsync(locker, "cache", owner).AsTask();
+        var second = owner.DisposeAsync().AsTask();
+        var error = await Assert.That(async () => await first.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<RespireServerException>();
+        var repeated = await Assert.That(async () => await second.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<RespireServerException>();
+        await Assert.That(error!.Message).IsEqualTo("NOPERM release denied");
+        await Assert.That(repeated).IsSameReferenceAs(error);
+        await Assert.That(releaseCalls).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task TeardownJoinsEveryHandleWhenOneReleaseFails()
+    {
+        var releasesArrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseCount = 0;
+        await using var server = new FakeRespServer("$1\r\n1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command.StartsWith("EVALSHA ", StringComparison.Ordinal)
+                ? "$1\r\n1\r\n"u8.ToArray() : null,
+            SuppressReply = command =>
+            {
+                if (!command.StartsWith("DELEX ", StringComparison.Ordinal)) return false;
+                if (Interlocked.Increment(ref releaseCount) == 2) releasesArrived.TrySetResult();
+                return true;
+            },
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var locker = new RespireFusionCacheDistributedLocker(client);
+        var rejected = (RespireFusionCacheLock)(await DistributedLockerTests.AcquireAsync(locker, "rejected", TimeSpan.Zero))!;
+        var blocked = (RespireFusionCacheLock)(await DistributedLockerTests.AcquireAsync(locker, "blocked", TimeSpan.Zero))!;
+        var disposal = locker.DisposeAsync().AsTask();
+        await releasesArrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var replies = server.ReceivedCommands.Where(command => command.StartsWith("DELEX ", StringComparison.Ordinal))
+            .Select(command => command.Contains(blocked.LeaseKey.ToString(), StringComparison.Ordinal)
+                ? ":1\r\n" : "-NOPERM release denied\r\n").ToArray();
+        try { await Assert.That(disposal.IsCompleted).IsFalse(); }
+        finally { await server.SendRawAsync(System.Text.Encoding.UTF8.GetBytes(string.Concat(replies))); }
+        var error = await Assert.That(async () => await disposal.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<RespireServerException>();
+        var repeated = await Assert.That(async () => await locker.DisposeAsync())
+            .Throws<RespireServerException>();
+        await Assert.That(repeated).IsSameReferenceAs(error);
+        await blocked.DisposeAsync();
+        await Assert.That(async () => await rejected.DisposeAsync()).Throws<RespireServerException>();
+        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("DELEX ", StringComparison.Ordinal)))
+            .IsEqualTo(2);
+    }
+
+    [Test]
     public async Task RenewalErrorStopsCleanupAndReportsUncertainOwnership()
     {
         await using var server = new FakeRespServer("$1\r\n1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray())

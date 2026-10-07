@@ -118,6 +118,8 @@ attempts, and `Timeout.InfiniteTimeSpan` waits until acquisition, cancellation, 
 Contention/timeout returns `null`; caller cancellation throws `OperationCanceledException`.
 Network failures retain Respire's normal error behavior. Cleanup can outlast the acquisition
 budget because an acquired lease must stop renewal and release safely.
+Synchronous acquisition and release block the calling thread until their asynchronous
+operations, including cleanup, finish.
 
 The default lease is 30 seconds and is renewed halfway through each duration. Set
 `RespireFusionCacheDistributedLockerOptions.LeaseDuration` between one second and five minutes;
@@ -146,6 +148,11 @@ a token and leave a lease until its bounded expiry. This is not a consensus-back
 Release, caller cancellation, renewal loss, and locker disposal stop renewal and join cleanup.
 Cleanup uses its own token even when the factory's token is already cancelled; a transport
 failure leaves server expiry as the fallback. Concurrent teardown callers join the same work.
+Explicit release and teardown propagate server or protocol rejection to FusionCache, including
+when `ReThrowDistributedLockerExceptions` is enabled. Automatic cancellation cleanup observes
+the same failure in the background and logs it when a logger is configured.
+Locker disposal also joins acquisitions still returning or releasing a lease. Await disposal
+before closing the shared client.
 The provider owns the locker created by `WithRespireDistributedLocker`, including renewal
 handles left active by an interrupted operation. `AddFusionCacheRespireDistributedLocker`
 registers transient provider-owned lockers for `WithRegisteredDistributedLocker` discovery.

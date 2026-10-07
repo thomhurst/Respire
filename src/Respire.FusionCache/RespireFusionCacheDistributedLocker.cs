@@ -4,6 +4,9 @@ using System.Security.Cryptography;
 using Microsoft.Extensions.Logging;
 using Respire.Coordination;
 using ZiggyCreatures.Caching.Fusion.Locking.Distributed;
+#if !NET9_0_OR_GREATER
+using Lock = System.Object;
+#endif
 
 namespace Respire.FusionCache;
 
@@ -21,8 +24,10 @@ public sealed class RespireFusionCacheDistributedLocker : IFusionCacheDistribute
     private readonly ILogger? _logger;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly CancellationToken _shutdownToken;
-    private readonly object _sync = new();
+    private readonly Lock _sync = new();
     private readonly HashSet<RespireFusionCacheLock> _handles = [];
+    private int _acquisitions;
+    private TaskCompletionSource? _acquisitionsDrained;
     private TaskCompletionSource? _cleanup;
 
     /// <summary>Uses the existing client without creating connections or taking ownership of that client.</summary>
@@ -53,7 +58,27 @@ public sealed class RespireFusionCacheDistributedLocker : IFusionCacheDistribute
         if (timeout < TimeSpan.Zero && timeout != Timeout.InfiniteTimeSpan)
             throw new ArgumentOutOfRangeException(nameof(timeout));
         token.ThrowIfCancellationRequested();
-        lock (_sync) ObjectDisposedException.ThrowIf(_cleanup is not null, this);
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_cleanup is not null, this);
+            _acquisitions++;
+        }
+        try
+        {
+            return await AcquireCoreAsync(cacheName, lockName, timeout, logger, token).ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (_sync)
+            {
+                if (--_acquisitions == 0) _acquisitionsDrained?.TrySetResult();
+            }
+        }
+    }
+
+    private async ValueTask<object?> AcquireCoreAsync(string cacheName, string lockName,
+        TimeSpan timeout, ILogger? logger, CancellationToken token)
+    {
         var (leaseKey, counterKey) = CreateKeys(cacheName, lockName);
         using var waiting = CancellationTokenSource.CreateLinkedTokenSource(token, _shutdownToken);
         using var deadlineStop = new CancellationTokenSource();
@@ -186,33 +211,41 @@ public sealed class RespireFusionCacheDistributedLocker : IFusionCacheDistribute
         catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
     }
 
-    /// <summary>Stops and joins all owned handles without disposing the caller's client.</summary>
+    /// <summary>Stops and joins acquisitions and owned handles without disposing the caller's client.</summary>
     public ValueTask DisposeAsync()
     {
         TaskCompletionSource completion;
         RespireFusionCacheLock[] handles;
+        Task acquisitions;
         lock (_sync)
         {
             if (_cleanup is not null) return new ValueTask(_cleanup.Task);
             completion = _cleanup = new(TaskCreationOptions.RunContinuationsAsynchronously);
             handles = [.. _handles];
+            acquisitions = _acquisitions == 0 ? Task.CompletedTask
+                : (_acquisitionsDrained = new(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
         }
-        _ = CompleteCleanupAsync(completion, handles);
+        _ = CompleteCleanupAsync(completion, handles, acquisitions);
         return new ValueTask(completion.Task);
     }
 
-    private async Task CompleteCleanupAsync(TaskCompletionSource completion, RespireFusionCacheLock[] handles)
+    private async Task CompleteCleanupAsync(TaskCompletionSource completion, RespireFusionCacheLock[] handles, Task acquisitions)
     {
         try
         {
             await _shutdown.CancelAsync().ConfigureAwait(false);
-            foreach (var handle in handles) await handle.DisposeAsync().ConfigureAwait(false);
+            // No acquisition may add a handle after the snapshot. Join rejected handoffs and
+            // their owner-checked release before the caller can close the shared client.
+            await acquisitions.ConfigureAwait(false);
+            var cleanup = new Task[handles.Length];
+            for (var i = 0; i < handles.Length; i++) cleanup[i] = handles[i].DisposeAsync().AsTask();
+            await Task.WhenAll(cleanup).ConfigureAwait(false);
             completion.TrySetResult();
         }
         catch (Exception error) { completion.TrySetException(error); }
         finally { _shutdown.Dispose(); }
     }
 
-    /// <summary>Synchronously stops and joins all owned handles, preserving the caller's client.</summary>
+    /// <summary>Synchronously stops and joins acquisitions and owned handles, preserving the caller's client.</summary>
     public void Dispose() => DisposeAsync().AsTask().GetAwaiter().GetResult();
 }

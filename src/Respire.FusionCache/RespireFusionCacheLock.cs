@@ -1,5 +1,8 @@
 using Microsoft.Extensions.Logging;
 using Respire.Coordination;
+#if !NET9_0_OR_GREATER
+using Lock = System.Object;
+#endif
 
 namespace Respire.FusionCache;
 
@@ -15,7 +18,7 @@ public sealed partial class RespireFusionCacheLock : IAsyncDisposable
     private readonly RespireLockKeepAlive _keepAlive;
     private readonly CancellationTokenSource _lifetime;
     private readonly ILogger? _logger;
-    private readonly object _sync = new();
+    private readonly Lock _sync = new();
     private CancellationTokenRegistration _registration;
     private TaskCompletionSource? _cleanup;
 
@@ -49,13 +52,23 @@ public sealed partial class RespireFusionCacheLock : IAsyncDisposable
     {
         var registration = OwnershipCancellationToken.UnsafeRegister(static state =>
         {
-            _ = ((RespireFusionCacheLock)state!).DisposeAsync();
+            _ = ((RespireFusionCacheLock)state!).CleanupAfterCancellationAsync();
         }, this);
         // Register can invoke the callback synchronously when cancellation won the handoff race.
         lock (_sync)
         {
             if (_cleanup is null) _registration = registration;
             else registration.Unregister();
+        }
+    }
+
+    private async Task CleanupAfterCancellationAsync()
+    {
+        try { await DisposeAsync().ConfigureAwait(false); }
+        catch
+        {
+            // CompleteCleanupAsync logs the failure. Cancellation callbacks have no caller
+            // to receive it; explicit release and teardown still observe the same fault.
         }
     }
 
@@ -74,6 +87,7 @@ public sealed partial class RespireFusionCacheLock : IAsyncDisposable
 
     private async Task CompleteCleanupAsync(TaskCompletionSource completion)
     {
+        Exception? failure = null;
         try
         {
             _registration.Unregister();
@@ -85,13 +99,16 @@ public sealed partial class RespireFusionCacheLock : IAsyncDisposable
         }
         catch (Exception error)
         {
-            if (_logger is not null) LogCleanupFailed(_logger, LeaseKey, error);
+            failure = error;
+            try { if (_logger is not null) LogCleanupFailed(_logger, LeaseKey, error); }
+            catch { /* Logging must not replace the release error or leave teardown pending. */ }
         }
         finally
         {
             _lifetime.Dispose();
             _owner.Forget(this);
-            completion.TrySetResult();
+            if (failure is null) completion.TrySetResult();
+            else completion.TrySetException(failure);
         }
     }
 
