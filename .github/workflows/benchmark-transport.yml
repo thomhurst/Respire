@@ -3,13 +3,6 @@ name: Transport acceptance benchmarks
 on:
   pull_request:
     types: [labeled]
-    paths:
-      - 'src/Respire/Networking/**'
-      - 'src/Respire/Infrastructure/RespireConnectionMultiplexer.cs'
-      - 'src/Respire/RespireClient.cs'
-      - 'src/Respire/Internal/Cluster*.cs'
-      - 'benchmarks/Respire.Benchmarks/TransportAcceptanceBenchmarks.cs'
-      - '.github/workflows/benchmark-transport.yml'
 
 permissions:
   contents: read
@@ -21,7 +14,7 @@ concurrency:
 
 jobs:
   transport-comparison:
-    if: github.event.label.name == 'run-benchmarks'
+    if: github.event.label.name == 'run-transport-benchmarks'
     name: Compare transport acceptance (informational)
     runs-on: ubuntu-latest
     timeout-minutes: 25

@@ -4,22 +4,13 @@ on:
   workflow_dispatch:
   pull_request:
     types: [labeled]
-    paths:
-      - 'Directory.Packages.props'
-      - 'src/Respire/Compression/**'
-      - 'src/Respire.Compression.Lz4/**'
-      - 'src/Respire.Compression.Zstd/**'
-      - 'benchmarks/Respire.Benchmarks/ValueCodecBenchmarks.cs'
-      - 'benchmarks/Respire.Benchmarks/Respire.Benchmarks.csproj'
-      - '.github/scripts/value_codec_report.py'
-      - '.github/scripts/test_value_codec_report.py'
-      - '.github/workflows/benchmark-value-codecs.yml'
 
 permissions:
   contents: read
 
 jobs:
   report-tests:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'benchmark-value-codecs'
     name: Validate codec report
     runs-on: ubuntu-latest
     steps:

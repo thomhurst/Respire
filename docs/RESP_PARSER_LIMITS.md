@@ -17,6 +17,28 @@ maps and attributes can contain at most `int.MaxValue / 2` pairs. Null aggregate
 retain their existing `-1` representation. Completed replies retain their normal
 pooled ownership and must still be disposed.
 
+Fully buffered aggregates up to the payload pool's limit copy their consumed wire
+frame once, excluding leading discarded attributes, into a payload buffer owned
+by the root. Nonempty string
+children borrow slices of that copy,
+including children of nested arrays and maps. Receive-buffer reuse therefore
+cannot change a completed reply. Keep the root alive while reading its children;
+use `ToOwned()` for a retained root or child. Integer-only aggregates need no
+payload copy, and common simple replies remain interned. Fragmented resumable
+aggregates retain their existing per-child payload ownership. Element arrays
+clear only their used slots before returning to the pool.
+The root lifetime contract applies to children on both parse paths. Public
+`RespireResult` child views check the root's disposed state before reading.
+Debug builds poison a returned shared frame to expose invalid internal child
+reads; release builds add no poisoning work. Deserialization materializes strings,
+byte arrays, primitives, and serializer results while the root remains alive.
+
+Batch and transaction converters finish materializing typed results before disposing
+the reply; deferred raw, script, and function results explicitly use `ToOwned()`.
+Pub/sub dispatch copies payload bytes before placing messages in subscription buffers.
+Scan pages and synchronous response parsers materialize their output before disposal;
+protocol-shaped additional fields use owned copies when they escape that parse.
+
 Nesting is limited to 512 aggregate frames, including maps and attributes. This
 bound applies to both parsers, including fully buffered replies, and protects
 recursive parsing, disposal, and owned copies. Replies beyond this depth fail with
@@ -34,6 +56,20 @@ element count and depth checks. It is not a 512 MiB managed-memory budget. Eleme
 arrays store `RespValue` structures, which can cost more than compact RESP tokens;
 payload buffers, receive buffers, object headers, pool rounding, and owned result
 copies also consume memory.
+
+The response payload pool retains buffers up to 64 MiB. Larger complete frames
+copy each retained string child separately instead of allocating an unpooled
+backing frame on every reply. Discarded nested attributes and integer tokens are
+not copied in this fallback. An individual child larger than 64 MiB still needs
+an unpooled allocation. The root lifetime contract applies to either storage mode.
+Shared-frame copies also include integer tokens and framing, so a mostly
+integer aggregate with a few strings can copy more bytes than separate payload
+copies. Integer-only aggregates still copy no payload. These are storage tradeoffs,
+not a guarantee of lower allocation or latency for every aggregate shape.
+The 100-item payload benchmark uses 1,906-byte MGET and 3,806-byte HGETALL frames,
+both well within the pool's limit; its retained cases hold 50 such replies.
+Two additional MGET/HGETALL rows decode two 1 MiB values each, exposing larger
+copies and pool rounding alongside typed string materialization.
 
 The restartable parser's total requested element slots cannot exceed one third
 of the buffered bytes, across the entire tree, before pool rounding. The budget is
@@ -67,9 +103,10 @@ does not change that rule or the large-bulk direct-fill contract.
 Parser changes require a pinned baseline/candidate/baseline CI comparison on both
 supported frameworks. Include small and large complete arrays, nested replies,
 and fragmented resumable arrays, with scalar batches as a control; report
-allocation and latency uncertainty. Run the comparison by adding the
-`run-aggregate-benchmarks` label to the PR. Reapply it after a source change to
-measure the new head. The workflow validates both builds before measuring and
+allocation and latency uncertainty. Also measure typed MGET and HGETALL decoding
+and batches retaining 50 replies before draining, to expose payload pool pressure.
+Add the `run-aggregate-benchmarks` label to the pull request to start these
+comparisons. The workflow validates both builds before measuring and
 retains its pinned revisions, reports, and logs as artifacts.
 Storage growth trades extra copies for bounded speculative allocation. Do not
 infer latency equivalence from correctness tests or pooled-allocation counts.

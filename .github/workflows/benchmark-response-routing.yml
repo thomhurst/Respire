@@ -8,11 +8,7 @@ on:
         required: true
         type: string
   pull_request:
-    paths:
-      - 'src/Respire/Internal/PooledResponseSource.cs'
-      - 'benchmarks/Respire.Benchmarks/ResponseRoutingBenchmarks.cs'
-      - 'benchmarks/Respire.Benchmarks/infra/**'
-      - '.github/workflows/benchmark-response-routing.yml'
+    types: [labeled]
 
 permissions:
   contents: read
@@ -23,6 +19,7 @@ concurrency:
 
 jobs:
   compare:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'run-response-routing-benchmarks'
     name: Response routing (${{ matrix.framework }})
     runs-on: ubuntu-latest
     timeout-minutes: 45

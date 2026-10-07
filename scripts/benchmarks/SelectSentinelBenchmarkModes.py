@@ -14,9 +14,6 @@ def select_modes(event: dict) -> list[str]:
     if event.get('action') == 'labeled':
         mode = LABEL_MODES.get(event.get('label', {}).get('name'))
         return [mode] if mode else []
-    if event.get('action') == 'synchronize':
-        labels = {label['name'] for label in event.get('pull_request', {}).get('labels', [])}
-        return [mode for label, mode in LABEL_MODES.items() if label in labels]
     return []
 
 

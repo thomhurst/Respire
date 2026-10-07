@@ -8,80 +8,32 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}-${{ github.event.label.name }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  compare:
+  parsing:
     if: github.event.label.name == 'run-aggregate-benchmarks'
-    name: Aggregate parsing (${{ matrix.framework }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
-    strategy:
-      fail-fast: false
-      matrix:
-        framework: [net10.0]
-    env:
-      FRAMEWORK: ${{ matrix.framework }}
-      EXPECTED_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-      EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-    steps:
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        with:
-          dotnet-version: |
-            10.0.x
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: baseline
-          persist-credentials: false
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          path: candidate
-          persist-credentials: false
-      - name: Validate both builds and measure baseline, candidate, baseline
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(git -C baseline rev-parse HEAD)" = "$EXPECTED_BASE_SHA"
-          test "$(git -C candidate rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
-          cp candidate/benchmarks/Respire.Benchmarks/AggregateParsingBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
-          for phase in baseline-validation candidate-validation baseline-a candidate baseline-b; do
-            source=baseline
-            job=Medium
-            if [[ "$phase" == candidate* ]]; then source=candidate; fi
-            if [[ "$phase" == *validation ]]; then job=Dry; fi
-            (
-              cd "$source"
-              git rev-parse HEAD
-              dotnet run --project benchmarks/Respire.Benchmarks -c Release -f "$FRAMEWORK" -- \
-                --filter '*AggregateParsingBenchmarks*' --job "$job" --exporters json markdown \
-                --artifacts "$GITHUB_WORKSPACE/results/$phase"
-            ) > "$GITHUB_WORKSPACE/$phase.log" 2>&1
-          done
-      - name: Require all cases and publish reports
-        shell: python
-        run: |
-          import json
-          import os
-          from pathlib import Path
-          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
-              summary.write('## Aggregate parsing before/after\n\nPinned base and pull request head run on the same runner. Compare candidate with both controls; growth can add copying even when pooled allocations are unchanged.\n')
-              for phase in ('baseline-validation', 'candidate-validation', 'baseline-a', 'candidate', 'baseline-b'):
-                  reports = list(Path('results', phase, 'results').glob('*-report-full-compressed.json'))
-                  assert len(reports) == 1, f'Missing report: {phase}'
-                  cases = json.loads(reports[0].read_text())['Benchmarks']
-                  assert len(cases) == 8, f'Missing aggregate parsing cases: {phase}'
-                  assert all(case.get('Statistics') and case['Statistics']['Mean'] > 0 for case in cases), phase
-                  if 'validation' not in phase:
-                      summary.write(f'\n### {phase}\n\n')
-                      summary.write(next(Path('results', phase, 'results').glob('*-report-github.md')).read_text())
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: always()
-        with:
-          name: aggregate-parsing-${{ matrix.framework }}
-          path: |
-            results/
-            *.log
-          retention-days: 30
+    uses: ./.github/workflows/benchmark-compare.yml
+    with:
+      event-base-sha: ${{ github.event.pull_request.base.sha }}
+      candidate-sha: ${{ github.sha }}
+      expected-head-sha: ${{ github.event.pull_request.head.sha }}
+      fixture: benchmarks/Respire.Benchmarks/AggregateParsingBenchmarks.cs
+      filter: '*AggregateParsingBenchmarks*'
+      expected-case-count: 8
+      expected-methods: Complete,Nested,ScalarBatch,Fragmented
+      zero-allocation-methods: Complete,Nested,ScalarBatch,Fragmented
+      artifact-prefix: aggregate-parsing
+  payload:
+    if: github.event.label.name == 'run-aggregate-benchmarks'
+    uses: ./.github/workflows/benchmark-compare.yml
+    with:
+      event-base-sha: ${{ github.event.pull_request.base.sha }}
+      candidate-sha: ${{ github.sha }}
+      expected-head-sha: ${{ github.event.pull_request.head.sha }}
+      fixture: benchmarks/Respire.Benchmarks/AggregatePayloadBenchmarks.cs
+      filter: '*AggregatePayloadBenchmarks*'
+      expected-case-count: 6
+      expected-methods: MGet,HGetAll,MGetLargeValues,HGetAllLargeValues,RetainedMGet,RetainedHGetAll
+      artifact-prefix: aggregate-payload

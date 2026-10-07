@@ -2,19 +2,7 @@ name: RESP framing benchmarks
 
 on:
   pull_request:
-    paths:
-      - 'src/Respire/Protocol/RespWriter.cs'
-      - 'src/Respire/RespireValue.cs'
-      - 'src/Respire/RespireClient.cs'
-      - 'src/Respire/RespireCommands.g.cs'
-      - 'src/Respire/Commands/**'
-      - 'src/Respire/Facets/SortedSet*Commands.cs'
-      - 'src/Respire/Facets/String*Commands.cs'
-      - 'src/Respire/Batching/BatchSortedSetCommands.cs'
-      - 'tools/Generate-CommandCatalog.ps1'
-      - 'benchmarks/Respire.Benchmarks/RespFramingBenchmarks.cs'
-      - '.github/workflows/benchmark-resp-framing.yml'
-      - '.github/workflows/benchmark-compare.yml'
+    types: [labeled]
 
 permissions:
   contents: read
@@ -25,6 +13,7 @@ concurrency:
 
 jobs:
   compare:
+    if: github.event.label.name == 'run-resp-framing-benchmarks'
     uses: ./.github/workflows/benchmark-compare.yml
     with:
       event-base-sha: ${{ github.event.pull_request.base.sha }}

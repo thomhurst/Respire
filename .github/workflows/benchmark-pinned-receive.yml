@@ -2,13 +2,7 @@ name: Pinned receive benchmarks
 
 on:
   pull_request:
-    paths:
-      - 'src/Respire/Networking/ReceiveBuffer.cs'
-      - 'src/Respire/Networking/RespireConnection.cs'
-      - 'tests/Respire.Tests/Networking/ReceiveBufferTests.cs'
-      - 'benchmarks/Respire.Benchmarks/PinnedReceiveBenchmarks.cs'
-      - '.github/workflows/benchmark-pinned-receive.yml'
-      - '.github/workflows/benchmark-compare.yml'
+    types: [labeled]
 
 permissions:
   contents: read
@@ -19,6 +13,7 @@ concurrency:
 
 jobs:
   lifetime:
+    if: github.event.label.name == 'run-pinned-receive-benchmarks'
     name: Receive lifetime (${{ matrix.runner }}, ${{ matrix.framework }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
@@ -46,6 +41,7 @@ jobs:
           path: TestResults/
 
   compare:
+    if: github.event.label.name == 'run-pinned-receive-benchmarks'
     name: Receive (${{ matrix.runner }})
     strategy:
       fail-fast: false

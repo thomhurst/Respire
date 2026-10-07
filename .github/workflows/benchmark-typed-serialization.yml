@@ -8,12 +8,7 @@ on:
         required: true
         type: string
   pull_request:
-    paths:
-      - 'src/Respire/Serialization/SystemTextJsonSerializer.cs'
-      - 'src/Respire/Serialization/PooledByteBufferWriter.cs'
-      - 'src/Respire/RespireClient.cs'
-      - 'benchmarks/Respire.Benchmarks/TypedSerializationBenchmarks.cs'
-      - '.github/workflows/benchmark-typed-serialization.yml'
+    types: [labeled]
 
 permissions:
   contents: read
@@ -24,6 +19,7 @@ concurrency:
 
 jobs:
   compare:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'run-typed-serialization-benchmarks'
     name: Typed serialization (${{ matrix.framework }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
