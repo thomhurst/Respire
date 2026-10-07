@@ -201,6 +201,10 @@ internal sealed class ClusterScanState(string? match, string? type, string? pref
     internal ulong Epoch;
     internal ulong Cursor;
 
+    internal bool MatchesKeyPrefix(KeyPrefix? prefix)
+        => Prefix == prefix?.Text
+            && BinaryPrefix.AsSpan().SequenceEqual(prefix is { Text: null } ? prefix.Bytes : null);
+
     internal ClusterScanState Copy()
     {
         var copy = new ClusterScanState(Match, Type, Prefix)

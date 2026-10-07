@@ -495,6 +495,10 @@ public class ClusterScanTests
         await Assert.That(async () => await client.WithKeyPrefix((RespireKey)other).Keys.ScanClusterPageAsync(parsed))
             .Throws<ArgumentException>();
         await Assert.That(cluster.CommandCount).IsEqualTo(before);
+        await Assert.That(async () => await client.WithKeyPrefix("tenant:").Keys.ScanClusterPageAsync(parsed))
+            .Throws<ArgumentException>();
+        await Assert.That(async () => await client.Keys.ScanClusterPageAsync(parsed)).Throws<ArgumentException>();
+        await Assert.That(cluster.CommandCount).IsEqualTo(before);
         var resumed = await client.WithKeyPrefix((RespireKey)prefix.ToArray()).Keys.ScanClusterPageAsync(parsed);
         await Assert.That(resumed.Keys).IsEquivalentTo(["visible"]);
         var bytes = Convert.FromBase64String(serialized);

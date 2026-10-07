@@ -57,7 +57,7 @@ internal sealed partial class KeyCommands
         var checkpointMatch = prefix?.Text is { } text ? EscapeGlob(text) + (match ?? "*") : match;
         var binaryPrefix = prefix is { Text: null } ? prefix.Bytes : null;
         if (cursor.State is { } previous && (previous.Match != checkpointMatch || previous.Type != typeToken
-            || previous.Prefix != prefix?.Text || !previous.BinaryPrefix.AsSpan().SequenceEqual(binaryPrefix)))
+            || !previous.MatchesKeyPrefix(prefix)))
             throw new ArgumentException("Resume a Cluster scan with the same match, type and key prefix.", nameof(cursor));
         if (cursor.IsComplete) return new(cursor, []);
         // Never mutate a published cursor. Failure/cancellation leaves the caller's checkpoint intact.

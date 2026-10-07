@@ -46,7 +46,7 @@ internal sealed class KeyPrefix
             if (physical.StartsWith(Bytes.AsSpan(0, boundary))
                 && Rune.DecodeFromUtf8(physical[boundary..], out var scalar, out var consumed) == OperationStatus.Done
                 && scalar.Value >= 0x10000
-                && (char)(0xD800 + ((scalar.Value - 0x10000) >> 10)) == Text[^1])
+                && (char)(0xD800 + ((scalar.Value - 0x10000) >> 10)) == Text![^1])
             {
                 var low = (char)(0xDC00 + ((scalar.Value - 0x10000) & 0x3FF));
                 // Keep the low code unit separate from arbitrary binary tails. The marker owns

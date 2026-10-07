@@ -52,11 +52,9 @@ internal sealed partial class KeyCommands
         var prefix = client.EncodedKeyPrefix;
         // A trailing high surrogate has both paired-text and replacement-byte encodings.
         // No single literal UTF-8 prefix covers both. Filter that namespace after scanning.
-        var effectiveMatch = match;
-        if (prefix is not null)
-            effectiveMatch = prefix.HasSurrogateBoundary ? null : EscapeGlob(prefix.Text) + (match ?? "*");
+        var effectiveMatch = prefix is { HasSurrogateBoundary: true } ? null : ScanMatch(prefix, match);
         List<RespireValue> arguments = [cursor];
-        if (effectiveMatch is not null) arguments.AddRange(["MATCH", effectiveMatch]);
+        if (effectiveMatch is not null) arguments.AddRange(["MATCH", effectiveMatch.Value]);
         arguments.AddRange(["COUNT", countHint]);
         if (typeToken is not null) arguments.AddRange(["TYPE", typeToken]);
         if (slot is { } selectedSlot) arguments.AddRange(["SLOT", selectedSlot]);

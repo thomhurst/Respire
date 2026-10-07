@@ -400,25 +400,31 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
                 };
                 var command = new CmdN(Verbs.Scan, args);
                 string[] page;
+                int pageCount;
                 using (var reply = await client.SendCursorPageAsync("SCAN", command, affinity, token).ConfigureAwait(false))
                 {
                     var elements = reply.AsArray();
                     cursor = elements[0].AsString();
-                    if (prefix is null) page = ResponseReader.StringArray(in elements[1]);
+                    if (prefix is null)
+                    {
+                        page = ResponseReader.StringArray(in elements[1]);
+                        pageCount = page.Length;
+                    }
                     else
                     {
-                        List<string> keys = [];
-                        foreach (ref readonly var value in elements[1].AsArray())
+                        var values = elements[1].AsArray();
+                        page = new string[values.Length];
+                        pageCount = 0;
+                        foreach (ref readonly var value in values)
                         {
-                            if (ScanKey(in value, prefix) is { } key) keys.Add(key);
+                            if (ScanKey(in value, prefix) is { } key) page[pageCount++] = key;
                         }
-                        page = keys.ToArray();
                     }
                 }
 
-                foreach (var key in page)
+                for (var index = 0; index < pageCount; index++)
                 {
-                    yield return key;
+                    yield return page[index];
                 }
             }
             while (cursor != "0");
@@ -463,12 +469,12 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
         var suffix = System.Text.Encoding.UTF8.GetBytes(match ?? "*");
         var escapedLength = prefix.Bytes.Length;
         foreach (var value in prefix.Bytes)
-            if (value is (byte)'*' or (byte)'?' or (byte)'[' or (byte)']' or (byte)'\\') escapedLength++;
+            if (IsGlobMeta(value)) escapedLength++;
         var pattern = new byte[checked(escapedLength + suffix.Length)];
         var offset = 0;
         foreach (var value in prefix.Bytes)
         {
-            if (value is (byte)'*' or (byte)'?' or (byte)'[' or (byte)']' or (byte)'\\') pattern[offset++] = (byte)'\\';
+            if (IsGlobMeta(value)) pattern[offset++] = (byte)'\\';
             pattern[offset++] = value;
         }
         suffix.CopyTo(pattern, offset);
@@ -498,7 +504,7 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
         var builder = new System.Text.StringBuilder(value.Length + 4);
         foreach (var c in value)
         {
-            if (c is '*' or '?' or '[' or ']' or '\\')
+            if (IsGlobMeta(c))
             {
                 builder.Append('\\');
             }
@@ -508,4 +514,6 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
 
         return builder.ToString();
     }
+
+    private static bool IsGlobMeta(int value) => value is '*' or '?' or '[' or ']' or '\\';
 }

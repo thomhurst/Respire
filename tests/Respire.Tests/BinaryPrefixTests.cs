@@ -275,4 +275,18 @@ public class BinaryPrefixTests
         await Assert.That(view.ResolveKey("k").ToBytes().SequenceEqual(expected)).IsTrue();
         await Assert.That(() => root.WithKeyPrefix(RespireKey.Empty)).Throws<ArgumentException>();
     }
+
+    [Test]
+    public async Task BinaryCompositionKeepsTextReplacementBytesAtSurrogateBoundary()
+    {
+        await using var root = RespireClient.Create("localhost");
+        const string text = "a\uD800";
+        byte[] binary = [255, 0];
+        var view = root.WithKeyPrefix(text).WithKeyPrefix((RespireKey)binary).WithKeyPrefix("b:");
+        byte[] expected = [.. Encoding.UTF8.GetBytes(text), .. binary, .. "b:key"u8];
+        await Assert.That(view.ResolveKey("key").ToBytes().SequenceEqual(expected)).IsTrue();
+        var composed = new KeyPrefix(text).Append((RespireKey)binary);
+        byte[] expectedPrefix = [.. Encoding.UTF8.GetBytes(text), .. binary];
+        await Assert.That(composed.Bytes.AsSpan().SequenceEqual(expectedPrefix)).IsTrue();
+    }
 }
