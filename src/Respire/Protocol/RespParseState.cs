@@ -21,15 +21,12 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
 #if DEBUG
     // Per-parser progress evidence for friend tests; absent from Release layout and work.
     internal int ResumedScalarCountForTests { get; private set; }
-#endif
 
-    [Conditional("DEBUG")]
     private void RecordResumedScalarForTests()
     {
-#if DEBUG
         ResumedScalarCountForTests++;
-#endif
     }
+#endif
 
     internal bool IsIdle => _depth == 0 && !_hasPendingBulk;
 
@@ -182,7 +179,9 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
                 return scalarStatus;
             }
 
+#if DEBUG
             RecordResumedScalarForTests();
+#endif
             pos = cursor;
             if (AcceptValue(in scalar, out value))
             {

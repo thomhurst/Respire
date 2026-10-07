@@ -34,7 +34,8 @@ public class AggregateProgressTransferTests
     public async Task CompletedPrefixSurvivesCompactionWithoutResumedScalarReads(
         string prefix, int expectedScalarReads, bool forceResumable)
     {
-        var input = Encoding.ASCII.GetBytes(prefix);
+        // Exercise absolute deferred offsets and a nonzero receive-buffer start.
+        var input = Encoding.ASCII.GetBytes(":99\r\n" + prefix);
         var complete = Encoding.ASCII.GetBytes(prefix + "llo\r\n");
         var expectedPosition = 0;
         await Assert.That(RespParser.TryParseValue(complete, ref expectedPosition, out var expected))
@@ -42,7 +43,7 @@ public class AggregateProgressTransferTests
         using (expected)
         using (var parser = new RespParseState(int.MaxValue))
         {
-            var position = 0;
+            var position = 5;
             var status = forceResumable
                 ? parser.TryParseResumable(input, ref position, out _, out _)
                 : parser.TryParse(input, ref position, out _, out _);
@@ -166,5 +167,57 @@ public class AggregateProgressTransferTests
             var text = fresh.AsArray()[0].AsString();
             await Assert.That(text).IsEqualTo("fresh");
         }
+    }
+
+    [Test]
+    [Arguments(512)]
+    [Arguments(513)]
+    public async Task TransferPreservesDepthLimit(int depth)
+    {
+        using var parser = new RespParseState(int.MaxValue);
+        var input = Encoding.ASCII.GetBytes(string.Concat(Enumerable.Repeat("*1\r\n", depth - 1))
+            + "*2\r\n+saved\r\n$5\r\nhe");
+        var position = 0;
+        var status = parser.TryParse(input, ref position, out _, out _);
+        await Assert.That(status).IsEqualTo(depth == 512 ? RespParseStatus.NeedMoreData : RespParseStatus.InvalidData);
+        if (depth == 513)
+        {
+            await Assert.That(position).IsEqualTo(0);
+            await Assert.That(parser.IsIdle).IsTrue();
+            return;
+        }
+#if DEBUG
+        await Assert.That(parser.ResumedScalarCountForTests).IsEqualTo(0);
+#endif
+        byte[] next = [.. input.AsSpan(position), .. "llo\r\n"u8];
+        input.AsSpan().Fill(0);
+        position = 0;
+        await Assert.That(parser.TryParse(next, ref position, out var value, out _)).IsEqualTo(RespParseStatus.Done);
+        using (value)
+        {
+            var child = value;
+            for (var i = 1; i < depth; i++) child = child.AsArray()[0];
+            var saved = child.AsArray()[0].AsString();
+            var text = child.AsArray()[1].AsString();
+            await Assert.That(saved).IsEqualTo("saved");
+            await Assert.That(text).IsEqualTo("hello");
+        }
+        await Assert.That(parser.IsIdle).IsTrue();
+    }
+
+    [Test]
+    public async Task BudgetRejectedHeaderStillUsesIncrementalStorage()
+    {
+        using var parser = new RespParseState(int.MaxValue);
+        var position = 0;
+        await Assert.That(parser.TryParse("*2147483647\r\n+saved\r\n"u8, ref position, out _, out _))
+            .IsEqualTo(RespParseStatus.NeedMoreData);
+        await Assert.That(position).IsEqualTo(21);
+#if DEBUG
+        // No stateless child was parsed: normal resumable parsing remains necessary.
+        await Assert.That(parser.ResumedScalarCountForTests).IsEqualTo(1);
+#endif
+        parser.Dispose();
+        await Assert.That(parser.IsIdle).IsTrue();
     }
 }
