@@ -6,6 +6,8 @@ on:
       - 'src/Respire/RespireClient.cs'
       - 'src/Respire/RespireClient.ReadySend.cs'
       - 'src/Respire/RespireClient.ClusterReadySend.cs'
+      - 'src/Respire/Networking/**'
+      - 'src/Respire/RespireTimeoutDiagnostics.cs'
       - 'benchmarks/Respire.Benchmarks/CommandConversionBenchmarks.cs'
       - '.github/workflows/benchmark-command-conversion.yml'
       - '.github/workflows/benchmark-compare.yml'

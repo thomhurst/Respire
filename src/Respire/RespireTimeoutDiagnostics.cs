@@ -25,6 +25,8 @@ public enum RespireCommandStage
 /// The exception message includes the observed endpoint host and port when available.
 /// Sending bytes does not prove that Redis received or executed them. Cause hints are diagnostic
 /// possibilities, not a determination of server or network health.
+/// Read and write ages use the monotonic TickCount64 clock with platform-dependent millisecond
+/// resolution. They do not enforce timeouts; the receive watchdog retains its high-resolution clock.
 /// </remarks>
 public sealed class RespireTimeoutDiagnostics
 {

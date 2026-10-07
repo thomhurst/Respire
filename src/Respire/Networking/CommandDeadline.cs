@@ -6,7 +6,7 @@ namespace Respire.Networking;
 /// </summary>
 /// <remarks>
 /// Both parts share one <see cref="long"/>, so a pending response's deadline is still written
-/// and read as a single value; the deadline sweep reads it while a producer may re-stamp it.
+/// and read as a single value; admission stamps it before publishing the source to the ring.
 /// Code outside this type sees only <see cref="Ticks"/> and <see cref="IsRelaxed"/>, so the
 /// encoding cannot leak into tick arithmetic.
 /// </remarks>
