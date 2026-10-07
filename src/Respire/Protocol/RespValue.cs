@@ -15,6 +15,8 @@ namespace Respire.Protocol;
 /// Values produced by the connection own pooled storage: call <see cref="Dispose"/> when done
 /// to return buffers to the pools. Forgetting to dispose is safe — the buffers are simply
 /// collected by the GC instead of being reused.
+/// Complete aggregate string children borrow slices of the root's payload. Keep the root alive
+/// while reading children; use <see cref="ToOwned"/> to retain a child beyond the root's disposal.
 /// </remarks>
 internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
 {
@@ -25,6 +27,7 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
         PooledPayload = 1,
         PooledElements = 2,
         TransactionStateCleared = 4,
+        DeferredPayload = 8,
     }
 
     private readonly RespDataType _type;
@@ -122,6 +125,35 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
     /// <summary>Wire-path factory: elements live in an array rented from <see cref="RespirePools.ValueArrays"/>.</summary>
     internal static RespValue PooledAggregate(RespDataType type, RespValue[] pooledElements, int count)
         => new(type, ValueFlags.PooledElements, elements: pooledElements, elementCount: count);
+
+    /// <summary>Parser-local wire offsets; never exposed until the complete root owns their payload.</summary>
+    internal static RespValue DeferredString(RespDataType type, int offset, int length)
+        => new(type, ValueFlags.DeferredPayload, integerValue: offset, elementCount: length);
+
+    /// <summary>Copies one complete aggregate frame and binds its string children to borrowed slices.</summary>
+    internal RespValue CopyDeferredPayloads(ReadOnlySpan<byte> buffer, int start, int length)
+    {
+        // Top-level attributes can precede a scalar. Keep that scalar's ordinary payload ownership.
+        if ((_flags & ValueFlags.DeferredPayload) != 0)
+            return RespParser.CopyToPooled(_type, buffer.Slice((int)_integerValue, _elementCount));
+        var array = RespirePools.ResponsePayloads.Rent(length);
+        buffer.Slice(start, length).CopyTo(array);
+        var frame = new ReadOnlyMemory<byte>(array, 0, length);
+        BindDeferredPayloads(frame, start);
+        return new(_type, _flags | ValueFlags.PooledPayload, _integerValue, frame, _elements, _elementCount);
+    }
+
+    private void BindDeferredPayloads(ReadOnlyMemory<byte> frame, int start)
+    {
+        if (_elements is null) return;
+        for (var i = 0; i < _elementCount; i++)
+        {
+            var child = _elements[i];
+            if ((child._flags & ValueFlags.DeferredPayload) != 0)
+                _elements[i] = new(child._type, payload: frame.Slice((int)child._integerValue - start, child._elementCount));
+            else child.BindDeferredPayloads(frame, start);
+        }
+    }
 
     /// <summary>Deep-copies this value into GC-owned storage with no pooled-buffer ownership.</summary>
     internal RespValue ToOwned()
@@ -263,7 +295,8 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
 
             if ((_flags & ValueFlags.PooledElements) != 0 && _elements.Length > 0)
             {
-                RespirePools.ValueArrays.Return(_elements, clearArray: true);
+                System.Array.Clear(_elements, 0, _elementCount);
+                RespirePools.ValueArrays.Return(_elements);
             }
         }
     }
@@ -325,5 +358,6 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
 
     public override bool Equals(object? obj) => obj is RespValue other && Equals(other);
 
-    public override int GetHashCode() => HashCode.Combine(_type, _integerValue, _payload.Length, _elementCount);
+    public override int GetHashCode() => HashCode.Combine(_type, _integerValue,
+        _elements is null ? _payload.Length : 0, _elementCount);
 }

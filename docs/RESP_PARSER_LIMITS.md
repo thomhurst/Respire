@@ -17,6 +17,15 @@ maps and attributes can contain at most `int.MaxValue / 2` pairs. Null aggregate
 retain their existing `-1` representation. Completed replies retain their normal
 pooled ownership and must still be disposed.
 
+Fully buffered aggregates copy their consumed wire frame once into a payload
+buffer owned by the root. Nonempty string children borrow slices of that copy,
+including children of nested arrays and maps. Receive-buffer reuse therefore
+cannot change a completed reply. Keep the root alive while reading its children;
+use `ToOwned()` for a retained root or child. Integer-only aggregates need no
+payload copy, and common simple replies remain interned. Fragmented resumable
+aggregates retain their existing per-child payload ownership. Element arrays
+clear only their used slots before returning to the pool.
+
 Nesting is limited to 512 aggregate frames, including maps and attributes. This
 bound applies to both parsers, including fully buffered replies, and protects
 recursive parsing, disposal, and owned copies. Replies beyond this depth fail with
@@ -67,9 +76,10 @@ does not change that rule or the large-bulk direct-fill contract.
 Parser changes require a pinned baseline/candidate/baseline CI comparison on both
 supported frameworks. Include small and large complete arrays, nested replies,
 and fragmented resumable arrays, with scalar batches as a control; report
-allocation and latency uncertainty. Run the comparison by adding the
-`run-aggregate-benchmarks` label to the PR. Reapply it after a source change to
-measure the new head. The workflow validates both builds before measuring and
+allocation and latency uncertainty. Also measure typed MGET and HGETALL decoding
+and batches retaining 50 replies before draining, to expose payload pool pressure.
+Relevant parser changes start these comparisons automatically; the
+`run-aggregate-benchmarks` label can also start them. The workflow validates both builds before measuring and
 retains its pinned revisions, reports, and logs as artifacts.
 Storage growth trades extra copies for bounded speculative allocation. Do not
 infer latency equivalence from correctness tests or pooled-allocation counts.
