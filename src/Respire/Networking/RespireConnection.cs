@@ -107,7 +107,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     {
         [FieldOffset(0)] internal readonly AsyncFlushSignal Signal = new();
         [FieldOffset(64)] internal long SentBytes;
-        [FieldOffset(72)] internal long LastWriteTimestamp;
+        [FieldOffset(72)] internal long LastWriteTimestamp = -1;
     }
 
     [StructLayout(LayoutKind.Explicit, Size = 128)]
@@ -116,7 +116,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         [FieldOffset(0)] internal readonly Lock DeadlineGate = new();
         [FieldOffset(8)] internal readonly AsyncCapacitySignal CapacitySignal = new();
         [FieldOffset(16)] internal readonly CompletionScheduler Completions = new();
-        [FieldOffset(64)] internal long LastReadTimestamp;
+        [FieldOffset(64)] internal long LastReadTimestamp = -1;
     }
 
     // Delivery before the next receive on an idle connection (see DeliverThenReceive).

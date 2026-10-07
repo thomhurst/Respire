@@ -96,6 +96,21 @@ public class DeadlinePublicationTests
         else await Assert.That(elapsed).IsEqualTo((TimeSpan?)TimeSpan.FromMilliseconds(expectedMilliseconds));
     }
 
+    [Test]
+    [Arguments("FlushProgress", "LastWriteTimestamp")]
+    [Arguments("ReceiveProgress", "LastReadTimestamp")]
+    public async Task DiagnosticAgeIsUnknownBeforeFirstObservation(string holderName, string timestampName)
+    {
+        var holderType = typeof(RespireConnection).GetNestedType(holderName, BindingFlags.NonPublic)!;
+        var holder = Activator.CreateInstance(holderType, nonPublic: true)!;
+        var timestamp = (long)holderType.GetField(timestampName, BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(holder)!;
+        var elapsed = (TimeSpan?)typeof(RespireConnection)
+            .GetMethod("GetDiagnosticElapsed", BindingFlags.NonPublic | BindingFlags.Static)!
+            .Invoke(null, [timestamp, Environment.TickCount64]);
+        await Assert.That(elapsed).IsNull();
+    }
+
     private static async Task SendAsync(RespireConnection connection, AcceptanceCommand command,
         CommandDeadline deadline, int path, bool direct)
     {
