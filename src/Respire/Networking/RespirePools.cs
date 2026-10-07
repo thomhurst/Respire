@@ -7,11 +7,9 @@ namespace Respire.Networking;
 /// Dedicated, bounded array pools for the wire path.
 /// </summary>
 /// <remarks>
-/// <see cref="ArrayPool{T}.Shared"/> keeps per-thread/per-core stacks that grow but never
-/// shrink; buffers rented on one thread and returned on another (the norm here — commands are
-/// serialized on caller threads, responses are completed on the receive loop) accumulate in
-/// every visited thread's cache, so the retained working set grows with thread count. Dedicated
-/// <see cref="ArrayPool{T}.Create(int,int)"/> pools use a single bounded store instead.
+/// <see cref="ArrayPool{T}.Shared"/> uses per-thread/per-core caches, so its retention is
+/// not bounded by one fixed response-storage budget. Response pools use fixed shared buckets
+/// that accept cross-thread returns; write buffers retain their bounded BCL pool.
 /// </remarks>
 internal static class RespirePools
 {
@@ -21,8 +19,14 @@ internal static class RespirePools
     internal const int MaxPooledResponsePayloadLength = 64 * 1024 * 1024;
 
     /// <summary>Response payload storage handed to <see cref="RespValue"/> instances.</summary>
-    public static readonly ArrayPool<byte> ResponsePayloads = ArrayPool<byte>.Create(MaxPooledResponsePayloadLength, 64);
+    public static readonly ArrayPool<byte> ResponsePayloads = CreateResponsePayloadPool();
 
     /// <summary>Element storage for RESP array/map/set responses.</summary>
-    public static readonly ArrayPool<RespValue> ValueArrays = ArrayPool<RespValue>.Create(64 * 1024, 64);
+    public static readonly ArrayPool<RespValue> ValueArrays = CreateValueArrayPool();
+
+    internal static ArrayPool<byte> CreateResponsePayloadPool()
+        => new BoundedResponseArrayPool<byte>(4096, 1024 * 1024, MaxPooledResponsePayloadLength);
+
+    internal static ArrayPool<RespValue> CreateValueArrayPool()
+        => new BoundedResponseArrayPool<RespValue>(64, 1024, 64 * 1024);
 }

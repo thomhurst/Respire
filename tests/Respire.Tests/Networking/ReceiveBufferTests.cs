@@ -87,13 +87,15 @@ public class ReceiveBufferTests
     {
         var buffer = ReceiveBuffer.Rent(4096, pinned);
         buffer.Return();
-        var pooled = RespirePools.ResponsePayloads.Rent(4096);
+        // Drain the bounded small bucket while holding every rental. A striped
+        // pool can return another cached array first when the thread migrates.
+        var pooled = new byte[257][];
         try
         {
-            if (pinned) await Assert.That(pooled).IsNotSameReferenceAs(buffer.Array);
-            else await Assert.That(pooled).IsSameReferenceAs(buffer.Array);
+            for (var index = 0; index < pooled.Length; index++) pooled[index] = RespirePools.ResponsePayloads.Rent(4096);
+            await Assert.That(pooled.Any(array => ReferenceEquals(array, buffer.Array))).IsEqualTo(!pinned);
         }
-        finally { RespirePools.ResponsePayloads.Return(pooled); }
+        finally { foreach (var array in pooled) if (array is not null) RespirePools.ResponsePayloads.Return(array); }
     }
 
     private static GCHandle GetNativeHandle(MemoryHandle handle)
