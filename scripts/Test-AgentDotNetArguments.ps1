@@ -2,7 +2,12 @@ $ErrorActionPreference = 'Stop'
 $guardScript = Join-Path $PSScriptRoot 'Invoke-AgentDotNet.ps1'
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ("agent-dotnet-arguments-{0}" -f [guid]::NewGuid())
 $previousCapturePath = $env:RESPIRE_GUARD_TEST_CAPTURE
+$previousDirectoryCapturePath = $env:RESPIRE_GUARD_TEST_DIRECTORY
 New-Item -ItemType Directory -Path $testRoot | Out-Null
+$configuration = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../global.json') -Raw | ConvertFrom-Json
+$configuration.test.runner = 'VSTest'
+$configuration | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $testRoot 'global.json')
+Push-Location $testRoot
 try {
     $project = Join-Path $testRoot 'ArgumentProbe.csproj'
     @'
@@ -19,6 +24,7 @@ using System.Text.Json;
 if (Environment.GetEnvironmentVariable("RESPIRE_AGENT_DOTNET_INVOCATION") is not null)
     return 7;
 File.WriteAllText(Environment.GetEnvironmentVariable("RESPIRE_GUARD_TEST_CAPTURE")!, JsonSerializer.Serialize(args));
+File.WriteAllText(Environment.GetEnvironmentVariable("RESPIRE_GUARD_TEST_DIRECTORY")!, Environment.CurrentDirectory);
 return 0;
 '@ | Set-Content -LiteralPath (Join-Path $testRoot 'Program.cs')
     # Build the native probe without relying on SingleNode injection under test.
@@ -27,10 +33,22 @@ return 0;
     $probeName = if ($IsWindows) { 'ArgumentProbe.exe' } else { 'ArgumentProbe' }
     $probe = Join-Path $testRoot "bin/Debug/net10.0/$probeName"
     $env:RESPIRE_GUARD_TEST_CAPTURE = Join-Path $testRoot 'arguments.json'
+    $env:RESPIRE_GUARD_TEST_DIRECTORY = Join-Path $testRoot 'directory.txt'
+    $directoryMarkerName = "guard-location-$([guid]::NewGuid()).txt"
 
     function Assert-Arguments([string[]]$InputArguments, [string[]]$Expected, [switch]$SingleNode) {
+        $markerPath = Join-Path (Get-Location).ProviderPath $directoryMarkerName
+        [IO.File]::WriteAllText($markerPath, $directoryMarkerName)
         & $guardScript -TimeoutSeconds 30 -DotNetPath $probe -SingleNode:$SingleNode -DotNetArguments $InputArguments
         if ($LASTEXITCODE -ne 0) { throw "Argument probe failed: $LASTEXITCODE" }
+        $actualDirectory = [IO.File]::ReadAllText($env:RESPIRE_GUARD_TEST_DIRECTORY)
+        # Native cwd may resolve aliases such as macOS /var to /private/var.
+        # A unique marker proves directory identity without assuming path spelling.
+        $actualMarkerPath = Join-Path $actualDirectory $directoryMarkerName
+        if (-not [IO.File]::Exists($actualMarkerPath) -or [IO.File]::ReadAllText($actualMarkerPath) -ne $directoryMarkerName) {
+            throw "Child directory: expected '$((Get-Location).ProviderPath)', actual '$actualDirectory'."
+        }
+        Remove-Item -LiteralPath $markerPath
         $capture = [Text.Json.JsonDocument]::Parse([IO.File]::ReadAllText($env:RESPIRE_GUARD_TEST_CAPTURE))
         try {
             $actual = @($capture.RootElement.EnumerateArray() | ForEach-Object { $_.GetString() })
@@ -60,6 +78,48 @@ return 0;
     Assert-Arguments @('run', '--', '-m:4') @('run', '--', '-m:4') -SingleNode
     Assert-Arguments @('version') @('version') -SingleNode
     Assert-Arguments @('--', '-m:4') @('--', '-m:4') -SingleNode
+    $mtpRoot = Join-Path $testRoot 'mtp'
+    $nestedRoot = Join-Path $mtpRoot 'nested'
+    $overrideRoot = Join-Path $nestedRoot 'override'
+    New-Item -ItemType Directory -Path $overrideRoot | Out-Null
+    @'
+{
+  // Match SDK-supported global.json comments and trailing commas.
+  "test": { "runner": "Microsoft.Testing.Platform", },
+}
+'@ | Set-Content -LiteralPath (Join-Path $mtpRoot 'global.json')
+    Push-Location $nestedRoot
+    try {
+        Assert-Arguments @('test', '--project', $project, '--list-tests') @('test', '--project', $project, '--list-tests') -SingleNode
+        Assert-Arguments @('test', '--', '-m:4') @('test', '--', '-m:4') -SingleNode
+        Assert-Arguments @('test', '-m:4') @('test', '-m:4') -SingleNode
+        Assert-Arguments @('build', $project) @('build', $project, '-m:1') -SingleNode
+        '{}' | Set-Content -LiteralPath (Join-Path $overrideRoot 'global.json')
+        Push-Location $overrideRoot
+        try {
+            Assert-Arguments @('test', 'project') @('test', 'project', '-m:1') -SingleNode
+            $malformedPath = Join-Path $overrideRoot 'global.json'
+            '{ invalid json' | Set-Content -LiteralPath $malformedPath
+            Remove-Item -LiteralPath $env:RESPIRE_GUARD_TEST_CAPTURE
+            $configurationRejected = $false
+            try { & $guardScript -SingleNode -DotNetPath $probe -DotNetArguments @('test', 'project') }
+            catch {
+                if (-not $_.Exception.Message.StartsWith("Cannot read test runner configuration '$malformedPath':")) { throw }
+                $configurationRejected = $true
+            }
+            if (-not $configurationRejected -or (Test-Path -LiteralPath $env:RESPIRE_GUARD_TEST_CAPTURE)) {
+                throw 'Malformed runner configuration did not fail before launching the child.'
+            }
+        }
+        finally { Pop-Location }
+    }
+    finally { Pop-Location }
+    $aliasRoot = Join-Path $testRoot 'mtp-alias'
+    $linkType = if ($IsWindows) { 'Junction' } else { 'SymbolicLink' }
+    New-Item -ItemType $linkType -Path $aliasRoot -Target $mtpRoot | Out-Null
+    Push-Location $aliasRoot
+    try { Assert-Arguments @('test', 'project') @('test', 'project') -SingleNode }
+    finally { Pop-Location }
     $longArgument = 'x' * 8192
     Assert-Arguments @('build', $longArgument) @('build', $longArgument, '-m:1') -SingleNode
 
@@ -73,10 +133,12 @@ return 0;
     # Exercise real MSBuild with the injected switch, not only the probe.
     & $guardScript -SingleNode -TimeoutSeconds 60 -DotNetArguments @('pack', $project, '--no-restore', '--nologo')
     if ($LASTEXITCODE -ne 0) { throw 'SingleNode pack failed.' }
-    Write-Output 'OK native argument preservation, SingleNode injection, existing switches, separator, and pack passed.'
+    Write-Output 'OK native argument preservation, VSTest SingleNode injection, nearest MTP configuration, existing switches, separator, and pack passed.'
 }
 finally {
+    Pop-Location
     $env:RESPIRE_GUARD_TEST_CAPTURE = $previousCapturePath
+    $env:RESPIRE_GUARD_TEST_DIRECTORY = $previousDirectoryCapturePath
     $resolvedRoot = [IO.Path]::GetFullPath($testRoot)
     $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
     if (-not $resolvedRoot.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase)) {
