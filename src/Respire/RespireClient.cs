@@ -3014,9 +3014,10 @@ public sealed partial class RespireClient : IRespireClient
                         operation, connection, command, cancellationToken, storedProcedureName)
                     .ConfigureAwait(false);
             }
-            catch (RespireServerException)
+            catch (Exception error) when (RespireException.GetDefinitiveServerError(error) is not null)
             {
-                // Fire-and-forget preserves its contract by discarding ordinary server errors.
+                // Fire-and-forget discards definitive command errors, including classified
+                // missing-engine replies. Cancellation and transport failures still escape.
             }
         }
         finally
@@ -3157,8 +3158,8 @@ public sealed partial class RespireClient : IRespireClient
                         allowReadFrom: allowReadFrom)
                     .ConfigureAwait(false);
             }
-            catch (RespireServerException error) when (!ClusterRouter.CanRecover(
-                error, command.TryGetClusterSlot(out var failedSlot) ? failedSlot : null))
+            catch (Exception error) when (RespireException.GetDefinitiveServerError(error) is { } serverError
+                && !ClusterRouter.CanRecover(serverError, command.TryGetClusterSlot(out var failedSlot) ? failedSlot : null))
             {
                 // Discard ordinary errors, but surface exhausted redirect or READONLY recovery.
             }

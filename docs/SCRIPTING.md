@@ -158,6 +158,9 @@ This exception retains the original error's definitive server-reply semantics. M
 and coordination operations do not fence an outstanding command or abandon ownership merely
 because the missing engine rejected the script. Import sessions also retain their normal
 definitive-rejection behavior. Transport failures remain uncertain.
+Fire-and-forget calls discard confirmed missing-engine replies wherever they already
+discard ordinary command errors. Caller cancellation, transport failures, and exhausted
+Cluster routing still surface through their existing error paths.
 
 Detection depends on Valkey's exact missing-engine error wording. If a server version
 changes that wording, Respire returns the original `RespireServerException` without

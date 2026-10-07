@@ -1,4 +1,5 @@
 using System.Text;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Internal;
@@ -10,6 +11,113 @@ namespace Respire.Tests.Networking;
 
 public class ScriptingEngineTests
 {
+    [Test]
+    [NotInParallel]
+    [MatrixDataSource]
+    public async Task FireAndForgetRetainsDefinitiveReplyDiscarding(
+        [Matrix(2, 3)] int protocol,
+        [Matrix(false, true)] bool cluster,
+        [Matrix(false, true)] bool cache,
+        [Matrix("EVAL", "EVAL_RO")] string operation,
+        [Matrix(false, true)] bool instrumented,
+        [Matrix("missing", "ordinary", "success")] string outcome)
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.None });
+        using var listener = instrumented ? new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "Respire",
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+        } : null;
+        if (listener is not null) ActivitySource.AddActivityListener(listener);
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                var hello when hello.StartsWith("HELLO 3", StringComparison.Ordinal)
+                    => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
+                "CLUSTER SLOTS" => "*0\r\n"u8.ToArray(),
+                "INFO scriptingengines" => Bulk(Absent),
+                "PING" => FakeRespServer.PongReply,
+                _ when command.StartsWith(operation + " ", StringComparison.Ordinal) => outcome switch
+                {
+                    "missing" => Error(Missing),
+                    "ordinary" => Error("WRONGTYPE private-key"),
+                    _ => ":42\r\n"u8.ToArray(),
+                },
+                _ => null,
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = (RespProtocol)protocol, Connections = 1, UseCluster = cluster,
+            ClusterTopologyRefreshInterval = null, ClientSideCache = cache ? new() : null,
+            Endpoints = [new("127.0.0.1", server.Port)],
+        });
+        await client.ExecuteFireAndForgetAsync(operation, ["return 42", 1, "private-key"]);
+        using var barrier = await client.ExecuteAsync("PING");
+        await Assert.That(barrier.AsString()).IsEqualTo("PONG");
+        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith(operation + " ", StringComparison.Ordinal)))
+            .IsEqualTo(1);
+        // Direct standalone submission discards in the receive loop and needs no inventory.
+        // Reply-awaiting Cluster and cache-fenced paths classify before discarding the reply.
+        var awaitsReply = cluster || cache && operation == "EVAL";
+        await Assert.That(server.ReceivedCommands.Count(command => command == "INFO scriptingengines"))
+            .IsEqualTo(outcome == "missing" && awaitsReply ? 1 : 0);
+        await Assert.That(server.ReceivedConnectionIds.Distinct().Count()).IsEqualTo(1);
+    }
+
+    [Test]
+    [MatrixDataSource]
+    public async Task FireAndForgetStillSurfacesCancellationAndTransportFailures(
+        [Matrix(2, 3)] int protocol,
+        [Matrix("cache", "cluster", "cluster-cache")] string route,
+        [Matrix("EVAL", "EVAL_RO")] string operation,
+        [Matrix(false, true)] bool cancellation)
+    {
+        var probeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                var hello when hello.StartsWith("HELLO 3", StringComparison.Ordinal)
+                    => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
+                "CLUSTER SLOTS" => "*0\r\n"u8.ToArray(),
+                _ when command.StartsWith(operation + " ", StringComparison.Ordinal) => Error(Missing),
+                _ => null,
+            },
+            SuppressReply = command =>
+            {
+                if (command != "INFO scriptingengines") return false;
+                probeStarted.TrySetResult();
+                return true;
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = (RespProtocol)protocol, Connections = 1, UseCluster = route != "cache",
+            ClusterTopologyRefreshInterval = null, ClientSideCache = route != "cluster" ? new() : null,
+            Endpoints = [new("127.0.0.1", server.Port)],
+        });
+        using var tokenSource = new CancellationTokenSource();
+        // Explicitly fence EVAL_RO too, so each route exercises its awaited-reply boundary.
+        var command = RespireCommand.Create(operation, cacheMutation: RespireCacheMutation.Unknown);
+        if (!cancellation) server.CloseConnectionAfterCommand = server.CommandsSeen + 1;
+        var execution = client.ExecuteFireAndForgetAsync(command, ["return 42", 1, "private-key"], tokenSource.Token).AsTask();
+        if (cancellation)
+        {
+            await probeStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            tokenSource.Cancel();
+            var error = await Assert.That(async () => await execution.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Throws<OperationCanceledException>();
+            await Assert.That(error!.CancellationToken).IsEqualTo(tokenSource.Token);
+        }
+        else
+        {
+            await Assert.That(async () => await execution.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Throws<RespireConnectionException>();
+        }
+    }
+
     [Test]
     public async Task MissingEngineIsADefinitiveCorrectionAndImportReply()
     {
