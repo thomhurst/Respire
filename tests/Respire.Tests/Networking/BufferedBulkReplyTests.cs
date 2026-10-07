@@ -12,20 +12,17 @@ namespace Respire.Tests.Networking;
 public class BufferedBulkReplyTests
 {
     [Test]
-    [Arguments(4096, false)]
-    [Arguments(4095, false)]
-    [Arguments(1, false)]
-    [Arguments(4096, true)]
-    [Arguments(4095, true)]
-    [Arguments(1, true)]
-    public async Task SmallReceiveTailIsReclaimedBeforeReadingAnIncompleteReply(int freeTail, bool nested)
+    [Arguments(1024, 127)]
+    [Arguments(65536, 4095)]
+    [Arguments(65536, 0)]
+    public async Task LargeUnreadTailAvoidsAnEarlyCopyButStillCompactsAFullBuffer(int bufferSize, int freeTail)
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var stream = new SegmentedStream();
         await using var connection = await RespireConnection.ConnectAsync("scripted", 6379,
             new RespireConnectionOptions
             {
-                Protocol = RespProtocol.Resp2, ReceiveBufferSize = 64 * 1024,
+                Protocol = RespProtocol.Resp2, ReceiveBufferSize = bufferSize,
                 TestingStreamFactory = (_, _, _) => ValueTask.FromResult<Stream>(stream),
             });
         var command = new Cmd1(Verbs.Get, "key");
@@ -33,19 +30,99 @@ public class BufferedBulkReplyTests
         var partial = connection.SendAsync(command, deadline.Token).AsTask();
         var following = connection.SendAsync(command, deadline.Token).AsTask();
         var capacity = await stream.NextReadSizeAsync(deadline.Token);
+        var firstFrame = "$7\r\nabcdefg\r\n"u8.ToArray();
+        var payload = new string('x', capacity - freeTail - firstFrame.Length - 1);
+        stream.Publish([.. firstFrame, .. Encoding.ASCII.GetBytes("+" + payload)]);
+        var nextWindow = await stream.NextReadSizeAsync(deadline.Token);
+        using var first = await earlier.WaitAsync(deadline.Token);
+        await Assert.That(nextWindow).IsEqualTo(freeTail == 0 ? firstFrame.Length : freeTail);
+        await Assert.That(first.AsSpan().SequenceEqual("abcdefg"u8)).IsTrue();
+        await Assert.That(partial.IsCompleted).IsFalse();
+        stream.Publish("\r\n:22\r\n"u8.ToArray());
+        using var second = await partial.WaitAsync(deadline.Token);
+        await Assert.That(second.AsSpan().SequenceEqual(Encoding.ASCII.GetBytes(payload))).IsTrue();
+        using var last = await following.WaitAsync(deadline.Token);
+        await Assert.That(last.AsInteger()).IsEqualTo(22L);
+    }
+
+    [Test]
+    public async Task UnconsumedFullFrameGrowsBeforeTheNextReceive()
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var stream = new SegmentedStream();
+        await using var connection = await RespireConnection.ConnectAsync("scripted", 6379,
+            new RespireConnectionOptions
+            {
+                Protocol = RespProtocol.Resp2, ReceiveBufferSize = 1024,
+                TestingStreamFactory = (_, _, _) => ValueTask.FromResult<Stream>(stream),
+            });
+        var command = new Cmd1(Verbs.Get, "key");
+        var pending = connection.SendAsync(command, deadline.Token).AsTask();
+        var following = connection.SendAsync(command, deadline.Token).AsTask();
+        var capacity = await stream.NextReadSizeAsync(deadline.Token);
+        var payload = new string('x', capacity - 1);
+        stream.Publish(Encoding.ASCII.GetBytes("+" + payload));
+        await Assert.That(await stream.NextReadSizeAsync(deadline.Token)).IsEqualTo(capacity);
+        await Assert.That(pending.IsCompleted).IsFalse();
+        stream.Publish("y\r\n:22\r\n"u8.ToArray());
+        using var first = await pending.WaitAsync(deadline.Token);
+        await Assert.That(first.AsSpan().SequenceEqual(Encoding.ASCII.GetBytes(payload + "y"))).IsTrue();
+        using var last = await following.WaitAsync(deadline.Token);
+        await Assert.That(last.AsInteger()).IsEqualTo(22L);
+    }
+
+    [Test]
+    [Arguments(65536, 4096, false, false, false)]
+    [Arguments(65536, 4095, false, true, false)]
+    [Arguments(65536, 1, false, true, false)]
+    [Arguments(65536, 4096, true, false, false)]
+    [Arguments(65536, 4095, true, true, false)]
+    [Arguments(65536, 1, true, true, false)]
+    [Arguments(1024, 128, false, false, false)]
+    [Arguments(1024, 127, false, true, false)]
+    [Arguments(1024, 1, true, true, false)]
+    [Arguments(65536, 1, true, true, true)]
+    public async Task SmallReceiveTailIsReclaimedBeforeReadingAnIncompleteReply(
+        int bufferSize, int freeTail, bool nested, bool compact, bool malformed)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var stream = new SegmentedStream();
+        await using var connection = await RespireConnection.ConnectAsync("scripted", 6379,
+            new RespireConnectionOptions
+            {
+                Protocol = RespProtocol.Resp2, ReceiveBufferSize = bufferSize,
+                TestingStreamFactory = (_, _, _) => ValueTask.FromResult<Stream>(stream),
+            });
+        var command = new Cmd1(Verbs.Get, "key");
+        var earlier = connection.SendAsync(command, deadline.Token).AsTask();
+        var partial = connection.SendAsync(command, deadline.Token).AsTask();
+        var following = connection.SendAsync(command, deadline.Token).AsTask();
+        var capacity = await stream.NextReadSizeAsync(deadline.Token);
+        await Assert.That(capacity).IsEqualTo(bufferSize);
         var prefix = nested ? "|1\r\n+source\r\n+test\r\n*2\r\n:11\r\n$7\r\nab" : "$7\r\nab";
-        var length = capacity - freeTail - 10 - prefix.Length;
+        var frameBudget = capacity - freeTail - prefix.Length;
+        var length = frameBudget - 10;
+        length = frameBudget - $"${length}\r\n".Length - 2;
+        var header = $"${length}\r\n";
+        await Assert.That(header.Length + length + 2).IsEqualTo(frameBudget);
         var payload = new string('x', length);
-        stream.Publish(Encoding.ASCII.GetBytes($"${length}\r\n{payload}\r\n{prefix}"));
+        stream.Publish(Encoding.ASCII.GetBytes($"{header}{payload}\r\n{prefix}"));
         var nextWindow = await stream.NextReadSizeAsync(deadline.Token);
         // A real outstanding read observes the destination length; no timing or TCP
         // packet assumptions determine whether compaction ran.
-        await Assert.That(nextWindow).IsEqualTo(freeTail < 4096 ? capacity - 2 : freeTail);
         using var first = await earlier.WaitAsync(deadline.Token);
+        await Assert.That(nextWindow).IsEqualTo(compact ? capacity - 2 : freeTail);
         await Assert.That(first.AsSpan().SequenceEqual(Encoding.ASCII.GetBytes(payload))).IsTrue();
         await Assert.That(partial.IsCompleted).IsFalse();
         await Assert.That(following.IsCompleted).IsFalse();
-        stream.Publish("cdefg\r\n:22\r\n"u8.ToArray());
+        stream.Publish(malformed ? "cdefgXX:22\r\n"u8.ToArray() : "cdefg\r\n:22\r\n"u8.ToArray());
+        if (malformed)
+        {
+            await Assert.That(async () => await partial.WaitAsync(deadline.Token)).Throws<RespireProtocolException>();
+            await Assert.That(async () => await following.WaitAsync(deadline.Token)).Throws<RespireProtocolException>();
+            await Assert.That(connection.IsConnected).IsFalse();
+            return;
+        }
         using var second = await partial.WaitAsync(deadline.Token);
         if (nested)
         {

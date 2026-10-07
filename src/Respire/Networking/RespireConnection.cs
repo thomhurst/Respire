@@ -2526,7 +2526,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     start = 0;
                     end = 0;
                 }
-                else if (end == buffer.Length)
+                // Reclaim a small tail before the next receive, but move no more
+                // bytes than the consumed prefix unless the buffer is already full.
+                else if (end == buffer.Length
+                    || (start >= end - start
+                        && buffer.Length - end < Math.Min(4096, Math.Max(1, buffer.Length / 8))))
                 {
                     if (start > 0)
                     {
