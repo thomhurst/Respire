@@ -18,6 +18,19 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
     private RespDataType _pendingBulkType;
     private int _pendingBulkLength;
 
+#if DEBUG
+    // Per-parser progress evidence for friend tests; absent from Release layout and work.
+    internal int ResumedScalarCountForTests { get; private set; }
+#endif
+
+    [Conditional("DEBUG")]
+    private void RecordResumedScalarForTests()
+    {
+#if DEBUG
+        ResumedScalarCountForTests++;
+#endif
+    }
+
     internal bool IsIdle => _depth == 0 && !_hasPendingBulk;
 
     // Only top-level attributes yield to the connection's bulk fast path;
@@ -43,7 +56,7 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
             }
 
             var cursor = pos;
-            var initialStatus = RespParser.TryParseValue(buffer, ref cursor, out value);
+            var initialStatus = RespParser.TryParseValue(buffer, ref cursor, out value, this);
             if (initialStatus != RespParseStatus.NeedMoreData
                 || typeByte is not ((byte)'*' or (byte)'~' or (byte)'>' or (byte)'%' or (byte)'|'))
             {
@@ -54,6 +67,9 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
 
                 return initialStatus;
             }
+
+            if (!IsIdle)
+                pos = cursor;
         }
 
         var status = TryParseResumable(buffer, ref pos, out value, out directFill);
@@ -166,6 +182,7 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
                 return scalarStatus;
             }
 
+            RecordResumedScalarForTests();
             pos = cursor;
             if (AcceptValue(in scalar, out value))
             {
@@ -383,6 +400,27 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
         _frames[_depth++] = new AggregateFrame(type, [], count, discard);
     }
 
+    internal void AdoptPartialAggregate(
+        RespDataType type, int count, int depth, Span<RespValue> completed, ReadOnlySpan<byte> buffer)
+    {
+        while (depth >= _frames.Length)
+            Array.Resize(ref _frames, _frames.Length * 2);
+
+        // Stateless recursion unwinds from the deepest incomplete aggregate first.
+        // Retain only incremental capacity, rather than its speculative full-count rent.
+        _frames[depth] = new AggregateFrame(type, [], count, discard: false);
+        _depth = Math.Max(_depth, depth + 1);
+        ref var frame = ref _frames[depth];
+        for (var i = 0; i < completed.Length; i++)
+        {
+            if (frame.Index == frame.Elements.Length)
+                RespAggregateStorage.Grow(ref frame.Elements, count);
+            frame.Elements[frame.Index] = completed[i].CopyDeferredPayloadsIndividually(buffer);
+            frame.Index++;
+            completed[i] = default;
+        }
+    }
+
     private bool AcceptValue(in RespValue accepted, out RespValue value)
     {
         var current = accepted;
@@ -424,7 +462,7 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
                 frame.Elements[j].Dispose();
             }
 
-            if (frame.Elements.Length != 0)
+            if (frame.Elements is { Length: > 0 })
             {
                 System.Array.Clear(frame.Elements, 0, frame.Index);
                 RespirePools.ValueArrays.Return(frame.Elements);

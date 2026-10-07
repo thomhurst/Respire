@@ -11,6 +11,14 @@ A header declaring a billion elements therefore does not rent a billion-element
 array. Maps and attributes validate the pair count before doubling it; array, set, and push counts
 must also fit the parser's signed 32-bit element count.
 
+The connection first attempts the fully buffered path. If an aggregate is
+incomplete after parsing children, it transfers those children and all unfinished
+parent frames into its resumable parser. Completed children are not parsed again.
+Deferred string payloads become individually owned copies before consumed input
+can be compacted or reused. Discarded attribute trees do not transfer ownership;
+their completed frames are discarded normally. The public restartable parser
+still retains nothing and leaves its position unchanged on incomplete input.
+
 There is no configurable aggregate-count ceiling. Valid large replies retain their
 existing count range. An aggregate can contain at most `int.MaxValue` elements;
 maps and attributes can contain at most `int.MaxValue / 2` pairs. Null aggregates
@@ -100,9 +108,10 @@ does not change that rule or the large-bulk direct-fill contract.
 
 ## Performance validation
 
-Parser changes require a pinned baseline/candidate/baseline CI comparison on both
-supported frameworks. Include small and large complete arrays, nested replies,
-and fragmented resumable arrays, with scalar batches as a control; report
+Parser changes require a pinned baseline/candidate/baseline CI comparison on
+net10.0, with correctness coverage on net8.0 and net10.0. Include small and large
+complete arrays, nested replies, and fragmented flat and nested arrays whose
+first slice fits the element budget and completes children, with scalar batches as a control; report
 allocation and latency uncertainty. Also measure typed MGET and HGETALL decoding
 and batches retaining 50 replies before draining, to expose payload pool pressure.
 Add the `run-aggregate-benchmarks` label to the pull request to start these

@@ -42,6 +42,11 @@ internal static class RespParser
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static RespParseStatus TryParseValue(ReadOnlySpan<byte> buffer, ref int pos, out RespValue value)
+        => TryParseValue(buffer, ref pos, out value, progressOwner: null);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal static RespParseStatus TryParseValue(
+        ReadOnlySpan<byte> buffer, ref int pos, out RespValue value, RespParseState? progressOwner)
     {
         value = default;
         if (pos >= buffer.Length)
@@ -62,7 +67,7 @@ internal static class RespParser
         var remainingElements = (buffer.Length - pos) / 3;
         var deferredPayloads = 0;
         var aggregateStatus = TryParseValue(buffer, ref pos, out value,
-            new ParseContext(0, ref remainingElements, ref deferredPayloads), out var start);
+            new ParseContext(0, ref remainingElements, ref deferredPayloads, progressOwner), out var start);
         if (aggregateStatus == RespParseStatus.Done && deferredPayloads != 0)
             value = value.CopyDeferredPayloads(buffer, start, pos - start);
         return aggregateStatus;
@@ -80,22 +85,27 @@ internal static class RespParser
         // entry points and has no aggregate budget for ForChildren/TryReserve.
         public static ParseContext ImmediateCopy => default;
         public bool DeferPayloads { get; }
+        public RespParseState? ProgressOwner { get; }
         public int DeferredPayloads { get => _deferredPayloads; set => _deferredPayloads = value; }
 
-        public ParseContext(int depth, ref int remainingElements, ref int deferredPayloads)
+        public ParseContext(int depth, ref int remainingElements, ref int deferredPayloads, RespParseState? progressOwner)
         {
             Depth = depth;
             _remainingElements = ref remainingElements;
             _deferredPayloads = ref deferredPayloads;
             DeferPayloads = true;
+            ProgressOwner = progressOwner;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public ParseContext ForChildren()
         {
             Debug.Assert(DeferPayloads, "ImmediateCopy has no aggregate budget.");
-            return new(Depth + 1, ref _remainingElements, ref _deferredPayloads);
+            return new(Depth + 1, ref _remainingElements, ref _deferredPayloads, ProgressOwner);
         }
+
+        public ParseContext ForDiscardedAttribute()
+            => new(Depth, ref _remainingElements, ref _deferredPayloads, progressOwner: null);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool TryReserve(int count)
@@ -132,7 +142,7 @@ internal static class RespParser
 
             var priorPayloads = context.DeferredPayloads;
             var attrStatus = TryParseAggregate(buffer, ref cursor, RespDataType.Map, pairCount: true,
-                out var attribute, context);
+                out var attribute, context.ForDiscardedAttribute());
             if (attrStatus != RespParseStatus.Done)
             {
                 return attrStatus;
@@ -144,7 +154,8 @@ internal static class RespParser
 
         valueStart = cursor;
         var status = TryParseCore(buffer, ref cursor, out value, context);
-        if (status == RespParseStatus.Done)
+        if (status == RespParseStatus.Done
+            || (status == RespParseStatus.NeedMoreData && context.ProgressOwner is not null))
         {
             pos = cursor;
         }
@@ -468,13 +479,25 @@ internal static class RespParser
 
             if (status != RespParseStatus.Done)
             {
-                for (var j = 0; j < i; j++)
+                try
                 {
-                    elements[j].Dispose();
+                    // Nested frames transfer first. Even an empty parent must then join
+                    // that frame chain, so the resumed child completes into its parent.
+                    if (status == RespParseStatus.NeedMoreData
+                        && context.ProgressOwner is { } owner && (i != 0 || !owner.IsIdle))
+                    {
+                        owner.AdoptPartialAggregate(type, count, context.Depth, elements.AsSpan(0, i), buffer);
+                        cursor = pos;
+                    }
                 }
-
-                System.Array.Clear(elements, 0, i);
-                RespirePools.ValueArrays.Return(elements);
+                finally
+                {
+                    // Adoption clears each moved slot. Only unmoved children remain ours.
+                    for (var j = 0; j < i; j++)
+                        elements[j].Dispose();
+                    System.Array.Clear(elements, 0, i);
+                    RespirePools.ValueArrays.Return(elements);
+                }
                 return status;
             }
         }
