@@ -118,7 +118,7 @@ attempts, and `Timeout.InfiniteTimeSpan` waits until acquisition, cancellation, 
 Contention/timeout returns `null`; caller cancellation throws `OperationCanceledException`.
 Network failures retain Respire's normal error behavior. Cleanup can outlast the acquisition
 budget because an acquired lease must stop renewal and release safely.
-Synchronous acquisition and release block the calling thread until their asynchronous
+Synchronous acquisition, release, and disposal block the calling thread until their asynchronous
 operations, including cleanup, finish.
 
 The default lease is 30 seconds and is renewed halfway through each duration. Set
@@ -148,9 +148,13 @@ a token and leave a lease until its bounded expiry. This is not a consensus-back
 Release, caller cancellation, renewal loss, and locker disposal stop renewal and join cleanup.
 Cleanup uses its own token even when the factory's token is already cancelled; a transport
 failure leaves server expiry as the fallback. Concurrent teardown callers join the same work.
-Explicit release and teardown propagate server or protocol rejection to FusionCache, including
-when `ReThrowDistributedLockerExceptions` is enabled. Automatic cancellation cleanup observes
-the same failure in the background and logs it when a logger is configured.
+Explicit release propagates server or protocol rejection to FusionCache, including when
+`ReThrowDistributedLockerExceptions` is enabled. Locker disposal propagates cleanup failures
+from handles still tracked when disposal starts. Automatic cancellation cleanup observes
+failures in the background and logs them when a logger is configured; completed handles are
+removed from the locker, so later locker disposal does not report their earlier failures.
+Explicit release of that handle still observes its recorded failure. Configure a logger to
+observe automatic cleanup failures when there is no later explicit release.
 Locker disposal also joins acquisitions still returning or releasing a lease. Await disposal
 before closing the shared client.
 The provider owns the locker created by `WithRespireDistributedLocker`, including renewal
@@ -163,7 +167,9 @@ FusionCache's own disposal only detaches its locker.
 This reduces cross-node cache stampedes while ownership remains valid. FusionCache's
 object-based locker interface does **not** pass the fencing token to a factory, atomically
 enforce that token on arbitrary cache or database writes, or cancel a factory after ownership
-loss. A slow factory or background factory completion can continue after expiry, cancellation,
+loss. The token passed to acquisition also controls the acquired lease's lifetime: cancelling
+a request-scoped token after acquisition releases the lease even if its factory keeps running.
+A slow factory or background factory completion can continue after expiry, cancellation,
 or a connection failure and overlap a new owner. The diagnostic `RespireFusionCacheLock`
 handle exposes its token and ownership cancellation token, but FusionCache cannot enforce
 them automatically. There is no exactly-once execution guarantee. For writes that require

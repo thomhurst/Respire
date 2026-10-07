@@ -68,7 +68,7 @@ public sealed partial class RespireFusionCacheLock : IAsyncDisposable
         catch
         {
             // CompleteCleanupAsync logs the failure. Cancellation callbacks have no caller
-            // to receive it; explicit release and teardown still observe the same fault.
+            // to receive it; explicit release and teardown joining this handle observe the fault.
         }
     }
 

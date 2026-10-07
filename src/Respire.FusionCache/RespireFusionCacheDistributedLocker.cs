@@ -197,6 +197,7 @@ public sealed class RespireFusionCacheDistributedLocker : IFusionCacheDistribute
 
     private static async Task CancelAtDeadlineAsync(CancellationTokenSource waiting, TimeSpan timeout, CancellationToken stop)
     {
+        // Chunk finite budgets above the timer limit; CancelAfter rejects those timeouts.
         var started = Stopwatch.GetTimestamp();
         try
         {
