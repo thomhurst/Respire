@@ -23,6 +23,9 @@ namespace Respire.Protocol;
 /// </remarks>
 internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
 {
+    private const int SparsePayloadMinimumFrameLength = 4 * 1024;
+    private const int SparsePayloadFrameRatio = 8;
+
     [Flags]
     internal enum ValueFlags : byte
     {
@@ -150,7 +153,7 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
         if ((_flags & ValueFlags.DeferredPayload) != 0)
             return RespParser.CopyToPooled(_type, buffer.Slice((int)_integerValue, _elementCount));
         if (length > RespirePools.MaxPooledResponsePayloadLength
-            || (length >= 4096 && (long)payloadBytes * 8 < length))
+            || (length >= SparsePayloadMinimumFrameLength && (long)payloadBytes * SparsePayloadFrameRatio < length))
         {
             // Avoid unpooled frames and large copies dominated by discarded attributes,
             // integer tokens or framing. Small replies retain the single-copy path.
