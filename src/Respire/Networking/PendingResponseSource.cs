@@ -163,7 +163,14 @@ internal abstract partial class PendingResponse
     /// <summary>Returns source to its pool after caller and receive loop both release it.</summary>
     internal void ReleaseRef()
     {
-        if (Interlocked.Decrement(ref _refs) != 0)
+        // References are initialized before publication and never added while rented. A
+        // count of one therefore belongs exclusively to this owner; the other owners have
+        // finished touching the source. Concurrent releases still use the atomic decrement.
+        if (Volatile.Read(ref _refs) == 1)
+        {
+            _refs = 0;
+        }
+        else if (Interlocked.Decrement(ref _refs) != 0)
         {
             return;
         }
