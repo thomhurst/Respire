@@ -56,6 +56,29 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
     private Entry[]?[] _spares = new Entry[]?[4];
     private int _spareCount;
     private int _spareEntryCount;
+
+    /// <summary>Copies spare-storage facts for friend tests without exposing pooled arrays or entries.</summary>
+    internal SpareStorageSnapshot InspectSpareStorageForTests()
+    {
+        lock (_gate)
+        {
+            var lengths = new List<int>();
+            var cleared = true;
+            foreach (var buffer in _spares)
+            {
+                if (buffer is null) continue;
+                lengths.Add(buffer.Length);
+                foreach (var entry in buffer)
+                    if (entry.Source is not null || !entry.Value.Equals(default(RespValue)))
+                        cleared = false;
+            }
+            return new(lengths.ToArray(), Unsafe.SizeOf<Entry>(), cleared, _spareCount, _spareEntryCount);
+        }
+    }
+
+    internal readonly record struct SpareStorageSnapshot(
+        int[] BufferLengths, int EntrySize, bool EntriesCleared, int TrackedBufferCount, int TrackedEntryCount);
+
     private bool _running;
     private bool _executing;
     private TaskCompletionSource? _idleWaiter;

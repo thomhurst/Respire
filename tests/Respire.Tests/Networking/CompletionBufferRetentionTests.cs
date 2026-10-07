@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Runtime.CompilerServices;
 using Respire.Networking;
 using Respire.Protocol;
@@ -10,8 +9,6 @@ namespace Respire.Tests.Networking;
 
 public class CompletionBufferRetentionTests
 {
-    private static readonly FieldInfo Spares = typeof(CompletionScheduler).GetField("_spares", BindingFlags.Instance | BindingFlags.NonPublic)!;
-
     [Test, NotInParallel]
     [Arguments(false)]
     [Arguments(true)]
@@ -29,9 +26,9 @@ public class CompletionBufferRetentionTests
             }
             scheduler.Execute();
             foreach (var source in initial) { using var reply = source.Task.GetAwaiter().GetResult(); }
-            var cached = ((Array)Spares.GetValue(scheduler)!).Cast<Array?>().Where(buffer => buffer is not null).ToArray();
+            var cached = scheduler.InspectSpareStorageForTests().BufferLengths;
             await Assert.That(cached.Length).IsEqualTo(4);
-            await Assert.That(cached.All(buffer => buffer!.Length == 256)).IsTrue();
+            await Assert.That(cached.All(length => length == 256)).IsTrue();
         }
         var sources = Enumerable.Range(0, 12).Select(_ => new PendingResponseSource()).ToArray();
         _ = MeasureDrains(scheduler, sources, false);
@@ -100,24 +97,17 @@ public class CompletionBufferRetentionTests
 
     private static async Task AssertClearedAndBoundedAsync(CompletionScheduler scheduler)
     {
-        var buffers = ((Array)Spares.GetValue(scheduler)!).Cast<Array?>().Where(buffer => buffer is not null).ToArray();
+        var snapshot = scheduler.InspectSpareStorageForTests();
+        var buffers = snapshot.BufferLengths;
         await Assert.That(buffers.Length).IsLessThanOrEqualTo(16);
-        var slots = buffers.Sum(buffer => buffer!.Length);
+        var slots = buffers.Sum();
         await Assert.That(slots).IsLessThanOrEqualTo(1024);
-        var entryType = typeof(CompletionScheduler).GetNestedType("Entry", BindingFlags.NonPublic)!;
-        var entrySize = (int)typeof(Unsafe).GetMethod(nameof(Unsafe.SizeOf))!.MakeGenericMethod(entryType).Invoke(null, null)!;
-        Console.WriteLine($"Completion spares: {buffers.Length} arrays, {slots} entry slots, {slots * entrySize} entry bytes (array headers excluded).");
-        foreach (var buffer in buffers)
-        {
-            var source = entryType.GetField("Source")!;
-            var value = entryType.GetField("Value")!;
-            await Assert.That(buffer!.Length).IsLessThanOrEqualTo(256);
-            foreach (var entry in buffer)
-            {
-                await Assert.That(source.GetValue(entry)).IsNull();
-                await Assert.That(value.GetValue(entry)!.Equals(default(RespValue))).IsTrue();
-            }
-        }
+        await Assert.That(snapshot.TrackedBufferCount).IsEqualTo(buffers.Length);
+        await Assert.That(snapshot.TrackedEntryCount).IsEqualTo(slots);
+        await Assert.That(snapshot.EntriesCleared).IsTrue();
+        Console.WriteLine($"Completion spares: {buffers.Length} arrays, {slots} entry slots, {slots * snapshot.EntrySize} entry bytes (array headers excluded).");
+        foreach (var length in buffers)
+            await Assert.That(length).IsLessThanOrEqualTo(256);
     }
 
     [Test]
