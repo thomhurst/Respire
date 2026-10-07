@@ -201,16 +201,20 @@ bounds each renewal, not the total time a live handle can remain active. Always 
 and dispose the locker.
 
 Applications that prefer eventual availability over keeping a stuck background factory's lock
-can opt into `MaximumIndependentLeaseLifetime`:
+can opt into `MaximumIndependentLeaseLifetime`. With a shared `IRespireClient` already
+registered, pass the options to the host's FusionCache builder:
 
 ```csharp
+using Microsoft.Extensions.DependencyInjection;
+using Respire.FusionCache;
+
 var lockerOptions = new RespireFusionCacheDistributedLockerOptions
 {
     ReleaseOnCallerCancellation = false,
     LeaseDuration = TimeSpan.FromSeconds(30),
     MaximumIndependentLeaseLifetime = TimeSpan.FromMinutes(5),
 };
-builder.WithRespireDistributedLocker(lockerOptions);
+builder.Services.AddFusionCache().WithRespireDistributedLocker(lockerOptions);
 ```
 
 The option defaults to `null` (no total limit). A configured value must be at least one
