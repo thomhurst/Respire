@@ -405,6 +405,9 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
         while (depth >= _frames.Length)
             Array.Resize(ref _frames, _frames.Length * 2);
 
+        Debug.Assert(_frames[depth].Elements is null);
+        Debug.Assert(_depth == 0
+            || (depth + 1 < _depth && _frames[depth + 1].Elements is not null));
         // Stateless recursion unwinds from the deepest incomplete aggregate first.
         // Retain only incremental capacity, rather than its speculative full-count rent.
         _frames[depth] = new AggregateFrame(type, [], count, discard: false);

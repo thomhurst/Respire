@@ -5,6 +5,9 @@ on:
     paths:
       - 'src/Respire/Protocol/**'
       - 'tests/Respire.Tests/Protocol/**'
+      - 'src/Respire/Networking/RespireConnection.cs'
+      - 'src/Respire/Networking/RespireConnection.TestInspection.cs'
+      - 'tests/Respire.Tests/Networking/AggregateProgressWireTests.cs'
       - '.github/workflows/aggregate-progress.yml'
       - 'Directory.Build.props'
       - 'Directory.Packages.props'
@@ -36,10 +39,16 @@ jobs:
           dotnet-version: |
             8.0.x
             10.0.x
+      # Scalar progress counters and connection inspection fields exist only in Debug.
+      # Release correctness and benchmark jobs retain the production layout and hot path.
       - name: Build with causal progress instrumentation
         run: dotnet build tests/Respire.Tests -c Debug -f ${{ matrix.framework }}
+      - name: Verify parser and production receive progress controls
+        run: >-
+          dotnet tests/Respire.Tests/bin/Debug/${{ matrix.framework }}/Respire.Tests.dll
+          --treenode-filter '/*/*/(AggregateProgressTransferTests)|(AggregateProgressWireTests)/*'
+          --minimum-expected-tests 42
       - name: Verify transfer, framing, storage and payload ownership
         run: >-
           dotnet tests/Respire.Tests/bin/Debug/${{ matrix.framework }}/Respire.Tests.dll
-          --treenode-filter '/*/*/(AggregateProgressTransferTests)|(AggregatePayloadTests)|(AggregateStorageTests)|(RespParseStateTests)|(RespParserTests)|(ParserContextTests)/*'
-          --minimum-expected-tests 155
+          --treenode-filter '/*/*/(AggregatePayloadTests)|(AggregateStorageTests)|(RespParseStateTests)|(RespParserTests)|(ParserContextTests)/*'
