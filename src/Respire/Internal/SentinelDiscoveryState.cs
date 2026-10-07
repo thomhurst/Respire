@@ -2,8 +2,33 @@ using Microsoft.Extensions.Logging;
 
 namespace Respire.Internal;
 
-// Reusable discovery state for runtime failover. Configured endpoints are never evicted;
-// learned peers are bounded, deduplicated by host/port, and copied before asynchronous work.
+/// <summary>
+/// Reusable discovery state for runtime failover. Configured endpoints are never evicted;
+/// learned peers are bounded, deduplicated by host/port, and copied before asynchronous work.
+/// </summary>
+/// <remarks>
+/// <para>
+/// A learned endpoint is removed only after <see cref="MissedDiscoveriesBeforeRemoval"/> completed rounds omit it
+/// <em>and</em> its last recorded connection attempt failed. A round counts only with at least one complete
+/// <c>SENTINEL SENTINELS</c> reply; permission errors, malformed lists and caller-cancelled rounds supply no omission
+/// evidence, though valid rows of a partially malformed list still add or refresh peers. Any reporter listing a peer,
+/// or the peer reporting its own list, resets its missing count; a successful connection clears failure evidence.
+/// There is no periodic discovery: aging advances only when primary discovery runs.
+/// </para>
+/// <para>
+/// The omitted rounds are hysteresis; connection failure is a separate health gate, so one failed attempt can remove
+/// a peer already omitted three times. A majority rule was rejected because it would block cleanup while most old
+/// addresses are unreachable. Tradeoff: one partitioned reporter can supply omissions; healthy peers stay protected
+/// by successful connections, while an unreachable peer may be removed and later rediscovered.
+/// </para>
+/// <para>
+/// Each <see cref="DiscoveryRound"/> keeps a membership snapshot and report counters, so overlapping rounds cannot age
+/// a peer refreshed by a newer report (a single per-peer round epoch would lose that evidence). The snapshot is bounded
+/// by <see cref="MaximumDiscoveredEndpoints"/> and taken only during discovery, never on command routing.
+/// <see cref="Membership"/> versions stop retired monitors changing a re-added endpoint's health. Removal signals the
+/// monitor supervisor; configured seeds, the learned cap and accepted primary/epoch evidence are untouched by it.
+/// </para>
+/// </remarks>
 internal sealed partial class SentinelDiscoveryState
 {
     internal const int MaximumDiscoveredEndpoints = 64;

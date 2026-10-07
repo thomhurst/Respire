@@ -43,6 +43,14 @@ on:
         description: Unique artifact prefix when calling this workflow more than once
         default: benchmark-comparison
         type: string
+      runner:
+        description: Hosted runner class used for all comparison phases
+        default: ubuntu-latest
+        type: string
+      retained-memory:
+        description: Require and summarize RECEIVE_MEMORY snapshots from the fixture
+        default: false
+        type: boolean
       job:
         description: BenchmarkDotNet measurement preset (Short, Default, or Medium)
         default: Medium
@@ -54,12 +62,12 @@ permissions:
 jobs:
   compare:
     name: Compare (${{ matrix.framework }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        framework: [net8.0, net10.0]
+        framework: [net10.0]
     env:
       EVENT_BASE_SHA: ${{ inputs.event-base-sha }}
       HEAD_SHA: ${{ inputs.candidate-sha }}
@@ -72,11 +80,11 @@ jobs:
       ZERO_ALLOCATION_METHODS: ${{ inputs.zero-allocation-methods }}
       IMPROVEMENT_METHODS: ${{ inputs.improvement-methods }}
       FRAMEWORK: ${{ matrix.framework }}
+      RETAINED_MEMORY: ${{ inputs.retained-memory }}
     steps:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: |
-            8.0.x
             10.0.x
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -130,26 +138,26 @@ jobs:
           paths[1].parent.mkdir(parents=True, exist_ok=True)
           shutil.copyfile(*paths)
       - name: Validate and measure against bracketing controls
-        shell: bash
+        shell: python
         run: |
-          set -euo pipefail
-          for phase in baseline-validation candidate-validation baseline-a candidate baseline-b; do
-            source=baseline
-            job="$BENCH_JOB"
-            if [[ "$phase" == candidate* ]]; then source=candidate; fi
-            if [[ "$phase" == *validation ]]; then job=Dry; fi
-            (
-              cd "$source"
-              git rev-parse HEAD
-              dotnet run --project benchmarks/Respire.Benchmarks -c Release -f "$FRAMEWORK" -- \
-                --filter "$BENCH_FILTER" --job "$job" --exporters json markdown \
-                --artifacts "$GITHUB_WORKSPACE/results/$phase"
-            ) > "$GITHUB_WORKSPACE/$phase.log" 2>&1
-          done
+          import os, subprocess
+          from pathlib import Path
+          workspace = Path(os.environ['GITHUB_WORKSPACE'])
+          for phase in ('baseline-validation', 'candidate-validation', 'baseline-a', 'candidate', 'baseline-b'):
+              source = 'candidate' if phase.startswith('candidate') else 'baseline'
+              job = 'Dry' if phase.endswith('validation') else os.environ['BENCH_JOB']
+              with Path(f'{phase}.log').open('w') as log:
+                  subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=source, stdout=log, check=True)
+                  subprocess.run(['dotnet', 'run', '--project', 'benchmarks/Respire.Benchmarks',
+                                  '-c', 'Release', '-f', os.environ['FRAMEWORK'], '--',
+                                  '--filter', os.environ['BENCH_FILTER'], '--job', job,
+                                  '--exporters', 'json', 'markdown',
+                                  '--artifacts', str(workspace / 'results' / phase)],
+                                 cwd=source, stdout=log, stderr=subprocess.STDOUT, check=True)
       - name: Require complete results and summarize both controls
         shell: python
         run: |
-          import json, os
+          import json, os, statistics
           from pathlib import Path
           expected = set(filter(None, os.environ['EXPECTED_METHODS'].split(',')))
           zero_allocation = set(filter(None, os.environ['ZERO_ALLOCATION_METHODS'].split(',')))
@@ -198,6 +206,23 @@ jobs:
                   intervals = [case['Statistics']['ConfidenceInterval'] for case in cases]
                   if not intervals[1]['Upper'] < min(intervals[0]['Lower'], intervals[2]['Lower']):
                       failures.append(f'No demonstrated improvement against both controls: {label}')
+          if os.environ['RETAINED_MEMORY'].lower() == 'true':
+              lines.extend(['', '## Whole-process retained memory', '',
+                            'Full-GC snapshots include the identical in-process peer, 51 client receive loops, and pools. POH size includes fragmentation; medians across fixture processes are descriptive. Working-set variation requires manual review.', '',
+                            '| Phase | Stage | Samples | Managed bytes | POH bytes | POH fragmented bytes | Working-set bytes |',
+                            '| --- | --- | ---: | ---: | ---: | ---: | ---: |'])
+              for phase in ('baseline-validation', 'candidate-validation', 'baseline-a', 'candidate', 'baseline-b'):
+                  snapshots = [json.loads(line.removeprefix('RECEIVE_MEMORY '))
+                               for line in Path(f'{phase}.log').read_text().splitlines()
+                               if line.startswith('RECEIVE_MEMORY ')]
+                  for stage in ('before-connect', 'connected-idle', 'after-dispose'):
+                      samples = [item for item in snapshots if item['stage'] == stage]
+                      assert len(samples) >= expected_count, f'Missing retention snapshots: {phase}/{stage}'
+                      values = []
+                      for field in ('managedBytes', 'pohBytes', 'pohFragmentedBytes', 'workingSetBytes'):
+                          assert all(isinstance(item[field], int) and item[field] >= 0 for item in samples)
+                          values.append(str(int(statistics.median(item[field] for item in samples))))
+                      lines.append(f"| {phase} | {stage} | {len(samples)} | {' | '.join(values)} |")
           summary = '\n'.join(lines) + '\n'
           Path('comparison.md').write_text(summary)
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as stream:

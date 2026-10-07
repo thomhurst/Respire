@@ -188,6 +188,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     internal void RequestMetricCloseReason(string reason) => _connectionMetrics?.RequestClose(reason);
     internal void RecordConnectionWait(long started) => _connectionMetrics?.Waited(started);
     internal void RecordConnectionHandoff() => _connectionMetrics?.HandedOff();
+    /// <summary>False as soon as <see cref="RetireAsync"/> starts; <see cref="IsConnected"/> stays true while accepted work drains.</summary>
     internal bool IsAcceptingCommands => IsConnected && !Volatile.Read(ref _retired) && _generation?.IsRetired != true;
     internal int WriteBufferCapacity => Math.Max(_activeBuffer.Capacity, _spareBuffer.Capacity);
     internal bool DrainedSuccessfully => Volatile.Read(ref _drainedSuccessfully);
@@ -2349,7 +2350,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     {
         // Leave the constructor's thread before doing any work, as Task.Run did.
         await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
-        var buffer = RespirePools.ResponsePayloads.Rent(_receiveBufferSize);
+        var receiveBuffer = ReceiveBuffer.Rent(_receiveBufferSize, pinned: OperatingSystem.IsWindows() && _stream is null);
+        var buffer = receiveBuffer.Array;
         // Return to the bulk-header path after top-level RESP3 attributes, including
         // fragmented metadata, before the parser consumes a streamed payload.
         var parser = new RespParseState(DirectFillThreshold, stopAfterAttributes: true);
@@ -2410,7 +2412,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                                     start = headerEnd;
                                     _completions.Flush();
                                     var streamed = await ReceiveBulkStreamAsync(
-                                        buffer, start, end, streamSource, (int)bulkLength).ConfigureAwait(false);
+                                        receiveBuffer, start, end, streamSource, (int)bulkLength).ConfigureAwait(false);
                                     start = streamed.Start;
                                     end = streamed.End;
                                     MarkReplyReceived();
@@ -2498,7 +2500,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                             var responseSource = parser.IsIdle && directFill.Type == RespDataType.BulkString
                                 && _inflight.TryPeek(out var directHead) ? directHead : null;
                             var filled = await ReceiveLargeBulkAsync(
-                                    buffer, start, end, directFill.Type, directFill.PayloadLength, responseSource)
+                                    receiveBuffer, start, end, directFill.Type, directFill.PayloadLength, responseSource)
                                 .ConfigureAwait(false);
                             start = filled.Start;
                             end = filled.End;
@@ -2540,10 +2542,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                             throw new RespireProtocolException($"Response exceeds the {MaxResponseSize} byte limit.");
                         }
 
-                        var bigger = RespirePools.ResponsePayloads.Rent(buffer.Length * 2);
-                        buffer.AsSpan(0, end).CopyTo(bigger);
-                        RespirePools.ResponsePayloads.Return(buffer);
-                        buffer = bigger;
+                        var bigger = receiveBuffer.Grow(Math.Min(MaxResponseSize, buffer.Length * 2));
+                        buffer.AsSpan(0, end).CopyTo(bigger.Array);
+                        receiveBuffer.Return();
+                        receiveBuffer = bigger;
+                        buffer = receiveBuffer.Array;
                     }
                 }
 
@@ -2556,14 +2559,14 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     // run caller code, or nothing to deliver: hand completions to the pool
                     // before receiving, as before.
                     _completions.Flush();
-                    received = await ReceiveAsync(buffer.AsMemory(end)).ConfigureAwait(false);
+                    received = await ReceiveAsync(receiveBuffer.Memory[end..]).ConfigureAwait(false);
                 }
                 else if (_pushHandler is null)
                 {
                     // Every reply is in and this loop owns the runner for the drained batch.
                     // Deliver it before starting the next receive, so the caller does not wait
                     // behind that socket call.
-                    received = await new DeliverThenReceive(this, buffer.AsMemory(end));
+                    received = await new DeliverThenReceive(this, receiveBuffer.Memory[end..]);
                 }
                 else
                 {
@@ -2572,7 +2575,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     ValueTask<int> receive;
                     try
                     {
-                        receive = ReceiveAsync(buffer.AsMemory(end));
+                        receive = ReceiveAsync(receiveBuffer.Memory[end..]);
                     }
                     catch
                     {
@@ -2612,7 +2615,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         finally
         {
             parser.Dispose();
-            RespirePools.ResponsePayloads.Return(buffer);
+            receiveBuffer.Return();
             // Replies parsed before the fault still complete normally.
             _completions.Flush();
             var closeError = Volatile.Read(ref _abortReason)
@@ -2648,12 +2651,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
     private async ValueTask<(int Start, int End)> ReceiveBulkStreamAsync(
-        byte[] buffer,
+        ReceiveBuffer receiveBuffer,
         int start,
         int end,
         BulkStreamPendingResponseSource source,
         int payloadLength)
     {
+        var buffer = receiveBuffer.Array;
         var payload = source.BeginPayload();
         if (source.IsPayloadAborted)
         {
@@ -2696,7 +2700,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 int received;
                 if (payload is null)
                 {
-                    var target = buffer.AsMemory(0, Math.Min(buffer.Length, remaining));
+                    var target = receiveBuffer.Memory[..Math.Min(buffer.Length, remaining)];
                     received = await ReceiveAsync(target).ConfigureAwait(false);
                 }
                 else
@@ -2743,7 +2747,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     end = 0;
                 }
 
-                var received = await ReceiveAsync(buffer.AsMemory(end, 2 - (end - start)))
+                var received = await ReceiveAsync(receiveBuffer.Memory.Slice(end, 2 - (end - start)))
                     .ConfigureAwait(false);
                 if (received == 0)
                 {
@@ -2824,9 +2828,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
     private async ValueTask<(int Start, int End, RespValue Value)> ReceiveLargeBulkAsync(
-        byte[] buffer, int start, int end, RespDataType type, int payloadLength,
+        ReceiveBuffer receiveBuffer, int start, int end, RespDataType type, int payloadLength,
         PendingResponse? responseSource)
     {
+        var buffer = receiveBuffer.Array;
         var bytesSource = responseSource as BytesPendingResponseSource;
         // The FIFO slot retains its receive reference until the entire frame is drained.
         // A completed or discarded head needs no payload, but still occupies its reply slot.
@@ -2851,7 +2856,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 ReleaseAbandonedBulkPayload(ref payload, responseSource, bytesSource is null);
                 var destination = payload is not null
                     ? payload.AsMemory(filled, payloadLength - filled)
-                    : buffer.AsMemory(0, Math.Min(buffer.Length, payloadLength - filled));
+                    : receiveBuffer.Memory[..Math.Min(buffer.Length, payloadLength - filled)];
                 var read = await ReceiveAsync(destination).ConfigureAwait(false);
                 if (read == 0)
                 {
@@ -2879,7 +2884,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     start = 0;
                 }
 
-                var read = await ReceiveAsync(buffer.AsMemory(end)).ConfigureAwait(false);
+                var read = await ReceiveAsync(receiveBuffer.Memory[end..]).ConfigureAwait(false);
                 if (read == 0)
                 {
                     Volatile.Write(ref _peerClosed, true);
@@ -3743,6 +3748,25 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     }
 
     /// <summary>Stops acceptance atomically with enqueue, then drains accepted frames and replies.</summary>
+    /// <remarks>
+    /// <para>Acceptance is rejected under the same write gate that publishes serialized frames to
+    /// the response FIFO. An accepted command still writes its complete frame and consumes its
+    /// reply, even if its caller cancelled. An operation waiting for FIFO capacity was never
+    /// accepted and wakes immediately with <see cref="RespireConnectionRetiredException"/>.</para>
+    /// <para>The returned task is shared by all callers. It completes after accepted writes,
+    /// response parsing, scheduled response completions, and socket cleanup. No cancellation
+    /// interrupts a partially written frame. Socket failures and configured timeouts keep their
+    /// usual behavior: <c>CommandTimeout</c> only abandons the caller's wait, so retirement still
+    /// waits for that reply. There is no implicit drain timeout; an owner bounds its own wait and
+    /// disposes to abort a silent peer. A configured response watchdog still aborts the socket.</para>
+    /// <para>If a delivered reply's inline continuation requests retirement,
+    /// <see cref="CompletionScheduler.ReleaseCurrentRunner"/> hands the remaining replies, in order,
+    /// to another worker so retirement does not wait on that continuation. Other queued completions
+    /// still drain before retirement completes.</para>
+    /// <para>Retirement and disposal wait for an in-progress CLIENT ID bootstrap to publish before
+    /// completing identity ownership; a reply dequeued before retirement cannot publish an
+    /// untracked ID afterwards. A successful drain needs no server-side kill.</para>
+    /// </remarks>
     internal Task RetireAsync()
     {
         _completions.ReleaseCurrentRunner();

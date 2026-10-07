@@ -9,8 +9,98 @@ internal enum SentinelNotificationPhase
     ActivePending,
 }
 
-// Every operation returns a new value. DNS lookup records share immutable storage,
-// so an earlier snapshot cannot be changed by later offers or lookup completions.
+/// <summary>
+/// Every operation returns a new value. DNS lookup records share immutable storage,
+/// so an earlier snapshot cannot be changed by later offers or lookup completions.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Hints retain immutable source, target, reporter and down-report collections, plus a
+/// <see cref="SentinelReporterLedger"/>. Lookup records are an immutable dictionary keyed by
+/// lookup lifetime. Evidence arrays are immutable after publication: duplicate reporter unions
+/// reuse existing arrays, empty source unions reuse their populated operand, and unchanged DNS
+/// evidence does not clone source arrays.
+/// </para>
+/// <para>
+/// A source-resolution record retains its original hint and evidence offered after that lookup
+/// began. It never imports earlier pending evidence: an older switch target could then protect a
+/// primary from a later demotion. Completion removes the record. DNS evidence stays paired with
+/// its endpoint and port.
+/// </para>
+/// <para>Safety boundaries:</para>
+/// <list type="bullet">
+/// <item>Notifications are advisory. Publication still requires Sentinel discovery and a successful
+/// <c>ROLE</c> check. Unknown or ambiguous advisory DNS never authorizes a different owner or erases a
+/// demotion fence.</item>
+/// <item>Observed configuration epochs never move backward. Equal or missing epochs cannot change an
+/// observed owner through an ambiguous DNS overlap.</item>
+/// <item>When <c>SENTINEL MASTER</c> is unavailable, source/target evidence still fences a stale reporter
+/// whose old primary keeps answering <c>ROLE master</c>; a wake-up-only event model would lose this.
+/// Conflicting targets do not disable source fences. A completed A-to-B switch cannot invert an
+/// independent pending B-to-A fence when another A-to-B report arrives. Reconciling a completed
+/// conflicting cycle consumes only the validated target's source fence; a source demoted toward a
+/// distinct pending target stays fenced.</item>
+/// <item>A gap or master-down report carries no demotion evidence. After it recovers a primary,
+/// unqueried reporters can confirm that primary or its unambiguous validated peer alias, but cannot
+/// replace it without a newer epoch. This restriction belongs to that reconciliation pass and duplicate
+/// reports of the same outage; an independent down/gap hint can discover a later primary, and an
+/// independent switch keeps its own evidence.</item>
+/// <item>DNS answer sets do not prove which peer answered <c>ROLE</c>. Reconciliation keeps the actual
+/// validated socket peer, including port. Ambiguous overlaps cannot consume another primary's source
+/// fence: demotion matching may conservatively match any source address, but consuming the fence needs
+/// the stronger identity proof. Fresh DNS must match the validated peer even when the hostname text is
+/// unchanged; textual hostname identity is a fallback only when DNS evidence is unavailable.</item>
+/// <item>An unchanged target hostname cannot suppress a switch (DNS may now point elsewhere). The
+/// target-is-current shortcut requires numeric peer identity on every command slot (see
+/// <see cref="SentinelGenerationEvidence"/>); one matching socket cannot authorize reuse while another
+/// still reaches an old DNS peer. Source fences still recognize any known peer, and conflicting-cycle
+/// source evidence still protects an explicitly announced failback target.</item>
+/// <item>A target hostname whose entire DNS answer set identifies demoted sources is rejected before
+/// connecting, even with a newer epoch. Mixed answers proceed to socket validation, where connecting to a
+/// demoted source is still rejected. Epochs order Sentinel's announced owner; they do not prove the
+/// client's DNS or socket reaches it. The router checks every registered ROLE-validated socket peer
+/// before accepting or publishing a configuration; the last validated socket cannot hide another
+/// socket reaching a demoted source.</item>
+/// <item>A source hostname may already resolve to the promoted peer. Fresh source addresses that also
+/// identify an unambiguous announced hostname target are not retained as demotion evidence (before or
+/// after target publication) unless they identify the peer validated when the event arrived. A literal
+/// source, the connected source hostname and that known peer still retire the generation; target DNS
+/// cannot erase this source identity.</item>
+/// <item>When a switch names the current primary's hostname, its validated peer is captured before
+/// queuing discovery, so a metadata-denied numeric alias cannot republish the demoted server while DNS
+/// is unavailable. In a conflicting cycle, source address evidence also protects a target with the
+/// same hostname and port from premature retirement.</item>
+/// <item>Forced discovery can reuse a healthy generation when the announced endpoint is its canonical
+/// endpoint without DNS evidence, or resolves unambiguously to its connected peer. A stable hostname
+/// with changed DNS requires a fresh connection; reuse also requires the same validated peer and port,
+/// still checks <c>ROLE</c>, and compares IPv6 spellings with the same normalized comparer as epoch state.</item>
+/// <item>Late source resolution never combines a source's addresses with the arrival generation's port.
+/// A newer generation is protected by the arrival generation's own identity or later announced failback
+/// evidence; a pending B-to-C switch must still demote an intervening B.</item>
+/// <item>A switch confirming the current primary stays pending while discovery is active: the in-flight
+/// query can still publish another primary first.</item>
+/// <item>Retirement preserves accepted commands and correction fences. Coalescing never replays accepted
+/// work or forces disposal of a draining generation.</item>
+/// </list>
+/// <para>
+/// Liveness limits: failed discovery retries with backoff (unlimited by default); a configured budget can
+/// stop the worker, and commands still trigger discovery on demand. There is no periodic polling loop.
+/// Permanently ambiguous or stale reports cannot guarantee failover without weakening split-brain safety.
+/// Switch payloads carry no epoch or sequence, so without epoch metadata a delayed A-to-B report after a
+/// completed A-to-B, B-to-A cycle is indistinguishable from a genuine third transition; the metadata-free
+/// fallback deliberately permits genuine recurrence (pinned by
+/// <c>CompletedSwitchCycleAllowsGenuineRecurrenceWithoutEpochs</c>). Epoch ordering needs
+/// <c>SENTINEL MASTER</c> permission; ROLE alone does not prove global ownership.
+/// </para>
+/// <para>
+/// Regression gates: <c>SentinelFenceTransitionTests</c> (15 idle/active/active+pending transitions,
+/// each with no metadata, equal and newer epochs), <c>OfferedEvidenceIsAlwaysQueuedOrDiscoveredAcrossWorkerTransitions</c>,
+/// <c>MergeUnionsAreCommutativeIdempotentAndKeepTheFaultFlag</c>,
+/// <c>RandomNotificationSequencesRequireRoleAndMonotonicEpochs</c> (real router, fake RESP sockets; positive
+/// controls so reject-everything cannot pass) and
+/// <c>RandomInterleavingsNeverLetAStaleReporterReleaseValidatedOwnership</c>.
+/// </para>
+/// </remarks>
 internal readonly partial record struct SentinelNotificationState
 {
     internal SentinelHint? Active { get; init; }

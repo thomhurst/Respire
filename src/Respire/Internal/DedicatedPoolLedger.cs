@@ -5,6 +5,16 @@ namespace Respire.Internal;
 /// serializes publication and prevents additions after shutdown. Sharing its publication gate
 /// makes snapshots wait for in-progress publications. Pool operations run outside that gate.
 /// </summary>
+/// <remarks>
+/// One ledger each for <see cref="ClientCore"/>, <see cref="ClusterRouter"/>, and every Sentinel
+/// generation; current route lookup stays with those owners. A replacement is added before it is
+/// exposed; the previous pool stays until its graceful retirement succeeds, and a failed retirement
+/// stays owned for explicit disposal. Completed pools are removed, not kept as history. Disposal
+/// starts every pool's abort before awaiting any, so one failure cannot stop another borrowed lease
+/// from being aborted; concurrent retirement and disposal share the pool's cleanup task. This
+/// bookkeeping is off the healthy dispatch and lease-acquisition path; route-version validation, ASK
+/// target selection, MOVING publication, deadlines, and drain rules stay with their owners.
+/// </remarks>
 internal sealed class DedicatedPoolLedger(Lock gate)
 {
     private readonly HashSet<DedicatedConnectionPool> _pools = [];

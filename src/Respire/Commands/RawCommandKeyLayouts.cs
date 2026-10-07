@@ -4,6 +4,15 @@ using Respire.Internal;
 namespace Respire.Commands;
 
 /// <summary>Explicit key layouts shared by immediate and deferred raw execution.</summary>
+/// <remarks>
+/// Combines generated catalog <see cref="RespireCacheMutation"/> metadata with argument layouts and
+/// destination-only overrides to name the keys a write fences in the client-side cache. Set-store and
+/// merge commands fence only their destination, keeping cached sources; an explicit
+/// <see cref="RespireCacheMutation.MultiKey"/> declaration fences every declared key.
+/// <see cref="MutationKind.Unknown"/> and <see cref="MutationKind.IndirectKeys"/> force a full-cache
+/// fence: TimeSeries sample writes (including <c>TS.MADD</c>) can change compaction destinations
+/// absent from their arguments. Cacheable-read eligibility is classified separately from mutation effects.
+/// </remarks>
 internal static class RawCommandKeyLayouts
 {
     internal enum MutationKind : byte

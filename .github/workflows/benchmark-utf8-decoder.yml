@@ -26,14 +26,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        framework: [net8.0, net10.0]
+        framework: [net10.0]
     env:
       FRAMEWORK: ${{ matrix.framework }}
     steps:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: |
-            8.0.x
             10.0.x
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -150,11 +149,7 @@ jobs:
               expected = manifest['head_sha'] if phase.startswith('candidate') else manifest['comparison_base_sha']
               assert Path(f'{phase}.log').read_text().splitlines()[0] == expected, phase
           PY
-          improvement=()
-          if [[ "$FRAMEWORK" == net8.0 ]] && python3 -c 'import json; import sys; sys.exit(not json.load(open("source-shas.json"))["production_changes"])'; then
-            improvement=(--require-ascii-improvement)
-          fi
-          python3 candidate/scripts/assert_decoder_benchmarks.py results "${improvement[@]}" \
+          python3 candidate/scripts/assert_decoder_benchmarks.py results \
             --summary "$GITHUB_STEP_SUMMARY" --manifest source-shas.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()

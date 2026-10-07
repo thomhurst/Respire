@@ -8,8 +8,24 @@ uses below-normal priority, and kills the full process tree when time or memory
 limits are exceeded. Exit 124 means timeout; exit 137 means memory limit.
 
 .EXAMPLE
-pwsh scripts/Invoke-AgentDotNet.ps1 -SingleNode `
+& scripts/Invoke-AgentDotNet.ps1 -SingleNode `
     -DotNetArguments @('build', 'Respire.slnx', '-c', 'Release')
+
+.NOTES
+SingleNode adds -m:1 for MSBuild commands and VSTest-mode dotnet test.
+For Microsoft.Testing.Platform selected by the nearest global.json, build
+separately with SingleNode, then invoke test --no-build; MTP test arguments
+are forwarded unchanged. All modes retain the same process/resource guard.
+Runner detection targets the repository's .NET 10 SDK. That SDK ignores
+DOTNET_TEST_RUNNER; SDK-aware .NET 11 override support is tracked in #1163.
+
+.EXAMPLE
+& scripts/Invoke-AgentDotNet.ps1 -SingleNode -DotNetArguments @(
+    'build', 'tests/Respire.Tests/Respire.Tests.csproj', '-c', 'Release', '-f', 'net10.0')
+# After a successful build, run the focused MTP tests without another build:
+& scripts/Invoke-AgentDotNet.ps1 -SingleNode -DotNetArguments @(
+    'test', '--project', 'tests/Respire.Tests/Respire.Tests.csproj', '-c', 'Release',
+    '-f', 'net10.0', '--no-build', '--treenode-filter', '/*/*/RespireConnectionTests/*')
 #>
 
 [CmdletBinding(PositionalBinding = $false)]
@@ -565,6 +581,25 @@ function Stop-ProcessTree(
     }
 }
 
+function Test-MicrosoftTestingPlatform {
+    # The CLI selects global.json from its working directory, not the project path.
+    $directory = [IO.DirectoryInfo]::new((Get-Location).ProviderPath)
+    while ($null -ne $directory) {
+        $globalJson = Join-Path $directory.FullName 'global.json'
+        if (Test-Path -LiteralPath $globalJson -PathType Leaf) {
+            try {
+                $configuration = Get-Content -LiteralPath $globalJson -Raw | ConvertFrom-Json
+            }
+            catch {
+                throw "Cannot read test runner configuration '$globalJson': $($_.Exception.Message)"
+            }
+            return $configuration.test.runner -eq 'Microsoft.Testing.Platform'
+        }
+        $directory = $directory.Parent
+    }
+    return $false
+}
+
 function Add-SingleNodeArgument([string[]]$Arguments) {
     if (-not $SingleNode -or $Arguments.Count -eq 0) {
         return $Arguments
@@ -572,6 +607,11 @@ function Add-SingleNodeArgument([string[]]$Arguments) {
 
     $verb = $Arguments[0]
     if ($verb -notin @('build', 'test', 'pack', 'publish', 'msbuild')) {
+        return $Arguments
+    }
+    # MTP forwards unknown switches to test applications. -m:1 is not an MTP option.
+    # Build separately with SingleNode, then use test --no-build in this mode.
+    if ($verb -eq 'test' -and (Test-MicrosoftTestingPlatform)) {
         return $Arguments
     }
     $separatorIndex = [Array]::IndexOf($Arguments, '--')
@@ -595,6 +635,8 @@ function Add-SingleNodeArgument([string[]]$Arguments) {
 $effectiveArguments = @(Add-SingleNodeArgument $DotNetArguments)
 $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
 $startInfo.UseShellExecute = $false
+# Match the PowerShell location used to resolve global.json and relative paths.
+$startInfo.WorkingDirectory = (Get-Location).ProviderPath
 $startInfo.Environment['BuildInParallel'] = 'false'
 $startInfo.Environment['DOTNET_CLI_TELEMETRY_OPTOUT'] = '1'
 $startInfo.Environment['DOTNET_CLI_USE_MSBUILD_SERVER'] = '0'

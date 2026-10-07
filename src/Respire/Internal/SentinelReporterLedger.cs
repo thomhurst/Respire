@@ -44,9 +44,26 @@ internal readonly record struct SentinelReporterObservation(
     }
 }
 
-// Original observations remain separate from the effective source fences and reporter
-// order used by a discovery pass. Reconciliation can consume a fence without rewriting
-// the event's owner, epoch, reporter, or completed DNS facts.
+/// <summary>
+/// Original observations remain separate from the effective source fences and reporter
+/// order used by a discovery pass. Reconciliation can consume a fence without rewriting
+/// the event's owner, epoch, reporter, or completed DNS facts.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Keeps each switch, down or gap observation with its reporter, source/target, validated owner at receipt,
+/// observed and accepted epoch facts, and completed source/target DNS evidence. Context is captured once under
+/// the router gate; a later publication or DNS-triggered requeue never replaces an observation's owner or fills
+/// in an owner that was absent at receipt.
+/// </para>
+/// <para>
+/// The cached down-report projection drives reporter-specific outage reconciliation. Mixing in an independent gap
+/// or switch suppresses that projection on the effective hint while keeping the original observations; consuming a
+/// source fence after validation likewise leaves its observation intact. Unique owner, epoch or DNS evidence from an
+/// existing reporter stays pending; identical evidence reuses immutable storage. Neither ledger order nor DNS
+/// completion order establishes failover chronology.
+/// </para>
+/// </remarks>
 internal readonly record struct SentinelReporterLedger
 {
     private readonly ImmutableArray<SentinelReporterObservation> _observations;

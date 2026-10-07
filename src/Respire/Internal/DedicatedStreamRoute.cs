@@ -3,7 +3,16 @@ using Respire.Networking;
 namespace Respire.Internal;
 
 /// <summary>Value snapshot revalidated immediately before a streamed header is admitted.</summary>
-/// <remarks>None (also the default value) permits direct connection sends. No delegate or boxed strategy is retained.</remarks>
+/// <remarks>
+/// <para>None (also the default value) permits direct connection sends. No delegate or boxed strategy is retained.</para>
+/// <para>Carries owner, pool, connection, slot generation, and ASK identity by value. The streaming
+/// writer validates it after the first source read and again after ASKING, immediately before
+/// admitting the SET header. Publication checks stay in <see cref="ClientCore"/> and
+/// <see cref="ClusterRouter"/>; a stopped pool is not the only invalidation signal.
+/// DedicatedStreamRouteTests measures construction and validation for standalone, Cluster, and ASK
+/// routes with no socket work in the measured interval, warm no-inline loops in the no-GC boundary,
+/// and escaping closures as the positive allocation control.</para>
+/// </remarks>
 internal readonly struct DedicatedStreamRoute
 {
     /// <summary>Direct connection send with no router-owned generation to validate.</summary>

@@ -154,6 +154,7 @@ internal sealed partial class ClusterRouter
 
     private Task DrainPoolAsync(DedicatedConnectionPool pool) => _ownedPools.RetireAsync(pool);
 
+    /// <summary>Observes completion of currently detached generations; late correction reservations have separate lifetimes.</summary>
     internal Task WaitForRetirementAsync()
     {
         lock (_nodesGate) return Task.WhenAll(_retiringNodes.Values.Select(value => value.Completion.Task));

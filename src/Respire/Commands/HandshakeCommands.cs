@@ -73,6 +73,13 @@ internal readonly record struct ClientTrackingConfiguration
 }
 
 /// <summary>CLIENT TRACKING ON with the selected registration mode.</summary>
+/// <remarks>
+/// Sent after <c>HELLO 3</c> on every cache-bearing connection, including reconnect replacements and
+/// discovered Cluster/Sentinel nodes, before the connection is published. OPTIN keeps server tracking
+/// memory and pushes limited to deliberate misses; BCAST registers the configured physical prefixes
+/// (none means every key). Invalidation pushes arrive on the connection that performed the read, so
+/// they stay in wire order with its replies and no redirect connection is needed.
+/// </remarks>
 internal readonly struct ClientTrackingCommand(ClientTrackingConfiguration configuration = default) : IRespCommand
 {
     public ReadCommandKind ReadKind => ReadCommandKind.None;
@@ -92,6 +99,13 @@ internal readonly struct ClientTrackingCommand(ClientTrackingConfiguration confi
 }
 
 /// <summary>CLIENT CACHING YES.</summary>
+/// <remarks>
+/// OPTIN prelude for one cacheable read. The prelude and read are written under one write gate with
+/// every response slot reserved before any frame is written, so no other producer can interleave a
+/// command; a validated multi-reply source drains the prelude replies and returns only the read reply.
+/// A Cluster ASK retry writes <c>ASKING</c>, this prelude, and the read as one such sequence. BCAST
+/// reads and reads outside the configured prefixes omit the prelude, so Redis does not track them.
+/// </remarks>
 internal readonly struct ClientCachingCommand : IRespCommand
 {
     public ReadCommandKind ReadKind => ReadCommandKind.None;
