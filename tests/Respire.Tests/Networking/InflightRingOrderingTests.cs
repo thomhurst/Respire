@@ -1,3 +1,5 @@
+using System.Reflection;
+using System.Runtime.InteropServices;
 using Respire.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -7,6 +9,22 @@ namespace Respire.Tests.Networking;
 
 public class InflightRingOrderingTests
 {
+    [Test]
+    [Arguments("Tail", "Head")]
+    [Arguments("Tail", "CompletedWriteEnd")]
+    [Arguments("CachedHead", "Head")]
+    [Arguments("CachedHead", "CompletedWriteEnd")]
+    public async Task ProducerAndConsumerCounterRangesHaveCacheLineSeparation(string producer, string consumer)
+    {
+        var positions = typeof(InflightRing).GetNestedType("Positions", BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("The ring counter layout is missing.");
+        var producerOffset = Marshal.OffsetOf(positions, producer).ToInt64();
+        var consumerOffset = Marshal.OffsetOf(positions, consumer).ToInt64();
+        // Check entire field ranges, preserving isolation even with an unaligned base address.
+        var gap = Math.Abs(consumerOffset - producerOffset) - sizeof(long);
+        await Assert.That(gap).IsGreaterThanOrEqualTo(128L);
+    }
+
     [Test]
     [Arguments(1)]
     [Arguments(2)]
