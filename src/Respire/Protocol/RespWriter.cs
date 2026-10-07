@@ -79,21 +79,21 @@ internal ref struct RespWriter
         }
         if (text.Length == 0 || text[0] <= 0x7f)
         {
-            // Match WriteBulkString's single-pass ASCII path. A non-ASCII suffix rolls
-            // back only this frame before using the UTF-8/surrogate-boundary path.
+            // An ASCII first code unit cannot pair with a surrogate at the prefix boundary.
             var mark = _buffer.Count;
             var asciiLength = checked(prefix.Bytes.Length + text.Length);
             WriteBulkStringHeader(asciiLength);
             var asciiPayload = _buffer.GetSpan(checked(asciiLength + 2));
             prefix.Bytes.CopyTo(asciiPayload);
-            if (Ascii.FromUtf16(text, asciiPayload[prefix.Bytes.Length..], out _) == OperationStatus.Done)
+            if (Ascii.FromUtf16(text, asciiPayload[prefix.Bytes.Length..], out var asciiBytes) == OperationStatus.Done)
             {
                 asciiPayload[asciiLength] = RespConstants.CarriageReturn;
                 asciiPayload[asciiLength + 1] = RespConstants.LineFeed;
                 _buffer.Advance(asciiLength + 2);
                 return;
             }
-            _buffer.TruncateTo(mark);
+            CompleteUtf8Suffix(mark, checked(prefix.Bytes.Length + asciiBytes), text.AsSpan(asciiBytes));
+            return;
         }
         var length = prefix.GetWireLength(text, bytes);
         WriteBulkStringHeader(length);
@@ -139,7 +139,8 @@ internal ref struct RespWriter
                 return;
             }
 
-            _buffer.TruncateTo(mark);
+            CompleteUtf8Suffix(mark, asciiBytes, value.AsSpan(asciiBytes));
+            return;
         }
 
         var byteCount = Encoding.UTF8.GetByteCount(value);
@@ -150,6 +151,33 @@ internal ref struct RespWriter
         span[byteCount] = RespConstants.CarriageReturn;
         span[byteCount + 1] = RespConstants.LineFeed;
         _buffer.Advance(byteCount + 2);
+    }
+
+    private void CompleteUtf8Suffix(int mark, int encodedPrefixLength, scoped ReadOnlySpan<char> suffix)
+    {
+        var oldHeaderLength = _buffer.Count - mark;
+        var byteCount = checked(encodedPrefixLength + Encoding.UTF8.GetByteCount(suffix));
+        Span<byte> header = stackalloc byte[MaxIntegerLineLength];
+        header[0] = RespConstants.BulkStringPrefix;
+        Utf8Formatter.TryFormat(byteCount, header[1..], out var digits);
+        var headerLength = digits + 3;
+        header[digits + 1] = RespConstants.CarriageReturn;
+        header[digits + 2] = RespConstants.LineFeed;
+        var frameLength = checked(headerLength + byteCount + 2);
+
+        // Growth copies only committed bytes. Include the encoded prefix before reserving,
+        // then reacquire the span: the old array may already have returned to the pool.
+        _buffer.Advance(encodedPrefixLength);
+        _buffer.GetSpan(checked(mark + frameLength - _buffer.Count));
+        _buffer.TruncateTo(mark);
+        var frame = _buffer.GetSpan(frameLength);
+        if (headerLength != oldHeaderLength)
+            frame.Slice(oldHeaderLength, encodedPrefixLength).CopyTo(frame[headerLength..]);
+        header[..headerLength].CopyTo(frame);
+        Encoding.UTF8.GetBytes(suffix, frame[(headerLength + encodedPrefixLength)..]);
+        frame[headerLength + byteCount] = RespConstants.CarriageReturn;
+        frame[headerLength + byteCount + 1] = RespConstants.LineFeed;
+        _buffer.Advance(frameLength);
     }
 
     /// <summary>Writes an integer as a bulk string ("$3\r\n123\r\n") — how Redis expects numeric arguments.</summary>

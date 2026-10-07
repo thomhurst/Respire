@@ -1,0 +1,32 @@
+name: UTF-8 suffix benchmarks
+
+on:
+  pull_request:
+    paths:
+      - 'src/Respire/Protocol/RespWriter.cs'
+      - 'src/Respire/Networking/WriteBuffer.cs'
+      - 'src/Respire/Internal/KeyPrefix.cs'
+      - 'benchmarks/Respire.Benchmarks/Utf8SuffixBenchmarks.cs'
+      - '.github/workflows/benchmark-utf8-suffix.yml'
+      - '.github/workflows/benchmark-compare.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    uses: ./.github/workflows/benchmark-compare.yml
+    with:
+      event-base-sha: ${{ github.event.pull_request.base.sha }}
+      candidate-sha: ${{ github.sha }}
+      expected-head-sha: ${{ github.event.pull_request.head.sha }}
+      fixture: benchmarks/Respire.Benchmarks/Utf8SuffixBenchmarks.cs
+      filter: '*Utf8SuffixBenchmarks*'
+      expected-case-count: 18
+      expected-methods: Serialize,SerializePrefixed,Single,SinglePrefixed,Pipeline,PipelinePrefixed
+      zero-allocation-methods: Serialize,SerializePrefixed
+      artifact-prefix: utf8-suffix-comparison
