@@ -82,7 +82,7 @@ internal static class ServerDiagnosticsParser
                     case "calls" or "histogram_usec":
                         throw new RespireProtocolException("Latency histogram contains a duplicate required field.");
                     default:
-                        if (!additional.TryAdd(name, new RespireResult(item.ToOwned())))
+                        if (!additional.TryAdd(name, RespireResult.CreateOwned(in item)))
                             throw new RespireProtocolException("Latency histogram contains a duplicate additional field.");
                         break;
                 }

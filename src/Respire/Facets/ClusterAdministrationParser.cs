@@ -84,12 +84,12 @@ internal static class ClusterAdministrationParser
             for (var index = 0; index < pairs.Length; index += 2)
             {
                 var name = ClusterInspectionParser.Text(in pairs[index]);
-                if (!metadata.TryAdd(name, new RespireResult(pairs[index + 1].ToOwned())))
+                if (!metadata.TryAdd(name, RespireResult.CreateOwned(in pairs[index + 1])))
                     throw new RespireProtocolException("CLUSTER SLOTS metadata contains duplicate fields.");
             }
         }
         var additional = new RespireResult[Math.Max(0, fields.Length - 4)];
-        for (var index = 0; index < additional.Length; index++) additional[index] = new(fields[index + 4].ToOwned());
+        for (var index = 0; index < additional.Length; index++) additional[index] = RespireResult.CreateOwned(in fields[index + 4]);
         return new(endpoint, (int)port, id, metadata, additional);
     }
 

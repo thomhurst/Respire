@@ -66,12 +66,7 @@ internal sealed class BatchScriptCommands(IPendingSink sink) : IBatchScriptComma
             script.EvalOperation,
             command,
             keys.AsSpan(),
-            static (client, value) =>
-            {
-                // Deferred results may never be read: never transfer pooled reply ownership to a pending.
-                var owned = value.ToOwned();
-                return client.CreateResult(in owned);
-            });
+            static (client, value) => RespireResult.CreateOwned(in value, client.Core.Options.Serializer));
     }
 }
 
