@@ -13,9 +13,26 @@ public class CompletionBufferRetentionTests
     private static readonly FieldInfo Spares = typeof(CompletionScheduler).GetField("_spares", BindingFlags.Instance | BindingFlags.NonPublic)!;
 
     [Test, NotInParallel]
-    public async Task WarmDeepDrainsReuseBuffersWithoutAllocations()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task WarmDeepDrainsReuseBuffersWithoutAllocations(bool largeBatchesFirst)
     {
         var scheduler = new CompletionScheduler();
+        if (largeBatchesFirst)
+        {
+            var initial = Enumerable.Range(0, 4 * 255).Select(_ => new PendingResponseSource()).ToArray();
+            for (var index = 0; index < initial.Length; index++)
+            {
+                initial[index].PrepareForUse();
+                scheduler.Add(initial[index], RespValue.Integer(index));
+                if ((index + 1) % 255 == 0) _ = scheduler.FlushDeferred();
+            }
+            scheduler.Execute();
+            foreach (var source in initial) { using var reply = source.Task.GetAwaiter().GetResult(); }
+            var cached = ((Array)Spares.GetValue(scheduler)!).Cast<Array?>().Where(buffer => buffer is not null).ToArray();
+            await Assert.That(cached.Length).IsEqualTo(4);
+            await Assert.That(cached.All(buffer => buffer!.Length == 256)).IsTrue();
+        }
         var sources = Enumerable.Range(0, 12).Select(_ => new PendingResponseSource()).ToArray();
         _ = MeasureDrains(scheduler, sources, false);
         _ = MeasureDrains(scheduler, sources, true);
@@ -25,6 +42,7 @@ public class CompletionBufferRetentionTests
         await Assert.That(measured.Sum).IsEqualTo(32L * 66);
         await Assert.That(control.Bytes).IsGreaterThanOrEqualTo(32L * 37);
         await Assert.That(control.Sum).IsEqualTo(measured.Sum);
+        await AssertClearedAndBoundedAsync(scheduler);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
