@@ -3,6 +3,41 @@ using System.Diagnostics;
 namespace Respire.Internal;
 
 /// <summary>Owns correction ordering and bounded cleanup policy for one client core.</summary>
+/// <remarks>
+/// <para>Supplies fence state, bounded foreground observation, attempt classification, and background
+/// queue admission for <see cref="RespireClient.ExecuteWithCorrectionAsync{TResult, TState}"/>.
+/// Rejected or unanswered fences never dispatch dependent corrections. A successful transport drain
+/// also establishes ordering without killing a possibly reused server client ID. Every bounded-attempt
+/// call passes its core explicitly (<c>null</c> for an untracked client) so disposal classification
+/// cannot be skipped through a default argument.</para>
+/// <para><b>Strict</b> corrections and native extensions propagate fence failures; compatible managed
+/// release logs them while keeping its original error and ownership-loss notice.</para>
+/// <para><b>Semaphore</b> cleanup: one-second attempts and foreground waits, a one-minute retry window,
+/// jittered exponential delays from 100 ms to 5 s. Confirmed core disposal or cleanup shutdown is
+/// terminal; another resource's disposal stays retryable while the owning core is live. Without a
+/// core, <see cref="ObjectDisposedException"/> stays terminal for untracked <see cref="IRespireClient"/>
+/// implementations. Server errors and attempt timeouts are retryable. The core queue keeps four
+/// workers, 256 queued items, and at most 256 admission waiters, with overload and abandonment
+/// diagnostics.</para>
+/// <para><b>Cache</b> corrections first use owner-checked FIFO broadcasts; a completed broadcast proves
+/// ordering without a kill or fence. Only an overdue pass creates a fence for the captured connection,
+/// keeping its original peer and ASK state until the broadcast completes. That control connection uses
+/// the independent <c>ConnectTimeout</c> (10 s default), because a cold handshake can outlast the
+/// broadcast wait and fence sends disable command deadlines. Timeout propagates without ordering proof
+/// or a dependent retry; cancellation retires the control connection. Each pass gets fresh TTL
+/// arguments; passes stop when latency no longer halves or falls below tolerance. A detached
+/// shrink-only pass stays observed and is safe if it lands. Every convergence call is awaited (the
+/// <c>ExecuteWithCorrectionAsync</c> callback, <c>CapDelayedTtlAsync</c>, <c>CapRefreshedTtlAsync</c>),
+/// so fence failures propagate.</para>
+/// <para><b>Hash-field lease</b> cleanup keeps owner-checked scripts and Sentinel/Cluster route
+/// targeting. Shared foreground observation and capped probe delays bound the caller's wait without
+/// cancelling owed FIFO corrections; later failures are observed
+/// (<c>BestEffortReleaseHashFieldLeaseAsync</c> catches completed failures, <see cref="WaitAsync(Task, CancellationToken)"/>
+/// attaches a fault observer after a foreground deadline, <c>CorrectHashFieldLeaseAsync</c> observes
+/// unfinished original and routed release tasks).</para>
+/// <para><b>Untracked</b> <see cref="IRespireClient"/> implementations get best-effort cleanup with the
+/// same retry mechanics, but no core-owned queue or explicit fence acknowledgement.</para>
+/// </remarks>
 internal sealed class CorrectionCoordinator(ClientCore core)
 {
     internal CorrectionFence CreateFence(RespireClient client, RespireClient.TrackedConnectionIdentity identity)
@@ -144,6 +179,9 @@ internal sealed class CorrectionCoordinator(ClientCore core)
 /// The owner serializes attempts (the cleanup queue runs one attempt per item at a time).
 /// A transport callback publishes acknowledgement with explicit cross-thread visibility.
 /// </summary>
+/// <remarks>The identity is captured once. A successful <c>CLIENT KILL</c> reply stays proof even if
+/// local socket retirement later fails; queued release retries reuse it and never kill the same
+/// identity again. Debug builds assert that sends never overlap.</remarks>
 internal sealed class CorrectionFence(
     RespireClient.TrackedConnectionIdentity identity,
     Func<RespireClient.TrackedConnectionIdentity, CancellationToken, Action, ValueTask> send,

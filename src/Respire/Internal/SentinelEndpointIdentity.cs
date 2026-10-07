@@ -3,8 +3,17 @@ using System.Net;
 
 namespace Respire.Internal;
 
-// Textual identity never resolves DNS. Address evidence and ROLE-accepted peers have
-// separate representations so an overlapping DNS set cannot silently become ownership.
+/// <summary>
+/// Textual identity never resolves DNS. Address evidence and ROLE-accepted peers have
+/// separate representations so an overlapping DNS set cannot silently become ownership.
+/// </summary>
+/// <remarks>
+/// Defines endpoint equality and hashing for discovery, monitor registration, hint keys, evidence
+/// unions and retained validated owners. Hostname case is ignored; numeric addresses compare by
+/// canonical spelling, including IPv4-mapped IPv6 equivalence; ports stay distinct. Epoch-owner
+/// equivalence (this type) must stay separate from conservative switch-source matching
+/// (<see cref="SentinelAddressEvidence.CouldMatch"/>).
+/// </remarks>
 internal readonly struct SentinelEndpointIdentity : IEquatable<SentinelEndpointIdentity>
 {
     internal string Host { get; }
@@ -61,8 +70,19 @@ internal readonly struct SentinelEndpointIdentity : IEquatable<SentinelEndpointI
     }
 }
 
-// Addresses belong to one observation/lookup lifetime. External arrays are snapshotted;
-// immutable snapshots retain storage on duplicates and copy only when evidence changes.
+/// <summary>
+/// Addresses belong to one observation/lookup lifetime. External arrays are snapshotted;
+/// immutable snapshots retain storage on duplicates and copy only when evidence changes.
+/// </summary>
+/// <remarks>
+/// Switch sources retain this evidence across matching calls. Value equality is typed (no boxing when
+/// switch sources are compared or hashed) and keeps array-snapshot identity; ownership and alias
+/// matching use the explicit operations instead. Default evidence never matches an observation.
+/// <see cref="CouldMatch"/> may fence a possible demoted source, but ownership needs
+/// <see cref="ConfirmsPeer"/> with one unambiguous address: overlapping multi-address sets can neither
+/// confirm an owner nor consume its demotion fence. Unions produce a new snapshot without assigning
+/// chronology.
+/// </remarks>
 internal readonly record struct SentinelAddressEvidence
 {
     internal RespireEndpoint Endpoint { get; }
@@ -172,6 +192,15 @@ internal readonly record struct SentinelAddressEvidence
     }
 }
 
+/// <summary>
+/// Keeps the advertised endpoint separate from the physical peer accepted by ROLE.
+/// </summary>
+/// <remarks>
+/// Discovery holds provisional DNS evidence apart from its accepted peer. At an observed epoch a numeric alias
+/// can confirm the peer even when DNS is unavailable; an unchanged hostname cannot replace it without a newer
+/// epoch. Retained down reports keep their observation-time owner when later DNS or publication changes the
+/// current owner.
+/// </remarks>
 internal readonly record struct SentinelValidatedPrimary(RespireEndpoint Endpoint, RespireEndpoint? Peer)
 {
     public bool Equals(SentinelValidatedPrimary other)

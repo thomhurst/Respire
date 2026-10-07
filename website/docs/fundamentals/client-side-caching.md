@@ -27,14 +27,63 @@ await using var redis = await RespireClient.ConnectAsync(new RespireOptions
 });
 ```
 
-Existing typed APIs and catalog `ExecuteAsync` calls then use the cache transparently. This covers
-deterministic keyed reads across strings, keys, hashes, lists, sets, sorted sets, streams, bitmaps,
-geospatial indexes, Redis arrays, JSON, and vector sets. Typed `GET` and `MGET` keep optimized
+Existing typed APIs, catalog `ExecuteAsync` calls, interpolated commands, and `GetLeaseAsync` then
+use the cache transparently. This covers deterministic keyed reads across strings, keys, hashes,
+lists, sets, sorted sets, streams, bitmaps, geospatial indexes, Redis arrays, JSON, and vector sets
+(see [Cached commands](#cached-commands)). Typed `GET` and `MGET` keep optimized
 per-key entries and partial-hit behavior. Opting into `ReuseHashFields` lets `HMGET` reuse individual `HGET` field entries;
-other replies use exact command-and-argument identities.
+other replies use exact command-and-argument identities, including argument order and binary
+arguments.
 
 Missing keys are cached too. Replies are deep-owned internally and converted for each call, so
-enabling caching does not introduce shared mutable objects.
+enabling caching does not introduce shared mutable objects; serializers run on every hit and
+`GetBytesAsync` still returns a caller-owned array. One cache belongs to each client and is shared
+by all of its `WithKeyPrefix` views.
+
+Enabling the cache requires RESP3: connection setup fails if Redis cannot negotiate RESP3 or enable
+`CLIENT TRACKING`. With `ClientSideCache = null` (the default) no cache, tracking handshake, or
+invalidation handler is created.
+
+## Cached commands
+
+A read is cached only when Redis marks it eligible for client-side caching and Respire can name
+every key it depends on:
+
+| Group | Cached reads |
+|---|---|
+| Strings | `GET`, `MGET`, `STRLEN`, `GETRANGE`, `SUBSTR`, `DIGEST`, `LCS` |
+| Keys | `EXISTS`, `EXPIRETIME`, `PEXPIRETIME`, `TYPE`, `OBJECT ENCODING`, `MEMORY USAGE ... SAMPLES 0`, `SORT_RO` without `BY` or `GET` patterns |
+| Hashes | `HGET`, `HMGET`, `HGETALL`, `HEXISTS`, `HLEN`, `HSTRLEN`, `HKEYS`, `HVALS`, `HEXPIRETIME`, `HPEXPIRETIME` |
+| Lists | `LINDEX`, `LLEN`, `LPOS`, `LRANGE` |
+| Sets | `SCARD`, `SDIFF`, `SINTER`, `SINTERCARD`, `SISMEMBER`, `SMEMBERS`, `SMISMEMBER`, `SUNION`, `SDIFFCARD`, `SUNIONCARD` |
+| Sorted sets | `ZCARD`, `ZCOUNT`, `ZDIFF`, `ZINTER`, `ZINTERCARD`, `ZLEXCOUNT`, `ZMSCORE`, `ZRANGE` and the legacy range aliases, `ZRANK`, `ZREVRANK`, `ZSCORE`, `ZUNION` |
+| Streams | `XLEN`, `XRANGE`, `XREVRANGE`, summary-form `XPENDING`, `XINFO STREAM`, `XINFO GROUPS` |
+| Bitmaps | `GETBIT`, `BITCOUNT`, `BITPOS`, `BITFIELD_RO` |
+| Geospatial | `GEODIST`, `GEOHASH`, `GEOPOS`, `GEOSEARCH` (without `COUNT ... ANY`), `GEORADIUS_RO`, `GEORADIUSBYMEMBER_RO` |
+| Arrays | every read-only command, including `ARSCAN` |
+| JSON | `JSON.ARRINDEX`, `JSON.ARRLEN`, `JSON.GET`, `JSON.MGET`, `JSON.OBJKEYS`, `JSON.OBJLEN`, `JSON.RESP`, `JSON.STRLEN`, `JSON.TYPE` |
+| Vector sets | `VCARD`, `VDIM`, `VEMB`, `VGETATTR`, `VINFO`, `VISMEMBER`, `VLINKS`, `VRANGE`, `VSIM` |
+
+Everything else bypasses the cache and goes to Redis:
+
+- Time-varying or nondeterministic replies: `DUMP`, relative TTLs such as `TTL` and `PTTL`, the
+  core cursor scans (`SCAN`, `HSCAN`, `SSCAN`, `ZSCAN`), random commands, and detailed `XPENDING`,
+  whose idle times change.
+- `SORT_RO` with `BY` or `GET` patterns, whose dependencies cannot be enumerated; `GEOSEARCH` with
+  `COUNT ... ANY`, which may return an arbitrary early subset; and sampled `MEMORY USAGE`, which is
+  an estimate.
+- `TOUCH`, probabilistic structures, blocking reads, scripts and functions, time series, Search, and
+  unkeyed server state.
+- Batches and transactions, which keep their server execution semantics and never consult the
+  local cache.
+
+While caching is enabled, Respire rejects `HELLO`, `RESET`, `SELECT`, `CLIENT CACHING`, and
+`CLIENT TRACKING`, because changing protocol, database, or tracking state would break coherence.
+
+Writes evict the keys they change before dispatch and again after completion, including on error
+and cancellation. When Respire cannot name the affected keys (unknown raw commands, scripts,
+cluster-wide mutations, blocking commands, batches, transactions, and time-series writes that can
+update compaction destinations), it flushes the whole local cache instead.
 
 ## Options
 
@@ -160,8 +209,8 @@ command arguments, which are snapshotted before asynchronous work. Typed facets 
 The cache stores each field with a dependency on its hash key. Redis invalidations and
 local hash writes evict every cached field of that hash. In-flight invalidation, clear,
 and reconnect reject stale insertion. A malformed array or invalid field response rejects
-the whole reply before any field is cached. Cluster MOVED recovery re-establishes tracked
-reads; ASK replies are returned without caching the untracked migration target.
+the whole reply before any field is cached. Cluster `MOVED` and `ASK` recovery flush continuity
+and re-establish tracked reads on the redirected node.
 
 With both `ReuseHashFields` and `CoalesceConcurrentMisses` enabled, concurrent requests with the
 same physical hash key and identical ordered missing fields share one HMGET producer. Full field
@@ -345,9 +394,10 @@ reconnect continuity use the same eviction and stale-insertion checks as `OptIn`
 RESP3 remains required. Standalone, discovered Sentinel data connections, and Redis/Valkey
 Cluster data nodes retain the selected configuration; Cluster slot and database restrictions
 still apply. Blocking/dedicated commands, batches, and transactions continue to bypass caching.
-Changing mode or prefixes requires creating a new client. Non-Cluster `Broadcast` clients can
-use one in-flight command slot. `OptIn` needs two for its validated command prefix, and Cluster
-caching needs two in either mode for atomic `ASKING` plus command redirects.
+Changing mode or prefixes requires creating a new client. `MaxInflightCommands` must allow the
+atomic prefix frames: one for non-Cluster `Broadcast`, two for non-Cluster `OptIn`
+(`CLIENT CACHING YES` plus the read) or Cluster `Broadcast` (`ASKING` plus the read), and three
+for Cluster `OptIn` (`ASKING`, `CLIENT CACHING YES`, and the read).
 
 Redis documents that BCAST trades per-read tracking entries for invalidations on all matching
 writes, even when this client never read those keys. More prefixes add server work, and broad
@@ -446,14 +496,11 @@ ClientSideCache = new RespireClientSideCacheOptions
 },
 ```
 
-An oversized response is returned without being cached. `GetLeaseAsync` participates without
-sharing lease ownership. `GEOSEARCH` with `COUNT ... ANY` is also excluded because Redis may return
-an arbitrary early subset. Only exact `MEMORY USAGE ... SAMPLES 0` calls are cached; sampled size
-estimates bypass the cache. Nondeterministic, random, probabilistic, blocking, script/function,
-time-series, Search, and unkeyed commands bypass caching; so do batches and transactions. Unknown
-mutations conservatively flush local entries before dispatch and after awaited completion.
-Respire rejects raw commands that would change protocol, database, or tracking state while this
-feature is enabled.
+Both limits are hard: whichever is exceeded first triggers eviction. The size estimate covers reply
+payloads, command arguments, dependency keys, and a fixed per-entry overhead. An oversized response
+is returned without being cached. `GetLeaseAsync` participates without sharing lease ownership.
+`LocalExpiration` is checked lazily on lookup; no timer runs. See [Cached commands](#cached-commands)
+for what bypasses the cache.
 
 ## ASP.NET Core registration
 
@@ -467,6 +514,12 @@ builder.Services.AddRespire(options =>
 });
 ```
 
+`RespireDistributedCache` reads through Lua scripts to preserve Microsoft-compatible sliding
+expiration, so its operations never use this command cache. Enable client-side caching on a
+separately registered `IRespireClient` used for direct deterministic reads. `HybridCache` remains
+the better fit for an application-level object L1; Respire's cache stores protocol replies and
+follows Redis invalidations.
+
 ## Diagnostics
 
 ```csharp
@@ -477,14 +530,31 @@ Console.WriteLine($"{statistics.Hits} hits; {statistics.SizeBytes} bytes");
 cache.Clear();
 ```
 
-The `Respire` OpenTelemetry meter emits hit, miss, invalidation, eviction, and continuity-flush
-counters.
+`GetStatistics()` returns a cheap point-in-time snapshot of hits, misses, invalidations, evictions,
+continuity flushes, resident entries, and approximate bytes. `Clear()` also rejects older reads
+still in flight, so they cannot refill the cache.
+
+The `Respire` OpenTelemetry meter emits:
+
+| Instrument | Meaning |
+|---|---|
+| `redis.client.csc.requests` | Cache lookups; `redis.client.csc.result` is `hit` or `miss`. |
+| `redis.client.csc.evictions` | Responses removed; `redis.client.csc.reason` is `full`, `ttl`, or `invalidation`. |
+| `respire.client_cache.invalidations` | Key or broadcast invalidations received. |
+| `respire.client_cache.continuity_flushes` | Flushes caused by connection or topology uncertainty. |
+
+The `redis.client.csc.*` counters are recorded only when the `RespireMetricGroups.ClientSideCaching`
+metric group is enabled, and carry `db.system.name=redis` and
+`redis.client.library=Respire:<version>`. One invalidated key can remove several cached responses
+or none. Local writes, `Clear()`, and continuity flushes do not increment
+`redis.client.csc.evictions`, although `GetStatistics().Evictions` counts flushes.
 
 ## Consistency boundary
 
 Respire rejects a stale read response when an invalidation races cache insertion. It also flushes
 after awaited local mutations and on detected connection loss, reconnect, redirect, and cluster
-topology retirement. `ASK` retries return their value without caching because Redis applies both
-`ASKING` and `CLIENT CACHING YES` to the next command. Like every server-assisted client cache, it
+topology retirement. In `OptIn` mode an `ASK` retry sends `ASKING`, `CLIENT CACHING YES`, and the
+read as one uninterrupted sequence, so the migration target tracks the key. Local TTL is an
+additional staleness bound, not a substitute for tracking. Like every server-assisted client cache, it
 cannot observe invalidations across an undetected network partition. Configure TCP keepalive or
 `ConnectionIdleReadTimeout`, and keep a finite local TTL, when bounded failure detection matters.

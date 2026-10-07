@@ -155,6 +155,39 @@ public interface IRespireClientSideCache
         => throw new NotSupportedException("This client-side cache does not support invalidation observation.");
 }
 
+/// <summary>Per-client RESP3 server-assisted cache shared by the root client and its key-prefixed views.</summary>
+/// <remarks>
+/// <para>
+/// Entries hold immutable, deep-owned <see cref="RespValue"/> replies keyed by resolved wire
+/// identity (command, ordered arguments, physical keys); caller-owned binary arguments are
+/// snapshotted before an asynchronous miss. Typed GET/MGET use per-key entries; other reads use
+/// exact-query entries with explicit key dependencies.
+/// </para>
+/// <para>
+/// Insertion invariant: a per-key read publishes only if its key generation, the continuity epoch,
+/// and the active <see cref="CacheStore"/> all still match the values captured when the read began;
+/// a query read additionally matches the query epoch. Invalidation advances the generation and
+/// query epoch before removing dependent projections, and publication and invalidation are
+/// serialized, so a racing invalidation is never undone by a stale insert. Cancellation, timeout,
+/// protocol failure, and conversion failure release the token without publishing. A Cluster
+/// redirect rebases the token after the continuity flush so the retried read can insert.
+/// </para>
+/// <para>
+/// Local mutations fence their written keys before dispatch and after completion (including error
+/// and cancellation). Unknown or unprovable effects, blocking commands, cluster-wide mutations,
+/// batches, and transactions swap out the whole store at both points instead.
+/// </para>
+/// <para>
+/// Continuity flushes (O(1) store swap plus epoch advance) run on connection close or reconnect,
+/// node retirement, MOVED/ASK redirects, null or broadcast invalidation, <see cref="Clear"/>, and
+/// conservative unknown-command invalidation. Disposal swaps out the store before connections are
+/// released; retired stores stay reachable only from in-flight tokens.
+/// </para>
+/// <para>
+/// When caching is disabled no coordinator exists; the ordinary command path pays only a null
+/// check used for mutation fencing.
+/// </para>
+/// </remarks>
 internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCache
 {
     private const int EntryOverhead = 64;
@@ -897,6 +930,16 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         public bool Retired;
     }
 
+    /// <summary>One generation of resident entries; a full flush replaces the whole store.</summary>
+    /// <remarks>
+    /// Hits are lock-free <see cref="ConcurrentDictionary{TKey, TValue}"/> probes with lazy monotonic
+    /// TTL checks (<see cref="Stopwatch.GetTimestamp"/>): no timer, linked-list mutation, queue growth,
+    /// or global lock. <see cref="RespireClientSideCacheOptions.MaxEntries"/> and
+    /// <see cref="RespireClientSideCacheOptions.MaxSizeBytes"/> are hard limits; the first exceeded
+    /// triggers eviction, which enumerates only after a limit is crossed so auxiliary state stays
+    /// bounded under invalidate/reinsert churn. Size counts deep payloads, arguments, dependency keys,
+    /// and a fixed per-entry overhead. A single value larger than the limit is returned uncached.
+    /// </remarks>
     internal sealed class CacheStore
     {
         private readonly ConcurrentDictionary<RespireKey, CacheEntry> _entries = new();

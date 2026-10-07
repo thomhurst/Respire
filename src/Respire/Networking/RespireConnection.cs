@@ -188,6 +188,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     internal void RequestMetricCloseReason(string reason) => _connectionMetrics?.RequestClose(reason);
     internal void RecordConnectionWait(long started) => _connectionMetrics?.Waited(started);
     internal void RecordConnectionHandoff() => _connectionMetrics?.HandedOff();
+    /// <summary>False as soon as <see cref="RetireAsync"/> starts; <see cref="IsConnected"/> stays true while accepted work drains.</summary>
     internal bool IsAcceptingCommands => IsConnected && !Volatile.Read(ref _retired) && _generation?.IsRetired != true;
     internal int WriteBufferCapacity => Math.Max(_activeBuffer.Capacity, _spareBuffer.Capacity);
     internal bool DrainedSuccessfully => Volatile.Read(ref _drainedSuccessfully);
@@ -3743,6 +3744,25 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     }
 
     /// <summary>Stops acceptance atomically with enqueue, then drains accepted frames and replies.</summary>
+    /// <remarks>
+    /// <para>Acceptance is rejected under the same write gate that publishes serialized frames to
+    /// the response FIFO. An accepted command still writes its complete frame and consumes its
+    /// reply, even if its caller cancelled. An operation waiting for FIFO capacity was never
+    /// accepted and wakes immediately with <see cref="RespireConnectionRetiredException"/>.</para>
+    /// <para>The returned task is shared by all callers. It completes after accepted writes,
+    /// response parsing, scheduled response completions, and socket cleanup. No cancellation
+    /// interrupts a partially written frame. Socket failures and configured timeouts keep their
+    /// usual behavior: <c>CommandTimeout</c> only abandons the caller's wait, so retirement still
+    /// waits for that reply. There is no implicit drain timeout; an owner bounds its own wait and
+    /// disposes to abort a silent peer. A configured response watchdog still aborts the socket.</para>
+    /// <para>If a delivered reply's inline continuation requests retirement,
+    /// <see cref="CompletionScheduler.ReleaseCurrentRunner"/> hands the remaining replies, in order,
+    /// to another worker so retirement does not wait on that continuation. Other queued completions
+    /// still drain before retirement completes.</para>
+    /// <para>Retirement and disposal wait for an in-progress CLIENT ID bootstrap to publish before
+    /// completing identity ownership; a reply dequeued before retirement cannot publish an
+    /// untracked ID afterwards. A successful drain needs no server-side kill.</para>
+    /// </remarks>
     internal Task RetireAsync()
     {
         _completions.ReleaseCurrentRunner();

@@ -1,4 +1,0 @@
-retain=False; followers=8; pausedBorrowed=0; clientsBefore=2; clientsAfter=2; competitorSamples=1; competitorMs=0.502; retiredWhilePaused=True; afterDisposeBorrowed=0
-retain=False; canceledBorrowed=0
-retain=True; followers=8; pausedBorrowed=8; clientsBefore=9; clientsAfter=10; competitorSamples=1; competitorMs=1.408; retiredWhilePaused=False; afterDisposeBorrowed=0
-retain=True; canceledBorrowed=0

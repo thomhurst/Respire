@@ -8,7 +8,18 @@ using Respire.Protocol;
 
 namespace Respire.Internal;
 
-// Event evidence and the single notification discovery worker.
+// Event evidence and the single notification discovery worker. Reducer contracts are on
+// SentinelNotificationState and SentinelNotificationCoalescer.
+// - Worker spacing and policy backoff use the injected Clock TimeProvider for both timestamps
+//   and delays; a timer wake-up rechecks the spacing deadline, even if a test timer fires early.
+// - Recovery logging runs outside the gate and before reconciliation. A logger callback may
+//   allow a competing publication, so Current is captured after it returns and supersession
+//   compares generation identity with the exact discovery result, never endpoint text.
+// - Switch-source DNS checks cancellation and monitor ownership before starting and after the
+//   resolver returns; startup shares the disposal gate, awaiting completion does not. A
+//   cancellation-ignoring source lookup cannot start target lookups after shutdown, even before
+//   linked-token callbacks run. Invalidate checks disposal before changing retirement state, so
+//   late responses cannot retire a generation while shutdown joins background work.
 internal sealed partial class SentinelRouter
 {
     private static readonly TimeSpan NotificationShutdownTimeout = TimeSpan.FromSeconds(10);
@@ -114,7 +125,18 @@ internal sealed partial class SentinelRouter
         }
     }
 
-    // Ordinary logger failures must not stop monitoring, rediscovery or disposal. Fatal failures propagate.
+    /// <summary>
+    /// Ordinary logger failures must not stop monitoring, rediscovery or disposal. Fatal failures propagate.
+    /// </summary>
+    /// <remarks>
+    /// This wrapper, the monitor's SafeLog/LogSentinelEvent and the resolver's LogOptionalDiscoveryFailure
+    /// count isolated recoverable logger failures through <see cref="RespireTelemetry.RecordSentinelGuardedLoggingFailure"/>
+    /// (<c>respire.sentinel.guarded_logging.failures</c>) instead of logging through the failing sink; that call
+    /// also isolates counter-listener exceptions. The counter covers these wrappers only: other Sentinel logging
+    /// paths are not guarded, so this is no general guarantee that a throwing logger cannot interrupt discovery.
+    /// Recovery, retry and guarded diagnostics filter with <see cref="SentinelExceptionPolicy.IsRecoverable"/>;
+    /// cleanup and task joins collect every failure instead.
+    /// </remarks>
     private void SafeLog<TState>(TState state, Action<ILogger, TState> log)
     {
         if (core.Logger is not { } logger) return;

@@ -846,6 +846,8 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     {
     }
 
+    /// <summary>Retries <c>CLIENT KILL</c> for retained failed-socket IDs after a failed retirement fence.</summary>
+    /// <remarks>Success clears the obligations; the original retirement task keeps its failure.</remarks>
     internal async ValueTask FenceRetiredConnectionsAsync(CancellationToken cancellationToken = default)
     {
         if (Volatile.Read(ref _disposed) != 0) throw new CorrectionFenceDisposedException();
@@ -1292,8 +1294,24 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     }
 
     /// <summary>Stops selection and reconnects, drains accepted work, and fences failed sockets.</summary>
-    /// <remarks>A failed fence leaves its IDs retained and faults retirement. Owners must retain
-    /// this generation and retry FenceRetiredConnectionsAsync before dropping correction ownership.</remarks>
+    /// <remarks>
+    /// <para>Stops connection selection and background reconnects, cancels pending handshakes, and
+    /// prevents initialization or reconnect publication afterwards. Existing transports retire
+    /// immediately (see <see cref="RespireConnection.RetireAsync"/>); unpublished connection cleanup
+    /// is awaited, then their drain tasks. Lifecycle notifications queue in transition order and are
+    /// delivered outside lifecycle locks. The retirement <c>Disconnected</c> notification means only
+    /// that work is no longer accepted; await the returned task to observe drain completion.</para>
+    /// <para>Successful drains need no kill. Failed transports with a known Redis client ID, including
+    /// IDs from an interrupted correction bootstrap, keep a <c>CLIENT KILL</c> obligation. Fences go
+    /// through an unpooled control connection using the captured network peer address and the original
+    /// TLS name and authentication settings; it is never published as a replacement and never enables
+    /// client tracking.</para>
+    /// <para>A failed fence faults retirement and retains the unresolved IDs. Owners must retain this
+    /// generation while <see cref="HasPendingCorrectionFences"/> is true and retry
+    /// <see cref="FenceRetiredConnectionsAsync"/> before dropping correction ownership. A faulted
+    /// retirement task is never proof that pending server commands are harmless. Failures before drain
+    /// and identity collection complete fault retirement even if no fence IDs remain.</para>
+    /// </remarks>
     internal Task RetireAsync()
     {
         TaskCompletionSource completion;
@@ -1317,7 +1335,11 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     }
 
     /// <summary>Retires gracefully unless the owner explicitly cancels, then completes abortive cleanup.</summary>
-    /// <remarks>Cancellation does not prove correction ordering. Pending fence IDs remain observable.</remarks>
+    /// <remarks>Pass a token carrying the owner's grace deadline. Cancellation calls
+    /// <see cref="DisposeAsync"/>, awaits cleanup, and throws <see cref="OperationCanceledException"/>.
+    /// The parameterless overload stays graceful-only. Cancellation does not prove drain or correction
+    /// ordering: pending fence IDs remain observable and must be reconciled by their owner, and the
+    /// disposed multiplexer cannot retry a fence later.</remarks>
     internal async Task RetireAsync(CancellationToken abortOnCancellation)
     {
         var retirement = RetireAsync();
@@ -1439,6 +1461,20 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         }
     }
 
+    /// <summary>Abortive shutdown; concurrent callers share one cleanup completion.</summary>
+    /// <remarks>
+    /// <para>Rejects selection, cancels initialization and fencing, closes accepted operations even
+    /// if the peer never replies, and waits for owned transport cleanup. Disposal during retirement
+    /// escalates it; a cancelled fence stays observable to the retirement caller. It never waits
+    /// indefinitely for graceful replies or an unavailable fencing peer.</para>
+    /// <para>Disposal that prevents a required fence faults retirement with
+    /// <see cref="OperationCanceledException"/>, including when it happens before fencing starts or
+    /// retirement is first requested after disposal; unresolved IDs stay visible through
+    /// <see cref="HasPendingCorrectionFences"/>. Abortive cleanup is never proof of correction
+    /// ordering, and a disposed multiplexer cannot retry fencing, so an owner needing correction
+    /// guarantees must complete fencing before disposal or carry the obligation elsewhere.
+    /// Retirement after disposal succeeds only when no fence obligations remain.</para>
+    /// </remarks>
     public ValueTask DisposeAsync()
     {
         TaskCompletionSource completion;
