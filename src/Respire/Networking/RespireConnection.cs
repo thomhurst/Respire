@@ -118,6 +118,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         [FieldOffset(8)] internal readonly AsyncCapacitySignal CapacitySignal = new();
         [FieldOffset(16)] internal readonly CompletionScheduler Completions = new();
         [FieldOffset(24)] internal long SentReplyCount;
+        // Received count, or TimeoutClaimed (-1) after the watchdog's terminal CAS.
         [FieldOffset(32)] internal long ReceivedReplyCount;
         [FieldOffset(40)] internal long DeadlineTimestamp;
         [FieldOffset(64)] internal long LastReadTimestamp = -1;
