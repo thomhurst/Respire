@@ -1218,13 +1218,18 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         CommandDeadline commandDeadline = default,
         bool allowStreamingConnectionReroute = true,
         DedicatedStreamRoute streamingRoute = default,
-        string? preferredZone = null)
+        string? preferredZone = null,
+        bool pinToConnection = false)
         where TCommand : struct, Respire.Protocol.IRespCommand
     {
         if (command is StreamedSetCommand streamedSet)
             return connection.SendAskingStreamedSetAsync(in Asking, streamedSet, cancellationToken, commandDeadline,
                 streamingRoute);
 
+        if (pinToConnection)
+            return connection.SendPrefixedAsync(in Asking, in command, throwOnError: true, cancellationToken,
+                commandName, pinToConnection: true, commandDeadline: commandDeadline,
+                allowStreamingConnectionReroute: allowStreamingConnectionReroute, preferredZone: preferredZone);
         return connection.SendPrefixedCheckedAsync(in Asking, in command, cancellationToken, commandName,
             commandDeadline, allowStreamingConnectionReroute, preferredZone);
     }

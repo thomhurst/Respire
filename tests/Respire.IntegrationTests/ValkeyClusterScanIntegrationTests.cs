@@ -63,6 +63,27 @@ public class ValkeyClusterScanIntegrationTests
                 cursor = RespireClusterScanCursor.Parse(page.Cursor.ToString());
             }
             found.Should().BeEquivalentTo(expected);
+            // Fixed patterns must reach their owner without one bootstrap per preceding slot.
+            var fixedView = resumed.WithKeyPrefix("fixed:");
+            foreach (var (key, pattern) in new[]
+            {
+                ($"{{{Tag(16383)}}}:selected", $"{{{Tag(16383)}}}:*"),
+                ("literal:" + Tag(16383), "literal:" + Tag(16383)),
+            })
+            {
+                await fixedView.SetAsync(key, "fixed-match", cancellationToken: token);
+                var fixedCursor = RespireClusterScanCursor.Start;
+                var fixedFound = new HashSet<string>();
+                for (var pages = 0; pages < 3 && !fixedCursor.IsComplete; pages++)
+                {
+                    var page = await fixedView.Keys.ScanClusterPageAsync(fixedCursor, pattern, countHint: 250,
+                        cancellationToken: token);
+                    fixedFound.UnionWith(page.Keys);
+                    fixedCursor = RespireClusterScanCursor.Parse(page.Cursor.ToString());
+                }
+                fixedCursor.IsComplete.Should().BeTrue("a fixed physical pattern needs at most three pages");
+                fixedFound.Should().BeEquivalentTo([key]);
+            }
             await using var wrongDatabase = await RespireClient.ConnectAsync(options with { Database = 0 }, token);
             var mismatch = async () => await wrongDatabase.WithKeyPrefix((RespireKey)prefix).Keys.ScanClusterPageAsync(checkpoint,
                 match: "*:selected", type: RespireKeyType.String, cancellationToken: token);

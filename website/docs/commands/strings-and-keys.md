@@ -464,6 +464,11 @@ failure. Save the returned cursor only after processing its keys, and make proce
 idempotent: SCAN and CLUSTERSCAN may return duplicates. Empty pages can still have an incomplete
 cursor. `COUNT` is a server work hint, not a maximum number of returned keys.
 `CompletedSlotCount` reports progress across 16,384 slots and can decrease after resharding.
+When the effective physical `MATCH` proves a single slot (a fixed hash tag such as
+`{tenant}:*`, or an exact key without glob metacharacters), other slots cannot contain
+matching keys and count as complete immediately. The scan starts at that slot's owner;
+it does not bootstrap every preceding slot. Wildcards or escapes before the hash tag,
+and text prefixes with a surrogate boundary, retain the general scan path.
 
 Keep the same database, `match`, `type`, and key-prefix view when resuming. These are bound into the
 cursor and a mismatch fails before network access; `countHint` may change. Prefixes are
@@ -491,6 +496,8 @@ The literal zero bootstrap can be redirected before any keys are scanned. Its em
 slot cursor is retained for the validated slot owner without certifying progress. An
 unsupported bootstrap destination permits legacy scanning on that validated owner.
 Redirects and physical retirement share one bounded retry budget per page call.
+ASKING and CLUSTERSCAN stay pinned to the checked destination. Socket retirement
+returns to that page budget, and the replacement's process and capability are checked again.
 
 The cursor records slot ownership/completion and the active primary's server cursor,
 configuration epoch, and process run ID. Each page refreshes topology and reads primary-local

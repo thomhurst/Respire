@@ -257,6 +257,10 @@ with SCAN-per-primary fallback for older servers or unknown capability. Numeric 
 finish unchanged; an opaque cursor is never reused as a numeric SCAN position. RSC3 checkpoints
 add database identity and opaque state while preserving backward reading of RSC1/RSC2; older
 clients reject RSC3. Legacy tokens require callers to retain their original database.
+A fixed physical MATCH hash tag or exact key proves all other slots irrelevant and
+starts scanning at its owner. General patterns retain normal range traversal.
+ASKING prefixes are pinned to checked sockets; retirement returns to the shared page
+recovery budget before replacement process/capability checks.
 The engine requires SCAN, CLUSTER SLOTS, CLUSTER NODES and INFO, and COMMAND INFO/CLUSTERSCAN
 for modern selection. It validates a node pass or modern owner range
 before committing completion. Empty pages and duplicates are valid; failed calls preserve

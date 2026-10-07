@@ -1,6 +1,4 @@
 using System.Globalization;
-using System.Runtime.CompilerServices;
-using System.Text;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Networking;
@@ -10,9 +8,6 @@ namespace Respire;
 
 internal sealed partial class KeyCommands
 {
-    private ConditionalWeakTable<RespireConnection, ScanCapability>? _scanCapabilities;
-    private sealed record ScanCapabilityEvidence(string RunId, bool Supported);
-    private sealed class ScanCapability { internal ScanCapabilityEvidence? Evidence; }
     private sealed class ScanRecovery
     {
         internal int Rejections;
@@ -74,9 +69,12 @@ internal sealed partial class KeyCommands
         if (cursor.IsComplete) return new(cursor, []);
         // Never mutate a published cursor. Failure/cancellation leaves the caller's checkpoint intact.
         var state = cursor.State?.Copy() ?? new ClusterScanState(checkpointMatch, typeToken, prefix?.Text) { BinaryPrefix = binaryPrefix };
-        state.Database ??= client.Core.Options.Database;
+        // Legacy tokens cannot prove their original database. Adopt the caller's database
+        // once and publish RSC3 so subsequent resumes enforce that identity.
+        if (state.Database is null) state.Database = client.Core.Options.Database;
         var topology = await ReadScanTopologyAsync(cancellationToken, recovery.Discovery).ConfigureAwait(false);
         ReconcileScan(state, topology);
+        RestrictScanToMatchingSlot(state, client.EncodedKeyPrefix is { HasSurrogateBoundary: true } ? null : effectiveMatch);
         var node = SelectScanNode(state, topology);
         if (node is null)
         {
@@ -137,168 +135,17 @@ internal sealed partial class KeyCommands
         {
             // Validate the complete pass against fresh, primary-local ownership and migration
             // state. An in-progress migration is never certified as a completed slot scan.
-            await CompleteScanPassAsync(state, cancellationToken, recovery.Discovery).ConfigureAwait(false);
+            await CompleteScanPassAsync(state, effectiveMatch, cancellationToken, recovery.Discovery).ConfigureAwait(false);
         }
         return new(new RespireClusterScanCursor(state), keys.ToArray());
     }
 
-    private async ValueTask<bool> SupportsClusterScanAsync(RespireConnection connection, string runId,
-        CancellationToken cancellationToken)
-    {
-        var cache = _scanCapabilities;
-        if (cache is null)
-        {
-            var created = new ConditionalWeakTable<RespireConnection, ScanCapability>();
-            cache = Interlocked.CompareExchange(ref _scanCapabilities, created, null) ?? created;
-        }
-        var capability = cache.GetOrCreateValue(connection);
-        if (Volatile.Read(ref capability.Evidence) is { } known && known.RunId == runId) return known.Supported;
-        try
-        {
-            using var reply = await client.SendOnPinnedConnectionAsync("COMMAND INFO", connection,
-                new Cmd1(RespireCommands.Server.COMMAND_INFO.Verb, "CLUSTERSCAN"), cancellationToken).ConfigureAwait(false);
-            if (reply.Type != RespDataType.Array || reply.AsArray().Length != 1) return false;
-            var entry = reply.AsArray()[0];
-            bool supported;
-            if (entry.IsNull) supported = false;
-            else if (entry.Type == RespDataType.Array && entry.AsArray().Length > 0
-                && entry.AsArray()[0].Type is RespDataType.BulkString or RespDataType.SimpleString
-                && ClusterInspectionParser.Text(in entry.AsArray()[0]).Equals("clusterscan", StringComparison.OrdinalIgnoreCase))
-                supported = true;
-            else return false;
-            Volatile.Write(ref capability.Evidence, new(runId, supported));
-            return supported;
-        }
-        catch (RespireServerException error) when (error.Code == "NOPERM"
-            || error.Message.StartsWith("ERR unknown command ", StringComparison.OrdinalIgnoreCase))
-        {
-            // Unknown metadata permits a legacy pass, but is not cached as command absence.
-            return false;
-        }
-    }
-
-    private async ValueTask<RespireClusterScanPage?> ReadValkeyScanPageAsync(ClusterScanState state,
-        ScanTopology topology, ScanNode node, string runId, string? match, RespireKeyType? type,
-        int countHint, CancellationToken cancellationToken, ScanRecovery recovery)
-    {
-        var starting = state.ValkeyCursor is null;
-        var slot = starting ? 0 : ClusterHash.GetSlot(state.ValkeyCursor!);
-        if (starting)
-        {
-            while (state.Completed[slot] || topology.Moving[slot] || state.Owners[slot] != node.Metadata.Id) slot++;
-            state.ActiveNode = node.Metadata.Id;
-            state.RunId = runId;
-            state.Epoch = node.Metadata.ConfigurationEpoch;
-            // CLUSTERSCAN scans the contiguous owner range, then returns a cursor for
-            // another range. Only this validated range can be certified by this pass.
-            for (var current = slot; current < ClusterHash.SlotCount && state.Owners[current] == state.ActiveNode; current++)
-                state.PassSlots[current] = !state.Completed[current] && !topology.Moving[current];
-        }
-        var command = CreateValkeyClusterScanCommand(client, state.ValkeyCursor ?? "0", match, type,
-            countHint, starting ? slot : null, cancellationToken);
-        var connection = node.Connection;
-        var redirected = false;
-        var asking = false;
-        RespValue reply;
-        while (true)
-        {
-            try
-            {
-                reply = asking
-                    ? await client.SendOnConnectionAsync("CLUSTERSCAN", connection, command, cancellationToken,
-                        sendAsking: true, allowStreamingConnectionReroute: false).ConfigureAwait(false)
-                    : await client.SendOnPinnedConnectionAsync("CLUSTERSCAN", connection, command, cancellationToken).ConfigureAwait(false);
-                break;
-            }
-            catch (RespireServerException error) when (error.Code == "ERR"
-                && error.Message.StartsWith("ERR unknown command 'CLUSTERSCAN'", StringComparison.OrdinalIgnoreCase))
-            {
-                // This is evidence about the actual destination, never about the redirect source.
-                Volatile.Write(ref _scanCapabilities!.GetOrCreateValue(connection).Evidence, new(runId, false));
-                state.ResetPass();
-                return redirected && !starting ? new(new RespireClusterScanCursor(state), []) : null;
-            }
-            catch (RespireServerException error) when (client.Core.Cluster is { } cluster
-                && cluster.CanRetryRetirement(recovery.Rejections, cancellationToken) && ClusterRouter.IsRedirect(error))
-            {
-                redirected = true;
-                recovery.Rejections++;
-                cluster.RecordRejection(ref recovery.Discovery, connection, error);
-                if (ClusterRouter.TryParseRedirect(error, connection.Host, out var changedSlot, out _)
-                    && (!starting || changedSlot == slot))
-                {
-                    state.Completed[changedSlot] = false;
-                    state.PassSlots[changedSlot] = false;
-                    // A rejected scan position is direct evidence of a transition even
-                    // before metadata catches up. Literal-zero bootstrap redirects for
-                    // another slot have scanned no data and do not invalidate its progress.
-                    topology.Moving[changedSlot] = true;
-                }
-                connection = await cluster.GetRedirectConnectionAsync(error, connection,
-                    cancellationToken, slot, recovery.Discovery).ConfigureAwait(false);
-                asking = error.Code == RespireErrorCodes.Ask;
-                runId = await ReadScanRunIdAsync(connection, cancellationToken).ConfigureAwait(false);
-                if (!await SupportsClusterScanAsync(connection, runId, cancellationToken).ConfigureAwait(false))
-                {
-                    state.ResetPass();
-                    return starting ? null : new(new RespireClusterScanCursor(state), []);
-                }
-            }
-        }
-        using (reply)
-        {
-            // Keep the page API's existing string decoding/prefix contract. The typed
-            // primitive remains binary-safe for callers needing byte-preserving keys.
-            var nextCursor = ValkeyClusterScanParser.ReadCursor(in reply);
-            var raw = reply.AsArray()[1].AsArray();
-            var keys = new List<string>(raw.Length);
-            var prefix = client.EncodedKeyPrefix;
-            var pattern = prefix is { HasSurrogateBoundary: true } && match is not null
-                ? Encoding.UTF8.GetBytes(match) : null;
-            foreach (ref readonly var key in raw)
-            {
-                if (key.Type != RespDataType.BulkString || key.IsNull)
-                    throw new RespireProtocolException("CLUSTERSCAN keys must be bulk strings.");
-                if (state.Completed[ClusterHash.GetSlot(key.AsSpan())]) continue;
-                if (prefix is null) keys.Add(key.AsString());
-                else if (ScanKey(in key, prefix) is { } stripped
-                    && (pattern is null || ByteGlob.IsMatch(Encoding.UTF8.GetBytes(stripped), pattern))) keys.Add(stripped);
-            }
-            cancellationToken.ThrowIfCancellationRequested();
-            // Literal "0" may itself be redirected before the server creates the SLOT
-            // cursor. That empty bootstrap has scanned no data and certifies no slots;
-            // keep its opaque position for the original, validated slot owner.
-            var bootstrap = starting && raw.Length == 0 && nextCursor != "0" && ClusterHash.GetSlot(nextCursor) == slot;
-            if (redirected && !bootstrap) state.ResetPass(); // A scanned redirect cannot certify the old owner's range.
-            else if (nextCursor == "0")
-            {
-                // The bootstrap uses SLOT, so a terminal reply only certifies that slot.
-                if (starting)
-                    for (var current = 0; current < ClusterHash.SlotCount; current++) state.PassSlots[current] &= current == slot;
-                await CompleteScanPassAsync(state, cancellationToken, recovery.Discovery).ConfigureAwait(false);
-            }
-            else
-            {
-                var nextSlot = ClusterHash.GetSlot(nextCursor);
-                if (nextSlot < slot) throw new RespireProtocolException("CLUSTERSCAN moved its cursor backwards.");
-                if (!state.PassSlots[nextSlot])
-                {
-                    // The next opaque position belongs to another range (or an already
-                    // completed/migrating slot). Certify only slots strictly before it.
-                    for (var current = nextSlot; current < ClusterHash.SlotCount; current++) state.PassSlots[current] = false;
-                    await CompleteScanPassAsync(state, cancellationToken, recovery.Discovery).ConfigureAwait(false);
-                }
-                else state.ValkeyCursor = nextCursor;
-            }
-            return new(new RespireClusterScanCursor(state), keys.ToArray());
-        }
-    }
-
-    private async ValueTask CompleteScanPassAsync(ClusterScanState state, CancellationToken cancellationToken,
+    private async ValueTask CompleteScanPassAsync(ClusterScanState state, RespireValue? effectiveMatch, CancellationToken cancellationToken,
         ClusterRouter.DiscoveryRound? discovery)
     {
         var after = await ReadScanTopologyAsync(cancellationToken, discovery).ConfigureAwait(false);
         ReconcileScan(state, after);
+        RestrictScanToMatchingSlot(state, effectiveMatch);
         if (state.ActiveNode is { } active && after.Nodes.TryGetValue(active, out var current)
             && state.Epoch == current.Metadata.ConfigurationEpoch
             && state.RunId == await ReadScanRunIdAsync(current.Connection, cancellationToken).ConfigureAwait(false))
@@ -381,6 +228,26 @@ internal sealed partial class KeyCommands
             || node.Metadata.ConfigurationEpoch != state.Epoch
             || state.ValkeyCursor is { } opaque && !state.PassSlots[ClusterHash.GetSlot(opaque)]
             || !state.PassSlots.Any(static eligible => eligible))) state.ResetPass();
+    }
+
+    private static void RestrictScanToMatchingSlot(ClusterScanState state, RespireValue? effectiveMatch)
+    {
+        if (effectiveMatch is not { } pattern) return;
+        var bytes = pattern.AsKey().ToBytes();
+        if (!ClusterHash.TryGetFixedPatternSlot(bytes, out var matchingSlot))
+        {
+            // Without metacharacters this is an exact physical key, including empty tags.
+            if (bytes.AsSpan().IndexOfAny("*?[\\"u8) >= 0) return;
+            matchingSlot = ClusterHash.GetSlot(bytes);
+        }
+        for (var slot = 0; slot < ClusterHash.SlotCount; slot++)
+            if (slot != matchingSlot)
+            {
+                // MATCH itself proves these slots have no eligible keys, even while moving.
+                state.Completed[slot] = true;
+                state.PassSlots[slot] = false;
+            }
+        if (state.ValkeyCursor is { } position && !state.PassSlots[ClusterHash.GetSlot(position)]) state.ResetPass();
     }
 
     private static ScanNode? SelectScanNode(ClusterScanState state, ScanTopology topology)

@@ -25,7 +25,7 @@ public sealed class RespireClusterScanCursor
     public static RespireClusterScanCursor Start { get; } = new(null);
     /// <summary>Whether every slot has completed a validated scan.</summary>
     public bool IsComplete => CompletedSlotCount == ClusterHash.SlotCount;
-    /// <summary>The number of slots whose scan has completed, from zero to 16384.</summary>
+    /// <summary>The number of slots scanned or proven unable to match the filter, from zero to 16384.</summary>
     public int CompletedSlotCount { get; }
 
     /// <summary>Serializes this checkpoint as an opaque, versioned Base64 string.</summary>
@@ -72,7 +72,7 @@ public sealed class RespireClusterScanCursor
             WriteBits(writer, state.PassSlots);
             if (format == ExtendedFormatMagic)
             {
-                writer.Write(state.Database ?? 0);
+                writer.Write(state.Database ?? throw new InvalidOperationException("Extended Cluster scan cursors require database identity."));
                 WriteText(writer, state.ValkeyCursor);
             }
         }

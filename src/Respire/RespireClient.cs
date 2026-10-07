@@ -3277,7 +3277,8 @@ public sealed partial class RespireClient : IRespireClient
         where TCommand : struct, IRespCommand
         => sendAsking
             ? ClusterRouter.SendAskingAsync(connection, in command, cancellationToken, operation,
-                commandDeadline, allowStreamingConnectionReroute, preferredZone: GetTransportReadZone(in command))
+                commandDeadline, allowStreamingConnectionReroute, preferredZone: GetTransportReadZone(in command),
+                pinToConnection: pinToConnection)
             : connection.SendCheckedAsync(in command, cancellationToken, operation,
                 commandDeadline, allowStreamingConnectionReroute, preferredZone: GetTransportReadZone(in command),
                 pinToConnection: pinToConnection);
@@ -3517,15 +3518,16 @@ public sealed partial class RespireClient : IRespireClient
     }
 
     // Physical handles cannot follow transport retirement to a replacement socket. Keep the
-    // same telemetry/error path, but expose no ASKING route on this pinned entry point.
+    // same telemetry/error path, including atomic ASKING prefixes on checked destinations.
     internal ValueTask<RespValue> SendOnPinnedConnectionAsync<TCommand>(
-        string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken)
+        string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken,
+        bool sendAsking = false)
         where TCommand : struct, IRespCommand
         => RespireTelemetry.IsOperationEnabled(operation)
             ? SendOnConnectionInstrumentedAsync(operation, connection, command, cancellationToken,
-                storedProcedureName: null, sendAsking: false, commandDeadline: default,
+                storedProcedureName: null, sendAsking: sendAsking, commandDeadline: default,
                 allowStreamingConnectionReroute: false, pinToConnection: true)
-            : SendOnConnectionCoreAsync(operation, connection, command, cancellationToken,
+            : SendOnConnectionCoreAsync(operation, connection, command, cancellationToken, sendAsking,
                 allowStreamingConnectionReroute: false, pinToConnection: true);
 
     internal ValueTask<RespValue> SendOnConnectionAsync<TCommand>(
