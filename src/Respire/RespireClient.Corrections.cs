@@ -11,12 +11,18 @@ public sealed partial class RespireClient
 
     internal enum CorrectionOrdering
     {
+        // Waits for the captured connection's fence before the dependent correction; a fence
+        // failure propagates and prevents the correction.
         FenceFirst,
-        // The supplied correction owns FIFO ordering, route following, and any required fence.
+        // The supplied correction owns FIFO ordering, route following, and any required fence
+        // (cache TTL convergence, hash-field lease cleanup, queued semaphore fence-then-release).
+        // No fence acknowledgement is fabricated.
         OrderedCorrection,
-        // Compatible managed release must preserve its original error if fencing fails.
+        // Compatible managed release must preserve its original error if fencing fails; fence
+        // failures are only logged. Cannot run a dependent correction.
         BestEffortLockFence,
-        // A managed release without CLIENT permissions still reports ownership loss.
+        // A managed release without CLIENT permissions still reports ownership loss. Cannot run a
+        // dependent correction.
         NotifyOnly,
     }
 
@@ -24,6 +30,12 @@ public sealed partial class RespireClient
     /// Awaits a tracked operation and dispatches cleanup only for an ambiguous outcome.
     /// Setup remains outside this boundary; the identity is read after routing has settled.
     /// </summary>
+    /// <remarks>Submission state and the final connection identity are read only after the response
+    /// settles, so redirects cannot leave cleanup targeting a pre-redirect identity. Callers pass value
+    /// state and static callbacks; success allocates no identity accessor or cleanup closure. Definitive
+    /// Redis errors and transport proof of non-submission skip cleanup. An uncertain managed lock
+    /// operation notifies ownership loss before waiting for a fence. Cleanup is never cancelled with
+    /// the abandoned command's token; <see cref="Internal.CorrectionCoordinator"/> owns its policy.</remarks>
     internal ValueTask<TResult> ExecuteWithCorrectionAsync<TResult>(
         ITrackedCorrectionExecution<TResult> execution,
         CorrectionOrdering ordering,

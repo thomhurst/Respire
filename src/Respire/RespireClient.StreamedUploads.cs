@@ -8,6 +8,11 @@ public sealed partial class RespireClient
 {
     // Uploads retain one deadline through acquisition, source reads, redirects and retirement.
     // DedicatedLeaseAcquisition owns safe pool replacement; the connection owns frame admission.
+    // Upload orchestration is separate from blocking commands: blocking sends keep their
+    // response-timeout exemption and read-role fallback. Both share the rental helper and return
+    // or discard a lease through the pool that supplied it. Pre-header retries (MOVED/ASK,
+    // retirement, maintenance relaxation) preserve prefetched bytes; completed redirect replies
+    // reset only replayable sources. One telemetry scope follows each logical upload.
     private CommandDeadline CreateUploadDeadline()
         => _core.Options.CommandTimeout is { } timeout
             ? CommandDeadline.After(Math.Max(1L, (long)timeout.TotalMilliseconds))

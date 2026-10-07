@@ -706,6 +706,13 @@ internal sealed class ClientCore : IAsyncDisposable
     internal ValueTask ReleaseServerPoolAsync(DedicatedConnectionPool pool)
         => new(_ownedPools.ReleaseAsync(pool));
 
+    /// <remarks>Observes each owner separately in disposal order; a pool, subscription hub, or router
+    /// failure cannot skip a later owner. A single failure (even an owner-supplied
+    /// <see cref="AggregateException"/>) is rethrown unchanged when no other phase fails; multiple
+    /// failures across owners or phases become direct inner exceptions of one
+    /// <see cref="AggregateException"/> after cleanup finishes, including every failure from the
+    /// <see cref="DedicatedPoolLedger"/>. An exception seen through both retirement and disposal is
+    /// reported once.</remarks>
     public async ValueTask DisposeAsync()
     {
         // Preserve worker ownership through client cleanup awaits without flowing it into

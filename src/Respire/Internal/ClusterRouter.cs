@@ -9,6 +9,47 @@ using Respire.Networking;
 
 namespace Respire.Internal;
 
+/// <summary>Routes Cluster commands and owns every node generation from publication to cleanup.</summary>
+/// <remarks>
+/// <para><b>Generation ownership.</b> A successful topology publication prunes departed and
+/// superseded generations from endpoint, node-ID, reverse-ID, health-handler, redirect, and
+/// dedicated-pool lookup. Newer MOVED/ASK routes keep their version protection. Seed addresses stay
+/// available for discovery without slots. Re-adding a departed address creates a new generation;
+/// old cleanup cannot remove its replacement.</para>
+/// <para><b>Detached generations</b> drain accepted frames and replies
+/// (<see cref="RespireConnectionMultiplexer.RetireAsync()"/>); their dedicated pools reject new rents
+/// and wait for borrowed operations. No implicit timeout aborts accepted commands. Failed tracked
+/// sockets keep their client IDs and captured peers until <c>CLIENT KILL</c> is acknowledged: each
+/// control attempt is bounded by <c>ConnectTimeout</c> (expiry surfaces as
+/// <see cref="RespireTimeoutException"/>; caller cancellation and disposal keep cancellation
+/// behavior), failed fences retry with exponential delays from 1 to 30 seconds, logged at Debug
+/// (Warning once the delay reaches 30 s, with the retiring-generation count), and the generation stays
+/// owned until success or client disposal. A permanently unreachable peer therefore keeps its
+/// generation alive until disposal.</para>
+/// <para>A failed pool drain, a failure before drain and identity collection complete, or an
+/// unexpected cleanup failure faults generation retirement (logged at Warning) and keeps the
+/// generation owned for disposal; an empty fence set cannot turn these into success, and they do not
+/// enter the fence retry loop. Retrying a faulted memoized transport cleanup task cannot restart
+/// cleanup or prove a drain. MOVED/ASK connection setup can re-resolve a generation retired by a
+/// concurrent publication, with bounded retries and caller cancellation, before sending and never
+/// replaying accepted work.</para>
+/// <para><b>Late corrections.</b> Correction pools share live multiplexer/peer/TLS identities,
+/// including replacement sockets on the same peer; a changed peer gets a separate pool and obsolete
+/// entries detach from lookup. A <see cref="CorrectionLease"/> reservation protects asynchronous rent
+/// through command completion; detached pools close after their reservations return. A late fence
+/// for a successfully drained socket sends nothing. Other late corrections may create a temporary
+/// client-owned pool for the original captured peer after routing ownership is released, never
+/// resolving a new server through the old hostname; TLS keeps the original configured name.
+/// Idempotent script corrections after retirement wait for drain and fence completion. After an owner
+/// successfully retries a failed fence, late corrections proceed although the shared retirement task
+/// keeps its original failure.</para>
+/// <para><b>Disposal</b> aborts active and detached transports, borrowed connections, and control
+/// attempts before awaiting cleanup. It snapshots every owned pool and awaits each pool's shared
+/// abortive cleanup, including pools already retiring in the background, and joins retained
+/// retirement tasks so failures from both phases are preserved even when abortive cleanup succeeds
+/// on a retry. Router and multiplexer cleanup keep internal bulk-task failures before an await can
+/// unwrap them.</para>
+/// </remarks>
 internal sealed partial class ClusterRouter : IAsyncDisposable
 {
     private const int MaxRedirects = 5;
@@ -23,6 +64,12 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     private readonly Dictionary<RespireConnectionMultiplexer, DedicatedConnectionPool> _dedicatedPools = [];
     private readonly Dictionary<RespireConnectionMultiplexer, Action> _dedicatedMovingHandlers = [];
     private readonly Dictionary<CorrectionPoolIdentity, CorrectionPoolEntry> _correctionPools = [];
+    // Guards lookup, routing, and correction ownership together so topology detachment, pool
+    // reservations, and identity publication stay atomic. Snapshot owned objects under it, then
+    // release it before renting, draining, disposing, awaiting, or invoking lifecycle callbacks.
+    // Node and pool lifecycle locks must be released before callbacks take this gate. Observer
+    // installation and peer revalidation happen together under it without a node or pool lock.
+    // Diagnostics take this gate before a pool's _gate; pools never call the router under _gate.
     private readonly Lock _nodesGate = new();
     private ClusterRoutingSnapshot _topology = ClusterRoutingSnapshot.Empty;
     private ulong _dirtyTopologyPages;

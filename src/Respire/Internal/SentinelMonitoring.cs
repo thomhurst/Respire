@@ -4,12 +4,52 @@ using Respire.Protocol;
 
 namespace Respire.Internal;
 
-// Owns Sentinel subscriptions and their transport lifecycle. Generation publication,
-// retirement, and evidence reconciliation remain callbacks guarded by the router.
-// received runs synchronously under gate and must not block or perform network I/O;
-// its asynchronous continuation is awaited after releasing gate. deliveryGap runs
-// outside gate with a captured startup version (zero means an independent gap).
-// The router rechecks disposal when consuming either callback.
+/// <summary>
+/// Owns Sentinel subscriptions and their transport lifecycle. Generation publication,
+/// retirement, and evidence reconciliation remain callbacks guarded by the router.
+/// </summary>
+/// <remarks>
+/// <para>
+/// received runs synchronously under gate and must not block or perform network I/O;
+/// its asynchronous continuation is awaited after releasing gate. deliveryGap runs
+/// outside gate with a captured startup version (zero means an independent gap), so user
+/// logging never holds the publication/disposal gate. The router rechecks disposal when
+/// consuming either callback, before queuing discovery or changing a generation.
+/// Owns subscription resources, reconnect episodes, parsing, the transport/clock/resolver
+/// seams and publication rearm signals; tasks are registered with <see cref="SentinelBackgroundWork"/>.
+/// </para>
+/// <para>
+/// Membership: discovery signals both additions and explicit removal of learned endpoints
+/// (configured endpoints are never removed; see <see cref="SentinelDiscoveryState"/>). Removing
+/// membership never erases primary/epoch evidence. Removal cancels that monitor's linked token and
+/// joins its cleanup; a removed monitor cannot submit late messages or readiness. Re-adding the
+/// endpoint creates a new monitor with an independent delivery gap; membership versions preserve
+/// this restart even when removal and re-addition fall between supervisor snapshots, and stop a
+/// retired monitor changing a re-added endpoint's health. Subscription history and reporter
+/// validation versions survive the restart.
+/// </para>
+/// <para>
+/// Startup validation: first-subscription acknowledgements advance a monitor version. Discovery
+/// captures it before its network lookup and marks it validated only for the reporter whose primary
+/// was accepted, so that reporter's initial gap can reuse the healthy generation without another ROLE
+/// pass. Other reporters stay unvalidated even if attached before the lookup began; a subscription
+/// attaching during the lookup still needs a later pass. Merging an initial gap with any switch, down,
+/// reconnect or overflow gap clears the shortcut. A restarted monitor task does not make its endpoint's
+/// next subscription a first subscription; it reports an independent delivery gap.
+/// </para>
+/// <para>
+/// Reconnect episodes: a monitor captures its publication signal at the start of an episode. Failed
+/// replacement sockets, and temporary clients that close before all subscription acknowledgements,
+/// stay in that outer episode and cannot overwrite an already granted budget; only a successful
+/// subscription resets retry state. A close after successful recovery starts a new episode.
+/// </para>
+/// <para>
+/// Shutdown starts both monitor-client and subscription cleanup even when one fails or hangs, and
+/// collects every failure before recovery policy applies; failures propagate after generation cleanup.
+/// The internal transport seam and shutdown clock let tests exercise cancellation-ignoring clients
+/// without private task-collection reflection.
+/// </para>
+/// </remarks>
 internal sealed class SentinelMonitoring(
     RespireOptions options, ILogger? logger, Lock gate, SentinelDiscoveryState discovery,
     CancellationTokenSource lifetime,
@@ -45,6 +85,14 @@ internal sealed class SentinelMonitoring(
     internal Func<string, CancellationToken, Task<IPAddress[]>> HostResolver { get; set; } = Dns.GetHostAddressesAsync;
     internal int SubscribedCount { get { lock (_gate) return _readySentinels.Count; } }
     internal long SubscriptionVersion { get { lock (_gate) return _subscriptionVersion; } }
+    /// <summary>
+    /// Waits for <paramref name="count"/> ready endpoints through the membership/readiness signal, not polling.
+    /// Honors caller cancellation and wakes on shutdown.
+    /// </summary>
+    /// <remarks>
+    /// Readiness is published only after the delivery-gap callback has queued validation, but readiness alone
+    /// does not prove validation completed; tests join startup rediscovery separately.
+    /// </remarks>
     internal async Task WaitForSubscriptionsAsync(int count, CancellationToken cancellationToken)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(count);

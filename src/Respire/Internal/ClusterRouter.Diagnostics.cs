@@ -4,6 +4,13 @@ namespace Respire.Internal;
 
 internal sealed partial class ClusterRouter
 {
+    /// <summary>Captures scalar retained-generation observations without command-path counters or I/O.</summary>
+    /// <remarks>Takes <c>_nodesGate</c> before any pool's <c>_gate</c>; completion continuations are
+    /// asynchronous. Membership is stable during capture, but transport counters change independently
+    /// and are not a completion barrier. Completed generations are not retained. The snapshot holds no
+    /// generation, connection, pool, router, or exception. No retention-age threshold may abandon an
+    /// owed fence or establish correction ordering, and capture leaves retry backoff, ownership, and
+    /// disposal semantics unchanged.</remarks>
     internal RespireClusterRetirementSnapshot CaptureRetirementSnapshot()
     {
         lock (_nodesGate)

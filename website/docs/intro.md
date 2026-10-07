@@ -39,6 +39,19 @@ Respire combines a performance-focused wire layer with an API designed for curre
 - **First-class blocking commands.** `BLPOP` and blocking stream reads use dedicated pooled connections.
 - **Production integrations.** Dependency injection, Microsoft caching abstractions, typed serialization, and OpenTelemetry are built in.
 
+## Design bets
+
+| Bet | Rejected alternative | Why |
+| --- | --- | --- |
+| Server-assisted client cache | Every read crosses the network, or every app builds its own cache | Redis tracking gives coherent hot reads without application invalidation plumbing |
+| Facets per data type (`redis.Hashes.GetAsync`) | Hundreds of flat prefixed methods | IntelliSense as documentation; the facet is the namespace |
+| Real return types, serializer for `T` | Protocol union struct (`RedisValue`-style) | Union types push protocol details and disposal onto every caller |
+| Explicit lease API for zero-copy | Disposable results everywhere | A disposal obligation should be visible at the call site |
+| Blocking commands on dedicated pooled connections | Forbidding them | The capability is why people use lists and streams as queues |
+| Throwing server errors | Error-as-value inspection | One error model; `.Code` carries the Redis error class |
+| Batch results throw if read before the batch is sent | Awaitable results that deadlock before flush | The await-before-flush deadlock is impossible by construction |
+| Cancellation abandons the wait | Cancelling partially written frames | The wire layer never corrupts the shared connection |
+
 ## A small, typed surface
 
 Common string and key operations sit on the client. Other commands are grouped by data type:

@@ -5,6 +5,16 @@ namespace Respire.Internal;
 
 internal readonly partial record struct SentinelNotificationState
 {
+    /// <summary>
+    /// Source DNS completion carries the collected target DNS answers and snapshots of the current and
+    /// lookup generations. Filters unambiguous target overlap while keeping a known demoted peer, applies
+    /// intervening-generation protection, and decides whether to queue rediscovery.
+    /// </summary>
+    /// <remarks>
+    /// The ledger keeps the actual DNS answers separately from filtered source fences. An empty filtered
+    /// result never manufactures demotion evidence, and an ambiguous target answer cannot prove the source
+    /// is the promoted owner.
+    /// </remarks>
     private SentinelNotificationTransition ResolveSourceEvidence(in SentinelNotificationEvent notification,
         in SentinelNotificationContext context)
     {
