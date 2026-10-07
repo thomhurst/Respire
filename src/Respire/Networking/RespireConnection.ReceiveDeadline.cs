@@ -10,11 +10,26 @@ internal sealed partial class RespireConnection
 
         internal void MarkReplyReceived()
         {
+            // A timeout claims this same counter before closing. Replies racing
+            // that claim either advance first (invalidating the sample) or see
+            // the terminal sentinel. Other pending replies need no gate entry.
+            long received;
+            while (true)
+            {
+                var previous = Volatile.Read(ref ReceivedReplyCount);
+                if (previous == TimeoutClaimed) return;
+                received = previous + 1;
+                if (Interlocked.CompareExchange(ref ReceivedReplyCount, received, previous) == previous)
+                    break;
+            }
+            if (received < Volatile.Read(ref SentReplyCount)) return;
+
             lock (DeadlineGate)
             {
-                if (ReceivedReplyCount == TimeoutClaimed) return;
-                ReceivedReplyCount++;
-                if (ReceivedReplyCount >= SentReplyCount) DeadlineTimestamp = 0;
+                // A writer can start the next pending interval before this idle
+                // cleanup takes the gate; never clear that newly armed deadline.
+                if (Volatile.Read(ref ReceivedReplyCount) >= SentReplyCount)
+                    DeadlineTimestamp = 0;
             }
         }
 
@@ -22,9 +37,13 @@ internal sealed partial class RespireConnection
         {
             lock (DeadlineGate)
             {
-                if (ReceivedReplyCount == TimeoutClaimed) return;
+                var received = Volatile.Read(ref ReceivedReplyCount);
+                if (received == TimeoutClaimed) return;
+                var wasIdle = SentReplyCount <= received;
                 SentReplyCount += count;
-                if (SentReplyCount > ReceivedReplyCount && DeadlineTimestamp == 0)
+                // Final-reply accounting is visible before its gated cleanup.
+                // Rearm a new interval even if the prior timestamp remains set.
+                if (SentReplyCount > received && (wasIdle || DeadlineTimestamp == 0))
                     DeadlineTimestamp = Stopwatch.GetTimestamp();
             }
         }
@@ -33,7 +52,8 @@ internal sealed partial class RespireConnection
         {
             lock (DeadlineGate)
             {
-                if (ReceivedReplyCount != TimeoutClaimed && SentReplyCount > ReceivedReplyCount)
+                var received = Volatile.Read(ref ReceivedReplyCount);
+                if (received != TimeoutClaimed && SentReplyCount > received)
                     DeadlineTimestamp = Stopwatch.GetTimestamp();
             }
         }
