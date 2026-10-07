@@ -13,6 +13,97 @@ namespace Respire.FusionCache.Tests;
 public class DistributedLockerRegistrationTests(RedisTestContainer fixture)
 {
     [Test]
+    [Arguments(2, true)]
+    [Arguments(3, true)]
+    [Arguments(2, false)]
+    [Arguments(3, false)]
+    public async Task BackgroundFactoryRetainsLeaseAccordingToRegisteredPolicy(int protocol, bool releaseOnCancellation)
+    {
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
+        {
+            Protocol = (RespProtocol)protocol, Connections = 1, MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
+        });
+        var services = new ServiceCollection();
+        services.AddSingleton<IRespireClient>(client);
+        var builder = services.AddFusionCache(Guid.NewGuid().ToString()).WithRespireDistributedLocker(
+            new() { ReleaseOnCallerCancellation = releaseOnCancellation, LeaseDuration = TimeSpan.FromSeconds(2) });
+        await using var provider = services.BuildServiceProvider();
+        var locker = (RespireFusionCacheDistributedLocker)builder.DistributedLockerFactory!(provider);
+        using var cache = new ZiggyCreatures.Caching.Fusion.FusionCache(new FusionCacheOptions { CacheName = Guid.NewGuid().ToString() });
+        cache.SetupDistributedLocker(locker);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var backgroundFinished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        cache.Events.BackgroundFactorySuccess += (_, _) => backgroundFinished.TrySetResult();
+        using var caller = new CancellationTokenSource();
+        CancellationToken factoryToken = default;
+        var foreground = cache.GetOrSetAsync<int>("product", async token =>
+        {
+            factoryToken = token;
+            started.TrySetResult();
+            await finish.Task;
+            return 42;
+        }, failSafeDefaultValue: -1, options: new FusionCacheEntryOptions
+        {
+            IsFailSafeEnabled = true, FactorySoftTimeout = TimeSpan.FromMilliseconds(50),
+            FactoryHardTimeout = TimeSpan.FromMilliseconds(50), AllowTimedOutFactoryBackgroundCompletion = true,
+            AllowBackgroundDistributedCacheOperations = false, ReThrowDistributedLockerExceptions = true,
+        }, token: caller.Token).AsTask();
+        try
+        {
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(await foreground.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(-1);
+            var leases = new List<RespireKey>();
+            await foreach (var key in client.Keys.ScanAsync("respire:fusioncache:lock:*:lease")) leases.Add(key);
+            await Assert.That(leases.Count).IsEqualTo(1);
+            await caller.CancelAsync();
+            await Assert.That(factoryToken.IsCancellationRequested).IsTrue();
+            await Assert.That(finish.Task.IsCompleted).IsFalse();
+            if (releaseOnCancellation)
+            {
+                using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                while (await client.GetBytesAsync(leases[0], limit.Token) is not null) await Task.Delay(10, limit.Token);
+            }
+            else
+            {
+                await Task.Delay(TimeSpan.FromSeconds(3));
+                await Assert.That(await client.GetBytesAsync(leases[0])).IsNotNull();
+            }
+            finish.TrySetResult();
+            await backgroundFinished.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(await cache.GetOrDefaultAsync<int>("product")).IsEqualTo(42);
+            // FusionCache announces factory success before its finally releases the handle.
+            using var released = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            while (await client.GetBytesAsync(leases[0], released.Token) is not null) await Task.Delay(10, released.Token);
+        }
+        finally
+        {
+            finish.TrySetResult();
+            await foreground.WaitAsync(TimeSpan.FromSeconds(5));
+            await backgroundFinished.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task RegisteredServiceDiscoveryPassesAcquiredLeasePolicy(bool releaseOnCancellation)
+    {
+        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        var services = new ServiceCollection();
+        services.AddSingleton<IRespireClient>(client);
+        services.AddFusionCacheRespireDistributedLocker(new() { ReleaseOnCallerCancellation = releaseOnCancellation });
+        await using var provider = services.BuildServiceProvider();
+        var locker = (RespireFusionCacheDistributedLocker)provider.GetRequiredService<IFusionCacheDistributedLocker>();
+        using var caller = new CancellationTokenSource();
+        var handle = (RespireFusionCacheLock)(await DistributedLockerTests.AcquireAsync(locker, "cache", TimeSpan.Zero, caller.Token))!;
+        await caller.CancelAsync();
+        await Assert.That(handle.OwnershipCancellationToken.IsCancellationRequested).IsEqualTo(releaseOnCancellation);
+        await DistributedLockerTests.ReleaseAsync(locker, "cache", handle, caller.Token);
+        await Assert.That(await client.GetBytesAsync(handle.LeaseKey)).IsNull();
+    }
+
+    [Test]
     [Arguments(2, false)]
     [Arguments(3, false)]
     [Arguments(2, true)]

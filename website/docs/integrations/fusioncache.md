@@ -171,8 +171,27 @@ FusionCache's own disposal only detaches its locker.
 This reduces cross-node cache stampedes while ownership remains valid. FusionCache's
 object-based locker interface does **not** pass the fencing token to a factory, atomically
 enforce that token on arbitrary cache or database writes, or cancel a factory after ownership
-loss. The token passed to acquisition also controls the acquired lease's lifetime: cancelling
-a request-scoped token after acquisition releases the lease even if its factory keeps running.
+loss. By default, the token passed to acquisition also controls the acquired lease's lifetime:
+cancelling a request-scoped token after acquisition releases the lease even if its factory keeps running.
+Set `RespireFusionCacheDistributedLockerOptions.ReleaseOnCallerCancellation = false` to
+use that token only while waiting and handing off acquisition. After a successful handoff,
+renewal continues until explicit release, locker disposal, or ownership loss. This option works
+with direct construction, `WithRespireDistributedLocker`, and `AddFusionCacheRespireDistributedLocker`.
+
+FusionCache 2.9 passes the caller token to foreground acquisition and factory execution.
+When `AllowTimedOutFactoryBackgroundCompletion` is enabled, its timeout path transfers the
+factory and lock handle to background completion, which releases with `CancellationToken.None`.
+Later request cancellation still cancels the token supplied to that factory. A factory that
+ignores cancellation can continue. The independent lease policy keeps that background handle
+renewing after request cancellation, reducing premature release while completion owns the handle.
+Foreground cancellation still makes FusionCache explicitly release its handle; this option does
+not delay that explicit release. See the pinned [factory timeout helper](https://github.com/ZiggyCreatures/FusionCache/blob/v2.9.0/src/ZiggyCreatures.FusionCache/Internals/RunUtils.cs)
+and [background handoff and cleanup](https://github.com/ZiggyCreatures/FusionCache/blob/v2.9.0/src/ZiggyCreatures.FusionCache/FusionCache.cs).
+If background completion never finishes, an independent lease can keep renewing until
+locker disposal or ownership loss; the server lease duration bounds each renewal, not the
+total time a live handle can remain active. Always release handles and dispose the locker.
+Neither policy stops factories or enforces fencing on their writes.
+
 A slow factory or background factory completion can continue after expiry, cancellation,
 or a connection failure and overlap a new owner. The diagnostic `RespireFusionCacheLock`
 handle exposes its token and ownership cancellation token, but FusionCache cannot enforce

@@ -93,7 +93,8 @@ public sealed class RespireFusionCacheDistributedLocker : IFusionCacheDistribute
                 if (attempt.Acquired)
                 {
                     RespireFusionCacheLock? handle = null;
-                    var lifetime = CancellationTokenSource.CreateLinkedTokenSource(token, _shutdownToken);
+                    var lifetime = CancellationTokenSource.CreateLinkedTokenSource(
+                        _options.ReleaseOnCallerCancellation ? token : CancellationToken.None, _shutdownToken);
                     try
                     {
                         token.ThrowIfCancellationRequested();

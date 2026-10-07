@@ -9,6 +9,14 @@ public sealed record RespireFusionCacheDistributedLockerOptions
     /// <summary>Delay between contended attempts, from one millisecond to one second. Defaults to 50 milliseconds.</summary>
     public TimeSpan PollInterval { get; init; } = TimeSpan.FromMilliseconds(50);
 
+    /// <summary>Whether caller cancellation releases an acquired lease. Defaults to true.</summary>
+    /// <remarks>
+    /// Set to false to use the caller token only while waiting and handing off acquisition.
+    /// An acquired lease then renews until explicit release, locker disposal, or ownership loss.
+    /// Neither policy cancels FusionCache factories or enforces fencing on their writes.
+    /// </remarks>
+    public bool ReleaseOnCallerCancellation { get; init; } = true;
+
     internal void Validate()
     {
         if (LeaseDuration < TimeSpan.FromSeconds(1) || LeaseDuration > TimeSpan.FromMinutes(5))

@@ -162,16 +162,29 @@ public class DistributedLockerWireTests
     }
 
     [Test]
-    public async Task RenewalErrorStopsCleanupAndReportsUncertainOwnership()
+    [Arguments(2, true)]
+    [Arguments(3, true)]
+    [Arguments(2, false)]
+    [Arguments(3, false)]
+    public async Task RenewalErrorStopsCleanupAndReportsUncertainOwnership(int protocol, bool releaseOnCancellation)
     {
-        await using var server = new FakeRespServer("$1\r\n1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray())
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray())
         {
-            ReplyOverride = (_, command) => command.StartsWith("SET ", StringComparison.Ordinal)
-                ? "-NOPERM renewal denied\r\n"u8.ToArray() : null,
+            ReplyOverride = (_, command) => command.Split(' ')[0] switch
+            {
+                "HELLO" => "%1\r\n+proto\r\n:3\r\n"u8.ToArray(),
+                "EVALSHA" => "$1\r\n1\r\n"u8.ToArray(),
+                "SET" => "-NOPERM renewal denied\r\n"u8.ToArray(),
+                _ => null,
+            },
         };
-        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = (RespProtocol)protocol, Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) }, Connections = 1,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
+        });
         await using var locker = new RespireFusionCacheDistributedLocker(client,
-            new() { LeaseDuration = TimeSpan.FromSeconds(1) });
+            new() { LeaseDuration = TimeSpan.FromSeconds(1), ReleaseOnCallerCancellation = releaseOnCancellation });
         var owner = (RespireFusionCacheLock)(await DistributedLockerTests.AcquireAsync(locker, "cache", TimeSpan.Zero))!;
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (!owner.OwnershipCancellationToken.IsCancellationRequested) await Task.Delay(10, timeout.Token);
@@ -184,11 +197,28 @@ public class DistributedLockerWireTests
     }
 
     [Test]
-    public async Task CancellationAfterSuccessfulReplyReleasesUnreturnedLeaseWithoutStartingRenewal()
+    [Arguments(2, true)]
+    [Arguments(3, true)]
+    [Arguments(2, false)]
+    [Arguments(3, false)]
+    public async Task CancellationAfterSuccessfulReplyReleasesUnreturnedLeaseWithoutStartingRenewal(int protocol, bool releaseOnCancellation)
     {
-        await using var server = new FakeRespServer("$1\r\n1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
-        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
-        await using var locker = new RespireFusionCacheDistributedLocker(client);
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command.Split(' ')[0] switch
+            {
+                "HELLO" => "%1\r\n+proto\r\n:3\r\n"u8.ToArray(),
+                "EVALSHA" => "$1\r\n1\r\n"u8.ToArray(),
+                _ => null,
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = (RespProtocol)protocol, Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) }, Connections = 1,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
+        });
+        await using var locker = new RespireFusionCacheDistributedLocker(client,
+            new() { ReleaseOnCallerCancellation = releaseOnCancellation });
         using var cancellation = new CancellationTokenSource();
         using var listener = new ActivityListener
         {
@@ -205,9 +235,10 @@ public class DistributedLockerWireTests
         var error = await Assert.That(async () => await DistributedLockerTests.AcquireAsync(locker, "cache", TimeSpan.Zero, cancellation.Token)
             .AsTask().WaitAsync(TimeSpan.FromSeconds(5))).Throws<OperationCanceledException>();
         await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
-        var commands = server.ReceivedCommands;
-        await Assert.That(commands.Count).IsEqualTo(4);
-        var arguments = server.ReceivedArguments;
+        var setupCount = protocol == 3 ? 1 : 0;
+        var commands = server.ReceivedCommands.Skip(setupCount).ToArray();
+        await Assert.That(commands.Length).IsEqualTo(4);
+        var arguments = server.ReceivedArguments.Skip(setupCount).ToArray();
         // Managed release fences uncertainty before deleting only the acquired owner.
         await Assert.That(commands[1]).IsEqualTo("CLIENT ID");
         await Assert.That(commands[2]).IsEqualTo("CLIENT KILL ID 1 SKIPME yes");
