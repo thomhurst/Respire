@@ -25,7 +25,8 @@ and full-capacity bursts verify cleared slots and bounded retention. Cancellatio
 failure and blocked-runner rescue controls exercise the return boundaries.
 
 CI compares the same fixtures against immutable candidate and baseline revisions
-on each supported framework. Connection contention covers public pipelined GET
+on net10.0, as required by repository benchmark policy. Correctness controls run
+on both net8.0 and net10.0. Connection contention covers public pipelined GET
 and 50 concurrent producers. Completion buffer comparisons cover binary GET at
 1 KiB and 1 MiB. Bracketing baseline controls, allocation and latency intervals
 remain part of acceptance; the local allocation control alone does not establish
