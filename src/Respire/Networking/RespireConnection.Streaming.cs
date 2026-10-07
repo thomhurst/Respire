@@ -330,10 +330,10 @@ internal sealed partial class RespireConnection
                 ClampDeadline(source, deadline);
                 // Streaming admission reserved a slot and blocks competing writers; keep the
                 // checked enqueue as the single runtime guard for invariant violations.
-                if (!_inflight.TryEnqueue(source, _enqueuedBytes))
+                if (!_inflight.TryEnqueue(source, _producerProgress.EnqueuedBytes))
                 {
                     _activeBuffer.TruncateTo(start);
-                    Volatile.Write(ref _enqueuedBytes, writeStart);
+                    Volatile.Write(ref _producerProgress.EnqueuedBytes, writeStart);
                     throw new InvalidOperationException("No in-flight slot remained for the ASKING prelude.");
                 }
                 if (_responseTimeout is not null) _activeReplyCount++;
@@ -631,7 +631,7 @@ internal sealed partial class RespireConnection
             // An earlier reply may still be pending after its frame has been sent and the
             // flush loop has parked. Wake inline whenever this header starts an empty buffer.
             startedBatch = start == 0;
-            requestWriteStart = _enqueuedBytes;
+            requestWriteStart = _producerProgress.EnqueuedBytes;
             try
             {
                 var writer = new RespWriter(_activeBuffer);
@@ -644,7 +644,7 @@ internal sealed partial class RespireConnection
                 _activeBuffer.TruncateTo(start);
                 throw;
             }
-            Volatile.Write(ref _enqueuedBytes, _enqueuedBytes + _activeBuffer.Count - start);
+            Volatile.Write(ref _producerProgress.EnqueuedBytes, _producerProgress.EnqueuedBytes + _activeBuffer.Count - start);
             return _activeBuffer.WriteCompletion;
         }
     }
@@ -655,7 +655,7 @@ internal sealed partial class RespireConnection
         {
             ThrowIfStreamingUnavailable(rejectRetired: false);
             _activeBuffer.Append(bytes);
-            Volatile.Write(ref _enqueuedBytes, _enqueuedBytes + bytes.Length);
+            Volatile.Write(ref _producerProgress.EnqueuedBytes, _producerProgress.EnqueuedBytes + bytes.Length);
             return _activeBuffer.WriteCompletion;
         }
     }
@@ -669,7 +669,7 @@ internal sealed partial class RespireConnection
         {
             ThrowIfStreamingUnavailable(rejectRetired: false);
             foreach (var segment in bytes) _activeBuffer.Append(segment.Span);
-            Volatile.Write(ref _enqueuedBytes, _enqueuedBytes + bytes.Length);
+            Volatile.Write(ref _producerProgress.EnqueuedBytes, _producerProgress.EnqueuedBytes + bytes.Length);
             return _activeBuffer.WriteCompletion;
         }
     }
@@ -689,10 +689,10 @@ internal sealed partial class RespireConnection
             command.WriteEnd(ref writer);
             // The request's write range spans the header, payload and trailer appends, so it is
             // stamped here rather than by the single-append StampWritePosition helper.
-            var requestWriteEnd = _enqueuedBytes + _activeBuffer.Count - start;
+            var requestWriteEnd = _producerProgress.EnqueuedBytes + _activeBuffer.Count - start;
             source.WriteStart = requestWriteStart;
             source.WriteEnd = requestWriteEnd;
-            Volatile.Write(ref _enqueuedBytes, requestWriteEnd);
+            Volatile.Write(ref _producerProgress.EnqueuedBytes, requestWriteEnd);
             if (!_inflight.TryEnqueue(source, requestWriteEnd))
                 throw new InvalidOperationException("No in-flight slot remained for streamed SET response.");
             // Count the reply only once it is published, so a failed enqueue cannot leak a count.

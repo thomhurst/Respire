@@ -35,6 +35,10 @@ on:
         description: Comma-separated candidate methods that must allocate zero bytes
         default: ''
         type: string
+      improvement-methods:
+        description: Methods whose candidate latency interval must be below both bracketing baseline intervals
+        default: ''
+        type: string
       artifact-prefix:
         description: Unique artifact prefix when calling this workflow more than once
         default: benchmark-comparison
@@ -66,6 +70,7 @@ jobs:
       EXPECTED_COUNT: ${{ inputs.expected-case-count }}
       EXPECTED_METHODS: ${{ inputs.expected-methods }}
       ZERO_ALLOCATION_METHODS: ${{ inputs.zero-allocation-methods }}
+      IMPROVEMENT_METHODS: ${{ inputs.improvement-methods }}
       FRAMEWORK: ${{ matrix.framework }}
     steps:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
@@ -148,7 +153,8 @@ jobs:
           from pathlib import Path
           expected = set(filter(None, os.environ['EXPECTED_METHODS'].split(',')))
           zero_allocation = set(filter(None, os.environ['ZERO_ALLOCATION_METHODS'].split(',')))
-          assert expected and zero_allocation <= expected
+          improvement = set(filter(None, os.environ['IMPROVEMENT_METHODS'].split(',')))
+          assert expected and zero_allocation <= expected and improvement <= expected
           expected_count = int(os.environ['EXPECTED_COUNT'])
           assert expected_count >= len(expected)
           phases = {}
@@ -174,6 +180,9 @@ jobs:
                    'Review latency, confidence intervals, allocations, and drift before merging. A green job validates measurements, not performance acceptance.', '',
                    '| Case | A ns [interval] | Candidate ns [interval] | B ns [interval] | Candidate/A | Candidate/B | B/A drift | Allocated B (A/candidate/B) |',
                    '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |']
+          failures = []
+          if improvement:
+              lines[4] += ' Required improvement: candidate upper latency bound must be below both baseline lower bounds for ' + ', '.join(sorted(improvement)) + '.'
           for identity in sorted(phases['candidate']):
               cases = [phases[phase][identity] for phase in ('baseline-a', 'candidate', 'baseline-b')]
               a, candidate, b = [case['Statistics']['Mean'] for case in cases]
@@ -185,10 +194,15 @@ jobs:
               allocated = '/'.join(str(case['Memory']['BytesAllocatedPerOperation']) for case in cases)
               label = cases[1]['Method'] + (' ' + identity[1] if identity[1] else '')
               lines.append(f"| {label} | {' | '.join(times)} | {100*(candidate/a-1):+.2f}% | {100*(candidate/b-1):+.2f}% | {100*(b/a-1):+.2f}% | {allocated} |")
+              if cases[1]['Method'] in improvement:
+                  intervals = [case['Statistics']['ConfidenceInterval'] for case in cases]
+                  if not intervals[1]['Upper'] < min(intervals[0]['Lower'], intervals[2]['Lower']):
+                      failures.append(f'No demonstrated improvement against both controls: {label}')
           summary = '\n'.join(lines) + '\n'
           Path('comparison.md').write_text(summary)
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as stream:
               stream.write(summary)
+          assert not failures, '; '.join(failures)
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
