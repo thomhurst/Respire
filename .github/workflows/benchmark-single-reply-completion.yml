@@ -1,0 +1,42 @@
+name: Single-reply completion benchmarks
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}-${{ github.event.label.name }}
+  cancel-in-progress: true
+
+jobs:
+  completion:
+    if: github.event.label.name == 'run-single-reply-completion-benchmarks'
+    name: Pooled completion
+    uses: ./.github/workflows/benchmark-compare.yml
+    with:
+      event-base-sha: ${{ github.event.pull_request.base.sha }}
+      candidate-sha: ${{ github.sha }}
+      expected-head-sha: ${{ github.event.pull_request.head.sha }}
+      fixture: benchmarks/Respire.Benchmarks/SingleReplyCompletionBenchmarks.cs
+      filter: '*SingleReplyCompletionBenchmarks*'
+      expected-case-count: 6
+      expected-methods: CallerReleasesFirst,ReceiverReleasesFirst,MultiReply3CallerFirst,MultiReply3ReceiverFirst,MultiReply64CallerFirst,MultiReply64ReceiverFirst
+      zero-allocation-methods: CallerReleasesFirst,ReceiverReleasesFirst,MultiReply3CallerFirst,MultiReply3ReceiverFirst,MultiReply64CallerFirst,MultiReply64ReceiverFirst
+      improvement-methods: CallerReleasesFirst,ReceiverReleasesFirst
+      artifact-prefix: single-reply-completion
+  socket:
+    if: github.event.label.name == 'run-single-reply-completion-benchmarks'
+    name: Public socket commands
+    uses: ./.github/workflows/benchmark-compare.yml
+    with:
+      event-base-sha: ${{ github.event.pull_request.base.sha }}
+      candidate-sha: ${{ github.sha }}
+      expected-head-sha: ${{ github.event.pull_request.head.sha }}
+      fixture: benchmarks/Respire.Benchmarks/PinnedReceiveBenchmarks.cs
+      filter: '*PinnedReceiveBenchmarks*'
+      expected-case-count: 5
+      expected-methods: Ping,Get64,GetLarge64KiB,GetPipeline128,GetConcurrent50
+      artifact-prefix: single-reply-socket
