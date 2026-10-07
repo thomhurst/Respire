@@ -50,6 +50,7 @@ public class ClientSideCacheTests
         var buffer = new WriteBuffer(128);
         var writer = new RespWriter(buffer);
         new ClientCachingCommand().Write(ref writer);
+        writer.Complete();
 
         await Assert.That(buffer.WrittenMemory.ToArray())
             .IsEquivalentTo("*3\r\n$6\r\nCLIENT\r\n$7\r\nCACHING\r\n$3\r\nYES\r\n"u8.ToArray());

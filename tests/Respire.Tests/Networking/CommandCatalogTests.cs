@@ -258,6 +258,7 @@ public class CommandCatalogTests
             {
                 var writer = new RespWriter(buffer);
                 new CatalogCommand(command, []).Write(ref writer);
+                writer.Complete();
                 var position = 0;
                 var status = RespParser.TryParseValue(buffer.WrittenMemory.Span, ref position, out var frame);
                 try

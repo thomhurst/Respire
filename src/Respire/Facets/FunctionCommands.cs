@@ -160,6 +160,7 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
     private readonly struct FunctionRetryCommand(BatchScriptCommand command, string operation, long started,
         TimeSpan budget, RespireServerException lastMissingFunction, CancellationToken callerToken) : IRespCommandWrapper
     {
+        public int GetWriteSizeHint() => command.GetWriteSizeHint();
         public ReadCommandKind ReadKind => command.ReadKind;
         public bool TryGetClusterSlot(out int slot) => command.TryGetClusterSlot(out slot);
         public void Write(ref RespWriter writer) => command.Write(ref writer);

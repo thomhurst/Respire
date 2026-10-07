@@ -73,6 +73,8 @@ internal sealed class BatchScriptCommands(IPendingSink sink) : IBatchScriptComma
 internal readonly struct BatchScriptCommand(
     Verb verb, RespireValue source, RespireValue[] tail, int keyCount) : IRespCommand
 {
+    public int GetWriteSizeHint() => CommandWriteSizeHint.Add(
+        CommandWriteSizeHint.For(verb, source.GetWriteSizeHint()), tail);
     public bool TryGetArgument(int index, out RespireValue value)
     {
         if (index == 0) { value = source; return true; }
