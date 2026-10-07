@@ -5,6 +5,8 @@
     <PackageTags>$(PackageTags);fusioncache;backplane;locking</PackageTags>
   </PropertyGroup>
   <ItemGroup>
+    <!-- Deterministic bounds for the internal polling policy; no public test hooks. -->
+    <InternalsVisibleTo Include="Respire.FusionCache.Tests" />
     <ProjectReference Include="../Respire/Respire.csproj" />
     <ProjectReference Include="../Respire.Coordination/Respire.Coordination.csproj" />
     <PackageReference Include="ZiggyCreatures.FusionCache" />

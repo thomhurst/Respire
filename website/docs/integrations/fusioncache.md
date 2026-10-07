@@ -122,10 +122,15 @@ Synchronous acquisition, release, and disposal block the calling thread until th
 operations, including cleanup, finish.
 An infinite acquisition timeout therefore occupies that thread until acquisition, cancellation,
 or locker disposal ends the wait.
+Many synchronous contenders can contribute to thread-pool starvation. Prefer asynchronous
+FusionCache entry points such as `GetOrSetAsync`, and await `DisposeAsync` for direct locker teardown.
 
 The default lease is 30 seconds and is renewed halfway through each duration. Set
 `RespireFusionCacheDistributedLockerOptions.LeaseDuration` between one second and five minutes;
-`PollInterval` defaults to 50 milliseconds and accepts one millisecond to one second. These
+`PollInterval` defaults to 50 milliseconds and accepts one millisecond to one second. Each
+contended wait varies randomly by up to ±10% to spread retries across nodes, with a
+one-millisecond minimum. A finite wait is capped by its remaining budget, which may be
+shorter than one millisecond. The first attempt is always immediate. These
 options apply to the constructor, `WithRespireDistributedLocker`, and
 `AddFusionCacheRespireDistributedLocker`. The wait timeout does not set the server lease duration.
 Managed renewal fences uncertain commands with `CLIENT ID` and `CLIENT KILL`; Redis ACLs

@@ -15,6 +15,8 @@ namespace Respire.FusionCache;
 /// Supports RESP2 and RESP3 without tracking. Persistent counters must never be deleted, expired,
 /// evicted, or reset. Redis failover can roll back counters. FusionCache's object-based interface
 /// cannot fence arbitrary factory writes or cancel a factory when ownership is lost.
+/// Synchronous acquisition, release, and disposal block a thread until completion. Prefer
+/// asynchronous FusionCache entry points to avoid thread-pool starvation under contention.
 /// </remarks>
 public sealed class RespireFusionCacheDistributedLocker : IFusionCacheDistributedLocker, IDisposable, IAsyncDisposable
 {
@@ -123,7 +125,7 @@ public sealed class RespireFusionCacheDistributedLocker : IFusionCacheDistribute
                     }
                 }
                 if (timeout == TimeSpan.Zero) return null;
-                var delay = _options.PollInterval;
+                var delay = GetPollDelay(_options.PollInterval, Random.Shared.NextDouble());
                 if (timeout != Timeout.InfiniteTimeSpan)
                 {
                     var remaining = timeout - Stopwatch.GetElapsedTime(started);
@@ -167,6 +169,13 @@ public sealed class RespireFusionCacheDistributedLocker : IFusionCacheDistribute
     internal void Forget(RespireFusionCacheLock handle)
     {
         lock (_sync) _handles.Remove(handle);
+    }
+
+    internal static TimeSpan GetPollDelay(TimeSpan interval, double sample)
+    {
+        // Spread contending nodes by +/-10%; never round a short interval down to a busy loop.
+        var ticks = (long)(interval.Ticks * (0.9 + 0.2 * sample));
+        return TimeSpan.FromTicks(Math.Max(TimeSpan.TicksPerMillisecond, ticks));
     }
 
     private static (RespireKey Lease, RespireKey Counter) CreateKeys(string cacheName, string lockName)

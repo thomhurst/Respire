@@ -76,21 +76,25 @@ public sealed partial class RespireFusionCacheLock : IAsyncDisposable
     public ValueTask DisposeAsync()
     {
         TaskCompletionSource completion;
+        CancellationTokenRegistration registration;
         lock (_sync)
         {
             if (_cleanup is not null) return new ValueTask(_cleanup.Task);
             completion = _cleanup = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            // Setting _cleanup freezes registration writes under this same gate. If Register
+            // invokes cleanup synchronously, ObserveLifetime unregisters its returned value instead.
+            registration = _registration;
         }
-        _ = CompleteCleanupAsync(completion);
+        _ = CompleteCleanupAsync(completion, registration);
         return new ValueTask(completion.Task);
     }
 
-    private async Task CompleteCleanupAsync(TaskCompletionSource completion)
+    private async Task CompleteCleanupAsync(TaskCompletionSource completion, CancellationTokenRegistration registration)
     {
         Exception? failure = null;
         try
         {
-            _registration.Unregister();
+            registration.Unregister();
             await _keepAlive.DisposeAsync().ConfigureAwait(false);
             if (_keepAlive.OwnershipLost && _logger is not null)
                 LogOwnershipLost(_logger, LeaseKey, _keepAlive.Failure);
