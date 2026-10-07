@@ -2307,14 +2307,14 @@ public sealed partial class RespireClient : IRespireClient
     /// <summary>The central send path: lazy connect, optional command timeout, telemetry, error translation.</summary>
     internal ValueTask<RespValue> SendAsync<TCommand>(
         string operation,
-        TCommand command,
+        in TCommand command,
         CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
         => SendAsync(operation, command, cancellationToken, RespireCommandFlags.None);
 
     private ValueTask<RespValue> SendAsync<TCommand>(
         string operation,
-        TCommand command,
+        in TCommand command,
         CancellationToken cancellationToken,
         RespireCommandFlags flags,
         bool allowReadFrom = true,
@@ -3257,7 +3257,7 @@ public sealed partial class RespireClient : IRespireClient
     private ValueTask<RespValue> SendOnConnectionCoreAsync<TCommand>(
         string operation,
         RespireConnection connection,
-        TCommand command,
+        in TCommand command,
         CancellationToken cancellationToken,
         bool sendAsking = false,
         CommandDeadline commandDeadline = default,
@@ -3520,7 +3520,7 @@ public sealed partial class RespireClient : IRespireClient
     internal ValueTask<RespValue> SendOnConnectionAsync<TCommand>(
         string operation,
         RespireConnection connection,
-        TCommand command,
+        in TCommand command,
         CancellationToken cancellationToken,
         string? storedProcedureName = null,
         bool sendAsking = false,
@@ -5014,10 +5014,12 @@ public sealed partial class RespireClient : IRespireClient
     }
 
     // Typed send helpers — one per reply shape, shared by every facet.
+    // Synchronous layers borrow the command. Async send/recovery paths still take an
+    // owned value before returning, so no command reference survives an await.
 
     private ValueTask<TResult> ConvertAsync<TCommand, TResult>(
         string operation,
-        TCommand command,
+        in TCommand command,
         CancellationToken ct,
         ResponseConverter<RespireClient, TResult> converter,
         bool transferOwnership = false)
@@ -5026,7 +5028,7 @@ public sealed partial class RespireClient : IRespireClient
 
     internal ValueTask<TResult> ConvertResponseAsync<TCommand, TState, TResult>(
         string operation,
-        TCommand command,
+        in TCommand command,
         CancellationToken ct,
         TState state,
         ResponseConverter<TState, TResult> converter,
@@ -5059,7 +5061,7 @@ public sealed partial class RespireClient : IRespireClient
             SendAsync(operation, command, ct), state, converter, transferOwnership);
     }
 
-    internal ValueTask<long> IntegerAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+    internal ValueTask<long> IntegerAsync<TCommand>(string operation, in TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
         => ConvertAsync(
             operation, command, ct,
@@ -5090,19 +5092,19 @@ public sealed partial class RespireClient : IRespireClient
             _ => IntegerAsync(operation, new CmdN(verb, MapKeys(keys)), ct),
         };
 
-    internal ValueTask<bool> FlagAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+    internal ValueTask<bool> FlagAsync<TCommand>(string operation, in TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
         => ConvertAsync(
             operation, command, ct,
             static (RespireClient _, in RespValue value) => ResponseReader.Flag(in value));
 
-    internal ValueTask<bool> OkOrNullAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+    internal ValueTask<bool> OkOrNullAsync<TCommand>(string operation, in TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
         => ConvertAsync(
             operation, command, ct,
             static (RespireClient _, in RespValue value) => ResponseReader.OkOrNull(in value));
 
-    internal ValueTask<bool> OkResultAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+    internal ValueTask<bool> OkResultAsync<TCommand>(string operation, in TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
         => ConvertAsync(
             operation, command, ct,
@@ -5125,13 +5127,13 @@ public sealed partial class RespireClient : IRespireClient
         }
     }
 
-    internal ValueTask<string> StringAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+    internal ValueTask<string> StringAsync<TCommand>(string operation, in TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
         => ConvertAsync(
             operation, command, ct,
             static (RespireClient _, in RespValue value) => ResponseReader.String(in value));
 
-    internal ValueTask<string?> StringOrNullAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+    internal ValueTask<string?> StringOrNullAsync<TCommand>(string operation, in TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
@@ -5160,7 +5162,7 @@ public sealed partial class RespireClient : IRespireClient
             transferOwnership: false);
     }
 
-    internal ValueTask<byte[]?> BytesOrNullAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+    internal ValueTask<byte[]?> BytesOrNullAsync<TCommand>(string operation, in TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
@@ -5185,58 +5187,58 @@ public sealed partial class RespireClient : IRespireClient
             static (RespireClient _, in RespValue value) => ResponseReader.BytesOrNull(in value));
     }
 
-    internal ValueTask<double> DoubleAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+    internal ValueTask<double> DoubleAsync<TCommand>(string operation, in TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
         => ConvertAsync(
             operation, command, ct,
             static (RespireClient _, in RespValue value) => ResponseReader.Double(in value));
 
-    internal ValueTask<double?> DoubleOrNullAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+    internal ValueTask<double?> DoubleOrNullAsync<TCommand>(string operation, in TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
         => ConvertAsync(
             operation, command, ct,
             static (RespireClient _, in RespValue value) => ResponseReader.DoubleOrNull(in value));
 
-    internal ValueTask<long?> IntegerOrNullAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+    internal ValueTask<long?> IntegerOrNullAsync<TCommand>(string operation, in TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
         => ConvertAsync(
             operation, command, ct,
             static (RespireClient _, in RespValue value) => ResponseReader.IntegerOrNull(in value));
 
     internal ValueTask<long?> IntegerMinusOneOrNullAsync<TCommand>(
-        string operation, TCommand command, CancellationToken ct)
+        string operation, in TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
         => ConvertAsync(
             operation, command, ct,
             static (RespireClient _, in RespValue value) => ResponseReader.IntegerMinusOneOrNull(in value));
 
     internal ValueTask<RespireTtl[]> TtlArrayAsync<TCommand>(
-        string operation, TCommand command, CancellationToken ct)
+        string operation, in TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
         => ConvertAsync(
             operation, command, ct,
             static (RespireClient _, in RespValue value) => ResponseReader.TtlArray(in value));
 
     internal ValueTask<HashFieldExpiryResult[]> HashFieldExpiryResultArrayAsync<TCommand>(
-        string operation, TCommand command, CancellationToken ct)
+        string operation, in TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
         => ConvertAsync(
             operation, command, ct,
             static (RespireClient _, in RespValue value) => ResponseReader.HashFieldExpiryResultArray(in value));
 
-    internal ValueTask<bool[]> FlagArrayAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+    internal ValueTask<bool[]> FlagArrayAsync<TCommand>(string operation, in TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
         => ConvertAsync(
             operation, command, ct,
             static (RespireClient _, in RespValue value) => ResponseReader.FlagArray(in value));
 
-    internal ValueTask<string[]> StringArrayAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+    internal ValueTask<string[]> StringArrayAsync<TCommand>(string operation, in TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
         => ConvertAsync(
             operation, command, ct,
             static (RespireClient _, in RespValue value) => ResponseReader.StringArray(in value));
 
-    internal ValueTask<string?[]> NullableStringArrayAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+    internal ValueTask<string?[]> NullableStringArrayAsync<TCommand>(string operation, in TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
         => ConvertAsync(
             operation, command, ct,
@@ -5245,7 +5247,7 @@ public sealed partial class RespireClient : IRespireClient
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     internal ValueTask<T[]> DeserializeArrayAsync<T, TCommand>(
-        string operation, TCommand command, CancellationToken ct)
+        string operation, in TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
         => ConvertAsync<TCommand, T[]>(
             operation, command, ct,
@@ -5254,25 +5256,25 @@ public sealed partial class RespireClient : IRespireClient
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     internal ValueTask<T?[]> DeserializeNullableArrayAsync<T, TCommand>(
-        string operation, TCommand command, CancellationToken ct)
+        string operation, in TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
         => ConvertAsync<TCommand, T?[]>(
             operation, command, ct,
             static (RespireClient client, in RespValue value) => client.DeserializeNullableArray<T>(in value));
 
-    internal ValueTask<long?[]> NullableIntegerArrayAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+    internal ValueTask<long?[]> NullableIntegerArrayAsync<TCommand>(string operation, in TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
         => ConvertResponseAsync(
             operation, command, ct, this,
             static (RespireClient _, in RespValue value) => ResponseReader.NullableIntegerArray(in value));
 
-    internal ValueTask<double?[]> NullableDoubleArrayAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+    internal ValueTask<double?[]> NullableDoubleArrayAsync<TCommand>(string operation, in TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
         => ConvertResponseAsync(
             operation, command, ct, this,
             static (RespireClient _, in RespValue value) => ResponseReader.NullableDoubleArray(in value));
 
-    internal ValueTask<Dictionary<string, string>> StringMapAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+    internal ValueTask<Dictionary<string, string>> StringMapAsync<TCommand>(string operation, in TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
         => ConvertAsync(
             operation, command, ct,
@@ -5281,7 +5283,7 @@ public sealed partial class RespireClient : IRespireClient
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     internal ValueTask<Dictionary<string, T>> DeserializeMapAsync<T, TCommand>(
-        string operation, TCommand command, CancellationToken ct)
+        string operation, in TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
         => ConvertAsync<TCommand, Dictionary<string, T>>(
             operation, command, ct,
@@ -5289,7 +5291,7 @@ public sealed partial class RespireClient : IRespireClient
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    internal ValueTask<T?> DeserializeAsync<T, TCommand>(string operation, TCommand command, CancellationToken ct)
+    internal ValueTask<T?> DeserializeAsync<T, TCommand>(string operation, in TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
         => ConvertAsync<TCommand, T?>(
             operation, command, ct,
@@ -5297,13 +5299,13 @@ public sealed partial class RespireClient : IRespireClient
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    internal ValueTask<RespireGet<T>> TryDeserializeAsync<T, TCommand>(string operation, TCommand command, CancellationToken ct)
+    internal ValueTask<RespireGet<T>> TryDeserializeAsync<T, TCommand>(string operation, in TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
         => ConvertAsync<TCommand, RespireGet<T>>(
             operation, command, ct,
             static (RespireClient client, in RespValue value) => client.TryDeserializeBorrowed<T>(in value));
 
-    internal ValueTask<RespireLease> LeaseAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+    internal ValueTask<RespireLease> LeaseAsync<TCommand>(string operation, in TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
         => ConvertAsync(
             operation, command, ct,

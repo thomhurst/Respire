@@ -1,0 +1,31 @@
+name: Command conversion benchmarks
+
+on:
+  pull_request:
+    paths:
+      - 'src/Respire/RespireClient.cs'
+      - 'src/Respire/RespireClient.ReadySend.cs'
+      - 'src/Respire/RespireClient.ClusterReadySend.cs'
+      - 'benchmarks/Respire.Benchmarks/CommandConversionBenchmarks.cs'
+      - '.github/workflows/benchmark-command-conversion.yml'
+      - '.github/workflows/benchmark-compare.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    uses: ./.github/workflows/benchmark-compare.yml
+    with:
+      event-base-sha: ${{ github.event.pull_request.base.sha }}
+      candidate-sha: ${{ github.sha }}
+      expected-head-sha: ${{ github.event.pull_request.head.sha }}
+      fixture: benchmarks/Respire.Benchmarks/CommandConversionBenchmarks.cs
+      filter: '*CommandConversionBenchmarks*'
+      expected-case-count: 4
+      expected-methods: SmallLength,LargeSetRange,SmallLengthPipeline,LargeSetRangePipeline
+      artifact-prefix: command-conversion-comparison
