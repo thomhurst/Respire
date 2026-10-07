@@ -1,0 +1,66 @@
+name: Pinned receive benchmarks
+
+on:
+  pull_request:
+    paths:
+      - 'src/Respire/Networking/ReceiveBuffer.cs'
+      - 'src/Respire/Networking/RespireConnection.cs'
+      - 'tests/Respire.Tests/Networking/ReceiveBufferTests.cs'
+      - 'benchmarks/Respire.Benchmarks/PinnedReceiveBenchmarks.cs'
+      - '.github/workflows/benchmark-pinned-receive.yml'
+      - '.github/workflows/benchmark-compare.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  lifetime:
+    name: Receive lifetime (${{ matrix.runner }}, ${{ matrix.framework }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-latest, ubuntu-latest]
+        framework: [net8.0, net10.0]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - name: Verify socket, TLS, growth, streaming, cancellation and shutdown
+        shell: pwsh
+        run: >-
+          dotnet run --project tests/Respire.Tests -c Release -f ${{ matrix.framework }} --
+          --treenode-filter '/*/*/(ReceiveBufferTests|RespireConnectionTests|BufferedBulkReplyTests|CanceledBulkDrainTests|BytesResponseTests|StalledDeliveryTests|TlsTests|DedicatedStreamRouteTests|DeferredStreamCommandTests|StreamedSetTests|AsyncLifecycleCancellationTests)/*'
+          --minimum-expected-tests 214 --report-trx --results-directory TestResults
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: receive-lifetime-${{ matrix.runner }}-${{ matrix.framework }}
+          path: TestResults/
+
+  compare:
+    name: Receive (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-latest, ubuntu-latest]
+    uses: ./.github/workflows/benchmark-compare.yml
+    with:
+      event-base-sha: ${{ github.event.pull_request.base.sha }}
+      candidate-sha: ${{ github.sha }}
+      expected-head-sha: ${{ github.event.pull_request.head.sha }}
+      fixture: benchmarks/Respire.Benchmarks/PinnedReceiveBenchmarks.cs
+      filter: '*PinnedReceiveBenchmarks*'
+      expected-case-count: 5
+      expected-methods: Ping,Get64,GetLarge64KiB,GetPipeline128,GetConcurrent50
+      runner: ${{ matrix.runner }}
+      retained-memory: true
+      artifact-prefix: pinned-receive-${{ matrix.runner }}
