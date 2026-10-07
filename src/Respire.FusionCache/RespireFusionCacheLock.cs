@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Respire.Coordination;
 #if !NET9_0_OR_GREATER
@@ -13,6 +14,7 @@ namespace Respire.FusionCache;
 /// </remarks>
 public sealed partial class RespireFusionCacheLock : IAsyncDisposable
 {
+    private static readonly TimeSpan MaximumTimerDelay = TimeSpan.FromMilliseconds(uint.MaxValue - 1d);
     private readonly RespireFusionCacheDistributedLocker _owner;
     private readonly RespireFencedLock _lease;
     private readonly RespireLockKeepAlive _keepAlive;
@@ -21,6 +23,9 @@ public sealed partial class RespireFusionCacheLock : IAsyncDisposable
     private readonly Lock _sync = new();
     private CancellationTokenRegistration _registration;
     private TaskCompletionSource? _cleanup;
+    private int _lifetimeLimitExpired;
+    private CancellationTokenSource? _limitStop;
+    private Task _limitTask = Task.CompletedTask;
 
     internal RespireFusionCacheLock(RespireFusionCacheDistributedLocker owner, RespireFencedLock lease,
         RespireLockKeepAlive keepAlive, CancellationTokenSource lifetime, ILogger? logger)
@@ -41,12 +46,48 @@ public sealed partial class RespireFusionCacheLock : IAsyncDisposable
     public long FencingToken => _lease.FencingToken;
     /// <summary>Whether renewal conservatively reported lost ownership.</summary>
     public bool OwnershipLost => _keepAlive.OwnershipLost;
+    /// <summary>Whether the optional total lifetime expired and started cleanup. This does not mean the factory stopped.</summary>
+    public bool LifetimeLimitExpired => Volatile.Read(ref _lifetimeLimitExpired) != 0;
     /// <summary>The renewal exception that made ownership uncertain, when present.</summary>
     public Exception? RenewalFailure => _keepAlive.Failure;
-    /// <summary>Signals ownership loss, teardown, or caller cancellation when configured; it cannot cancel FusionCache's factory automatically.</summary>
+    /// <summary>Signals ownership loss, teardown, the optional lifetime limit, or caller cancellation when configured; it cannot cancel FusionCache's factory automatically.</summary>
     public CancellationToken OwnershipCancellationToken { get; }
 
     internal bool BelongsTo(RespireFusionCacheDistributedLocker owner) => ReferenceEquals(_owner, owner);
+
+    internal void StartLifetimeLimit(TimeSpan? maximum)
+    {
+        if (maximum is not { } duration) return;
+        lock (_sync)
+        {
+            if (_cleanup is not null) return;
+            _limitStop = new();
+            // Holding the gate publishes the worker before expiry can start cleanup.
+            _limitTask = ExpireAfterAsync(duration, _limitStop.Token);
+        }
+    }
+
+    private async Task ExpireAfterAsync(TimeSpan duration, CancellationToken stop)
+    {
+        var started = Stopwatch.GetTimestamp();
+        try
+        {
+            while (true)
+            {
+                var remaining = duration - Stopwatch.GetElapsedTime(started);
+                if (remaining <= TimeSpan.Zero) break;
+                await Task.Delay(remaining > MaximumTimerDelay ? MaximumTimerDelay : remaining, stop).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (stop.IsCancellationRequested) { return; }
+        lock (_sync)
+        {
+            if (_cleanup is not null) return;
+            Volatile.Write(ref _lifetimeLimitExpired, 1);
+        }
+        // Do not await cleanup here: cleanup joins this worker before disposing renewal.
+        _ = CleanupAfterCancellationAsync();
+    }
 
     internal void ObserveLifetime()
     {
@@ -95,6 +136,11 @@ public sealed partial class RespireFusionCacheLock : IAsyncDisposable
         try
         {
             registration.Unregister();
+            if (_limitStop is not null)
+            {
+                await _limitStop.CancelAsync().ConfigureAwait(false);
+                await _limitTask.ConfigureAwait(false);
+            }
             await _keepAlive.DisposeAsync().ConfigureAwait(false);
             if (_keepAlive.OwnershipLost && _logger is not null)
                 LogOwnershipLost(_logger, LeaseKey, _keepAlive.Failure);
@@ -109,6 +155,7 @@ public sealed partial class RespireFusionCacheLock : IAsyncDisposable
         }
         finally
         {
+            _limitStop?.Dispose();
             _lifetime.Dispose();
             _owner.Forget(this);
             if (failure is null) completion.TrySetResult();

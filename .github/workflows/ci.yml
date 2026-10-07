@@ -335,6 +335,7 @@ jobs:
           for project in \
             tests/Aspire.Respire.Tests \
             tests/Respire.Tests \
+            tests/Respire.FusionCache.Tests \
             samples/Respire.Samples.Testing \
             samples/Respire.Samples.Cluster \
             samples/Respire.Samples.Sentinel \
@@ -354,6 +355,14 @@ jobs:
         run: |
           dotnet run --project tests/Respire.Tests -c Release -f net8.0 --no-build -- \
             --treenode-filter '/*/*/(Utf8StringTests)|(TlsTests)|(FakeServerTests)|(ConnectionStringParsingTests)/*'
+
+      - name: Run FusionCache lease lifetime regressions
+        env:
+          TUNIT_DISABLE_HTML_REPORTER: 'true'
+        run: >-
+          dotnet run --project tests/Respire.FusionCache.Tests -c Release -f net8.0 --no-build --
+          --treenode-filter '/*/*/(DistributedLockerTests)|(DistributedLockerWireTests)|(DistributedLockerRegistrationTests)|(IndependentLeaseLifetimeTests)|(IndependentLeaseLifetimeWireTests)/*'
+          --minimum-expected-tests 28
 
       - name: Run binary GET regressions without operation tracing
         env:

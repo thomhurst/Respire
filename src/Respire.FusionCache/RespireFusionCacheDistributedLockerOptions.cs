@@ -13,10 +13,18 @@ public sealed record RespireFusionCacheDistributedLockerOptions
     /// <summary>Whether caller cancellation releases an acquired lease. Defaults to true.</summary>
     /// <remarks>
     /// Set to false to use the caller token only while waiting and handing off acquisition.
-    /// An acquired lease then renews until explicit release, locker disposal, or ownership loss.
+    /// An acquired lease then renews until explicit release, locker disposal, ownership loss, or its optional total lifetime limit.
     /// Neither policy cancels FusionCache factories or enforces fencing on their writes.
     /// </remarks>
     public bool ReleaseOnCallerCancellation { get; init; } = true;
+
+    /// <summary>Optional total lifetime after successful independent-handle handoff. Defaults to null (no limit).</summary>
+    /// <remarks>
+    /// Requires <see cref="ReleaseOnCallerCancellation"/> to be false. A finite value must be at least one millisecond.
+    /// Expiry stops renewal and starts owner-checked release; it does not cancel the factory or fence its writes.
+    /// This limit is separate from each server lease duration and the acquisition wait budget.
+    /// </remarks>
+    public TimeSpan? MaximumIndependentLeaseLifetime { get; init; }
 
     internal void Validate()
     {
@@ -24,5 +32,12 @@ public sealed record RespireFusionCacheDistributedLockerOptions
             throw new ArgumentOutOfRangeException(nameof(LeaseDuration), "Lease duration must be between one second and five minutes.");
         if (PollInterval < TimeSpan.FromMilliseconds(1) || PollInterval > TimeSpan.FromSeconds(1))
             throw new ArgumentOutOfRangeException(nameof(PollInterval), "Poll interval must be between one millisecond and one second.");
+        if (MaximumIndependentLeaseLifetime is { } maximum)
+        {
+            if (maximum < TimeSpan.FromMilliseconds(1))
+                throw new ArgumentOutOfRangeException(nameof(MaximumIndependentLeaseLifetime), "Independent lease lifetime must be at least one millisecond, or null for no limit.");
+            if (ReleaseOnCallerCancellation)
+                throw new ArgumentException("A total independent lease lifetime requires ReleaseOnCallerCancellation to be false.", nameof(MaximumIndependentLeaseLifetime));
+        }
     }
 }

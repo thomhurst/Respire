@@ -112,6 +112,7 @@ public sealed class RespireFusionCacheDistributedLocker : IFusionCacheDistribute
                         // A late cancellation cannot hand an unobserved renewing handle to FusionCache.
                         token.ThrowIfCancellationRequested();
                         waiting.Token.ThrowIfCancellationRequested();
+                        handle.StartLifetimeLimit(_options.MaximumIndependentLeaseLifetime);
                         return handle;
                     }
                     catch
