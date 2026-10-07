@@ -61,7 +61,7 @@ internal static class HotKeysParser
                 network[index] = new(Key(in entries[index * 2]), Number(in entries[index * 2 + 1]));
         }
         var additional = new Dictionary<string, RespireResult>(fields.Count, StringComparer.Ordinal);
-        foreach (var field in fields) additional.Add(field.Key, new(field.Value.ToOwned()));
+        foreach (var field in fields) additional.Add(field.Key, RespireResult.CreateOwned(field.Value));
         return new(active == 1, ratio, selected, start, duration, allCpu, allNetwork, sampledCpu, selectedCpu,
             sampledNetwork, selectedNetwork, user, system, totalNetwork, cpu, network, additional);
     }

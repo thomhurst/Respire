@@ -110,7 +110,7 @@ internal static class VectorSetParser
         var count = Number(Take(fields, "attributes-count"));
         long? projection = fields.Remove("projection-input-dim", out var projected) ? Number(in projected) : null;
         var extra = new Dictionary<string, RespireResult>(fields.Count, StringComparer.Ordinal);
-        foreach (var field in fields) extra.Add(field.Key, new(field.Value.ToOwned()));
+        foreach (var field in fields) extra.Add(field.Key, RespireResult.CreateOwned(field.Value));
         return new(quant.AsString(), dimensions, size, links, level, count, projection, extra);
     }
 
