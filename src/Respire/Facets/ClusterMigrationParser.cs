@@ -46,7 +46,7 @@ internal static class ClusterMigrationParser
         var ended = Timestamp(Take(fields, "end_time"), allowUnset: true);
         var pause = ServerDiagnosticsParser.NonnegativeInteger(Take(fields, "write_pause_ms"));
         var additional = new Dictionary<string, RespireResult>(StringComparer.Ordinal);
-        foreach (var (name, field) in fields) additional.Add(name, new RespireResult(field.ToOwned()));
+        foreach (var (name, field) in fields) additional.Add(name, RespireResult.CreateOwned(in field));
         return new(id, slots, source, destination, operation, state, error, retries, created, started, ended, pause, additional);
     }
 

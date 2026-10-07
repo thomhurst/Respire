@@ -17,7 +17,7 @@ maps and attributes can contain at most `int.MaxValue / 2` pairs. Null aggregate
 retain their existing `-1` representation. Completed replies retain their normal
 pooled ownership and must still be disposed.
 
-Fully buffered aggregates up to the payload pool's limit copy their consumed wire
+Dense fully buffered aggregates up to the payload pool's limit copy their consumed wire
 frame once, excluding leading discarded attributes, into a payload buffer owned
 by the root. Nonempty string
 children borrow slices of that copy,
@@ -34,7 +34,9 @@ reads; release builds add no poisoning work. Deserialization materializes string
 byte arrays, primitives, and serializer results while the root remains alive.
 
 Batch and transaction converters finish materializing typed results before disposing
-the reply; deferred raw, script, and function results explicitly use `ToOwned()`.
+the reply; deferred raw, script, function and protocol-shaped additional results
+use `RespireResult.CreateOwned()` as their common materialization boundary. It deep-copies
+the borrowed value with `ToOwned()` before creating a result with its own lifetime.
 Pub/sub dispatch copies payload bytes before placing messages in subscription buffers.
 Scan pages and synchronous response parsers materialize their output before disposal;
 protocol-shaped additional fields use owned copies when they escape that parse.
@@ -62,14 +64,19 @@ copy each retained string child separately instead of allocating an unpooled
 backing frame on every reply. Discarded nested attributes and integer tokens are
 not copied in this fallback. An individual child larger than 64 MiB still needs
 an unpooled allocation. The root lifetime contract applies to either storage mode.
-Shared-frame copies also include integer tokens and framing, so a mostly
-integer aggregate with a few strings can copy more bytes than separate payload
-copies. Integer-only aggregates still copy no payload. These are storage tradeoffs,
-not a guarantee of lower allocation or latency for every aggregate shape.
+Frames of at least 4 KiB whose retained string bytes are less than one eighth of
+the consumed frame also copy retained children separately. Discarded attributes
+do not count as retained string bytes; their counts are restored after parsing.
+Small frames keep the single-copy path, avoiding extra per-child rents for small
+replies. Integer-only aggregates still copy no payload. The 4 KiB/one-eighth policy
+bounds sparse-frame copying; it does not guarantee lower latency for every shape.
 The 100-item payload benchmark uses 1,906-byte MGET and 3,806-byte HGETALL frames,
 both well within the pool's limit; its retained cases hold 50 such replies.
 Two additional MGET/HGETALL rows decode two 1 MiB values each, exposing larger
 copies and pool rounding alongside typed string materialization.
+Sparse mixed replies contain 4,096 elements with only two three-byte strings,
+both singly and in batches retaining 50 replies, to expose the fallback's pool
+pressure and latency tradeoff.
 
 The restartable parser's total requested element slots cannot exceed one third
 of the buffered bytes, across the entire tree, before pool rounding. The budget is
@@ -100,13 +107,15 @@ does not change that rule or the large-bulk direct-fill contract.
 
 ## Performance validation
 
-Parser changes require a pinned baseline/candidate/baseline CI comparison on both
-supported frameworks. Include small and large complete arrays, nested replies,
+Parser performance acceptance uses a pinned baseline/candidate/baseline CI comparison
+on net10.0 under the repository benchmark policy. Correctness remains covered on
+net8.0 and net10.0. Include small and large complete arrays, nested replies,
 and fragmented resumable arrays, with scalar batches as a control; report
 allocation and latency uncertainty. Also measure typed MGET and HGETALL decoding
 and batches retaining 50 replies before draining, to expose payload pool pressure.
-Relevant parser changes start these comparisons automatically; the
-`run-aggregate-benchmarks` label can also start them. The workflow validates both builds before measuring and
+Add the `run-aggregate-benchmarks` label to start comparisons for a selected head;
+ordinary pushes do not repeat the expensive comparisons. Reapplying that label
+cancels an older comparison for the same PR and pins the new head. The workflow validates baseline and candidate builds before measuring and
 retains its pinned revisions, reports, and logs as artifacts.
 Storage growth trades extra copies for bounded speculative allocation. Do not
 infer latency equivalence from correctness tests or pooled-allocation counts.
