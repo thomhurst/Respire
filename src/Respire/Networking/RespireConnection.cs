@@ -45,6 +45,8 @@ namespace Respire.Networking;
 internal sealed partial class RespireConnection : IAsyncDisposable
 {
     private const int DirectFillThreshold = 4 * 1024;
+    private const int ReceiveTailCompactionLimit = 4 * 1024;
+    private const int ReceiveTailCapacityDivisor = 8;
     private const int MaxResponseSize = 512 * 1024 * 1024;
     private static readonly TimeSpan MinWatchdogDelay = TimeSpan.FromMilliseconds(1);
     private static readonly TimeSpan MaxWatchdogSleep = TimeSpan.FromDays(1);
@@ -2532,7 +2534,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 // deferred delivery receives the resulting free tail only afterward.
                 else if (end == buffer.Length
                     || (start >= end - start
-                        && buffer.Length - end < Math.Min(4096, Math.Max(1, buffer.Length / 8))))
+                        && buffer.Length - end < Math.Min(ReceiveTailCompactionLimit,
+                            Math.Max(1, buffer.Length / ReceiveTailCapacityDivisor))))
                 {
                     if (start > 0)
                     {
