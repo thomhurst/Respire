@@ -1,4 +1,5 @@
 using System.Buffers.Text;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using Respire.Networking;
 
@@ -59,29 +60,47 @@ internal static class RespParser
         // Even the shortest RESP value takes three bytes. Share this rent budget across
         // nested aggregates and attributes, rather than trusting each declared count.
         var remainingElements = (buffer.Length - pos) / 3;
-        return TryParseValue(buffer, ref pos, out value, new ParseContext(0, ref remainingElements));
+        var deferredPayloads = 0;
+        var aggregateStatus = TryParseValue(buffer, ref pos, out value,
+            new ParseContext(0, ref remainingElements, ref deferredPayloads), out var start);
+        if (aggregateStatus == RespParseStatus.Done && deferredPayloads != 0)
+            value = value.CopyDeferredPayloads(buffer, start, pos - start);
+        return aggregateStatus;
     }
 
     /// <summary>
-    /// Copies branch depth while every copy refers to the root's stack-local rent budget.
+    /// Copies branch depth while sharing the root's rent budget and deferred payload count.
     /// </summary>
     private readonly ref struct ParseContext
     {
         private readonly ref int _remainingElements;
+        private readonly ref int _deferredPayloads;
         public int Depth { get; }
+        // Constructed contexts defer payloads; ImmediateCopy is only for scalar/bulk
+        // entry points and has no aggregate budget for ForChildren/TryReserve.
+        public static ParseContext ImmediateCopy => default;
+        public bool DeferPayloads { get; }
+        public int DeferredPayloads { get => _deferredPayloads; set => _deferredPayloads = value; }
 
-        public ParseContext(int depth, ref int remainingElements)
+        public ParseContext(int depth, ref int remainingElements, ref int deferredPayloads)
         {
             Depth = depth;
             _remainingElements = ref remainingElements;
+            _deferredPayloads = ref deferredPayloads;
+            DeferPayloads = true;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public ParseContext ForChildren() => new(Depth + 1, ref _remainingElements);
+        public ParseContext ForChildren()
+        {
+            Debug.Assert(DeferPayloads, "ImmediateCopy has no aggregate budget.");
+            return new(Depth + 1, ref _remainingElements, ref _deferredPayloads);
+        }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool TryReserve(int count)
         {
+            Debug.Assert(DeferPayloads, "ImmediateCopy has no aggregate budget.");
             if (count > _remainingElements)
                 return false;
 
@@ -92,10 +111,11 @@ internal static class RespParser
     }
 
     private static RespParseStatus TryParseValue(
-        ReadOnlySpan<byte> buffer, ref int pos, out RespValue value, ParseContext context)
+        ReadOnlySpan<byte> buffer, ref int pos, out RespValue value, ParseContext context, out int valueStart)
     {
         value = default;
         var cursor = pos;
+        valueStart = cursor;
 
         // RESP3 attribute frames ("|") annotate the reply that follows; parse and discard them.
         while (true)
@@ -110,6 +130,7 @@ internal static class RespParser
                 break;
             }
 
+            var priorPayloads = context.DeferredPayloads;
             var attrStatus = TryParseAggregate(buffer, ref cursor, RespDataType.Map, pairCount: true,
                 out var attribute, context);
             if (attrStatus != RespParseStatus.Done)
@@ -118,8 +139,10 @@ internal static class RespParser
             }
 
             attribute.Dispose();
+            context.DeferredPayloads = priorPayloads;
         }
 
+        valueStart = cursor;
         var status = TryParseCore(buffer, ref cursor, out value, context);
         if (status == RespParseStatus.Done)
         {
@@ -179,6 +202,11 @@ internal static class RespParser
         long payloadLength,
         int headerEnd,
         out RespValue value)
+        => TryParseBulkValue(buffer, ref pos, type, payloadLength, headerEnd, out value, ParseContext.ImmediateCopy);
+
+    private static RespParseStatus TryParseBulkValue(
+        ReadOnlySpan<byte> buffer, ref int pos, RespDataType type, long payloadLength, int headerEnd,
+        out RespValue value, ParseContext context)
     {
         value = default;
 
@@ -207,12 +235,15 @@ internal static class RespParser
             return RespParseStatus.InvalidData;
         }
 
-        value = CopyToPooled(type, buffer.Slice(headerEnd, length));
+        value = CreatePayload(type, buffer, headerEnd, length, context);
         pos = headerEnd + total;
         return RespParseStatus.Done;
     }
 
     internal static RespParseStatus TryParseScalar(ReadOnlySpan<byte> buffer, ref int cursor, out RespValue value)
+        => TryParseScalar(buffer, ref cursor, out value, ParseContext.ImmediateCopy);
+
+    private static RespParseStatus TryParseScalar(ReadOnlySpan<byte> buffer, ref int cursor, out RespValue value, ParseContext context)
     {
         value = default;
         var typeByte = buffer[cursor];
@@ -220,11 +251,11 @@ internal static class RespParser
         switch (typeByte)
         {
             case (byte)'+':
-                return TryParseLineString(buffer, ref cursor, RespDataType.SimpleString, out value);
+                return TryParseLineString(buffer, ref cursor, RespDataType.SimpleString, out value, context);
             case (byte)'-':
-                return TryParseLineString(buffer, ref cursor, RespDataType.Error, out value);
+                return TryParseLineString(buffer, ref cursor, RespDataType.Error, out value, context);
             case (byte)'(':
-                return TryParseLineString(buffer, ref cursor, RespDataType.BigNumber, out value);
+                return TryParseLineString(buffer, ref cursor, RespDataType.BigNumber, out value, context);
             case (byte)':':
                 return TryParseInteger(buffer, ref cursor, out value);
             case (byte)'#':
@@ -234,11 +265,11 @@ internal static class RespParser
             case (byte)'_':
                 return TryParseNull(buffer, ref cursor, out value);
             case (byte)'$':
-                return TryParseBulk(buffer, ref cursor, RespDataType.BulkString, out value);
+                return TryParseBulk(buffer, ref cursor, RespDataType.BulkString, out value, context);
             case (byte)'=':
-                return TryParseBulk(buffer, ref cursor, RespDataType.VerbatimString, out value);
+                return TryParseBulk(buffer, ref cursor, RespDataType.VerbatimString, out value, context);
             case (byte)'!':
-                return TryParseBulk(buffer, ref cursor, RespDataType.BulkError, out value);
+                return TryParseBulk(buffer, ref cursor, RespDataType.BulkError, out value, context);
             default:
                 return RespParseStatus.InvalidData;
         }
@@ -258,14 +289,14 @@ internal static class RespParser
             case (byte)'%':
                 return TryParseAggregate(buffer, ref cursor, RespDataType.Map, pairCount: true, out value, context);
             case (byte)'|':
-                return TryParseValue(buffer, ref cursor, out value, context);
+                return TryParseValue(buffer, ref cursor, out value, context, out _);
             default:
-                return TryParseScalar(buffer, ref cursor, out value);
+                return TryParseScalar(buffer, ref cursor, out value, context);
         }
     }
 
     private static RespParseStatus TryParseLineString(
-        ReadOnlySpan<byte> buffer, ref int cursor, RespDataType type, out RespValue value)
+        ReadOnlySpan<byte> buffer, ref int cursor, RespDataType type, out RespValue value, ParseContext context)
     {
         value = default;
         var pos = cursor + 1;
@@ -274,7 +305,7 @@ internal static class RespParser
             return RespParseStatus.NeedMoreData;
         }
 
-        value = CopyToPooled(type, line);
+        value = CreatePayload(type, buffer, cursor + 1, line.Length, context);
         cursor = pos;
         return RespParseStatus.Done;
     }
@@ -364,7 +395,7 @@ internal static class RespParser
     }
 
     private static RespParseStatus TryParseBulk(
-        ReadOnlySpan<byte> buffer, ref int cursor, RespDataType type, out RespValue value)
+        ReadOnlySpan<byte> buffer, ref int cursor, RespDataType type, out RespValue value, ParseContext context)
     {
         value = default;
         var pos = cursor + 1;
@@ -378,7 +409,7 @@ internal static class RespParser
             return RespParseStatus.InvalidData;
         }
 
-        return TryParseBulkValue(buffer, ref cursor, type, length, pos, out value);
+        return TryParseBulkValue(buffer, ref cursor, type, length, pos, out value, context);
     }
 
     private static RespParseStatus TryParseAggregate(
@@ -442,7 +473,8 @@ internal static class RespParser
                     elements[j].Dispose();
                 }
 
-                RespirePools.ValueArrays.Return(elements, clearArray: true);
+                System.Array.Clear(elements, 0, i);
+                RespirePools.ValueArrays.Return(elements);
                 return status;
             }
         }
@@ -456,6 +488,16 @@ internal static class RespParser
     private static readonly ReadOnlyMemory<byte> InternedPong = "PONG"u8.ToArray();
     private static readonly ReadOnlyMemory<byte> InternedQueued = "QUEUED"u8.ToArray();
 
+    private static RespValue CreatePayload(RespDataType type, ReadOnlySpan<byte> buffer, int offset, int length, ParseContext context)
+    {
+        if (!context.DeferPayloads || length == 0)
+            return CopyToPooled(type, buffer.Slice(offset, length));
+        if (type == RespDataType.SimpleString && TryGetInternedSimpleString(buffer.Slice(offset, length), out var interned))
+            return RespValue.SimpleString(interned);
+        context.DeferredPayloads++;
+        return RespValue.DeferredString(type, offset, length);
+    }
+
     internal static RespValue CopyToPooled(RespDataType type, ReadOnlySpan<byte> payload)
     {
         if (payload.IsEmpty)
@@ -465,27 +507,26 @@ internal static class RespParser
 
         // The constant replies that dominate write-heavy traffic (+OK, +PONG, +QUEUED) are
         // interned: no pooled rent on this thread + return on the caller's thread per reply.
-        if (type == RespDataType.SimpleString)
-        {
-            if (payload.SequenceEqual("OK"u8))
-            {
-                return RespValue.SimpleString(InternedOk);
-            }
-
-            if (payload.SequenceEqual("PONG"u8))
-            {
-                return RespValue.SimpleString(InternedPong);
-            }
-
-            if (payload.SequenceEqual("QUEUED"u8))
-            {
-                return RespValue.SimpleString(InternedQueued);
-            }
-        }
+        if (type == RespDataType.SimpleString && TryGetInternedSimpleString(payload, out var interned))
+            return RespValue.SimpleString(interned);
 
         var array = RespirePools.ResponsePayloads.Rent(payload.Length);
         payload.CopyTo(array);
         return RespValue.PooledString(type, array, payload.Length);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool TryGetInternedSimpleString(ReadOnlySpan<byte> payload, out ReadOnlyMemory<byte> interned)
+    {
+        if (payload.SequenceEqual("OK"u8)) interned = InternedOk;
+        else if (payload.SequenceEqual("PONG"u8)) interned = InternedPong;
+        else if (payload.SequenceEqual("QUEUED"u8)) interned = InternedQueued;
+        else
+        {
+            interned = default;
+            return false;
+        }
+        return true;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

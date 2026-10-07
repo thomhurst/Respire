@@ -18,8 +18,10 @@ internal static class RespirePools
     /// <summary>Outgoing command serialization buffers (write coalescing buffers).</summary>
     public static readonly ArrayPool<byte> WriteBuffers = ArrayPool<byte>.Create(4 * 1024 * 1024, 32);
 
+    internal const int MaxPooledResponsePayloadLength = 64 * 1024 * 1024;
+
     /// <summary>Response payload storage handed to <see cref="RespValue"/> instances.</summary>
-    public static readonly ArrayPool<byte> ResponsePayloads = ArrayPool<byte>.Create(64 * 1024 * 1024, 64);
+    public static readonly ArrayPool<byte> ResponsePayloads = ArrayPool<byte>.Create(MaxPooledResponsePayloadLength, 64);
 
     /// <summary>Element storage for RESP array/map/set responses.</summary>
     public static readonly ArrayPool<RespValue> ValueArrays = ArrayPool<RespValue>.Create(64 * 1024, 64);

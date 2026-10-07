@@ -425,7 +425,10 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
             }
 
             if (frame.Elements.Length != 0)
-                RespirePools.ValueArrays.Return(frame.Elements, clearArray: true);
+            {
+                System.Array.Clear(frame.Elements, 0, frame.Index);
+                RespirePools.ValueArrays.Return(frame.Elements);
+            }
             frame = default;
         }
 
