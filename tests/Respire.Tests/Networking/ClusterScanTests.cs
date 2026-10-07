@@ -636,6 +636,21 @@ public class ClusterScanTests
     }
 
     [Test]
+    public async Task DeniedBootstrapFallsBackWithoutCachingAbsence()
+    {
+        await using var cluster = new ScanCluster();
+        cluster.First.Capability = Supported;
+        cluster.First.ClusterScan = _ => "-NOPERM scan denied\r\n"u8.ToArray();
+        await using var client = await cluster.ConnectAsync();
+        var legacy = await client.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start);
+        await Assert.That(legacy.Cursor.CompletedSlotCount).IsEqualTo(8192);
+        cluster.First.ClusterScan = _ => Page("position-{" + TagInSlot(0) + "}-opaque");
+        var modern = await client.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start);
+        await Assert.That(modern.Cursor.State!.ValkeyCursor).IsNotNull();
+        await Assert.That(cluster.First.Server.ReceivedCommands.Count(command => command.StartsWith("CLUSTERSCAN "))).IsEqualTo(2);
+    }
+
+    [Test]
     [Arguments("-ERR unknown command 'CLUSTERSCAN'\r\n")]
     [Arguments("-ERR unknown command \"clusterscan\", with args beginning with: '0'\r\n")]
     [Arguments("-ERR unknown command CLUSTERSCAN\r\n")]

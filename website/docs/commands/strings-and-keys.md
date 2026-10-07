@@ -479,7 +479,9 @@ For a new pass, the client queries `COMMAND INFO CLUSTERSCAN` on the selected ph
 primary. A recognized command entry selects Valkey's CLUSTERSCAN; a null entry selects
 legacy SCAN. Evidence is cached for that connection and process run ID, so a new socket
 or replacement process is checked again. Denied or unknown metadata permits a legacy
-pass without caching command absence. A denied CLUSTERSCAN execution still fails explicitly.
+pass without caching command absence. If CLUSTERSCAN execution is denied at the initial,
+unredirected bootstrap, the pass uses SCAN without caching command absence. Denied opaque
+continuations and redirected execution still fail explicitly, preserving the checkpoint.
 An exact unsupported-command reply from a destination permits fallback on that destination;
 it does not change the redirect source's capability evidence.
 

@@ -12,6 +12,7 @@ internal sealed partial class KeyCommands
     {
         internal int Rejections;
         internal ClusterRouter.DiscoveryRound? Discovery;
+        internal ClusterScanCapabilityCache.ProbeRound Capabilities { get; } = new();
     }
 
     public async ValueTask<RespireClusterScanPage> ScanClusterPageAsync(
@@ -87,7 +88,7 @@ internal sealed partial class KeyCommands
         // Finish an old numeric pass unchanged. Only new passes and opaque continuations
         // select the newer protocol; opaque positions are never sent to SCAN.
         if ((state.ActiveNode is null || state.ValkeyCursor is not null)
-            && await SupportsClusterScanAsync(node.Connection, runId, cancellationToken).ConfigureAwait(false))
+            && await SupportsClusterScanAsync(node.Connection, runId, recovery, cancellationToken).ConfigureAwait(false))
         {
             var modern = await ReadValkeyScanPageAsync(state, topology, node, runId, match, type,
                 countHint, cancellationToken, recovery).ConfigureAwait(false);
