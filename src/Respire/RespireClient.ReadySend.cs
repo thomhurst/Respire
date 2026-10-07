@@ -19,14 +19,14 @@ public sealed partial class RespireClient
             && (ReadCache is null || !ClientSideCacheCoordinator.CanCacheOperation(operation));
 
     private ValueTask<RespValue> SendOnReadyPrimaryAsync<TCommand>(
-        string operation, RespireConnectionMultiplexer multiplexer, TCommand command,
+        string operation, RespireConnectionMultiplexer multiplexer, in TCommand command,
         CancellationToken cancellationToken) where TCommand : struct, IRespCommand
         // Raw sends keep their mutation fence in the outer SendAsync path.
         => SendOnReadyPrimaryAsync<TCommand, RespValue, RawReadySend>(
             operation, multiplexer, command, cancellationToken, new RawReadySend(this));
 
     private ValueTask<TResult> SendOnReadyPrimaryAsync<TCommand, TResult, TSend>(
-        string operation, RespireConnectionMultiplexer multiplexer, TCommand command,
+        string operation, RespireConnectionMultiplexer multiplexer, in TCommand command,
         CancellationToken cancellationToken, TSend sender, ClientSideCacheCoordinator? cache = null,
         ClientSideCacheCoordinator.MutationFence mutationFence = default)
         where TCommand : struct, IRespCommand
