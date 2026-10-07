@@ -154,6 +154,10 @@ on the same physical connection. A complete inventory that omits the named engin
 properties identify the missing engine, selected server, and original command error.
 The original error is also the inner exception. Respire does not load modules or replay
 commands after this exception; an operator must make the engine available before retrying.
+This exception retains the original error's definitive server-reply semantics. Managed lock
+and coordination operations do not fence an outstanding command or abandon ownership merely
+because the missing engine rejected the script. Import sessions also retain their normal
+definitive-rejection behavior. Transport failures remain uncertain.
 
 Detection depends on Valkey's exact missing-engine error wording. If a server version
 changes that wording, Respire returns the original `RespireServerException` without

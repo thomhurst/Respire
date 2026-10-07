@@ -66,7 +66,7 @@ public sealed partial class RespireClient
     }
 
     internal static bool IsUncertainCorrectionOutcome(Exception error)
-        => error is not RespireServerException && !IsCorrectionNotSubmitted(error);
+        => RespireException.GetDefinitiveServerError(error) is null && !IsCorrectionNotSubmitted(error);
 
     internal static bool IsCorrectionNotSubmitted(Exception error)
         => error is RespireException { IsCommandNotSubmitted: true }

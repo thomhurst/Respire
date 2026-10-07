@@ -10,6 +10,22 @@ namespace Respire.Tests.Networking;
 
 public class ScriptingEngineTests
 {
+    [Test]
+    public async Task MissingEngineIsADefinitiveCorrectionAndImportReply()
+    {
+        var original = new RespireServerException("ERR Could not find scripting engine 'lua'", "EVAL");
+        var error = new RespireScriptingEngineUnavailableException("lua", new("localhost", 6379), original);
+        await Assert.That(RespireClient.IsUncertainCorrectionOutcome(error)).IsFalse();
+        await Assert.That(QueuedConnectionPolicy.RequiresSessionExpiration(error)).IsFalse();
+        await Assert.That(error.ServerError).IsSameReferenceAs(original);
+        await Assert.That(error.InnerException).IsSameReferenceAs(original);
+        await Assert.That(RespireException.GetDefinitiveServerError(error)).IsSameReferenceAs(original);
+        var transport = new RespireConnectionException("Transport outcome is unknown", error);
+        await Assert.That(RespireClient.IsUncertainCorrectionOutcome(transport)).IsTrue();
+        await Assert.That(QueuedConnectionPolicy.RequiresSessionExpiration(transport)).IsTrue();
+        await Assert.That(RespireException.GetDefinitiveServerError(transport)).IsNull();
+    }
+
     private static object? _allocationControl;
 
     [Test]

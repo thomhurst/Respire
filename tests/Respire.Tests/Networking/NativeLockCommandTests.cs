@@ -9,6 +9,64 @@ namespace Respire.Tests.Networking;
 public class NativeLockCommandTests
 {
     [Test]
+    [Arguments(2, false)]
+    [Arguments(2, true)]
+    [Arguments(3, false)]
+    [Arguments(3, true)]
+    public async Task MissingLuaEnginePreservesManagedOwnershipWithoutFencing(int protocol, bool extend)
+    {
+        var missingEngine = true;
+        await using var server = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
+                "CLIENT ID" => ":41\r\n"u8.ToArray(),
+                "INFO scriptingengines" => Encoding.UTF8.GetBytes("$" + Encoding.UTF8.GetByteCount(AbsentEngines)
+                    + "\r\n" + AbsentEngines + "\r\n"),
+                var text when text.StartsWith("DELEX ", StringComparison.Ordinal) => UnknownDelex,
+                var text when text.StartsWith("DELIFEQ ", StringComparison.Ordinal) => UnknownDelifeq,
+                var text when text.StartsWith("SET ", StringComparison.Ordinal) && text.Contains(" IFEQ ", StringComparison.Ordinal)
+                    => UnsupportedSet,
+                var text when text.StartsWith("EVALSHA ", StringComparison.Ordinal) => "-NOSCRIPT missing\r\n"u8.ToArray(),
+                var text when text.StartsWith("EVAL ", StringComparison.Ordinal) => missingEngine
+                    ? "-ERR Could not find scripting engine 'lua'\r\n"u8.ToArray() : One,
+                _ => null,
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = (RespProtocol)protocol, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+        });
+        var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        try
+        {
+            var error = await Assert.That(async () =>
+            {
+                if (extend) await mutex.ResetExpiryAsync(TimeSpan.FromMinutes(1), deadline.Token);
+                else await mutex.ReleaseAsync(deadline.Token);
+            }).Throws<RespireScriptingEngineUnavailableException>();
+            await Assert.That(error!.ServerError.Code).IsEqualTo("ERR");
+            await Assert.That(error.ServerError.CommandName).IsEqualTo("EVAL");
+            await Assert.That(error.Endpoint.Port).IsEqualTo(server.Port);
+            await Assert.That(mutex.IsReleased).IsFalse();
+            // The capability probe includes SKIPME; a fence of this owner does not.
+            await Assert.That(server.ReceivedCommands).DoesNotContain("CLIENT KILL ID 41");
+            missingEngine = false;
+            if (extend) await Assert.That(await mutex.ResetExpiryAsync(TimeSpan.FromMinutes(1), deadline.Token)).IsTrue();
+            else await Assert.That(await mutex.ReleaseAsync(deadline.Token)).IsEqualTo(LockReleaseOutcome.Released);
+        }
+        finally
+        {
+            missingEngine = false;
+            await mutex.DisposeAsync();
+        }
+    }
+
+    private const string AbsentEngines = "# Scripting Engines\r\nengines_count:0\r\nengines_total_used_memory:0\r\n";
+
+    [Test]
     [Arguments(0L)]
     [Arguments(-1L)]
     [Arguments(long.MinValue)]

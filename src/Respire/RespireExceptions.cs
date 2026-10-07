@@ -5,6 +5,15 @@ public class RespireException : Exception
 {
     internal bool IsCommandNotSubmitted { get; set; }
 
+    // Only explicit definitive-reply wrappers qualify; a transport error with an arbitrary
+    // inner server error does not prove that the current command finished.
+    internal static RespireServerException? GetDefinitiveServerError(Exception? error) => error switch
+    {
+        RespireServerException server => server,
+        RespireScriptingEngineUnavailableException engine => engine.ServerError,
+        _ => null,
+    };
+
     /// <summary>Creates a Respire exception.</summary>
     public RespireException(string message) : base(message)
     {

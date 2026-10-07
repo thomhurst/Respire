@@ -49,7 +49,7 @@ internal readonly struct QueuedConnectionPolicy(RespireHashImportSession? import
     internal static bool RequiresSessionExpiration(Exception error)
         => error is not RespireCommandNotSubmittedException
             && error is not RespireTimeoutException { IsCommandNotSubmitted: true }
-            && (error is not RespireServerException server || ClusterRouter.IsRedirect(server)
+            && (RespireException.GetDefinitiveServerError(error) is not { } server || ClusterRouter.IsRedirect(server)
                 || server.Code == RespireErrorCodes.ReadOnly);
 
     public ValueTask ExpireAsync(Exception error, bool transactionStateUncertain = false)
