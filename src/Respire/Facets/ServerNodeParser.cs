@@ -51,7 +51,7 @@ internal static class ServerNodeParser
         var start = Timestamp(Take(fields, "start_time"));
         var end = Timestamp(Take(fields, "end_time"));
         var additional = new Dictionary<string, RespireResult>(StringComparer.Ordinal);
-        foreach (var (name, field) in fields) additional.Add(name, new RespireResult(field.ToOwned()));
+        foreach (var (name, field) in fields) additional.Add(name, RespireResult.CreateOwned(in field));
         return new(state, error, start, end, additional);
     }
 

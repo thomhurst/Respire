@@ -59,41 +59,48 @@ internal static class RespParser
             var cursor = pos;
             var status = TryParseScalar(buffer, ref cursor, out value);
             if (status == RespParseStatus.Done)
+            {
+                value.AssertMaterialized();
                 pos = cursor;
+            }
             return status;
         }
 
         // Even the shortest RESP value takes three bytes. Share this rent budget across
         // nested aggregates and attributes, rather than trusting each declared count.
         var remainingElements = (buffer.Length - pos) / 3;
-        var deferredPayloads = 0;
+        var deferredPayloadBytes = 0;
         var aggregateStatus = TryParseValue(buffer, ref pos, out value,
-            new ParseContext(0, ref remainingElements, ref deferredPayloads, progressOwner), out var start);
-        if (aggregateStatus == RespParseStatus.Done && deferredPayloads != 0)
-            value = value.CopyDeferredPayloads(buffer, start, pos - start);
+            new ParseContext(0, ref remainingElements, ref deferredPayloadBytes, progressOwner), out var start);
+        if (aggregateStatus == RespParseStatus.Done)
+        {
+            if (deferredPayloadBytes != 0)
+                value = value.CopyDeferredPayloads(buffer, start, pos - start, deferredPayloadBytes);
+            value.AssertMaterialized();
+        }
         return aggregateStatus;
     }
 
     /// <summary>
-    /// Copies branch depth while sharing the root's rent budget and deferred payload count.
+    /// Copies branch depth while sharing the root's rent budget and deferred payload byte count.
     /// </summary>
     private readonly ref struct ParseContext
     {
         private readonly ref int _remainingElements;
-        private readonly ref int _deferredPayloads;
+        private readonly ref int _deferredPayloadBytes;
         public int Depth { get; }
         // Constructed contexts defer payloads; ImmediateCopy is only for scalar/bulk
         // entry points and has no aggregate budget for ForChildren/TryReserve.
         public static ParseContext ImmediateCopy => default;
         public bool DeferPayloads { get; }
         public RespParseState? ProgressOwner { get; }
-        public int DeferredPayloads { get => _deferredPayloads; set => _deferredPayloads = value; }
+        public int DeferredPayloadBytes { get => _deferredPayloadBytes; set => _deferredPayloadBytes = value; }
 
-        public ParseContext(int depth, ref int remainingElements, ref int deferredPayloads, RespParseState? progressOwner)
+        public ParseContext(int depth, ref int remainingElements, ref int deferredPayloadBytes, RespParseState? progressOwner)
         {
             Depth = depth;
             _remainingElements = ref remainingElements;
-            _deferredPayloads = ref deferredPayloads;
+            _deferredPayloadBytes = ref deferredPayloadBytes;
             DeferPayloads = true;
             ProgressOwner = progressOwner;
         }
@@ -102,11 +109,11 @@ internal static class RespParser
         public ParseContext ForChildren()
         {
             Debug.Assert(DeferPayloads, "ImmediateCopy has no aggregate budget.");
-            return new(Depth + 1, ref _remainingElements, ref _deferredPayloads, ProgressOwner);
+            return new(Depth + 1, ref _remainingElements, ref _deferredPayloadBytes, ProgressOwner);
         }
 
         public ParseContext ForDiscardedAttribute()
-            => new(Depth, ref _remainingElements, ref _deferredPayloads, progressOwner: null);
+            => new(Depth, ref _remainingElements, ref _deferredPayloadBytes, progressOwner: null);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool TryReserve(int count)
@@ -141,7 +148,7 @@ internal static class RespParser
                 break;
             }
 
-            var priorPayloads = context.DeferredPayloads;
+            var priorPayloadBytes = context.DeferredPayloadBytes;
             var attrStatus = TryParseAggregate(buffer, ref cursor, RespDataType.Map, pairCount: true,
                 out var attribute, context.ForDiscardedAttribute());
             if (attrStatus != RespParseStatus.Done)
@@ -150,7 +157,7 @@ internal static class RespParser
             }
 
             attribute.Dispose();
-            context.DeferredPayloads = priorPayloads;
+            context.DeferredPayloadBytes = priorPayloadBytes;
         }
 
         valueStart = cursor;
@@ -534,7 +541,9 @@ internal static class RespParser
             return CopyToPooled(type, buffer.Slice(offset, length));
         if (type == RespDataType.SimpleString && TryGetInternedSimpleString(buffer.Slice(offset, length), out var interned))
             return RespValue.SimpleString(interned);
-        context.DeferredPayloads++;
+        // Empty and interned strings are already materialized, so positive bytes also
+        // indicate whether the root has any deferred payloads to copy.
+        context.DeferredPayloadBytes += length;
         return RespValue.DeferredString(type, offset, length);
     }
 

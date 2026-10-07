@@ -51,11 +51,7 @@ internal sealed class BatchFunctionCommands(IPendingSink sink) : IBatchFunctionC
     {
         var command = FunctionCommands.CallCommand(sink.Client, function, keys, args);
         return sink.Add<BatchScriptCommand, RespireResult>(function.Operation, command, keys,
-            static (client, value) =>
-            {
-                var owned = value.ToOwned();
-                return client.CreateResult(in owned);
-            });
+            static (client, value) => RespireResult.CreateOwned(in value, client.Core.Options.Serializer));
     }
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]

@@ -200,14 +200,14 @@ internal static class CommandMetadataParser
     private static Dictionary<string, RespireResult> OwnFields(Dictionary<string, RespValue> fields)
     {
         var result = new Dictionary<string, RespireResult>(fields.Count, StringComparer.Ordinal);
-        foreach (var (name, value) in fields) result.Add(name, new RespireResult(value.ToOwned()));
+        foreach (var (name, value) in fields) result.Add(name, RespireResult.CreateOwned(in value));
         return result;
     }
 
     private static RespireResult[] OwnItems(ReadOnlySpan<RespValue> items)
     {
         var result = new RespireResult[items.Length];
-        for (var index = 0; index < items.Length; index++) result[index] = new(items[index].ToOwned());
+        for (var index = 0; index < items.Length; index++) result[index] = RespireResult.CreateOwned(in items[index]);
         return result;
     }
 
