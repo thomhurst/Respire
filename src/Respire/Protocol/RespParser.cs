@@ -48,6 +48,7 @@ internal static class RespParser
     internal static RespParseStatus TryParseValue(
         ReadOnlySpan<byte> buffer, ref int pos, out RespValue value, RespParseState? progressOwner)
     {
+        // A direct state reference avoids interface/delegate dispatch in the aggregate loop.
         value = default;
         if (pos >= buffer.Length)
             return RespParseStatus.NeedMoreData;
@@ -154,6 +155,11 @@ internal static class RespParser
 
         valueStart = cursor;
         var status = TryParseCore(buffer, ref cursor, out value, context);
+        // Completed attributes may advance to valueStart without adopting a frame.
+        // Consuming an incomplete value itself requires owned aggregate progress.
+        Debug.Assert(status != RespParseStatus.NeedMoreData || cursor == valueStart
+            || context.ProgressOwner is { IsIdle: false },
+            "An incomplete value can advance the cursor only after adopting progress.");
         if (status == RespParseStatus.Done
             || (status == RespParseStatus.NeedMoreData && context.ProgressOwner is not null))
         {
@@ -467,6 +473,9 @@ internal static class RespParser
         var childContext = context.ForChildren();
         for (var i = 0; i < count; i++)
         {
+#if DEBUG
+            var childStart = pos;
+#endif
             RespParseStatus status;
             if (pos >= buffer.Length)
             {
@@ -479,6 +488,14 @@ internal static class RespParser
 
             if (status != RespParseStatus.Done)
             {
+#if DEBUG
+                // Attributes may consume completed metadata. TryParseValue checks
+                // the following value against its own start after that metadata.
+                Debug.Assert(status != RespParseStatus.NeedMoreData || pos == childStart
+                    || context.ProgressOwner is { IsIdle: false }
+                    || buffer[childStart] == (byte)'|',
+                    "An incomplete child can consume value bytes only after adopting progress.");
+#endif
                 try
                 {
                     // Nested frames transfer first. Even an empty parent must then join

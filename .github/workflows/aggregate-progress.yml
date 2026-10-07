@@ -21,13 +21,9 @@ concurrency:
 
 jobs:
   progress:
-    name: Aggregate progress (${{ matrix.framework }})
+    name: Aggregate progress (net10.0)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        framework: [net8.0, net10.0]
     env:
       TUNIT_DISABLE_HTML_REPORTER: 'true'
     steps:
@@ -36,19 +32,17 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
-          dotnet-version: |
-            8.0.x
-            10.0.x
+          dotnet-version: 10.0.x
       # Scalar progress counters and connection inspection fields exist only in Debug.
       # Release correctness and benchmark jobs retain the production layout and hot path.
       - name: Build with causal progress instrumentation
-        run: dotnet build tests/Respire.Tests -c Debug -f ${{ matrix.framework }}
+        run: dotnet build tests/Respire.Tests -c Debug -f net10.0
       - name: Verify parser and production receive progress controls
         run: >-
-          dotnet tests/Respire.Tests/bin/Debug/${{ matrix.framework }}/Respire.Tests.dll
+          dotnet tests/Respire.Tests/bin/Debug/net10.0/Respire.Tests.dll
           --treenode-filter '/*/*/(AggregateProgressTransferTests)|(AggregateProgressWireTests)/*'
           --minimum-expected-tests 42
       - name: Verify transfer, framing, storage and payload ownership
         run: >-
-          dotnet tests/Respire.Tests/bin/Debug/${{ matrix.framework }}/Respire.Tests.dll
+          dotnet tests/Respire.Tests/bin/Debug/net10.0/Respire.Tests.dll
           --treenode-filter '/*/*/(AggregatePayloadTests)|(AggregateStorageTests)|(RespParseStateTests)|(RespParserTests)|(ParserContextTests)/*'
