@@ -2001,6 +2001,9 @@ public partial class SentinelRoutingTests
             $"mymaster 127.0.0.1 {original.Port} 127.0.0.1 {promoted.Port}");
         await WaitForEndpointAsync(client, promoted.Port);
 
+        // The volatile endpoint becomes visible before Published completes the old rearm task.
+        // Observe that publication signal before checking either epoch's state.
+        await previousEpoch.WaitAsync(Limit);
         await Assert.That(previousEpoch.IsCompleted).IsTrue();
         var reconnectEpoch = router.CurrentMonitorRearm();
         await Assert.That(ReferenceEquals(reconnectEpoch, previousEpoch)).IsFalse();

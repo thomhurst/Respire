@@ -32,7 +32,7 @@ internal static class CommandLogParser
         var address = Bytes(in fields[4]);
         var name = Bytes(in fields[5]);
         var additional = new RespireResult[fields.Length - 6];
-        for (var field = 6; field < fields.Length; field++) additional[field - 6] = new(fields[field].ToOwned());
+        for (var field = 6; field < fields.Length; field++) additional[field - 6] = RespireResult.CreateOwned(in fields[field]);
         return new(type, id, timestamp, metric, ownedArguments, address, name, additional);
     }
 

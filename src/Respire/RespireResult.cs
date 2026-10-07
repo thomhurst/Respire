@@ -30,6 +30,13 @@ public readonly struct RespireResult : IDisposable, IReadOnlyList<RespireResult>
         _serializer = serializer ?? RespireSerializer.Default;
     }
 
+    /// <summary>Materializes a retained result before its borrowed reply owner is disposed.</summary>
+    internal static RespireResult CreateOwned(in RespValue value, IRespireSerializer? serializer = null)
+    {
+        var owned = value.ToOwned();
+        return new(in owned, serializer);
+    }
+
     /// <summary>Nested element view: storage belongs to the root.</summary>
     private RespireResult(
         in RespValue borrowed, PooledValueOwner lifetime, IRespireSerializer? serializer)

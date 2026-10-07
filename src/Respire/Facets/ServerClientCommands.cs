@@ -211,7 +211,7 @@ public sealed partial class RespireServerClientConnection
         if (parts.Length % 2 != 0) throw new RespireProtocolException("CLIENT TRACKINGINFO contains an incomplete field.");
         var fields = new Dictionary<string, RespireResult>(StringComparer.Ordinal);
         for (var index = 0; index < parts.Length; index += 2)
-            fields.Add(parts[index].AsString(), new RespireResult(parts[index + 1].ToOwned()));
+            fields.Add(parts[index].AsString(), RespireResult.CreateOwned(in parts[index + 1]));
         if (!fields.TryGetValue("flags", out var flags) || !fields.TryGetValue("redirect", out var redirect)
             || !fields.TryGetValue("prefixes", out var prefixes))
             throw new RespireProtocolException("CLIENT TRACKINGINFO is missing required fields.");

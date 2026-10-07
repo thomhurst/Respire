@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -22,6 +23,9 @@ namespace Respire.Protocol;
 /// </remarks>
 internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
 {
+    private const int SparsePayloadMinimumFrameLength = 4 * 1024;
+    private const int SparsePayloadFrameRatio = 8;
+
     [Flags]
     internal enum ValueFlags : byte
     {
@@ -132,16 +136,27 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
     internal static RespValue DeferredString(RespDataType type, int offset, int length)
         => new(type, ValueFlags.DeferredPayload, integerValue: offset, elementCount: length);
 
+    [Conditional("DEBUG")]
+    internal void AssertMaterialized()
+    {
+        Debug.Assert((_flags & ValueFlags.DeferredPayload) == 0,
+            "Parser-local payload offsets must be materialized before returning a complete value.");
+        if (_elements is null) return;
+        for (var i = 0; i < _elementCount; i++)
+            _elements[i].AssertMaterialized();
+    }
+
     /// <summary>Copies deferred aggregate payloads into shared or per-child storage.</summary>
-    internal RespValue CopyDeferredPayloads(ReadOnlySpan<byte> buffer, int start, int length)
+    internal RespValue CopyDeferredPayloads(ReadOnlySpan<byte> buffer, int start, int length, int payloadBytes)
     {
         // Top-level attributes can precede a scalar. Keep that scalar's ordinary payload ownership.
         if ((_flags & ValueFlags.DeferredPayload) != 0)
             return RespParser.CopyToPooled(_type, buffer.Slice((int)_integerValue, _elementCount));
-        if (length > RespirePools.MaxPooledResponsePayloadLength)
+        if (length > RespirePools.MaxPooledResponsePayloadLength
+            || (length >= SparsePayloadMinimumFrameLength && (long)payloadBytes * SparsePayloadFrameRatio < length))
         {
-            // A frame too large to pool would allocate on every reply, even when its
-            // retained children are tiny. Copy those children into their ordinary buckets.
+            // Avoid unpooled frames and large copies dominated by discarded attributes,
+            // integer tokens or framing. Small replies retain the single-copy path.
             CopyDeferredChildren(buffer);
             return this;
         }
@@ -154,6 +169,7 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
 
     private void CopyDeferredChildren(ReadOnlySpan<byte> buffer)
     {
+        // Struct copies share _elements, so replacing children updates the original tree.
         if (_elements is null) return;
         for (var i = 0; i < _elementCount; i++)
         {
