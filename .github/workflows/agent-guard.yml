@@ -8,6 +8,8 @@ on:
       - scripts/Test-InvokeAgentDotNet.ps1
       - scripts/Test-AgentDotNetArguments.ps1
       - scripts/Test-AgentDotNetMtp.ps1
+      - scripts/Test-AgentDotNetVstest.ps1
+      - scripts/Test-AgentDotNetSdkProbe.ps1
       - scripts/AssertPrGreenReviewHeuristics.ps1
       - scripts/Assert-PrGreen.ps1
       - scripts/Merge-Pr.ps1
@@ -29,6 +31,8 @@ on:
       - scripts/Test-InvokeAgentDotNet.ps1
       - scripts/Test-AgentDotNetArguments.ps1
       - scripts/Test-AgentDotNetMtp.ps1
+      - scripts/Test-AgentDotNetVstest.ps1
+      - scripts/Test-AgentDotNetSdkProbe.ps1
       - scripts/AssertPrGreenReviewHeuristics.ps1
       - scripts/Assert-PrGreen.ps1
       - scripts/Merge-Pr.ps1
@@ -72,6 +76,12 @@ jobs:
       - name: Verify MTP discovery, execution, and failure propagation
         shell: pwsh
         run: ./scripts/Test-AgentDotNetMtp.ps1
+      - name: Verify VSTest discovery and execution
+        shell: pwsh
+        run: ./scripts/Test-AgentDotNetVstest.ps1
+      - name: Verify SDK probe containment and resource limits
+        shell: pwsh
+        run: ./scripts/Test-AgentDotNetSdkProbe.ps1
       - name: Verify process containment and resource limits
         shell: pwsh
         run: ./scripts/Test-InvokeAgentDotNet.ps1
@@ -93,3 +103,28 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: bash .github/scripts/test-claude-request-revision.sh
+
+  runner-overrides:
+    name: SDK runner overrides (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: |
+            10.0.x
+            11.0.100-preview.7.26381.103
+      - name: Environment MTP overrides global VSTest on the supporting SDK
+        shell: pwsh
+        run: ./scripts/Test-AgentDotNetMtp.ps1 -SdkVersion 11.0.100-preview.7.26381.103
+      - name: Environment VSTest overrides global MTP on the supporting SDK
+        shell: pwsh
+        run: ./scripts/Test-AgentDotNetVstest.ps1 -SdkVersion 11.0.100-preview.7.26381.103
+      - name: Resolve a supporting SDK through roll-forward from the .NET 10 pin
+        shell: pwsh
+        run: ./scripts/Test-AgentDotNetMtp.ps1 -RollForwardAcrossMajor
