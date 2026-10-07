@@ -21,8 +21,14 @@ internal static class RespirePools
     internal const int MaxPooledResponsePayloadLength = 64 * 1024 * 1024;
 
     /// <summary>Response payload storage handed to <see cref="RespValue"/> instances.</summary>
-    public static readonly ArrayPool<byte> ResponsePayloads = ArrayPool<byte>.Create(MaxPooledResponsePayloadLength, 64);
+    public static readonly ArrayPool<byte> ResponsePayloads = CreateResponsePayloadPool();
 
     /// <summary>Element storage for RESP array/map/set responses.</summary>
-    public static readonly ArrayPool<RespValue> ValueArrays = ArrayPool<RespValue>.Create(64 * 1024, 64);
+    public static readonly ArrayPool<RespValue> ValueArrays = CreateValueArrayPool();
+
+    internal static ArrayPool<byte> CreateResponsePayloadPool()
+        => ArrayPool<byte>.Create(MaxPooledResponsePayloadLength, 64);
+
+    internal static ArrayPool<RespValue> CreateValueArrayPool()
+        => ArrayPool<RespValue>.Create(64 * 1024, 64);
 }
