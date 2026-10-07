@@ -38,12 +38,8 @@ internal static class DeferredRawCommands
         var firstKey = layout.Extra >= 0 ? layout.Extra : layout.Count > 0 ? layout.Start : -1;
         var command = CreateCommand(descriptor, tokens,
             firstKey < 0 ? -1 : words.Length + firstKey, words.Length);
-        return sink.Add<DynamicCommand, RespireResult>(operation, command, static (client, value) =>
-        {
-            // Unread pendings must not retain pooled response storage.
-            var owned = value.ToOwned();
-            return client.CreateResult(in owned);
-        });
+        return sink.Add<DynamicCommand, RespireResult>(operation, command,
+            static (client, value) => RespireResult.CreateOwned(in value, client.Core.Options.Serializer));
 
         void PrefixKey(int index)
         {

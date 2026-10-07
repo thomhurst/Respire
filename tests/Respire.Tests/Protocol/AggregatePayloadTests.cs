@@ -10,15 +10,62 @@ namespace Respire.Tests.Protocol;
 public class AggregatePayloadTests
 {
     [Test]
+    [Arguments(4095, 6, false, true)]
+    [Arguments(4095, 6, true, true)]
+    [Arguments(4096, 511, false, false)]
+    [Arguments(4096, 511, true, false)]
+    [Arguments(4096, 512, false, true)]
+    [Arguments(4096, 512, true, true)]
+    [Arguments(4096, 513, false, true)]
+    [Arguments(4096, 513, true, true)]
+    [Arguments(8192, 1023, false, false)]
+    [Arguments(8192, 1023, true, false)]
+    [Arguments(8192, 1024, false, true)]
+    [Arguments(8192, 1024, true, true)]
+    public async Task SparseFramesCopyOnlyRetainedPayloads(int frameLength, int payloadBytes, bool nested, bool sharesFrame)
+    {
+        var firstLength = payloadBytes - 3;
+        var suffix = "$" + firstLength + "\r\n" + new string('x', firstLength)
+            + "\r\n" + (nested ? "*1\r\n" : "") + "$3\r\nend\r\n";
+        var prefix = "*2\r\n|1\r\n+k\r\n$";
+        var paddingLength = frameLength - prefix.Length - suffix.Length - 4;
+        while (prefix.Length + paddingLength.ToString().Length + 4 + paddingLength + suffix.Length != frameLength)
+            paddingLength = frameLength - prefix.Length - paddingLength.ToString().Length - 4 - suffix.Length;
+        var input = Encoding.ASCII.GetBytes(prefix + paddingLength + "\r\n"
+            + new string('a', paddingLength) + "\r\n" + suffix);
+        var position = 0;
+        await Assert.That(input.Length).IsEqualTo(frameLength);
+        await Assert.That(RespParser.TryParseValue(input, ref position, out var value)).IsEqualTo(RespParseStatus.Done);
+        using (value)
+        using (var owned = value.ToOwned())
+        {
+            var first = value.AsArray()[0];
+            var second = nested ? value.AsArray()[1].AsArray()[0] : value.AsArray()[1];
+            MemoryMarshal.TryGetArray(first.AsMemory(), out var one);
+            MemoryMarshal.TryGetArray(second.AsMemory(), out var two);
+            await Assert.That(ReferenceEquals(one.Array, two.Array)).IsEqualTo(sharesFrame);
+            if (!sharesFrame) await Assert.That(one.Array!.Length).IsLessThan(frameLength);
+            input.AsSpan().Fill(0);
+            await Assert.That(position).IsEqualTo(frameLength);
+            await Assert.That(first.AsString()).IsEqualTo(new string('x', firstLength));
+            await Assert.That(second.AsString()).IsEqualTo("end");
+            await Assert.That(value.Equals(owned)).IsTrue();
+            await Assert.That(value.GetHashCode()).IsEqualTo(owned.GetHashCode());
+            await Assert.That(value.GetOwnedSize()).IsEqualTo(owned.GetOwnedSize());
+        }
+    }
+
+    [Test]
     [NotInParallel]
     [Arguments(false)]
     [Arguments(true)]
     public async Task FramesBeyondThePoolLimitCopyOnlyRetainedChildPayloads(bool oversized)
     {
-        // A large discarded nested attribute makes the frame expensive even though retained
-        // children need only six bytes. Exercise the exact shared-storage boundary and offsets.
+        // Keep enough retained payload for shared storage at the exact pool limit;
+        // one extra wire byte must still select the unpooled-frame fallback.
         var frameLength = 64 * 1024 * 1024 + (oversized ? 1 : 0);
-        var suffix = "\r\n$3\r\none\r\n*1\r\n$3\r\ntwo\r\n"u8.ToArray();
+        var oneText = new string('o', 8 * 1024 * 1024);
+        var suffix = Encoding.ASCII.GetBytes("\r\n$" + oneText.Length + "\r\n" + oneText + "\r\n*1\r\n$3\r\ntwo\r\n");
         var prefix = Encoding.ASCII.GetBytes($"*2\r\n|1\r\n+k\r\n${frameLength}\r\n");
         var paddingLength = frameLength - prefix.Length - suffix.Length;
         prefix = Encoding.ASCII.GetBytes($"*2\r\n|1\r\n+k\r\n${paddingLength}\r\n");
@@ -37,13 +84,13 @@ public class AggregatePayloadTests
             if (oversized)
             {
                 await Assert.That(ReferenceEquals(one.Array, two.Array)).IsFalse();
-                await Assert.That(one.Array!.Length).IsLessThan(1024);
+                await Assert.That(one.Array!.Length).IsLessThan(frameLength);
                 await Assert.That(two.Array!.Length).IsLessThan(1024);
             }
             else await Assert.That(one.Array).IsSameReferenceAs(two.Array);
             await Assert.That(position).IsEqualTo(3 + frameLength);
             input.AsSpan().Fill(0);
-            await Assert.That(value.AsArray()[0].AsString()).IsEqualTo("one");
+            await Assert.That(value.AsArray()[0].AsString()).IsEqualTo(oneText);
             await Assert.That(value.AsArray()[1].AsArray()[0].AsString()).IsEqualTo("two");
             await Assert.That(value.Equals(owned)).IsTrue();
             await Assert.That(value.GetHashCode()).IsEqualTo(owned.GetHashCode());

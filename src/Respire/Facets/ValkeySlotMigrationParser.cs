@@ -45,7 +45,7 @@ internal static class ValkeySlotMigrationParser
         long? remaining = fields.Remove("remaining_repl_size", out var size)
             ? ServerDiagnosticsParser.NonnegativeInteger(in size) : null;
         var additional = new Dictionary<string, RespireResult>(StringComparer.Ordinal);
-        foreach (var pair in fields) additional.Add(pair.Key, new RespireResult(pair.Value.ToOwned()));
+        foreach (var pair in fields) additional.Add(pair.Key, RespireResult.CreateOwned(pair.Value));
         return new(name, operation, slots, source, target, created, updated, acknowledged,
             state, message, cow, remaining, additional);
 

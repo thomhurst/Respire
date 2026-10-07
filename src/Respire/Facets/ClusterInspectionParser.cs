@@ -71,7 +71,7 @@ internal static class ClusterInspectionParser
     private static Dictionary<string, RespireResult> OwnRemaining(Dictionary<string, RespValue> fields)
     {
         var result = new Dictionary<string, RespireResult>(fields.Count, StringComparer.Ordinal);
-        foreach (var (name, value) in fields) result.Add(name, new RespireResult(value.ToOwned()));
+        foreach (var (name, value) in fields) result.Add(name, RespireResult.CreateOwned(in value));
         return result;
     }
 
