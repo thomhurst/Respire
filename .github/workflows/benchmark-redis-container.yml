@@ -18,7 +18,7 @@ jobs:
 
     strategy:
       matrix:
-        framework: [net8.0, net10.0]
+        framework: [net10.0]
     
     steps:
       - name: Checkout code
@@ -28,7 +28,6 @@ jobs:
         uses: actions/setup-dotnet@v6
         with:
           dotnet-version: |
-            8.0.x
             10.0.x
       
       - name: Restore dependencies
