@@ -45,8 +45,10 @@ Pull request benchmark workflows start only when someone adds their label. They 
 | `benchmark-primitive-codec.yml` | `run-primitive-codec-benchmarks` |
 | `benchmark-pubsub.yml` | `run-pubsub-benchmarks` |
 | `benchmark-rate-limiters.yml` | `run-rate-limiters-benchmarks` |
+| `benchmark-receive-compaction.yml` | `run-receive-compaction-benchmarks` |
 | `benchmark-resp-framing.yml` | `run-resp-framing-benchmarks` |
 | `benchmark-response-routing.yml` | `run-response-routing-benchmarks` |
+| `benchmark-response-pools.yml` | `run-response-pools-benchmarks` |
 | `benchmark-semaphores.yml` | `run-semaphores-benchmarks` |
 | `benchmark-sentinel-routing.yml` | `run-ready-strategy-benchmarks`, `run-sentinel-benchmarks` |
 | `benchmark-thread-pool.yml` | `run-thread-pool-benchmarks` |
