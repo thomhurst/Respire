@@ -55,7 +55,7 @@
     <PackageVersion Include="System.Threading.RateLimiting" Version="10.0.12" />
     <PackageVersion Include="Testcontainers" Version="4.15.0" />
     <PackageVersion Include="Testcontainers.Redis" Version="4.15.0" />
-    <PackageVersion Include="TUnit" Version="1.72.16" />
+    <PackageVersion Include="TUnit" Version="1.73.0" />
     <PackageVersion Include="ZiggyCreatures.FusionCache" Version="2.9.0" />
     <PackageVersion Include="ZiggyCreatures.FusionCache.Backplane.StackExchangeRedis" Version="2.9.0" />
     <PackageVersion Include="ZiggyCreatures.FusionCache.Serialization.SystemTextJson" Version="2.9.0" />
