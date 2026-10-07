@@ -420,14 +420,27 @@ public class ClusterScanTests
         await router.WaitForRetirementAsync().WaitAsync(timeout.Token);
     }
 
-    internal static async Task AssertRetirementPreservesAcceptedPagesAsync()
+    [Test]
+    public Task ModernPageRetirementPreservesAcceptedRepliesAndCheckpoint()
+        => AssertRetirementPreservesAcceptedPagesAsync(modern: true);
+
+    internal static async Task AssertRetirementPreservesAcceptedPagesAsync(bool modern = false)
     {
         await using var cluster = new ScanCluster();
         cluster.First.Scan = _ => Page("0", KeyInSlot(0));
         cluster.Second.Scan = _ => Page("0", KeyInSlot(8192));
+        if (modern)
+        {
+            cluster.First.Capability = cluster.Second.Capability = Supported;
+            cluster.First.ClusterScan = command => command.StartsWith("CLUSTERSCAN 0 ")
+                ? Page("position-{" + TagInSlot(0) + "}-opaque") : Page("0", KeyInSlot(0));
+            cluster.Second.ClusterScan = command => command.StartsWith("CLUSTERSCAN 0 ")
+                ? Page("position-{" + TagInSlot(8192) + "}-opaque") : Page("0", KeyInSlot(8192));
+        }
         await using var client = await cluster.ConnectAsync();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var first = await client.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start, cancellationToken: timeout.Token);
+        if (modern) first = await client.Keys.ScanClusterPageAsync(first.Cursor, cancellationToken: timeout.Token);
         var router = client.Core.Cluster!;
         var old = await router.GetConnectionAsync(8192, timeout.Token, discovery: null);
         var full = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -459,10 +472,16 @@ public class ClusterScanTests
             typeof(ClusterRouter).GetMethod("ApplyTopology", flags)!.Invoke(router, [ranges, version, generation]);
         };
         var final = await client.Keys.ScanClusterPageAsync(first.Cursor, cancellationToken: timeout.Token);
+        if (modern) final = await client.Keys.ScanClusterPageAsync(final.Cursor, cancellationToken: timeout.Token);
         await Assert.That(final.Cursor.IsComplete).IsTrue();
         await Assert.That(final.Keys).IsEquivalentTo([KeyInSlot(8192)]);
-        await Assert.That(cluster.First.Server.ReceivedCommands.Count(command => command.StartsWith("SCAN "))).IsEqualTo(1);
-        await Assert.That(cluster.Second.Server.ReceivedCommands.Count(command => command.StartsWith("SCAN "))).IsEqualTo(1);
+        await Assert.That(cluster.First.Server.ReceivedCommands.Count(command => command.StartsWith("SCAN "))).IsEqualTo(modern ? 0 : 1);
+        await Assert.That(cluster.Second.Server.ReceivedCommands.Count(command => command.StartsWith("SCAN "))).IsEqualTo(modern ? 0 : 1);
+        if (modern)
+        {
+            await Assert.That(cluster.First.Server.ReceivedCommands.Count(command => command.StartsWith("CLUSTERSCAN "))).IsEqualTo(2);
+            await Assert.That(cluster.Second.Server.ReceivedCommands.Count(command => command.StartsWith("CLUSTERSCAN "))).IsEqualTo(2);
+        }
         await Assert.That(accepted.All(task => !task.IsCompleted)).IsTrue();
         await cluster.Second.Server.SendRawAsync("+PONG\r\n+PONG\r\n+PONG\r\n+PONG\r\n"u8.ToArray(), 0);
         foreach (var task in accepted)
@@ -504,6 +523,522 @@ public class ClusterScanTests
         var bytes = Convert.FromBase64String(serialized);
         await Assert.That(RespireClusterScanCursor.TryParse(Convert.ToBase64String(bytes.AsSpan(0, 13)), out _)).IsFalse();
     }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ValkeyOpaqueCheckpointResumesRangesAndMixedVersions(bool binaryPrefix)
+    {
+        await using var cluster = new ScanCluster();
+        cluster.First.Capability = Supported;
+        var opaque = "fingerprint-{mixed}-opaque-position";
+        var slot = ClusterHash.GetSlot(opaque);
+        cluster.First.Slots = $"0-{slot}";
+        cluster.Second.Slots = $"{slot + 1}-16383";
+        var calls = 0;
+        var prefix = binaryPrefix ? new byte[] { 255, 0 } : "tenant:*:"u8.ToArray();
+        var modernKey = "{" + TagInSlot(0) + "}:modern";
+        var legacyKey = "{" + TagInSlot(slot + 1) + "}:legacy";
+        cluster.First.ClusterScan = _ => ++calls == 1 ? Page(opaque)
+            : [.. Encoding.ASCII.GetBytes("*2\r\n$1\r\n0\r\n*1\r\n"), .. BinaryPrefixTests.Bulk([.. prefix, .. Encoding.UTF8.GetBytes(modernKey)])];
+        cluster.Second.Scan = _ => [.. Encoding.ASCII.GetBytes("*2\r\n$1\r\n0\r\n*1\r\n"), .. BinaryPrefixTests.Bulk([.. prefix, .. Encoding.UTF8.GetBytes(legacyKey)])];
+        await using var client = await cluster.ConnectAsync();
+        var view = binaryPrefix ? client.WithKeyPrefix((RespireKey)prefix) : client.WithKeyPrefix("tenant:*:");
+        var first = await view.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start, type: RespireKeyType.String);
+        var saved = first.Cursor.ToString();
+        await Assert.That(Convert.FromBase64String(saved)[3]).IsEqualTo((byte)'3');
+        await Assert.That(first.Cursor.State!.ValkeyCursor).IsEqualTo(opaque);
+        await using var resumed = await cluster.ConnectAsync();
+        var resumedView = binaryPrefix ? resumed.WithKeyPrefix((RespireKey)prefix) : resumed.WithKeyPrefix("tenant:*:");
+        var second = await resumedView.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Parse(saved), type: RespireKeyType.String);
+        await Assert.That(second.Keys).IsEquivalentTo([modernKey]);
+        await Assert.That(second.Cursor.CompletedSlotCount).IsEqualTo(slot + 1);
+        var final = await resumedView.Keys.ScanClusterPageAsync(second.Cursor, type: RespireKeyType.String);
+        await Assert.That(final.Cursor.IsComplete).IsTrue();
+        await Assert.That(final.Keys).IsEquivalentTo([legacyKey]);
+        await Assert.That(first.Cursor.ToString()).IsEqualTo(saved);
+        await Assert.That(cluster.First.Server.ReceivedCommands.Where(command => command.StartsWith("SCAN "))).IsEmpty();
+        await Assert.That(cluster.First.Server.ReceivedCommands.Any(command => command.StartsWith("CLUSTERSCAN " + opaque + " "))).IsTrue();
+        await Assert.That(cluster.Second.Server.ReceivedCommands.Count(command => command.StartsWith("SCAN 0 "))).IsEqualTo(1);
+        await Assert.That(cluster.First.Server.ReceivedCommands.Count(command => command == "COMMAND INFO CLUSTERSCAN")).IsEqualTo(2);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task LegacyCheckpointFinishesNumericPassBeforeUpgrading(bool binaryPrefix)
+    {
+        await using var cluster = new ScanCluster();
+        cluster.First.Scan = command => command.StartsWith("SCAN 0 ") ? Page("17") : Page("0");
+        await using var client = await cluster.ConnectAsync();
+        var view = binaryPrefix ? client.WithKeyPrefix((RespireKey)new byte[] { 255 }) : client;
+        var first = await view.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start);
+        // Frozen legacy representation has no database or opaque-position extension.
+        var legacyState = first.Cursor.State!.Copy();
+        legacyState.Database = null;
+        var serialized = new RespireClusterScanCursor(legacyState).ToString();
+        await Assert.That(Convert.FromBase64String(serialized)[3]).IsEqualTo(binaryPrefix ? (byte)'2' : (byte)'1');
+        cluster.First.Capability = cluster.Second.Capability = Supported;
+        cluster.Second.ClusterScan = _ => Page("position-{" + TagInSlot(8192) + "}-opaque");
+        await using var resumed = await cluster.ConnectAsync();
+        view = binaryPrefix ? resumed.WithKeyPrefix((RespireKey)new byte[] { 255 }) : resumed;
+        var next = await view.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Parse(serialized));
+        await Assert.That(next.Cursor.CompletedSlotCount).IsEqualTo(8192);
+        await Assert.That(cluster.First.Server.ReceivedCommands.Any(command => command.StartsWith("SCAN 17 "))).IsTrue();
+        var modern = await view.Keys.ScanClusterPageAsync(next.Cursor);
+        await Assert.That(modern.Cursor.State!.ValkeyCursor).IsNotNull();
+        await Assert.That(modern.Cursor.CompletedSlotCount).IsEqualTo(8192);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task OpaqueDowngradeRestartsNumericPassWithoutLosingCompletedSlots(bool denied)
+    {
+        await using var cluster = new ScanCluster();
+        cluster.First.Scan = _ => Page("0");
+        cluster.Second.Capability = Supported;
+        var opaque = "position-{" + TagInSlot(8192) + "}-opaque";
+        cluster.Second.ClusterScan = _ => Page(opaque);
+        await using var client = await cluster.ConnectAsync();
+        var first = await client.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start);
+        var modern = await client.Keys.ScanClusterPageAsync(first.Cursor);
+        var saved = modern.Cursor.ToString();
+        cluster.Second.Capability = denied ? "-NOPERM metadata denied\r\n"u8.ToArray() : Missing;
+        cluster.Second.Scan = _ => Page("0", KeyInSlot(8192));
+        await using var resumed = await cluster.ConnectAsync();
+        var fallback = await resumed.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Parse(saved));
+        await Assert.That(fallback.Cursor.IsComplete).IsTrue();
+        await Assert.That(fallback.Keys).IsEquivalentTo([KeyInSlot(8192)]);
+        await Assert.That(cluster.Second.Server.ReceivedCommands.Any(command => command.StartsWith("SCAN 0 "))).IsTrue();
+        await Assert.That(cluster.Second.Server.ReceivedCommands.Any(command => command.StartsWith("SCAN " + opaque + " "))).IsFalse();
+        await Assert.That(modern.Cursor.ToString()).IsEqualTo(saved);
+    }
+
+    [Test]
+    public async Task DeniedCapabilityIsReprobedAndRunIdInvalidatesPositiveEvidence()
+    {
+        await using var cluster = new ScanCluster();
+        cluster.First.Capability = "-NOPERM metadata denied\r\n"u8.ToArray();
+        cluster.First.Scan = _ => Page("0");
+        cluster.Second.Scan = _ => Page("0");
+        await using var client = await cluster.ConnectAsync();
+        await client.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start);
+        cluster.First.Capability = Supported;
+        cluster.First.ClusterScan = _ => Page("position-{" + TagInSlot(0) + "}-opaque");
+        var modern = await client.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start);
+        await Assert.That(modern.Cursor.State!.ValkeyCursor).IsNotNull();
+        cluster.First.Capability = Missing;
+        cluster.First.RunId = "replacement-run";
+        var reset = await client.Keys.ScanClusterPageAsync(modern.Cursor);
+        await Assert.That(reset.Cursor.CompletedSlotCount).IsEqualTo(8192);
+        await Assert.That(cluster.First.Server.ReceivedCommands.Count(command => command == "COMMAND INFO CLUSTERSCAN")).IsEqualTo(3);
+    }
+
+    [Test]
+    public async Task DeniedBootstrapFallsBackWithoutCachingAbsence()
+    {
+        await using var cluster = new ScanCluster();
+        cluster.First.Capability = Supported;
+        cluster.First.ClusterScan = _ => "-NOPERM scan denied\r\n"u8.ToArray();
+        await using var client = await cluster.ConnectAsync();
+        var legacy = await client.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start);
+        await Assert.That(legacy.Cursor.CompletedSlotCount).IsEqualTo(8192);
+        cluster.First.ClusterScan = _ => Page("position-{" + TagInSlot(0) + "}-opaque");
+        var modern = await client.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start);
+        await Assert.That(modern.Cursor.State!.ValkeyCursor).IsNotNull();
+        await Assert.That(cluster.First.Server.ReceivedCommands.Count(command => command.StartsWith("CLUSTERSCAN "))).IsEqualTo(2);
+    }
+
+    [Test]
+    [Arguments("-ERR unknown command 'CLUSTERSCAN'\r\n")]
+    [Arguments("-ERR unknown command \"clusterscan\", with args beginning with: '0'\r\n")]
+    [Arguments("-ERR unknown command CLUSTERSCAN\r\n")]
+    public async Task DefinitiveUnknownCommandFallsBackDespiteEarlierPositiveEvidence(string unsupported)
+    {
+        await using var cluster = new ScanCluster();
+        cluster.First.Capability = Supported;
+        cluster.First.ClusterScan = _ => Encoding.UTF8.GetBytes(unsupported);
+        await using var client = await cluster.ConnectAsync();
+        var page = await client.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start);
+        await Assert.That(page.Cursor.CompletedSlotCount).IsEqualTo(8192);
+        await client.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start);
+        await Assert.That(cluster.First.Server.ReceivedCommands.Count(command => command.StartsWith("CLUSTERSCAN "))).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ValkeyFailureBeforePublicationLeavesCheckpointUsable(bool canceled)
+    {
+        await using var cluster = new ScanCluster();
+        cluster.First.Capability = Supported;
+        var opaque = "position-{" + TagInSlot(0) + "}-opaque";
+        cluster.First.ClusterScan = _ => Page(opaque);
+        await using var client = await cluster.ConnectAsync();
+        var first = await client.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start);
+        var saved = first.Cursor.ToString();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        if (canceled)
+        {
+            using var cancellation = new CancellationTokenSource();
+            cluster.First.ClusterScan = _ => { cancellation.Cancel(); return Page("0"); };
+            await Assert.That(async () => await client.Keys.ScanClusterPageAsync(first.Cursor, cancellationToken: cancellation.Token))
+                .Throws<OperationCanceledException>();
+        }
+        else
+        {
+            cluster.First.ClusterScan = _ => "-NOPERM scan denied\r\n"u8.ToArray();
+            await Assert.That(async () => await client.Keys.ScanClusterPageAsync(first.Cursor, cancellationToken: deadline.Token))
+                .Throws<RespireServerException>();
+        }
+        await Assert.That(first.Cursor.ToString()).IsEqualTo(saved);
+        cluster.First.ClusterScan = _ => Page("0", KeyInSlot(0));
+        var retry = await client.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Parse(saved), cancellationToken: deadline.Token);
+        await Assert.That(retry.Cursor.CompletedSlotCount).IsEqualTo(8192);
+    }
+
+    [Test]
+    [Arguments(false, false, 2)]
+    [Arguments(false, true, 2)]
+    [Arguments(true, false, 2)]
+    [Arguments(true, true, 2)]
+    [Arguments(false, false, 3)]
+    [Arguments(false, true, 3)]
+    [Arguments(true, false, 3)]
+    [Arguments(true, true, 3)]
+    public async Task RedirectUsesDestinationCapabilityWithoutCertifyingSource(bool ask, bool supported, int protocol)
+    {
+        await using var cluster = new ScanCluster();
+        cluster.First.Capability = Supported;
+        cluster.Second.Capability = supported ? Supported : Missing;
+        var sourcePosition = "position-{" + TagInSlot(1) + "}-opaque";
+        cluster.First.ClusterScan = _ => Page("position-{" + TagInSlot(0) + "}-opaque");
+        await using var client = await cluster.ConnectAsync(protocol);
+        var initial = await client.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start);
+        cluster.First.ClusterScan = _ =>
+        {
+            cluster.First.ClusterScan = _ => Page(sourcePosition);
+            if (!ask)
+            {
+                cluster.First.Slots = "1-8191";
+                cluster.Second.Slots = "0 8192-16383";
+                cluster.First.Epoch++;
+                cluster.Second.Epoch++;
+            }
+            return Encoding.ASCII.GetBytes($"-{(ask ? "ASK" : "MOVED")} 0 127.0.0.1:{cluster.Second.Server.Port}\r\n");
+        };
+        cluster.Second.ClusterScan = _ => Page("0", KeyInSlot(0));
+        cluster.Second.Scan = _ => Page("0", KeyInSlot(0), KeyInSlot(8192));
+        var cursor = initial.Cursor;
+        var saved = cursor.ToString();
+        var redirected = await client.Keys.ScanClusterPageAsync(cursor);
+        await Assert.That(cursor.ToString()).IsEqualTo(saved);
+        await Assert.That(redirected.Cursor.CompletedSlotCount).IsEqualTo(0);
+        await Assert.That(redirected.Keys).IsEquivalentTo(supported ? [KeyInSlot(0)] : Array.Empty<string>());
+        await Assert.That(cluster.Second.Server.ReceivedCommands.Contains("ASKING")).IsEqualTo(ask && supported);
+        await Assert.That(cluster.First.Server.ReceivedCommands.Count(command => command == "COMMAND INFO CLUSTERSCAN")).IsEqualTo(1);
+        var next = await client.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Parse(redirected.Cursor.ToString()));
+        if (ask)
+        {
+            await Assert.That(next.Cursor.State!.ValkeyCursor).IsEqualTo(sourcePosition);
+            await Assert.That(cluster.First.Server.ReceivedCommands.Count(command => command == "COMMAND INFO CLUSTERSCAN")).IsEqualTo(1);
+        }
+        else if (!supported)
+        {
+            await Assert.That(next.Cursor.CompletedSlotCount).IsEqualTo(8193);
+            await Assert.That(next.Keys).IsEquivalentTo([KeyInSlot(0), KeyInSlot(8192)]);
+            var source = await client.Keys.ScanClusterPageAsync(next.Cursor);
+            await Assert.That(source.Cursor.State!.ValkeyCursor).IsEqualTo(sourcePosition);
+        }
+        await Assert.That(cluster.Second.Server.ReceivedCommands.Count(command => command == "COMMAND INFO CLUSTERSCAN")).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ValkeyRangeBoundaryCertifiesOnlyObservedStableSlots(bool moving)
+    {
+        await using var cluster = new ScanCluster();
+        cluster.First.Capability = Supported;
+        var current = "position-{" + TagInSlot(0) + "}-opaque";
+        var boundary = "next-{" + TagInSlot(8192) + "}-opaque";
+        var calls = 0;
+        cluster.First.ClusterScan = _ => ++calls == 1 ? Page(current) : Page(boundary, KeyInSlot(0));
+        if (moving) cluster.First.Transitions = "[1->-second]";
+        await using var client = await cluster.ConnectAsync();
+        var first = await client.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start);
+        var next = await client.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Parse(first.Cursor.ToString()));
+        await Assert.That(next.Cursor.CompletedSlotCount).IsEqualTo(moving ? 8191 : 8192);
+        await Assert.That(next.Cursor.State!.ValkeyCursor).IsNull();
+        await Assert.That(next.Keys).IsEquivalentTo([KeyInSlot(0)]);
+        await Assert.That(cluster.First.Server.ReceivedCommands.Where(command => command.StartsWith("CLUSTERSCAN ")))
+            .IsEquivalentTo(["CLUSTERSCAN 0 COUNT 250 SLOT 0", "CLUSTERSCAN " + current + " COUNT 250"]);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task LiteralZeroBootstrapRedirectRetainsOpaqueSeedOrFallsBack(bool supported)
+    {
+        await using var cluster = new ScanCluster();
+        cluster.First.Capability = Supported;
+        cluster.Second.Capability = supported ? Supported : Missing;
+        var position = "0-{" + TagInSlot(0) + "}-0";
+        cluster.First.ClusterScan = _ =>
+        {
+            cluster.First.ClusterScan = _ => Page("0", KeyInSlot(0));
+            return Encoding.ASCII.GetBytes($"-MOVED {ClusterHash.GetSlot("0")} 127.0.0.1:{cluster.Second.Server.Port}\r\n");
+        };
+        cluster.Second.ClusterScan = _ => Page(position);
+        cluster.First.Scan = _ => Page("0", KeyInSlot(0));
+        await using var client = await cluster.ConnectAsync();
+        var prior = new ClusterScanState(null, null, null) { Database = 0 };
+        for (var slot = 0; slot < 16384; slot++) prior.Owners[slot] = slot < 8192 ? "first" : "second";
+        prior.Completed[ClusterHash.GetSlot("0")] = true;
+        var checkpoint = new RespireClusterScanCursor(prior);
+        var saved = checkpoint.ToString();
+        var first = await client.Keys.ScanClusterPageAsync(checkpoint);
+        await Assert.That(checkpoint.ToString()).IsEqualTo(saved);
+        if (supported)
+        {
+            await Assert.That(first.Cursor.CompletedSlotCount).IsEqualTo(1);
+            await Assert.That(first.Cursor.State!.ValkeyCursor).IsEqualTo(position);
+            await Assert.That(first.Cursor.State.ActiveNode).IsEqualTo("first");
+            var next = await client.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Parse(first.Cursor.ToString()));
+            await Assert.That(next.Cursor.CompletedSlotCount).IsEqualTo(8193);
+            await Assert.That(next.Keys).IsEquivalentTo([KeyInSlot(0)]);
+        }
+        else
+        {
+            await Assert.That(first.Cursor.CompletedSlotCount).IsEqualTo(8193);
+            await Assert.That(first.Keys).IsEquivalentTo([KeyInSlot(0)]);
+            await Assert.That(cluster.Second.Server.ReceivedCommands.Any(command => command.StartsWith("CLUSTERSCAN "))).IsFalse();
+        }
+        await Assert.That(cluster.First.Server.ReceivedCommands.Count(command => command == "COMMAND INFO CLUSTERSCAN")).IsEqualTo(1);
+        await Assert.That(cluster.Second.Server.ReceivedCommands.Count(command => command == "COMMAND INFO CLUSTERSCAN")).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task DatabaseAndMalformedOpaqueCursorFailBeforeNetworkAccess()
+    {
+        await using var cluster = new ScanCluster();
+        cluster.First.Capability = Supported;
+        cluster.First.ClusterScan = _ => Page("position-{" + TagInSlot(0) + "}-opaque");
+        await using var client = await cluster.ConnectAsync();
+        var page = await client.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start);
+        var copy = page.Cursor.State!.Copy();
+        copy.Database = 1;
+        var wrongDatabase = RespireClusterScanCursor.Parse(new RespireClusterScanCursor(copy).ToString());
+        var before = cluster.CommandCount;
+        await Assert.That(async () => await client.Keys.ScanClusterPageAsync(wrongDatabase)).Throws<ArgumentException>();
+        await Assert.That(cluster.CommandCount).IsEqualTo(before);
+        foreach (var position in new[] { "", "0", "position-{" + TagInSlot(8192) + "}-opaque" })
+        {
+            copy.ValkeyCursor = position;
+            await Assert.That(RespireClusterScanCursor.TryParse(new RespireClusterScanCursor(copy).ToString(), out _)).IsFalse();
+        }
+        copy.ValkeyCursor = page.Cursor.State!.ValkeyCursor;
+        copy.Cursor = 17;
+        await Assert.That(RespireClusterScanCursor.TryParse(new RespireClusterScanCursor(copy).ToString(), out _)).IsFalse();
+    }
+
+    [Test]
+    [Arguments("-NOPERM metadata denied\r\n")]
+    [Arguments("-ERR unknown command 'COMMAND'\r\n")]
+    [Arguments("-ERR unknown command \"command\"\r\n")]
+    [Arguments("-ERR unknown command COMMAND\r\n")]
+    [Arguments("+not-metadata\r\n")]
+    [Arguments("*1\r\n*1\r\n:42\r\n")]
+    [Arguments("*1\r\n*1\r\n$4\r\nscan\r\n")]
+    public async Task UnknownMetadataNeverCachesCommandAbsence(string unknown)
+    {
+        await using var cluster = new ScanCluster();
+        cluster.First.Capability = Encoding.UTF8.GetBytes(unknown);
+        await using var client = await cluster.ConnectAsync();
+        var legacy = await client.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start);
+        await Assert.That(legacy.Cursor.CompletedSlotCount).IsEqualTo(8192);
+        cluster.First.Capability = Supported;
+        cluster.First.ClusterScan = _ => Page("position-{" + TagInSlot(0) + "}-opaque");
+        var modern = await client.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start);
+        await Assert.That(modern.Cursor.State!.ValkeyCursor).IsNotNull();
+        await Assert.That(cluster.First.Server.ReceivedCommands.Count(command => command == "COMMAND INFO CLUSTERSCAN")).IsEqualTo(2);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ExtendedCheckpointRetainsExactUtf16FilterIdentity(bool modern)
+    {
+        await using var cluster = new ScanCluster();
+        cluster.First.Capability = modern ? Supported : Missing;
+        cluster.First.ClusterScan = _ => Page("position-{" + TagInSlot(0) + "}-opaque");
+        cluster.First.Scan = _ => Page("17");
+        const string prefix = "tenant:\uD83D";
+        const string match = "*:ok";
+        await using var client = await cluster.ConnectAsync();
+        var view = client.WithKeyPrefix(prefix);
+        var first = await view.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start, match);
+        var parsed = RespireClusterScanCursor.Parse(first.Cursor.ToString());
+        await Assert.That(parsed.State!.Prefix).IsEqualTo(prefix);
+        await Assert.That(parsed.State.Match).IsEqualTo(prefix + match);
+        cluster.First.ClusterScan = _ => Page("0", prefix + "\uDE00:ok", prefix + "\uDE00:skip");
+        cluster.First.Scan = _ => Page("0", prefix + "\uDE00:ok");
+        var next = await view.Keys.ScanClusterPageAsync(parsed, match);
+        await Assert.That(next.Keys).IsEquivalentTo(["\uDE00:ok"]);
+        await Assert.That(next.Cursor.CompletedSlotCount).IsEqualTo(8192);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ValkeyRestartOrEpochChangeRestartsOpaquePass(bool restart)
+    {
+        await using var cluster = new ScanCluster();
+        cluster.First.Capability = Supported;
+        cluster.First.ClusterScan = _ => Page("position-{" + TagInSlot(0) + "}-opaque");
+        await using var client = await cluster.ConnectAsync();
+        var first = await client.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start);
+        var saved = first.Cursor.ToString();
+        if (restart) cluster.First.RunId = "new-process";
+        else cluster.First.Epoch++;
+        var reset = await client.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Parse(saved));
+        await Assert.That(reset.Cursor.CompletedSlotCount).IsEqualTo(0);
+        await Assert.That(first.Cursor.ToString()).IsEqualTo(saved);
+        await Assert.That(cluster.First.Server.ReceivedCommands.Where(command => command.StartsWith("CLUSTERSCAN ")))
+            .IsEquivalentTo(["CLUSTERSCAN 0 COUNT 250 SLOT 0", "CLUSTERSCAN 0 COUNT 250 SLOT 0"]);
+        await Assert.That(cluster.First.Server.ReceivedCommands.Count(command => command == "COMMAND INFO CLUSTERSCAN")).IsEqualTo(restart ? 2 : 1);
+    }
+
+    [Test]
+    [Arguments(2, "hash", true)]
+    [Arguments(3, "hash", true)]
+    [Arguments(2, "text", true)]
+    [Arguments(3, "text", true)]
+    [Arguments(2, "binary", true)]
+    [Arguments(3, "binary", true)]
+    [Arguments(2, "exact", true)]
+    [Arguments(3, "exact", true)]
+    [Arguments(2, "hash", false)]
+    [Arguments(3, "hash", false)]
+    public async Task FixedPhysicalMatchBootstrapsItsOnlySlot(int protocol, string kind, bool modern)
+    {
+        await using var cluster = new ScanCluster();
+        cluster.First.Capability = Supported;
+        cluster.Second.Capability = modern ? Supported : Missing;
+        const int slot = 16383;
+        var tag = TagInSlot(slot);
+        var position = "position-{" + tag + "}-opaque";
+        byte[] prefix = kind switch { "binary" => [255, 0], "text" => "tenant:"u8.ToArray(), _ => [] };
+        var logicalKey = kind == "exact" ? KeyInSlot(slot) : "{" + tag + "}:key";
+        byte[] physicalKey = [.. prefix, .. Encoding.UTF8.GetBytes(logicalKey)];
+        byte[] finalReply = [.. "*2\r\n$1\r\n0\r\n*1\r\n"u8, .. BinaryPrefixTests.Bulk(physicalKey)];
+        var calls = 0;
+        cluster.Second.ClusterScan = command => command.Contains("SLOT " + slot, StringComparison.Ordinal)
+            ? Page(position) : finalReply;
+        cluster.Second.Scan = _ => finalReply;
+        cluster.First.ClusterScan = _ => { calls++; return Page("0"); };
+        await using var client = await cluster.ConnectAsync(protocol);
+        IRespireClient view = kind switch
+        {
+            "binary" => client.WithKeyPrefix((RespireKey)prefix),
+            "text" => client.WithKeyPrefix("tenant:"),
+            _ => client,
+        };
+        var match = kind == "exact" ? logicalKey : "{" + tag + "}:*";
+        var first = await view.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start, match);
+        await Assert.That(calls).IsEqualTo(0);
+        if (!modern)
+        {
+            await Assert.That(first.Cursor.IsComplete).IsTrue();
+            await Assert.That(first.Keys).IsEquivalentTo([logicalKey]);
+            await Assert.That(cluster.Second.Server.ReceivedCommands.Count(command => command.StartsWith("SCAN "))).IsEqualTo(1);
+            return;
+        }
+        await Assert.That(first.Cursor.CompletedSlotCount).IsEqualTo(16383);
+        var final = await view.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Parse(first.Cursor.ToString()), match);
+        await Assert.That(final.Cursor.IsComplete).IsTrue();
+        await Assert.That(final.Keys).IsEquivalentTo([logicalKey]);
+        await Assert.That(cluster.Second.Server.ReceivedCommands.Count(command => command.StartsWith("CLUSTERSCAN "))).IsEqualTo(2);
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task AskingRechecksReplacementAfterCapabilitySocketRetires(int protocol)
+    {
+        await using var cluster = new ScanCluster();
+        cluster.First.Capability = cluster.Second.Capability = Supported;
+        cluster.First.ClusterScan = _ => Page("position-{" + TagInSlot(0) + "}-opaque");
+        await using var client = await cluster.ConnectAsync(protocol, connections: 2);
+        var page = await client.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start);
+        cluster.First.ClusterScan = _ => Encoding.ASCII.GetBytes($"-ASK 0 127.0.0.1:{cluster.Second.Server.Port}\r\n");
+        var target = client.Core.Cluster!.GetMultiplexer(new("127.0.0.1", cluster.Second.Server.Port));
+        Task? retirement = null;
+        var probes = 0;
+        cluster.Second.BeforeInfo = () => probes++;
+        cluster.Second.BeforeCapability = () =>
+        {
+            if (retirement is not null) return;
+            target.HasConnection(connection =>
+            {
+                if (connection.PendingResponseCount == 0) return false;
+                retirement = connection.RetireAsync();
+                return true;
+            });
+        };
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await client.Keys.ScanClusterPageAsync(page.Cursor, cancellationToken: deadline.Token);
+        await Assert.That(retirement).IsNotNull();
+        await retirement!.WaitAsync(deadline.Token);
+        await Assert.That(probes).IsEqualTo(2);
+        await Assert.That(cluster.First.Server.ReceivedCommands.Count(command => command.StartsWith("CLUSTERSCAN "))).IsEqualTo(3);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RedirectAndRetirementShareOnePageRetryBudget(bool afterCapability)
+    {
+        await using var cluster = new ScanCluster();
+        cluster.First.Capability = cluster.Second.Capability = Supported;
+        cluster.First.ClusterScan = _ => Page("position-{" + TagInSlot(0) + "}-opaque");
+        await using var client = await cluster.ConnectAsync();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var page = await client.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start, cancellationToken: deadline.Token);
+        var saved = page.Cursor.ToString();
+        var router = client.Core.Cluster!;
+        var replacements = 0;
+        cluster.First.ClusterScan = _ => Encoding.ASCII.GetBytes($"-ASK 0 127.0.0.1:{cluster.Second.Server.Port}\r\n");
+        Action retire = () =>
+        {
+            cluster.Second.Id = "replacement-" + ++replacements;
+            cluster.Second.RunId = "replacement-run-" + replacements;
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            var version = (long)typeof(ClusterRouter).GetField("_topologyVersion", flags)!.GetValue(router)!;
+            var generationField = typeof(ClusterRouter).GetField("_nextDiscoveryGeneration", flags)!;
+            var generation = (long)generationField.GetValue(router)! + 1;
+            generationField.SetValue(router, generation);
+            List<ClusterTopologyRange> ranges =
+            [
+                new(0, 8191, new("127.0.0.1", cluster.First.Server.Port), "first", []),
+                new(8192, 16383, new("127.0.0.1", cluster.Second.Server.Port), cluster.Second.Id, []),
+            ];
+            typeof(ClusterRouter).GetMethod("ApplyTopology", flags)!.Invoke(router, [ranges, version, generation]);
+        };
+        if (afterCapability) cluster.Second.BeforeCapability = retire;
+        else cluster.Second.BeforeInfo = retire;
+        await Assert.That(async () => await client.Keys.ScanClusterPageAsync(page.Cursor, cancellationToken: deadline.Token))
+            .Throws<Respire.Networking.RespireConnectionRetiredException>();
+        await Assert.That(replacements).IsEqualTo(3);
+        await Assert.That(cluster.First.Server.ReceivedCommands.Count(command => command.StartsWith("CLUSTERSCAN "))).IsEqualTo(4);
+        await Assert.That(page.Cursor.ToString()).IsEqualTo(saved);
+        await router.WaitForRetirementAsync().WaitAsync(deadline.Token);
+    }
+
+    private static string TagInSlot(int slot) => KeyInSlot(slot);
+    private static readonly byte[] Missing = "*1\r\n$-1\r\n"u8.ToArray();
+    private static readonly byte[] Supported = "*1\r\n*1\r\n$11\r\nclusterscan\r\n"u8.ToArray();
 
     private static string KeyInSlot(int slot)
     {
@@ -552,21 +1087,34 @@ public class ClusterScanTests
             foreach (var node in new[] { First, Second })
                 node.Server.ReplyOverride = (_, command) => command switch
                 {
+                    "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
                     "CLUSTER SLOTS" => SlotsReply(),
                     "CLUSTER NODES" => Metadata(node),
-                    "INFO server" => Bulk($"# Server\r\nrun_id:{node.RunId}\r\n"),
+                    "INFO server" => Info(node),
+                    "COMMAND INFO CLUSTERSCAN" => Capability(node),
+                    _ when command.StartsWith("CLUSTERSCAN ") => node.ClusterScan(command),
                     _ when command.StartsWith("SCAN ") => node.Scan(command),
                     _ => FakeRespServer.PongReply,
                 };
+        }
+        private static byte[] Capability(Node node)
+        {
+            node.BeforeCapability?.Invoke();
+            return node.Capability;
         }
         private static byte[] Metadata(Node node)
         {
             node.BeforeMetadata?.Invoke();
             return Bulk($"{node.Id} 127.0.0.1:{node.Server.Port}@17000 myself,master - 0 0 {node.Epoch} connected {node.Slots} {node.Transitions}\n");
         }
-        internal ValueTask<RespireClient> ConnectAsync() => RespireClient.ConnectAsync(new RespireOptions
+        private static byte[] Info(Node node)
         {
-            UseCluster = true, Protocol = RespProtocol.Resp2, Connections = 1, MaxInflightCommands = 4,
+            node.BeforeInfo?.Invoke();
+            return Bulk($"# Server\r\nrun_id:{node.RunId}\r\n");
+        }
+        internal ValueTask<RespireClient> ConnectAsync(int protocol = 2, int connections = 1) => RespireClient.ConnectAsync(new RespireOptions
+        {
+            UseCluster = true, Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3, Connections = connections, MaxInflightCommands = 4,
             Endpoints = { new RespireEndpoint("127.0.0.1", First.Server.Port) },
         });
         private byte[] SlotsReply()
@@ -591,11 +1139,15 @@ public class ClusterScanTests
     {
         internal string Id = id;
         internal Action? BeforeMetadata;
+        internal Action? BeforeInfo;
+        internal Action? BeforeCapability;
         internal string Slots = slots;
         internal string Transitions = "";
         internal ulong Epoch = 1;
         internal string RunId = id + "-run";
         internal FakeRespServer Server { get; } = new(8, FakeRespServer.PongReply);
         internal Func<string, byte[]> Scan = _ => Page("0");
+        internal byte[] Capability = Missing;
+        internal Func<string, byte[]> ClusterScan = _ => Page("0");
     }
 }

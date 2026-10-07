@@ -144,9 +144,10 @@ public partial interface IKeyCommands
     /// <summary>Touches keys (updates access time); returns how many existed. Redis: TOUCH.</summary>
     ValueTask<long> TouchAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken);
 
-    /// <summary>Reads one resumable page across Redis Cluster primaries.</summary>
-    /// <remarks>Start with RespireClusterScanCursor.Start. Preserve match, type and the client's
+    /// <summary>Reads one resumable page across Cluster primaries, selecting CLUSTERSCAN when supported.</summary>
+    /// <remarks>Start with RespireClusterScanCursor.Start. Preserve database, match, type and the client's
     /// key prefix when resuming. Requires SCAN, CLUSTER SLOTS, CLUSTER NODES and INFO permissions.
+    /// Modern selection also uses COMMAND INFO and CLUSTERSCAN; unknown metadata permits an uncached fallback.
     /// A failed call leaves its input cursor usable. Retry that cursor after transient failures.
     /// Duplicate keys and empty incomplete pages are permitted, especially during resharding.</remarks>
     ValueTask<RespireClusterScanPage> ScanClusterPageAsync(

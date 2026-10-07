@@ -8,24 +8,32 @@ namespace Respire;
 
 internal sealed partial class KeyCommands
 {
+    private sealed class ScanRecovery
+    {
+        internal int Rejections;
+        internal ClusterRouter.DiscoveryRound? Discovery;
+        internal ClusterScanCapabilityCache.ProbeRound Capabilities { get; } = new();
+    }
+
     public async ValueTask<RespireClusterScanPage> ScanClusterPageAsync(
         RespireClusterScanCursor cursor, string? match = null, RespireKeyType? type = null,
         int countHint = 250, CancellationToken cancellationToken = default)
     {
-        ClusterRouter.DiscoveryRound? discovery = null;
+        var recovery = new ScanRecovery();
         try
         {
-            for (var attempt = 0; ; attempt++)
+            while (true)
             {
                 try
                 {
-                    return await ScanClusterPageCoreAsync(cursor, match, type, countHint, cancellationToken, discovery).ConfigureAwait(false);
+                    return await ScanClusterPageCoreAsync(cursor, match, type, countHint, cancellationToken, recovery).ConfigureAwait(false);
                 }
                 catch (RespireConnectionRetiredException retirement) when (client.Core.Cluster is { } cluster
-                    && cluster.CanRetryRetirement(attempt, cancellationToken))
+                    && cluster.CanRetryRetirement(recovery.Rejections, cancellationToken))
                 {
                     // Rebuild from the immutable checkpoint, retaining the same fallback budget.
-                    cluster.RecordRejection(ref discovery, retirement.Endpoint, retirement);
+                    recovery.Rejections++;
+                    cluster.RecordRejection(ref recovery.Discovery, retirement.Endpoint, retirement);
                 }
             }
         }
@@ -33,16 +41,16 @@ internal sealed partial class KeyCommands
         {
             // Cancellation before the next selection still ends a pending recovery. Errors
             // from INFO/SCAN after successful selection do not invalidate discovery telemetry.
-            if (discovery is not null)
+            if (recovery.Discovery is { } discovery)
                 discovery.RecordCommandFailure(error, discovery.HasPendingFailure, cancellationToken);
             throw;
         }
-        finally { discovery?.Finish(); }
+        finally { recovery.Discovery?.Finish(); }
     }
 
     private async ValueTask<RespireClusterScanPage> ScanClusterPageCoreAsync(
         RespireClusterScanCursor cursor, string? match, RespireKeyType? type,
-        int countHint, CancellationToken cancellationToken, ClusterRouter.DiscoveryRound? discovery)
+        int countHint, CancellationToken cancellationToken, ScanRecovery recovery)
     {
         ArgumentNullException.ThrowIfNull(cursor);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(countHint);
@@ -57,13 +65,17 @@ internal sealed partial class KeyCommands
         var checkpointMatch = prefix?.Text is { } text ? EscapeGlob(text) + (match ?? "*") : match;
         var binaryPrefix = prefix is { Text: null } ? prefix.Bytes : null;
         if (cursor.State is { } previous && (previous.Match != checkpointMatch || previous.Type != typeToken
-            || !previous.MatchesKeyPrefix(prefix)))
-            throw new ArgumentException("Resume a Cluster scan with the same match, type and key prefix.", nameof(cursor));
+            || !previous.MatchesKeyPrefix(prefix) || previous.Database is { } database && database != client.Core.Options.Database))
+            throw new ArgumentException("Resume a Cluster scan with the same match, type, database and key prefix.", nameof(cursor));
         if (cursor.IsComplete) return new(cursor, []);
         // Never mutate a published cursor. Failure/cancellation leaves the caller's checkpoint intact.
         var state = cursor.State?.Copy() ?? new ClusterScanState(checkpointMatch, typeToken, prefix?.Text) { BinaryPrefix = binaryPrefix };
-        var topology = await ReadScanTopologyAsync(cancellationToken, discovery).ConfigureAwait(false);
+        // Legacy tokens cannot prove their original database. Adopt the caller's database
+        // once and publish RSC3 so subsequent resumes enforce that identity.
+        if (state.Database is null) state.Database = client.Core.Options.Database;
+        var topology = await ReadScanTopologyAsync(cancellationToken, recovery.Discovery).ConfigureAwait(false);
         ReconcileScan(state, topology);
+        RestrictScanToMatchingSlot(state, client.EncodedKeyPrefix is { HasSurrogateBoundary: true } ? null : effectiveMatch);
         var node = SelectScanNode(state, topology);
         if (node is null)
         {
@@ -71,6 +83,18 @@ internal sealed partial class KeyCommands
             return new(new RespireClusterScanCursor(state), []) { WaitingOnMigration = true };
         }
         var runId = await ReadScanRunIdAsync(node.Connection, cancellationToken).ConfigureAwait(false);
+        if (state.ActiveNode is not null && (state.ActiveNode != node.Metadata.Id
+            || state.RunId != runId || state.Epoch != node.Metadata.ConfigurationEpoch)) state.ResetPass();
+        // Finish an old numeric pass unchanged. Only new passes and opaque continuations
+        // select the newer protocol; opaque positions are never sent to SCAN.
+        if ((state.ActiveNode is null || state.ValkeyCursor is not null)
+            && await SupportsClusterScanAsync(node.Connection, runId, recovery, cancellationToken).ConfigureAwait(false))
+        {
+            var modern = await ReadValkeyScanPageAsync(state, topology, node, runId, match, type,
+                countHint, cancellationToken, recovery).ConfigureAwait(false);
+            if (modern is not null) return modern;
+        }
+        if (state.ValkeyCursor is not null) state.ResetPass();
         if (state.ActiveNode != node.Metadata.Id || state.RunId != runId || state.Epoch != node.Metadata.ConfigurationEpoch)
         {
             state.ResetPass();
@@ -89,7 +113,7 @@ internal sealed partial class KeyCommands
             _ => [serverCursor, "MATCH", effectiveMatch!.Value, "COUNT", countHint, "TYPE", typeToken],
         };
         // A node-local cursor must never be redirected or transferred to a replacement server.
-        using var reply = await client.SendOnConnectionAsync("SCAN", node.Connection,
+        using var reply = await client.SendOnPinnedConnectionAsync("SCAN", node.Connection,
             new CmdN(Verbs.Scan, arguments), cancellationToken).ConfigureAwait(false);
         if (reply.Type != RespDataType.Array || reply.AsArray().Length != 2)
             throw new RespireProtocolException("SCAN must return a cursor and a key array.");
@@ -112,18 +136,23 @@ internal sealed partial class KeyCommands
         {
             // Validate the complete pass against fresh, primary-local ownership and migration
             // state. An in-progress migration is never certified as a completed slot scan.
-            var after = await ReadScanTopologyAsync(cancellationToken, discovery).ConfigureAwait(false);
-            ReconcileScan(state, after);
-            if (state.ActiveNode is { } active && after.Nodes.TryGetValue(active, out var current)
-                && state.Epoch == current.Metadata.ConfigurationEpoch
-                && state.RunId == await ReadScanRunIdAsync(current.Connection, cancellationToken).ConfigureAwait(false))
-            {
-                for (var slot = 0; slot < ClusterHash.SlotCount; slot++)
-                    if (state.PassSlots[slot]) state.Completed[slot] = true;
-            }
-            state.ResetPass();
+            await CompleteScanPassAsync(state, effectiveMatch, cancellationToken, recovery.Discovery).ConfigureAwait(false);
         }
         return new(new RespireClusterScanCursor(state), keys.ToArray());
+    }
+
+    private async ValueTask CompleteScanPassAsync(ClusterScanState state, RespireValue? effectiveMatch, CancellationToken cancellationToken,
+        ClusterRouter.DiscoveryRound? discovery)
+    {
+        var after = await ReadScanTopologyAsync(cancellationToken, discovery).ConfigureAwait(false);
+        ReconcileScan(state, after);
+        RestrictScanToMatchingSlot(state, effectiveMatch);
+        if (state.ActiveNode is { } active && after.Nodes.TryGetValue(active, out var current)
+            && state.Epoch == current.Metadata.ConfigurationEpoch
+            && state.RunId == await ReadScanRunIdAsync(current.Connection, cancellationToken).ConfigureAwait(false))
+            for (var slot = 0; slot < ClusterHash.SlotCount; slot++)
+                if (state.PassSlots[slot]) state.Completed[slot] = true;
+        state.ResetPass();
     }
 
     private sealed record ScanNode(RespireConnection Connection, RespireClusterNode Metadata);
@@ -147,7 +176,7 @@ internal sealed partial class KeyCommands
         var moving = new bool[ClusterHash.SlotCount];
         foreach (var connection in connections)
         {
-            using var reply = await client.SendOnConnectionAsync("CLUSTER NODES", connection,
+            using var reply = await client.SendOnPinnedConnectionAsync("CLUSTER NODES", connection,
                 new Cmd(RespireCommands.Cluster.CLUSTER_NODES.Verb), cancellationToken).ConfigureAwait(false);
             var rows = ClusterInspectionParser.Nodes(in reply);
             var self = rows.SingleOrDefault(static row => row.Flags.Contains("myself", StringComparer.Ordinal));
@@ -172,7 +201,7 @@ internal sealed partial class KeyCommands
 
     private async ValueTask<string> ReadScanRunIdAsync(RespireConnection connection, CancellationToken cancellationToken)
     {
-        using var reply = await client.SendOnConnectionAsync("INFO", connection,
+        using var reply = await client.SendOnPinnedConnectionAsync("INFO", connection,
             new Cmd1(Verbs.Info, "server"), cancellationToken).ConfigureAwait(false);
         foreach (var line in ClusterInspectionParser.Text(in reply).Split('\n'))
             if (line.StartsWith("run_id:", StringComparison.Ordinal) && line.AsSpan(7).Trim().Length > 0)
@@ -198,7 +227,28 @@ internal sealed partial class KeyCommands
         }
         if (state.ActiveNode is { } active && (!topology.Nodes.TryGetValue(active, out var node)
             || node.Metadata.ConfigurationEpoch != state.Epoch
+            || state.ValkeyCursor is { } opaque && !state.PassSlots[ClusterHash.GetSlot(opaque)]
             || !state.PassSlots.Any(static eligible => eligible))) state.ResetPass();
+    }
+
+    private static void RestrictScanToMatchingSlot(ClusterScanState state, RespireValue? effectiveMatch)
+    {
+        if (effectiveMatch is not { } pattern) return;
+        var bytes = pattern.AsKey().ToBytes();
+        if (!ClusterHash.TryGetFixedPatternSlot(bytes, out var matchingSlot))
+        {
+            // Without metacharacters this is an exact physical key, including empty tags.
+            if (bytes.AsSpan().IndexOfAny("*?[\\"u8) >= 0) return;
+            matchingSlot = ClusterHash.GetSlot(bytes);
+        }
+        for (var slot = 0; slot < ClusterHash.SlotCount; slot++)
+            if (slot != matchingSlot)
+            {
+                // MATCH itself proves these slots have no eligible keys, even while moving.
+                state.Completed[slot] = true;
+                state.PassSlots[slot] = false;
+            }
+        if (state.ValkeyCursor is { } position && !state.PassSlots[ClusterHash.GetSlot(position)]) state.ResetPass();
     }
 
     private static ScanNode? SelectScanNode(ClusterScanState state, ScanTopology topology)

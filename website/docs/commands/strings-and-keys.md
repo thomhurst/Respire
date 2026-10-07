@@ -504,14 +504,45 @@ while (!cursor.IsComplete);
 Each cursor is immutable. Reusing one repeats that scan position; a failed or cancelled
 page call leaves its input cursor usable. Retry that input after a transient connection
 failure. Save the returned cursor only after processing its keys, and make processing
-idempotent: Redis SCAN may return duplicates. Empty pages can still have an incomplete
+idempotent: SCAN and CLUSTERSCAN may return duplicates. Empty pages can still have an incomplete
 cursor. `COUNT` is a server work hint, not a maximum number of returned keys.
 `CompletedSlotCount` reports progress across 16,384 slots and can decrease after resharding.
+When the effective physical `MATCH` proves a single slot (a fixed hash tag such as
+`{tenant}:*`, or an exact key without glob metacharacters), other slots cannot contain
+matching keys and count as complete immediately. The scan starts at that slot's owner;
+it does not bootstrap every preceding slot. Wildcards or escapes before the hash tag,
+and text prefixes with a surrogate boundary, retain the general scan path.
 
-Keep the same `match`, `type`, and key-prefix view when resuming. These are bound into the
+Keep the same database, `match`, `type`, and key-prefix view when resuming. These are bound into the
 cursor and a mismatch fails before network access; `countHint` may change. Prefixes are
 glob-escaped for matching, and returned keys have the literal prefix removed, just as with
 `ScanAsync`. The string API retains its existing UTF-8 decoding semantics for key names.
+
+For a new pass, the client queries `COMMAND INFO CLUSTERSCAN` on the selected physical
+primary. A recognized command entry selects Valkey's CLUSTERSCAN; a null entry selects
+legacy SCAN. Evidence is cached for that connection and process run ID, so a new socket
+or replacement process is checked again. Denied or unknown metadata permits a legacy
+pass without caching command absence. If CLUSTERSCAN execution is denied at the initial,
+unredirected bootstrap, the pass uses SCAN without caching command absence. Denied opaque
+continuations and redirected execution still fail explicitly, preserving the checkpoint.
+An exact unsupported-command reply from a destination permits fallback on that destination;
+it does not change the redirect source's capability evidence.
+
+Modern passes scan a contiguous primary-owned slot range. The initial SLOT request obtains
+an opaque server position; subsequent requests pass it unchanged and let CLUSTERSCAN traverse
+the range. Its hash tag identifies the physical slot for routing and range completion;
+the client never interprets its fingerprint or local position as a numeric SCAN cursor.
+A MOVED/ASK response follows normal Cluster recovery after checking the destination's
+capability. A redirected page cannot certify the previous owner's range. Older servers and
+mixed-version clusters retain the SCAN-per-primary path. Downgrade restarts the unfinished
+pass from numeric zero, retaining unaffected completed slots and allowing duplicate keys.
+An existing numeric pass finishes with SCAN before selecting a new protocol.
+The literal zero bootstrap can be redirected before any keys are scanned. Its empty
+slot cursor is retained for the validated slot owner without certifying progress. An
+unsupported bootstrap destination permits legacy scanning on that validated owner.
+Redirects and physical retirement share one bounded retry budget per page call.
+ASKING and CLUSTERSCAN stay pinned to the checked destination. Socket retirement
+returns to that page budget, and the replacement's process and capability are checked again.
 
 The cursor records slot ownership/completion and the active primary's server cursor,
 configuration epoch, and process run ID. Each page refreshes topology and reads primary-local
@@ -525,13 +556,14 @@ node pass. Migrating/importing slots cannot complete until their transition sett
 Continuous epoch changes can prevent an active pass from finishing; unaffected slots already
 validated remain complete. Use cancellation or an application deadline to bound a scan.
 When only moving slots remain, a page sets `WaitingOnMigration`, contains no keys, and issues
-no INFO or SCAN. Page callers should delay before retrying. `ScanAsync` waits 50 ms, doubling
+no INFO, capability probe, SCAN or CLUSTERSCAN. Page callers should delay before retrying. `ScanAsync` waits 50 ms, doubling
 to a maximum of 250 ms between consecutive waiting pages; stable work resets this delay.
 The wait observes the enumeration's cancellation token.
 Redis scans whole node dictionaries, so rescanning affected slots still traverses the new
 owner's dictionary, while filtering already completed slots from the result.
 
-This requires `SCAN`, `CLUSTER SLOTS`, `CLUSTER NODES`, and `INFO` permissions. Metadata
+This requires `SCAN`, `CLUSTER SLOTS`, `CLUSTER NODES`, and `INFO` permissions. Modern
+selection additionally uses `COMMAND INFO` and `CLUSTERSCAN`; fallback does not widen ACLs. Metadata
 validation adds round trips per page; use a larger count hint to amortize them. Incomplete
 or contradictory ownership and unavailable primaries fail explicitly instead of silently
 omitting keys. The scan follows Cluster-reported ownership and epochs; it is not a database
@@ -547,6 +579,14 @@ use cancellation to bound the work. Standalone scans retain their existing curso
 `Parse` rejects malformed, oversized, or unsupported-version tokens; `TryParse` returns
 false instead. Tokens are versioned Base64 data, not encrypted or authenticated. They contain
 filters and node identities, but no passwords, sockets, or process-local registry handles.
+This client reads existing RSC1 text-prefix and RSC2 binary-prefix checkpoints, and writes
+RSC3 checkpoints with database identity and separate numeric/opaque positions. Older clients
+that only understand RSC1/RSC2 reject RSC3; new checkpoints are not universally portable
+between client versions. Legacy tokens did not record a database: resume them against their
+original database, which is bound when the next checkpoint is published. Tokens do not
+identify a unique cluster, so callers must also reconnect to the original cluster.
+RSC3 retains exact UTF-16 filter and text-prefix identity, including unpaired surrogates.
+Legacy UTF-8 text tokens cannot reconstruct code units already replaced during serialization.
 Treat checkpoints as trusted application state; do not accept arbitrary client-supplied tokens
 as validated scan progress. Authenticate them at the application boundary if they cross a
 trust boundary, and enforce storage/request size limits. Tokens can be several kilobytes;
@@ -620,8 +660,8 @@ its scan group to a primary without flushing the shared client cache. A mixed
 write batch and a primary-view batch retain conservative cache invalidation.
 
 This explicit API retains unsupported-command and permission errors from older servers.
-It does not change `ScanClusterPageAsync`, its `RespireClusterScanCursor` checkpoints, or
-automatically convert between the two cursor formats. See Valkey's
+Its raw server cursor is distinct from `ScanClusterPageAsync`'s immutable
+`RespireClusterScanCursor` checkpoint. Do not pass one format to the other API. See Valkey's
 [CLUSTERSCAN reference](https://valkey.io/commands/clusterscan/) for server scan guarantees.
 
 #### Database ACLs

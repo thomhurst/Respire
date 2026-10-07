@@ -1218,15 +1218,29 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         CommandDeadline commandDeadline = default,
         bool allowStreamingConnectionReroute = true,
         DedicatedStreamRoute streamingRoute = default,
-        string? preferredZone = null)
+        string? preferredZone = null,
+        bool pinToConnection = false)
         where TCommand : struct, Respire.Protocol.IRespCommand
     {
         if (command is StreamedSetCommand streamedSet)
             return connection.SendAskingStreamedSetAsync(in Asking, streamedSet, cancellationToken, commandDeadline,
                 streamingRoute);
 
-        return connection.SendPrefixedCheckedAsync(in Asking, in command, cancellationToken, commandName,
-            commandDeadline, allowStreamingConnectionReroute, preferredZone);
+        return CheckAskingReplyAsync(connection.SendValidatedPrefixedAsync(in Asking, in command,
+            cancellationToken, commandName ?? "(command)", preferredZone, pinToConnection, commandDeadline), commandName);
+    }
+
+    private static async ValueTask<Respire.Protocol.RespValue> CheckAskingReplyAsync(
+        ValueTask<Respire.Protocol.RespValue> pending, string? commandName)
+    {
+        var reply = await pending.ConfigureAwait(false);
+        if (reply.IsError)
+        {
+            var message = reply.GetErrorMessage();
+            reply.Dispose();
+            throw new RespireServerException(message, commandName);
+        }
+        return reply;
     }
 
     internal static ValueTask<Respire.Protocol.RespValue> SendTrackedAskingAsync<TCommand>(

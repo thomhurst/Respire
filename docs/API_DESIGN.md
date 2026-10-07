@@ -247,12 +247,22 @@ await foreach (var field in redis.Hashes.ScanAsync("user:1", match: "profile:*",
 Hashes yield field/value pairs, sets yield members, and sorted sets yield members with scores.
 
 Cluster key scans also expose `Keys.ScanClusterPageAsync(RespireClusterScanCursor, ...)`.
-Its immutable next cursor round-trips through `ToString`/`Parse`, binds match/type/key prefix,
+Its immutable next cursor round-trips through `ToString`/`Parse`, binds database/match/type/key prefix,
 and records completed slots plus the active node's cursor, identity, epoch, and run ID.
 The async enumerable delegates to this page engine. Primary-local metadata prevents an
 in-progress migration from being marked complete; changed owners invalidate only affected
 slot completion. Reusing a server cursor after a restart or epoch change is forbidden.
-The engine requires SCAN, CLUSTER SLOTS, CLUSTER NODES and INFO and validates a full node pass
+The engine selects CLUSTERSCAN using physical-connection/run-ID-scoped COMMAND INFO evidence,
+with SCAN-per-primary fallback for older servers or unknown capability. Numeric legacy passes
+finish unchanged; an opaque cursor is never reused as a numeric SCAN position. RSC3 checkpoints
+add database identity and opaque state while preserving backward reading of RSC1/RSC2; older
+clients reject RSC3. Legacy tokens require callers to retain their original database.
+A fixed physical MATCH hash tag or exact key proves all other slots irrelevant and
+starts scanning at its owner. General patterns retain normal range traversal.
+ASKING prefixes are pinned to checked sockets; retirement returns to the shared page
+recovery budget before replacement process/capability checks.
+The engine requires SCAN, CLUSTER SLOTS, CLUSTER NODES and INFO, and COMMAND INFO/CLUSTERSCAN
+for modern selection. It validates a node pass or modern owner range
 before committing completion. Empty pages and duplicates are valid; failed calls preserve
 the input checkpoint, and missing topology is an explicit failure, never a partial scan.
 
