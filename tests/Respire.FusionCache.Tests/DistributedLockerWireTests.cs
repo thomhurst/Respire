@@ -9,6 +9,56 @@ namespace Respire.FusionCache.Tests;
 public class DistributedLockerWireTests
 {
     [Test]
+    [Arguments(0)]
+    [Arguments(30)]
+    public async Task ImmediateAttemptAndFiniteBudgetDoNotWaitForLongPollInterval(int timeoutMs)
+    {
+        await using var server = new FakeRespServer("$-1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await using var locker = new RespireFusionCacheDistributedLocker(client,
+            new() { PollInterval = TimeSpan.FromSeconds(1) });
+        var pending = DistributedLockerTests.AcquireAsync(locker, "cache", TimeSpan.FromMilliseconds(timeoutMs)).AsTask();
+        // The smallest uncapped jittered poll is 900 ms. A finite budget must end before it.
+        await Assert.That(await pending.WaitAsync(TimeSpan.FromMilliseconds(500))).IsNull();
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(1);
+        await Assert.That(server.ReceivedCommands[0].StartsWith("EVALSHA ", StringComparison.Ordinal)).IsTrue();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task InfiniteContentionEndsOnCancellationOrDisposal(bool disposeLocker)
+    {
+        var attemptArrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer("$-1\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) =>
+            {
+                if (command.StartsWith("EVALSHA ", StringComparison.Ordinal)) attemptArrived.TrySetResult();
+                return null;
+            },
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await using var locker = new RespireFusionCacheDistributedLocker(client,
+            new() { PollInterval = TimeSpan.FromSeconds(1) });
+        using var cancellation = new CancellationTokenSource();
+        var pending = DistributedLockerTests.AcquireAsync(locker, "cache", Timeout.InfiniteTimeSpan, cancellation.Token).AsTask();
+        await attemptArrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        if (disposeLocker)
+        {
+            await locker.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5))).Throws<ObjectDisposedException>();
+        }
+        else
+        {
+            await cancellation.CancelAsync();
+            var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Throws<OperationCanceledException>();
+            await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
+        }
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task SuccessfulReleaseIgnoresCancellationBeforeAndDuringCleanup(bool cancelDuringCleanup)
