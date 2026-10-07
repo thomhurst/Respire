@@ -27,40 +27,40 @@ internal readonly struct StreamReadCommand(RespireValue[] keys, RespireStreamId[
         writer.WriteArrayHeader(2 + keys.Length * 2 + (count.HasValue ? 2 : 0) + (blockMilliseconds.HasValue ? 2 : 0)
             + (maxCount.HasValue ? 2 : 0) + (maxSize.HasValue ? 2 : 0) + (group is null ? 0 : 3)
             + (noAck ? 1 : 0) + (claimMinIdleMilliseconds.HasValue ? 2 : 0));
-        writer.WriteBulkString(group is null ? "XREAD"u8 : "XREADGROUP"u8);
+        writer.WriteRaw(group is null ? CommandOptionFrames.XREAD : CommandOptionFrames.XREADGROUP);
         if (group is not null)
         {
-            writer.WriteBulkString("GROUP"u8);
+            writer.WriteRaw(CommandOptionFrames.GROUP);
             writer.WriteBulkString(group);
             writer.WriteBulkString(consumer!);
         }
         if (count is { } take)
         {
-            writer.WriteBulkString("COUNT"u8);
+            writer.WriteRaw(CommandOptionFrames.COUNT);
             writer.WriteBulkInteger(take);
         }
         if (maxCount is { } total)
         {
-            writer.WriteBulkString("MAXCOUNT"u8);
+            writer.WriteRaw(CommandOptionFrames.MAXCOUNT);
             writer.WriteBulkInteger(total);
         }
         if (maxSize is { } bytes)
         {
-            writer.WriteBulkString("MAXSIZE"u8);
+            writer.WriteRaw(CommandOptionFrames.MAXSIZE);
             writer.WriteBulkInteger(bytes);
         }
         if (blockMilliseconds is { } wait)
         {
-            writer.WriteBulkString("BLOCK"u8);
+            writer.WriteRaw(CommandOptionFrames.BLOCK);
             writer.WriteBulkInteger(wait);
         }
         if (claimMinIdleMilliseconds is { } idle)
         {
-            writer.WriteBulkString("CLAIM"u8);
+            writer.WriteRaw(CommandOptionFrames.CLAIM);
             writer.WriteBulkInteger(idle);
         }
-        if (noAck) writer.WriteBulkString("NOACK"u8);
-        writer.WriteBulkString("STREAMS"u8);
+        if (noAck) writer.WriteRaw(CommandOptionFrames.NOACK);
+        writer.WriteRaw(CommandOptionFrames.STREAMS);
         foreach (var key in keys) key.WriteTo(ref writer);
         foreach (var id in ids) writer.WriteBulkString(id.Value);
     }

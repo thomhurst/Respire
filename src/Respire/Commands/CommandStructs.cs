@@ -857,32 +857,32 @@ internal readonly struct SetCommand(
 
         if (expiry.TryGetRelativeMilliseconds(out var milliseconds))
         {
-            writer.WriteBulkString("PX"u8);
+            writer.WriteRaw(CommandOptionFrames.PX);
             writer.WriteBulkInteger(milliseconds);
         }
         else if (expiry.TryGetAbsoluteUnixMilliseconds(out var unixMilliseconds))
         {
-            writer.WriteBulkString("PXAT"u8);
+            writer.WriteRaw(CommandOptionFrames.PXAT);
             writer.WriteBulkInteger(unixMilliseconds);
         }
 
         if (when == SetWhen.NotExists)
         {
-            writer.WriteBulkString("NX"u8);
+            writer.WriteRaw(CommandOptionFrames.NX);
         }
         else if (when == SetWhen.Exists)
         {
-            writer.WriteBulkString("XX"u8);
+            writer.WriteRaw(CommandOptionFrames.XX);
         }
 
         if (expiry.IsKeep)
         {
-            writer.WriteBulkString("KEEPTTL"u8);
+            writer.WriteRaw(CommandOptionFrames.KEEPTTL);
         }
 
         if (returnOld)
         {
-            writer.WriteBulkString("GET"u8);
+            writer.WriteRaw(CommandOptionFrames.GET);
         }
     }
 
@@ -929,17 +929,17 @@ internal readonly struct GetExCommand(RespireValue key, RespireExpiry expiry) : 
 
         if (expiry.TryGetRelativeMilliseconds(out var milliseconds))
         {
-            writer.WriteBulkString("PX"u8);
+            writer.WriteRaw(CommandOptionFrames.PX);
             writer.WriteBulkInteger(milliseconds);
         }
         else if (expiry.TryGetAbsoluteUnixMilliseconds(out var unixMilliseconds))
         {
-            writer.WriteBulkString("PXAT"u8);
+            writer.WriteRaw(CommandOptionFrames.PXAT);
             writer.WriteBulkInteger(unixMilliseconds);
         }
         else
         {
-            writer.WriteBulkString("PERSIST"u8);
+            writer.WriteRaw(CommandOptionFrames.PERSIST);
         }
     }
 

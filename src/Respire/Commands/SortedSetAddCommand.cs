@@ -19,12 +19,12 @@ internal readonly struct SortedSetAddCommand(
         writer.WriteArrayHeader(2 + BitOperations.PopCount((uint)options) + (increment ? 1 : 0) + (pairs?.Length ?? 2));
         writer.WriteRaw(Verbs.ZAdd.Bulk);
         key.WriteTo(ref writer);
-        if ((options & RespireSortedSetAddOptions.Nx) != 0) writer.WriteBulkString("NX"u8);
-        if ((options & RespireSortedSetAddOptions.Xx) != 0) writer.WriteBulkString("XX"u8);
-        if ((options & RespireSortedSetAddOptions.Gt) != 0) writer.WriteBulkString("GT"u8);
-        if ((options & RespireSortedSetAddOptions.Lt) != 0) writer.WriteBulkString("LT"u8);
-        if ((options & RespireSortedSetAddOptions.Ch) != 0) writer.WriteBulkString("CH"u8);
-        if (increment) writer.WriteBulkString("INCR"u8);
+        if ((options & RespireSortedSetAddOptions.Nx) != 0) writer.WriteRaw(CommandOptionFrames.NX);
+        if ((options & RespireSortedSetAddOptions.Xx) != 0) writer.WriteRaw(CommandOptionFrames.XX);
+        if ((options & RespireSortedSetAddOptions.Gt) != 0) writer.WriteRaw(CommandOptionFrames.GT);
+        if ((options & RespireSortedSetAddOptions.Lt) != 0) writer.WriteRaw(CommandOptionFrames.LT);
+        if ((options & RespireSortedSetAddOptions.Ch) != 0) writer.WriteRaw(CommandOptionFrames.CH);
+        if (increment) writer.WriteRaw(CommandOptionFrames.INCR);
         if (pairs is not null)
         {
             foreach (var value in pairs) value.WriteTo(ref writer);

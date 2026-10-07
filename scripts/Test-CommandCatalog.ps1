@@ -84,7 +84,21 @@ try {
             throw "Incorrect cache mutation metadata for $($entry.Key)."
         }
     }
-    Write-Host 'Command catalog generation checks passed.'
+    $frames = [regex]::Matches($first,
+        'internal static ReadOnlySpan<byte> (?<option>[A-Z0-9]+) => "\$(?<length>\d+)\\r\\n(?<payload>[A-Z0-9]+)\\r\\n"u8;')
+    foreach ($frame in $frames) {
+        $option = $frame.Groups['option'].Value
+        $payload = $frame.Groups['payload'].Value
+        if ($option -cne $payload -or [int] $frame.Groups['length'].Value -ne $payload.Length) {
+            throw "Invalid pre-encoded option frame: $option."
+        }
+    }
+    foreach ($requiredOption in @('PX', 'WITHSCORES', 'REV')) {
+        if ($requiredOption -notin @($frames | ForEach-Object { $_.Groups['option'].Value })) {
+            throw "Missing pre-encoded option frame: $requiredOption."
+        }
+    }
+    Write-Host 'Command catalog generation and fixed-frame checks passed.'
 }
 finally {
     $resolvedRoot = [System.IO.Path]::GetFullPath($fixtureRoot)

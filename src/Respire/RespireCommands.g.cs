@@ -3230,3 +3230,45 @@ internal static class CommandReadMetadata
     internal static (ReadCommandKind Kind, int CursorArgumentIndex) Get(string command)
         => s_commands.TryGetValue(command, out var metadata) ? metadata : (ReadCommandKind.None, -1);
 }
+
+/// <summary>Immutable pre-encoded bulk frames for fixed command options.</summary>
+internal static class CommandOptionFrames
+{
+    internal static ReadOnlySpan<byte> ANY => "$3\r\nANY\r\n"u8;
+    internal static ReadOnlySpan<byte> ASC => "$3\r\nASC\r\n"u8;
+    internal static ReadOnlySpan<byte> BLOCK => "$5\r\nBLOCK\r\n"u8;
+    internal static ReadOnlySpan<byte> BYBOX => "$5\r\nBYBOX\r\n"u8;
+    internal static ReadOnlySpan<byte> BYRADIUS => "$8\r\nBYRADIUS\r\n"u8;
+    internal static ReadOnlySpan<byte> CH => "$2\r\nCH\r\n"u8;
+    internal static ReadOnlySpan<byte> CLAIM => "$5\r\nCLAIM\r\n"u8;
+    internal static ReadOnlySpan<byte> COUNT => "$5\r\nCOUNT\r\n"u8;
+    internal static ReadOnlySpan<byte> DESC => "$4\r\nDESC\r\n"u8;
+    internal static ReadOnlySpan<byte> FP32 => "$4\r\nFP32\r\n"u8;
+    internal static ReadOnlySpan<byte> FROMLONLAT => "$10\r\nFROMLONLAT\r\n"u8;
+    internal static ReadOnlySpan<byte> FROMMEMBER => "$10\r\nFROMMEMBER\r\n"u8;
+    internal static ReadOnlySpan<byte> GET => "$3\r\nGET\r\n"u8;
+    internal static ReadOnlySpan<byte> GROUP => "$5\r\nGROUP\r\n"u8;
+    internal static ReadOnlySpan<byte> GT => "$2\r\nGT\r\n"u8;
+    internal static ReadOnlySpan<byte> INCR => "$4\r\nINCR\r\n"u8;
+    internal static ReadOnlySpan<byte> KEEPTTL => "$7\r\nKEEPTTL\r\n"u8;
+    internal static ReadOnlySpan<byte> LT => "$2\r\nLT\r\n"u8;
+    internal static ReadOnlySpan<byte> MAXCOUNT => "$8\r\nMAXCOUNT\r\n"u8;
+    internal static ReadOnlySpan<byte> MAXSIZE => "$7\r\nMAXSIZE\r\n"u8;
+    internal static ReadOnlySpan<byte> NOACK => "$5\r\nNOACK\r\n"u8;
+    internal static ReadOnlySpan<byte> NX => "$2\r\nNX\r\n"u8;
+    internal static ReadOnlySpan<byte> PERSIST => "$7\r\nPERSIST\r\n"u8;
+    internal static ReadOnlySpan<byte> PX => "$2\r\nPX\r\n"u8;
+    internal static ReadOnlySpan<byte> PXAT => "$4\r\nPXAT\r\n"u8;
+    internal static ReadOnlySpan<byte> REV => "$3\r\nREV\r\n"u8;
+    internal static ReadOnlySpan<byte> STREAMS => "$7\r\nSTREAMS\r\n"u8;
+    internal static ReadOnlySpan<byte> VALUES => "$6\r\nVALUES\r\n"u8;
+    internal static ReadOnlySpan<byte> WITHSCORES => "$10\r\nWITHSCORES\r\n"u8;
+    internal static ReadOnlySpan<byte> XREAD => "$5\r\nXREAD\r\n"u8;
+    internal static ReadOnlySpan<byte> XREADGROUP => "$10\r\nXREADGROUP\r\n"u8;
+    internal static ReadOnlySpan<byte> XX => "$2\r\nXX\r\n"u8;
+
+    internal static readonly RespireValue PXValue = RespireValue.PreEncodedOption("PX", PX.ToArray());
+    internal static readonly RespireValue PXATValue = RespireValue.PreEncodedOption("PXAT", PXAT.ToArray());
+    internal static readonly RespireValue REVValue = RespireValue.PreEncodedOption("REV", REV.ToArray());
+    internal static readonly RespireValue WITHSCORESValue = RespireValue.PreEncodedOption("WITHSCORES", WITHSCORES.ToArray());
+}

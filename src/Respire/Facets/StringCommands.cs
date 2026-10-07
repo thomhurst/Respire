@@ -653,12 +653,12 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
 
         if (expiry.TryGetRelativeMilliseconds(out var milliseconds))
         {
-            args[index++] = "PX";
+            args[index++] = CommandOptionFrames.PXValue;
             args[index++] = milliseconds;
         }
         else if (expiry.TryGetAbsoluteUnixMilliseconds(out var unixMilliseconds))
         {
-            args[index++] = "PXAT";
+            args[index++] = CommandOptionFrames.PXATValue;
             args[index++] = unixMilliseconds;
         }
         else if (expiry.IsKeep)

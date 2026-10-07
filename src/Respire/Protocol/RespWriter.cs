@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Buffers.Binary;
 using System.Buffers.Text;
+using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -29,7 +30,12 @@ internal ref struct RespWriter
     /// <summary>Writes "*&lt;count&gt;\r\n".</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void WriteArrayHeader(int count)
-        => WritePrefixedLine(RespConstants.ArrayPrefix, count);
+    {
+        if ((uint)(count - 1) < 9)
+            WriteRaw("*1\r\n*2\r\n*3\r\n*4\r\n*5\r\n*6\r\n*7\r\n*8\r\n*9\r\n"u8.Slice((count - 1) * 4, 4));
+        else
+            WritePrefixedLine(RespConstants.ArrayPrefix, count);
+    }
 
     /// <summary>Writes "$&lt;length&gt;\r\n&lt;value&gt;\r\n".</summary>
     public void WriteBulkString(scoped ReadOnlySpan<byte> value)
@@ -149,10 +155,31 @@ internal ref struct RespWriter
     /// <summary>Writes an integer as a bulk string ("$3\r\n123\r\n") — how Redis expects numeric arguments.</summary>
     public void WriteBulkInteger(long value)
     {
-        Span<byte> digits = stackalloc byte[20];
-        Utf8Formatter.TryFormat(value, digits, out var written);
-        WriteBulkString(digits[..written]);
+        // Unsigned subtraction handles Int64.MinValue without signed overflow.
+        var magnitude = value < 0 ? unchecked(0UL - (ulong)value) : (ulong)value;
+        var length = (BitOperations.Log2(magnitude | 1) * 1233 >> 12) + 1;
+        if (magnitude >= PowersOfTen[length]) length++;
+        if (value < 0) length++;
+        WriteBulkStringHeader(length);
+        var payload = _buffer.GetSpan(length + 2);
+        Utf8Formatter.TryFormat(value, payload[..length], out _);
+        payload[length] = RespConstants.CarriageReturn;
+        payload[length + 1] = RespConstants.LineFeed;
+        _buffer.Advance(length + 2);
     }
+
+    // 1233/4096 approximates log10(2) from below. For a 64-bit magnitude the estimate
+    // can be at most one decimal digit short; one power-of-ten comparison corrects it.
+    // A cached array also avoids net8.0's per-access RuntimeFieldHandle allocation
+    // from the generic RuntimeHelpers.CreateSpan<ulong> emitted for an RVA span.
+    private static readonly ulong[] PowersOfTen =
+    [
+        1, 10, 100, 1_000, 10_000, 100_000, 1_000_000, 10_000_000,
+        100_000_000, 1_000_000_000, 10_000_000_000, 100_000_000_000,
+        1_000_000_000_000, 10_000_000_000_000, 100_000_000_000_000,
+        1_000_000_000_000_000, 10_000_000_000_000_000, 100_000_000_000_000_000,
+        1_000_000_000_000_000_000, 10_000_000_000_000_000_000,
+    ];
 
     /// <summary>Appends pre-encoded RESP bytes (e.g. a pre-compiled command prefix) verbatim.</summary>
     public void WriteRaw(scoped ReadOnlySpan<byte> preEncoded)
