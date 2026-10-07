@@ -155,6 +155,10 @@ properties identify the missing engine, selected server, and original command er
 The original error is also the inner exception. Respire does not load modules or replay
 commands after this exception; an operator must make the engine available before retrying.
 
+Detection depends on Valkey's exact missing-engine error wording. If a server version
+changes that wording, Respire returns the original `RespireServerException` without
+probing or translating it. An unrecognized error does not prove an engine is available.
+
 Detection is lazy: successful calls and ordinary script errors perform no extra I/O.
 `NOSCRIPT` still triggers the existing EVAL fallback, and a registered function's missing
 library still follows the existing reload policy. An EVALSHA-only `NOSCRIPT` or an FCALL
