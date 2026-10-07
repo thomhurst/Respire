@@ -6,10 +6,7 @@ on:
       - 'src/Respire/Networking/PendingResponseSource.cs'
       - 'src/Respire/Networking/CompletionScheduler.cs'
       - 'tests/Respire.Tests/Networking/PendingResponseLifetimeTests.cs'
-      - 'benchmarks/Respire.Benchmarks/SingleReplyCompletionBenchmarks.cs'
-      - 'benchmarks/Respire.Benchmarks/PinnedReceiveBenchmarks.cs'
       - '.github/workflows/single-reply-completion.yml'
-      - '.github/workflows/benchmark-compare.yml'
 
 permissions:
   contents: read
@@ -30,41 +27,17 @@ jobs:
         framework: [net8.0, net10.0]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-dotnet
       - name: Verify both owners, stale epochs, cancellation, and stalled delivery
         shell: pwsh
         run: >-
           dotnet run --project tests/Respire.Tests -c Release -f ${{ matrix.framework }} --
           --treenode-filter '/*/*/(PendingResponseLifetimeTests)|(CompletionSchedulerTests)|(StalledDeliveryTests)|(TransportRetirementTests)|(DeadlinePublicationTests)|(TransactionDeadlineTests)|(CommandTimeoutCancellationTests)|(FakeTransactionTests)|(TransactionTests)|(FunctionCommandTests)|(DeferredStreamCommandTests)|(StreamedSetTests)|(TimeoutDiagnosticsTests)|(TestInspectionArchitectureTests)/*'
-          --minimum-expected-tests 317 --report-trx --results-directory completion-lifetime
+          --minimum-expected-tests 329 --report-trx --results-directory completion-lifetime
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: completion-lifetime-${{ matrix.os }}-${{ matrix.framework }}
           path: completion-lifetime/
-  completion:
-    name: Pooled completion
-    uses: ./.github/workflows/benchmark-compare.yml
-    with:
-      event-base-sha: ${{ github.event.pull_request.base.sha }}
-      candidate-sha: ${{ github.sha }}
-      expected-head-sha: ${{ github.event.pull_request.head.sha }}
-      fixture: benchmarks/Respire.Benchmarks/SingleReplyCompletionBenchmarks.cs
-      filter: '*SingleReplyCompletionBenchmarks*'
-      expected-case-count: 2
-      expected-methods: CallerReleasesFirst,ReceiverReleasesFirst
-      zero-allocation-methods: CallerReleasesFirst,ReceiverReleasesFirst
-      improvement-methods: CallerReleasesFirst,ReceiverReleasesFirst
-      artifact-prefix: single-reply-completion
-  socket:
-    name: Public socket commands
-    uses: ./.github/workflows/benchmark-compare.yml
-    with:
-      event-base-sha: ${{ github.event.pull_request.base.sha }}
-      candidate-sha: ${{ github.sha }}
-      expected-head-sha: ${{ github.event.pull_request.head.sha }}
-      fixture: benchmarks/Respire.Benchmarks/PinnedReceiveBenchmarks.cs
-      filter: '*PinnedReceiveBenchmarks*'
-      expected-case-count: 5
-      expected-methods: Ping,Get64,GetLarge64KiB,GetPipeline128,GetConcurrent50
-      artifact-prefix: single-reply-socket

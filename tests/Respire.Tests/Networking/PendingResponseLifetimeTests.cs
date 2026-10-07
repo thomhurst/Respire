@@ -113,8 +113,87 @@ public class PendingResponseLifetimeTests
             var first = pool.Rent();
             var second = pool.Rent();
             await Assert.That(ReferenceEquals(first, second)).IsFalse();
+            await Assert.That(ReferenceEquals(first, source) || ReferenceEquals(second, source)).IsTrue();
             Finish(first);
             Finish(second);
+        }
+    }
+
+    [Test]
+    [NotInParallel]
+    [Arguments(3, false, 0)]
+    [Arguments(3, true, 0)]
+    [Arguments(3, false, 1)]
+    [Arguments(3, true, 1)]
+    [Arguments(3, false, 2)]
+    [Arguments(3, true, 2)]
+    [Arguments(64, false, 0)]
+    [Arguments(64, true, 0)]
+    [Arguments(64, false, 1)]
+    [Arguments(64, true, 1)]
+    [Arguments(64, false, 2)]
+    [Arguments(64, true, 2)]
+    public async Task MultiReplyRecyclesOnlyAfterEveryOwnerReleases(int replyCount, bool callerFirst, int outcome)
+    {
+        var source = MultiReplyPendingResponseSource.Rent(replyCount, 0, "MULTI/EXEC");
+        source.Deadline = CommandDeadline.FromRawValue(1);
+        var observedState = source.State;
+        var pending = source.Task;
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        pending.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(() => ready.TrySetResult());
+        for (var i = 0; i < replyCount - 1; i++)
+        {
+            source.TrySetResult(RespValue.Integer(i));
+            source.ReleaseRef();
+            await Assert.That(source.State).IsEqualTo(observedState);
+            await Assert.That(source.CommandName).IsEqualTo("MULTI/EXEC");
+        }
+        if (outcome == 0) source.TrySetResult(RespValue.Integer(42));
+        else if (outcome == 1) source.TrySetException(new InvalidOperationException("failure"));
+        else source.TrySetCanceled(new CancellationToken(true));
+        await ready.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        if (callerFirst) await ConsumeAsync(pending, outcome);
+        else source.ReleaseRef();
+        await Assert.That(source.State).IsEqualTo(observedState | 1);
+        await Assert.That(source.CommandName).IsEqualTo("MULTI/EXEC");
+        if (callerFirst) source.ReleaseRef();
+        else await ConsumeAsync(pending, outcome);
+        var recycledState = source.State;
+        await Assert.That(recycledState).IsNotEqualTo(observedState);
+        await Assert.That(source.CommandName).IsNull();
+        await Assert.That(source.Deadline).IsEqualTo(CommandDeadline.None);
+
+        // Hold other pool entries until this exact source is found. Do not assume pool order.
+        var rentals = new List<MultiReplyPendingResponseSource>();
+        try
+        {
+            var found = false;
+            for (var i = 0; i <= 4096; i++)
+            {
+                var candidate = MultiReplyPendingResponseSource.Rent(replyCount, 0, "MULTI/EXEC");
+                rentals.Add(candidate);
+                if (!ReferenceEquals(candidate, source)) continue;
+                found = true;
+                await Assert.That(candidate.State).IsEqualTo(recycledState);
+                RespireTimeoutDiagnostics? diagnostics = null;
+                await Assert.That(candidate.TrySetTimedOut(observedState, TimeSpan.FromSeconds(1), ref diagnostics, null)).IsFalse();
+                break;
+            }
+            await Assert.That(found).IsTrue();
+        }
+        finally
+        {
+            foreach (var rental in rentals)
+            {
+                var task = rental.Task;
+                for (var i = 0; i < replyCount; i++)
+                {
+                    rental.TrySetResult(RespValue.Integer(42));
+                    rental.ReleaseRef();
+                }
+                using var value = task.GetAwaiter().GetResult();
+            }
         }
     }
 
