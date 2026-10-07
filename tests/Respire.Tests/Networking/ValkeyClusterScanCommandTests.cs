@@ -10,6 +10,53 @@ namespace Respire.Tests.Networking;
 public class ValkeyClusterScanCommandTests
 {
     [Test]
+    [Arguments(2, 0)]
+    [Arguments(3, 0)]
+    [Arguments(2, 1)]
+    [Arguments(3, 1)]
+    [Arguments(2, 2)]
+    [Arguments(3, 2)]
+    public async Task BinaryPrefixesEscapeMatchAndRoundTripOwnedResults(int protocol, int mode)
+    {
+        await using var cluster = new ScanCluster();
+        cluster.QueueTransaction = mode == 2;
+        byte[] prefix = [255, (byte)'*', 0, .. Encoding.UTF8.GetBytes($"{{{Tag(0)}}}:")];
+        byte[] suffix = [254, 0];
+        byte[] physical = [.. prefix, .. suffix];
+        cluster.Scan = _ => Page("0", physical, [254, .. prefix.AsSpan(1), .. suffix]);
+        await using var client = await cluster.ConnectAsync(protocol);
+        var view = client.WithKeyPrefix((RespireKey)prefix);
+        var cursor = $"binary-{{{Tag(9000)}}}-17";
+        RespireValkeyClusterScanPage page;
+        if (mode == 0) page = await view.Keys.ScanValkeyClusterPageAsync(cursor);
+        else if (mode == 1)
+        {
+            using var queue = view.CreateBatch();
+            var pending = queue.Keys.ScanValkeyClusterPage(cursor);
+            await queue.ExecuteAsync();
+            page = pending.Result;
+        }
+        else
+        {
+            await using var queue = view.CreateTransaction();
+            var pending = queue.Keys.ScanValkeyClusterPage(cursor);
+            await queue.CommitAsync();
+            page = pending.Result;
+        }
+        await Assert.That(page.Keys.Count).IsEqualTo(1);
+        await Assert.That(page.Keys[0]).IsEqualTo(new RespireKey(suffix));
+        var sent = cluster.Second.ReceivedArguments.Single(row => row[0].AsSpan().SequenceEqual("CLUSTERSCAN"u8));
+        byte[] pattern = [255, (byte)'\\', (byte)'*', .. prefix.AsSpan(2), (byte)'*'];
+        await Assert.That(sent[3].AsSpan().SequenceEqual(pattern)).IsTrue();
+        await Assert.That(Encoding.UTF8.GetString(sent[1])).IsEqualTo(cursor);
+        await Assert.That(await view.GetStringAsync(page.Keys[0])).IsEqualTo("value");
+        var get = cluster.First.ReceivedArguments.Single(row => row[0].AsSpan().SequenceEqual("GET"u8));
+        await Assert.That(get[1].AsSpan().SequenceEqual(physical)).IsTrue();
+        physical.AsSpan().Clear();
+        await Assert.That(page.Keys[0]).IsEqualTo(new RespireKey(suffix));
+    }
+
+    [Test]
     [Arguments(RespireReadFrom.Primary, false)]
     [Arguments(RespireReadFrom.Primary, true)]
     [Arguments(RespireReadFrom.Replica, false)]

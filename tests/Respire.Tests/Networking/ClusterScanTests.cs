@@ -473,6 +473,38 @@ public class ClusterScanTests
         await router.WaitForRetirementAsync().WaitAsync(timeout.Token);
     }
 
+    [Test]
+    public async Task BinaryPrefixCheckpointRetainsExactIdentityAndStripsBeforeDecoding()
+    {
+        await using var cluster = new ScanCluster();
+        byte[] prefix = [255, (byte)'*', 0];
+        byte[] other = [254, (byte)'*', 0];
+        cluster.First.Scan = _ => [.. "*2\r\n$2\r\n17\r\n*2\r\n"u8,
+            .. BinaryPrefixTests.Bulk([.. prefix, .. "visible"u8]),
+            .. BinaryPrefixTests.Bulk([.. other, .. "secret"u8])];
+        await using var client = await cluster.ConnectAsync();
+        var view = client.WithKeyPrefix((RespireKey)prefix);
+        var page = await view.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start);
+        await Assert.That(page.Keys).IsEquivalentTo(["visible"]);
+        var serialized = page.Cursor.ToString();
+        var parsed = RespireClusterScanCursor.Parse(serialized);
+        await Assert.That(parsed.ToString()).IsEqualTo(serialized);
+        var received = cluster.First.Server.ReceivedArguments.Last();
+        await Assert.That(received[3].SequenceEqual(new byte[] { 255, (byte)'\\', (byte)'*', 0, (byte)'*' })).IsTrue();
+        var before = cluster.CommandCount;
+        await Assert.That(async () => await client.WithKeyPrefix((RespireKey)other).Keys.ScanClusterPageAsync(parsed))
+            .Throws<ArgumentException>();
+        await Assert.That(cluster.CommandCount).IsEqualTo(before);
+        await Assert.That(async () => await client.WithKeyPrefix("tenant:").Keys.ScanClusterPageAsync(parsed))
+            .Throws<ArgumentException>();
+        await Assert.That(async () => await client.Keys.ScanClusterPageAsync(parsed)).Throws<ArgumentException>();
+        await Assert.That(cluster.CommandCount).IsEqualTo(before);
+        var resumed = await client.WithKeyPrefix((RespireKey)prefix.ToArray()).Keys.ScanClusterPageAsync(parsed);
+        await Assert.That(resumed.Keys).IsEquivalentTo(["visible"]);
+        var bytes = Convert.FromBase64String(serialized);
+        await Assert.That(RespireClusterScanCursor.TryParse(Convert.ToBase64String(bytes.AsSpan(0, 13)), out _)).IsFalse();
+    }
+
     private static string KeyInSlot(int slot)
     {
         for (var index = 0; ; index++)

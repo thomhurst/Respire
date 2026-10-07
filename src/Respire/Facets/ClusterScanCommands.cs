@@ -51,12 +51,17 @@ internal sealed partial class KeyCommands
         cancellationToken.ThrowIfCancellationRequested();
         if (client.Core.Cluster is null) throw new InvalidOperationException("A Cluster scan requires UseCluster.");
         var prefix = client.KeyPrefix;
-        var effectiveMatch = prefix is null ? match : EscapeGlob(prefix) + (match ?? "*");
-        if (cursor.State is { } previous && (previous.Match != effectiveMatch || previous.Type != typeToken || previous.Prefix != prefix))
+        var effectiveMatch = ScanMatch(prefix, match);
+        // Keep the original text checkpoint representation. Binary prefixes additionally carry
+        // their exact bytes, and Match records the caller's text pattern in that format.
+        var checkpointMatch = prefix?.Text is { } text ? EscapeGlob(text) + (match ?? "*") : match;
+        var binaryPrefix = prefix is { Text: null } ? prefix.Bytes : null;
+        if (cursor.State is { } previous && (previous.Match != checkpointMatch || previous.Type != typeToken
+            || !previous.MatchesKeyPrefix(prefix)))
             throw new ArgumentException("Resume a Cluster scan with the same match, type and key prefix.", nameof(cursor));
         if (cursor.IsComplete) return new(cursor, []);
         // Never mutate a published cursor. Failure/cancellation leaves the caller's checkpoint intact.
-        var state = cursor.State?.Copy() ?? new ClusterScanState(effectiveMatch, typeToken, prefix);
+        var state = cursor.State?.Copy() ?? new ClusterScanState(checkpointMatch, typeToken, prefix?.Text) { BinaryPrefix = binaryPrefix };
         var topology = await ReadScanTopologyAsync(cancellationToken, discovery).ConfigureAwait(false);
         ReconcileScan(state, topology);
         var node = SelectScanNode(state, topology);
@@ -79,9 +84,9 @@ internal sealed partial class KeyCommands
         var arguments = (effectiveMatch, typeToken) switch
         {
             (null, null) => new RespireValue[] { serverCursor, "COUNT", countHint },
-            (not null, null) => [serverCursor, "MATCH", effectiveMatch, "COUNT", countHint],
+            (not null, null) => [serverCursor, "MATCH", effectiveMatch.Value, "COUNT", countHint],
             (null, not null) => [serverCursor, "COUNT", countHint, "TYPE", typeToken],
-            _ => [serverCursor, "MATCH", effectiveMatch, "COUNT", countHint, "TYPE", typeToken],
+            _ => [serverCursor, "MATCH", effectiveMatch!.Value, "COUNT", countHint, "TYPE", typeToken],
         };
         // A node-local cursor must never be redirected or transferred to a replacement server.
         using var reply = await client.SendOnConnectionAsync("SCAN", node.Connection,
@@ -99,9 +104,8 @@ internal sealed partial class KeyCommands
             if (value.Type != RespDataType.BulkString || value.IsNull)
                 throw new RespireProtocolException("SCAN keys must be bulk strings.");
             if (state.Completed[ClusterHash.GetSlot(value.AsSpan())]) continue;
-            var key = value.AsString();
-            if (prefix is null) keys.Add(key);
-            else if (key.StartsWith(prefix, StringComparison.Ordinal)) keys.Add(key[prefix.Length..]);
+            if (prefix is null) keys.Add(value.AsString());
+            else if (ScanKey(in value, prefix) is { } key) keys.Add(key);
         }
         state.Cursor = next;
         if (next == 0)

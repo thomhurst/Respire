@@ -353,6 +353,47 @@ IRespireClient tenant = redis.WithKeyPrefix("tenant:42:");
 await tenant.SetAsync("settings", json); // tenant:42:settings
 ```
 
+Use the `RespireKey` overload for arbitrary prefix bytes, including NUL and invalid UTF-8:
+
+```csharp
+RespireKey prefix = new byte[] { 0xff, 0x00, (byte)':' };
+IRespireClient binaryTenant = redis.WithKeyPrefix(prefix);
+await binaryTenant.SetAsync("settings", "enabled");
+```
+
+Both overloads reject empty prefixes. Views snapshot binary prefix memory when created;
+changing the original array afterward cannot change the namespace. Ordinary command key
+memory retains its existing borrowing contract. Nested views append prefixes in order.
+Text-only composition preserves string concatenation semantics, including UTF-16 surrogate
+pairs split across a boundary. Once a binary component is present, composition preserves
+its exact bytes and encodes subsequent text components independently as UTF-8.
+
+Views share connections and the client-side cache. Disposing a view does not dispose the
+root client. Read-routing and cache-bypass policies survive composition. Keys are prefixed
+before Cluster slot selection, including hash tags that cross prefix boundaries. Cache
+invalidation and keyspace notification filters use physical keys; `ResolveKey` returns that
+physical identity. Regular pub/sub channels and notification descriptors remain unchanged.
+
+Typed key arguments, script keys, streams, batches, and transactions use the same prefix.
+Supported deferred raw layouts and explicitly registered immediate module layouts also
+prefix key arguments. Immediate caller-supplied core commands and interpolated commands
+still require physical keys. Immediate catalog commands without an explicitly prefixable
+layout are rejected, as are unsupported deferred layouts. A prefix is not an authorization
+boundary. `SORT BY`/`GET` external patterns reject prefixes containing `*`,
+`->`, or NUL because Redis would reinterpret those bytes as pattern syntax.
+
+Scans escape literal prefix metacharacters in `MATCH` and return keys with the prefix
+removed. Binary prefixes are filtered and stripped before decoding the suffix, so different
+invalid UTF-8 prefixes cannot collapse into the same namespace. `ScanAsync` and
+`ScanClusterPageAsync` still return strings: invalid UTF-8 suffixes retain replacement
+decoding and cannot be round-tripped losslessly through those string APIs. Resume a Cluster
+checkpoint with the same prefix representation and filter. Existing text checkpoints keep
+their format; binary-prefix checkpoints use a new format that older clients cannot read.
+
+Root configuration defaults and explicit pub/sub prefixing are tracked separately in
+[#1119](https://github.com/thomhurst/Respire/issues/1119) and
+[#1120](https://github.com/thomhurst/Respire/issues/1120).
+
 ## Absolute expiration and object metadata
 
 `Keys.ExpiryTimeAsync(key)` uses Redis 7's `PEXPIRETIME`; pass `ExpiryTimePrecision.Seconds`

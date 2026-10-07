@@ -8,7 +8,7 @@ namespace Respire.Internal;
 /// <summary>
 /// The state one logical client owns: the multiplexed connection set, the dedicated-connection
 /// pool for blocking commands, and the lazily created pub/sub hub. Key-prefixed views created
-/// by <see cref="RespireClient.WithKeyPrefix"/> share one core; only the root client disposes it.
+/// by <see cref="RespireClient.WithKeyPrefix(string)"/> share one core; only the root client disposes it.
 /// </summary>
 internal sealed class ClientCore : IAsyncDisposable
 {

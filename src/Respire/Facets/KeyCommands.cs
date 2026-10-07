@@ -354,7 +354,7 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
         // so results round-trip through the same view's commands. The prefix is glob-escaped —
         // a prefix like "tenant:*:" must match itself literally, never act as a wildcard.
         var prefix = client.KeyPrefix;
-        var effectiveMatch = prefix is null ? match : EscapeGlob(prefix) + (match ?? "*");
+        var effectiveMatch = ScanMatch(prefix, match);
 
         if (client.Core.Cluster is not null)
         {
@@ -394,31 +394,37 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
                 var args = (effectiveMatch, typeToken) switch
                 {
                     (null, null) => new RespireValue[] { cursor, "COUNT", countHint },
-                    (not null, null) => [cursor, "MATCH", effectiveMatch, "COUNT", countHint],
+                    (not null, null) => [cursor, "MATCH", effectiveMatch.Value, "COUNT", countHint],
                     (null, not null) => [cursor, "COUNT", countHint, "TYPE", typeToken],
-                    _ => [cursor, "MATCH", effectiveMatch, "COUNT", countHint, "TYPE", typeToken],
+                    _ => [cursor, "MATCH", effectiveMatch!.Value, "COUNT", countHint, "TYPE", typeToken],
                 };
                 var command = new CmdN(Verbs.Scan, args);
                 string[] page;
+                int pageCount;
                 using (var reply = await client.SendCursorPageAsync("SCAN", command, affinity, token).ConfigureAwait(false))
                 {
                     var elements = reply.AsArray();
                     cursor = elements[0].AsString();
-                    page = ResponseReader.StringArray(in elements[1]);
-                }
-
-                foreach (var key in page)
-                {
                     if (prefix is null)
                     {
-                        yield return key;
+                        page = ResponseReader.StringArray(in elements[1]);
+                        pageCount = page.Length;
                     }
-                    else if (key.StartsWith(prefix, StringComparison.Ordinal))
+                    else
                     {
-                        yield return key[prefix.Length..];
+                        var values = elements[1].AsArray();
+                        page = new string[values.Length];
+                        pageCount = 0;
+                        foreach (ref readonly var value in values)
+                        {
+                            if (ScanKey(in value, prefix) is { } key) page[pageCount++] = key;
+                        }
                     }
+                }
 
-                    // Keys outside the literal prefix never leave a prefixed view.
+                for (var index = 0; index < pageCount; index++)
+                {
+                    yield return page[index];
                 }
             }
             while (cursor != "0");
@@ -456,6 +462,37 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
                 nameof(type), type, "SCAN TYPE requires a concrete Redis key type."),
         };
 
+    private static RespireValue? ScanMatch(KeyPrefix? prefix, string? match)
+    {
+        if (prefix is null) return match is null ? (RespireValue?)null : new RespireValue(match);
+        if (prefix.Text is { } text) return new RespireValue(EscapeGlob(text) + (match ?? "*"));
+        var suffix = System.Text.Encoding.UTF8.GetBytes(match ?? "*");
+        var escapedLength = prefix.Bytes.Length;
+        foreach (var value in prefix.Bytes)
+            if (IsGlobMeta(value)) escapedLength++;
+        var pattern = new byte[checked(escapedLength + suffix.Length)];
+        var offset = 0;
+        foreach (var value in prefix.Bytes)
+        {
+            if (IsGlobMeta(value)) pattern[offset++] = (byte)'\\';
+            pattern[offset++] = value;
+        }
+        suffix.CopyTo(pattern, offset);
+        return new RespireValue(pattern);
+    }
+
+    private static string? ScanKey(in RespValue value, KeyPrefix prefix)
+    {
+        if (prefix.Text is { } text)
+        {
+            // Preserve text-prefix behavior, including UTF-16 pairs split at the prefix boundary.
+            var key = value.AsString();
+            return key.StartsWith(text, StringComparison.Ordinal) ? key[text.Length..] : null;
+        }
+        var bytes = value.AsSpan();
+        return bytes.StartsWith(prefix.Bytes) ? Utf8String.GetString(bytes[prefix.Bytes.Length..]) : null;
+    }
+
     /// <summary>Escapes Redis glob metacharacters so the text matches itself literally.</summary>
     private static string EscapeGlob(string value)
     {
@@ -467,7 +504,7 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
         var builder = new System.Text.StringBuilder(value.Length + 4);
         foreach (var c in value)
         {
-            if (c is '*' or '?' or '[' or ']' or '\\')
+            if (IsGlobMeta(c))
             {
                 builder.Append('\\');
             }
@@ -477,4 +514,6 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
 
         return builder.ToString();
     }
+
+    private static bool IsGlobMeta(int value) => value is '*' or '?' or '[' or ']' or '\\';
 }
