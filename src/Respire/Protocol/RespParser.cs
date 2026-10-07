@@ -63,13 +63,12 @@ internal static class RespParser
         // Even the shortest RESP value takes three bytes. Share this rent budget across
         // nested aggregates and attributes, rather than trusting each declared count.
         var remainingElements = (buffer.Length - pos) / 3;
-        var deferredPayloads = 0;
         var deferredPayloadBytes = 0;
         var aggregateStatus = TryParseValue(buffer, ref pos, out value,
-            new ParseContext(0, ref remainingElements, ref deferredPayloads, ref deferredPayloadBytes), out var start);
+            new ParseContext(0, ref remainingElements, ref deferredPayloadBytes), out var start);
         if (aggregateStatus == RespParseStatus.Done)
         {
-            if (deferredPayloads != 0)
+            if (deferredPayloadBytes != 0)
                 value = value.CopyDeferredPayloads(buffer, start, pos - start, deferredPayloadBytes);
             value.AssertMaterialized();
         }
@@ -77,26 +76,23 @@ internal static class RespParser
     }
 
     /// <summary>
-    /// Copies branch depth while sharing the root's rent budget and deferred payload count.
+    /// Copies branch depth while sharing the root's rent budget and deferred payload byte count.
     /// </summary>
     private readonly ref struct ParseContext
     {
         private readonly ref int _remainingElements;
-        private readonly ref int _deferredPayloads;
         private readonly ref int _deferredPayloadBytes;
         public int Depth { get; }
         // Constructed contexts defer payloads; ImmediateCopy is only for scalar/bulk
         // entry points and has no aggregate budget for ForChildren/TryReserve.
         public static ParseContext ImmediateCopy => default;
         public bool DeferPayloads { get; }
-        public int DeferredPayloads { get => _deferredPayloads; set => _deferredPayloads = value; }
         public int DeferredPayloadBytes { get => _deferredPayloadBytes; set => _deferredPayloadBytes = value; }
 
-        public ParseContext(int depth, ref int remainingElements, ref int deferredPayloads, ref int deferredPayloadBytes)
+        public ParseContext(int depth, ref int remainingElements, ref int deferredPayloadBytes)
         {
             Depth = depth;
             _remainingElements = ref remainingElements;
-            _deferredPayloads = ref deferredPayloads;
             _deferredPayloadBytes = ref deferredPayloadBytes;
             DeferPayloads = true;
         }
@@ -105,7 +101,7 @@ internal static class RespParser
         public ParseContext ForChildren()
         {
             Debug.Assert(DeferPayloads, "ImmediateCopy has no aggregate budget.");
-            return new(Depth + 1, ref _remainingElements, ref _deferredPayloads, ref _deferredPayloadBytes);
+            return new(Depth + 1, ref _remainingElements, ref _deferredPayloadBytes);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -141,7 +137,6 @@ internal static class RespParser
                 break;
             }
 
-            var priorPayloads = context.DeferredPayloads;
             var priorPayloadBytes = context.DeferredPayloadBytes;
             var attrStatus = TryParseAggregate(buffer, ref cursor, RespDataType.Map, pairCount: true,
                 out var attribute, context);
@@ -151,7 +146,6 @@ internal static class RespParser
             }
 
             attribute.Dispose();
-            context.DeferredPayloads = priorPayloads;
             context.DeferredPayloadBytes = priorPayloadBytes;
         }
 
@@ -507,7 +501,8 @@ internal static class RespParser
             return CopyToPooled(type, buffer.Slice(offset, length));
         if (type == RespDataType.SimpleString && TryGetInternedSimpleString(buffer.Slice(offset, length), out var interned))
             return RespValue.SimpleString(interned);
-        context.DeferredPayloads++;
+        // Empty and interned strings are already materialized, so positive bytes also
+        // indicate whether the root has any deferred payloads to copy.
         context.DeferredPayloadBytes += length;
         return RespValue.DeferredString(type, offset, length);
     }
