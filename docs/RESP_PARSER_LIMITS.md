@@ -105,8 +105,8 @@ supported frameworks. Include small and large complete arrays, nested replies,
 and fragmented resumable arrays, with scalar batches as a control; report
 allocation and latency uncertainty. Also measure typed MGET and HGETALL decoding
 and batches retaining 50 replies before draining, to expose payload pool pressure.
-Relevant parser changes start these comparisons automatically; the
-`run-aggregate-benchmarks` label can also start them. The workflow validates both builds before measuring and
+Add the `run-aggregate-benchmarks` label to the pull request to start these
+comparisons. The workflow validates both builds before measuring and
 retains its pinned revisions, reports, and logs as artifacts.
 Storage growth trades extra copies for bounded speculative allocation. Do not
 infer latency equivalence from correctness tests or pooled-allocation counts.

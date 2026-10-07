@@ -3,13 +3,6 @@ name: Partial hash read benchmarks
 on:
   pull_request:
     types: [labeled]
-    paths:
-      - 'src/Respire/RespireClientSideCache*.cs'
-      - 'src/Respire/RespireClient.HashCache.cs'
-      - 'src/Respire/RespireClient.cs'
-      - 'src/Respire/Internal/ClientCore.cs'
-      - 'benchmarks/Respire.Benchmarks/HashPartialReadBenchmarks.cs'
-      - '.github/workflows/benchmark-hash-partial-reads.yml'
 
 permissions:
   contents: read
@@ -21,7 +14,7 @@ concurrency:
 
 jobs:
   hash-partial-reads-comparison:
-    if: github.event.label.name == 'run-benchmarks'
+    if: github.event.label.name == 'run-hash-partial-reads-benchmarks'
     name: Compare partial hash reads (informational)
     runs-on: ubuntu-latest
     timeout-minutes: 30

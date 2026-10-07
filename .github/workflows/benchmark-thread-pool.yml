@@ -3,14 +3,6 @@ name: Thread-pool monitoring benchmarks
 on:
   pull_request:
     types: [labeled]
-    paths:
-      - 'src/Respire/Internal/ThreadPoolMonitor.cs'
-      - 'src/Respire/Internal/ClientCore.cs'
-      - 'src/Respire/Internal/RespireTelemetry.cs'
-      - 'src/Respire/RespireOptions.cs'
-      - 'src/Respire/RespireThreadPoolSnapshot.cs'
-      - 'benchmarks/Respire.Benchmarks/ThreadPoolMonitoringBenchmarks.cs'
-      - '.github/workflows/benchmark-thread-pool.yml'
 permissions:
   contents: read
 
@@ -21,7 +13,7 @@ concurrency:
 
 jobs:
   thread-pool-comparison:
-    if: github.event.label.name == 'run-benchmarks'
+    if: github.event.label.name == 'run-thread-pool-benchmarks'
     name: Compare thread-pool monitoring (informational)
     runs-on: ubuntu-latest
     timeout-minutes: 20

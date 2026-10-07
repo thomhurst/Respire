@@ -2,12 +2,7 @@ name: Aggregate parsing benchmarks
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
-    paths:
-      - 'src/Respire/Protocol/**'
-      - 'benchmarks/Respire.Benchmarks/Aggregate*Benchmarks.cs'
-      - '.github/workflows/benchmark-aggregate-parsing.yml'
-      - '.github/workflows/benchmark-compare.yml'
+    types: [labeled]
 
 permissions:
   contents: read
@@ -18,7 +13,7 @@ concurrency:
 
 jobs:
   parsing:
-    if: github.event.action != 'labeled' || github.event.label.name == 'run-aggregate-benchmarks'
+    if: github.event.label.name == 'run-aggregate-benchmarks'
     uses: ./.github/workflows/benchmark-compare.yml
     with:
       event-base-sha: ${{ github.event.pull_request.base.sha }}
@@ -31,7 +26,7 @@ jobs:
       zero-allocation-methods: Complete,Nested,ScalarBatch,Fragmented
       artifact-prefix: aggregate-parsing
   payload:
-    if: github.event.action != 'labeled' || github.event.label.name == 'run-aggregate-benchmarks'
+    if: github.event.label.name == 'run-aggregate-benchmarks'
     uses: ./.github/workflows/benchmark-compare.yml
     with:
       event-base-sha: ${{ github.event.pull_request.base.sha }}

@@ -3,11 +3,6 @@ name: Semaphore benchmarks
 on:
   pull_request:
     types: [labeled]
-    paths:
-      - 'src/Respire.Coordination/**'
-      - 'src/Respire/RespireClient.cs'
-      - 'benchmarks/Respire.Benchmarks/SemaphoreBenchmarks.cs'
-      - '.github/workflows/benchmark-semaphores.yml'
 
 permissions:
   contents: read
@@ -18,7 +13,7 @@ concurrency:
 
 jobs:
   semaphores:
-    if: github.event.label.name == 'run-benchmarks'
+    if: github.event.label.name == 'run-semaphores-benchmarks'
     name: Compare semaphores (informational)
     runs-on: ubuntu-latest
     timeout-minutes: 30

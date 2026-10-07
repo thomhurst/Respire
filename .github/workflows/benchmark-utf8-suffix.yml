@@ -2,13 +2,7 @@ name: UTF-8 suffix benchmarks
 
 on:
   pull_request:
-    paths:
-      - 'src/Respire/Protocol/RespWriter.cs'
-      - 'src/Respire/Networking/WriteBuffer.cs'
-      - 'src/Respire/Internal/KeyPrefix.cs'
-      - 'benchmarks/Respire.Benchmarks/Utf8SuffixBenchmarks.cs'
-      - '.github/workflows/benchmark-utf8-suffix.yml'
-      - '.github/workflows/benchmark-compare.yml'
+    types: [labeled]
 
 permissions:
   contents: read
@@ -19,6 +13,7 @@ concurrency:
 
 jobs:
   compare:
+    if: github.event.label.name == 'run-utf8-suffix-benchmarks'
     uses: ./.github/workflows/benchmark-compare.yml
     with:
       event-base-sha: ${{ github.event.pull_request.base.sha }}

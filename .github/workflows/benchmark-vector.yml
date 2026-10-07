@@ -3,15 +3,6 @@ name: Vector encoding benchmarks
 on:
   pull_request:
     types: [labeled]
-    paths:
-      - 'src/Respire/Commands/VectorCommand.cs'
-      - 'src/Respire/Protocol/RespWriter.cs'
-      - 'src/Respire/RespireValue.cs'
-      - 'src/Respire/Networking/WriteBuffer.cs'
-      - 'benchmarks/Respire.Benchmarks/VectorEncodingBenchmarks.cs'
-      - 'benchmarks/Respire.Benchmarks/Respire.Benchmarks.csproj'
-      - '.github/scripts/vector_encoding_report.py'
-      - '.github/workflows/benchmark-vector.yml'
 
 permissions:
   contents: read
@@ -23,7 +14,7 @@ concurrency:
 
 jobs:
   vector-comparison:
-    if: github.event.label.name == 'run-benchmarks'
+    if: github.event.label.name == 'run-vector-benchmarks'
     name: Compare vector encoding (informational)
     runs-on: ubuntu-latest
     timeout-minutes: 20

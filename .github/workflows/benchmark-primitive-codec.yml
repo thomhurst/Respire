@@ -2,10 +2,7 @@ name: Primitive numeric GET benchmarks
 
 on:
   pull_request:
-    paths:
-      - 'src/Respire/Serialization/PrimitiveCodec.cs'
-      - 'benchmarks/Respire.ComparisonBenchmarks/CommonOperationsBenchmarks.cs'
-      - '.github/workflows/benchmark-primitive-codec.yml'
+    types: [labeled]
 
 permissions:
   contents: read
@@ -16,6 +13,7 @@ concurrency:
 
 jobs:
   compare:
+    if: github.event.label.name == 'run-primitive-codec-benchmarks'
     name: Compare typed numeric GET on one runner
     runs-on: ubuntu-latest
     timeout-minutes: 20

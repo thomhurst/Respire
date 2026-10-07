@@ -3,15 +3,6 @@ name: In-flight FIFO benchmarks
 on:
   pull_request:
     types: [labeled]
-    paths:
-      - 'src/Respire/Networking/InflightRing.cs'
-      - 'src/Respire/Networking/RespireConnection.cs'
-      - 'src/Respire/Networking/RespireConnection.Credentials.cs'
-      - 'src/Respire/Networking/PendingResponseSource.cs'
-      - 'src/Respire/RespireTransaction.cs'
-      - 'benchmarks/Respire.Benchmarks/InflightRingBenchmarks.cs'
-      - 'benchmarks/Respire.Benchmarks/DiagnosticsPipelineBenchmarks.cs'
-      - '.github/workflows/benchmark-inflight.yml'
 
 permissions:
   contents: read
@@ -23,7 +14,7 @@ concurrency:
 
 jobs:
   inflight-comparison:
-    if: github.event.label.name == 'run-benchmarks'
+    if: github.event.label.name == 'run-inflight-benchmarks'
     name: Compare in-flight FIFO (informational)
     runs-on: ubuntu-latest
     timeout-minutes: 20

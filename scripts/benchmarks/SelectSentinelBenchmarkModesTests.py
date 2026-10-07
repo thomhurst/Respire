@@ -17,23 +17,13 @@ class SelectSentinelBenchmarkModesTests(unittest.TestCase):
                                                 {'name': 'run-ready-strategy-benchmarks'}]},
                 }), expected)
 
-    def test_updates_run_every_requested_comparison_independently(self):
-        for labels, expected in (
-            ([], []),
-            (['documentation'], []),
-            (['run-sentinel-benchmarks'], ['main']),
-            (['run-ready-strategy-benchmarks'], ['pre-strategy']),
-            (['run-ready-strategy-benchmarks', 'documentation', 'run-sentinel-benchmarks'], ['main', 'pre-strategy']),
-        ):
-            with self.subTest(labels=labels):
-                self.assertEqual(select_modes({
-                    'action': 'synchronize',
-                    'pull_request': {'labels': [{'name': label} for label in labels]},
-                }), expected)
-
     def test_unrequested_events_do_not_start_measurements(self):
         self.assertEqual(select_modes({}), [])
         self.assertEqual(select_modes({'action': 'opened'}), [])
+        self.assertEqual(select_modes({
+            'action': 'synchronize',
+            'pull_request': {'labels': [{'name': 'run-sentinel-benchmarks'}]},
+        }), [])
 
 
 if __name__ == '__main__':

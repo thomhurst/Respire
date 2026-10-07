@@ -2,14 +2,7 @@ name: UTF-8 decoder benchmarks
 
 on:
   pull_request:
-    paths:
-      - 'src/Respire/Internal/Utf8String.cs'
-      - 'benchmarks/Respire.Benchmarks/ProtocolBenchmarks.cs'
-      - 'scripts/assert_decoder_benchmarks.py'
-      - 'scripts/tests/test_assert_decoder_benchmarks.py'
-      - 'scripts/decoder_benchmark_inputs.py'
-      - 'scripts/tests/test_decoder_benchmark_inputs.py'
-      - '.github/workflows/benchmark-utf8-decoder.yml'
+    types: [labeled]
 
 permissions:
   contents: read
@@ -20,6 +13,7 @@ concurrency:
 
 jobs:
   compare:
+    if: github.event.label.name == 'run-utf8-decoder-benchmarks'
     name: Decoder operations (${{ matrix.framework }})
     runs-on: ubuntu-latest
     timeout-minutes: 45

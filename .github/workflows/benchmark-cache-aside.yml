@@ -3,14 +3,6 @@ name: Cache-aside benchmarks
 on:
   pull_request:
     types: [labeled]
-    paths:
-      - 'src/Respire/RespireClientSideCache*.cs'
-      - 'src/Respire/RespireClient.cs'
-      - 'src/Respire/RespireClient.CacheAside.cs'
-      - 'src/Respire/IRespireClient.cs'
-      - 'src/Respire/Internal/ClientCore.cs'
-      - 'benchmarks/Respire.Benchmarks/CacheAsideBenchmarks.cs'
-      - '.github/workflows/benchmark-cache-aside.yml'
 
 permissions:
   contents: read
@@ -22,7 +14,7 @@ concurrency:
 
 jobs:
   cache-aside-comparison:
-    if: github.event.label.name == 'run-benchmarks'
+    if: github.event.label.name == 'run-cache-aside-benchmarks'
     name: Compare cache-aside (informational)
     runs-on: ubuntu-latest
     timeout-minutes: 45
