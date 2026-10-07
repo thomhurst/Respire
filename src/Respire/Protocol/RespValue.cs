@@ -15,7 +15,7 @@ namespace Respire.Protocol;
 /// Values produced by the connection own pooled storage: call <see cref="Dispose"/> when done
 /// to return buffers to the pools. Forgetting to dispose is safe — the buffers are simply
 /// collected by the GC instead of being reused.
-/// Complete aggregate string children borrow slices of the root's payload. Keep the root alive
+/// Complete aggregate string children can borrow slices of the root's payload. Keep the root alive
 /// while reading children; use <see cref="ToOwned"/> to retain a child beyond the root's disposal.
 /// Fragmented replies may own separate child buffers. The same root lifetime contract applies
 /// to both parse paths; callers must not depend on an individual child's storage ownership.
@@ -132,17 +132,36 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
     internal static RespValue DeferredString(RespDataType type, int offset, int length)
         => new(type, ValueFlags.DeferredPayload, integerValue: offset, elementCount: length);
 
-    /// <summary>Copies one complete aggregate frame and binds its string children to borrowed slices.</summary>
+    /// <summary>Copies deferred aggregate payloads into shared or per-child storage.</summary>
     internal RespValue CopyDeferredPayloads(ReadOnlySpan<byte> buffer, int start, int length)
     {
         // Top-level attributes can precede a scalar. Keep that scalar's ordinary payload ownership.
         if ((_flags & ValueFlags.DeferredPayload) != 0)
             return RespParser.CopyToPooled(_type, buffer.Slice((int)_integerValue, _elementCount));
+        if (length > RespirePools.MaxPooledResponsePayloadLength)
+        {
+            // A frame too large to pool would allocate on every reply, even when its
+            // retained children are tiny. Copy those children into their ordinary buckets.
+            CopyDeferredChildren(buffer);
+            return this;
+        }
         var array = RespirePools.ResponsePayloads.Rent(length);
         buffer.Slice(start, length).CopyTo(array);
         var frame = new ReadOnlyMemory<byte>(array, 0, length);
         BindDeferredPayloads(frame, start);
         return new(_type, _flags | ValueFlags.PooledPayload, _integerValue, frame, _elements, _elementCount);
+    }
+
+    private void CopyDeferredChildren(ReadOnlySpan<byte> buffer)
+    {
+        if (_elements is null) return;
+        for (var i = 0; i < _elementCount; i++)
+        {
+            var child = _elements[i];
+            if ((child._flags & ValueFlags.DeferredPayload) != 0)
+                _elements[i] = RespParser.CopyToPooled(child._type, buffer.Slice((int)child._integerValue, child._elementCount));
+            else child.CopyDeferredChildren(buffer);
+        }
     }
 
     private void BindDeferredPayloads(ReadOnlyMemory<byte> frame, int start)

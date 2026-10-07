@@ -10,12 +10,16 @@ namespace Respire.Benchmarks;
 public class AggregatePayloadBenchmarks
 {
     private const int PipelineDepth = 50;
+    private const int LargeCount = 2;
+    private const int LargeValueLength = 1024 * 1024;
 
     [Params(100)]
     public int Count { get; set; }
 
     private byte[] _mget = null!;
     private byte[] _hgetall = null!;
+    private byte[] _largeMget = null!;
+    private byte[] _largeHgetall = null!;
     private readonly RespValue[] _replies = new RespValue[PipelineDepth];
 
     [GlobalSetup]
@@ -32,14 +36,30 @@ public class AggregatePayloadBenchmarks
         }
         _mget = Encoding.ASCII.GetBytes(values.ToString());
         _hgetall = Encoding.ASCII.GetBytes(pairs.ToString());
+        _largeMget = LargeFrame(map: false);
+        _largeHgetall = LargeFrame(map: true);
         if (MGet() != Count * 12L || HGetAll() != Count * 24L
             || RetainedMGet() != PipelineDepth * Count * 12L
-            || RetainedHGetAll() != PipelineDepth * Count * 24L)
+            || RetainedHGetAll() != PipelineDepth * Count * 24L
+            || MGetLargeValues() != LargeCount * (long)LargeValueLength
+            || HGetAllLargeValues() != LargeCount * (LargeValueLength + 12L))
             throw new InvalidOperationException("Aggregate payload benchmark fixture did not decode correctly.");
     }
 
     private static void AppendBulk(StringBuilder frame, string value)
         => frame.Append('$').Append(value.Length).Append("\r\n").Append(value).Append("\r\n");
+
+    private static byte[] LargeFrame(bool map)
+    {
+        var frame = new StringBuilder($"{(map ? '%' : '*')}{LargeCount}\r\n");
+        var payload = new string('x', LargeValueLength);
+        for (var index = 0; index < LargeCount; index++)
+        {
+            if (map) AppendBulk(frame, $"field-{index:D6}");
+            AppendBulk(frame, payload);
+        }
+        return Encoding.ASCII.GetBytes(frame.ToString());
+    }
 
     [Benchmark]
     public long MGet()
@@ -52,6 +72,20 @@ public class AggregatePayloadBenchmarks
     public long HGetAll()
     {
         using var reply = Parse(_hgetall);
+        return Decode(reply, map: true);
+    }
+
+    [Benchmark]
+    public long MGetLargeValues()
+    {
+        using var reply = Parse(_largeMget);
+        return Decode(reply, map: false);
+    }
+
+    [Benchmark]
+    public long HGetAllLargeValues()
+    {
+        using var reply = Parse(_largeHgetall);
         return Decode(reply, map: true);
     }
 

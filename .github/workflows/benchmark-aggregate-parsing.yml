@@ -39,6 +39,6 @@ jobs:
       expected-head-sha: ${{ github.event.pull_request.head.sha }}
       fixture: benchmarks/Respire.Benchmarks/AggregatePayloadBenchmarks.cs
       filter: '*AggregatePayloadBenchmarks*'
-      expected-case-count: 4
-      expected-methods: MGet,HGetAll,RetainedMGet,RetainedHGetAll
+      expected-case-count: 6
+      expected-methods: MGet,HGetAll,MGetLargeValues,HGetAllLargeValues,RetainedMGet,RetainedHGetAll
       artifact-prefix: aggregate-payload

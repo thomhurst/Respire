@@ -1,4 +1,5 @@
 using System.Buffers.Text;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using Respire.Networking;
 
@@ -90,11 +91,16 @@ internal static class RespParser
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public ParseContext ForChildren() => new(Depth + 1, ref _remainingElements, ref _deferredPayloads);
+        public ParseContext ForChildren()
+        {
+            Debug.Assert(DeferPayloads, "ImmediateCopy has no aggregate budget.");
+            return new(Depth + 1, ref _remainingElements, ref _deferredPayloads);
+        }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool TryReserve(int count)
         {
+            Debug.Assert(DeferPayloads, "ImmediateCopy has no aggregate budget.");
             if (count > _remainingElements)
                 return false;
 

@@ -9,6 +9,48 @@ namespace Respire.Tests.Protocol;
 
 public class AggregatePayloadTests
 {
+    [Test]
+    [NotInParallel]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task FramesBeyondThePoolLimitCopyOnlyRetainedChildPayloads(bool oversized)
+    {
+        // A large discarded nested attribute makes the frame expensive even though retained
+        // children need only six bytes. Exercise the exact shared-storage boundary and offsets.
+        var frameLength = 64 * 1024 * 1024 + (oversized ? 1 : 0);
+        var suffix = "\r\n$3\r\none\r\n*1\r\n$3\r\ntwo\r\n"u8.ToArray();
+        var prefix = Encoding.ASCII.GetBytes($"*2\r\n|1\r\n+k\r\n${frameLength}\r\n");
+        var paddingLength = frameLength - prefix.Length - suffix.Length;
+        prefix = Encoding.ASCII.GetBytes($"*2\r\n|1\r\n+k\r\n${paddingLength}\r\n");
+        var input = new byte[3 + frameLength + 4];
+        prefix.CopyTo(input, 3);
+        input.AsSpan(3 + prefix.Length, paddingLength).Fill((byte)'x');
+        suffix.CopyTo(input, 3 + prefix.Length + paddingLength);
+        ":9\r\n"u8.CopyTo(input.AsSpan(3 + frameLength));
+        var position = 3;
+        await Assert.That(RespParser.TryParseValue(input, ref position, out var value)).IsEqualTo(RespParseStatus.Done);
+        using (value)
+        using (var owned = value.ToOwned())
+        {
+            MemoryMarshal.TryGetArray(value.AsArray()[0].AsMemory(), out var one);
+            MemoryMarshal.TryGetArray(value.AsArray()[1].AsArray()[0].AsMemory(), out var two);
+            if (oversized)
+            {
+                await Assert.That(ReferenceEquals(one.Array, two.Array)).IsFalse();
+                await Assert.That(one.Array!.Length).IsLessThan(1024);
+                await Assert.That(two.Array!.Length).IsLessThan(1024);
+            }
+            else await Assert.That(one.Array).IsSameReferenceAs(two.Array);
+            await Assert.That(position).IsEqualTo(3 + frameLength);
+            input.AsSpan().Fill(0);
+            await Assert.That(value.AsArray()[0].AsString()).IsEqualTo("one");
+            await Assert.That(value.AsArray()[1].AsArray()[0].AsString()).IsEqualTo("two");
+            await Assert.That(value.Equals(owned)).IsTrue();
+            await Assert.That(value.GetHashCode()).IsEqualTo(owned.GetHashCode());
+            await Assert.That(value.GetOwnedSize()).IsEqualTo(owned.GetOwnedSize());
+        }
+    }
+
 #if DEBUG
     [Test]
     [NotInParallel]
