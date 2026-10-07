@@ -11,6 +11,95 @@ namespace Respire.Tests;
 public class ClientCacheHitAllocationTests
 {
     [Test]
+    public async Task DecodedStringsCountAgainstTheLimitAndInvalidationRemovesTheirSize()
+    {
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", 1)], ClientSideCache = new() { MaxSizeBytes = 200 },
+        });
+        var cache = client.Core.ClientCache!;
+        var key = new RespireKey("key");
+        var token = cache.BeginRead(in key);
+        var response = RespValue.BulkString(new byte[100]);
+        cache.CompleteRead(in token, in response, allowInsert: true);
+        await Assert.That(cache.Count).IsEqualTo(1);
+        await Assert.That((await client.GetStringAsync("key"))!.Length).IsEqualTo(100);
+        await Assert.That(cache.SizeBytes).IsLessThanOrEqualTo(200);
+        await Assert.That(cache.Count).IsEqualTo(0);
+        await Assert.That(cache.SizeBytes).IsEqualTo(0);
+
+        response = RespValue.BulkString("é😀"u8.ToArray());
+        token = cache.BeginRead(in key);
+        cache.CompleteRead(in token, in response, allowInsert: true);
+        var binarySize = cache.SizeBytes;
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("é😀");
+        var decodedSize = cache.SizeBytes;
+        await Assert.That(decodedSize).IsGreaterThan(binarySize);
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("é😀");
+        await Assert.That(cache.SizeBytes).IsEqualTo(decodedSize);
+        cache.Invalidate(in key);
+        await Assert.That(cache.SizeBytes).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task ConcurrentHitsAndMissesKeepExactTotalsAndOneDecodedEntry()
+    {
+        var cache = new ClientSideCacheCoordinator(new());
+        var key = new RespireKey("key");
+        var missing = new RespireKey("missing");
+        var token = cache.BeginRead(in key);
+        var response = RespValue.BulkString("é😀"u8.ToArray());
+        cache.CompleteRead(in token, in response, allowInsert: true);
+        await Task.WhenAll(Enumerable.Range(0, 32).Select(worker => Task.Run(() =>
+        {
+            for (var index = 0; index < 1000; index++)
+            {
+                if (!cache.TryGetString(in key, out var value) || value != "é😀")
+                    throw new InvalidOperationException("Lost a cached value.");
+                if (cache.TryGet(in missing, out _)) throw new InvalidOperationException("Unexpected cache hit.");
+            }
+        })));
+        var statistics = cache.GetStatistics();
+        await Assert.That(statistics.Hits).IsEqualTo(32_000);
+        await Assert.That(statistics.Misses).IsEqualTo(32_000);
+        await Assert.That(cache.Count).IsEqualTo(1);
+        cache.Invalidate(in key);
+        await Assert.That(cache.SizeBytes).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task StringMemoizationPreservesNullBinaryCopiesAndInvalidation(bool isNull)
+    {
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", 1)], ClientSideCache = new(),
+        });
+        var cache = client.Core.ClientCache!;
+        var key = new RespireKey("key");
+        var token = cache.BeginRead(in key);
+        var response = isNull ? RespValue.Null : RespValue.BulkString(new byte[] { 0xff, 0, 65 });
+        cache.CompleteRead(in token, in response, allowInsert: true);
+        var first = await client.GetStringAsync("key");
+        var second = await client.GetStringAsync("key");
+        await Assert.That(second).IsSameReferenceAs(first);
+        await Assert.That(first).IsEqualTo(isNull ? null : "�\0A");
+        if (!isNull)
+        {
+            var bytes = (await client.GetBytesAsync("key"))!;
+            bytes[0] = 1;
+            await Assert.That((await client.GetBytesAsync("key"))![0]).IsEqualTo((byte)0xff);
+            await Assert.That(await client.GetStringAsync("key")).IsEqualTo("�\0A");
+        }
+        cache.Invalidate(in key);
+        token = cache.BeginRead(in key);
+        response = RespValue.BulkString("new"u8.ToArray());
+        cache.CompleteRead(in token, in response, allowInsert: true);
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("new");
+    }
+
+    [Test]
     [NotInParallel]
     [Arguments("ascii-value")]
     [Arguments("é😀value")]
