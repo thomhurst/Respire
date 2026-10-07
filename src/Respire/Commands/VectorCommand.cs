@@ -27,12 +27,12 @@ internal readonly struct VectorCommand(Verb verb, RespireValue key, ReadOnlyMemo
         foreach (var argument in before) argument.WriteTo(ref writer);
         if (encoding == RespireVectorEncoding.Fp32)
         {
-            writer.WriteBulkString("FP32"u8);
+            writer.WriteRaw(CommandOptionFrames.FP32);
             writer.WriteBulkFloat32(vector.Span);
         }
         else
         {
-            writer.WriteBulkString("VALUES"u8);
+            writer.WriteRaw(CommandOptionFrames.VALUES);
             writer.WriteBulkInteger(vector.Length);
             foreach (var component in vector.Span) ((RespireValue)component).WriteTo(ref writer);
         }

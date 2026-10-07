@@ -1,0 +1,38 @@
+name: RESP framing benchmarks
+
+on:
+  pull_request:
+    paths:
+      - 'src/Respire/Protocol/RespWriter.cs'
+      - 'src/Respire/RespireValue.cs'
+      - 'src/Respire/RespireClient.cs'
+      - 'src/Respire/RespireCommands.g.cs'
+      - 'src/Respire/Commands/**'
+      - 'src/Respire/Facets/SortedSet*Commands.cs'
+      - 'src/Respire/Facets/String*Commands.cs'
+      - 'src/Respire/Batching/BatchSortedSetCommands.cs'
+      - 'tools/Generate-CommandCatalog.ps1'
+      - 'benchmarks/Respire.Benchmarks/RespFramingBenchmarks.cs'
+      - '.github/workflows/benchmark-resp-framing.yml'
+      - '.github/workflows/benchmark-compare.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    uses: ./.github/workflows/benchmark-compare.yml
+    with:
+      event-base-sha: ${{ github.event.pull_request.base.sha }}
+      candidate-sha: ${{ github.sha }}
+      expected-head-sha: ${{ github.event.pull_request.head.sha }}
+      fixture: benchmarks/Respire.Benchmarks/RespFramingBenchmarks.cs
+      filter: '*RespFraming*Benchmarks*'
+      expected-case-count: 10
+      expected-methods: WriteBulkInteger,WriteGetCommand,WriteSetOptions,SetWithExpiry,ReverseRangeWithScores,SetWithExpiryPipeline,ReverseRangeWithScoresPipeline
+      zero-allocation-methods: WriteBulkInteger,WriteGetCommand,WriteSetOptions
+      artifact-prefix: resp-framing-comparison

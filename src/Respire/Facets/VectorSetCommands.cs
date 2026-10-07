@@ -174,7 +174,7 @@ internal sealed class VectorSetCommands(RespireClient client) : IVectorSetComman
         if (options.Epsilon is { } epsilon && (!double.IsFinite(epsilon) || epsilon is < 0 or > 1))
             throw new ArgumentOutOfRangeException(nameof(options), "Epsilon must be finite and between 0 and 1.");
         List<RespireValue> args = [];
-        if (options.IncludeScores) args.Add("WITHSCORES");
+        if (options.IncludeScores) args.Add(CommandOptionFrames.WITHSCORESValue);
         if (options.IncludeAttributes) args.Add("WITHATTRIBS");
         if (options.Count is { } count) { args.Add("COUNT"); args.Add(count); }
         if (options.Epsilon is { } distance) { args.Add("EPSILON"); args.Add(distance); }
@@ -208,7 +208,7 @@ internal sealed class VectorSetCommands(RespireClient client) : IVectorSetComman
     }
 
     internal static Cmd1N BuildLinks(RespireClient client, RespireKey key, RespireValue member, bool scores)
-        => Build(client, RespireCommands.VectorSet.VLINKS.Verb, key, scores ? [member, "WITHSCORES"] : [member]);
+        => Build(client, RespireCommands.VectorSet.VLINKS.Verb, key, scores ? [member, CommandOptionFrames.WITHSCORESValue] : [member]);
     internal static Cmd1N BuildRandom(RespireClient client, RespireKey key, long count)
     {
         if (count == long.MinValue) throw new ArgumentOutOfRangeException(nameof(count));

@@ -279,6 +279,27 @@ foreach ($command in ($merged | Sort-Object Name)) {
 [void] $builder.AppendLine('        => s_commands.TryGetValue(command, out var metadata) ? metadata : (ReadCommandKind.None, -1);')
 [void] $builder.AppendLine('}')
 
+# Fixed options are complete bulk frames. Keep their logical argument identity separate
+# from framing so generic command/cache/routing inspection sees ordinary text.
+[void] $builder.AppendLine()
+[void] $builder.AppendLine('/// <summary>Immutable pre-encoded bulk frames for fixed command options.</summary>')
+[void] $builder.AppendLine('internal static class CommandOptionFrames')
+[void] $builder.AppendLine('{')
+$fixedOptions = @(
+    'ANY', 'ASC', 'BLOCK', 'BYBOX', 'BYRADIUS', 'CH', 'CLAIM', 'COUNT', 'DESC',
+    'FP32', 'FROMLONLAT', 'FROMMEMBER', 'GET', 'GROUP', 'GT', 'INCR', 'KEEPTTL',
+    'LT', 'MAXCOUNT', 'MAXSIZE', 'NOACK', 'NX', 'PERSIST', 'PX', 'PXAT',
+    'REV', 'STREAMS', 'VALUES', 'WITHSCORES', 'XREAD', 'XREADGROUP', 'XX'
+)
+foreach ($option in $fixedOptions) {
+    [void] $builder.AppendLine(('    internal static ReadOnlySpan<byte> {0} => "${1}\r\n{0}\r\n"u8;' -f $option, $option.Length))
+}
+[void] $builder.AppendLine()
+foreach ($option in @('PX', 'PXAT', 'REV', 'WITHSCORES')) {
+    [void] $builder.AppendLine(('    internal static readonly RespireValue {0}Value = RespireValue.PreEncodedOption("{0}", {0}.ToArray());' -f $option))
+}
+[void] $builder.AppendLine('}')
+
 $resolvedOutput = [System.IO.Path]::GetFullPath($OutputPath)
 [System.IO.Directory]::CreateDirectory([System.IO.Path]::GetDirectoryName($resolvedOutput)) | Out-Null
 [System.IO.File]::WriteAllText($resolvedOutput, $builder.ToString(), [System.Text.UTF8Encoding]::new($false))

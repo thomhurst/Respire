@@ -26,16 +26,16 @@ internal readonly struct ConditionalSetCommand(RespireValue key, RespireValue va
         condition.Operand.WriteTo(ref writer);
         if (expiry.TryGetRelativeMilliseconds(out var milliseconds))
         {
-            writer.WriteBulkString("PX"u8);
+            writer.WriteRaw(CommandOptionFrames.PX);
             writer.WriteBulkInteger(milliseconds);
         }
         else if (expiry.TryGetAbsoluteUnixMilliseconds(out var unixMilliseconds))
         {
-            writer.WriteBulkString("PXAT"u8);
+            writer.WriteRaw(CommandOptionFrames.PXAT);
             writer.WriteBulkInteger(unixMilliseconds);
         }
         else if (expiry.IsKeep)
-            writer.WriteBulkString("KEEPTTL"u8);
-        if (returnOld) writer.WriteBulkString("GET"u8);
+            writer.WriteRaw(CommandOptionFrames.KEEPTTL);
+        if (returnOld) writer.WriteRaw(CommandOptionFrames.GET);
     }
 }

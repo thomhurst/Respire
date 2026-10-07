@@ -87,7 +87,7 @@ internal static class ArrayCommandArguments
         return args;
     }
 
-    internal static RespireValue[] LastItems(long count, bool reverse) => reverse ? [count, "REV"] : [count];
+    internal static RespireValue[] LastItems(long count, bool reverse) => reverse ? [count, CommandOptionFrames.REVValue] : [count];
     internal static RespireValue[] Info(bool full) => full ? ["FULL"] : [];
 
     internal static RespireValue[] Aggregate(ulong start, ulong end, RespireArrayOperation operation, RespireValue? match)

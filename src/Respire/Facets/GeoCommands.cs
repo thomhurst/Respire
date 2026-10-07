@@ -613,24 +613,24 @@ internal readonly struct GeoSearchCommand(
         source.WriteTo(ref writer);
         if (origin.Member is { } member)
         {
-            writer.WriteBulkString("FROMMEMBER"u8);
+            writer.WriteRaw(CommandOptionFrames.FROMMEMBER);
             member.WriteTo(ref writer);
         }
         else
         {
-            writer.WriteBulkString("FROMLONLAT"u8);
+            writer.WriteRaw(CommandOptionFrames.FROMLONLAT);
             ((RespireValue)origin.Longitude).WriteTo(ref writer);
             ((RespireValue)origin.Latitude).WriteTo(ref writer);
         }
 
         if (shape.IsRadius)
         {
-            writer.WriteBulkString("BYRADIUS"u8);
+            writer.WriteRaw(CommandOptionFrames.BYRADIUS);
             ((RespireValue)shape.Radius).WriteTo(ref writer);
         }
         else
         {
-            writer.WriteBulkString("BYBOX"u8);
+            writer.WriteRaw(CommandOptionFrames.BYBOX);
             ((RespireValue)shape.Width).WriteTo(ref writer);
             ((RespireValue)shape.Height).WriteTo(ref writer);
         }
@@ -638,16 +638,16 @@ internal readonly struct GeoSearchCommand(
         writer.WriteBulkString(GeoCommands.Unit(shape.Unit));
         if (options.Sort != GeoSortOrder.Unsorted)
         {
-            writer.WriteBulkString(options.Sort == GeoSortOrder.Ascending ? "ASC"u8 : "DESC"u8);
+            writer.WriteRaw(options.Sort == GeoSortOrder.Ascending ? CommandOptionFrames.ASC : CommandOptionFrames.DESC);
         }
 
         if (options.Count is { } count)
         {
-            writer.WriteBulkString("COUNT"u8);
+            writer.WriteRaw(CommandOptionFrames.COUNT);
             writer.WriteBulkInteger(count);
             if (options.Any)
             {
-                writer.WriteBulkString("ANY"u8);
+                writer.WriteRaw(CommandOptionFrames.ANY);
             }
         }
 
@@ -686,7 +686,7 @@ internal readonly struct GeoAddCommand(
 
         if (changed)
         {
-            writer.WriteBulkString("CH"u8);
+            writer.WriteRaw(CommandOptionFrames.CH);
         }
 
         foreach (var entry in entries)

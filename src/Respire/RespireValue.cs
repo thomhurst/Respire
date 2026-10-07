@@ -22,6 +22,7 @@ public readonly struct RespireValue : IEquatable<RespireValue>
     {
         Null = 0,
         String,
+        PreEncoded,
         Bytes,
         Integer,
         UnsignedInteger,
@@ -39,6 +40,10 @@ public readonly struct RespireValue : IEquatable<RespireValue>
 
     internal static RespireValue Prefixed(KeyPrefix prefix, string? text, ReadOnlyMemory<byte> bytes)
         => new(prefix, text, bytes);
+
+    /// <summary>Creates a fixed option whose immutable generated frame serializes directly and whose identity remains text.</summary>
+    internal static RespireValue PreEncodedOption(string text, ReadOnlyMemory<byte> frame)
+        => new(Kind.PreEncoded, s: text, bytes: frame);
 
     private RespireValue(KeyPrefix prefix, string? text, ReadOnlyMemory<byte> bytes)
     {
@@ -192,6 +197,9 @@ public readonly struct RespireValue : IEquatable<RespireValue>
             case Kind.String:
                 writer.WriteBulkString(_string!);
                 break;
+            case Kind.PreEncoded:
+                writer.WriteRaw(_bytes.Span);
+                break;
             case Kind.Bytes:
                 writer.WriteBulkString(_bytes.Span);
                 break;
@@ -217,7 +225,7 @@ public readonly struct RespireValue : IEquatable<RespireValue>
                 writer.WriteBulkString(digits[..written]);
                 break;
             case Kind.Boolean:
-                writer.WriteBulkString(_number != 0 ? "1"u8 : "0"u8);
+                writer.WriteRaw(_number != 0 ? "$1\r\n1\r\n"u8 : "$1\r\n0\r\n"u8);
                 break;
             default:
                 throw new InvalidOperationException($"Unsupported RespireValue kind '{_kind}'.");
@@ -231,7 +239,7 @@ public readonly struct RespireValue : IEquatable<RespireValue>
             slot = GetPrefixedClusterSlot();
             return true;
         }
-        if (_kind == Kind.String)
+        if (_kind is Kind.String or Kind.PreEncoded)
         {
             slot = ClusterHash.GetSlot(_string!);
             return true;
@@ -305,6 +313,7 @@ public readonly struct RespireValue : IEquatable<RespireValue>
                 value = _number;
                 return true;
             case Kind.String:
+            case Kind.PreEncoded:
                 return long.TryParse(
                     _string.AsSpan(),
                     NumberStyles.Integer,
@@ -329,7 +338,7 @@ public readonly struct RespireValue : IEquatable<RespireValue>
         if (_kind == Kind.Prefixed)
             return _string is not null ? _prefix!.GetString(_string, _bytes).Equals(value, StringComparison.OrdinalIgnoreCase)
                 : PrefixedBytesEqualAsciiIgnoreCase(value);
-        if (_kind == Kind.String)
+        if (_kind is Kind.String or Kind.PreEncoded)
         {
             return string.Equals(_string, value, StringComparison.OrdinalIgnoreCase);
         }
@@ -389,7 +398,7 @@ public readonly struct RespireValue : IEquatable<RespireValue>
         => _kind switch
         {
             Kind.Null => true,
-            Kind.String => _string!.Length == 0,
+            Kind.String or Kind.PreEncoded => _string!.Length == 0,
             Kind.Bytes => _bytes.IsEmpty,
             _ => false,
         };
@@ -425,14 +434,14 @@ public readonly struct RespireValue : IEquatable<RespireValue>
             return EqualsBytes(other._bytes.Span);
         }
 
-        if (_kind == Kind.String)
+        if (_kind is Kind.String or Kind.PreEncoded)
         {
-            return other._kind == Kind.String
+            return other._kind is Kind.String or Kind.PreEncoded
                 ? StringsHaveSamePayload(_string!, other._string!)
                 : other.EqualsUtf8(_string!);
         }
 
-        if (other._kind == Kind.String)
+        if (other._kind is Kind.String or Kind.PreEncoded)
         {
             return EqualsUtf8(other._string!);
         }
@@ -527,7 +536,7 @@ public readonly struct RespireValue : IEquatable<RespireValue>
             return _bytes.Span.SequenceEqual(bytes);
         }
 
-        if (_kind == Kind.String)
+        if (_kind is Kind.String or Kind.PreEncoded)
         {
             return Utf8Equals(_string!, bytes);
         }
@@ -641,7 +650,7 @@ public readonly struct RespireValue : IEquatable<RespireValue>
     internal int GetWireLength()
     {
         if (_kind == Kind.Prefixed) return _prefix!.GetWireLength(_string, _bytes);
-        if (_kind == Kind.String)
+        if (_kind is Kind.String or Kind.PreEncoded)
         {
             return Encoding.UTF8.GetByteCount(_string!);
         }
@@ -658,7 +667,7 @@ public readonly struct RespireValue : IEquatable<RespireValue>
     internal RespireKey AsKey()
     {
         if (_kind == Kind.Prefixed) return new RespireKey(_prefix!, _string, _bytes);
-        if (_kind == Kind.String)
+        if (_kind is Kind.String or Kind.PreEncoded)
         {
             return new RespireKey(_string!);
         }
@@ -680,6 +689,7 @@ public readonly struct RespireValue : IEquatable<RespireValue>
             case Kind.Prefixed:
                 return _prefix!.WritePayload(_string, _bytes, destination);
             case Kind.String:
+            case Kind.PreEncoded:
                 return Encoding.UTF8.GetBytes(_string!, destination);
             case Kind.Bytes:
                 _bytes.Span.CopyTo(destination);
@@ -709,7 +719,7 @@ public readonly struct RespireValue : IEquatable<RespireValue>
         => _kind switch
         {
             Kind.Prefixed => _prefix!.GetString(_string, _bytes),
-            Kind.String => _string!,
+            Kind.String or Kind.PreEncoded => _string!,
             Kind.Bytes => Internal.Utf8String.GetString(_bytes),
             Kind.Integer => _number.ToString(CultureInfo.InvariantCulture),
             Kind.UnsignedInteger => unchecked((ulong)_number).ToString(CultureInfo.InvariantCulture),

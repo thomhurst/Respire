@@ -4873,7 +4873,7 @@ public sealed partial class RespireClient : IRespireClient
 
     private async ValueTask PlaceLeaseAsync(RespireValue lease, CancellationToken cancellationToken)
     {
-        var command = new Cmd4(Verbs.Set, lease, 1, "PX", (long)RemovalLeaseTtl.TotalMilliseconds);
+        var command = new Cmd4(Verbs.Set, lease, 1, CommandOptionFrames.PXValue, (long)RemovalLeaseTtl.TotalMilliseconds);
         var reply = await SendAsync("SET", command, cancellationToken).ConfigureAwait(false);
         reply.Dispose();
     }

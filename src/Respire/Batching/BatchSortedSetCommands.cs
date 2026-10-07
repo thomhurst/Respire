@@ -303,7 +303,7 @@ internal sealed partial class BatchSortedSetCommands(IPendingSink sink) : IBatch
         RespireKey key, long start = 0, long stop = -1, bool descending = false)
         => descending
             ? sink.Add<Cmd4, string[]>(
-                "ZRANGE", new Cmd4(Verbs.ZRange, sink.Client.Key(in key), start, stop, "REV"),
+                "ZRANGE", new Cmd4(Verbs.ZRange, sink.Client.Key(in key), start, stop, CommandOptionFrames.REVValue),
                 static (c, v) => ResponseReader.StringArray(in v))
             : sink.Add<Cmd3, string[]>(
                 "ZRANGE", new Cmd3(Verbs.ZRange, sink.Client.Key(in key), start, stop),
@@ -315,7 +315,7 @@ internal sealed partial class BatchSortedSetCommands(IPendingSink sink) : IBatch
         RespireKey key, long start = 0, long stop = -1, bool descending = false)
         => descending
             ? sink.Add<Cmd4, T[]>(
-                "ZRANGE", new Cmd4(Verbs.ZRange, sink.Client.Key(in key), start, stop, "REV"),
+                "ZRANGE", new Cmd4(Verbs.ZRange, sink.Client.Key(in key), start, stop, CommandOptionFrames.REVValue),
                 static (c, v) => c.DeserializeArray<T>(in v))
             : sink.Add<Cmd3, T[]>(
                 "ZRANGE", new Cmd3(Verbs.ZRange, sink.Client.Key(in key), start, stop),
@@ -326,11 +326,11 @@ internal sealed partial class BatchSortedSetCommands(IPendingSink sink) : IBatch
         => descending
             ? sink.Add<Cmd5, SortedSetEntry[]>(
                 "ZRANGE",
-                new Cmd5(Verbs.ZRange, sink.Client.Key(in key), start, stop, "REV", "WITHSCORES"),
+                new Cmd5(Verbs.ZRange, sink.Client.Key(in key), start, stop, CommandOptionFrames.REVValue, CommandOptionFrames.WITHSCORESValue),
                 static (c, v) => SortedSetCommands.ParseEntries(in v))
             : sink.Add<Cmd4, SortedSetEntry[]>(
                 "ZRANGE",
-                new Cmd4(Verbs.ZRange, sink.Client.Key(in key), start, stop, "WITHSCORES"),
+                new Cmd4(Verbs.ZRange, sink.Client.Key(in key), start, stop, CommandOptionFrames.WITHSCORESValue),
                 static (c, v) => SortedSetCommands.ParseEntries(in v));
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
@@ -340,11 +340,11 @@ internal sealed partial class BatchSortedSetCommands(IPendingSink sink) : IBatch
         => descending
             ? sink.Add<Cmd5, SortedSetEntry<T>[]>(
                 "ZRANGE",
-                new Cmd5(Verbs.ZRange, sink.Client.Key(in key), start, stop, "REV", "WITHSCORES"),
+                new Cmd5(Verbs.ZRange, sink.Client.Key(in key), start, stop, CommandOptionFrames.REVValue, CommandOptionFrames.WITHSCORESValue),
                 static (c, v) => SortedSetCommands.ParseEntries<T>(c, in v))
             : sink.Add<Cmd4, SortedSetEntry<T>[]>(
                 "ZRANGE",
-                new Cmd4(Verbs.ZRange, sink.Client.Key(in key), start, stop, "WITHSCORES"),
+                new Cmd4(Verbs.ZRange, sink.Client.Key(in key), start, stop, CommandOptionFrames.WITHSCORESValue),
                 static (c, v) => SortedSetCommands.ParseEntries<T>(c, in v));
 
     public RespirePending<string[]> RangeByScore(
@@ -456,7 +456,7 @@ internal sealed partial class BatchSortedSetCommands(IPendingSink sink) : IBatch
                 RespireCommands.SortedSet.ZRANGESTORE.Verb,
                 sink.Client.Key(in destination),
                 sink.Client.Key(in source),
-                descending ? [start, stop, "REV"] : [start, stop]),
+                descending ? [start, stop, CommandOptionFrames.REVValue] : [start, stop]),
             destination, source,
             static (c, v) => ResponseReader.Integer(in v));
 

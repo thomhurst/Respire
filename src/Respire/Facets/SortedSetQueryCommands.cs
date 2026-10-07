@@ -88,7 +88,7 @@ internal sealed partial class SortedSetCommands
     internal static Cmd3 RandomScoredMembersCommand(RespireClient client, RespireKey key, long count)
     {
         ValidateRandomCount(count);
-        return new Cmd3(RespireCommands.SortedSet.ZRANDMEMBER.Verb, client.Key(in key), count, "WITHSCORES");
+        return new Cmd3(RespireCommands.SortedSet.ZRANDMEMBER.Verb, client.Key(in key), count, CommandOptionFrames.WITHSCORESValue);
     }
 
     private static void ValidateRandomCount(long count)

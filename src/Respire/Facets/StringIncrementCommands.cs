@@ -80,7 +80,7 @@ internal sealed partial class StringCommands
         if (saturate) arguments[index++] = "SATURATE";
         if (relative || absolute)
         {
-            arguments[index++] = relative ? "PX" : "PXAT";
+            arguments[index++] = relative ? CommandOptionFrames.PXValue : CommandOptionFrames.PXATValue;
             arguments[index++] = relative ? milliseconds : timestamp;
         }
         else if (expiry.IsPersist) arguments[index++] = "PERSIST";

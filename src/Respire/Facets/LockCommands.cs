@@ -446,8 +446,8 @@ internal readonly struct LockTakeCommand(RespireValue key, RespireValue token, l
         writer.WriteRaw(Verbs.Set.Bulk);
         key.WriteTo(ref writer);
         token.WriteTo(ref writer);
-        writer.WriteBulkString("NX"u8);
-        writer.WriteBulkString("PX"u8);
+        writer.WriteRaw(CommandOptionFrames.NX);
+        writer.WriteRaw(CommandOptionFrames.PX);
         writer.WriteBulkInteger(milliseconds);
     }
 }

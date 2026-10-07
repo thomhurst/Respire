@@ -529,7 +529,7 @@ internal sealed partial class SortedSetCommands(RespireClient client) : ISortedS
         RespireKey key, long start = 0, long stop = -1, bool descending = false, CancellationToken cancellationToken = default)
         => descending
             ? client.StringArrayAsync(
-                "ZRANGE", new Cmd4(Verbs.ZRange, client.Key(in key), start, stop, "REV"), cancellationToken)
+                "ZRANGE", new Cmd4(Verbs.ZRange, client.Key(in key), start, stop, CommandOptionFrames.REVValue), cancellationToken)
             : client.StringArrayAsync(
                 "ZRANGE", new Cmd3(Verbs.ZRange, client.Key(in key), start, stop), cancellationToken);
 
@@ -540,7 +540,7 @@ internal sealed partial class SortedSetCommands(RespireClient client) : ISortedS
         CancellationToken cancellationToken = default)
         => descending
             ? client.DeserializeArrayAsync<T, Cmd4>(
-                "ZRANGE", new Cmd4(Verbs.ZRange, client.Key(in key), start, stop, "REV"), cancellationToken)
+                "ZRANGE", new Cmd4(Verbs.ZRange, client.Key(in key), start, stop, CommandOptionFrames.REVValue), cancellationToken)
             : client.DeserializeArrayAsync<T, Cmd3>(
                 "ZRANGE", new Cmd3(Verbs.ZRange, client.Key(in key), start, stop), cancellationToken);
 
@@ -548,11 +548,11 @@ internal sealed partial class SortedSetCommands(RespireClient client) : ISortedS
         RespireKey key, long start = 0, long stop = -1, bool descending = false, CancellationToken cancellationToken = default)
         => descending
             ? client.ConvertResponseAsync(
-                "ZRANGE", new Cmd5(Verbs.ZRange, client.Key(in key), start, stop, "REV", "WITHSCORES"),
+                "ZRANGE", new Cmd5(Verbs.ZRange, client.Key(in key), start, stop, CommandOptionFrames.REVValue, CommandOptionFrames.WITHSCORESValue),
                 cancellationToken, this,
                 static (SortedSetCommands _, in RespValue value) => ParseEntries(in value))
             : client.ConvertResponseAsync(
-                "ZRANGE", new Cmd4(Verbs.ZRange, client.Key(in key), start, stop, "WITHSCORES"),
+                "ZRANGE", new Cmd4(Verbs.ZRange, client.Key(in key), start, stop, CommandOptionFrames.WITHSCORESValue),
                 cancellationToken, this,
                 static (SortedSetCommands _, in RespValue value) => ParseEntries(in value));
 
@@ -565,7 +565,7 @@ internal sealed partial class SortedSetCommands(RespireClient client) : ISortedS
             new Cmd1N(
                 Verbs.ZRange,
                 client.Key(in key),
-                descending ? [start, stop, "REV", "WITHSCORES"] : [start, stop, "WITHSCORES"]),
+                descending ? [start, stop, CommandOptionFrames.REVValue, CommandOptionFrames.WITHSCORESValue] : [start, stop, CommandOptionFrames.WITHSCORESValue]),
             cancellationToken);
 
     public ValueTask<string[]> RangeByScoreAsync(
@@ -699,7 +699,7 @@ internal sealed partial class SortedSetCommands(RespireClient client) : ISortedS
                 RespireCommands.SortedSet.ZRANGESTORE.Verb,
                 client.Key(in destination),
                 client.Key(in source),
-                descending ? [start, stop, "REV"] : [start, stop]),
+                descending ? [start, stop, CommandOptionFrames.REVValue] : [start, stop]),
             cancellationToken);
 
     public ValueTask<long> StoreRangeByScoreAsync(
@@ -754,7 +754,7 @@ internal sealed partial class SortedSetCommands(RespireClient client) : ISortedS
         arguments[index++] = mode;
         if (descending)
         {
-            arguments[index++] = "REV";
+            arguments[index++] = CommandOptionFrames.REVValue;
         }
 
         if (count is { } pageSize)
@@ -766,7 +766,7 @@ internal sealed partial class SortedSetCommands(RespireClient client) : ISortedS
 
         if (withScores)
         {
-            arguments[index] = "WITHSCORES";
+            arguments[index] = CommandOptionFrames.WITHSCORESValue;
         }
 
         return arguments;
