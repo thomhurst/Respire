@@ -5,6 +5,8 @@ on:
   pull_request:
     paths:
       - scripts/Invoke-AgentDotNet.ps1
+      - scripts/AgentDotNetWindowsJob.cs
+      - scripts/Test-AgentDotNetWindowsHandles.ps1
       - scripts/Test-InvokeAgentDotNet.ps1
       - scripts/Test-AgentDotNetArguments.ps1
       - scripts/Test-AgentDotNetMtp.ps1
@@ -28,6 +30,8 @@ on:
     branches: [main]
     paths:
       - scripts/Invoke-AgentDotNet.ps1
+      - scripts/AgentDotNetWindowsJob.cs
+      - scripts/Test-AgentDotNetWindowsHandles.ps1
       - scripts/Test-InvokeAgentDotNet.ps1
       - scripts/Test-AgentDotNetArguments.ps1
       - scripts/Test-AgentDotNetMtp.ps1
@@ -73,6 +77,10 @@ jobs:
       - name: Verify native arguments and SingleNode
         shell: pwsh
         run: ./scripts/Test-AgentDotNetArguments.ps1
+      - name: Verify Windows standard-handle inheritance
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/Test-AgentDotNetWindowsHandles.ps1
       - name: Verify MTP discovery, execution, and failure propagation
         shell: pwsh
         run: ./scripts/Test-AgentDotNetMtp.ps1
