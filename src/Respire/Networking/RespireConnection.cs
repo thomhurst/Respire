@@ -87,7 +87,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private readonly ProducerProgress _producerProgress = new();
     private readonly FlushProgress _flushProgress = new();
     private readonly ReceiveProgress _receiveProgress = new();
-    // Cache the role's coordination handles so hot paths need no extra holder load.
+    // Role holders own the coordination objects. These readonly aliases avoid extra
+    // holder loads on hot paths.
     private readonly Lock _receiveDeadlineGate;
     private readonly AsyncFlushSignal _flushSignal;
     private readonly AsyncCapacitySignal _capacitySignal;
