@@ -30,6 +30,7 @@ internal static class RespireConfiguration
         SentinelTlsOptions = Tls(section.GetSection("SentinelTlsOptions"), options.SentinelTlsOptions),
         ClientName = section.GetValue("ClientName", options.ClientName),
         Database = section.GetValue("Database", options.Database),
+        KeyPrefix = section["KeyPrefix"] is { } prefix ? (RespireKey)prefix : options.KeyPrefix,
         AllowAdmin = section.GetValue("AllowAdmin", options.AllowAdmin),
         Protocol = section.GetValue("Protocol", options.Protocol),
         MaintenanceNotifications = section.GetValue("MaintenanceNotifications", options.MaintenanceNotifications),

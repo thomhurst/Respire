@@ -252,7 +252,13 @@ Connection URI query parameters cover common options:
 redis://localhost:6379/0?clientName=checkout-api&connections=4&allowAdmin=false
 ```
 
-Supported query parameters are `clientName`, `connections`, `connectTimeoutMs`, `commandTimeoutMs`, `responseTimeoutMs`, `protocol` (`auto`, `2`/`resp2` or `3`/`resp3`, case-insensitive), `db`, `cluster`, and `allowAdmin`.
+Supported query parameters are `clientName`, `connections`, `connectTimeoutMs`, `commandTimeoutMs`, `responseTimeoutMs`, `protocol` (`auto`, `2`/`resp2` or `3`/`resp3`, case-insensitive), `db`, `cluster`, `allowAdmin`, and `keyPrefix`.
+
+`keyPrefix` configures a [default root key namespace](../commands/strings-and-keys.md#default-root-namespace).
+It accepts percent-escaped UTF-8 text in URI and comma-delimited strings, decodes once,
+and leaves pub/sub channels unchanged. Empty disables prefixing; repeated entries use
+the last value. Use `Uri.EscapeDataString` to escape delimiters and literal percent signs.
+Configure arbitrary binary prefixes through `RespireOptions.KeyPrefix`.
 
 Unsupported protocol values and malformed or overflowing integer options throw `ArgumentException`
 with the option name and `ParamName == "connectionString"`. This applies to URI and comma-delimited
@@ -297,7 +303,7 @@ Cluster and Sentinel cannot both be selected in one comma-delimited string.
 Supported options are `user` (or `username`), `password`, `ssl`, `sslHost`, `sslProtocols`,
 `checkCertificateRevocation`, `clientName` (or `name`), `defaultDatabase` (or `db`),
 `connectTimeout`, `asyncTimeout` (or `syncTimeout`), `protocol` (`auto`, `resp2` or `resp3`), and
-`allowAdmin`. `sslHost` sets the TLS certificate/SNI target and enables TLS unless
+`allowAdmin` and `keyPrefix`. `sslHost` sets the TLS certificate/SNI target and enables TLS unless
 `ssl=false` explicitly disables it, regardless of option order. `sslProtocols`
 accepts pipe-separated enum names, such as `Tls12|Tls13`, or numeric masks combining defined
 protocol bits, such as `15360`. `sslProtocols` and `checkCertificateRevocation` configure TLS

@@ -182,7 +182,10 @@ public sealed partial class RespireClient : IRespireClient
     {
         ArgumentNullException.ThrowIfNull(options);
         options = options.ValidateAndSnapshot();
-        return new RespireClient(new ClientCore(options), keyPrefix: null, ownsCore: true);
+        KeyPrefix? prefix = null;
+        if (!options.KeyPrefix.IsEmpty)
+            prefix = options.KeyPrefix.Text is { } text ? new KeyPrefix(text) : new KeyPrefix(options.KeyPrefix.ToBytes());
+        return new RespireClient(new ClientCore(options), keyPrefix: prefix, ownsCore: true);
     }
 
     /// <inheritdoc/>

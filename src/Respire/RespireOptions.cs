@@ -161,6 +161,12 @@ public sealed record RespireOptions
     /// <summary>Explicit read replicas for standalone primary/replica deployments. Sentinel ignores this list.</summary>
     public IList<RespireEndpoint> ReplicaEndpoints { get; init; } = [];
 
+    /// <summary>Optional key namespace for the root client. Empty (the default) disables prefixing.</summary>
+    /// <remarks>Text and binary prefixes follow the same contracts as <see cref="IRespireClient.WithKeyPrefix(RespireKey)"/>.
+    /// Client creation snapshots binary storage. Derived views append to this prefix.
+    /// Regular pub/sub channels and server-wide operations are unchanged.</remarks>
+    public RespireKey KeyPrefix { get; init; }
+
     /// <summary>Default routing policy for catalog commands whose metadata confirms they are read-only.</summary>
     public RespireReadFrom ReadFrom { get; init; } = RespireReadFrom.Primary;
 
@@ -556,6 +562,7 @@ public sealed record RespireOptions
             ReplicaEndpoints = new List<RespireEndpoint>(ReplicaEndpoints),
             Protocol = effectiveProtocol,
             ClientSideCache = ClientSideCache?.ValidateAndSnapshot(),
+            KeyPrefix = KeyPrefix.IsEmpty ? default : KeyPrefix.Snapshot(),
         };
     }
 
@@ -632,13 +639,15 @@ public sealed record RespireOptions
     /// <c>serviceName</c>. Options include <c>user</c>, <c>password</c>, <c>ssl</c>,
     /// <c>sslHost</c>, <c>sslProtocols</c>, <c>checkCertificateRevocation</c>, <c>clientName</c>
     /// (or <c>name</c>), <c>defaultDatabase</c>, <c>connectTimeout</c>, <c>asyncTimeout</c>,
-    /// <c>syncTimeout</c>, <c>protocol</c>, <c>allowAdmin</c>, and Sentinel credentials/TLS.
+    /// <c>syncTimeout</c>, <c>protocol</c>, <c>allowAdmin</c>, <c>keyPrefix</c>, and Sentinel credentials/TLS.
     /// Recognized URI query parameters:
     /// <c>clientName</c>, <c>connections</c>, <c>connectTimeoutMs</c>, <c>commandTimeoutMs</c>,
     /// <c>connectionIdleReadTimeoutMs</c>, <c>protocol</c> (2/resp2 or 3/resp3), <c>db</c>,
     /// <c>useCluster</c> (true or false), <c>sentinelPrimaryName</c>, <c>sentinelUser</c>,
-    /// <c>sentinelPassword</c>, <c>sentinelTls</c> (true or false), and
-    /// <c>allowAdmin</c> (true or false).
+    /// <c>sentinelPassword</c>, <c>sentinelTls</c> (true or false),
+    /// <c>allowAdmin</c> (true or false), and <c>keyPrefix</c>.
+    /// In both forms, <c>keyPrefix</c> is percent-decoded once and used as a UTF-8 text prefix.
+    /// Empty disables prefixing; duplicate values use the last entry. Escape delimiters and literal percent signs.
     /// Use <c>rediss://</c> to enable TLS. Unix sockets accept <c>unix:///path</c>,
     /// <c>redis+unix:///path</c>, or <c>!/path</c> in comma-delimited strings.
     /// A Unix URI uses its path for the socket and <c>?db=N</c> for the database.
@@ -705,6 +714,7 @@ public sealed record RespireOptions
         }
 
         string? clientName = null;
+        RespireKey keyPrefix = default;
         var connections = 1;
         TimeSpan connectTimeout = TimeSpan.FromSeconds(10);
         TimeSpan? commandTimeout = DefaultCommandTimeout;
@@ -727,6 +737,9 @@ public sealed record RespireOptions
             {
                 case "clientname":
                     clientName = value;
+                    break;
+                case "keyprefix":
+                    keyPrefix = value;
                     break;
                 case "connections":
                     connections = ParseIntegerOption(name, value);
@@ -773,6 +786,7 @@ public sealed record RespireOptions
             SentinelPassword = mode.SentinelPassword,
             SentinelUseTls = mode.SentinelUseTls,
             ClientName = clientName,
+            KeyPrefix = keyPrefix,
             Database = database,
             Connections = connections,
             ConnectTimeout = connectTimeout,
@@ -910,6 +924,7 @@ public sealed record RespireOptions
         string? username = null;
         string? password = null;
         string? clientName = null;
+        RespireKey keyPrefix = default;
         var database = 0;
         bool? useTls = null;
         var connectTimeout = TimeSpan.FromSeconds(10);
@@ -954,6 +969,9 @@ public sealed record RespireOptions
                 case "name":
                 case "clientname":
                     clientName = value;
+                    break;
+                case "keyprefix":
+                    keyPrefix = Uri.UnescapeDataString(value);
                     break;
                 case "defaultdatabase":
                 case "db":
@@ -1025,6 +1043,7 @@ public sealed record RespireOptions
             Username = username,
             Password = password,
             ClientName = clientName,
+            KeyPrefix = keyPrefix,
             Database = database,
             ConnectTimeout = connectTimeout,
             UseTls = useTls ?? !string.IsNullOrEmpty(tlsOptions?.TargetHost),

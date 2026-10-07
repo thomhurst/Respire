@@ -390,9 +390,52 @@ decoding and cannot be round-tripped losslessly through those string APIs. Resum
 checkpoint with the same prefix representation and filter. Existing text checkpoints keep
 their format; binary-prefix checkpoints use a new format that older clients cannot read.
 
-Root configuration defaults and explicit pub/sub prefixing are tracked separately in
-[#1119](https://github.com/thomhurst/Respire/issues/1119) and
-[#1120](https://github.com/thomhurst/Respire/issues/1120).
+### Default root namespace
+
+Set `RespireOptions.KeyPrefix` to apply the same namespace to the root client:
+
+```csharp
+await using var namespaced = RespireClient.Create(new RespireOptions
+{
+    Endpoints = { new RespireEndpoint("localhost", 6379) },
+    KeyPrefix = "tenant:42:", // Also accepts RespireKey, byte[] or ReadOnlyMemory<byte>.
+});
+await namespaced.SetAsync("settings", "enabled"); // tenant:42:settings
+IRespireClient section = namespaced.WithKeyPrefix("section:");
+await section.GetStringAsync("settings"); // tenant:42:section:settings
+```
+
+`Create` snapshots the prefix before the first connection; `ConnectAsync` snapshots it
+before connecting. Each `ConnectAnyAsync` candidate keeps its own configured prefix.
+Empty/default prefixes disable root prefixing, while `WithKeyPrefix` still rejects empty
+view prefixes. Binary configuration preserves exact bytes and snapshots mutable input;
+text configuration preserves the same UTF-16 boundary behavior as text views. Derived
+views append to the default namespace and retain routing and cache policies. Dispose the
+root client to close its connections, even when it has a configured prefix.
+
+Connection strings accept `keyPrefix` in both supported forms:
+
+```text
+redis://localhost:6379/0?keyPrefix=tenant%3A42%3A
+localhost:6379,keyPrefix=tenant%3A42%3A
+```
+
+Values are percent-decoded exactly once and encoded as UTF-8 text. Use
+`Uri.EscapeDataString(prefixText)` when constructing a value, including for literal `%`,
+commas, `&`, `=`, NUL, or leading/trailing spaces. A literal `+` stays `+`;
+use `%20` for a space. Comma-delimited values are trimmed before decoding.
+Decoding follows `Uri.UnescapeDataString`: malformed escapes and undecodable UTF-8
+bytes remain escaped literal text (`%FF` stays `%FF`); they do not encode arbitrary binary keys.
+Option names are case-insensitive, repeated `keyPrefix` entries use the last value,
+and `keyPrefix=` disables prefixing. Unknown options still throw. There is no
+connection-string serializer; binary prefixes that are not UTF-8 text require structured
+options rather than a textual connection string.
+
+The command-layout, scan, Cluster, cache and authorization limits above apply equally to
+root namespaces. Cache tracking prefixes and invalidation observers still use physical
+keys, including the root prefix; configuration does not rewrite these filters.
+Regular pub/sub channels remain literal. Explicit pub/sub prefixing is tracked separately
+in [#1120](https://github.com/thomhurst/Respire/issues/1120).
 
 ## Absolute expiration and object metadata
 

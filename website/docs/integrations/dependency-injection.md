@@ -82,3 +82,15 @@ Sentinel primary changes.
 
 For ASP.NET Core cache abstractions, continue to [caching integrations](./caching).
 For readiness endpoints, see [health checks](./health-checks).
+
+## Default key namespaces with Aspire
+
+`Aspire.Respire` accepts a text prefix at `Aspire:Respire:Options:KeyPrefix`, with
+a per-client override at `Aspire:Respire:<connectionName>:Options:KeyPrefix`.
+Configuration values are literal text; they are not percent-decoded. An absent value
+preserves the connection-string or global prefix, and an empty value clears it.
+The `configureOptions` callback runs last and can supply arbitrary binary prefixes
+through `RespireOptions.KeyPrefix`. Both `AddRespireClient` and `AddKeyedRespireClient`
+apply these rules when creating the lazy root client. See
+[default root namespaces](../commands/strings-and-keys.md#default-root-namespace)
+for key, scan, cache and disposal behavior.
