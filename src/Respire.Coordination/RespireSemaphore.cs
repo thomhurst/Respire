@@ -128,6 +128,11 @@ public sealed class RespireSemaphore
                 acquired = response.AsInteger() == 1;
             }
         }
+        catch (RespireScriptingEngineUnavailableException)
+        {
+            // The engine never ran the acquisition script, so there are no partial writes to undo.
+            throw;
+        }
         catch (RespireServerException error)
         {
             // An error reply is definite, so no delayed acquire can follow and no fence is needed.

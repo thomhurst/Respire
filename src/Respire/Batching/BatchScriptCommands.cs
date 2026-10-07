@@ -78,6 +78,14 @@ internal sealed class BatchScriptCommands(IPendingSink sink) : IBatchScriptComma
 internal readonly struct BatchScriptCommand(
     Verb verb, RespireValue source, RespireValue[] tail, int keyCount) : IRespCommand
 {
+    public bool TryGetArgument(int index, out RespireValue value)
+    {
+        if (index == 0) { value = source; return true; }
+        if ((uint)(index - 1) < (uint)tail.Length) { value = tail[index - 1]; return true; }
+        value = default;
+        return false;
+    }
+
     public ReadCommandKind ReadKind => verb.ReadKind;
 
     public bool TryGetClusterSlot(out int slot)

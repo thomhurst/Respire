@@ -74,6 +74,12 @@ public readonly struct RespireValue : IEquatable<RespireValue>
     /// <summary>Whether this is the absent <see cref="Null"/> sentinel.</summary>
     public bool IsNull => _kind == Kind.Null;
 
+    internal bool TryGetByteMemory(out ReadOnlyMemory<byte> bytes)
+    {
+        bytes = _bytes;
+        return _kind == Kind.Bytes;
+    }
+
     internal static void ThrowIfNull(RespireValue value, string paramName)
     {
         if (value.IsNull)

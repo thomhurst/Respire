@@ -86,7 +86,7 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
                     return false;
                 }
             }
-            catch (RespireServerException)
+            catch (Exception error) when (RespireException.GetDefinitiveServerError(error) is not null)
             {
                 throw;
             }
@@ -161,7 +161,7 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
             Volatile.Write(ref _state, released ? StateReleased : StateNotOwned);
             return released ? LockReleaseOutcome.Released : LockReleaseOutcome.NotOwned;
         }
-        catch (RespireServerException)
+        catch (Exception error) when (RespireException.GetDefinitiveServerError(error) is not null)
         {
             lock (_releaseSync)
             {

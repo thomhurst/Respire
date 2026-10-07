@@ -685,7 +685,7 @@ internal static class RespireTelemetry
             }
 
             var errorType = ErrorType(error);
-            var responseStatusCode = error is RespireServerException { Code.Length: > 0 } serverError
+            var responseStatusCode = RespireException.GetDefinitiveServerError(error) is { Code.Length: > 0 } serverError
                 ? serverError.Code
                 : null;
             var peerAddress = connection?.NetworkPeerAddress;
@@ -764,7 +764,7 @@ internal static class RespireTelemetry
                 return null;
             }
 
-            if (error is RespireServerException { Code.Length: > 0 } serverError)
+            if (RespireException.GetDefinitiveServerError(error) is { Code.Length: > 0 } serverError)
             {
                 return serverError.Code;
             }

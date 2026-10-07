@@ -32,6 +32,9 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
     private bool _hasClusterSlot;
     private bool _completed;
 
+    // The transport records the accepting socket after any pre-admission maintenance reroute.
+    internal RespireConnection? ExecutingConnection { get; set; }
+
     private IBatchStringCommands? _strings;
     private IBatchKeyCommands? _keys;
     private IBatchServerCommands? _server;
@@ -372,10 +375,39 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                 foreach (var op in _ops) op.Fail(error);
                 throw error;
             }
-            var completeCount = Math.Min(_ops.Count, elements.Length);
+            var elementCount = elements.Length;
+            var completeCount = Math.Min(_ops.Count, elementCount);
+            Dictionary<string, bool>? missingEngines = null;
             for (var i = 0; i < completeCount; i++)
             {
-                var itemError = _ops[i].Complete(_client, in elements[i]);
+                var element = result.AsArray()[i];
+                Exception? itemError;
+                if (element.IsError && connection is not null
+                    && ScriptingEngineInfo.IsScriptingCommand(_ops[i].Operation))
+                {
+                    var serverError = ResponseReader.ServerError(in element, _ops[i].Operation);
+                    var engine = ScriptingEngineInfo.MissingEngine(serverError, _ops[i].ExpectedEngine);
+                    itemError = serverError;
+                    if (engine is not null)
+                    {
+                        missingEngines ??= new(StringComparer.OrdinalIgnoreCase);
+                        if (missingEngines.TryGetValue(engine, out var missing))
+                        {
+                            if (missing) itemError = new RespireScriptingEngineUnavailableException(engine,
+                                new RespireEndpoint(connection.Host, connection.Port), serverError);
+                        }
+                        else
+                        {
+                            // EXEC already ran. One observation per engine bounds diagnostics for
+                            // this reply only, including unknown/denied/timed-out probes.
+                            itemError = await connection.ClassifyScriptingErrorAsync(serverError,
+                                _ops[i].ExpectedEngine, CancellationToken.None, deadline).ConfigureAwait(false);
+                            missingEngines.Add(engine, itemError is RespireScriptingEngineUnavailableException);
+                        }
+                    }
+                    _ops[i].Fail(itemError);
+                }
+                else itemError = _ops[i].Complete(_client, in element);
                 operationError ??= itemError;
                 if (itemError is not null && ConnectionPolicy.RequiresExpiration(itemError))
                     importError ??= itemError;
@@ -384,7 +416,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             if (completeCount < _ops.Count)
             {
                 var mismatch = new RespireProtocolException(
-                    $"EXEC returned {elements.Length} results for {_ops.Count} queued commands.");
+                    $"EXEC returned {elementCount} results for {_ops.Count} queued commands.");
                 operationError ??= mismatch;
                 for (var i = completeCount; i < _ops.Count; i++)
                 {
@@ -491,8 +523,10 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                             importTransactionStarted = true;
                         }
                         reply = await connection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count,
-                                cancellationToken, includeMulti: !ConnectionPolicy.IsImportSession, commandDeadline: deadline)
+                                cancellationToken, includeMulti: !ConnectionPolicy.IsImportSession, commandDeadline: deadline,
+                                transaction: this)
                             .ConfigureAwait(false);
+                        connection = ExecutingConnection ?? connection;
                         if (ConnectionPolicy.IsImportSession && (reply.Type == RespDataType.Array || reply.IsNull
                             || reply.TransactionStateCleared))
                             importTransactionStarted = false;
@@ -669,7 +703,9 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
         }
 
         var pending = new RespirePending<T>();
-        _ops.Add(new TxOp<T>(operation, pending, convert));
+        _ops.Add(ScriptingEngineInfo.IsScriptingCommand(operation)
+            ? new ScriptingTxOp<T>(operation, pending, convert, ScriptingEngineInfo.ExpectedEngine(in command, operation))
+            : new TxOp<T>(operation, pending, convert));
         return pending;
     }
 
@@ -733,6 +769,8 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
 
         public string Operation { get; }
 
+        public virtual string? ExpectedEngine => null;
+
         public abstract Exception? Complete(RespireClient client, in RespValue element);
 
         public abstract void Fail(Exception error);
@@ -741,7 +779,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
     }
 
     /// <summary>Completes from a borrowed EXEC-array element; the parent reply owns the storage.</summary>
-    private sealed class TxOp<T>(
+    private class TxOp<T>(
         string operation, RespirePending<T> pending, Func<RespireClient, RespValue, T> convert) : TxOp(operation)
     {
         public override Exception? Complete(RespireClient client, in RespValue element)
@@ -769,6 +807,13 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
         public override void Fail(Exception error) => pending.Fail(error);
 
         public override void Abort() => pending.Abort();
+    }
+
+    // Ordinary queued operations retain their existing object size.
+    private sealed class ScriptingTxOp<T>(string operation, RespirePending<T> pending,
+        Func<RespireClient, RespValue, T> convert, string? engine) : TxOp<T>(operation, pending, convert)
+    {
+        public override string? ExpectedEngine => engine;
     }
 }
 

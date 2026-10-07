@@ -12,6 +12,53 @@ namespace Respire.Coordination.Tests;
 public class HashFieldLeaseWireTests
 {
     [Test]
+    [Arguments(2, false)]
+    [Arguments(2, true)]
+    [Arguments(3, false)]
+    [Arguments(3, true)]
+    public async Task MissingEnginePreservesHashLeaseForRetry(int protocol, bool renew)
+    {
+        var missingEngine = false;
+        const string absent = "# Scripting Engines\r\nengines_count:0\r\nengines_total_used_memory:0\r\n";
+        await using var server = new FakeRespServer(8, ":1\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
+                "CLIENT ID" => ":41\r\n"u8.ToArray(),
+                "INFO scriptingengines" => Encoding.UTF8.GetBytes("$" + Encoding.UTF8.GetByteCount(absent)
+                    + "\r\n" + absent + "\r\n"),
+                var text when text.StartsWith("EVALSHA ", StringComparison.Ordinal) => "-NOSCRIPT missing\r\n"u8.ToArray(),
+                var text when text.StartsWith("EVAL ", StringComparison.Ordinal) && missingEngine
+                    => "-ERR Could not find scripting engine 'lua'\r\n"u8.ToArray(),
+                _ => null,
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = (RespProtocol)protocol, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+        });
+        await using var lease = await new RespireCoordination(client)
+            .TryAcquireLeaseAsync("registry", "worker", TimeSpan.FromSeconds(30))
+            ?? throw new InvalidOperationException("Expected lease acquisition.");
+        missingEngine = true;
+        try
+        {
+            await Assert.That(async () =>
+            {
+                if (renew) await lease.ResetExpiryAsync(TimeSpan.FromMinutes(1));
+                else await lease.ReleaseAsync();
+            }).Throws<RespireScriptingEngineUnavailableException>();
+            await Assert.That(lease.IsReleased).IsFalse();
+            await Assert.That(server.ReceivedCommands).DoesNotContain("CLIENT KILL ID 41");
+            missingEngine = false;
+            if (renew) await Assert.That(await lease.ResetExpiryAsync(TimeSpan.FromMinutes(1))).IsTrue();
+            else await Assert.That(await lease.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
+        }
+        finally { missingEngine = false; }
+    }
+
+    [Test]
     [ParallelLimiter<TimingSensitive>]
     public async Task LeaseEstimateStartsAfterCorrectionOrderingBootstrap()
     {

@@ -494,7 +494,7 @@ public sealed class RespireCoordination
                 acquired = !response.IsNull && response.AsInteger() != 0;
             }
         }
-        catch (RespireServerException)
+        catch (Exception error) when (RespireException.GetDefinitiveServerError(error) is not null)
         {
             // The script returned a definitive Redis error, so there is no uncertain acquisition to clean up.
             throw;

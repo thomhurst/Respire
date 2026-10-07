@@ -392,7 +392,7 @@ public sealed class RespireLock : IAsyncDisposable
             ExceptionDispatchInfo.Throw(notSubmitted.InnerException!);
             throw; // Unreachable: ExceptionDispatchInfo.Throw never returns.
         }
-        catch (RespireServerException)
+        catch (Exception error) when (RespireException.GetDefinitiveServerError(error) is not null)
         {
             // A server error is a definitive reply: the compare-and-DEL did not complete, so
             // this handle may still own the key and can safely retry.

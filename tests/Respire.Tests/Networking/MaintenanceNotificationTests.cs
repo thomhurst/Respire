@@ -1465,6 +1465,48 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
+    public async Task MovedTransactionProbesEngineOnExecutingConnection()
+    {
+        await using var source = Server(maxConnections: 2);
+        source.SuppressReply = command => command == "PING";
+        await using var target = Server(maxConnections: 2);
+        var targetReply = target.ReplyOverride!;
+        const string inventory = "# Scripting Engines\r\nengines_count:0\r\n";
+        target.ReplyOverride = (id, command) => command switch
+        {
+            "MULTI" => FakeRespServer.OkReply,
+            "EVAL return 42 0" => "+QUEUED\r\n"u8.ToArray(),
+            "EXEC" => "*1\r\n-ERR Could not find scripting engine 'lua'\r\n"u8.ToArray(),
+            "INFO scriptingengines" => Encoding.UTF8.GetBytes($"${Encoding.UTF8.GetByteCount(inventory)}\r\n{inventory}\r\n"),
+            _ => targetReply(id, command),
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(source) with
+        {
+            Connections = 1, MaxInflightCommands = 4, CommandTimeout = TimeSpan.FromSeconds(5),
+        });
+        var original = client.Core.Multiplexer.GetConnection();
+        var first = original.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+        var second = original.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+        await WaitForCommands(source, 4);
+        await using var transaction = client.CreateTransaction();
+        var pending = transaction.Scripts.Evaluate(RespireScript.Create("return 42"));
+        // The ready connection has only two free slots; MULTI/EVAL/EXEC needs three.
+        var commit = transaction.CommitAsync().AsTask();
+        await Assert.That(commit.IsCompleted).IsFalse();
+        await source.SendRawAsync(Moving(1, target.Port));
+        await WaitForRetirement(original);
+        await source.SendRawAsync([.. FakeRespServer.PongReply, .. FakeRespServer.PongReply]);
+        using var firstReply = await first.WaitAsync(TimeSpan.FromSeconds(5));
+        using var secondReply = await second.WaitAsync(TimeSpan.FromSeconds(5));
+        await commit.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(pending.Error).IsTypeOf<RespireScriptingEngineUnavailableException>();
+        await Assert.That(((RespireScriptingEngineUnavailableException)pending.Error!).Endpoint.Port).IsEqualTo(target.Port);
+        await Assert.That(source.ReceivedCommands.Contains("INFO scriptingengines")).IsFalse();
+        await Assert.That(target.ReceivedCommands.Count(command => command == "INFO scriptingengines")).IsEqualTo(1);
+        await Assert.That(target.ReceivedCommands.Count(command => command == "EXEC")).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task MovingReroutesStreamedSetRejectedBeforeAdmission()
     {
         await using var source = Server(maxConnections: 2);

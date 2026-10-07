@@ -5,6 +5,15 @@ public class RespireException : Exception
 {
     internal bool IsCommandNotSubmitted { get; set; }
 
+    // Only explicit definitive-reply wrappers qualify; a transport error with an arbitrary
+    // inner server error does not prove that the current command finished.
+    internal static RespireServerException? GetDefinitiveServerError(Exception? error) => error switch
+    {
+        RespireServerException server => server,
+        RespireScriptingEngineUnavailableException engine => engine.ServerError,
+        _ => null,
+    };
+
     /// <summary>Creates a Respire exception.</summary>
     public RespireException(string message) : base(message)
     {
@@ -157,6 +166,27 @@ public sealed class RespireServerException : RespireException
 
         return token;
     }
+}
+
+/// <summary>A scripting command failed because its engine is absent from the server's current inventory.</summary>
+public sealed class RespireScriptingEngineUnavailableException : RespireException
+{
+    internal RespireScriptingEngineUnavailableException(string engine, RespireEndpoint endpoint, RespireServerException serverError)
+        : base($"Scripting engine '{engine}' is unavailable at {endpoint}. Load the engine on that server before retrying the command.", serverError)
+    {
+        Engine = engine;
+        Endpoint = endpoint;
+        ServerError = serverError;
+    }
+
+    /// <summary>The engine named by the server's command error.</summary>
+    public string Engine { get; }
+
+    /// <summary>The endpoint whose connection confirmed the missing engine.</summary>
+    public RespireEndpoint Endpoint { get; }
+
+    /// <summary>The original command error; engine detection does not replay it.</summary>
+    public RespireServerException ServerError { get; }
 }
 
 /// <summary>Known Redis error reply codes.</summary>
