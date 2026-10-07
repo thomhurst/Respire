@@ -40,10 +40,11 @@ internal sealed partial class RespireConnection
                 var received = Volatile.Read(ref ReceivedReplyCount);
                 if (received == TimeoutClaimed) return;
                 var wasIdle = SentReplyCount <= received;
-                SentReplyCount += count;
+                var sent = SentReplyCount + count;
+                Volatile.Write(ref SentReplyCount, sent);
                 // Final-reply accounting is visible before its gated cleanup.
                 // Rearm a new interval even if the prior timestamp remains set.
-                if (SentReplyCount > received && (wasIdle || DeadlineTimestamp == 0))
+                if (sent > received && (wasIdle || DeadlineTimestamp == 0))
                     DeadlineTimestamp = Stopwatch.GetTimestamp();
             }
         }
