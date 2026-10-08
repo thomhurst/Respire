@@ -17,6 +17,7 @@ internal sealed class BytesPendingResponseSource : PendingResponse, IValueTaskSo
     private bool _hasResponse;
     private bool _hasDirectResult;
     private string? _commandName;
+    private RespireTelemetry.DurationObservation _duration;
 
     private BytesPendingResponseSource()
     {
@@ -26,11 +27,12 @@ internal sealed class BytesPendingResponseSource : PendingResponse, IValueTaskSo
 
     internal override string? CommandName => _commandName;
 
-    public static BytesPendingResponseSource Rent(string? commandName)
+    public static BytesPendingResponseSource Rent(string? commandName, RespireTelemetry.DurationObservation duration = default)
     {
         var source = Pool.Rent();
 
         source._commandName = commandName;
+        source._duration = duration;
         source.PrepareForUse();
         return source;
     }
@@ -48,6 +50,7 @@ internal sealed class BytesPendingResponseSource : PendingResponse, IValueTaskSo
 
     protected override void SetResultCore(in RespValue result)
     {
+        _duration.MarkCompleted();
         if (_hasDirectResult)
         {
             // Direct completions carry a default RespValue; nothing to retain.
@@ -60,21 +63,27 @@ internal sealed class BytesPendingResponseSource : PendingResponse, IValueTaskSo
         _core.SetResult(true);
     }
 
-    protected override void SetExceptionCore(Exception exception) => _core.SetException(exception);
+    protected override void SetExceptionCore(Exception exception)
+    {
+        _duration.MarkCompleted();
+        _core.SetException(exception);
+    }
 
     byte[]? IValueTaskSource<byte[]?>.GetResult(short token)
     {
         try
         {
-            _core.GetResult(token);
+            try
+            {
+                _core.GetResult(token);
+                if (!_hasDirectResult && _response.IsError)
+                    throw ResponseReader.ServerError(in _response, _commandName);
+            }
+            catch (Exception error) { _duration.Complete(_commandName, error); throw; }
+            _duration.Complete(_commandName);
             if (_hasDirectResult)
             {
                 return _directResult;
-            }
-
-            if (_response.IsError)
-            {
-                throw ResponseReader.ServerError(in _response, _commandName);
             }
 
             return ResponseReader.BytesOrNull(in _response);
@@ -109,6 +118,7 @@ internal sealed class BytesPendingResponseSource : PendingResponse, IValueTaskSo
         _hasResponse = false;
         _hasDirectResult = false;
         _commandName = null;
+        _duration = default;
     }
 
     private readonly struct PoolPolicy : IPooledObjectPolicy<BytesPendingResponseSource>

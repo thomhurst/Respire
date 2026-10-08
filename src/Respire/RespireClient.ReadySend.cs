@@ -14,7 +14,8 @@ public sealed partial class RespireClient
     // Callers retain their response-specific streaming exclusions.
     private bool CanUseDirectReplySource<TCommand>(string operation, in TCommand command)
         where TCommand : struct, IRespCommand
-        => !RespireTelemetry.IsOperationEnabled(operation)
+        => !RespireTelemetry.Source.HasListeners()
+            && (!RespireTelemetry.IsOperationEnabled(operation) || !ScriptingEngineInfo.IsScriptingCommand(operation))
             && (_readFrom == RespireReadFrom.Primary || command.ReadKind == ReadCommandKind.None)
             && (ReadCache is null || !command.GetClientCacheMetadata(operation).CacheableRead);
 
@@ -32,13 +33,14 @@ public sealed partial class RespireClient
         where TCommand : struct, IRespCommand
         where TSend : struct, IReadySend<TResult>
     {
+        var durationStarted = sender.ObserveDuration ? RespireTelemetry.CaptureOperationStart(operation) : default;
         try
         {
-            var response = sender.Send(multiplexer.GetConnection(), operation, in command, cancellationToken);
+            var response = sender.Send(multiplexer.GetConnection(), operation, in command, cancellationToken, durationStarted);
             return mutationFence.IsRequired ? CompleteMutationAsync(response, cache!, mutationFence) : response;
         }
         // _core is readonly: this filter observes the same core captured by the caller.
-        catch (Exception error) when (_core.Sentinel is not null)
+        catch (Exception error) when (_core.Sentinel is not null || durationStarted.MetricEnabled)
         {
             return CaptureReadySendFailure<TResult>(error, cache, mutationFence);
         }
@@ -47,43 +49,56 @@ public sealed partial class RespireClient
     // Constrained value-type dispatch keeps each specialized response source without a delegate or boxing.
     private interface IReadySend<TResult>
     {
+        bool ObserveDuration { get; }
         ValueTask<TResult> Send<TCommand>(RespireConnection connection, string operation,
-            in TCommand command, CancellationToken cancellationToken) where TCommand : struct, IRespCommand;
+            in TCommand command, CancellationToken cancellationToken,
+            RespireTelemetry.OperationStart durationStarted) where TCommand : struct, IRespCommand;
     }
 
     private readonly struct RawReadySend(RespireClient client) : IReadySend<RespValue>
     {
+        public bool ObserveDuration => false;
         public ValueTask<RespValue> Send<TCommand>(RespireConnection connection, string operation,
-            in TCommand command, CancellationToken cancellationToken) where TCommand : struct, IRespCommand
+            in TCommand command, CancellationToken cancellationToken,
+            RespireTelemetry.OperationStart durationStarted) where TCommand : struct, IRespCommand
             => client.SendOnConnectionAsync(operation, connection, command, cancellationToken);
     }
 
     private readonly struct StringReadySend : IClusterReadySend<string?>
     {
+        public bool ObserveDuration => true;
         public bool TransferOwnership => false;
         public string? Convert(in RespValue response) => ResponseReader.StringOrNull(in response);
 
         public ValueTask<string?> Send<TCommand>(RespireConnection connection, string operation,
-            in TCommand command, CancellationToken cancellationToken) where TCommand : struct, IRespCommand
-            => connection.SendStringAsync(in command, cancellationToken, operation);
+            in TCommand command, CancellationToken cancellationToken,
+            RespireTelemetry.OperationStart durationStarted) where TCommand : struct, IRespCommand
+            => connection.SendStringAsync(in command, cancellationToken, operation,
+                durationStarted: durationStarted);
     }
 
     private readonly struct BytesReadySend : IClusterReadySend<byte[]?>
     {
+        public bool ObserveDuration => true;
         public bool TransferOwnership => false;
         public byte[]? Convert(in RespValue response) => ResponseReader.BytesOrNull(in response);
 
         public ValueTask<byte[]?> Send<TCommand>(RespireConnection connection, string operation,
-            in TCommand command, CancellationToken cancellationToken) where TCommand : struct, IRespCommand
-            => connection.SendBytesAsync(in command, cancellationToken, operation);
+            in TCommand command, CancellationToken cancellationToken,
+            RespireTelemetry.OperationStart durationStarted) where TCommand : struct, IRespCommand
+            => connection.SendBytesAsync(in command, cancellationToken, operation,
+                durationStarted: durationStarted);
     }
 
     private readonly struct ConvertedReadySend<TState, TResult>(
         TState state, ResponseConverter<TState, TResult> converter, bool transferOwnership) : IReadySend<TResult>
     {
+        public bool ObserveDuration => true;
         public ValueTask<TResult> Send<TCommand>(RespireConnection connection, string operation,
-            in TCommand command, CancellationToken cancellationToken) where TCommand : struct, IRespCommand
-            => connection.SendConvertedAsync(in command, state, converter, transferOwnership, cancellationToken, operation);
+            in TCommand command, CancellationToken cancellationToken,
+            RespireTelemetry.OperationStart durationStarted) where TCommand : struct, IRespCommand
+            => connection.SendConvertedAsync(in command, state, converter, transferOwnership, cancellationToken, operation,
+                durationStarted: durationStarted);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]

@@ -113,9 +113,24 @@ attributes still identify configured endpoints, database numbers, batch sizes, a
 Metric selection and the label limit do not alter trace names or existing span attributes.
 
 Without a listener, or with the command group disabled or the command excluded, metric
-instrumentation avoids timestamps, metric tag formatting, and compound name construction.
+per-command instrumentation avoids timestamps, metric tag formatting, and compound name construction.
 Tracing can independently require its own timestamps and span attributes. This does not
 make streamed or blocking operations allocation-free; their transport contracts still apply.
+
+A duration histogram listener by itself retains the direct string, byte-array and converted
+reply sources on eligible ready primary and Cluster connections. Tracing retains its span
+path, and cache, replica, streaming and scripting routing keep their existing exclusions.
+Metric selection is captured before admission and remains fixed while a response is pending.
+Duration ends when the source completes, before delayed result consumption or user conversion.
+Listener callbacks run when the caller consumes the result, outside transport locks; listener
+failures cannot replace the command result or its error on this direct path.
+
+Each connection caches its database namespace and endpoint tags, including boxed port values.
+This moves their formatting cost to connection creation. The three specialized source types
+retain a connection reference and two timestamps while an observed request is pending; their
+existing pools remain bounded to 4,096 sources per closed source type. Raw response sources
+retain their existing layout. Retained storage and public-command latency still need measurement
+alongside allocation counts when changing these paths.
 
 ## Redis metric mapping
 

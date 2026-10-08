@@ -50,7 +50,7 @@ public class MetricSelectionTests
             while (!server.ReceivedCommands.Any(command => command.StartsWith(operation + " ", StringComparison.Ordinal)))
                 await Task.Delay(1, deadline.Token);
             await Assert.That(Inflight(client.Core.Multiplexer.GetConnection()).TryPeek(out var head)).IsTrue();
-            await Assert.That(head is BytesPendingResponseSource).IsEqualTo(!trace && mode != "enabled");
+            await Assert.That(head is BytesPendingResponseSource).IsEqualTo(!trace);
             byte[] expected = [0, 255, 97, 98];
             await server.SendRawAsync([.. "$4\r\n"u8, .. expected, 13, 10]);
             var bytes = await pending;

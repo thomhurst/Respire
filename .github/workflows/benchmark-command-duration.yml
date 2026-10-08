@@ -1,0 +1,27 @@
+name: Command duration listener benchmarks
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}-${{ github.event.label.name }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    if: github.event.label.name == 'run-command-duration-benchmarks'
+    uses: ./.github/workflows/benchmark-compare.yml
+    with:
+      event-base-sha: ${{ github.event.pull_request.base.sha }}
+      candidate-sha: ${{ github.sha }}
+      expected-head-sha: ${{ github.event.pull_request.head.sha }}
+      fixture: benchmarks/Respire.Benchmarks/CommandDurationBenchmarks.cs
+      filter: '*CommandDurationBenchmarks*'
+      expected-case-count: 6
+      expected-methods: StringGetMiss,BytesGetMiss,StringLength
+      zero-allocation-methods: StringGetMiss,BytesGetMiss,StringLength
+      artifact-prefix: command-duration-comparison
