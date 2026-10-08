@@ -86,7 +86,10 @@ address-in-use bind message naming one of the selected `127.0.0.1` ports, or the
 Linux TCP socket bind format that omits the address. Standalone recognizes the specific
 Linux networking error with an empty loopback host port and an IPv4 container destination
 on port 6379 (`127.0.0.1::<container-address>:6379/tcp: address already in use`). The recognized
-formats cover Moby's allocator/Linux bind errors and Docker Desktop's TCP bind errors on
+selected-port formats also include the complete Linux networking error ending in
+`failed to bind host port 127.0.0.1:<selected-port>/tcp: address already in use`, without `for`
+or a container destination. The selected host port must match exactly.
+Recognized formats cover Moby's allocator/Linux bind errors and Docker Desktop's TCP bind errors on
 Windows and macOS. Unknown formats, permission/reserved-port errors, image/authentication
 errors, and readiness failures are returned without retry. The same message from container
 creation or post-start initialization does not trigger a retry.

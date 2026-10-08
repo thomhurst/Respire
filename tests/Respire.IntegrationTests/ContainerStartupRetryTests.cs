@@ -28,13 +28,27 @@ public class ContainerStartupRetryTests
     [Arguments("failed to set up container networking: driver failed programming external connectivity on endpoint fixture (abc123): failed to listen on UDP socket: address already in use", false)]
     [Arguments("failed to set up container networking: driver failed programming external connectivity on endpoint fixture (abc123): failed to listen on TCP socket: permission denied", false)]
     [Arguments("failed to listen on TCP socket: address already in use", false)]
+    [Arguments("failed to set up container networking: driver failed programming external connectivity on endpoint fixture (abc123): failed to bind host port 127.0.0.1:32791/tcp: address already in use", true)]
+    [Arguments("failed to set up container networking: driver failed programming external connectivity on endpoint fixture (abc123): failed to bind host port 127.0.0.1:327910/tcp: address already in use", false)]
+    [Arguments("failed to set up container networking: driver failed programming external connectivity on endpoint fixture (abc123): failed to bind host port 127.0.0.1:32792/tcp: address already in use", false)]
+    [Arguments("failed to set up container networking: driver failed programming external connectivity on endpoint fixture (abc123): failed to bind host port 0.0.0.0:32791/tcp: address already in use", false)]
+    [Arguments("failed to set up container networking: driver failed programming external connectivity on endpoint fixture (abc123): failed to bind host port 127.0.0.1:32791/udp: address already in use", false)]
+    [Arguments("failed to set up container networking: driver failed programming external connectivity on endpoint fixture (abc123): failed to bind host port 127.0.0.1:32791/tcp: permission denied", false)]
+    [Arguments("failed to bind host port 127.0.0.1:32791/tcp: address already in use", false)]
+    [Arguments("image pull failed: failed to bind host port 127.0.0.1:32791/tcp: address already in use", false)]
+    [Arguments("failed to set up container networking: driver failed programming external connectivity on endpoint fixture (abc123): failed to bind host port 127.0.0.1:32791/tcp: address already in use; unrelated failure", false)]
     public void RecognizesOnlyKnownPortBindingFailures(string message, bool expected)
         => ContainerPortCollision.IsMatch(ApiError(message), [32791]).Should().Be(expected);
 
     [Test]
-    public void RequiresTypedServerErrorAndStructuredMessage()
+    [Arguments(false)]
+    [Arguments(true)]
+    public void RequiresTypedServerErrorAndStructuredMessage(bool directHostPort)
     {
-        const string message = "Bind for 127.0.0.1:32791 failed: port is already allocated";
+        var message = directHostPort
+            ? "failed to set up container networking: driver failed programming external connectivity on endpoint fixture (abc123): failed to bind host port 127.0.0.1:32791/tcp: address already in use"
+            : "Bind for 127.0.0.1:32791 failed: port is already allocated";
+        ContainerPortCollision.IsMatch(ApiError(message), []).Should().BeFalse();
         foreach (var error in new Exception[]
         {
             new IOException(message), new AggregateException(ApiError(message)),
@@ -47,9 +61,10 @@ public class ContainerStartupRetryTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task ExhaustionUsesThreeFreshContainersAndRetainsAllFailures(bool addressOmitted)
+    [Arguments(0)]
+    [Arguments(1)]
+    [Arguments(2)]
+    public async Task ExhaustionUsesThreeFreshContainersAndRetainsAllFailures(int messageFormat)
     {
         var probes = new List<ContainerProbe>();
         var portsUsed = new HashSet<int>();
@@ -62,9 +77,12 @@ public class ContainerStartupRetryTests
                 ports.Should().OnlyContain(port => !portsUsed.Contains(port));
                 portsUsed.UnionWith(ports);
                 tokens.Add(token);
-                var failure = addressOmitted
-                    ? ApiError("failed to set up container networking: driver failed programming external connectivity on endpoint fixture (abc123): failed to listen on TCP socket: address already in use")
-                    : Collision(ports[0]);
+                var failure = messageFormat switch
+                {
+                    1 => ApiError("failed to set up container networking: driver failed programming external connectivity on endpoint fixture (abc123): failed to listen on TCP socket: address already in use"),
+                    2 => DirectCollision(ports[0]),
+                    _ => Collision(ports[0]),
+                };
                 failures.Add(failure);
                 var container = ContainerProbe.Create(_ => Task.FromException(failure));
                 probes.Add((ContainerProbe)container);
@@ -77,6 +95,61 @@ public class ContainerStartupRetryTests
         error.Should().BeSameAs(failures[2]);
         error.Data["RespireFixture.PreviousPortCollisions"].Should().BeEquivalentTo(failures.Take(2).ToArray());
         error.Data["RespireFixture.StartupAttempt"].Should().Be(3);
+    }
+
+    [Test]
+    [Arguments(RespireContainerTopology.Cluster, 1)]
+    [Arguments(RespireContainerTopology.Cluster, 2)]
+    [Arguments(RespireContainerTopology.Sentinel, 1)]
+    [Arguments(RespireContainerTopology.Sentinel, 2)]
+    public async Task DirectHostPortCollisionRetriesUntilStartupSucceeds(RespireContainerTopology topology, int collisions)
+    {
+        var probes = new List<ContainerProbe>();
+        var portsUsed = new HashSet<int>();
+        var initialized = new InvalidOperationException("Reached initialization after successful container startup.");
+        Func<Task> start = async () => await RespireContainerFixture.StartAsync(new() { Topology = topology }, default, (ports, _) =>
+        {
+            probes.Should().OnlyContain(probe => probe.DisposeCount == 1);
+            ports.Should().OnlyContain(port => !portsUsed.Contains(port));
+            portsUsed.UnionWith(ports);
+            var failure = DirectCollision(ports[^1]);
+            var container = ContainerProbe.Create(probes.Count < collisions
+                ? _ => Task.FromException(failure) : _ => Task.CompletedTask);
+            var probe = (ContainerProbe)container;
+            // Stop after successful startup without creating Docker resources.
+            probe.HostnameError = initialized;
+            probes.Add(probe);
+            return Task.FromResult(container);
+        });
+        (await start.Should().ThrowAsync<InvalidOperationException>()).Which.Should().BeSameAs(initialized);
+        probes.Should().HaveCount(collisions + 1)
+            .And.OnlyContain(probe => probe.StartCount == 1 && probe.DisposeCount == 1);
+        initialized.Data["RespireFixture.StartupAttempt"].Should().Be(collisions + 1);
+        ((Exception[])initialized.Data["RespireFixture.PreviousPortCollisions"]!).Should().HaveCount(collisions);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DirectHostPortCollisionForUnselectedPortOrAfterStartupNeverRetries(bool afterStartup)
+    {
+        var probes = new List<ContainerProbe>();
+        Exception? expected = null;
+        Func<Task> start = async () => await RespireContainerFixture.StartAsync(new() { Topology = RespireContainerTopology.Sentinel },
+            default, (ports, _) =>
+            {
+                var port = ports[^1];
+                if (!afterStartup)
+                    while (Array.IndexOf(ports, port) >= 0) port = port == 65535 ? 1 : port + 1;
+                expected = DirectCollision(port);
+                var container = ContainerProbe.Create(_ => afterStartup ? Task.CompletedTask : Task.FromException(expected));
+                var probe = (ContainerProbe)container;
+                if (afterStartup) probe.HostnameError = expected;
+                probes.Add(probe);
+                return Task.FromResult(container);
+            });
+        (await start.Should().ThrowAsync<DockerApiException>()).Which.Should().BeSameAs(expected);
+        probes.Should().ContainSingle().Which.DisposeCount.Should().Be(1);
     }
 
     [Test]
@@ -113,9 +186,11 @@ public class ContainerStartupRetryTests
     }
 
     [Test]
-    [Arguments(1)]
-    [Arguments(2)]
-    public async Task CleanupFailureStopsRetriesAndPreservesEveryCause(int failCleanupOnAttempt)
+    [Arguments(1, false)]
+    [Arguments(2, false)]
+    [Arguments(1, true)]
+    [Arguments(2, true)]
+    public async Task CleanupFailureStopsRetriesAndPreservesEveryCause(int failCleanupOnAttempt, bool directHostPort)
     {
         var failures = new List<Exception>();
         var probes = new List<ContainerProbe>();
@@ -123,7 +198,7 @@ public class ContainerStartupRetryTests
         Func<Task> start = async () => await RespireContainerFixture.StartAsync(new() { Topology = RespireContainerTopology.Cluster },
             default, (ports, _) =>
             {
-                var failure = Collision(ports[0]);
+                var failure = directHostPort ? DirectCollision(ports[0]) : Collision(ports[0]);
                 failures.Add(failure);
                 var container = ContainerProbe.Create(_ => Task.FromException(failure));
                 var probe = (ContainerProbe)container;
@@ -137,47 +212,52 @@ public class ContainerStartupRetryTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task CancellationDuringCleanupPreventsAnotherAttempt(bool callerCancellation)
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task CancellationDuringCleanupPreventsAnotherAttempt(bool callerCancellation, bool directHostPort)
     {
         using var caller = new CancellationTokenSource();
+        var clock = new CredentialTestClock();
         var probes = new List<ContainerProbe>();
         var tokens = new List<CancellationToken>();
         var options = new RespireContainerOptions
         {
             Topology = RespireContainerTopology.Cluster,
-            StartupTimeout = callerCancellation ? TimeSpan.FromSeconds(10) : TimeSpan.FromMilliseconds(100),
+            StartupTimeout = TimeSpan.FromSeconds(10),
         };
         Func<Task> start = async () => await RespireContainerFixture.StartAsync(options, caller.Token, (ports, token) =>
         {
             tokens.Add(token);
-            var container = ContainerProbe.Create(_ => Task.FromException(Collision(ports[0])));
+            var failure = directHostPort ? DirectCollision(ports[0]) : Collision(ports[0]);
+            var container = ContainerProbe.Create(_ => Task.FromException(failure));
             var probe = (ContainerProbe)container;
             probes.Add(probe);
             if (probes.Count == 2)
-                probe.Cleanup = async () =>
+                probe.Cleanup = () =>
                 {
                     if (callerCancellation) caller.Cancel();
-                    try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
-                    catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+                    else clock.Advance(options.StartupTimeout);
+                    token.IsCancellationRequested.Should().BeTrue();
+                    return ValueTask.CompletedTask;
                 };
             return Task.FromResult(container);
-        });
+        }, clock);
         if (callerCancellation)
             (await start.Should().ThrowAsync<OperationCanceledException>()).Which.CancellationToken.Should().Be(caller.Token);
         else
             (await start.Should().ThrowAsync<TimeoutException>()).Which.InnerException.Should().NotBeNull();
-        // The overall deadline may expire before reaching the second attempt on a busy
-        // runner. Only explicit caller cancellation is gated on that exact boundary.
-        if (callerCancellation) probes.Should().HaveCount(2);
-        else probes.Count.Should().BeLessThanOrEqualTo(2);
+        probes.Should().HaveCount(2);
         probes.Should().OnlyContain(probe => probe.DisposeCount == 1);
-        tokens.Distinct().Count().Should().BeLessThanOrEqualTo(1);
+        tokens.Distinct().Should().ContainSingle();
     }
 
     private static DockerApiException Collision(int port)
         => ApiError($"Bind for 127.0.0.1:{port} failed: port is already allocated");
+
+    private static DockerApiException DirectCollision(int port)
+        => ApiError($"failed to set up container networking: driver failed programming external connectivity on endpoint fixture (abc123): failed to bind host port 127.0.0.1:{port}/tcp: address already in use");
 
     private static DockerApiException ApiError(string message)
         => new(HttpStatusCode.InternalServerError, JsonSerializer.Serialize(new { message }));

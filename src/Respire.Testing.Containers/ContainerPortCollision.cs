@@ -7,21 +7,29 @@ namespace Respire.Testing.Containers;
 
 internal static class ContainerPortCollision
 {
+    private const string NetworkingPrefix = "failed to set up container networking: driver failed programming external connectivity on endpoint ";
+
     /// <summary>Recognizes a structured Docker bind collision for explicitly selected host ports.</summary>
     internal static bool IsMatch(Exception error, int[] selectedPorts)
     {
         var message = DockerMessage(error);
         if (message is null) return false;
+        var networkingFailure = message.StartsWith(NetworkingPrefix, StringComparison.Ordinal);
         // Recent Linux engines omit the host address in this libnetwork TCP bind error.
         // The fixture calls this only for StartAsync failures with explicit port mappings;
         // retain the complete networking prefix and TCP bind suffix, not a generic match.
         if (selectedPorts.Length != 0
-            && message.StartsWith("failed to set up container networking: driver failed programming external connectivity on endpoint ", StringComparison.Ordinal)
+            && networkingFailure
             && message.EndsWith("): failed to listen on TCP socket: address already in use", StringComparison.Ordinal))
             return true;
         foreach (var port in selectedPorts)
         {
             var address = "127.0.0.1:" + port.ToString(CultureInfo.InvariantCulture);
+            // Some engines report the selected host endpoint directly, without "for"
+            // or the container destination. Keep the full networking prefix and bind suffix.
+            if (networkingFailure
+                && message.EndsWith($"): failed to bind host port {address}/tcp: address already in use", StringComparison.Ordinal))
+                return true;
             // Moby's port allocator and Linux bindTCPOrUDP error formats.
             if (message.EndsWith($"Bind for {address} failed: port is already allocated", StringComparison.Ordinal))
                 return true;
@@ -61,12 +69,11 @@ internal static class ContainerPortCollision
 
     private static bool IsRandomHostPortCollision(string message, int[] containerPorts)
     {
-        const string prefix = "failed to set up container networking: driver failed programming external connectivity on endpoint ";
         const string binding = "): failed to bind host port for 127.0.0.1::";
         const string suffix = "/tcp: address already in use";
-        if (!message.StartsWith(prefix, StringComparison.Ordinal)
+        if (!message.StartsWith(NetworkingPrefix, StringComparison.Ordinal)
             || !message.EndsWith(suffix, StringComparison.Ordinal)) return false;
-        var bindingIndex = message.IndexOf(binding, prefix.Length, StringComparison.Ordinal);
+        var bindingIndex = message.IndexOf(binding, NetworkingPrefix.Length, StringComparison.Ordinal);
         if (bindingIndex < 0) return false;
         var destination = message.AsSpan(bindingIndex + binding.Length);
         destination = destination[..^suffix.Length];
