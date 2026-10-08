@@ -60,6 +60,7 @@ public sealed class RespireAuthenticationException : RespireConnectionException
 /// <summary>A connection recovery episode exhausted its configured replacement attempts.</summary>
 public sealed class RespireReconnectLimitException : RespireConnectionException
 {
+    internal override Exception? ErrorCause => null;
     /// <summary>Creates a recovery limit exception.</summary>
     public RespireReconnectLimitException(string message) : base(message) { }
 

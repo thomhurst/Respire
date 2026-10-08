@@ -43,8 +43,9 @@ internal static partial class RespireTelemetry
         try { return new(response.GetAwaiter().GetResult()); }
         catch (Exception error)
         {
-            RecordError(error, internallyHandled: false, retryAttempts);
-            return ValueTask.FromException<T>(error);
+            // The shared async boundary preserves cancellation status even when a
+            // successful-status source translates cancellation during GetResult.
+            return AwaitFinalError(ValueTask.FromException<T>(error), retryAttempts);
         }
     }
 
@@ -60,8 +61,7 @@ internal static partial class RespireTelemetry
         }
         catch (Exception error)
         {
-            RecordError(error, internallyHandled: false, retryAttempts);
-            return ValueTask.FromException(error);
+            return AwaitFinalError(ValueTask.FromException(error), retryAttempts);
         }
     }
 
@@ -110,6 +110,9 @@ internal static partial class RespireTelemetry
         };
         var category = relevant switch
         {
+            // This boundary cannot infer the initiator from an exception token. Count
+            // surfaced cancellation separately instead of calling it a server/network error.
+            OperationCanceledException => "cancelled",
             RespireAuthenticationException => "auth",
             RespireServerException when code is "NOAUTH" or "NOPERM" or "WRONGPASS" => "auth",
             AuthenticationException => "tls",

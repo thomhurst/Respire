@@ -6,6 +6,8 @@ namespace Respire.Internal;
 internal sealed class ErrorTypeNameCache
 {
     private readonly ConditionalWeakTable<Type, string> _types = new();
+    // Different runtime types can share a FullName, including collectible replacements.
+    // Charge that canonical name once; the first-seen budget lasts for this cache.
     private readonly HashSet<string> _names = new(StringComparer.Ordinal);
     private readonly Lock _gate = new();
     private readonly int _limit;

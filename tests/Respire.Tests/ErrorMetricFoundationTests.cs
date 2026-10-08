@@ -40,9 +40,12 @@ public class ErrorMetricFoundationTests
     [Arguments("socket", "network", null)]
     [Arguments("io", "network", null)]
     [Arguments("connection", "network", null)]
+    [Arguments("reconnect-auth", "network", null)]
+    [Arguments("reconnect-server", "network", null)]
+    [Arguments("reconnect-socket", "network", null)]
     [Arguments("timeout", "network", null)]
     [Arguments("other", "other", null)]
-    [Arguments("cancellation", "other", null)]
+    [Arguments("cancellation", "cancelled", null)]
     public async Task ClassificationPublishesOnlyBoundedTags(string kind, string category, string? code)
     {
         using var configuration = new MetricConfigurationScope();
@@ -57,6 +60,9 @@ public class ErrorMetricFoundationTests
             "socket" => new SocketException((int)SocketError.ConnectionRefused),
             "io" => new IOException("private path"),
             "connection" => new RespireConnectionException("private endpoint"),
+            "reconnect-auth" => new RespireReconnectLimitException("private recovery", new RespireAuthenticationException("private credentials")),
+            "reconnect-server" => new RespireReconnectLimitException("private recovery", new RespireServerException("NOAUTH private credentials")),
+            "reconnect-socket" => new RespireReconnectLimitException("private recovery", new SocketException((int)SocketError.ConnectionRefused)),
             "timeout" => new RespireTimeoutException("PRIVATE_COMMAND", TimeSpan.FromSeconds(1)),
             "cancellation" => new OperationCanceledException(),
             _ => new InvalidOperationException("private payload"),
@@ -163,16 +169,17 @@ public class ErrorMetricFoundationTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task CancellationRetainsExceptionAndToken(bool generic)
+    [MatrixDataSource]
+    public async Task CancellationRetainsExceptionAndToken(
+        [Matrix(false, true)] bool generic, [Matrix(false, true)] bool asynchronous,
+        [Matrix(false, true)] bool canceledToken)
     {
         using var configuration = new MetricConfigurationScope();
         using var capture = new Capture();
         using var cancellation = new CancellationTokenSource();
-        cancellation.Cancel();
+        if (canceledToken) cancellation.Cancel();
         var expected = new OperationCanceledException(cancellation.Token);
-        var source = new ResponseSource(expected, true);
+        var source = new ResponseSource(expected, asynchronous);
         Exception? actual = null;
         if (generic)
         {
@@ -206,6 +213,52 @@ public class ErrorMetricFoundationTests
         completion.SetException(new InvalidOperationException());
         try { await pending; } catch (InvalidOperationException) { }
         await Assert.That(capture.Items.Count).IsEqualTo(initiallyEnabled ? 0 : 1);
+    }
+
+    [Test]
+    public async Task DisabledClassificationDoesNotWalkTheCause()
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.None });
+        using var capture = new Capture();
+        var error = new ProbingWrapper(new IOException());
+        RespireTelemetry.RecordError(error, false);
+        await Assert.That(error.CauseReads).IsEqualTo(0);
+        await Assert.That(capture.Items.Count).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task TypeBudgetOverflowIsObservableInTheExistingCounter()
+    {
+        var context = new AssemblyLoadContext("cold-foundation-type-budget", isCollectible: true);
+        Meter? meter = null;
+        try
+        {
+            var assembly = context.LoadFromAssemblyPath(typeof(RespireClient).Assembly.Location);
+            const BindingFlags flags = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
+            var telemetry = assembly.GetType("Respire.Internal.RespireTelemetry", true)!;
+            meter = (Meter)telemetry.GetField("Meter", flags)!.GetValue(null)!;
+            using var capture = new Capture(observedMeter: meter);
+            var record = telemetry.GetMethod("RecordError", flags)!;
+            var types = AssemblyBuilder.DefineDynamicAssembly(new AssemblyName("Respire.FoundationBudget"), AssemblyBuilderAccess.RunAndCollect)
+                .DefineDynamicModule("errors");
+            Exception? known = null;
+            for (var i = 0; i < 131; i++)
+            {
+                var type = types.DefineType($"FoundationBudgetError{i}", TypeAttributes.Public, typeof(Exception)).CreateType()!;
+                var error = (Exception)Activator.CreateInstance(type)!;
+                known ??= error;
+                record.Invoke(null, [error, false, 0]);
+            }
+            var items = capture.Items.ToArray();
+            await Assert.That(items.Length).IsEqualTo(131);
+            await Assert.That(items.Take(128).All(item => !Equals(item.Tags["error.type"], "_OTHER"))).IsTrue();
+            await Assert.That(items.Skip(128).All(item => Equals(item.Tags["error.type"], "_OTHER"))).IsTrue();
+            // Overflow needs no extra instrument: this series already counts each such error.
+            await Assert.That(items.Where(item => Equals(item.Tags["error.type"], "_OTHER")).Sum(item => item.Count)).IsEqualTo(3L);
+            record.Invoke(null, [known!, false, 0]);
+            await Assert.That(capture.Items.Last().Tags["error.type"]).IsEqualTo("FoundationBudgetError0");
+        }
+        finally { meter?.Dispose(); context.Unload(); }
     }
 
     [Test]
@@ -370,6 +423,15 @@ public class ErrorMetricFoundationTests
         internal override Exception? ErrorCause => transparent ? InnerException : null;
     }
 
+    private sealed class ProbingWrapper(Exception cause) : RespireException("wrapper", cause)
+    {
+        internal int CauseReads;
+        internal override Exception? ErrorCause
+        {
+            get { CauseReads++; return InnerException; }
+        }
+    }
+
     // Succeeded status deliberately leaves error translation to GetResult, like native RESP sources.
     private sealed class ResponseSource(Exception? error, bool asynchronous) : IValueTaskSource<int>, IValueTaskSource
     {
@@ -393,11 +455,12 @@ public class ErrorMetricFoundationTests
     {
         private readonly MeterListener _listener = new();
         internal readonly ConcurrentQueue<(long Count, Dictionary<string, object?> Tags)> Items = new();
-        internal Capture(bool throwOnMeasurement = false, bool retain = true)
+        internal Capture(bool throwOnMeasurement = false, bool retain = true, Meter? observedMeter = null)
         {
+            observedMeter ??= RespireTelemetry.Meter;
             _listener.InstrumentPublished = (instrument, listener) =>
             {
-                if (ReferenceEquals(instrument.Meter, RespireTelemetry.Meter) && instrument.Name == "redis.client.errors") listener.EnableMeasurementEvents(instrument);
+                if (ReferenceEquals(instrument.Meter, observedMeter) && instrument.Name == "redis.client.errors") listener.EnableMeasurementEvents(instrument);
             };
             _listener.SetMeasurementEventCallback<long>((_, count, tags, _) =>
             {
