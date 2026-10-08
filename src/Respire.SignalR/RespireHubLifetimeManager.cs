@@ -419,7 +419,12 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
         catch (Exception error)
         {
             _clientResultsManager.RemoveInvocation(invocationId);
-            if (error is OperationCanceledException) cancellationToken.ThrowIfCancellationRequested();
+            if (error is OperationCanceledException)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (connection?.ConnectionAborted.IsCancellationRequested == true)
+                    throw new IOException($"Connection '{connectionId}' disconnected.");
+            }
             throw;
         }
 

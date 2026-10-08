@@ -5,13 +5,16 @@ using System.Threading.Channels;
 using System.Collections;
 using System.Reflection;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.AspNetCore.SignalR.Client;
+using Microsoft.AspNetCore.SignalR.Protocol;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Respire.DependencyInjection;
 using StackExchange.Redis;
 using TUnit.Assertions;
@@ -27,6 +30,65 @@ namespace Respire.SignalR.Tests;
 [NotInParallel("signalr-integration")]
 public class BackplaneIntegrationTests(RedisTestContainer fixture)
 {
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task LocalDisconnectHasConsistentFailureAcrossWriteBoundary(bool duringWrite, bool cancelCaller)
+    {
+        await using var host = await BackplaneHost.StartAsync(fixture.ConnectionString, Guid.NewGuid().ToString("N"), false, false);
+        await using var positive = await host.ConnectAsync("positive", false);
+        using var answer = positive.Connection.On("answer", [], static (_, _) => Task.FromResult<object?>(7), null!);
+        using var caller = new CancellationTokenSource();
+        using var disconnected = new CancellationTokenSource();
+        void Cancel()
+        {
+            if (cancelCaller) caller.Cancel();
+            disconnected.Cancel();
+        }
+        var connection = new WriteBoundaryConnection(disconnected.Token, duringWrite, Cancel);
+        await host.Manager.OnConnectedAsync(connection);
+        try
+        {
+            var pending = host.Manager.InvokeConnectionAsync<int>(connection.ConnectionId, "answer", [], caller.Token);
+            if (!duringWrite) Cancel();
+            if (cancelCaller)
+            {
+                var error = await Assert.That(async () => await pending).Throws<OperationCanceledException>();
+                await Assert.That(error!.CancellationToken).IsEqualTo(caller.Token);
+                await Assert.That(pending.IsCanceled).IsTrue();
+            }
+            else
+            {
+                var error = await Assert.That(async () => await pending).ThrowsExactly<IOException>();
+                await Assert.That(error!.Message).Contains("disconnected");
+                await Assert.That(pending.IsFaulted).IsTrue();
+            }
+            await Assert.That(connection.InvocationId).IsNotEmpty();
+            await Assert.That(host.Manager.TryGetReturnType(connection.InvocationId, out _)).IsFalse();
+        }
+        finally { Cancel(); await host.Manager.OnDisconnectedAsync(connection); }
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await Assert.That(await host.Manager.InvokeConnectionAsync<int>(positive.Id, "answer", [], deadline.Token)).IsEqualTo(7);
+    }
+
+    private sealed class WriteBoundaryConnection(CancellationToken disconnected, bool duringWrite, Action cancel)
+        : HubConnectionContext(new DefaultConnectionContext(Guid.NewGuid().ToString("N")), new(), NullLoggerFactory.Instance)
+    {
+        public override CancellationToken ConnectionAborted => disconnected;
+        internal string InvocationId { get; private set; } = "";
+
+        public override ValueTask WriteAsync(HubMessage message, CancellationToken cancellationToken = default)
+        {
+            InvocationId = ((InvocationMessage)message).InvocationId!;
+            if (!duringWrite) return ValueTask.CompletedTask;
+            // Deterministically cancel after the manager's lookup, inside the actual virtual write boundary.
+            cancel();
+            return ValueTask.FromCanceled(cancellationToken);
+        }
+    }
+
     [Test]
     [Arguments(false)]
     [Arguments(true)]
