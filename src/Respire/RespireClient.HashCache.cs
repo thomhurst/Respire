@@ -112,17 +112,11 @@ public sealed partial class RespireClient
         // invalidation therefore removes every projection, regardless of the requested list.
         // Each pending field owns a dependency lease. Always abandon remaining leases,
         // including partial registration, send failures, cancellation, and malformed replies.
-        var tokens = new ClientSideCacheCoordinator.QueryReadToken[fields.Length];
-        var registered = 0;
+        using var queryReads = new HashQueryReadScope(cache, key, fields);
+        var tokens = queryReads.Tokens;
         var response = default(RespValue);
         try
         {
-            for (; registered < fields.Length; registered++)
-            {
-                var request = new ClientSideCacheCoordinator.QueryRequest(
-                    new ClientCacheCommandKey("HGET", key.AsValue(), fields[registered]), key);
-                tokens[registered] = cache.BeginRead("HGET", in request);
-            }
             Action? onRedirect = null;
             if (_core.Cluster is not null)
             {
@@ -155,11 +149,39 @@ public sealed partial class RespireClient
             response.Dispose();
             throw;
         }
-        finally
+    }
+
+    // A value scope adds no separate owner allocation. Its array is also the
+    // redirect callback's array, so disposal abandons the rebased leases.
+    private readonly struct HashQueryReadScope : IDisposable
+    {
+        private readonly ClientSideCacheCoordinator _cache;
+        internal ClientSideCacheCoordinator.QueryReadToken[] Tokens { get; }
+
+        internal HashQueryReadScope(ClientSideCacheCoordinator cache, RespireKey key, RespireValue[] fields)
+        {
+            _cache = cache;
+            Tokens = new ClientSideCacheCoordinator.QueryReadToken[fields.Length];
+            var registered = 0;
+            try
+            {
+                for (; registered < fields.Length; registered++)
+                {
+                    var request = new ClientSideCacheCoordinator.QueryRequest(
+                        new ClientCacheCommandKey("HGET", key.AsValue(), fields[registered]), key);
+                    Tokens[registered] = cache.BeginRead("HGET", in request);
+                }
+            }
+            catch { Abandon(registered); throw; }
+        }
+
+        public void Dispose() => Abandon(Tokens.Length);
+
+        private void Abandon(int registered)
         {
             var unused = default(RespValue);
             for (var index = 0; index < registered; index++)
-                cache.CompleteRead(in tokens[index], in unused, allowInsert: false);
+                _cache.CompleteRead(in Tokens[index], in unused, allowInsert: false);
         }
     }
 }

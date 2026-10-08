@@ -38,6 +38,7 @@ Benchmark concurrency groups must include `github.event.label.name` alongside th
 | `benchmark-cache-read.yml` | `run-cache-read-benchmarks` |
 | `benchmark-cache-publication.yml` | `run-cache-publication-benchmarks` |
 | `benchmark-cache-query.yml` | `run-cache-query-benchmarks` |
+| `benchmark-cache-query-hash.yml` | `run-cache-query-hash-benchmarks` |
 | `benchmark-client-cache.yml` | `run-client-cache-benchmarks` |
 | `benchmark-cluster-routing.yml` | `run-cluster-ready-benchmarks` |
 | `benchmark-cluster-replica.yml` | `run-cluster-replica-benchmarks` |
