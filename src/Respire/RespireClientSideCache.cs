@@ -1067,6 +1067,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         private readonly QueryDependencyStamp[]? _additional = dependencyCount > 1
             ? new QueryDependencyStamp[dependencyCount - 1] : null;
         internal int Registered;
+        // After construction, access through Volatile or while holding the coordinator's _queryLock.
         internal bool Completed;
 
         internal void Capture(InflightRead state)
