@@ -17,6 +17,83 @@ namespace Respire.Tests;
 public class CommandDurationTests
 {
     [Test]
+    [MatrixDataSource]
+    public async Task CancelledDurationSourceRecyclesWithoutReportingForDisabledRental(
+        [Matrix("string", "bytes", "integer")] string shape, [Matrix(false, true)] bool callerFirst)
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Command });
+        await using var server = new FakeRespServer();
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        using var capture = new DurationCapture(throwFromListener: true);
+        var observation = new RespireTelemetry.DurationObservation(
+            client.Core.Multiplexer.GetConnection(), RespireTelemetry.CaptureOperationStart("GET"));
+        var original = RentDurationReuseSource(shape, observation);
+        var previousState = original.Source.State;
+        var cancellation = new CancellationToken(true);
+        original.Source.TrySetCanceled(cancellation);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        // Cancellation reserves completion before its scheduled source publication.
+        while (!original.IsCompleted()) await Task.Delay(1, deadline.Token);
+        if (!callerFirst) original.Source.ReleaseRef();
+        try { await Assert.That(original.Consume).Throws<OperationCanceledException>(); }
+        finally { if (callerFirst) original.Source.ReleaseRef(); }
+        await Assert.That(capture.Items.Count).IsEqualTo(1);
+        await Assert.That(capture.Items.Single().Tags["error.type"]).IsEqualTo(typeof(OperationCanceledException).FullName);
+
+        RespireMetrics.Configure(new() { Groups = RespireMetricGroups.None });
+        capture.Items.Clear();
+        var rentals = new List<(PendingResponse Source, Action Consume, Func<bool> IsCompleted)>();
+        try
+        {
+            var found = false;
+            // Hold other entries so reuse is proved by identity rather than pool order.
+            for (var index = 0; index <= 4096; index++)
+            {
+                var rental = RentDurationReuseSource(shape, default);
+                rentals.Add(rental);
+                if (!ReferenceEquals(rental.Source, original.Source)) continue;
+                found = true;
+                await Assert.That(rental.Source.State).IsNotEqualTo(previousState);
+                await Assert.That(rental.Source.Deadline).IsEqualTo(CommandDeadline.None);
+                await Assert.That(rental.Source.InspectForTests().RegisteredCancellationToken).IsEqualTo(CancellationToken.None);
+                break;
+            }
+            await Assert.That(found).IsTrue();
+        }
+        finally
+        {
+            foreach (var rental in rentals)
+            {
+                rental.Source.TrySetResult(RespValue.Null);
+                try { rental.Consume(); }
+                finally { rental.Source.ReleaseRef(); }
+            }
+        }
+        await Assert.That(capture.Items.IsEmpty).IsTrue();
+    }
+
+    private static (PendingResponse Source, Action Consume, Func<bool> IsCompleted) RentDurationReuseSource(
+        string shape, RespireTelemetry.DurationObservation observation)
+    {
+        switch (shape)
+        {
+            case "string":
+                var text = StringPendingResponseSource.Rent("GET", observation);
+                var textTask = text.Task;
+                return (text, () => textTask.GetAwaiter().GetResult(), () => textTask.IsCompleted);
+            case "bytes":
+                var bytes = BytesPendingResponseSource.Rent("GET", observation);
+                var bytesTask = bytes.Task;
+                return (bytes, () => bytesTask.GetAwaiter().GetResult(), () => bytesTask.IsCompleted);
+            default:
+                var integer = ConvertedPendingResponseSource<int, int>.Rent(42,
+                    static (int state, in RespValue _) => state, false, "GET", observation);
+                var integerTask = integer.Task;
+                return (integer, () => integerTask.GetAwaiter().GetResult(), () => integerTask.IsCompleted);
+        }
+    }
+
+    [Test]
     [Arguments("string")]
     [Arguments("bytes")]
     [Arguments("integer")]
