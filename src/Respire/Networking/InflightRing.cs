@@ -22,7 +22,7 @@ internal sealed class InflightRing
     public static readonly PendingResponseSource DiscardSentinel = new();
 
     private readonly Slot[] _slots;
-    private string?[]? _discardedOperations;
+    private DiscardedReply[]? _discardedReplies;
     private readonly int _mask;
     private Positions _positions;
 
@@ -81,13 +81,14 @@ internal sealed class InflightRing
         return true;
     }
 
-    // Generation bookkeeping and enabled publication metrics retain discarded-reply metadata
+    // Generation bookkeeping, publication metrics, and retried submissions retain metadata
     // in a lazily allocated, bounded array. Other rings allocate none; the slot layout is unchanged.
-    internal bool TryEnqueueDiscard(string operation, long writeEnd)
+    internal bool TryEnqueueDiscard(string? operation, long writeEnd, int retryAttempts = 0)
     {
         var tail = _positions.Tail;
         if (!HasCapacity(1)) return false;
-        (_discardedOperations ??= new string?[_slots.Length])[tail & _mask] = operation;
+        if (operation is not null || retryAttempts != 0)
+            (_discardedReplies ??= new DiscardedReply[_slots.Length])[tail & _mask] = new(operation, retryAttempts);
         PublishSlot(tail, DiscardSentinel, writeEnd);
         return true;
     }
@@ -114,24 +115,7 @@ internal sealed class InflightRing
     }
 
     internal bool TryDequeue(out PendingResponse source, out string? discardedOperation)
-    {
-        var head = _positions.Head;
-        if (Volatile.Read(ref _positions.Tail) == head)
-        {
-            source = null!;
-            discardedOperation = null;
-            return false;
-        }
-        // Read and clear before releasing the slot to the producer in TryDequeue.
-        // The receive loop is the only consumer, so the head cannot change here.
-        discardedOperation = null;
-        if (_discardedOperations is { } operations)
-        {
-            discardedOperation = operations[head & _mask];
-            operations[head & _mask] = null;
-        }
-        return TryDequeue(out source);
-    }
+        => TryDequeue(out source, out discardedOperation, out _);
 
     /// <summary>Consumer only. Returns the head source without consuming it, so the receive
     /// loop can choose a specialized completion path before dequeuing.</summary>
@@ -243,6 +227,37 @@ internal sealed class InflightRing
 
         ref var slot = ref _slots[head & _mask];
         source = slot.Source!;
+        // Callers that ignore metadata still release its references before slot reuse.
+        // Avoid reading the record and constructing unused outputs on this common path.
+        if (_discardedReplies is { } replies) replies[head & _mask] = default;
+        Volatile.Write(ref _positions.CompletedWriteEnd, slot.WriteEnd);
+        slot.Source = null;
+        Volatile.Write(ref _positions.Head, head + 1);
+        return true;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal bool TryDequeue(out PendingResponse source, out string? discardedOperation, out int retryAttempts)
+    {
+        var head = _positions.Head;
+        discardedOperation = null;
+        retryAttempts = 0;
+        if (Volatile.Read(ref _positions.Tail) == head)
+        {
+            source = null!;
+            return false;
+        }
+
+        ref var slot = ref _slots[head & _mask];
+        source = slot.Source!;
+        // Capture immutable counts and clear references before releasing this slot for reuse.
+        if (_discardedReplies is { } replies)
+        {
+            var reply = replies[head & _mask];
+            discardedOperation = reply.Operation;
+            retryAttempts = reply.RetryAttempts;
+            replies[head & _mask] = default;
+        }
         // Intermediate replies carry the frame start; only the final reply advances past
         // the complete frame. This offset never retreats across FIFO-ordered frames.
         Volatile.Write(ref _positions.CompletedWriteEnd, slot.WriteEnd);
@@ -257,4 +272,6 @@ internal sealed class InflightRing
         internal PendingResponse? Source;
         internal long WriteEnd;
     }
+
+    private readonly record struct DiscardedReply(string? Operation, int RetryAttempts);
 }

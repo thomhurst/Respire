@@ -139,7 +139,7 @@ public class ClusterRedirectEndpointTests
 
         var error = await Assert.That(async () =>
         {
-            using var result = await execution.Response.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            using var result = await execution.ConsumeResponseAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         }).ThrowsExactly<RespireServerException>();
         await Assert.That(error!.Message).IsEqualTo(message);
         await Assert.That(target.ReceivedCommands.Count).IsEqualTo(3);

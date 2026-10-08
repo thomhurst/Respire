@@ -203,8 +203,7 @@ internal sealed partial class SubscriptionHub
             routes = [.. snapshot];
         }
         foreach (var (kind, name) in routes)
-            await SendControlAsync(replacement, SubscribeVerb(kind), SubscribeOperation(kind), name,
-                cancellationToken, instrument: false).ConfigureAwait(false);
+            await SendRecoveryControlAsync(replacement, kind, name, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
         if (!replacement.IsConnected)
             throw replacement.CloseError ?? new RespireConnectionException("Pub/sub replacement closed during resubscription.");

@@ -25,6 +25,7 @@ internal sealed class PooledResponseSource<TState, TResult> : IValueTaskSource<T
     private ResponseConverter<TState, TResult>? _converter;
     private TState _state = default!;
     private bool _transferOwnership;
+    private RespireTelemetry.ErrorObservation _observation;
 
     private PooledResponseSource() => _complete = Complete;
 
@@ -35,17 +36,27 @@ internal sealed class PooledResponseSource<TState, TResult> : IValueTaskSource<T
         ValueTask<RespValue> responseTask,
         TState state,
         ResponseConverter<TState, TResult> converter,
-        bool transferOwnership = false)
+        bool transferOwnership = false,
+        RespireTelemetry.ErrorObservation observation = default)
     {
         if (responseTask.IsCompletedSuccessfully)
         {
-            var response = responseTask.Result;
+            var response = default(RespValue);
             var converted = false;
+            var received = false;
             try
             {
+                response = responseTask.Result;
+                received = true;
                 var result = converter(state, in response);
                 converted = true;
                 return new ValueTask<TResult>(result);
+            }
+            catch (Exception error)
+            {
+                if (!observation.IsEmpty) observation.Final(error);
+                else if (received) RespireTelemetry.RecordError(error, internallyHandled: false);
+                throw;
             }
             finally
             {
@@ -53,6 +64,7 @@ internal sealed class PooledResponseSource<TState, TResult> : IValueTaskSource<T
                 {
                     response.Dispose();
                 }
+                observation.Dispose();
             }
         }
 
@@ -62,6 +74,7 @@ internal sealed class PooledResponseSource<TState, TResult> : IValueTaskSource<T
         source._state = state;
         source._converter = converter;
         source._transferOwnership = transferOwnership;
+        source._observation = observation;
         responseTask.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(source._complete);
         return new ValueTask<TResult>(source, source._core.Version);
     }
@@ -72,24 +85,31 @@ internal sealed class PooledResponseSource<TState, TResult> : IValueTaskSource<T
         var state = _state;
         var converter = _converter!;
         var transferOwnership = _transferOwnership;
+        var observation = _observation;
 
         _responseTask = default;
         _state = default!;
         _converter = null;
         _transferOwnership = false;
+        _observation = default;
 
         var response = default(RespValue);
         var converted = false;
+        var received = false;
         TResult result = default!;
         Exception? error = null;
         try
         {
             response = responseTask.GetAwaiter().GetResult();
+            received = true;
             result = converter(state, in response);
             converted = true;
         }
         catch (Exception exception)
         {
+            // A supplied lease owns both transport and conversion. Without a lease, the
+            // send already owns its failures and only successful replies add conversion errors.
+            if (observation.IsEmpty && received) RespireTelemetry.RecordError(exception, internallyHandled: false);
             error = exception;
         }
         finally
@@ -99,6 +119,9 @@ internal sealed class PooledResponseSource<TState, TResult> : IValueTaskSource<T
                 response.Dispose();
             }
         }
+
+        if (error is not null) observation.Final(error);
+        observation.Dispose();
 
         // Publishing can run the caller inline, returning this instance to the pool and
         // renting it again. Finish cleanup first and never catch a caller's exception here.

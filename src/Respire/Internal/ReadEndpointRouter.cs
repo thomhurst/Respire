@@ -426,7 +426,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         string? preferredZone = null, ReadAttempt? attempt = null)
     {
         attempt?.ThrowIfFailed(core.Multiplexer.ActiveConnectionEndpoint);
-        await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+        await core.EnsureConnectedAsync(cancellationToken, observeEstablishmentErrors: true).ConfigureAwait(false);
         var multiplexer = core.Multiplexer;
         attempt?.ThrowIfFailed(multiplexer.ActiveConnectionEndpoint);
         return new Selection(preferredZone is null ? multiplexer.GetConnection() : multiplexer.GetConnectionForZone(preferredZone),
@@ -701,7 +701,8 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 if (_closed || !router.IsCurrent(this))
                     throw new RespireConnectionException($"Read replica {endpoint} was removed from the topology.");
                 // Standalone replicas use ROLE validation, not Cluster's READONLY handshake.
-                pool = _dedicatedPool ??= new(endpoint.Host, endpoint.Port, owner.Options.ToConnectionOptions(), owner.Logger);
+                pool = _dedicatedPool ??= new(endpoint.Host, endpoint.Port,
+                    owner.Options.ToConnectionOptions() with { ObserveEstablishmentErrors = true }, owner.Logger);
             }
             finally { _gate.Release(); }
 
@@ -713,10 +714,24 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 connection = await pool.RentAsync(cancellationToken, preferredZone: preferredZone).ConfigureAwait(false);
                 if (_health.Check(connection, router.RoleRevalidationInterval) != ReplicaValidation.Fresh)
                 {
-                    var checkedAt = Stopwatch.GetTimestamp();
-                    using var role = await connection.SendAsync(new Cmd(Verbs.Role), cancellationToken).ConfigureAwait(false);
-                    if (!_health.Record(connection, checkedAt, in role))
-                        throw new RespireConnectionException($"Configured read endpoint {endpoint} did not report a replica ROLE.");
+                    try
+                    {
+                        var checkedAt = Stopwatch.GetTimestamp();
+                        using var role = await connection.SendAsync(new Cmd(Verbs.Role), cancellationToken).ConfigureAwait(false);
+                        if (!_health.Record(connection, checkedAt, in role))
+                        {
+                            var message = $"Configured read endpoint {endpoint} did not report a replica ROLE.";
+                            throw role.IsError ? new RespireConnectionException(message, ResponseReader.ServerError(in role, "ROLE"))
+                                : new RespireConnectionException(message);
+                        }
+                    }
+                    catch (Exception error) when (!cancellationToken.IsCancellationRequested
+                        && !router._lifetime.IsCancellationRequested && !pool.IsStopping && error is not ObjectDisposedException)
+                    {
+                        // Connect failures are owned by establishment; only ROLE belongs here.
+                        RespireTelemetry.RecordError(error, internallyHandled: true);
+                        throw;
+                    }
                 }
                 if (_closed || !router.IsCurrent(this))
                     throw new RespireConnectionException($"Read replica {endpoint} was removed from the topology.");
@@ -785,7 +800,8 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 {
                     var multiplexer = await RespireConnectionMultiplexer.CreateAsync(
                         endpoint.Host, endpoint.Port, owner.Options.Connections,
-                        owner.Options.ToConnectionOptions(), owner.Logger, linked.Token).ConfigureAwait(false);
+                        owner.Options.ToConnectionOptions() with { ObserveEstablishmentErrors = true },
+                        owner.Logger, linked.Token).ConfigureAwait(false);
                     try
                     {
                         Action<RespireConnectionStateChange> stateChanged = change =>
@@ -825,11 +841,24 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                     var checkedAt = Stopwatch.GetTimestamp();
                     // The reservation belongs to this physical socket. A MOVING handoff
                     // must reject validation here, not reroute ROLE onto an unreserved socket.
-                    using var role = await selected.SendAsync(new Cmd(Verbs.Role), linked.Token,
-                        pinToConnection: true).ConfigureAwait(false);
-                    if (!_health.Record(selected, checkedAt, in role))
-                        throw new RespireConnectionException($"Configured read endpoint {endpoint} did not report a replica ROLE.");
-                    return selected;
+                    try
+                    {
+                        using var role = await selected.SendAsync(new Cmd(Verbs.Role), linked.Token,
+                            pinToConnection: true).ConfigureAwait(false);
+                        if (!_health.Record(selected, checkedAt, in role))
+                            throw role.IsError
+                                ? new RespireConnectionException($"Configured read endpoint {endpoint} did not report a replica ROLE.",
+                                    ResponseReader.ServerError(in role, "ROLE"))
+                                : new RespireConnectionException($"Configured read endpoint {endpoint} did not report a replica ROLE.");
+                        return selected;
+                    }
+                    catch (Exception error) when (!linked.IsCancellationRequested && error is not ObjectDisposedException)
+                    {
+                        // Establishment already observes connect failures. This boundary owns
+                        // only the subsequent ROLE failure, which selection can hide by falling back.
+                        RespireTelemetry.RecordError(error, internallyHandled: true);
+                        throw;
+                    }
                 }
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested

@@ -1033,7 +1033,7 @@ public class ClusterReadOnlyTests
 
         var execution = await client.StartTrackedScriptExecutionAsync(
             script, ["key"], ["value"], CancellationToken.None, requireReliableCorrectionOrdering: true);
-        using var result = await execution.Response;
+        using var result = await execution.ConsumeResponseAsync();
 
         await Assert.That(result.AsString()).IsEqualTo("OK");
         await Assert.That(execution.ConnectionIdentity.Endpoint.Port).IsEqualTo(replacement.Port);

@@ -181,7 +181,7 @@ jobs:
           TUNIT_DISABLE_HTML_REPORTER: 'true'
         run: |
           dotnet run --project tests/Respire.Tests -c Release -f net10.0 --no-build -- \
-            --treenode-filter '/*/*/(!MetricSelectionTests)/*' \
+            --treenode-filter '/*/*/(!MetricSelectionTests)&(!ErrorMetricsTests)/*' \
             --results-directory "$GITHUB_WORKSPACE/TestResults" \
             --coverage \
             --coverage-output coverage.cobertura.xml \
@@ -197,7 +197,7 @@ jobs:
           dotnet run --project tests/Respire.Tests -c Release -f net10.0 --no-build -- \
             --treenode-filter '/*/*/(GetStringDirectPathTests)|(ClusterReadyReplyTests)/*'
           dotnet run --project tests/Respire.Tests -c Release -f net10.0 --no-build -- \
-            --treenode-filter '/*/*/MetricSelectionTests/*' \
+            --treenode-filter '/*/*/(MetricSelectionTests)|(ErrorMetricsTests)/*' \
             --results-directory "$GITHUB_WORKSPACE/TestResults/isolated-telemetry" \
             --coverage \
             --coverage-output coverage.cobertura.xml \
@@ -469,7 +469,7 @@ jobs:
           TUNIT_DISABLE_HTML_REPORTER: 'true'
         run: |
           dotnet run --project tests/Respire.Tests -c Release -f net8.0 --no-build -- \
-            --treenode-filter '/*/*/(MetricSelectionTests)|(TelemetryTests)|(RedisMetricSchemaTests)|(ClusterReadyReplyTests)/*'
+            --treenode-filter '/*/*/(MetricSelectionTests)|(ErrorMetricsTests)|(TelemetryTests)|(RedisMetricSchemaTests)|(ClusterReadyReplyTests)/*'
 
       - name: Verify aggregate progress and ownership (net8.0)
         env:

@@ -12,10 +12,12 @@ public class DiagnosticsPipelineBenchmarks
     private readonly RespirePending<long>[] _pending = new RespirePending<long>[CommandCount];
     private readonly RespireKey _key = "diagnostics-benchmark";
     private RespireClient _client = null!;
+    private ErrorMetricBenchmarkScope _errorMetrics = null!;
 
     [GlobalSetup]
     public async Task Setup()
     {
+        _errorMetrics = new();
         await _redis.StartAsync();
         _client = await RespireClient.ConnectAsync(new RespireOptions
         {
@@ -23,6 +25,7 @@ public class DiagnosticsPipelineBenchmarks
             Connections = 1, CommandTimeout = TimeSpan.FromSeconds(5)
         });
         await _client.SetAsync(_key, "value");
+        await _errorMetrics.WarmAsync(_client, _key);
     }
 
     [GlobalCleanup]
@@ -30,6 +33,7 @@ public class DiagnosticsPipelineBenchmarks
     {
         if (_client is not null) await _client.DisposeAsync();
         await _redis.DisposeAsync();
+        _errorMetrics.Dispose();
     }
 
     // Each invocation is one application batch; report time/allocation per command.
@@ -49,6 +53,23 @@ public class DiagnosticsPipelineBenchmarks
         for (var i = 0; i < CommandCount; i++) _pending[i] = transaction.Strings.Length(_key);
         await transaction.CommitAsync();
         return ReadResults();
+    }
+
+    [Benchmark(OperationsPerInvoke = CommandCount)]
+    public async Task<int> PipelinedBatchServerErrors()
+    {
+        using var batch = _client.CreateBatch();
+        for (var i = 0; i < CommandCount; i++) _pending[i] = batch.Strings.Increment(_key);
+        try { await batch.ExecuteAsync(); }
+        catch (RespireServerException error) when (error.Code == "ERR") { }
+        var errors = 0;
+        foreach (var pending in _pending)
+        {
+            try { _ = pending.Result; }
+            catch (RespireServerException error) when (error.Code == "ERR") { errors++; }
+        }
+        if (errors != CommandCount) throw new InvalidOperationException("Expected one Redis ERR per command.");
+        return errors;
     }
 
     private long ReadResults()

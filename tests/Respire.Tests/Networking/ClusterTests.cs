@@ -3376,7 +3376,7 @@ public class ClusterTests
 
         var execution = await client.StartTrackedScriptExecutionAsync(
             script, ["cache-key"], [], CancellationToken.None);
-        using var result = await execution.Response;
+        using var result = await execution.ConsumeResponseAsync();
 
         await Assert.That(result.AsString()).IsEqualTo("value");
         await Assert.That(execution.ConnectionIdentity.ServerClientId).IsEqualTo(42);
@@ -3411,7 +3411,7 @@ public class ClusterTests
         var script = RespireScript.Create("return redis.call('GET', KEYS[1])");
         var execution = await client.StartTrackedScriptExecutionAsync(
             script, ["cache-key"], [], CancellationToken.None);
-        using var result = await execution.Response;
+        using var result = await execution.ConsumeResponseAsync();
 
         await client.ExecuteOnAllConnectionsAsync(
             script, ["cache-key"], [], execution.ConnectionIdentity);
@@ -3447,7 +3447,7 @@ public class ClusterTests
         var script = RespireScript.Create("return redis.call('GET', KEYS[1])");
         var execution = await client.StartTrackedScriptExecutionAsync(
             script, ["cache-key"], [], CancellationToken.None);
-        using var result = await execution.Response;
+        using var result = await execution.ConsumeResponseAsync();
 
         await client.ExecuteOnAllConnectionsAsync(
             script, ["cache-key"], [], execution.ConnectionIdentity);

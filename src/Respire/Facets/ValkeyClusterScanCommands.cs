@@ -34,8 +34,10 @@ internal sealed partial class KeyCommands
         CancellationToken cancellationToken = default)
     {
         var command = CreateValkeyClusterScanCommand(client, cursor, match, type, countHint, slot, cancellationToken);
-        using var reply = await client.SendAsync("CLUSTERSCAN", command, cancellationToken).ConfigureAwait(false);
-        return ValkeyClusterScanParser.ParseWithPrefix(in reply, client.EncodedKeyPrefix, match);
+        return await client.ConvertResponseAsync("CLUSTERSCAN", in command, cancellationToken,
+            (Prefix: client.EncodedKeyPrefix, Match: match),
+            static ((KeyPrefix? Prefix, string? Match) state, in RespValue reply) =>
+                ValkeyClusterScanParser.ParseWithPrefix(in reply, state.Prefix, state.Match)).ConfigureAwait(false);
     }
 
     internal static ValkeyClusterScanCommand CreateValkeyClusterScanCommand(RespireClient client,

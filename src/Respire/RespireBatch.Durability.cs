@@ -1,3 +1,4 @@
+using System.Buffers;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Networking;
@@ -74,26 +75,8 @@ public sealed partial class RespireBatch
         string operation, TCommand acknowledgement, Func<RespValue, T> convert, CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        ObjectDisposedException.ThrowIf(_client.Core.Disposed, _client);
-        if (_sent) throw new InvalidOperationException("This batch has already been sent.");
-        ConnectionPolicy.ValidateDurabilityExecution();
-        if (_ops.Count == 0) throw new InvalidOperationException("A durability acknowledgement requires a nonempty batch.");
-        cancellationToken.ThrowIfCancellationRequested();
+        var slot = ValidateDurabilityAdmission(cancellationToken);
         var core = _client.Core;
-        int? slot = null;
-        if (core.Cluster is not null)
-        {
-            // Deferred operations already contain keys resolved through the client's prefix view.
-            foreach (var op in _ops)
-            {
-                if (!op.TryGetClusterSlot(out var current))
-                    throw new NotSupportedException("Cluster durability batches require a routing key for every command.");
-                if (slot is { } previous && previous != current)
-                    throw new NotSupportedException("Cluster durability batches require every command to use the same hash slot.");
-                slot = current;
-            }
-        }
 
         _sent = true;
         var telemetryOperation = operation;
@@ -119,10 +102,18 @@ public sealed partial class RespireBatch
                 connection.Host, connection.Port, core.Options.Database, out telemetryOperation, started);
             cancellationToken.ThrowIfCancellationRequested();
             var writes = new Task<Exception?>[_ops.Count];
-            for (var index = 0; index < _ops.Count; index++)
-                writes[index] = _ops[index].RunAsync(_client, connection, cancellationToken);
-            await Task.WhenAll(writes).ConfigureAwait(false);
-            new RespireBatchResult(_ops.Count, CollectFailures(_ops)).ThrowIfAnyFailed();
+            var observations = ArrayPool<RespireTelemetry.ErrorObservation>.Shared.Rent(_ops.Count);
+            try
+            {
+                for (var index = 0; index < _ops.Count; index++)
+                {
+                    observations[index] = RespireTelemetry.ErrorObservation.Rent(force: true);
+                    writes[index] = _ops[index].RunAsync(_client, connection, cancellationToken, observations[index]);
+                }
+                await Task.WhenAll(writes).ConfigureAwait(false);
+            }
+            finally { CompleteObservations(_ops, observations); }
+            new RespireBatchResult(_ops.Count, CollectFailures(_ops, reportErrors: false)).ThrowIfAnyFailed();
             cancellationToken.ThrowIfCancellationRequested();
 
             using var response = await connection.SendWithoutResponseTimeoutAsync(acknowledgement, cancellationToken).ConfigureAwait(false);
@@ -158,6 +149,12 @@ public sealed partial class RespireBatch
             }
             finally
             {
+                if (operationError is not null)
+                {
+                    var pendingErrors = false;
+                    foreach (var op in _ops) pendingErrors |= op.ReportError();
+                    if (!pendingErrors) RespireTelemetry.RecordError(operationError, internallyHandled: false);
+                }
                 if (connection is null && operationError is not null)
                     RespireTelemetry.RecordUnroutedBatchFailure(operation, _ops, static op => op.Operation,
                         core.Options.Database, started, operationError,
@@ -166,6 +163,40 @@ public sealed partial class RespireBatch
                 telemetry.Complete(core, telemetryOperation, error: operationError, connection: connection,
                     batchSize: _ops.Count == 1 ? null : _ops.Count);
             }
+        }
+    }
+
+    private int? ValidateDurabilityAdmission(CancellationToken cancellationToken)
+    {
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            ObjectDisposedException.ThrowIf(_client.Core.Disposed, _client);
+            if (_sent) throw new InvalidOperationException("This batch has already been sent.");
+            ConnectionPolicy.ValidateDurabilityExecution();
+            if (_ops.Count == 0) throw new InvalidOperationException("A durability acknowledgement requires a nonempty batch.");
+            cancellationToken.ThrowIfCancellationRequested();
+            int? slot = null;
+            if (_client.Core.Cluster is not null)
+            {
+                // Deferred operations already contain keys resolved through the client's prefix view.
+                foreach (var op in _ops)
+                {
+                    if (!op.TryGetClusterSlot(out var current))
+                        throw new NotSupportedException("Cluster durability batches require a routing key for every command.");
+                    if (slot is { } previous && previous != current)
+                        throw new NotSupportedException("Cluster durability batches require every command to use the same hash slot.");
+                    slot = current;
+                }
+            }
+            return slot;
+        }
+        catch (Exception error)
+        {
+            // Execution has not begun. Report the caller's rejection without completing or
+            // reporting queued results that never reached transport.
+            RespireTelemetry.RecordError(error, internallyHandled: false);
+            throw;
         }
     }
 }

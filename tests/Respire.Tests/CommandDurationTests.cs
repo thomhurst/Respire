@@ -78,16 +78,16 @@ public class CommandDurationTests
         switch (shape)
         {
             case "string":
-                var text = StringPendingResponseSource.Rent("GET", observation);
+                var text = StringPendingResponseSource.Rent("GET", duration: observation);
                 var textTask = text.Task;
                 return (text, () => textTask.GetAwaiter().GetResult(), () => textTask.IsCompleted);
             case "bytes":
-                var bytes = BytesPendingResponseSource.Rent("GET", observation);
+                var bytes = BytesPendingResponseSource.Rent("GET", duration: observation);
                 var bytesTask = bytes.Task;
                 return (bytes, () => bytesTask.GetAwaiter().GetResult(), () => bytesTask.IsCompleted);
             default:
                 var integer = ConvertedPendingResponseSource<int, int>.Rent(42,
-                    static (int state, in RespValue _) => state, false, "GET", observation);
+                    static (int state, in RespValue _) => state, false, "GET", duration: observation);
                 var integerTask = integer.Task;
                 return (integer, () => integerTask.GetAwaiter().GetResult(), () => integerTask.IsCompleted);
         }
@@ -256,14 +256,14 @@ public class CommandDurationTests
             switch (shape)
             {
                 case 0:
-                    var text = StringPendingResponseSource.Rent("GET", duration);
+                    var text = StringPendingResponseSource.Rent("GET", duration: duration);
                     text.TrySetResult(RespValue.Null); _ = text.Task.GetAwaiter().GetResult(); text.ReleaseRef(); break;
                 case 1:
-                    var bytes = BytesPendingResponseSource.Rent("GET", duration);
+                    var bytes = BytesPendingResponseSource.Rent("GET", duration: duration);
                     bytes.TrySetResult(RespValue.Null); _ = bytes.Task.GetAwaiter().GetResult(); bytes.ReleaseRef(); break;
                 default:
                     var integer = ConvertedPendingResponseSource<int, int>.Rent(42,
-                        static (int state, in RespValue _) => state, false, "GET", duration);
+                        static (int state, in RespValue _) => state, false, "GET", duration: duration);
                     integer.TrySetResult(RespValue.Null); _ = integer.Task.GetAwaiter().GetResult(); integer.ReleaseRef(); break;
             }
         }
@@ -305,14 +305,14 @@ public class CommandDurationTests
         switch (shape)
         {
             case "string":
-                var text = StringPendingResponseSource.Rent("GET", duration);
+                var text = StringPendingResponseSource.Rent("GET", duration: duration);
                 source = text; consume = () => text.Task.GetAwaiter().GetResult(); break;
             case "bytes":
-                var bytes = BytesPendingResponseSource.Rent("GET", duration);
+                var bytes = BytesPendingResponseSource.Rent("GET", duration: duration);
                 source = bytes; consume = () => bytes.Task.GetAwaiter().GetResult(); break;
             default:
                 var integer = ConvertedPendingResponseSource<int, int>.Rent(42,
-                    static (int state, in RespValue _) => state, false, "GET", duration);
+                    static (int state, in RespValue _) => state, false, "GET", duration: duration);
                 source = integer; consume = () => integer.Task.GetAwaiter().GetResult(); break;
         }
         try

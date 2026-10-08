@@ -231,18 +231,40 @@ public sealed class RespireSemaphore
         => _ = await CorrectionCoordinator.WaitAsync(cleanup, BestEffortCleanupTimeout).ConfigureAwait(false);
 
     /// <summary>Sends one owner-checked release bounded by <see cref="BestEffortCleanupTimeout"/>.</summary>
-    internal static ValueTask<CleanupAttemptResult> TryReleaseOnceAsync(
+    internal static async ValueTask<CleanupAttemptResult> TryReleaseOnceAsync(
         IRespireClient client, RespireKey key, RespireLockToken owner,
-        CancellationToken cancellationToken = default)
-        => CorrectionCoordinator.AttemptAsync((client as RespireClient)?.Core, (Client: client, Key: key, Owner: owner),
-            static (state, token) => ReleaseOnceAsync(state.Client, state.Key, state.Owner, token),
-            BestEffortCleanupTimeout, cancellationToken);
+        CancellationToken cancellationToken = default, RespireTelemetry.ErrorObservation observation = default)
+    {
+        var ownsObservation = observation.IsEmpty && client is RespireClient;
+        if (ownsObservation) observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        try
+        {
+            return await CorrectionCoordinator.AttemptAsync((client as RespireClient)?.Core,
+                (Client: client, Key: key, Owner: owner, Observation: observation),
+                static async (state, token) =>
+                {
+                    try
+                    {
+                        await ReleaseOnceAsync(state.Client, state.Key, state.Owner, token, state.Observation)
+                            .ConfigureAwait(false);
+                    }
+                    catch (Exception error)
+                    {
+                        state.Observation.Handled(error);
+                        throw;
+                    }
+                }, BestEffortCleanupTimeout, cancellationToken).ConfigureAwait(false);
+        }
+        finally { if (ownsObservation) observation.Dispose(); }
+    }
 
     private static async ValueTask ReleaseOnceAsync(
-        IRespireClient client, RespireKey key, RespireLockToken owner, CancellationToken cancellationToken)
+        IRespireClient client, RespireKey key, RespireLockToken owner, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation = default)
     {
-        using var response = await client.Scripts.ExecuteAsync(
-            ReleaseScript, [key], [owner.Bytes], cancellationToken).ConfigureAwait(false);
+        using var response = await (client is RespireClient wire && !observation.IsEmpty
+            ? wire.ExecuteScriptBorrowedAsync(ReleaseScript, [key], [owner.Bytes], cancellationToken, observation)
+            : client.Scripts.ExecuteAsync(ReleaseScript, [key], [owner.Bytes], cancellationToken)).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -570,9 +592,12 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     public async ValueTask<bool> ResetExpiryAsync(TimeSpan? expiry, CancellationToken cancellationToken = default)
     {
         var milliseconds = RespireSemaphore.ToMilliseconds(expiry, nameof(expiry));
-        await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var observation = _client is RespireClient ? RespireTelemetry.ErrorObservation.Rent(force: true) : default;
+        var enteredGate = false;
         try
         {
+            await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            enteredGate = true;
             // An earlier renewal may still execute and overwrite any newer score, so no later
             // renewal can be confirmed. Fail closed; disposal still retries the owner release.
             if (IsReleased || Has(PermitState.DisposeReleaseScheduled | PermitState.OutcomeUncertain)) return false;
@@ -601,9 +626,11 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
                         RespireSemaphore.RenewScript, [Key], [_owner.Bytes, milliseconds], cancellationToken,
                         requireReliableCorrectionOrdering: false, captureSendTimestampOnly: true,
                         onSerialized: sentAt => ClampLocalLeaseForPendingRenewal(requestedExpiry, sentAt, confirmedLease),
-                        onCommandNotApplied: () => RestoreLocalLeaseAfterRejectedRenewal(confirmedLease))
+                        onCommandNotApplied: () => RestoreLocalLeaseAfterRejectedRenewal(confirmedLease),
+                        errorObservation: observation)
                         .ConfigureAwait(false);
-                    response = await trackedExecution.Response.ConfigureAwait(false);
+                    response = await ((RespireClient.ITrackedCorrectionExecution<RespireResult>)trackedExecution)
+                        .Response.ConfigureAwait(false);
                 }
                 else
                 {
@@ -627,7 +654,7 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
                 // script that failed after its ZADD (for example an ACL rejecting PERSIST) may have
                 // changed the permit's lifetime. Disposal cleanup must not stop at the old expiry.
                 Set(PermitState.RenewalFailed);
-                var failedRenewalCleanupOutcome = await TryReleaseAndMarkAsync().ConfigureAwait(false);
+                var failedRenewalCleanupOutcome = await TryReleaseAndMarkAsync(observation).ConfigureAwait(false);
                 if (failedRenewalCleanupOutcome == CleanupAttemptResult.Failed
                     && Has(PermitState.DisposeReleaseScheduled))
                     ScheduleDisposeReleaseRetry();
@@ -656,15 +683,21 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
             if (stillValid && !Has(PermitState.DisposeReleaseScheduled)) return true;
 
             // The renewal was confirmed after its expiry elapsed locally, or disposal started meanwhile.
-            var lateRenewalCleanupOutcome = await TryReleaseAndMarkAsync().ConfigureAwait(false);
+            var lateRenewalCleanupOutcome = await TryReleaseAndMarkAsync(observation).ConfigureAwait(false);
             if (lateRenewalCleanupOutcome == CleanupAttemptResult.Failed
                 && Has(PermitState.DisposeReleaseScheduled))
                 ScheduleDisposeReleaseRetry();
             return false;
         }
+        catch (Exception error)
+        {
+            observation.Final(error);
+            throw;
+        }
         finally
         {
-            _operationGate.Release();
+            observation.Dispose();
+            if (enteredGate) _operationGate.Release();
         }
     }
 
@@ -680,14 +713,23 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     /// </returns>
     public async ValueTask<bool> ReleaseAsync(CancellationToken cancellationToken = default)
     {
-        await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var observation = _client is RespireClient ? RespireTelemetry.ErrorObservation.Rent(force: true) : default;
+        var enteredGate = false;
         try
         {
-            return await ReleaseUnderGateAsync(cleanupOnFailure: true, cancellationToken).ConfigureAwait(false);
+            await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            enteredGate = true;
+            return await ReleaseUnderGateAsync(cleanupOnFailure: true, cancellationToken, observation).ConfigureAwait(false);
+        }
+        catch (Exception error)
+        {
+            observation.Final(error);
+            throw;
         }
         finally
         {
-            _operationGate.Release();
+            observation.Dispose();
+            if (enteredGate) _operationGate.Release();
         }
     }
 
@@ -786,28 +828,35 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
             || Stopwatch.GetTimestamp() < lease.ValidUntil;
     }
 
-    private async ValueTask<bool> ReleaseUnderGateAsync(bool cleanupOnFailure, CancellationToken cancellationToken)
+    private async ValueTask<bool> ReleaseUnderGateAsync(bool cleanupOnFailure, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation = default)
     {
         if (Has(PermitState.Released)) return false;
         try
         {
-            using var response = await _client.Scripts.ExecuteAsync(
-                RespireSemaphore.ReleaseScript, [Key], [_owner.Bytes], cancellationToken).ConfigureAwait(false);
+            using var response = await (_client is RespireClient wire && !observation.IsEmpty
+                ? wire.ExecuteScriptBorrowedAsync(RespireSemaphore.ReleaseScript, [Key], [_owner.Bytes], cancellationToken, observation)
+                : _client.Scripts.ExecuteAsync(RespireSemaphore.ReleaseScript, [Key], [_owner.Bytes], cancellationToken))
+                .ConfigureAwait(false);
             var removed = response.AsInteger() == 1;
             Set(PermitState.Released);
             return removed;
         }
         catch when (cleanupOnFailure)
         {
-            await TryReleaseAndMarkAsync().ConfigureAwait(false);
+            await TryReleaseAndMarkAsync(observation).ConfigureAwait(false);
             throw;
         }
     }
 
     // The single place that turns a completed release command into local released state.
-    private async ValueTask<CleanupAttemptResult> TryReleaseAndMarkAsync(CancellationToken cancellationToken = default)
+    private ValueTask<CleanupAttemptResult> TryReleaseAndMarkAsync(CancellationToken cancellationToken = default)
+        => TryReleaseAndMarkAsync(default, cancellationToken);
+
+    private async ValueTask<CleanupAttemptResult> TryReleaseAndMarkAsync(
+        RespireTelemetry.ErrorObservation observation, CancellationToken cancellationToken = default)
     {
-        var outcome = await RespireSemaphore.TryReleaseOnceAsync(_client, Key, _owner, cancellationToken)
+        var outcome = await RespireSemaphore.TryReleaseOnceAsync(_client, Key, _owner, cancellationToken, observation)
             .ConfigureAwait(false);
         if (outcome == CleanupAttemptResult.Succeeded) Set(PermitState.Released);
         else Set(PermitState.ReleaseUncertain);

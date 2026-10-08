@@ -115,7 +115,17 @@ internal sealed partial class SortedSetCommands
         => IntersectCountAsync(limit, keys, CancellationToken.None);
 
     public ValueTask<long> IntersectCountAsync(long limit, ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
-        => client.IntegerAsync("ZINTERCARD", IntersectCountCommand(client, keys, limit), cancellationToken);
+        => client.IntegerAsync("ZINTERCARD", CreateObservedIntersectCountCommand(keys, limit), cancellationToken);
+
+    private CmdN CreateObservedIntersectCountCommand(ReadOnlySpan<RespireKey> keys, long limit)
+    {
+        try { return IntersectCountCommand(client, keys, limit); }
+        catch (Exception error)
+        {
+            RespireTelemetry.RecordError(error, internallyHandled: false);
+            throw;
+        }
+    }
 
     internal static CmdN IntersectCountCommand(RespireClient client, ReadOnlySpan<RespireKey> keys, long limit)
     {

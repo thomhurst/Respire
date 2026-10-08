@@ -13,6 +13,7 @@ internal sealed partial class KeyCommands
         internal int Rejections;
         internal ClusterRouter.DiscoveryRound? Discovery;
         internal ClusterScanCapabilityCache.ProbeRound Capabilities { get; } = new();
+        internal RespireTelemetry.ErrorObservation Observation { get; } = RespireTelemetry.ErrorObservation.Rent(force: true);
     }
 
     public async ValueTask<RespireClusterScanPage> ScanClusterPageAsync(
@@ -20,6 +21,7 @@ internal sealed partial class KeyCommands
         int countHint = 250, CancellationToken cancellationToken = default)
     {
         var recovery = new ScanRecovery();
+        using var observation = recovery.Observation;
         try
         {
             while (true)
@@ -32,6 +34,7 @@ internal sealed partial class KeyCommands
                     && cluster.CanRetryRetirement(recovery.Rejections, cancellationToken))
                 {
                     // Rebuild from the immutable checkpoint, retaining the same fallback budget.
+                    observation.Handled(retirement);
                     recovery.Rejections++;
                     cluster.RecordRejection(ref recovery.Discovery, retirement.Endpoint, retirement);
                 }
@@ -43,6 +46,7 @@ internal sealed partial class KeyCommands
             // from INFO/SCAN after successful selection do not invalidate discovery telemetry.
             if (recovery.Discovery is { } discovery)
                 discovery.RecordCommandFailure(error, discovery.HasPendingFailure, cancellationToken);
+            observation.Final(error);
             throw;
         }
         finally { recovery.Discovery?.Finish(); }
@@ -73,7 +77,7 @@ internal sealed partial class KeyCommands
         // Legacy tokens cannot prove their original database. Adopt the caller's database
         // once and publish RSC3 so subsequent resumes enforce that identity.
         if (state.Database is null) state.Database = client.Core.Options.Database;
-        var topology = await ReadScanTopologyAsync(cancellationToken, recovery.Discovery).ConfigureAwait(false);
+        var topology = await ReadScanTopologyAsync(cancellationToken, recovery.Discovery, recovery.Observation).ConfigureAwait(false);
         ReconcileScan(state, topology);
         RestrictScanToMatchingSlot(state, client.EncodedKeyPrefix is { HasSurrogateBoundary: true } ? null : effectiveMatch);
         var node = SelectScanNode(state, topology);
@@ -82,7 +86,7 @@ internal sealed partial class KeyCommands
             state.ResetPass();
             return new(new RespireClusterScanCursor(state), []) { WaitingOnMigration = true };
         }
-        var runId = await ReadScanRunIdAsync(node.Connection, cancellationToken).ConfigureAwait(false);
+        var runId = await ReadScanRunIdAsync(node.Connection, cancellationToken, recovery.Observation).ConfigureAwait(false);
         if (state.ActiveNode is not null && (state.ActiveNode != node.Metadata.Id
             || state.RunId != runId || state.Epoch != node.Metadata.ConfigurationEpoch)) state.ResetPass();
         // Finish an old numeric pass unchanged. Only new passes and opaque continuations
@@ -114,7 +118,7 @@ internal sealed partial class KeyCommands
         };
         // A node-local cursor must never be redirected or transferred to a replacement server.
         using var reply = await client.SendOnPinnedConnectionAsync("SCAN", node.Connection,
-            new CmdN(Verbs.Scan, arguments), cancellationToken).ConfigureAwait(false);
+            new CmdN(Verbs.Scan, arguments), cancellationToken, observation: recovery.Observation).ConfigureAwait(false);
         if (reply.Type != RespDataType.Array || reply.AsArray().Length != 2)
             throw new RespireProtocolException("SCAN must return a cursor and a key array.");
         var values = reply.AsArray();
@@ -136,20 +140,20 @@ internal sealed partial class KeyCommands
         {
             // Validate the complete pass against fresh, primary-local ownership and migration
             // state. An in-progress migration is never certified as a completed slot scan.
-            await CompleteScanPassAsync(state, effectiveMatch, cancellationToken, recovery.Discovery).ConfigureAwait(false);
+            await CompleteScanPassAsync(state, effectiveMatch, cancellationToken, recovery.Discovery, recovery.Observation).ConfigureAwait(false);
         }
         return new(new RespireClusterScanCursor(state), keys.ToArray());
     }
 
     private async ValueTask CompleteScanPassAsync(ClusterScanState state, RespireValue? effectiveMatch, CancellationToken cancellationToken,
-        ClusterRouter.DiscoveryRound? discovery)
+        ClusterRouter.DiscoveryRound? discovery, RespireTelemetry.ErrorObservation observation)
     {
-        var after = await ReadScanTopologyAsync(cancellationToken, discovery).ConfigureAwait(false);
+        var after = await ReadScanTopologyAsync(cancellationToken, discovery, observation).ConfigureAwait(false);
         ReconcileScan(state, after);
         RestrictScanToMatchingSlot(state, effectiveMatch);
         if (state.ActiveNode is { } active && after.Nodes.TryGetValue(active, out var current)
             && state.Epoch == current.Metadata.ConfigurationEpoch
-            && state.RunId == await ReadScanRunIdAsync(current.Connection, cancellationToken).ConfigureAwait(false))
+            && state.RunId == await ReadScanRunIdAsync(current.Connection, cancellationToken, observation).ConfigureAwait(false))
             for (var slot = 0; slot < ClusterHash.SlotCount; slot++)
                 if (state.PassSlots[slot]) state.Completed[slot] = true;
         state.ResetPass();
@@ -159,7 +163,7 @@ internal sealed partial class KeyCommands
     private sealed record ScanTopology(Dictionary<string, ScanNode> Nodes, string[] Owners, bool[] Moving);
 
     private async ValueTask<ScanTopology> ReadScanTopologyAsync(
-        CancellationToken cancellationToken, ClusterRouter.DiscoveryRound? discovery)
+        CancellationToken cancellationToken, ClusterRouter.DiscoveryRound? discovery, RespireTelemetry.ErrorObservation observation)
     {
         RespireConnection[] connections;
         try
@@ -177,7 +181,7 @@ internal sealed partial class KeyCommands
         foreach (var connection in connections)
         {
             using var reply = await client.SendOnPinnedConnectionAsync("CLUSTER NODES", connection,
-                new Cmd(RespireCommands.Cluster.CLUSTER_NODES.Verb), cancellationToken).ConfigureAwait(false);
+                new Cmd(RespireCommands.Cluster.CLUSTER_NODES.Verb), cancellationToken, observation: observation).ConfigureAwait(false);
             var rows = ClusterInspectionParser.Nodes(in reply);
             var self = rows.SingleOrDefault(static row => row.Flags.Contains("myself", StringComparer.Ordinal));
             if (self is null || !self.Flags.Contains("master", StringComparer.Ordinal)
@@ -199,10 +203,11 @@ internal sealed partial class KeyCommands
         return new(nodes, owners, moving);
     }
 
-    private async ValueTask<string> ReadScanRunIdAsync(RespireConnection connection, CancellationToken cancellationToken)
+    private async ValueTask<string> ReadScanRunIdAsync(RespireConnection connection, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation)
     {
         using var reply = await client.SendOnPinnedConnectionAsync("INFO", connection,
-            new Cmd1(Verbs.Info, "server"), cancellationToken).ConfigureAwait(false);
+            new Cmd1(Verbs.Info, "server"), cancellationToken, observation: observation).ConfigureAwait(false);
         foreach (var line in ClusterInspectionParser.Text(in reply).Split('\n'))
             if (line.StartsWith("run_id:", StringComparison.Ordinal) && line.AsSpan(7).Trim().Length > 0)
                 return line[7..].Trim();

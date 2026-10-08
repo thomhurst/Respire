@@ -36,17 +36,19 @@ internal sealed partial class SubscriptionHub
     private bool IsClusterSharded(SubscriptionKind kind)
         => kind == SubscriptionKind.Sharded && core.Cluster is not null;
 
-    private async ValueTask ActivateShardedAsync(RespireSubscription subscription, CancellationToken cancellationToken)
+    private async ValueTask ActivateShardedAsync(RespireSubscription subscription, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation)
     {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetimeCancellation.Token);
-        try { await ActivateShardedCoreAsync(subscription, linked.Token).ConfigureAwait(false); }
+        try { await ActivateShardedCoreAsync(subscription, linked.Token, observation).ConfigureAwait(false); }
         catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(error, cancellationToken, linked.Token))
         {
             throw new OperationCanceledException(error.Message, error, cancellationToken);
         }
     }
 
-    private async ValueTask ActivateShardedCoreAsync(RespireSubscription subscription, CancellationToken cancellationToken)
+    private async ValueTask ActivateShardedCoreAsync(RespireSubscription subscription, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation)
     {
         cancellationToken.ThrowIfCancellationRequested();
         // Recovery can hold the sharded control gate across an unanswered SSUBSCRIBE. New callers
@@ -71,7 +73,7 @@ internal sealed partial class SubscriptionHub
                 }
             }
             foreach (var name in subscription.Names)
-                await EnsureShardedRouteAsync(name, cancellationToken, recovering: false).ConfigureAwait(false);
+                await EnsureShardedRouteAsync(name, cancellationToken, recovering: false, observation).ConfigureAwait(false);
             await CloseUnusedPrimariesAsync().ConfigureAwait(false);
         }
         catch (RespireServerException)
@@ -114,7 +116,8 @@ internal sealed partial class SubscriptionHub
 
     // Caller owns _shardedControlGate. Connections and acknowledgement state are published under
     // _gate so pushes, topology callbacks and disposal can safely race control commands.
-    private async ValueTask EnsureShardedRouteAsync(RespireChannel name, CancellationToken cancellationToken, bool recovering)
+    private async ValueTask EnsureShardedRouteAsync(RespireChannel name, CancellationToken cancellationToken, bool recovering,
+        RespireTelemetry.ErrorObservation observation = default)
     {
         var slot = ClusterHash.GetSlot(name.Span);
         var commandConnection = await core.Cluster!.GetConnectionAsync(slot, cancellationToken, discovery: null).ConfigureAwait(false);
@@ -156,7 +159,7 @@ internal sealed partial class SubscriptionHub
                 try
                 {
                     await SendControlAsync(primary.Connection!, SubscribeVerb(SubscriptionKind.Sharded), "SSUBSCRIBE",
-                        name, cancellationToken, instrument: !recovering, primary.IsAskConnection).ConfigureAwait(false);
+                        name, cancellationToken, instrument: !recovering, primary.IsAskConnection, observation).ConfigureAwait(false);
                     lock (_gate)
                     {
                         // SUNSUBSCRIBE may follow the acknowledgement in the same socket read.
@@ -168,6 +171,8 @@ internal sealed partial class SubscriptionHub
                 catch (RespireServerException error) when ((error.Code is RespireErrorCodes.Moved or RespireErrorCodes.Ask)
                     && redirect < ClusterRouter.RedirectLimit)
                 {
+                    if (!observation.IsEmpty) observation.Handled(error);
+                    else RespireTelemetry.RecordError(error, internallyHandled: true, retryAttempts: redirect);
                     commandConnection = await core.Cluster.GetRedirectConnectionAsync(error, primary.Connection!, cancellationToken, slot, discovery: null)
                         .ConfigureAwait(false);
                     if (primary.IsAskConnection)
@@ -493,9 +498,17 @@ internal sealed partial class SubscriptionHub
                     failure = null;
                     foreach (var name in names)
                     {
-                        try { await EnsureShardedRouteAsync(name, cancellationToken, recovering: true).ConfigureAwait(false); }
+                        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+                        observation.SetAttempts(attempt - 1);
+                        try
+                        {
+                            await EnsureShardedRouteAsync(name, cancellationToken, recovering: true, observation).ConfigureAwait(false);
+                        }
                         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
                         {
+                            // Detached recovery owns an internal attempt, separate from activation.
+                            // Redirects already increment this owner before a terminal rejection.
+                            observation.Handled(error);
                             failure ??= error;
                             lock (_gate)
                                 if (_shardedOwners.TryGetValue(name, out var primary))

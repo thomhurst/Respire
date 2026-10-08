@@ -50,8 +50,18 @@ internal sealed partial class ListCommands
         ListMoveCountMode countMode = ListMoveCountMode.UpTo, ListMoveOrder order = ListMoveOrder.OneByOne,
         TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        var (operation, command) = MoveManyCommand(client, source, destination, count, from, to, countMode, order, waitFor);
+        (string operation, CmdN command) frame;
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            frame = MoveManyCommand(client, source, destination, count, from, to, countMode, order, waitFor);
+        }
+        catch (Exception error)
+        {
+            RespireTelemetry.RecordError(error, internallyHandled: false);
+            throw;
+        }
+        var (operation, command) = frame;
         return waitFor.HasValue
             ? MoveManyBlockingAsync(operation, command, cancellationToken)
             : client.ConvertResponseAsync(operation, command, cancellationToken, this,
@@ -60,8 +70,8 @@ internal sealed partial class ListCommands
 
     private async ValueTask<string[]?> MoveManyBlockingAsync(string operation, CmdN command, CancellationToken cancellationToken)
     {
-        using var reply = await client.SendBlockingAsync(operation, command, cancellationToken).ConfigureAwait(false);
-        return ParseMovedValues(in reply);
+        return await client.ConvertBlockingResponseAsync(operation, command, cancellationToken, 0,
+            static (int _, in RespValue reply) => ParseMovedValues(in reply)).ConfigureAwait(false);
     }
 
     internal static string[]? ParseMovedValues(in RespValue reply)

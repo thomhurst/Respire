@@ -110,12 +110,12 @@ internal sealed class ClientCore : IAsyncDisposable
             _threadPoolMonitor = ThreadPoolMonitor.Acquire(options.CreateLogger("Respire.ThreadPool"), options.ThreadPoolWarningThreshold);
     }
 
-    public ValueTask EnsureConnectedAsync(CancellationToken cancellationToken)
+    public ValueTask EnsureConnectedAsync(CancellationToken cancellationToken, bool observeEstablishmentErrors = false)
         => Sentinel is not null
-            ? EnsureSentinelConnectedAsync(cancellationToken)
+            ? EnsureSentinelConnectedAsync(cancellationToken, observeEstablishmentErrors)
             : Cluster is { } cluster
             ? cluster.EnsureConnectedAsync(cancellationToken, discovery: null)
-            : Multiplexer.EnsureConnectedAsync(cancellationToken);
+            : Multiplexer.EnsureConnectedAsync(cancellationToken, observeEstablishmentErrors);
 
     /// <summary>Captures an initialized primary route without starting discovery or reconnecting.</summary>
     /// <remarks>
@@ -144,8 +144,8 @@ internal sealed class ClientCore : IAsyncDisposable
         return false;
     }
 
-    private async ValueTask EnsureSentinelConnectedAsync(CancellationToken cancellationToken)
-        => await Sentinel!.GetGenerationAsync(cancellationToken).ConfigureAwait(false);
+    private async ValueTask EnsureSentinelConnectedAsync(CancellationToken cancellationToken, bool observeEstablishmentErrors)
+        => await Sentinel!.GetGenerationAsync(cancellationToken, observeEstablishmentErrors: observeEstablishmentErrors).ConfigureAwait(false);
 
     internal async ValueTask<DedicatedConnectionPool> GetDedicatedPoolAsync(CancellationToken cancellationToken)
     {

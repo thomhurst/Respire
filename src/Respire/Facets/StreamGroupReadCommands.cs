@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using Respire.Protocol;
 
 namespace Respire;
 
@@ -34,7 +35,7 @@ internal sealed partial class StreamCommands
     {
         ArgumentNullException.ThrowIfNull(group);
         ArgumentNullException.ThrowIfNull(consumer);
-        var command = BuildReadCommand(client, streams, options, group: group, consumer: consumer);
+        var command = BuildObservedReadCommand(streams, options, group: group, consumer: consumer);
         return ReadGroupCoreAsync(command, group, options.WaitFor.HasValue, cancellationToken);
     }
 
@@ -42,10 +43,13 @@ internal sealed partial class StreamCommands
     private async ValueTask<RespireStreamReadResult[]> ReadGroupCoreAsync(Commands.StreamReadCommand command,
         string group, bool blocking, CancellationToken cancellationToken)
     {
-        using var reply = blocking
-            ? await client.SendBlockingAsync("XREADGROUP", command, cancellationToken).ConfigureAwait(false)
-            : await client.SendAsync("XREADGROUP", command, cancellationToken).ConfigureAwait(false);
-        return ParseStreamRead(in reply, client, group);
+        var state = (Client: client, Group: group);
+        return await (blocking
+            ? client.ConvertBlockingResponseAsync("XREADGROUP", command, cancellationToken, state,
+                static ((RespireClient Client, string Group) owner, in RespValue reply) => ParseStreamRead(in reply, owner.Client, owner.Group))
+            : client.ConvertResponseAsync("XREADGROUP", command, cancellationToken, state,
+                static ((RespireClient Client, string Group) owner, in RespValue reply) => ParseStreamRead(in reply, owner.Client, owner.Group)))
+            .ConfigureAwait(false);
     }
 
     public async IAsyncEnumerable<RespireStreamEntry> ReadGroupAsync(StreamReadOptions options, RespireKey key,

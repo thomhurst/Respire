@@ -8,17 +8,24 @@ permissions:
   contents: read
 
 concurrency:
-  # Reapplying the benchmark label supersedes older runs on the same PR.
+  # Reapplying this label supersedes its older run; unrelated labels cannot cancel it.
+  # Non-label events would use an empty label segment without changing their grouping.
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event.label.name }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   transport-comparison:
     if: github.event.label.name == 'run-transport-benchmarks'
-    name: Compare transport acceptance (informational)
+    name: Compare transport acceptance (${{ matrix.error-metrics }}, informational)
+    strategy:
+      fail-fast: false
+      matrix:
+        error-metrics: [disabled, enabled]
     runs-on: ubuntu-latest
-    # Sixteen cases, two launches and both bracket controls, including disassembly.
-    timeout-minutes: 45
+    # Each metric mode measures eighteen cases, two launches and both bracket controls.
+    # The disabled leg exceeded 45 minutes during the final baseline control.
+    # Retain the full sampling profile and allow every bracket to finish.
+    timeout-minutes: 60
     services:
       redis:
         image: redis:8.10@sha256:2c2dff791878316e3b083188be0d578423b24813cdda5de0e80ea4f7b3e6bfd6
@@ -32,6 +39,7 @@ jobs:
     env:
       REDIS_HOST: 127.0.0.1
       REDIS_PORT: 6379
+      RESPIRE_BENCH_ERRORS: ${{ matrix.error-metrics }}
     steps:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
@@ -39,12 +47,34 @@ jobs:
             10.0.x
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: baseline
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          path: candidate
+      - name: Verify the immutable merge and derive its baseline
+        id: revisions
+        shell: python
+        env:
+          MERGE_SHA: ${{ github.sha }}
+          EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          import os, re, subprocess
+          for variable in ('MERGE_SHA', 'EXPECTED_HEAD_SHA', 'EVENT_BASE_SHA'):
+              assert re.fullmatch(r'[0-9a-f]{40}', os.environ[variable]), 'A pinned full SHA is required'
+          actual = subprocess.check_output(['git', '-C', 'candidate', 'rev-parse', 'HEAD'], text=True).strip()
+          assert actual == os.environ['MERGE_SHA'], 'Wrong candidate merge'
+          parents = subprocess.check_output(['git', '-C', 'candidate', 'show', '-s', '--format=%P', 'HEAD'], text=True).split()
+          assert len(parents) == 2, 'Candidate must be a two-parent PR merge'
+          assert parents[1] == os.environ['EXPECTED_HEAD_SHA'], 'Wrong PR head'
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
+              print('baseline-sha=' + parents[0], file=stream)
+          with open('revisions.log', 'w') as stream:
+              print('merge=' + actual, 'baseline=' + parents[0],
+                    'head=' + parents[1], 'event-base=' + os.environ['EVENT_BASE_SHA'], sep='\n', file=stream)
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          path: candidate
+          ref: ${{ steps.revisions.outputs.baseline-sha }}
+          path: baseline
       - name: Compare pinned baseline, candidate, baseline on one runner
         shell: bash
         run: |
@@ -52,6 +82,7 @@ jobs:
           # The shared fixture must compile against both pinned APIs. A mismatch fails this
           # step; the always() upload below retains its phase log without masking that failure.
           cp candidate/benchmarks/Respire.Benchmarks/TransportAcceptanceBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
+          cp candidate/benchmarks/Respire.Benchmarks/ErrorMetricBenchmarkScope.cs baseline/benchmarks/Respire.Benchmarks/
           cp candidate/benchmarks/Respire.Benchmarks/Program.cs baseline/benchmarks/Respire.Benchmarks/
           git -C baseline rev-parse HEAD > baseline.commit
           git -C candidate rev-parse HEAD > candidate.commit
@@ -79,8 +110,15 @@ jobs:
         shell: python
         run: |
           import json
+          import os
           from pathlib import Path
           for phase in ("validation-baseline", "validation-candidate", "baseline-a", "candidate", "baseline-b"):
+              enabled = os.environ["RESPIRE_BENCH_ERRORS"] == "enabled"
+              marker = f"ERROR_METRICS requested={enabled}; published="
+              log = Path(f"{phase}.log").read_text()
+              assert marker in log, f"Missing metric selection evidence: {phase}"
+              if phase in ("validation-candidate", "candidate"):
+                  assert marker + "True" in log, f"Candidate errors instrument was not published: {phase}"
               expected = int(Path(f"{phase}.case-count").read_text())
               assert expected > 0, f"No benchmark cases discovered: {phase}"
               reports = list(Path("results", phase, "results").glob("*-report*.json"))
@@ -190,7 +228,7 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
-          name: transport-acceptance-comparison
+          name: transport-acceptance-comparison-${{ matrix.error-metrics }}
           path: |
             results/
             *.log

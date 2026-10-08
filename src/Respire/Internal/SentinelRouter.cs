@@ -113,7 +113,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
     }
 
     internal async ValueTask<Generation> GetGenerationAsync(CancellationToken cancellationToken, bool forceDiscovery = false,
-        SentinelHint? notificationHint = null)
+        SentinelHint? notificationHint = null, bool observeEstablishmentErrors = false)
     {
         lock (_gate) ObjectDisposedException.ThrowIf(_disposed, this);
         // An unexpected close retires a Sentinel generation, even when that multiplexer
@@ -144,8 +144,9 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
             // A forced discovery that resolves to the healthy current primary confirms it with ROLE
             // on the existing connection instead of opening and discarding a candidate generation.
             Func<RespireOptions, string[]?, CancellationToken, ValueTask<Generation>> connect = forceDiscovery && previous is not null
-                ? (options, addresses, token) => ReuseOrConnectGenerationAsync(previous, options, addresses, notificationHint, token)
-                : (options, _, token) => ConnectGenerationAsync(options, notificationHint, token);
+                ? (options, addresses, token) => ReuseOrConnectGenerationAsync(previous, options, addresses, notificationHint, token,
+                    observeEstablishmentErrors)
+                : (options, _, token) => ConnectGenerationAsync(options, notificationHint, token, observeEstablishmentErrors);
             var replacement = await SentinelResolver.ResolveAndConnectPrimaryAsync(
                 core.Options, connect, linked.Token, _discovery,
                 notificationHint?.ReportingSentinel,
@@ -253,7 +254,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
     }
 
     private async ValueTask<Generation> ReuseOrConnectGenerationAsync(Generation current, RespireOptions options,
-        string[]? addresses, SentinelHint? hint, CancellationToken cancellationToken)
+        string[]? addresses, SentinelHint? hint, CancellationToken cancellationToken, bool observeEstablishmentErrors)
     {
         var endpoint = options.PrimaryEndpoint;
         var samePeer = new SentinelAddressEvidence(endpoint, addresses).SingleAddress is { } address
@@ -264,7 +265,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
             && current.ValidatedPeer is { } peer && current.Multiplexer.AllCurrentPeersMatch(peer.Host, peer.Port);
         if (current.IsRetired || !current.Multiplexer.IsConnected
             || !sameEndpointWithoutAddresses && !samePeer)
-            return await ConnectGenerationAsync(options, hint, cancellationToken).ConfigureAwait(false);
+            return await ConnectGenerationAsync(options, hint, cancellationToken, observeEstablishmentErrors).ConfigureAwait(false);
         await current.ValidateAsync(current.Multiplexer.GetConnection(), cancellationToken).ConfigureAwait(false);
         ValidateSwitchTargetPeer(current, hint);
         return current;
@@ -283,7 +284,8 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
 
     // The supervisor wakes when discovery learns a Sentinel. Monitors complete only when the
     // client is disposed, so this fallback interval only restarts one that faulted unexpectedly.
-    private async ValueTask<Generation> ConnectGenerationAsync(RespireOptions options, SentinelHint? hint, CancellationToken cancellationToken)
+    private async ValueTask<Generation> ConnectGenerationAsync(RespireOptions options, SentinelHint? hint,
+        CancellationToken cancellationToken, bool observeEstablishmentErrors)
     {
         var generation = new Generation(this, core, options);
         lock (_gate)
@@ -293,7 +295,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
         }
         try
         {
-            await generation.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            await generation.Multiplexer.EnsureConnectedAsync(cancellationToken, observeEstablishmentErrors).ConfigureAwait(false);
             ValidateSwitchTargetPeer(generation, hint);
             return generation;
         }

@@ -1,3 +1,6 @@
+using System.Runtime.CompilerServices;
+using Respire.Internal;
+
 namespace Respire;
 
 public sealed partial class RespireClient
@@ -7,6 +10,7 @@ public sealed partial class RespireClient
         ValueTask<TResult> Response { get; }
         TrackedConnectionIdentity ConnectionIdentity { get; }
         bool CommandMayBeOutstanding { get; }
+        RespireTelemetry.ErrorObservation ErrorObservation => default;
     }
 
     internal enum CorrectionOrdering
@@ -42,7 +46,7 @@ public sealed partial class RespireClient
         Action? onOutcomeUncertain = null)
         => ExecuteWithCorrectionAsync(execution, ordering, false, correct: null, onOutcomeUncertain);
 
-    internal async ValueTask<TResult> ExecuteWithCorrectionAsync<TResult, TState>(
+    internal ValueTask<TResult> ExecuteWithCorrectionAsync<TResult, TState>(
         ITrackedCorrectionExecution<TResult> execution,
         CorrectionOrdering ordering,
         TState state,
@@ -50,7 +54,24 @@ public sealed partial class RespireClient
         Action? onOutcomeUncertain = null)
     {
         if (correct is not null && ordering is CorrectionOrdering.BestEffortLockFence or CorrectionOrdering.NotifyOnly)
-            throw new ArgumentException("A dependent correction requires explicit ordering.", nameof(ordering));
+            return ValueTask.FromException<TResult>(
+                new ArgumentException("A dependent correction requires explicit ordering.", nameof(ordering)));
+        // The tracked response lends its lease. Only this observer returns it, after the
+        // response's mutation fence and any dependent correction have completed.
+        var observation = execution.ErrorObservation;
+        if (observation.IsEmpty) observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        return RespireTelemetry.ObserveFinalError(
+            ExecuteWithCorrectionCoreAsync(execution, ordering, state, correct, onOutcomeUncertain), observation);
+    }
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private async ValueTask<TResult> ExecuteWithCorrectionCoreAsync<TResult, TState>(
+        ITrackedCorrectionExecution<TResult> execution,
+        CorrectionOrdering ordering,
+        TState state,
+        Func<TState, TrackedConnectionIdentity, ValueTask>? correct,
+        Action? onOutcomeUncertain)
+    {
         try
         {
             return await execution.Response.ConfigureAwait(false);

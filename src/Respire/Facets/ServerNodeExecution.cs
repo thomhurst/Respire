@@ -47,14 +47,25 @@ internal sealed partial class ServerCommands
         string operation, TCommand command, CancellationToken cancellationToken,
         ResponseConverter<ServerCommands, T> convert) where TCommand : struct, IRespCommand
     {
-        ObjectDisposedException.ThrowIf(client.Core.Disposed, client);
-        cancellationToken.ThrowIfCancellationRequested();
-        var endpoints = await DiscoverServerEndpointsAsync(cancellationToken).ConfigureAwait(false);
-        using var capacity = new SemaphoreSlim(MaxFanOutConcurrency);
-        var tasks = new Task<RespireServerResult<T>>[endpoints.Length];
-        for (var index = 0; index < endpoints.Length; index++)
-            tasks[index] = ExecuteOnNodeAsync(endpoints[index], operation, command, convert, capacity, cancellationToken);
-        return await Task.WhenAll(tasks).ConfigureAwait(false);
+        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        try
+        {
+            ObjectDisposedException.ThrowIf(client.Core.Disposed, client);
+            cancellationToken.ThrowIfCancellationRequested();
+            var endpoints = await DiscoverServerEndpointsAsync(cancellationToken, observation).ConfigureAwait(false);
+            using var capacity = new SemaphoreSlim(MaxFanOutConcurrency);
+            var tasks = new Task<RespireServerResult<T>>[endpoints.Length];
+            for (var index = 0; index < endpoints.Length; index++)
+                tasks[index] = ExecuteOnNodeAsync(endpoints[index], operation, command, convert, capacity, cancellationToken);
+            // Node failures return error results with their own observations. Only an exception
+            // that escapes the fan-out itself belongs to this final observer.
+            return await Task.WhenAll(tasks).ConfigureAwait(false);
+        }
+        catch (Exception error)
+        {
+            observation.Final(error);
+            throw;
+        }
     }
 
     private async Task<RespireServerResult<T>> ExecuteOnNodeAsync<TCommand, T>(
@@ -62,6 +73,7 @@ internal sealed partial class ServerCommands
         ResponseConverter<ServerCommands, T> convert, SemaphoreSlim capacity, CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
+        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
         DedicatedConnectionPool? pool = null;
         var entered = false;
         try
@@ -71,12 +83,14 @@ internal sealed partial class ServerCommands
             // Introspection must not retain every historical replica in the routing pool cache.
             pool = client.Core.CreateServerPool(endpoint);
             var connection = await pool.RentAsync(cancellationToken).ConfigureAwait(false);
-            using var reply = await client.SendOnConnectionAsync(operation, connection, command, cancellationToken).ConfigureAwait(false);
+            using var reply = await client.SendOnConnectionAsync(operation, connection, command, cancellationToken,
+                observation: observation).ConfigureAwait(false);
             return RespireServerResult<T>.Success(endpoint, convert(this, in reply));
         }
         catch (Exception error)
         {
             // Preserve successes from other nodes, including when cancellation occurs after discovery.
+            observation.Final(error);
             return RespireServerResult<T>.Failure(endpoint, error);
         }
         finally
@@ -92,7 +106,8 @@ internal sealed partial class ServerCommands
         }
     }
 
-    private async ValueTask<RespireEndpoint[]> DiscoverServerEndpointsAsync(CancellationToken cancellationToken)
+    private async ValueTask<RespireEndpoint[]> DiscoverServerEndpointsAsync(CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation)
     {
         // Acquisition selects a client-owned multiplexed connection, not a dedicated lease.
         var connection = await client.AcquireConnectionAsync(cancellationToken).ConfigureAwait(false);
@@ -101,7 +116,7 @@ internal sealed partial class ServerCommands
         // The routing table contains primaries only. CLUSTER NODES also includes replicas and
         // slotless members, which can have their own subscribers. Never silently omit them.
         using var reply = await client.SendToClusterTargetAsync("CLUSTER NODES", connection,
-            new Cmd(ClusterNodes), cancellationToken).ConfigureAwait(false);
+            new Cmd(ClusterNodes), cancellationToken, observeErrors: false, observation: observation).ConfigureAwait(false);
         if (reply.Type is not (RespDataType.BulkString or RespDataType.SimpleString or RespDataType.VerbatimString))
             throw new RespireProtocolException("CLUSTER NODES must return topology text.");
         return ParseServerEndpoints(reply.AsString(), source);

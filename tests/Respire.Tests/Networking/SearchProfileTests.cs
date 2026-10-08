@@ -393,16 +393,23 @@ public class SearchProfileTests
         foreach (var mode in new[] { "SEARCH", "AGGREGATE", "HYBRID" })
         {
             await using var server = Server(_ => Frame(Envelope(protocol, mode, Profile(protocol)), protocol));
-            server.DelayCommand("FT.PROFILE", 100);
+            var written = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var requests = 0;
+            server.SuppressReply = command =>
+            {
+                if (!command.StartsWith("FT.PROFILE", StringComparison.Ordinal) || Interlocked.Increment(ref requests) != 1)
+                    return false;
+                written.TrySetResult();
+                return true;
+            };
             await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
             using var cancelled = new CancellationTokenSource();
             var pending = RunAsync(client.Search, mode, cancelled.Token);
-            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            while (!server.ReceivedCommands.Any(command => command.StartsWith("FT.PROFILE", StringComparison.Ordinal)))
-                await Task.Delay(1, deadline.Token);
+            await written.Task.WaitAsync(TimeSpan.FromSeconds(5));
             cancelled.Cancel();
             var error = await Assert.That(async () => await pending).Throws<OperationCanceledException>();
             await Assert.That(error!.CancellationToken).IsEqualTo(cancelled.Token);
+            await server.SendRawAsync(Frame(Envelope(protocol, mode, Profile(protocol)), protocol));
             await RunAsync(client.Search, mode);
             await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("FT.PROFILE", StringComparison.Ordinal))).IsEqualTo(2);
         }

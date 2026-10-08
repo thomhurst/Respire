@@ -17,6 +17,7 @@ internal sealed class BytesPendingResponseSource : PendingResponse, IValueTaskSo
     private bool _hasResponse;
     private bool _hasDirectResult;
     private string? _commandName;
+    private bool _observeErrors;
     private RespireTelemetry.DurationObservation _duration;
 
     private BytesPendingResponseSource()
@@ -27,13 +28,16 @@ internal sealed class BytesPendingResponseSource : PendingResponse, IValueTaskSo
 
     internal override string? CommandName => _commandName;
 
-    public static BytesPendingResponseSource Rent(string? commandName, RespireTelemetry.DurationObservation duration = default)
+    public static BytesPendingResponseSource Rent(string? commandName, int errorAttempts = 0, bool observeErrors = true,
+        RespireTelemetry.DurationObservation duration = default)
     {
         var source = Pool.Rent();
 
         source._commandName = commandName;
+        source._observeErrors = observeErrors;
         source._duration = duration;
         source.PrepareForUse();
+        source.ErrorAttempts = errorAttempts;
         return source;
     }
 
@@ -73,13 +77,9 @@ internal sealed class BytesPendingResponseSource : PendingResponse, IValueTaskSo
     {
         try
         {
-            try
-            {
-                _core.GetResult(token);
-                if (!_hasDirectResult && _response.IsError)
-                    throw ResponseReader.ServerError(in _response, _commandName);
-            }
-            catch (Exception error) { _duration.Complete(_commandName, error); throw; }
+            _core.GetResult(token);
+            if (!_hasDirectResult && _response.IsError)
+                throw ResponseReader.ServerError(in _response, _commandName);
             _duration.Complete(_commandName);
             if (_hasDirectResult)
             {
@@ -87,6 +87,12 @@ internal sealed class BytesPendingResponseSource : PendingResponse, IValueTaskSo
             }
 
             return ResponseReader.BytesOrNull(in _response);
+        }
+        catch (Exception error)
+        {
+            _duration.Complete(_commandName, error);
+            if (_observeErrors) RespireTelemetry.RecordError(error, internallyHandled: false, ErrorAttempts);
+            throw;
         }
         finally
         {

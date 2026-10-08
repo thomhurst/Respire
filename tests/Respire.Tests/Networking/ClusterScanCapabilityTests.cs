@@ -30,14 +30,15 @@ public class ClusterScanCapabilityTests
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
         var cache = new ClusterScanCapabilityCache();
         var round = new ClusterScanCapabilityCache.ProbeRound();
-        await Assert.That(await cache.SupportsAsync(client, connection, "run", round, default)).IsFalse();
+        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        await Assert.That(await cache.SupportsAsync(client, connection, "run", round, default, observation)).IsFalse();
         metadata = "*1\r\n*1\r\n$11\r\nclusterscan\r\n"u8.ToArray();
-        await Assert.That(await cache.SupportsAsync(client, connection, "run", round, default)).IsFalse();
+        await Assert.That(await cache.SupportsAsync(client, connection, "run", round, default, observation)).IsFalse();
         await Assert.That(server.ReceivedCommands.Count(command => command == "COMMAND INFO CLUSTERSCAN")).IsEqualTo(1);
-        await Assert.That(await cache.SupportsAsync(client, connection, "run", new(), default)).IsTrue();
+        await Assert.That(await cache.SupportsAsync(client, connection, "run", new(), default, observation)).IsTrue();
         metadata = "*1\r\n$-1\r\n"u8.ToArray();
-        await Assert.That(await cache.SupportsAsync(client, connection, "run", new(), default)).IsTrue();
-        await Assert.That(await cache.SupportsAsync(client, connection, "replacement-run", new(), default)).IsFalse();
+        await Assert.That(await cache.SupportsAsync(client, connection, "run", new(), default, observation)).IsTrue();
+        await Assert.That(await cache.SupportsAsync(client, connection, "replacement-run", new(), default, observation)).IsFalse();
         await Assert.That(server.ReceivedCommands.Count(command => command == "COMMAND INFO CLUSTERSCAN")).IsEqualTo(3);
     }
 

@@ -5,11 +5,16 @@ namespace Respire;
 
 public sealed partial class RespireClient
 {
-    /// <summary>Shares one selected script scope across cluster redirects and NOSCRIPT fallback.</summary>
-    private sealed class ClusterScriptTelemetry(ClientCore core, RespireScript script, RespireTelemetry.OperationStart started)
+    /// <summary>Shares selected command telemetry across cluster redirects and NOSCRIPT fallback.</summary>
+    private sealed class ClusterScriptTelemetry(ClientCore core, RespireScript script,
+        RespireTelemetry.OperationStart started)
     {
         private RespireTelemetry.OperationScope _scope;
         private RespireConnection? _connection;
+        private int _errorAttempts;
+
+        internal void RecordRetry(Exception error)
+            => RespireTelemetry.RecordError(error, internallyHandled: true, _errorAttempts++);
 
         /// <summary>Updates the selected peer without resetting the logical operation's start time.</summary>
         internal void UseConnection(RespireConnection connection)

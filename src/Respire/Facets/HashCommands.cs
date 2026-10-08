@@ -486,7 +486,9 @@ internal sealed partial class HashCommands(RespireClient client) : IHashCommands
 
     public async ValueTask<RespireTtl> ExpiryAsync(
         RespireKey key, RespireKey field, CancellationToken cancellationToken = default)
-        => (await ExpiryAsync(key, new[] { field }, cancellationToken).ConfigureAwait(false))[0];
+        => await client.SingleTtlArrayAsync(
+            "HPTTL", new Cmd1N(RespireCommands.Hash.HPTTL.Verb, client.Key(in key), FieldsBlock([field])),
+            cancellationToken).ConfigureAwait(false);
 
     public ValueTask<HashFieldExpiryResult[]> ExpireAsync(
         RespireKey key, RespireExpiry expiry, params ReadOnlySpan<string> fields)

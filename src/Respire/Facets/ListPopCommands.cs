@@ -39,7 +39,7 @@ internal sealed partial class ListCommands
         ReadOnlySpan<RespireKey> keys, long count = 1, ListSide side = ListSide.Left,
         TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
     {
-        var (operation, command) = PopManyCommand(client, keys, count, side, waitFor);
+        var (operation, command) = CreateObservedPopManyCommand(keys, count, side, waitFor);
         return waitFor.HasValue
             ? PopManyBlockingAsync(operation, command, cancellationToken)
             : client.ConvertResponseAsync(operation, command, cancellationToken, client,
@@ -50,27 +50,56 @@ internal sealed partial class ListCommands
         ReadOnlySpan<RespireKey> keys, TimeSpan waitFor, ListSide side = ListSide.Left,
         CancellationToken cancellationToken = default)
     {
-        _ = SideToken(side);
-        MultiKeyPop.ValidateWait(waitFor);
         var operation = side == ListSide.Left ? "BLPOP" : "BRPOP";
-        var arguments = new RespireValue[keys.Length + 1];
-        MultiKeyPop.CopyPopKeys(client, keys, arguments, operation);
-        arguments[^1] = MultiKeyPop.ToSeconds(waitFor);
-        return PopOneBlockingAsync(operation,
-            new CmdN(side == ListSide.Left ? Verbs.BLPop : Verbs.BRPop, arguments), cancellationToken);
+        CmdN command;
+        try
+        {
+            _ = SideToken(side);
+            MultiKeyPop.ValidateWait(waitFor);
+            var arguments = new RespireValue[keys.Length + 1];
+            MultiKeyPop.CopyPopKeys(client, keys, arguments, operation);
+            arguments[^1] = MultiKeyPop.ToSeconds(waitFor);
+            command = new CmdN(side == ListSide.Left ? Verbs.BLPop : Verbs.BRPop, arguments);
+        }
+        catch (Exception error)
+        {
+            RespireTelemetry.RecordError(error, internallyHandled: false);
+            throw;
+        }
+        return PopOneBlockingAsync(operation, command, cancellationToken);
+    }
+
+    private (string Operation, CmdN Command) CreateObservedPopManyCommand(
+        ReadOnlySpan<RespireKey> keys, long count, ListSide side, TimeSpan? waitFor)
+    {
+        try { return PopManyCommand(client, keys, count, side, waitFor); }
+        catch (Exception error)
+        {
+            // No attempt or reply source exists yet. Preserve native converted dispatch and
+            // let its existing owner handle failures after construction succeeds.
+            RespireTelemetry.RecordError(error, internallyHandled: false);
+            throw;
+        }
     }
 
     private async ValueTask<RespireListPopManyResult?> PopManyBlockingAsync(
         string operation, CmdN command, CancellationToken cancellationToken)
     {
-        using var reply = await client.SendBlockingAsync(operation, command, cancellationToken).ConfigureAwait(false);
-        return ParsePopMany(in reply, client.KeyPrefixBytes);
+        return await client.ConvertBlockingResponseAsync(operation, command, cancellationToken, client,
+            static (RespireClient owner, in RespValue reply) => ParsePopMany(in reply, owner.KeyPrefixBytes))
+            .ConfigureAwait(false);
     }
 
     private async ValueTask<RespireListPopResult?> PopOneBlockingAsync(
         string operation, CmdN command, CancellationToken cancellationToken)
     {
-        using var reply = await client.SendBlockingAsync(operation, command, cancellationToken).ConfigureAwait(false);
+        return await client.ConvertBlockingResponseAsync(operation, command, cancellationToken, client,
+            static (RespireClient owner, in RespValue reply) => ParsePopOne(in reply, owner.KeyPrefixBytes))
+            .ConfigureAwait(false);
+    }
+
+    private static RespireListPopResult? ParsePopOne(in RespValue reply, ReadOnlySpan<byte> prefix)
+    {
         if (reply.IsNull)
         {
             return null;
@@ -80,7 +109,7 @@ internal sealed partial class ListCommands
         {
             throw new RespireProtocolException("Expected a selected list key and one popped value.");
         }
-        return new RespireListPopResult(MultiKeyPop.ParsePoppedKey(in elements[0], client.KeyPrefixBytes), elements[1].AsString());
+        return new RespireListPopResult(MultiKeyPop.ParsePoppedKey(in elements[0], prefix), elements[1].AsString());
     }
 
     internal static (string Operation, CmdN Command) PopManyCommand(

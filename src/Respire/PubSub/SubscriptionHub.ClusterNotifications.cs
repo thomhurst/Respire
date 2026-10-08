@@ -37,6 +37,15 @@ internal sealed partial class SubscriptionHub
         lock (_gate) return _clusterNotifications.RetryingEndpoints.Contains(endpoint);
     }
 
+    // Test seam: expire a command only after the fixture has observed its wire admission.
+    internal bool ExpireClusterNotificationCommandForTesting(RespireEndpoint endpoint)
+    {
+        RespireConnection? connection;
+        lock (_gate)
+            connection = _clusterNotifications.Nodes.TryGetValue(endpoint, out var node) ? node.Connection : null;
+        return connection?.ExpireOldestCommandForTesting() == true;
+    }
+
     // Test seam: marks an endpoint as waiting for a failed reconciliation route.
     internal void MarkClusterNotificationEndpointRetrying(RespireEndpoint endpoint)
     {
@@ -59,7 +68,8 @@ internal sealed partial class SubscriptionHub
     }
 
     private async ValueTask ActivateClusterNotificationsAsync(
-        RespireSubscription subscription, CancellationToken cancellationToken)
+        RespireSubscription subscription, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation)
     {
         long observedTopologyVersion;
         lock (_gate) observedTopologyVersion = _clusterNotifications.TopologyVersion;
@@ -79,7 +89,7 @@ internal sealed partial class SubscriptionHub
                 {
                     try
                     {
-                        await AddNotificationRouteAsync(node, subscription, name, trackCoverage: true, cancellationToken)
+                        await AddNotificationRouteAsync(node, subscription, name, trackCoverage: true, cancellationToken, observation)
                             .ConfigureAwait(false);
                     }
                     catch (Exception error)
@@ -108,7 +118,7 @@ internal sealed partial class SubscriptionHub
                 using var activation = CancellationTokenSource.CreateLinkedTokenSource(
                     cancellationToken, _lifetimeCancellation.Token);
                 if (await ReconcileNotificationSubscriptionAsync(subscription, latest.Version, latest.Endpoints,
-                        latest.Authoritative, new StrongBox<RespireEndpoint?>(), activation.Token).ConfigureAwait(false))
+                        latest.Authoritative, new StrongBox<RespireEndpoint?>(), activation.Token, observation).ConfigureAwait(false))
                     observedTopologyVersion = latest.Version;
                 else
                     // The router can publish before its callback reaches this hub. A rejected
@@ -182,7 +192,8 @@ internal sealed partial class SubscriptionHub
     // so callers treat the endpoint as uncertain and close or roll back its socket.
     private async ValueTask AddNotificationRouteAsync(
         ClusterNotificationNode node, RespireSubscription subscription, RespireChannel name,
-        bool trackCoverage, CancellationToken cancellationToken)
+        bool trackCoverage, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation = default)
     {
         bool subscribe;
         RespireConnection? connection;
@@ -203,7 +214,7 @@ internal sealed partial class SubscriptionHub
             if (connection is null)
                 throw new RespireConnectionException($"Cluster notification connection to {node.Endpoint} is unavailable.");
             await SendControlAsync(connection, SubscribeVerb(subscription.Kind),
-                SubscribeOperation(subscription.Kind), name, cancellationToken, instrument: true)
+                SubscribeOperation(subscription.Kind), name, cancellationToken, instrument: true, observation: observation)
                 .ConfigureAwait(false);
         }
         catch (Exception error) when (ContainsServerRejection(error))
@@ -857,11 +868,12 @@ internal sealed partial class SubscriptionHub
                     // Reconcile each subscription independently so one failing endpoint cannot
                     // keep every other subscription on the previous topology.
                     var failingEndpoint = new StrongBox<RespireEndpoint?>();
+                    using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
                     try
                     {
                         if (!await ReconcileNotificationSubscriptionAsync(
                                 subscription, version, endpoints, authoritative, failingEndpoint,
-                                _lifetimeCancellation.Token).ConfigureAwait(false))
+                                _lifetimeCancellation.Token, observation).ConfigureAwait(false))
                             return;
                         lock (_gate)
                         {
@@ -876,6 +888,7 @@ internal sealed partial class SubscriptionHub
                     catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested) { throw; }
                     catch (Exception error)
                     {
+                        observation.Handled(error);
                         TryLog(error, static (logger, state) => logger.NotificationTopologyReconciliationFailed(state));
                         // Each failing endpoint gets the policy's full attempt budget. A failure
                         // against a different endpoint, such as a newer topology replacing an
@@ -1024,7 +1037,8 @@ internal sealed partial class SubscriptionHub
 
     private async ValueTask<bool> ReconcileNotificationSubscriptionAsync(
         RespireSubscription subscription, long version, RespireEndpoint[]? endpoints, bool authoritative,
-        StrongBox<RespireEndpoint?> failingEndpoint, CancellationToken cancellationToken)
+        StrongBox<RespireEndpoint?> failingEndpoint, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation = default)
     {
         if (version != Volatile.Read(ref _clusterNotifications.TopologyVersion)) return false;
         var desired = await GetNotificationCoverageAsync(subscription, cancellationToken, refreshPrimaries: endpoints is null).ConfigureAwait(false);
@@ -1073,7 +1087,7 @@ internal sealed partial class SubscriptionHub
             {
                 try
                 {
-                    await AddNotificationRouteAsync(node, subscription, name, trackCoverage: false, cancellationToken)
+                    await AddNotificationRouteAsync(node, subscription, name, trackCoverage: false, cancellationToken, observation)
                         .ConfigureAwait(false);
                 }
                 catch (Exception error)
@@ -1129,7 +1143,7 @@ internal sealed partial class SubscriptionHub
                 {
                     try
                     {
-                        await AddNotificationRouteAsync(node, subscription, name, trackCoverage: true, cancellationToken)
+                        await AddNotificationRouteAsync(node, subscription, name, trackCoverage: true, cancellationToken, observation)
                             .ConfigureAwait(false);
                     }
                     catch (Exception error)

@@ -72,6 +72,8 @@ acceptance criteria, dependencies, and current status:
 
 - [Resilience and API parity](https://github.com/thomhurst/Respire/issues/857): command retry policies,
   circuit breakers, and further connection/API work.
+- [Error telemetry ownership hardening](https://github.com/thomhurst/Respire/issues/1046): strengthen
+  stale-observation checks, consolidate reporting ownership, and independently audit command coverage.
 - [Typed command coverage](https://github.com/thomhurst/Respire/issues/858): Redis 8.10 / Valkey 9.1
   commands, missing options, and module/admin APIs.
 - [Ecosystem integrations](https://github.com/thomhurst/Respire/issues/859): Aspire, ASP.NET Core,

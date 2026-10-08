@@ -27,55 +27,69 @@ public sealed partial class RespireClient
         where TCommand : struct, IRespCommand
         where TSend : struct, IClusterReadySend<TResult>
     {
-        var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
-        var connection = cluster.TryAcquireReadyConnection(slot, cancellationToken);
-        RespValue response;
-        if (connection is null)
-        {
-            // Discovery and connection initialization retain the normal routing path.
-            response = await SendAsync(operation, command, cancellationToken).ConfigureAwait(false);
-        }
-        else
-        {
-            try
-            {
-                return await sender.Send(connection, operation, in command, cancellationToken,
-                    RespireTelemetry.CaptureOperationStart(operation)).ConfigureAwait(false);
-            }
-            catch (ClusterConverterException error)
-            {
-                // A caller converter can throw a Redis-shaped exception after success.
-                // It must never be mistaken for a rejected command and replayed.
-                ExceptionDispatchInfo.Capture(error.InnerException!).Throw();
-                throw;
-            }
-            catch (RespireConnectionRetiredException error) when (cluster.CanRetryRetirement(0, cancellationToken))
-            {
-                response = await ResumeRetiredClusterSendAsync(operation, command, connection, error,
-                    RespireReadFrom.Primary, cancellationToken).ConfigureAwait(false);
-            }
-            catch (RespireServerException error) when (ClusterRouter.CanRecover(error, slot))
-            {
-                response = await ResumeRejectedClusterSendAsync(operation, command, connection, error,
-                    RespireReadFrom.Primary, cancellationToken).ConfigureAwait(false);
-            }
-        }
-
-        var transferred = false;
+        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
         try
         {
-            var result = sender.Convert(in response);
-            transferred = sender.TransferOwnership;
-            return result;
+            var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
+            var connection = cluster.TryAcquireReadyConnection(slot, cancellationToken);
+            RespValue response;
+            if (connection is null)
+            {
+                // Discovery and connection initialization borrow the same conversion owner.
+                response = await SendCoreAsync(operation, command, cancellationToken, RespireCommandFlags.None,
+                    allowReadFrom: true, cursorAffinity: null, observation: observation, observeErrors: false).ConfigureAwait(false);
+            }
+            else
+            {
+                try
+                {
+                    return await sender.Send(connection, operation, in command, cancellationToken, observation,
+                        RespireTelemetry.CaptureOperationStart(operation)).ConfigureAwait(false);
+                }
+                catch (ClusterConverterException error)
+                {
+                    // A caller converter can throw a Redis-shaped exception after success.
+                    // It must never be mistaken for a rejected command and replayed.
+                    ExceptionDispatchInfo.Capture(error.InnerException!).Throw();
+                    throw;
+                }
+                catch (RespireConnectionRetiredException error) when (cluster.CanRetryRetirement(0, cancellationToken))
+                {
+                    response = await ResumeRetiredClusterSendAsync(operation, command, connection, error,
+                        RespireReadFrom.Primary, cancellationToken, observation: observation).ConfigureAwait(false);
+                }
+                catch (RespireServerException error) when (ClusterRouter.CanRecover(error, slot))
+                {
+                    response = await ResumeRejectedClusterSendAsync(operation, command, connection, error,
+                        RespireReadFrom.Primary, cancellationToken, observation: observation).ConfigureAwait(false);
+                }
+            }
+
+            var transferred = false;
+            try
+            {
+                var result = sender.Convert(in response);
+                transferred = sender.TransferOwnership;
+                return result;
+            }
+            finally
+            {
+                if (!transferred) response.Dispose();
+            }
         }
-        finally
+        catch (Exception error)
         {
-            if (!transferred) response.Dispose();
+            observation.Final(error);
+            throw;
         }
     }
 
-    private interface IClusterReadySend<TResult> : IReadySend<TResult>
+    private interface IClusterReadySend<TResult>
     {
+        ValueTask<TResult> Send<TCommand>(RespireConnection connection, string operation,
+            in TCommand command, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation,
+            RespireTelemetry.OperationStart durationStarted)
+            where TCommand : struct, IRespCommand;
         TResult Convert(in RespValue response);
         bool TransferOwnership { get; }
     }
@@ -84,20 +98,19 @@ public sealed partial class RespireClient
     private readonly struct ClusterConvertedReadySend<TState, TResult>(
         TState state, ResponseConverter<TState, TResult> converter, bool transferOwnership) : IClusterReadySend<TResult>
     {
-        public bool ObserveDuration => true;
         public bool TransferOwnership => transferOwnership;
         public TResult Convert(in RespValue response) => converter(state, in response);
 
         public ValueTask<TResult> Send<TCommand>(RespireConnection connection, string operation,
-            in TCommand command, CancellationToken cancellationToken,
-            RespireTelemetry.OperationStart durationStarted) where TCommand : struct, IRespCommand
+            in TCommand command, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation,
+            RespireTelemetry.OperationStart durationStarted)
+            where TCommand : struct, IRespCommand
             => connection.SendConvertedAsync(in command, this,
                 static (ClusterConvertedReadySend<TState, TResult> sender, in RespValue response) =>
                 {
                     try { return sender.Convert(in response); }
                     catch (Exception error) { throw new ClusterConverterException(error); }
-                }, transferOwnership, cancellationToken, operation,
-                durationStarted: durationStarted);
+                }, transferOwnership, cancellationToken, operation, observation: observation, durationStarted: durationStarted);
     }
 
     private sealed class ClusterConverterException(Exception error)

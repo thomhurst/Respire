@@ -54,13 +54,21 @@ internal abstract partial class PendingResponse
     /// <summary>Command label used in timeout errors; null when the source carries none.</summary>
     internal virtual string? CommandName => null;
 
+    // Copy before admission; both owners retain this value until the FIFO reply drains.
+    // Never retain the caller's pooled observation after its final boundary completes.
+    internal int ErrorAttempts { get; set; }
+
     /// <summary>Completion state captured by the deadline sweep for its epoch-checked CAS.</summary>
     internal long State => Volatile.Read(ref _state);
 
     internal static bool IsCompleted(long state) => (state & 1) != 0;
 
     /// <summary>Called after rent, before source is published anywhere.</summary>
-    internal void PrepareForUse(int receiveReferences = 1) => _refs = receiveReferences + 1;
+    internal void PrepareForUse(int receiveReferences = 1)
+    {
+        _refs = receiveReferences + 1;
+        ErrorAttempts = 0;
+    }
 
     public virtual bool TrySetResult(in RespValue result)
     {
@@ -350,6 +358,7 @@ internal sealed class MultiReplyPendingResponseSource : PendingResponse, IValueT
             }
             else
             {
+                RespireTelemetry.RecordDiscardedError(in result, _commandName, ErrorAttempts);
                 result.Dispose();
             }
 
@@ -366,6 +375,7 @@ internal sealed class MultiReplyPendingResponseSource : PendingResponse, IValueT
                 || result.IsError && result.AsMemory().Span.SequenceEqual(
                     "EXECABORT Transaction discarded because of previous errors."u8)))
                 completion = completion.WithTransactionStateCleared();
+            RespireTelemetry.RecordDiscardedError(in result, _commandName, ErrorAttempts);
             result.Dispose();
             _queueError = default;
             _hasQueueError = false;
@@ -373,6 +383,7 @@ internal sealed class MultiReplyPendingResponseSource : PendingResponse, IValueT
 
         if (!(reserved ? base.CompleteReservedResult(in completion) : base.TrySetResult(in completion)))
         {
+            RespireTelemetry.RecordDiscardedError(in completion, _commandName, ErrorAttempts);
             completion.Dispose();
         }
 
@@ -428,6 +439,7 @@ internal sealed class MultiReplyPendingResponseSource : PendingResponse, IValueT
         {
             if (source._hasQueueError)
             {
+                RespireTelemetry.RecordDiscardedError(in source._queueError, source._commandName, source.ErrorAttempts);
                 source._queueError.Dispose();
             }
 
@@ -551,6 +563,7 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
     private bool _hasResponse;
     private bool _transferOwnership;
     private string? _commandName;
+    private bool _observeErrors;
     private RespireTelemetry.DurationObservation _duration;
 
     private ConvertedPendingResponseSource()
@@ -565,7 +578,7 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
         TState state,
         ResponseConverter<TState, TResult> converter,
         bool transferOwnership,
-        string? commandName,
+        string? commandName, int errorAttempts = 0, bool observeErrors = true,
         RespireTelemetry.DurationObservation duration = default)
     {
         var source = Pool.Rent();
@@ -574,8 +587,10 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
         source._converter = converter;
         source._transferOwnership = transferOwnership;
         source._commandName = commandName;
+        source._observeErrors = observeErrors;
         source._duration = duration;
         source.PrepareForUse();
+        source.ErrorAttempts = errorAttempts;
         return source;
     }
 
@@ -597,12 +612,8 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
     {
         try
         {
-            try
-            {
-                _core.GetResult(token);
-                if (_response.IsError) throw ResponseReader.ServerError(in _response, _commandName);
-            }
-            catch (Exception error) { _duration.Complete(_commandName, error); throw; }
+            _core.GetResult(token);
+            if (_response.IsError) throw ResponseReader.ServerError(in _response, _commandName);
             // Telemetry ends at the response, before user conversion and its failures.
             _duration.Complete(_commandName);
 
@@ -613,6 +624,13 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
             }
 
             return result;
+        }
+        catch (Exception error)
+        {
+            // Successful response completion already consumes duration before conversion.
+            _duration.Complete(_commandName, error);
+            if (_observeErrors) RespireTelemetry.RecordError(error, internallyHandled: false, ErrorAttempts);
+            throw;
         }
         finally
         {
@@ -683,6 +701,7 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
     private bool _hasResponse;
     private bool _hasDirectResult;
     private string? _commandName;
+    private bool _observeErrors;
     private RespireTelemetry.DurationObservation _duration;
 
     private StringPendingResponseSource()
@@ -693,13 +712,16 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
 
     internal override string? CommandName => _commandName;
 
-    public static StringPendingResponseSource Rent(string? commandName, RespireTelemetry.DurationObservation duration = default)
+    public static StringPendingResponseSource Rent(string? commandName, int errorAttempts = 0, bool observeErrors = true,
+        RespireTelemetry.DurationObservation duration = default)
     {
         var source = Pool.Rent();
 
         source._commandName = commandName;
+        source._observeErrors = observeErrors;
         source._duration = duration;
         source.PrepareForUse();
+        source.ErrorAttempts = errorAttempts;
         return source;
     }
 
@@ -739,13 +761,9 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
     {
         try
         {
-            try
-            {
-                _core.GetResult(token);
-                if (!_hasDirectResult && _response.IsError)
-                    throw ResponseReader.ServerError(in _response, _commandName);
-            }
-            catch (Exception error) { _duration.Complete(_commandName, error); throw; }
+            _core.GetResult(token);
+            if (!_hasDirectResult && _response.IsError)
+                throw ResponseReader.ServerError(in _response, _commandName);
             _duration.Complete(_commandName);
             if (_hasDirectResult)
             {
@@ -753,6 +771,12 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
             }
 
             return ResponseReader.StringOrNull(in _response);
+        }
+        catch (Exception error)
+        {
+            _duration.Complete(_commandName, error);
+            if (_observeErrors) RespireTelemetry.RecordError(error, internallyHandled: false, ErrorAttempts);
+            throw;
         }
         finally
         {

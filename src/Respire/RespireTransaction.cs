@@ -262,11 +262,8 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private protected async ValueTask<bool> CommitCoreAsync(CancellationToken cancellationToken, bool validateEmptyWatch = false)
     {
-        ThrowIfCompleted();
-        using var importUsage = ConnectionPolicy.EnterOperation();
-        if (ConnectionPolicy.IsImportSession)
-            ConnectionPolicy.PinnedConnection!.ValidateTransactionCapacity(_ops.Count, includeMulti: false);
-        _completed = true;
+        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        using var importUsage = PrepareCommit(observation);
         var core = _client.Core;
         var telemetryOperation = "MULTI";
         var sentinelStarted = core.Sentinel is null ? default : RespireTelemetry.CaptureBatchStart("MULTI", _ops, static op => op.Operation);
@@ -459,6 +456,17 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             }
             finally
             {
+                if (operationError is not null)
+                {
+                    var pendingErrors = false;
+                    foreach (var op in _ops)
+                    {
+                        op.AddErrorAttempts(observation.Attempts);
+                        pendingErrors |= op.ReportError();
+                    }
+                    if (!pendingErrors)
+                        RespireTelemetry.RecordError(operationError, internallyHandled: false, observation.Attempts);
+                }
                 if (connection is null && operationError is not null)
                     RespireTelemetry.RecordUnroutedBatchFailure("MULTI", _ops, static op => op.Operation,
                         core.Options.Database, sentinelStarted, operationError);
@@ -525,7 +533,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                         }
                         reply = await connection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count,
                                 cancellationToken, includeMulti: !ConnectionPolicy.IsImportSession, commandDeadline: deadline,
-                                transaction: this, mutationFence: mutationFence)
+                                transaction: this, observation: observation, mutationFence: mutationFence)
                             .ConfigureAwait(false);
                         connection = ExecutingConnection ?? connection;
                         if (ConnectionPolicy.IsImportSession && (reply.Type == RespDataType.Array || reply.IsNull
@@ -537,6 +545,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                     {
                         // The transport rejects the complete MULTI/EXEC frame before accepting any part.
                         cluster.RecordRejection(ref discovery, connection, retirement);
+                        observation.Handled(retirement);
                         discoveryPending = true;
                         connection = await cluster.GetReplacementConnectionAsync(null, slot, null, acquisition.Token, discovery)
                             .ConfigureAwait(false);
@@ -588,6 +597,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                     }
 
                     cluster.RecordRejection(ref discovery, connection, redirect);
+                    observation.Handled(redirect);
                     discoveryPending = true;
                     connection = await cluster.GetRedirectConnectionAsync(redirect, connection, acquisition.Token, slot, discovery)
                         .ConfigureAwait(false);
@@ -757,6 +767,26 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
         _hasClusterSlot = true;
     }
 
+    private RespireHashImportSession.Usage? PrepareCommit(RespireTelemetry.ErrorObservation observation)
+    {
+        RespireHashImportSession.Usage? usage = null;
+        try
+        {
+            ThrowIfCompleted();
+            usage = ConnectionPolicy.EnterOperation();
+            if (ConnectionPolicy.IsImportSession)
+                ConnectionPolicy.PinnedConnection!.ValidateTransactionCapacity(_ops.Count, includeMulti: false);
+            _completed = true;
+            return usage;
+        }
+        catch (Exception error)
+        {
+            usage?.Dispose();
+            observation.Final(error);
+            throw;
+        }
+    }
+
     private void ThrowIfCompleted()
     {
         if (_completed)
@@ -776,6 +806,8 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
         public abstract Exception? Complete(RespireClient client, in RespValue element);
 
         public abstract void Fail(Exception error);
+        public abstract bool ReportError();
+        public abstract void AddErrorAttempts(int attempts);
 
         public abstract void Abort();
     }
@@ -807,6 +839,8 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
         }
 
         public override void Fail(Exception error) => pending.Fail(error);
+        public override bool ReportError() => pending.ReportError();
+        public override void AddErrorAttempts(int attempts) => pending.AddErrorAttempts(attempts);
 
         public override void Abort() => pending.Abort();
     }

@@ -638,22 +638,40 @@ public class TimeoutDiagnosticsTests
     [Arguments(true)]
     public async Task TransactionTimeout_ReportsSharedOrDedicatedConnection(bool watched)
     {
+        var written = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
         {
-            SuppressReply = command => command == "EXEC"
+            SuppressReply = command =>
+            {
+                if (command != "EXEC") return false;
+                written.TrySetResult();
+                return true;
+            },
         };
-        await using var client = await ConnectAsync(server.Port);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, CommandTimeout = null,
+            Endpoints = [new("127.0.0.1", server.Port)],
+        });
         await using RespireTransactionBase transaction = watched
             ? await client.CreateTransactionAsync(["key"])
             : client.CreateTransaction();
         var pending = transaction.GetString("key");
-        var error = await Assert.That(async () =>
-        {
-            if (transaction is RespireWatchedTransaction watchedTransaction)
-                await watchedTransaction.CommitAsync();
-            else
-                await ((RespireTransaction)transaction).CommitAsync();
-        })
+        var connection = watched ? transaction.InspectForTests().WatchConnection! : client.Core.Multiplexer.GetConnection();
+        var commit = transaction is RespireWatchedTransaction watchedTransaction
+            ? watchedTransaction.CommitAsync().AsTask() : ((RespireTransaction)transaction).CommitAsync().AsTask();
+        await written.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        // Keep setup outside this command-timeout test. EXEC remains suppressed while earlier
+        // replies drain and the physical write completes, so the timeout captures AwaitingReply.
+        while (connection.InspectForTests().Inflight.Count != 1)
+            await Task.Delay(1, deadline.Token);
+        await Assert.That(connection.InspectForTests().Inflight.TryPeek(out var source)).IsTrue();
+        while (connection.CaptureTimeoutDiagnostics().ForCommand(source!.WriteStart, source.WriteEnd).Stage != RespireCommandStage.AwaitingReply)
+            await Task.Delay(1, deadline.Token);
+        RespireTimeoutDiagnostics? diagnostics = null;
+        await Assert.That(source!.TrySetTimedOut(source.State, TimeSpan.FromMilliseconds(200), ref diagnostics, connection)).IsTrue();
+        var error = await Assert.That(async () => await commit.WaitAsync(TimeSpan.FromSeconds(5)))
             .ThrowsExactly<RespireTimeoutException>();
         await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.AwaitingReply);
         await Assert.That(error.Diagnostics.Endpoint).IsEqualTo(new RespireEndpoint("127.0.0.1", server.Port));

@@ -72,7 +72,7 @@ jobs:
           dotnet run --project tests/Respire.Tests -c Release -f net8.0 --no-build -- \
             --treenode-filter '/*/*/GetStringDirectPathTests/*'
           dotnet run --project tests/Respire.Tests -c Release -f net8.0 --no-build -- \
-            --treenode-filter '/*/*/MetricSelectionTests/*' --report-trx \
+            --treenode-filter '/*/*/(MetricSelectionTests)|(ErrorMetricsTests)/*' --report-trx \
             --report-trx-filename Respire.Tests-metric-selection-net8.trx
       - name: Upload test reports
         if: always()

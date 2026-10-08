@@ -64,7 +64,7 @@ public class MetricSelectionTests
     [Arguments("blocked")]
     [Arguments("excluded")]
     [Arguments("enabled")]
-    public async Task PinnedResponseSelectionAvoidsUnneededTelemetryWrapper(string mode)
+    public async Task PinnedResponseSelectionPreservesFinalErrorBoundary(string mode)
     {
         foreach (var trace in new[] { false, true })
         {
@@ -83,7 +83,10 @@ public class MetricSelectionTests
             var pending = client.SendOnPinnedConnectionAsync("GET", connection, new Cmd1(Verbs.Get, "key"), deadline.Token);
             while (!server.ReceivedCommands.Contains("GET key")) await Task.Delay(1, deadline.Token);
             await Assert.That(Inflight(connection).TryPeek(out var head)).IsTrue();
-            await Assert.That(ReferenceEquals(ResponseSource(ref pending), head)).IsEqualTo(!trace && mode != "enabled");
+            // A pooled final-error observer consumes GetResult even when command telemetry is
+            // disabled. The physical response cannot be the public task's source because
+            // metric selection can change before that response completes.
+            await Assert.That(ReferenceEquals(ResponseSource(ref pending), head)).IsFalse();
             await server.SendRawAsync("$5\r\nhello\r\n"u8.ToArray());
             using var value = await pending;
             await Assert.That(value.AsString()).IsEqualTo("hello");
@@ -517,7 +520,7 @@ public class MetricSelectionTests
                 {
                     var execution = await client.StartTrackedScriptExecutionAsync(RespireScript.Create("return 1"),
                         [], [], deadline.Token, captureSendTimestampOnly: true);
-                    using var result = await execution.Response;
+                    using var result = await execution.ConsumeResponseAsync();
                 }
                 else
                     using (await client.Scripts.ExecuteAsync(RespireScript.Create("return 1"), cancellationToken: deadline.Token)) { }
@@ -595,7 +598,7 @@ public class MetricSelectionTests
             {
                 if (!tracked) return await client.Scripts.ExecuteAsync(script);
                 var execution = await client.StartTrackedScriptExecutionAsync(script, [], [], default, captureSendTimestampOnly: true);
-                return await execution.Response;
+                return await execution.ConsumeResponseAsync();
             }
         }
     }
@@ -679,7 +682,7 @@ public class MetricSelectionTests
             {
                 var execution = await client.StartTrackedScriptExecutionAsync(script, [], [], deadline.Token,
                     captureSendTimestampOnly: true);
-                using var result = await execution.Response;
+                using var result = await execution.ConsumeResponseAsync();
             }
             else
                 using (await client.Scripts.ExecuteAsync(script, cancellationToken: deadline.Token)) { }

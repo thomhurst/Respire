@@ -548,7 +548,17 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
         if (cancellationToken.IsCancellationRequested)
             return ValueTask.FromCanceled<bool>(cancellationToken);
         return client.FlagAsync(
-            "MSETNX", new CmdN(RespireCommands.String.MSETNX.Verb, SetManyIfNotExistsArgs(client, pairs)), cancellationToken);
+            "MSETNX", CreateObservedSetManyIfNotExistsCommand(pairs), cancellationToken);
+    }
+
+    private CmdN CreateObservedSetManyIfNotExistsCommand(ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
+    {
+        try { return new CmdN(RespireCommands.String.MSETNX.Verb, SetManyIfNotExistsArgs(client, pairs)); }
+        catch (Exception error)
+        {
+            RespireTelemetry.RecordError(error, internallyHandled: false);
+            throw;
+        }
     }
 
     public ValueTask<bool> SetManyExpireAsync(

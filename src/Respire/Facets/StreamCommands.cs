@@ -917,7 +917,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
         var resolvedKey = client.Key(in key);
         while (!cancellationToken.IsCancellationRequested)
         {
-            var reply = await client.SendBlockingAsync(
+            var entries = await client.ConvertBlockingResponseAsync(
                 "XREADGROUP",
                 new CmdN(Verbs.XReadGroup,
                 [
@@ -926,23 +926,10 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
                     "BLOCK", (long)BlockInterval.TotalMilliseconds,
                     "STREAMS", resolvedKey, ">",
                 ]),
-                cancellationToken).ConfigureAwait(false);
-
-            if (reply.IsNull)
-            {
-                reply.Dispose();
-                continue;
-            }
-
-            RespireStreamEntry[] entries;
-            try
-            {
-                entries = ParseReadReply(in reply, resolvedKey, group);
-            }
-            finally
-            {
-                reply.Dispose();
-            }
+                cancellationToken, (Commands: this, Key: resolvedKey, Group: group),
+                static ((StreamCommands Commands, RespireValue Key, string Group) state, in RespValue reply) =>
+                    reply.IsNull ? [] : state.Commands.ParseReadReply(in reply, state.Key, state.Group))
+                .ConfigureAwait(false);
 
             foreach (var entry in entries)
             {
@@ -972,7 +959,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
         var cursor = startAt.Value;
         while (!cancellationToken.IsCancellationRequested)
         {
-            var reply = await client.SendAsync(
+            var entries = await client.ConvertResponseAsync(
                 "XREADGROUP",
                 new CmdN(Verbs.XReadGroupReplay,
                 [
@@ -980,22 +967,10 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
                     "COUNT", batchSize,
                     "STREAMS", resolvedKey, cursor.Value,
                 ]),
-                cancellationToken).ConfigureAwait(false);
-            if (reply.IsNull)
-            {
-                reply.Dispose();
-                yield break;
-            }
-
-            RespireStreamEntry[] entries;
-            try
-            {
-                entries = ParseReadReply(in reply, resolvedKey, group);
-            }
-            finally
-            {
-                reply.Dispose();
-            }
+                cancellationToken, (Commands: this, Key: resolvedKey, Group: group),
+                static ((StreamCommands Commands, RespireValue Key, string Group) state, in RespValue reply) =>
+                    reply.IsNull ? [] : state.Commands.ParseReadReply(in reply, state.Key, state.Group))
+                .ConfigureAwait(false);
 
             if (entries.Length == 0)
             {

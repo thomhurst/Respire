@@ -194,22 +194,31 @@ public sealed class RespireHashImportSession : IAsyncDisposable
     private async ValueTask<T> SendAsync<T>(string operation, CmdN command,
         Func<RespValue, T> convert, CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        using var usage = EnterOperation();
-        var cache = operation == SetOperation ? _client.Core.ClientCache : null;
-        var fence = cache is null ? default : cache.BeforeCommand(operation, in command);
+        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
         try
         {
-            using var response = await _client.SendMutationOnConnectionAsync(operation, _connection, command,
-                fence, cancellationToken, allowStreamingConnectionReroute: false).ConfigureAwait(false);
-            return convert(response);
+            cancellationToken.ThrowIfCancellationRequested();
+            using var usage = EnterOperation();
+            var cache = operation == SetOperation ? _client.Core.ClientCache : null;
+            var fence = cache is null ? default : cache.BeforeCommand(operation, in command);
+            try
+            {
+                using var response = await _client.SendMutationOnConnectionAsync(operation, _connection, command,
+                    fence, cancellationToken, allowStreamingConnectionReroute: false, observation: observation).ConfigureAwait(false);
+                return convert(response);
+            }
+            catch (Exception error)
+            {
+                await ExpireIfUncertainAsync(error).ConfigureAwait(false);
+                throw;
+            }
+            finally { cache?.CompleteMutation(in fence); }
         }
         catch (Exception error)
         {
-            await ExpireIfUncertainAsync(error).ConfigureAwait(false);
+            observation.Final(error);
             throw;
         }
-        finally { cache?.CompleteMutation(in fence); }
     }
 
     internal Usage EnterOperation()

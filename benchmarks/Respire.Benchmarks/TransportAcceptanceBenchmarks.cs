@@ -21,8 +21,10 @@ public class TransportAcceptanceBenchmarks
     private readonly DelayedReadStream _stream = new(new byte[StreamPayloadLength]);
     private readonly MemoryStream _instantStream = new(new byte[StreamPayloadLength]);
     private static readonly RawCommand Ping = new("*1\r\n$4\r\nPING\r\n"u8.ToArray());
+    private readonly RespireKey _errorKey = "transport-acceptance:not-integer";
     private RespireConnectionMultiplexer _multiplexer = null!;
     private RespireClient _client = null!;
+    private ErrorMetricBenchmarkScope _errorMetrics = null!;
 
     [Params(1, 2)]
     public int Connections { get; set; }
@@ -30,6 +32,7 @@ public class TransportAcceptanceBenchmarks
     [GlobalSetup]
     public async Task Setup()
     {
+        _errorMetrics = new();
         ReportMemory("before-connect");
         var host = Environment.GetEnvironmentVariable("REDIS_HOST") ?? "127.0.0.1";
         var port = int.TryParse(Environment.GetEnvironmentVariable("REDIS_PORT"), out var configured) ? configured : 6379;
@@ -43,6 +46,8 @@ public class TransportAcceptanceBenchmarks
         });
         await Pipeline();
         await _client.PingAsync();
+        await _client.SetAsync(_errorKey, "value");
+        await _errorMetrics.WarmAsync(_client, _errorKey);
         ReportMemory("connected");
         // Exercise bounded source reuse and both ordinary write layouts outside the timed region.
         for (var i = 0; i < 64; i++) await PublicPipeline();
@@ -61,6 +66,7 @@ public class TransportAcceptanceBenchmarks
         _multiplexer = null!;
         _stream.Dispose();
         _instantStream.Dispose();
+        _errorMetrics.Dispose();
         ReportMemory("after-dispose");
     }
 
@@ -143,4 +149,12 @@ public class TransportAcceptanceBenchmarks
 
     [Benchmark]
     public async Task ClientPing() => await _client.PingAsync();
+
+    [Benchmark]
+    public async Task<string> ClientServerError()
+    {
+        try { await _client.Strings.IncrementAsync(_errorKey); }
+        catch (RespireServerException error) when (error.Code == "ERR") { return error.Code; }
+        throw new InvalidOperationException("Expected Redis ERR for a non-integer value.");
+    }
 }

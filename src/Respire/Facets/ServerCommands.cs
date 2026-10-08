@@ -301,24 +301,26 @@ internal sealed partial class ServerCommands(RespireClient client) : IServerComm
 
     private async ValueTask<long> DatabaseSizeClusterAsync(CancellationToken cancellationToken)
     {
-        var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(cancellationToken, discovery: null).ConfigureAwait(false);
-        long total = 0;
-        foreach (var connection in connections)
+        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        try
         {
-            var reply = await client.SendToClusterTargetAsync(
-                    "DBSIZE", connection, new RawCommand(RespCommands.DbSize, DbSizeReadKind), cancellationToken)
-                .ConfigureAwait(false);
-            try
+            var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(cancellationToken, discovery: null).ConfigureAwait(false);
+            long total = 0;
+            foreach (var connection in connections)
             {
+                using var reply = await client.SendToClusterTargetAsync(
+                        "DBSIZE", connection, new RawCommand(RespCommands.DbSize, DbSizeReadKind), cancellationToken,
+                        observeErrors: false, observation: observation)
+                    .ConfigureAwait(false);
                 total = checked(total + ResponseReader.Integer(in reply));
             }
-            finally
-            {
-                reply.Dispose();
-            }
+            return total;
         }
-
-        return total;
+        catch (Exception error)
+        {
+            observation.Final(error);
+            throw;
+        }
     }
 
     private async ValueTask FlushClusterAsync(
@@ -326,33 +328,35 @@ internal sealed partial class ServerCommands(RespireClient client) : IServerComm
         Cmd command,
         CancellationToken cancellationToken)
     {
-        var cache = client.Core.ClientCache;
-        var mutationFence = cache is null ? default : cache.BeginUnknownMutation();
+        // This sequential fan-out has one public result. Its targets borrow the owner
+        // through conversion, and final reporting follows the mutation fence cleanup.
+        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
         try
         {
-            var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(cancellationToken, discovery: null)
-                .ConfigureAwait(false);
-            foreach (var connection in connections)
+            var cache = client.Core.ClientCache;
+            var mutationFence = cache is null ? default : cache.BeginUnknownMutation();
+            try
             {
-                var reply = await client.SendToClusterTargetAsync(
-                        operation, connection, new MutationCommand<Cmd>(command, mutationFence), cancellationToken)
+                var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(cancellationToken, discovery: null)
                     .ConfigureAwait(false);
-                try
+                foreach (var connection in connections)
                 {
+                    using var reply = await client.SendToClusterTargetAsync(
+                            operation, connection, new MutationCommand<Cmd>(command, mutationFence), cancellationToken,
+                            observeErrors: false, observation: observation)
+                        .ConfigureAwait(false);
                     ResponseReader.ExpectOk(in reply);
                 }
-                finally
-                {
-                    reply.Dispose();
-                }
+            }
+            finally
+            {
+                if (mutationFence.IsRequired) cache!.CompleteMutation(in mutationFence);
             }
         }
-        finally
+        catch (Exception error)
         {
-            if (mutationFence.IsRequired)
-            {
-                cache!.CompleteMutation(in mutationFence);
-            }
+            observation.Final(error);
+            throw;
         }
     }
 

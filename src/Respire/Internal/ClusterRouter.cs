@@ -688,12 +688,13 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
     internal async ValueTask<DedicatedConnectionPool> GetReadDedicatedPoolAsync(
         int? slot, RespireReadFrom readFrom, CancellationToken cancellationToken, DiscoveryRound? discovery,
-        string? preferredZone = null, HashSet<RespireConnectionMultiplexer>? excluded = null)
+        string? preferredZone = null, HashSet<RespireConnectionMultiplexer>? excluded = null,
+        RespireTelemetry.ErrorObservation observation = default)
     {
         if (readFrom == RespireReadFrom.Primary || slot is null)
             return await GetDedicatedPoolAsync(slot, cancellationToken, discovery).ConfigureAwait(false);
 
-        var connection = await GetReadConnectionAsync(slot, readFrom, cancellationToken, discovery, preferredZone, excluded)
+        var connection = await GetReadConnectionAsync(slot, readFrom, cancellationToken, discovery, preferredZone, excluded, observation)
             .ConfigureAwait(false);
         return connection.Multiplexer is { } node
             ? GetOrCreateDedicatedPool(node)
@@ -1266,15 +1267,15 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         bool allowStreamingConnectionReroute = true,
         DedicatedStreamRoute streamingRoute = default,
         string? preferredZone = null,
-        bool pinToConnection = false)
+        bool pinToConnection = false, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, Respire.Protocol.IRespCommand
     {
         if (command is StreamedSetCommand streamedSet)
             return connection.SendAskingStreamedSetAsync(in Asking, streamedSet, cancellationToken, commandDeadline,
-                streamingRoute);
+                streamingRoute, observation.Attempts);
 
         return CheckAskingReplyAsync(connection.SendValidatedPrefixedAsync(in Asking, in command,
-            cancellationToken, commandName ?? "(command)", preferredZone, pinToConnection, commandDeadline), commandName);
+            cancellationToken, commandName ?? "(command)", preferredZone, pinToConnection, commandDeadline, observation), commandName);
     }
 
     private static async ValueTask<Respire.Protocol.RespValue> CheckAskingReplyAsync(
@@ -1294,16 +1295,17 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         RespireConnection connection,
         in TCommand command,
         CancellationToken cancellationToken,
-        string commandName = "(command)", string? preferredZone = null)
+        string commandName = "(command)", string? preferredZone = null,
+        RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, Respire.Protocol.IRespCommand
     {
         if (command is StreamedSetCommand)
             // Streamed SET is a write; CLIENT CACHING only applies to a subsequent read.
-            return SendAskingAsync(connection, in command, cancellationToken, commandName);
+            return SendAskingAsync(connection, in command, cancellationToken, commandName, observation: observation);
 
         var caching = new ClientCachingCommand();
         return connection.SendValidatedPrefixedAsync(
-            in Asking, in caching, in command, cancellationToken, commandName, preferredZone);
+            in Asking, in caching, in command, cancellationToken, commandName, preferredZone, observation);
     }
 
     internal static ValueTask<Stream?> SendAskingBulkStreamAsync<TCommand>(
@@ -1311,10 +1313,11 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         in TCommand command,
         CancellationToken cancellationToken,
         string? commandName = null,
-        Action<Exception?>? onFrameCompleted = null, string? preferredZone = null)
+        Action<Exception?>? onFrameCompleted = null, string? preferredZone = null,
+        RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, Respire.Protocol.IRespCommand
          => connection.SendPrefixedBulkStreamAsync(
-             in Asking, in command, cancellationToken, commandName, onFrameCompleted, preferredZone);
+             in Asking, in command, cancellationToken, commandName, onFrameCompleted, preferredZone, observation);
 
     internal static ValueTask<Respire.Protocol.RespValue> SendAskingUncheckedAsync<TCommand>(
         RespireConnection connection,
@@ -1330,10 +1333,10 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     internal static ValueTask<Respire.Protocol.RespValue> SendBlockingAskingUncheckedAsync<TCommand>(
         RespireConnection connection,
         in TCommand command,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, int errorAttempts = 0)
         where TCommand : struct, Respire.Protocol.IRespCommand
         => connection.SendPrefixedWithoutResponseTimeoutAsync(
-            Asking, command, throwOnError: false, cancellationToken);
+            Asking, command, throwOnError: false, cancellationToken, errorAttempts);
 
     internal async ValueTask<RespireConnection[]> GetMasterConnectionsAsync(
         CancellationToken cancellationToken, DiscoveryRound? discovery)

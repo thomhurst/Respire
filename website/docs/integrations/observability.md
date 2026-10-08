@@ -70,7 +70,7 @@ their contents. `Configure` copies and validates the collections before publishi
 
 | Flag | Redis group | Currently selected standard measurements |
 | --- | --- | --- |
-| `Resiliency` | `resiliency` | Maintenance notifications and geographic failovers |
+| `Resiliency` | `resiliency` | Errors, maintenance notifications, and geographic failovers |
 | `ConnectionBasic` | `connection-basic` | Ready connection counts, creation time, active maintenance timeout allowances and published handoffs |
 | `ConnectionAdvanced` | `connection-advanced` | Pending replies, dedicated-pool acquisition waits and physical socket closes |
 | `Command` | `command` | Logical operation duration, including Redis commands used for pub/sub and streams |
@@ -145,6 +145,7 @@ The meter name remains `Respire`.
 | `respire.client_cache.evictions` | `redis.client.csc.evictions` | `{eviction}` | Removed cached responses; optional `redis.client.csc.reason=full`, `ttl`, or `invalidation` |
 | `respire.maintenance.notifications` | `redis.client.maintenance.notifications` | `{notification}` | `redis.client.connection.notification` identifies the notification; `server.address` and `server.port` identify its source |
 | Deployment switches between known endpoints | `redis.client.geofailover.failovers` | `{failover}` | `db.client.geofailover.reason=automatic`, `db.client.geofailover.fail_from`, and `db.client.geofailover.fail_to` |
+| New instrument | `redis.client.errors` | `{error}` | Internal handling or final operation failure; category, internal flag, exception type, retry count, and known Redis error code |
 | `db.client.operation.duration` | Unchanged | `s` | Existing logical operation latency and database attributes |
 | New measurement | `redis.client.pubsub.messages` | `{message}` | One message per confirmed publication or accepted incoming frame; direction `out`/`in` and sharded boolean |
 | New measurement | `redis.client.stream.lag` | `s` | Entry timestamp to explicit application processing start |
@@ -167,7 +168,7 @@ Respire-specific instruments remain available for hedging, availability zones, t
 health, coordination, Sentinel recovery, cache invalidation notifications, continuity
 flushes, and pub/sub delivery gaps. Mapping existing signals does not imply that every
 instrument or configuration group in the Redis specification is implemented. Additional
-error and dashboard coverage is tracked
+dashboard coverage is tracked
 by [#866](https://github.com/thomhurst/Respire/issues/866).
 
 ## Pub/sub messages and stream lag
@@ -319,6 +320,246 @@ client disposal does not flush them. MOVING captures both shared and dedicated l
 at publication, so a lease closed afterwards still counts and a handshake completed afterwards
 does not. The retirement cache fence, dedicated-owner notification and idle cleanup precede
 queueing handoff measurements.
+
+## Error measurements
+
+`redis.client.errors` is a counter in the `Resiliency` group, independent of command
+filters and latency collection. Each measurement is one error at an observed boundary,
+not one failed command inferred from a disconnected socket.
+
+Observed caller boundaries include connection establishment, immediate typed and raw
+commands, scripts, blocking commands, streamed uploads, cached reads, batch execution,
+transaction commit, and fire-and-forget submission. The counter is not an exception
+constructor hook: throwing or inspecting an exception elsewhere does not itself emit
+a measurement. Selection is checked when an error is reported.
+
+When adding a command route, identify its final observation owner and test both a
+handled retry and the failure delivered to the caller. Delegating routes borrow that
+owner; shared producers, deferred results and payload reads need their own lifetime
+boundaries. The independent route inventory and ownership consolidation are tracked
+in [#1046](https://github.com/thomhurst/Respire/issues/1046). Current runtime controls
+cover individual routes; they do not mechanically classify every public entry point.
+
+Include synchronous command construction and execution admission in that review.
+Multi-key builders can reject cross-slot inputs before dispatch, and batch execution
+can reject a disposed, already-sent, or busy import session before command owners exist.
+These preflight boundaries report one final error themselves. Keep their catch scope
+limited to construction or admission so a delegated response owner does not report twice.
+Test rejected construction with no command sent, successful construction with a reply,
+and enabled and disabled collection. Batch admission controls must preserve pending
+results and the batch's single-shot state.
+
+The logical boundary rents an error observation even when collection is disabled, so
+later activation retains completed retry counts. Sequential routing, transport, and
+conversion helpers borrow that observation and never return it or publish a nested
+final failure. Return the observation only after those borrowers and cleanup finish.
+Shared cache producers and hedge legs can outlive the caller, so they own independent
+observations; callers copy completed counts rather than share an outstanding handle.
+Generation checks protect storage reuse but do not extend a borrower's lifetime.
+
+Error-instrument publication is also isolated from application failures. A listener
+that throws while the counter is first published cannot replace the caller's exception
+or permanently disable reporting. Publication can succeed after that listener is removed.
+
+Connection-string parsing failures in `RespireClient.ConnectAsync(string)` are final
+connection failures, including null or malformed input. Parsing preserves its synchronous
+exception behavior. Once parsing succeeds, the delegated connection setup owns the final
+observation, so authentication or cancellation failures are not counted twice.
+
+Direct node sends, CLIENT handles, and HOTKEYS handles have explicit final observers.
+These observers include reply parsing. Typed conversion retains the operation's
+observation through transport retries or redirects, so a converter failure reports
+the completed retry count. The conversion source returns its lease before publishing
+the caller's result and preserves the original exception and cancellation token.
+Cluster-target fan-outs retain transport and target-replacement attempts in one observation; node-result
+fan-outs count each failed endpoint before returning its error result. Blocking commands
+and scripts include disposed-client rejection. Correction scopes that suppress their
+inner observer keep reporting after their own cleanup.
+
+Ordered distributed-cache corrections borrow their independent observation through
+socket broadcasts and original-peer recovery. Handled retirement and connection-loss
+retries contribute to the caller's final retry count when the caller joins correction.
+A failed ordering fence remains the final failure rather than a handled retry.
+
+Tracked scripts share one observation across transport retries, Cluster redirects,
+and `NOSCRIPT` fallback. A direct response read owns the final observation. When a
+tracked caller uses the correction boundary, final reporting waits for correction
+and mutation cleanup and describes the exception that actually reaches the caller.
+This includes tracked distributed-cache writes and coordination scripts.
+
+Public scripts also retain transport retries across `NOSCRIPT` fallback. Connection
+candidate cancellation reports the failures completed before cancellation. FUNCTION
+fan-outs observe discovery and inconsistent-result failures while retaining each
+target's own failure boundary. Server fan-outs observe topology discovery failures
+before per-node work starts. The sequential Cluster `DBSIZE`, `FLUSHDB`, and `FLUSHALL`
+operations retain one owner through discovery, target sends, reply conversion, and
+mutation cleanup. A target borrows that owner, so its failure is not counted again
+at the public boundary.
+
+Raw, catalog, and interpolated stored-procedure calls retain one owner through
+disposed-client admission, transport reroutes, Cluster redirects, and cache cleanup.
+The final measurement preserves the completed retry count, including when collection
+is enabled while the operation is pending.
+
+FUNCTION execution retains its owner through missing-function reload, library
+verification, and replica propagation retries. Private reload tasks join before final
+reporting and never publish a nested final failure for a recovered library load.
+
+Pending raw, cached, and fire-and-forget submissions keep their final observation
+boundary even when collection is disabled at dispatch. Enabling the group or attaching
+a listener before completion can therefore observe their final failure. Earlier errors
+are not replayed.
+
+`redis.client.errors.category` is `network`, `tls`, `auth`, `server`, `cancelled`, or `other`.
+Surfaced cancellation uses `cancelled` because the client cannot infer who requested it.
+TLS certificate failures use `tls`; Redis authentication and authorization rejections
+use `auth`. `error.type` identifies the exception type. Known wrappers are unwrapped
+for classification without changing the exception delivered to the caller.
+`db.response.status_code` contains a recognized Redis error prefix, such as `WRONGTYPE`
+or `NOSCRIPT`. Unknown prefixes are omitted because scripts and modules can put
+application data in them. Exception messages, credentials, keys, and payloads are never
+labels. Error measurements currently omit endpoint labels.
+
+`error.type` uses the runtime exception type's full name for the first 128 distinct
+canonical names observed in the process. Additional names use `_OTHER`; previously
+accepted names remain stable. This bounds this attribute to 129 values, including
+exceptions from application codecs and dynamically generated generic types. The
+weak type-name cache does not keep collectible types or assemblies alive. Its small
+name registry retains only the accepted strings, so a recreated type with an accepted
+name still uses that name after the budget is exhausted. Reuse exception types rather
+than generating a distinct type for each operation.
+The first report for an exception type can initialize its cached name. Warm reports
+reuse that name and the common retry-count tags; first-use initialization is outside
+the warmed allocation contract. Retry owners retain their counts even while collection
+is disabled, so activation before completion does not reset those counts.
+
+`redis.client.errors.internal=true` identifies a handled error: a cluster retry,
+`NOSCRIPT` fallback, unsuccessful connection candidate, background reconnect attempt,
+physical connection abort, or an error reply discarded after fire-and-forget submission
+or cancellation. `false` identifies a final failure delivered at an observed connection
+or command boundary. A recovered `NOSCRIPT` produces only an internal measurement;
+if its fallback fails, that final failure produces a separate user-visible measurement.
+`redis.client.operation.retry_attempts` is zero initially and increases across observed
+retries, including redirects followed by script fallback.
+It remains an exact non-negative integer, including counts above 16, as required by the
+[Redis observability specification](https://redis.io/docs/latest/develop/clients/observability/).
+The boxing cache is bounded independently of the reported count; it does not retain a
+cache entry for every count. Exporters that need a fixed series budget can exclude this
+attribute with a metric view instead of changing the client's retry metadata.
+Replica ROLE rejection on shared or dedicated connections is an internal candidate
+failure even when primary fallback succeeds. Successful connection establishment is
+not counted again for that rejection. Cluster read selection also retains rejected
+replica connection candidates before another replica or the primary succeeds. The
+aggregate no-healthy-replica wrapper is not a second handled error. A Cluster batch
+reports its shared selection failure once, then copies that count to each deferred
+command owner; a later command failure includes both selection and send retries.
+Failed ordinary and sharded subscription recovery
+has its own internal owner; handled redirects and terminal rejections remain separate
+events. Cancellation caused by subscription shutdown is excluded.
+Additional rejected prefix or transaction queue replies are internal events when
+discarded; the retained error is reported once at the caller's final boundary.
+Hedged reads add the completed result leg's retry count to retries already handled by
+the caller; the discarded leg retains its own internal error boundary.
+Standalone submission retries retain the same count through both immediate retirement
+and capacity waits; a later write/submission failure reports the accumulated count.
+`ConnectAnyAsync` also reports null or empty candidates and enumeration failures once
+at its final boundary. These failures and caller cancellation retain the number of
+completed failed candidates. Exhaustion retains the last candidate's retry index.
+
+Streaming reads include transport reroutes in the same attempt count as Cluster
+redirects. After a successful header, the payload stream retains that count for a later
+read failure. Streamed uploads copy the count into their pending replies, including
+the `ASKING` prelude, so a discarded reply retains its submission count even after
+caller cancellation returns the operation's observation lease. WATCH setup starts its
+observation before key mapping and cluster-slot validation; a rejected cross-slot WATCH
+reports one final error without submitting a WATCH command.
+
+Multi-key list and sorted-set pops, including typed and blocking variants, and
+multi-element list moves report construction-time cross-slot rejection once with
+zero retry attempts. No command is submitted; after successful construction, the
+existing response-conversion boundary owns subsequent failures.
+Typed XREAD and XREADGROUP also report cross-slot validation failures once before
+submitting a command. Continuous XREAD retains one observation across pages: recovered
+failures are internal, and a later terminal failure includes completed retry attempts
+even when collection was disabled during those retries. Ending enumeration after a
+successful page does not create a final error.
+Guarded cache removal reports its final error after the removal lease is
+revoked or expires and any owned timeout is translated to the caller's `UNLINK` error.
+Lease placement and the removal script borrow the same retry owner. Background
+revocation retains a separate lifetime because it can outlive the caller's lease.
+Distributed-cache GET and refresh, and semaphore renewal, retain their final error
+boundary until required TTL correction or owner-only release finishes. No final
+measurement is published while that cleanup is pending. If correction replaces the
+original failure, the final measurement describes the exception delivered to the caller.
+
+Error observation storage is pooled, and each borrower carries its rental generation.
+Debug builds reject stale borrowers with `InvalidOperationException`; Release builds
+ignore them without touching another operation's retry count or final-error state.
+The generation check protects reuse, but ownership must still cover every pending reply
+and required cleanup before the observation is returned.
+
+A physical connection abort is counted once at its handling boundary. A command failure
+is counted separately only when its own completion reports failure; aborting a socket
+does not manufacture a user-visible error for every in-flight command. Re-reading an
+exception does not create a new measurement. Caller cancellation retains the original
+exception and token. Listener exceptions are isolated from propagation and recovery.
+
+Caller-requested cancellation is intentionally included when it escapes an observed
+operation: category `other`, with its original cancellation exception type. It is not
+evidence of a transport outage. `RespireTimeoutException` uses `network` for the failed
+client transport/deadline boundary; this does not identify whether the underlying cause
+was a slow server, pool contention, or a network fault. Filter by `error.type` when
+separating cancellations or deadlines from outage alerts. The categories remain the five
+values used by this mapping; no `cancelled` or `timeout` category is introduced.
+
+Wrapper traversal is capped at sixteen links to bound observation work for external
+exception chains. A deeper chain is classified from the remaining wrapper, so its
+innermost server code may be absent. Reporting never changes the original exception.
+Respire exception wrappers declare their classification cause through one internal
+accessor. A wrapper with meaningful authentication or multi-candidate connection
+semantics keeps its own identity. A new wrapper can opt into cause classification
+without adding a type-specific branch to the metric classifier.
+
+Error observations use immutable value handles containing pooled storage and its lease
+generation. Copies borrow the same active lease. Validation and mutation share the
+storage gate, so a returned handle cannot change retry counts, report a final failure,
+or return storage belonging to a later renter. Release builds ignore stale calls;
+Debug builds reject stale observation calls, including after the storage is rented
+again. Duplicate final reports during active ownership and duplicate disposal remain
+idempotent. Owners must still finish their borrowers before returning the lease.
+The independent route inventory and broader ownership consolidation remain tracked in
+[issue #1046](https://github.com/thomhurst/Respire/issues/1046).
+
+Failed batch and transaction commands produce one user-visible measurement per faulted
+deferred result, after the owner finishes correction and connection cleanup. Reading
+`Result` again or calling `ThrowIfAnyFailed` does not add another measurement.
+Standalone batch transport retries retain each pending command's own retry count.
+A failure of the execution itself, such as a durability acknowledgement failure, is counted when
+there are no failed deferred results representing that execution. WATCH aborts and
+intentional batch or transaction disposal are not errors for this counter.
+
+Fire-and-forget submission failures are user-visible errors. Replies that its contract
+intentionally discards are internal errors, including the replies awaited for cache
+invalidation fencing or cluster routing. Exhausted cluster routing still surfaces to
+the caller and is counted as a final failure.
+
+Cached reads count final failure once for each waiting caller. A shared producer does
+not add another user-visible failure when it faults several coalesced waiters. Internal
+producer retries are counted at their handling boundary; each cache waiter inherits the
+producer's completed retry count in its final measurement. Hedge races report their final
+outcome with the completed result leg's retry count; each leg retains its own retry owner
+until its reply finishes, including a loser that outlives the caller. Each failed discarded
+hedge leg contributes one internal measurement, including a late loser; when both legs
+fail, their internal observations are separate from the race's final caller failure.
+
+Streaming GET counts header or acquisition failure at the command boundary. After a
+stream is returned, its first observed payload failure is counted once; repeated reads of
+the same failed stream do not add measurements. Canceling an individual read counts that
+read's cancellation without marking the payload failed: reading can resume, and a later
+payload failure has its own measurement. A socket failure without an observed
+stream read failure contributes only its internal connection measurement. Invalid
+buffer arguments, unsupported stream operations, and reads after disposal are excluded
+from payload error observations.
 
 ## Reads by availability zone
 
@@ -476,47 +717,6 @@ unavailable peers can retain generations indefinitely; age is diagnostic, never 
 to abandon an owed fence. The existing one-to-30-second fence retry backoff and explicit
 client-disposal behavior are unchanged. Any future policy that abandons ordering guarantees
 requires a separate explicit contract.
-
-## Error ownership for contributors
-
-The internal error metric foundation provides failure-only `ErrorObservation` leases.
-These leases do not consume responses, own transport references, or wrap deferred results.
-Command-family integration and the independent route-owner guard are tracked separately
-in [#1023](https://github.com/thomhurst/Respire/issues/1023) and
-[#1264](https://github.com/thomhurst/Respire/issues/1264); the leases alone do not enable
-error metrics for every command path.
-
-Keep a default `ErrorObservation.FinalOwner` on a successful path. Call `StartFailure`
-only after the first failure or handled retry, and complete the lease in `finally`.
-There is one final owner per logical caller, even when independent callers receive the
-same exception instance. `PublishFinal` records at most one final failure; repeated
-inspection of that generation returns `false`. It observes the exception without consuming
-or rethrowing it. Preserve the original exception with `throw;` and retain its
-cancellation token.
-
-Helpers borrow a separate lease with `Borrow`. Borrowers can create nested borrowers,
-record handled retries with `RecordHandled`, and complete their own lease. They cannot
-publish a final caller failure. Every handled retry increments the shared count once;
-the final failure captures the total count. Exporters run outside the ownership gate,
-so concurrent retry events may arrive out of order while retaining their exact counts.
-
-Copying an owner or borrower value shares its existing completion right; it does not
-create another reference. Repeated completion is harmless, including after the pooled
-storage has been reused, so cleanup in `finally` cannot replace the original failure.
-Storage returns to the bounded pool only after the owner and every distinct borrower
-complete. Owner completion does not complete a still-live borrower. Final publication
-closes retry reporting and new borrowing. `RecordHandled` and `PublishFinal` return
-`false` for default, completed, closed, or stale leases without emitting a metric.
-`Borrow` returns a default, inert borrower in those states. These checks apply in every
-build, so a final-inspection race or stale asynchronous callback cannot replace the
-original failure or affect a new caller's observation. Do not retain completed leases
-for later asynchronous work. Storage returns outside the ownership gate after the last
-completion. Retry counts saturate at `int.MaxValue`.
-
-When adding a command path, declare its public boundary and delegated final owner in
-the independent route inventory. Helper, borrower, transport, and cleanup observations
-must remain distinct from the caller's final publication. Preserve checked native
-response lifetimes and deferred-result inspection; do not introduce a universal wrapper.
 
 ## Sentinel primary changes
 

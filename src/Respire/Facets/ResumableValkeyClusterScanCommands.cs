@@ -19,7 +19,7 @@ internal sealed partial class KeyCommands
             var created = new ClusterScanCapabilityCache();
             cache = Interlocked.CompareExchange(ref _scanCapabilities, created, null) ?? created;
         }
-        return cache.SupportsAsync(client, connection, runId, recovery.Capabilities, cancellationToken);
+        return cache.SupportsAsync(client, connection, runId, recovery.Capabilities, cancellationToken, recovery.Observation);
     }
 
     private async ValueTask<RespireClusterScanPage?> ReadValkeyScanPageAsync(ClusterScanState state,
@@ -37,7 +37,7 @@ internal sealed partial class KeyCommands
         if (sent.Unsupported)
             return sent.Redirected && !starting ? new(new RespireClusterScanCursor(state), []) : null;
         return await ApplyValkeyScanPageAsync(state, sent, slot, starting, match,
-            cancellationToken, recovery.Discovery).ConfigureAwait(false);
+            cancellationToken, recovery.Discovery, recovery.Observation).ConfigureAwait(false);
     }
 
     private readonly record struct ValkeyScanReply(RespValue Reply, bool Redirected, bool Unsupported);
@@ -54,12 +54,13 @@ internal sealed partial class KeyCommands
             try
             {
                 var reply = await client.SendOnPinnedConnectionAsync("CLUSTERSCAN", connection, command,
-                    cancellationToken, sendAsking: asking).ConfigureAwait(false);
+                    cancellationToken, observation: recovery.Observation, sendAsking: asking).ConfigureAwait(false);
                 return new(reply, redirected, Unsupported: false);
             }
             catch (RespireServerException error) when (ClusterScanCommandErrors.IsUnknown(error, "CLUSTERSCAN"))
             {
                 // This is evidence about the actual destination, never about the redirect source.
+                recovery.Observation.Handled(error);
                 _scanCapabilities!.RecordAbsent(connection, runId);
                 state.ResetPass();
                 return new(default, redirected, Unsupported: true);
@@ -68,6 +69,7 @@ internal sealed partial class KeyCommands
             {
                 // Execution ACLs may differ from metadata ACLs. Preserve the legacy
                 // bootstrap path without claiming the command is absent.
+                recovery.Observation.Handled(error);
                 state.ResetPass();
                 return new(default, redirected, Unsupported: true);
             }
@@ -75,6 +77,7 @@ internal sealed partial class KeyCommands
                 && cluster.CanRetryRetirement(recovery.Rejections, cancellationToken) && ClusterRouter.IsRedirect(error))
             {
                 redirected = true;
+                recovery.Observation.Handled(error);
                 recovery.Rejections++;
                 cluster.RecordRejection(ref recovery.Discovery, connection, error);
                 if (ClusterRouter.TryParseRedirect(error, connection.Host, out var changedSlot, out _)
@@ -90,7 +93,7 @@ internal sealed partial class KeyCommands
                 connection = await cluster.GetRedirectConnectionAsync(error, connection,
                     cancellationToken, slot, recovery.Discovery).ConfigureAwait(false);
                 asking = error.Code == RespireErrorCodes.Ask;
-                runId = await ReadScanRunIdAsync(connection, cancellationToken).ConfigureAwait(false);
+                runId = await ReadScanRunIdAsync(connection, cancellationToken, recovery.Observation).ConfigureAwait(false);
                 if (!await SupportsClusterScanAsync(connection, runId, recovery, cancellationToken).ConfigureAwait(false))
                 {
                     state.ResetPass();
@@ -102,7 +105,7 @@ internal sealed partial class KeyCommands
 
     private async ValueTask<RespireClusterScanPage> ApplyValkeyScanPageAsync(ClusterScanState state,
         ValkeyScanReply sent, int slot, bool starting, string? match,
-        CancellationToken cancellationToken, ClusterRouter.DiscoveryRound? discovery)
+        CancellationToken cancellationToken, ClusterRouter.DiscoveryRound? discovery, RespireTelemetry.ErrorObservation observation)
     {
         var reply = sent.Reply;
         using (reply)
@@ -127,7 +130,7 @@ internal sealed partial class KeyCommands
             }
             cancellationToken.ThrowIfCancellationRequested();
             if (ClusterScanPassCertifier.ApplyPosition(state, nextCursor, slot, starting, sent.Redirected, raw.Length == 0))
-                await CompleteScanPassAsync(state, effectiveMatch, cancellationToken, discovery).ConfigureAwait(false);
+                await CompleteScanPassAsync(state, effectiveMatch, cancellationToken, discovery, observation).ConfigureAwait(false);
             return new(new RespireClusterScanCursor(state), keys.ToArray());
         }
     }

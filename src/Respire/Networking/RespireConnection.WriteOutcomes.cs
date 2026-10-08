@@ -62,7 +62,7 @@ internal sealed partial class RespireConnection
         try
         {
             var response = await SendStreamedSetAsync(command, cancellationToken, commandDeadline,
-                streamingRoute, asking, observation).ConfigureAwait(false);
+                streamingRoute, asking, writeObservation: observation).ConfigureAwait(false);
             return CaptureAttemptResult(observation, response);
         }
         catch (Exception error)
