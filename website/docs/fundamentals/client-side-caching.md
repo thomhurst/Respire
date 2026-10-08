@@ -88,8 +88,10 @@ Everything else bypasses the cache and goes to Redis:
 While caching is enabled, Respire rejects `HELLO`, `RESET`, `SELECT`, `CLIENT CACHING`, and
 `CLIENT TRACKING`, because changing protocol, database, or tracking state would break coherence.
 
-Writes evict the keys they change before dispatch and again after completion, including on error
-and cancellation. When Respire cannot name the affected keys (unknown raw commands, scripts,
+Writes evict the keys they change before dispatch and prevent overlapping reads from entering
+the cache until both caller and native ownership retire. Successful known-key writes can omit
+the second eviction; errors, cancellation, and unproven lifetimes retain it.
+When Respire cannot name the affected keys (unknown raw commands, scripts,
 cluster-wide mutations, blocking commands, batches, transactions, and time-series writes that can
 update compaction destinations), it flushes the whole local cache instead.
 
@@ -197,8 +199,9 @@ Use this counter to assess how often churn prevents new callers from joining exi
 
 With sharing enabled, writes and continuity flushes skip the shared-read gate when no read
 is joinable or being admitted. Retired producers may still finish for their original callers.
-Read admission and overlapping invalidations remain fenced, and both pre-command and
-post-command cache invalidation remain in place.
+Read admission and overlapping invalidations remain fenced. Pre-command eviction remains;
+successful known-key writes replace the second eviction with ownership through native retirement.
+Conservative mutations retain completion eviction.
 
 Sharing adds bookkeeping and owned-result copies on misses. Keep the default independent
 requests for workloads with little contention. A sole remaining waiter can take the producer's
@@ -406,7 +409,8 @@ next read → Redis response → refreshed local entry
 ```
 
 With `OPTIN`, Redis tracks only misses Respire deliberately sends with `CLIENT CACHING YES`.
-Local mutations also evict before and after execution. If tracking continuity is lost, Respire
+Local mutations evict before execution and fence overlapping reads through native retirement.
+Conservative mutations also evict at retirement. If tracking continuity is lost, Respire
 clears affected cache state instead of trusting entries whose invalidations may have been missed.
 
 ## Broadcast tracking
