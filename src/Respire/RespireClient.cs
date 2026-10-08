@@ -2504,7 +2504,7 @@ public sealed partial class RespireClient : IRespireClient
 
     private ValueTask<RespValue> SendTrackedOnConnectionUncheckedAsync<TCommand>(
         string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken,
-        bool sendAsking, bool track) where TCommand : struct, IRespCommand
+        bool sendAsking, bool track, CommandDeadline commandDeadline = default, bool pinToConnection = false) where TCommand : struct, IRespCommand
     {
         var preferredZone = GetTransportReadZone(in command);
         // Broadcast registrations come from the handshake; uncached OPTIN reads stay untracked.
@@ -2521,10 +2521,10 @@ public sealed partial class RespireClient : IRespireClient
         }
 
         if (!optIn)
-            return connection.SendAsync(command, cancellationToken, commandName: operation, preferredZone: preferredZone, observation: observation);
+            return connection.SendAsync(command, cancellationToken, commandName: operation, commandDeadline: commandDeadline, preferredZone: preferredZone, pinToConnection: pinToConnection, observation: observation);
         var caching = new ClientCachingCommand();
         return connection.SendValidatedPrefixedAsync(
-            in caching, in command, cancellationToken, operation, preferredZone, observation: observation);
+            in caching, in command, cancellationToken, operation, preferredZone, pinToConnection, commandDeadline, observation: observation);
     }
 
 #if NET
@@ -3395,12 +3395,12 @@ public sealed partial class RespireClient : IRespireClient
 
     private ValueTask SendFireAndForgetOnConnectionUncheckedAsync<TCommand>(
         string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken,
-        string? storedProcedureName) where TCommand : struct, IRespCommand
+        string? storedProcedureName, CommandDeadline capacityDeadline = default, bool pinToConnection = false) where TCommand : struct, IRespCommand
         => RespireTelemetry.IsOperationEnabled(operation)
             ? SendFireAndForgetOnConnectionInstrumentedAsync(
-                operation, connection, command, cancellationToken, storedProcedureName, observation)
+                operation, connection, command, cancellationToken, storedProcedureName, capacityDeadline, pinToConnection, observation: observation)
             : connection.SendFireAndForgetAsync(in command, cancellationToken, operation,
-                preferredZone: GetTransportReadZone(in command), observation: observation);
+                capacityDeadline: capacityDeadline, preferredZone: GetTransportReadZone(in command), pinToConnection: pinToConnection, observation: observation);
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
@@ -3410,7 +3410,7 @@ public sealed partial class RespireClient : IRespireClient
         RespireConnection connection,
         TCommand command,
         CancellationToken cancellationToken,
-        string? storedProcedureName, RespireTelemetry.ErrorObservation observation)
+        string? storedProcedureName, CommandDeadline capacityDeadline = default, bool pinToConnection = false, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
@@ -3422,7 +3422,7 @@ public sealed partial class RespireClient : IRespireClient
         try
         {
             await connection.SendFireAndForgetAsync(in command, cancellationToken, operation,
-                preferredZone: GetTransportReadZone(in command), observation: observation).ConfigureAwait(false);
+                capacityDeadline: capacityDeadline, preferredZone: GetTransportReadZone(in command), pinToConnection: pinToConnection, observation: observation).ConfigureAwait(false);
             telemetry.Complete(
                 operation,
                 connection.Host,
@@ -3838,15 +3838,38 @@ public sealed partial class RespireClient : IRespireClient
 
         try
         {
-            if (core.Circuits is not null)
-                circuitCompletion = new(AcquireCircuit(connection, cancellationToken), cancellationToken);
-            var stream = sendAsking
-                ? await ClusterRouter.SendAskingBulkStreamAsync(
-                    connection, in command, cancellationToken, operation, CompleteTelemetry,
-                    GetTransportReadZone(in command), observation).ConfigureAwait(false)
-                : await connection.SendBulkStreamAsync(
-                    in command, cancellationToken, operation, CompleteTelemetry,
-                    GetTransportReadZone(in command), observation).ConfigureAwait(false);
+            Stream? stream;
+            var commandDeadline = core.Circuits is not null ? CreateCircuitDeadline() : default;
+            while (true)
+            {
+                try
+                {
+                    if (core.Circuits is not null)
+                    {
+                        connection.ThrowIfRetired();
+                        circuitCompletion = new(AcquireCircuit(connection, cancellationToken), cancellationToken);
+                    }
+                    stream = sendAsking
+                        ? await ClusterRouter.SendAskingBulkStreamAsync(
+                            connection, in command, cancellationToken, operation, CompleteTelemetry,
+                            GetTransportReadZone(in command), observation).ConfigureAwait(false)
+                        : await connection.SendBulkStreamAsync(
+                            in command, cancellationToken, operation, CompleteTelemetry,
+                            GetTransportReadZone(in command), pinToConnection: core.Circuits is not null,
+                            commandDeadline: commandDeadline, observation: observation).ConfigureAwait(false);
+                    break;
+                }
+                catch (RespireConnectionRetiredException error) when (core.Circuits is not null
+                    && connection.TryReroute(false, commandDeadline, out var target, out var rerouted, GetTransportReadZone(in command)))
+                {
+                    observation.Handled(error);
+                    circuitCompletion?.Ignore();
+                    circuitCompletion = null;
+                    connection = target;
+                    commandDeadline = rerouted;
+                    telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
+                }
+            }
             if (stream is null)
             {
                 CompleteTelemetry(null);
@@ -3954,14 +3977,15 @@ public sealed partial class RespireClient : IRespireClient
         string? storedProcedureName = null,
         bool sendAsking = false,
         CommandDeadline commandDeadline = default,
-        bool allowStreamingConnectionReroute = true, RespireTelemetry.ErrorObservation observation = default)
+        bool allowStreamingConnectionReroute = true,
+        bool pinToConnection = false, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
         => RespireTelemetry.IsOperationEnabled(operation)
             ? SendOnConnectionInstrumentedAsync(
                 operation, connection, command, cancellationToken, storedProcedureName, sendAsking,
-                commandDeadline, allowStreamingConnectionReroute, observation: observation)
+                commandDeadline, allowStreamingConnectionReroute, pinToConnection, observation: observation)
             : SendOnConnectionCoreAsync(operation, connection, command, cancellationToken, sendAsking,
-                commandDeadline, allowStreamingConnectionReroute, observation: observation);
+                commandDeadline, allowStreamingConnectionReroute, pinToConnection, observation: observation);
 
     internal ValueTask<RespValue> SendMutationOnConnectionAsync<TCommand>(
         string operation, RespireConnection connection, in TCommand command,

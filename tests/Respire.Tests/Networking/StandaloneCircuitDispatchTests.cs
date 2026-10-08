@@ -14,6 +14,162 @@ namespace Respire.Tests.Networking;
 public class StandaloneCircuitDispatchTests
 {
     [Test]
+    public async Task SelectionFailureOpensCircuitWithoutDispatchingACommand()
+    {
+        await using var server = Server();
+        await using var client = await RespireClient.ConnectAsync(Options(server) with
+        {
+            ReconnectPolicy = new() { InitialDelay = TimeSpan.FromMinutes(1), MaxDelay = TimeSpan.FromMinutes(1) },
+        });
+        var (circuit, clock) = await Prepare(client, server);
+        var connection = client.Core.Multiplexer.GetConnection();
+        server.CloseConnections();
+        await connection.Closed.WaitAsync(TimeSpan.FromSeconds(5));
+        var commands = server.CommandsSeen;
+        await Assert.That(await Failure(() => Send(client, "string", "unavailable"))).IsTypeOf<RespireConnectionException>();
+        await Assert.That(circuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Open);
+        await Assert.That(await Failure(() => Send(client, "raw", "rejected"))).IsTypeOf<RespireCircuitOpenException>();
+        clock.Advance(TimeSpan.FromMinutes(1));
+        await Assert.That(await Failure(() => Send(client, "bytes", "failed-probe"))).IsTypeOf<RespireConnectionException>();
+        await Assert.That(circuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Open);
+        await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(0);
+        await Assert.That(server.CommandsSeen).IsEqualTo(commands);
+    }
+
+    [Test]
+    [Arguments("array")]
+    [Arguments("span")]
+    [Arguments("async-array")]
+    [Arguments("async-memory")]
+    public async Task ValidatedStreamEofCompletesRecoveryBeforeTransportCallback(string shape)
+    {
+        var endpoint = new RespireEndpoint("localhost");
+        var registry = new StandaloneCircuitRegistry(new() { MinimumFailureCount = 1, HalfOpenProbeCount = 1 });
+        var failed = registry.Acquire(endpoint, default);
+        failed.Failed(new RespireConnectionException("lost"), default);
+        failed.Dispose();
+        var circuit = registry.GetForTests(endpoint);
+        var clock = new Clock();
+        CircuitClock(circuit) = clock;
+        clock.Advance(TimeSpan.FromMinutes(1));
+        var completion = new CircuitStreamCompletion(registry.Acquire(endpoint, default), default);
+        await using var stream = new CircuitCompletionStream(new MemoryStream([42]), completion);
+        var buffer = new byte[1];
+        await Assert.That(await Read(0)).IsEqualTo(0);
+        await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(1);
+        await Assert.That(await Read(1)).IsEqualTo(1);
+        await Assert.That(await Read(1)).IsEqualTo(0);
+        await stream.DisposeAsync();
+        await Assert.That(circuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Closed);
+        completion.Complete(new RespireConnectionException("late callback"));
+        await Assert.That(circuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Closed);
+
+        ValueTask<int> Read(int length) => shape switch
+        {
+            "array" => ValueTask.FromResult(stream.Read(buffer, 0, length)),
+            "span" => ValueTask.FromResult(stream.Read(buffer.AsSpan(0, length))),
+            "async-array" => new(stream.ReadAsync(buffer, 0, length)),
+            _ => stream.ReadAsync(buffer.AsMemory(0, length)),
+        };
+    }
+
+    [Test]
+    [Arguments("raw", false)]
+    [Arguments("string", false)]
+    [Arguments("bytes", false)]
+    [Arguments("integer", false)]
+    [Arguments("fire-and-forget", false)]
+    [Arguments("stream", false)]
+    [Arguments("cache", false)]
+    [Arguments("raw", true)]
+    [Arguments("string", true)]
+    [Arguments("bytes", true)]
+    [Arguments("integer", true)]
+    [Arguments("fire-and-forget", true)]
+    [Arguments("stream", true)]
+    [Arguments("cache", true)]
+    public async Task MaintenanceHandoffReacquiresAdmissionForActualEndpoint(string shape, bool targetOpen)
+    {
+        await using var target = Server();
+        await using var source = Server();
+        await using var client = await RespireClient.ConnectAsync(Options(source) with
+        {
+            Protocol = RespProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            CommandTimeout = TimeSpan.FromSeconds(5), MaxInflightCommands = 2,
+            ClientSideCache = shape == "cache" ? new() : null,
+        });
+        var (sourceCircuit, clock) = await Prepare(client, source);
+        await Trip(client, source);
+        clock.Advance(TimeSpan.FromMinutes(1));
+        var original = client.Core.Multiplexer.GetConnection();
+        source.SuppressReply = command => command == "GET parked";
+        var first = original.SendWithoutResponseTimeoutAsync(new Cmd1(Verbs.Get, "parked")).AsTask();
+        var second = original.SendWithoutResponseTimeoutAsync(new Cmd1(Verbs.Get, "parked")).AsTask();
+        await Received(source, "GET parked", 2);
+        var endpoint = new RespireEndpoint("127.0.0.1", target.Port);
+        var targetAdmission = client.Core.Circuits!.Acquire(endpoint, default);
+        if (targetOpen) targetAdmission.Failed(new RespireConnectionException("target unavailable"), default);
+        targetAdmission.Dispose();
+        var targetCircuit = client.Core.Circuits.GetForTests(endpoint);
+        var pending = Dispatch();
+        await Assert.That(pending.IsCompleted).IsFalse();
+        await source.SendRawAsync(Encoding.UTF8.GetBytes($">4\r\n+MOVING\r\n:1\r\n:10\r\n+127.0.0.1:{target.Port}\r\n"));
+        try
+        {
+            if (targetOpen)
+                await Assert.That(await Failure(() => pending)).IsTypeOf<RespireCircuitOpenException>();
+            else
+            {
+                await pending.WaitAsync(TimeSpan.FromSeconds(5));
+                await Received(target, shape == "integer" ? "STRLEN routed" : "GET routed");
+            }
+            await Assert.That(sourceCircuit.Snapshot().ActiveProbes).IsEqualTo(0);
+            await Assert.That(sourceCircuit.Snapshot().State).IsEqualTo(EndpointCircuitState.HalfOpen);
+            await Assert.That(targetCircuit.Snapshot().State).IsEqualTo(targetOpen ? EndpointCircuitState.Open : EndpointCircuitState.Closed);
+            await Assert.That(source.ReceivedCommands.Any(command => command.Contains("routed", StringComparison.Ordinal))).IsFalse();
+            await Assert.That(target.ReceivedCommands.Count(command => command.Contains("routed", StringComparison.Ordinal))).IsEqualTo(targetOpen ? 0 : 1);
+        }
+        finally
+        {
+            var wireId = source.ReceivedConnectionIds[^1];
+            await source.SendRawAsync("$6\r\nparked\r\n$6\r\nparked\r\n"u8.ToArray(), wireId);
+            (await first.WaitAsync(TimeSpan.FromSeconds(5))).Dispose();
+            (await second.WaitAsync(TimeSpan.FromSeconds(5))).Dispose();
+        }
+
+        async Task Dispatch()
+        {
+            if (shape == "stream")
+            {
+                await using var stream = await client.Strings.GetStreamAsync("routed");
+                using var reader = new StreamReader(stream!);
+                await Assert.That(await reader.ReadToEndAsync()).IsEqualTo("routed");
+            }
+            else await Send(client, shape == "cache" ? "string" : shape, "routed");
+        }
+    }
+
+    [Test]
+    public async Task RetiredOpenEndpointCannotRejectHealthyMaintenanceReplacement()
+    {
+        await using var target = Server();
+        await using var source = Server();
+        await using var client = await RespireClient.ConnectAsync(Options(source) with
+        {
+            Protocol = RespProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+        });
+        await Prepare(client, source);
+        var original = client.Core.Multiplexer.GetConnection();
+        await Trip(client, source);
+        await source.SendRawAsync(Encoding.UTF8.GetBytes($">4\r\n+MOVING\r\n:1\r\n:10\r\n+127.0.0.1:{target.Port}\r\n"));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (client.Core.Multiplexer.ActiveConnectionEndpoint.Port != target.Port) await Task.Delay(1, deadline.Token);
+        using var reply = await client.SendOnConnectionAsync("GET", original, new Cmd1(Verbs.Get, "routed"), deadline.Token);
+        await Assert.That(reply.AsString()).IsEqualTo("routed");
+        await Assert.That(target.ReceivedCommands.Count(command => command == "GET routed")).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task CacheHitsBypassAdmissionAndRejectedMissSendsNoTrackingPrelude()
     {
         await using var server = Server();

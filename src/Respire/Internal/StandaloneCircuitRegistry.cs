@@ -1,34 +1,82 @@
 namespace Respire.Internal;
 
 // Created only in opt-in mode. Prefix and cache-bypass views share endpoint state.
-internal sealed class StandaloneCircuitRegistry(RespireCircuitBreakerOptions options)
+internal sealed class StandaloneCircuitRegistry(RespireCircuitBreakerOptions options,
+    Func<RespireEndpoint>? getCurrentEndpoint = null)
 {
+    internal const int RetainedEndpointLimit = 16;
     private readonly Lock _gate = new();
-    private readonly Dictionary<RespireEndpoint, EndpointCircuitBreaker> _circuits = [];
+    // Ordinary standalone clients reuse their configured host (not each resolved IP).
+    // Retain current and in-flight endpoint state; trim only idle maintenance history.
+    private readonly Dictionary<RespireEndpoint, Entry> _circuits = [];
+    private long _lastUse;
+
+    internal sealed class Entry(EndpointCircuitBreaker circuit)
+    {
+        internal EndpointCircuitBreaker Circuit { get; } = circuit;
+        internal int ActiveAdmissions;
+        internal long LastUse;
+    }
 
     internal CircuitAdmission Acquire(RespireEndpoint endpoint, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        EndpointCircuitBreaker circuit;
         lock (_gate)
         {
-            if (!_circuits.TryGetValue(endpoint, out circuit!))
-                _circuits.Add(endpoint, circuit = new(endpoint, options));
+            if (!_circuits.TryGetValue(endpoint, out var entry))
+                _circuits.Add(endpoint, entry = new(new(endpoint, options)));
+            entry.LastUse = ++_lastUse;
+            if (!entry.Circuit.TryAcquire(out var permit, out var retryAfter))
+                throw new RespireCircuitOpenException(endpoint, retryAfter);
+            entry.ActiveAdmissions++;
+            TrimInactive();
+            return new(permit, this, entry);
         }
-        if (!circuit.TryAcquire(out var permit, out var retryAfter))
-            throw new RespireCircuitOpenException(endpoint, retryAfter);
-        return new(permit);
     }
+
+    internal void Release(Entry entry)
+    {
+        lock (_gate)
+        {
+            entry.ActiveAdmissions--;
+            TrimInactive();
+        }
+    }
+
+    private void TrimInactive()
+    {
+        if (_circuits.Count <= RetainedEndpointLimit) return;
+        var current = getCurrentEndpoint?.Invoke();
+        while (_circuits.Count > RetainedEndpointLimit)
+        {
+            Entry? oldest = null;
+            foreach (var entry in _circuits.Values)
+            {
+                if (entry.ActiveAdmissions != 0 || entry.Circuit.Endpoint == current) continue;
+                if (oldest is null || entry.LastUse < oldest.LastUse) oldest = entry;
+            }
+            // Active work owns its state until completion; it cannot be evicted to meet a cap.
+            if (oldest is null) return;
+            _circuits.Remove(oldest.Circuit.Endpoint);
+        }
+    }
+
+    internal int CountForTests { get { lock (_gate) return _circuits.Count; } }
 
     internal EndpointCircuitBreaker GetForTests(RespireEndpoint endpoint)
     {
-        lock (_gate) return _circuits[endpoint];
+        lock (_gate) return _circuits[endpoint].Circuit;
     }
 }
 
-internal struct CircuitAdmission(CircuitPermit permit) : IDisposable
+internal struct CircuitAdmission(CircuitPermit permit, StandaloneCircuitRegistry? registry = null,
+    StandaloneCircuitRegistry.Entry? entry = null) : IDisposable
 {
+    // Move ownership once into CircuitStreamCompletion, or keep this mutable local.
+    // Do not copy an admission: its outcome and one-shot permit must stay together.
     private CircuitPermit _permit = permit;
+    private readonly StandaloneCircuitRegistry? _registry = registry;
+    private readonly StandaloneCircuitRegistry.Entry? _entry = entry;
     private CircuitOutcome _outcome = CircuitOutcome.Ignored;
 
     internal void Success() => _outcome = CircuitOutcome.Success;
@@ -46,5 +94,11 @@ internal struct CircuitAdmission(CircuitPermit permit) : IDisposable
         };
     }
 
-    public void Dispose() => _permit.Owner?.Complete(ref _permit, _outcome);
+    public void Dispose()
+    {
+        if (_permit.Owner is not { } owner) return;
+        owner.Complete(ref _permit, _outcome);
+        // Complete clears this mutable permit. Repeated Dispose cannot release twice.
+        _registry?.Release(_entry!);
+    }
 }

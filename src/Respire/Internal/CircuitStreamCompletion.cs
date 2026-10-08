@@ -44,17 +44,26 @@ internal sealed class CircuitCompletionStream(Stream inner, CircuitStreamComplet
     public override void Flush() => inner.Flush();
     public override long Seek(long offset, SeekOrigin origin) => inner.Seek(offset, origin);
     public override void SetLength(long value) => inner.SetLength(value);
-    public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
-    public override int Read(Span<byte> buffer) => inner.Read(buffer);
+    public override int Read(byte[] buffer, int offset, int count)
+        => CompleteRead(inner.Read(buffer, offset, count), count);
+    public override int Read(Span<byte> buffer) => CompleteRead(inner.Read(buffer), buffer.Length);
     public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
         => ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
 
     public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
     {
-        try { return await inner.ReadAsync(buffer, cancellationToken).ConfigureAwait(false); }
+        try { return CompleteRead(await inner.ReadAsync(buffer, cancellationToken).ConfigureAwait(false), buffer.Length); }
         catch (OperationCanceledException) { completion.Ignore(); throw; }
     }
     public override void Write(byte[] buffer, int offset, int count) => inner.Write(buffer, offset, count);
+
+    private int CompleteRead(int read, int requested)
+    {
+        // The payload pipe reports EOF only after the transport validates the complete frame.
+        // A zero-length read is not EOF. Complete here before disposal can win the callback race.
+        if (read == 0 && requested != 0) completion.Complete(null);
+        return read;
+    }
 
     protected override void Dispose(bool disposing)
     {

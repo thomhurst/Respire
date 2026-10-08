@@ -43,6 +43,13 @@ to the same endpoint. Client-side cache hits do not require admission. Different
 including maintenance handoff destinations, keep separate histories. Socket setup, reconnect
 handshakes, and explicit health-check probes retain their existing lifecycle.
 
+A maintenance handoff can move a command only before its frame is accepted. The old admission
+is released as ignored, and the replacement endpoint requires fresh admission under the
+original command deadline. An open replacement circuit rejects without writing there. The
+registry retains at most 16 endpoint histories unless more entries are needed by current routing
+or outstanding admissions. Only idle, non-current histories can be evicted; returning to an
+evicted endpoint starts fresh history. DNS changes reuse the configured hostname.
+
 An operation already accepted by the transport remains in its FIFO position when another
 operation opens the circuit. Circuit breaking does not remove queued frames, cancel accepted
 writes, retry a rejected command, or replay an ambiguous write. `RetryAfter` is not permission
@@ -55,8 +62,9 @@ generation, or a command writer failing before dispatch is ignored. These paths 
 half-open capacity even when the transport must retain a response placeholder to drain a
 later reply in FIFO order.
 
-For a streamed GET, admission remains active until the wire frame finishes. Canceling or
-disposing the returned stream releases admission as ignored immediately; the transport can
+For a streamed GET, admission remains active until the wire frame finishes. Reading EOF records
+success even when disposal precedes the transport's completion callback. Canceling or disposing
+the returned stream before EOF releases admission as ignored immediately; the transport can
 continue discarding the payload to preserve FIFO. Blocking commands retain their existing
 response-timeout exemption. Supply a cancellation token to bound the blocking wait. Streamed
 uploads retain their existing command deadline and source cancellation behavior.
@@ -68,6 +76,10 @@ Submitted command failures represented by `RespireConnectionException` (except a
 TLS errors reported by the transport retain their connection classification. Authentication,
 configuration, command validation, source/serializer exceptions, and application cancellation
 do not count as endpoint health failures.
+
+A connection-selection failure because no healthy connection exists also counts as endpoint
+failure, even though no application frame was submitted. An open circuit rejects subsequent
+selection failures, and an unavailable half-open probe starts a new recovery delay.
 
 Ordinary Redis command errors, including WRONGTYPE, ACL, and missing scripting-engine replies,
 prove that a reply arrived and count as healthy outcomes. Raw error replies and typed command
