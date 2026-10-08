@@ -71,14 +71,15 @@ static async Task VerifyHashAsync(IRespireClient client, string run, Cancellatio
             Check((await client.Hashes.ExpiryAsync(key, "Name"))[0].HasExpiry, "Hash field TTL missing.");
             await client.Hashes.SetAsync(key, "Unknown", (RespireValue)"preserved");
             var tracker = ScalarsHashMapper.Track(client, value, expiryMode: mode);
-            var updated = value with { Name = null, Age = 0 };
+            var updated = value with { Name = null, Age = 42 };
             await tracker.UpdateAsync(updated, token);
             await tracker.UpdateAsync(updated, token);
             Check(await ScalarsHashMapper.GetAsync(client, key, token) == updated, "Tracked update mismatch.");
             Check(await client.Hashes.GetStringAsync(key, "Unknown") == "preserved", "Tracked update lost unknown field.");
             var partial = await ScalarsHashMapper.GetPartialAsync(client, key, ["Name", "Age"], token);
             Check(partial.Name.Selected && !partial.Name.Found, "Hash absent nullable field mismatch.");
-            Check(partial.Age.Selected && partial.Age.Found && partial.Age.Value == 0, "Hash selected zero mismatch.");
+            Check(partial.Age.Selected && partial.Age.Found && partial.Age.Value == updated.Age,
+                "Hash tracked age partial read mismatch.");
             Check(!partial.Id.Selected, "Hash unselected field mismatch.");
             Check(!(await ScalarsHashMapper.GetPartialAsync(client, key + ":missing", ["Age"], token)).Age.Found,
                 "Missing hash partial read mismatch.");
