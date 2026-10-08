@@ -56,12 +56,16 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
         _hubProtocolResolver = hubProtocolResolver;
         _logger = logger;
         var configured = options.Value;
+        if (configured.RemoteClientResultTimeout <= TimeSpan.Zero
+            || configured.RemoteClientResultTimeout.TotalMilliseconds > uint.MaxValue - 1)
+            throw new ArgumentOutOfRangeException(nameof(options), "Remote client result timeout must be positive and within the timer limit.");
         _options = new RespireSignalROptions
         {
             ChannelPrefix = configured.ChannelPrefix,
             SubscriptionBufferSize = configured.SubscriptionBufferSize,
             UseShardedPubSub = configured.UseShardedPubSub,
             GroupAckTimeout = configured.GroupAckTimeout,
+            RemoteClientResultTimeout = configured.RemoteClientResultTimeout,
         };
         _bus = new RespirePubSub(client, _options, logger, typeof(THub).FullName!);
         _ackHandler = new AckHandler();
@@ -536,14 +540,11 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
             // This is a Client result we need to setup state for the completion and forward the message to the client
             if (!string.IsNullOrEmpty(invocation.InvocationId))
             {
-                CancellationTokenRegistration? tokenRegistration = null;
-                _clientResultsManager.AddInvocation(invocation.InvocationId,
-                    (typeof(RawResult), connection.ConnectionId, null!, async (_, completionMessage) =>
+                var lifetime = new RemoteInvocationLifetime(_clientResultsManager, invocation.InvocationId,
+                    connection.ConnectionAborted, _options.RemoteClientResultTimeout, async completionMessage =>
                 {
                     try
                     {
-                        if (tokenRegistration is { } registration)
-                            await registration.DisposeAsync().ConfigureAwait(false);
                         var memoryBufferWriter = new ArrayBufferWriter<byte>();
                         connection.Protocol.WriteMessage(completionMessage, memoryBufferWriter);
                         var message = RedisProtocol.WriteCompletionMessage(memoryBufferWriter.WrittenMemory, connection.Protocol.Name);
@@ -553,14 +554,15 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
                     {
                         RedisLog.ErrorForwardingResult(_logger, completionMessage.InvocationId!, ex);
                     }
-                }));
-
-                // TODO: this isn't great
-                tokenRegistration = connection.ConnectionAborted.UnsafeRegister(_ =>
+                });
+                try
                 {
-                    var invocationInfo = _clientResultsManager.RemoveInvocation(invocation.InvocationId);
-                    invocationInfo?.Completion(null!, CompletionMessage.WithError(invocation.InvocationId, "Connection disconnected."));
-                }, null);
+                    _clientResultsManager.AddInvocation(invocation.InvocationId,
+                        (typeof(RawResult), connection.ConnectionId, lifetime,
+                            static (state, completion) => ((RemoteInvocationLifetime)state).CompleteAsync(completion)));
+                }
+                catch { lifetime.DisposeBeforeStart(); throw; }
+                lifetime.Start();
             }
 
             // Forward message from other server to client

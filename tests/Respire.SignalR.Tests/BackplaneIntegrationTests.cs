@@ -2,6 +2,8 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System.Threading.Channels;
+using System.Collections;
+using System.Reflection;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http.Connections;
@@ -25,6 +27,48 @@ namespace Respire.SignalR.Tests;
 [NotInParallel("signalr-integration")]
 public class BackplaneIntegrationTests(RedisTestContainer fixture)
 {
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CallerCancellationCannotRetainRemoteResultState(bool microsoftCaller)
+    {
+        var prefix = Guid.NewGuid().ToString("N");
+        await using var first = await BackplaneHost.StartAsync(fixture.ConnectionString, prefix, microsoftCaller, false);
+        await using var second = await BackplaneHost.StartAsync(fixture.ConnectionString, prefix, false, false,
+            remoteResultTimeout: TimeSpan.FromMilliseconds(500));
+        await using var remote = await second.ConnectAsync("remote", false);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var handler = remote.Connection.On("never", [], (_, _) => { entered.TrySetResult(); return release.Task; }, null!);
+        using var cancellation = new CancellationTokenSource();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var pending = first.Manager.InvokeConnectionAsync<int>(remote.Id, "never", [], cancellation.Token);
+        try
+        {
+            await entered.Task.WaitAsync(deadline.Token);
+            await Assert.That(PendingClientResults(second.Manager)).IsEqualTo(1);
+            cancellation.Cancel();
+            await Assert.That(async () => await pending).Throws<Exception>();
+            // The client handler remains blocked and connected. Only receiver expiry can retire this owner.
+            while (PendingClientResults(second.Manager) != 0)
+                await Task.Delay(10, deadline.Token);
+            await second.Manager.SendConnectionAsync(remote.Id, "message", ["still-connected"]);
+            await remote.ExpectAsync("still-connected");
+        }
+        finally { cancellation.Cancel(); release.TrySetResult(1); }
+    }
+
+    private static int PendingClientResults(HubLifetimeManager<BackplaneTestHub> manager)
+    {
+        var field = manager.GetType().GetField("_clientResultsManager", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("Client results owner not found.");
+        var results = field.GetValue(manager) ?? throw new InvalidOperationException("Client results owner is null.");
+        var pending = results.GetType().GetField("_pendingInvocations", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("Pending invocation index not found.");
+        return pending.GetValue(results) is ICollection entries ? entries.Count
+            : throw new InvalidOperationException("Pending invocation index is not a collection.");
+    }
+
     [Test]
     public async Task LocalConnectionSendBypassesRedis()
     {
@@ -273,7 +317,7 @@ internal sealed class BackplaneHost(WebApplication application) : IAsyncDisposab
     internal HubLifetimeManager<BackplaneTestHub> Manager => application.Services.GetRequiredService<HubLifetimeManager<BackplaneTestHub>>();
 
     internal static async Task<BackplaneHost> StartAsync(string connectionString, string prefix, bool microsoft,
-        bool sharded, TimeSpan? ackTimeout = null, bool cluster = false)
+        bool sharded, TimeSpan? ackTimeout = null, bool cluster = false, TimeSpan? remoteResultTimeout = null)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
         builder.WebHost.UseTestServer();
@@ -296,6 +340,7 @@ internal sealed class BackplaneHost(WebApplication application) : IAsyncDisposab
             {
                 options.ChannelPrefix = prefix; options.UseShardedPubSub = sharded;
                 if (ackTimeout is { } timeout) options.GroupAckTimeout = timeout;
+                if (remoteResultTimeout is { } resultTimeout) options.RemoteClientResultTimeout = resultTimeout;
             });
         }
         var app = builder.Build();

@@ -14,4 +14,8 @@ public sealed class RespireSignalROptions
 
     /// <summary>Maximum time to await a remote group acknowledgement.</summary>
     public TimeSpan GroupAckTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>Maximum lifetime of forwarded client-result state on the receiving server. Must be positive and no greater than the timer limit.</summary>
+    /// <remarks>Defaults to 30 seconds. Expiry releases state even if the originating server cancels or disappears. It does not cancel the client handler.</remarks>
+    public TimeSpan RemoteClientResultTimeout { get; set; } = TimeSpan.FromSeconds(30);
 }

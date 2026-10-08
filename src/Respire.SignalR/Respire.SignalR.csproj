@@ -6,6 +6,8 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="../Respire/Respire.csproj" />
     <PackageReference Include="MessagePack" />
+    <!-- Source-only System.Threading.Lock support on net8.0. -->
+    <PackageReference Include="Polyfill" PrivateAssets="all" />
     <InternalsVisibleTo Include="Respire.SignalR.Tests" />
     <None Include="LICENSE-Microsoft.txt" Pack="true" PackagePath="licenses/" />
   </ItemGroup>

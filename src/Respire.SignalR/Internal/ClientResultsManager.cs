@@ -156,8 +156,8 @@ internal sealed class ClientResultsManager : IInvocationBinder
 
         public new void SetCanceled()
         {
-            // TODO: RedisHubLifetimeManager will want to notify the other server (if there is one) about the cancellation
-            // so it can clean up state and potentially forward that info to the connection
+            // Microsoft's wire protocol carries no cancellation notification. The
+            // receiving Respire server bounds its separate owner with RemoteClientResultTimeout.
             // Typed cancellation completion is synchronous; forwarding callbacks are not registered here.
             _clientResultsManager.TryCompleteResult(_connectionId, CompletionMessage.WithError(_invocationId, "Invocation canceled by the server."))
                 .GetAwaiter().GetResult();

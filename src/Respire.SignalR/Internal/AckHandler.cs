@@ -5,7 +5,7 @@ namespace Respire.SignalR.Internal;
 internal sealed class AckHandler : IDisposable
 {
     private readonly ConcurrentDictionary<int, TaskCompletionSource> _pending = new();
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private bool _disposed;
 
     internal Task CreateAck(int id)

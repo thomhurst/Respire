@@ -112,7 +112,15 @@ are absent from metric tags. Register this meter with an OpenTelemetry `AddMeter
 Remote group changes await acknowledgement for `GroupAckTimeout` and honor caller
 cancellation. A timeout or gap means the operation's outcome can be unknown. Client-result
 invocations should always receive a caller cancellation token with a deadline: a remote
-server can disappear or a completion can be lost. [Ordinary Cluster `PUBLISH`](https://redis.io/docs/latest/commands/publish/) reports only
+server can disappear or a completion can be lost. The receiving Respire server expires
+forwarded client-result state after `RemoteClientResultTimeout`, default 30 seconds.
+Set a longer positive timeout for longer client methods (up to 4,294,967,294 milliseconds).
+Expiry removes the pending result and disconnect registration, and sends an error completion
+when possible. It does not stop the client handler. This also bounds retained state when
+a caller cancels, disappears, or uses Microsoft's provider, whose compatible envelope has
+no cancellation notification. An originating wait still needs its own deadline if the
+error completion is lost or the receiver uses Microsoft's provider.
+[Ordinary Cluster `PUBLISH`](https://redis.io/docs/latest/commands/publish/) reports only
 node-local receiver counts, so zero receivers cannot establish that a remote client is
 missing. Standalone and sharded sends can detect a missing subscriber immediately.
 Manager disposal settles pending local waits and stops subscription consumers.
