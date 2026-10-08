@@ -22,7 +22,8 @@ public sealed class RespireSearchGenerator : IIncrementalGenerator
         var models = context.SyntaxProvider.ForAttributeWithMetadataName("Respire.Search.RespireSearchAttribute",
             static (node, _) => node is TypeDeclarationSyntax,
             static (attribute, token) => BuildSchema((INamedTypeSymbol)attribute.TargetSymbol,
-                attribute.Attributes[0], token)).WithTrackingName("RespireSearchModels");
+                attribute.Attributes[0], attribute.SemanticModel.Compilation.GetSpecialType(SpecialType.System_Object),
+                token)).WithTrackingName("RespireSearchModels");
         context.RegisterSourceOutput(models, static (output, model) =>
         {
             if (model.Error is not null)
@@ -73,7 +74,8 @@ public sealed class RespireSearchGenerator : IIncrementalGenerator
     private static bool Has(AttributeData attribute, params string[] names) =>
         attribute.NamedArguments.Any(pair => names.Contains(pair.Key));
 
-    private static GeneratedModel BuildSchema(INamedTypeSymbol type, AttributeData attribute, CancellationToken token)
+    private static GeneratedModel BuildSchema(INamedTypeSymbol type, AttributeData attribute,
+        INamedTypeSymbol objectType, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
         var mappings = type.GetAttributes().Where(candidate => candidate.AttributeClass?.ToDisplayString()
@@ -158,8 +160,15 @@ public sealed class RespireSearchGenerator : IIncrementalGenerator
             .Append(string.Join(", ", properties.Select(property => "Fields.@" + property.Name))).Append(" }) };\n")
             .Append("    public static ").Append(fieldCollection).Append(" Fields { get; } = new();\n")
             .Append("    public sealed class ").Append(fieldCollection).Append("\n    {\n        internal ").Append(fieldCollection).Append("() { }\n");
-        for (var i = 0; i < properties.Length; i++) source.Append("        public global::Respire.Search.RespireSearchField @")
-            .Append(properties[i].Name).Append(" { get; } = ").Append(fields[i]).Append(";\n");
+        for (var i = 0; i < properties.Length; i++)
+        {
+            var hidesInheritedMember = objectType.GetMembers(properties[i].Name)
+                .Any(member => member.DeclaredAccessibility is Accessibility.Public or Accessibility.Protected or Accessibility.ProtectedOrInternal
+                    && member is not IMethodSymbol { MethodKind: MethodKind.Destructor });
+            source.Append("        public ").Append(hidesInheritedMember ? "new " : "")
+                .Append("global::Respire.Search.RespireSearchField @")
+                .Append(properties[i].Name).Append(" { get; } = ").Append(fields[i]).Append(";\n");
+        }
         source.Append("    }\n    public static void Validate(").Append(model).Append(" value)\n    {\n        global::System.ArgumentNullException.ThrowIfNull(value);\n");
         foreach (var property in properties.Where(property => VectorAttribute(property) is not null))
         {

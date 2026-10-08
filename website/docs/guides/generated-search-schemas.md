@@ -10,6 +10,7 @@ Install `Respire.Search` alongside the hash or JSON mapper package. Add `[Respir
 The generator emits `ModelNameSearchSchema`, with named typed fields, an index definition, key
 expansion and vector validation. It uses no runtime reflection.
 
+<!-- doc-test-top-level-tail-declaration: split-before=[RespireJson -->
 ```csharp
 using Respire;
 using Respire.Json;
@@ -72,15 +73,26 @@ Nullable vectors can be absent/null. Arrays cannot appear in key templates or ot
 The public `IRespireSearchSchema<TModel>` seam supplies static `IndexName`, `Definition`, `GetKey`
 and `Validate` members. A VectorStore adapter can consume any generated schema independently:
 
+<!-- doc-test-top-level-tail-declaration: split-before=[RespireJson -->
 ```csharp
+using Respire.Json;
+using Respire.Search;
+
 static RespireSearchIndexDefinition GetSchema<TModel, TSchema>()
     where TSchema : IRespireSearchSchema<TModel> => TSchema.Definition;
 
 var definition = GetSchema<Product, ProductSearchSchema>();
+
+[RespireJson("product:{Id}")]
+[RespireSearch("products-v1", Prefixes = new[] { "product:" })]
+public partial record Product(string Id,
+    [property: RespireSearchField(RespireSearchFieldType.Text)] string Name);
 ```
 
 `RespireSearchVectorValidation` is also public for independent connectors. This metadata seam does
 not install a VectorStore connector, perform upserts, or provide a query-result object mapper.
+The low-level `RespireHashModelIO.WriteBinaryAsync` helper writes binary fields without checking
+vector dimensions. Use the generated mapper or validate vector bytes before calling it directly.
 
 ## Schema migration limits
 

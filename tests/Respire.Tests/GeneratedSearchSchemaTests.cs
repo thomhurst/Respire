@@ -131,6 +131,95 @@ public class GeneratedSearchSchemaTests
     }
 
     [Test]
+    public async Task BinaryCancellationSettlesOwnedSnapshotBeforeAdvancingBaseline()
+    {
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = Server();
+        server.ReplyOverride = (_, command) => command.StartsWith("HSET ", StringComparison.Ordinal) ? ":1\r\n"u8.ToArray() : null;
+        server.SuppressReply = _ => { received.TrySetResult(); return true; };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var value = new SearchHashModel("42", "Hello", "tools", 2, new byte[8]);
+        var tracker = SearchHashModelHashMapper.Track(client, value);
+        value.Embedding[0] = 1;
+        using var cancellation = new CancellationTokenSource();
+        var pending = tracker.UpdateAsync(value, cancellation.Token).AsTask();
+        await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        value.Embedding[0] = 2;
+        cancellation.Cancel();
+        await Assert.That(pending.IsCompleted).IsFalse();
+        await Assert.That(async () => await tracker.UpdateAsync(value)).Throws<InvalidOperationException>();
+        server.SuppressReply = null;
+        await server.SendRawAsync(":1\r\n"u8.ToArray(), server.ReceivedConnectionIds.Single());
+        await Assert.That(async () => await pending).Throws<OperationCanceledException>();
+        await tracker.UpdateAsync(value);
+        await tracker.UpdateAsync(value);
+        await Assert.That(server.ReceivedArguments.Count).IsEqualTo(2);
+        await Assert.That(server.ReceivedArguments[0][3][0]).IsEqualTo((byte)1);
+        await Assert.That(server.ReceivedArguments[1][3][0]).IsEqualTo((byte)2);
+    }
+
+    [Test]
+    public async Task BinaryGroupedFailureRetriesOwnedVectorAfterCallerMutation()
+    {
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(3, ":1\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command == "COMMAND INFO HSETEX"
+                ? "*1\r\n*6\r\n$6\r\nhsetex\r\n:-6\r\n*0\r\n:1\r\n:1\r\n:1\r\n"u8.ToArray() : null,
+            SuppressReply = command =>
+            {
+                if (!command.StartsWith("HSET ", StringComparison.Ordinal)) return false;
+                received.TrySetResult();
+                return true;
+            },
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var value = new SearchExpiringHashModel("42", new byte[8]);
+        value.Embedding[0] = 1;
+        var tracker = SearchExpiringHashModelHashMapper.Track(client, "fixed");
+        var pending = tracker.UpdateAsync(value).AsTask();
+        await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        value.Embedding[0] = 2;
+        server.SuppressReply = null;
+        await server.SendRawAsync("-ERR ordinary group failed\r\n"u8.ToArray(), server.ReceivedConnectionIds.Last());
+        await Assert.That(async () => await pending).Throws<RespireServerException>();
+        await tracker.UpdateAsync(value);
+        await tracker.UpdateAsync(value);
+        var vectors = server.ReceivedArguments.Where(arguments => Encoding.UTF8.GetString(arguments[0]) == "HSETEX").ToArray();
+        await Assert.That(vectors.Length).IsEqualTo(2);
+        await Assert.That(vectors[0][^1][0]).IsEqualTo((byte)1);
+        await Assert.That(vectors[1][^1][0]).IsEqualTo((byte)2);
+        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("HSET ", StringComparison.Ordinal))).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task BinaryWriteTimeoutKeepsTrackerInvalidAfterLateReply()
+    {
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = Server();
+        server.SuppressReply = _ => { received.TrySetResult(); return true; };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            CommandTimeout = TimeSpan.FromMilliseconds(200), ThreadPoolMonitoring = false,
+        });
+        var value = new SearchHashModel("42", "Hello", "tools", 2, new byte[8]);
+        var tracker = SearchHashModelHashMapper.Track(client, value);
+        value.Embedding[0] = 1;
+        var pending = tracker.UpdateAsync(value).AsTask();
+        await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        value.Embedding[0] = 2;
+        await Assert.That(async () => await pending).Throws<RespireTimeoutException>();
+        await Assert.That(async () => await tracker.UpdateAsync(value)).Throws<InvalidOperationException>();
+        server.SuppressReply = null;
+        await server.SendRawAsync(":1\r\n"u8.ToArray(), server.ReceivedConnectionIds.Single());
+        await Assert.That(async () => await tracker.UpdateAsync(value)).Throws<InvalidOperationException>();
+        await Assert.That(server.ReceivedArguments.Count).IsEqualTo(1);
+        await Assert.That(server.ReceivedArguments[0][3][0]).IsEqualTo((byte)1);
+    }
+
+    [Test]
     public async Task PartialHashVectorReadsValidateDimensionsAndOwnReplyBytes()
     {
         var vector = new byte[] { 255, 128, 0, 1, 2, 3, 4, 5 };

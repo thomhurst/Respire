@@ -11,6 +11,30 @@ namespace Respire.Analyzers.Tests;
 public class RespireSearchGeneratorTests
 {
     [Test]
+    [Arguments("GetType")]
+    [Arguments("ToString")]
+    [Arguments("Equals")]
+    [Arguments("GetHashCode")]
+    [Arguments("ReferenceEquals")]
+    [Arguments("MemberwiseClone")]
+    [Arguments("Finalize")]
+    public async Task IndexedInheritedMemberNamesCompileWithoutWarnings(string property)
+    {
+        var modifier = property == "Finalize" ? "" : "new ";
+        var (source, diagnostics) = Generate($$"""
+            [RespireJson("model:{Id}"), RespireSearch("models", Prefixes = new[] { "model:" })]
+            public partial class Model
+            {
+                public string Id { get; set; } = "42";
+                [RespireSearchField(RespireSearchFieldType.Text)]
+                public {{modifier}}string {{property}} { get; set; } = "value";
+            }
+            """);
+        await Assert.That(diagnostics).IsEmpty();
+        await Assert.That(source).Contains("public " + modifier + "global::Respire.Search.RespireSearchField @" + property);
+    }
+
+    [Test]
     [Arguments("RespireHash", "byte[]", "Float32")]
     [Arguments("RespireJson", "float[]", "Float32")]
     [Arguments("RespireJson", "double[]", "Float64")]
