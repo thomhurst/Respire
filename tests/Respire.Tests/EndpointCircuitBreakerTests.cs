@@ -70,6 +70,50 @@ public sealed class EndpointCircuitBreakerTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ExpiredSuccessesOpenCircuitBeforeAnotherAdmission(bool inspectBeforeAdmission)
+    {
+        var clock = new Clock();
+        var breaker = New(clock, new()
+        {
+            MinimumFailureCount = 2, FailureRateThreshold = 0.75, SamplingWindow = TimeSpan.FromSeconds(10)
+        });
+        for (var i = 0; i < 3; i++) Finish(breaker, CircuitOutcome.Success);
+        clock.Advance(TimeSpan.FromSeconds(5));
+        Finish(breaker, CircuitOutcome.Failure);
+        Finish(breaker, CircuitOutcome.Failure);
+        var pending = Acquire(breaker);
+        clock.Advance(TimeSpan.FromSeconds(5));
+        if (inspectBeforeAdmission) await Assert.That(breaker.Snapshot().SampleCount).IsEqualTo(2);
+        await Assert.That(breaker.TryAcquire(out _, out var remaining)).IsFalse();
+        await Assert.That(remaining).IsEqualTo(TimeSpan.FromSeconds(5));
+        breaker.Complete(ref pending, CircuitOutcome.Success);
+        await Assert.That(breaker.Snapshot().State).IsEqualTo(EndpointCircuitState.Open);
+    }
+
+    [Test]
+    public async Task ExpiryDoesNotOpenBelowMinimumOrWithoutRemainingFailures()
+    {
+        var clock = new Clock();
+        var breaker = New(clock, new()
+        {
+            MinimumFailureCount = 2, FailureRateThreshold = 0.75, SamplingWindow = TimeSpan.FromSeconds(10)
+        });
+        for (var i = 0; i < 3; i++) Finish(breaker, CircuitOutcome.Success);
+        clock.Advance(TimeSpan.FromSeconds(5));
+        Finish(breaker, CircuitOutcome.Failure);
+        clock.Advance(TimeSpan.FromSeconds(5));
+        var belowMinimum = Acquire(breaker);
+        await Assert.That(breaker.Snapshot().FailureCount).IsEqualTo(1);
+        breaker.Complete(ref belowMinimum, CircuitOutcome.Ignored);
+        clock.Advance(TimeSpan.FromSeconds(5));
+        var emptyHistory = Acquire(breaker);
+        await Assert.That(breaker.Snapshot()).IsEqualTo(new CircuitSnapshot(EndpointCircuitState.Closed, 0, 0, 0, 0));
+        breaker.Complete(ref emptyHistory, CircuitOutcome.Ignored);
+    }
+
+    [Test]
     public async Task OpenDelayUsesMonotonicTimeDespiteWallClockChanges()
     {
         var clock = new Clock();

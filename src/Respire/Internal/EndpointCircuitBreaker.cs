@@ -45,6 +45,12 @@ internal sealed class EndpointCircuitBreaker
         {
             permit = default;
             retryAfter = null;
+            if (_state == EndpointCircuitState.Closed)
+            {
+                var now = _clock.GetTimestamp();
+                TrimHistory(now);
+                OpenIfThresholdReached(now);
+            }
             if (_state == EndpointCircuitState.Open)
             {
                 var elapsed = _clock.GetElapsedTime(_openedAt, _clock.GetTimestamp());
@@ -109,10 +115,15 @@ internal sealed class EndpointCircuitBreaker
             _samples[(_head + _sampleCount) % _samples.Length] = new(now, failure);
             _sampleCount++;
             if (failure) _failureCount++;
-            if (_failureCount >= _options.MinimumFailureCount
-                && (double)_failureCount / _sampleCount >= _options.FailureRateThreshold)
-                Open(now);
+            OpenIfThresholdReached(now);
         }
+    }
+
+    private void OpenIfThresholdReached(long now)
+    {
+        if (_failureCount >= _options.MinimumFailureCount
+            && (double)_failureCount / _sampleCount >= _options.FailureRateThreshold)
+            Open(now);
     }
 
     private void Open(long now)
