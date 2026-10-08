@@ -205,6 +205,74 @@ public sealed class GatheredSetTests
 
     [Test]
     [NotInParallel]
+    [Arguments("cancel")]
+    [Arguments("deadline")]
+    [Arguments("watchdog")]
+    [Arguments("resume")]
+    public async Task ConfiguredWatchdogReleasesBorrowedMemoryQueuedBehindCopiedWrite(string boundary)
+    {
+        var reads = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(FakeRespServer.OkReply) { ReadGate = reads.Task };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            CommandTimeout = boundary == "deadline" ? TimeSpan.FromMilliseconds(250) : null,
+            ConnectionIdleReadTimeout = TimeSpan.FromSeconds(1),
+        });
+        var connection = client.Core.Multiplexer.GetConnection();
+        var socket = (Socket)typeof(RespireConnection).GetField("_socket", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(connection)!;
+        socket.SendBufferSize = 0;
+        using var cancellation = new CancellationTokenSource();
+        using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        // SET GET uses the copied serializer. Park the real kernel send before borrowing another array.
+        var copied = client.Strings.GetAndSetAsync("copied-first", new byte[5 * 1024 * 1024]).AsTask();
+        while (connection.CaptureTimeoutDiagnostics().InflightBytes == 0 || socket.Poll(0, SelectMode.SelectWrite))
+        {
+            if (copied.IsCompleted) await copied;
+            await Task.Delay(1, guard.Token);
+        }
+        var payload = Enumerable.Repeat((byte)'a', 512 * 1024).ToArray();
+        var pending = client.SetAsync("queued-borrowed", (RespireValue)payload,
+            cancellationToken: cancellation.Token).AsTask();
+        await Assert.That(connection.CaptureTimeoutDiagnostics().PendingWriteBytes > payload.Length).IsTrue();
+        if (boundary == "cancel") await cancellation.CancelAsync();
+        try
+        {
+            if (boundary == "resume")
+            {
+                reads.TrySetResult();
+                await Assert.That(await pending.WaitAsync(guard.Token)).IsTrue();
+                await copied.WaitAsync(guard.Token);
+                await Assert.That(server.ReceivedArguments[0][2].All(value => value == 0)).IsTrue();
+                await Assert.That(server.ReceivedArguments[1][2].All(value => value == (byte)'a')).IsTrue();
+                await Task.Delay(TimeSpan.FromMilliseconds(1200), guard.Token);
+                await Assert.That(connection.IsConnected).IsTrue();
+                await Assert.That(await client.SetAsync("following", "small", cancellationToken: guard.Token)).IsTrue();
+                return;
+            }
+            if (boundary == "cancel")
+                await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(3), guard.Token)).Throws<OperationCanceledException>();
+            else if (boundary == "deadline")
+                await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(3), guard.Token)).Throws<RespireTimeoutException>();
+            else
+                await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(3), guard.Token)).Throws<RespireConnectionException>();
+            await Assert.That(connection.IsConnected).IsFalse();
+            await Assert.That(server.CommandsSeen).IsEqualTo(0);
+            payload.AsSpan().Fill((byte)'b');
+        }
+        finally
+        {
+            // Always consume the preceding command, including when the regression times out.
+            await client.DisposeAsync();
+            try { await copied; } catch (RespireException) { }
+            reads.TrySetResult();
+        }
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task CompletedBorrowedWriteDoesNotLeaveAnIdleWatchdogArmed()
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply);

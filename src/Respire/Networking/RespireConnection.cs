@@ -119,6 +119,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         // an ambiguous socket/TLS write has reported any successful progress.
         [FieldOffset(80)] internal long ClaimedWriteEnd;
         [FieldOffset(88)] internal long GatheredWriteDeadlineTimestamp;
+        [FieldOffset(96)] internal int GatheredWriteBufferCount;
     }
 
     [StructLayout(LayoutKind.Explicit, Size = 128)]
@@ -1889,6 +1890,16 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         // Only the persistent FlushLoopAsync sender calls this method, including TLS writes.
         Volatile.Write(ref _flushProgress.SentBytes, _flushProgress.SentBytes + bytes);
         Volatile.Write(ref _flushProgress.LastWriteTimestamp, Environment.TickCount64);
+        if (Volatile.Read(ref _flushProgress.GatheredWriteDeadlineTimestamp) != 0)
+        {
+            // Copied sends ahead of queued borrowed memory also advance the ownership watchdog.
+            // Serialize progress and its terminal decision with producer admission.
+            lock (_writeGate)
+            {
+                if (_flushProgress.GatheredWriteBufferCount != 0)
+                    Volatile.Write(ref _flushProgress.GatheredWriteDeadlineTimestamp, Stopwatch.GetTimestamp());
+            }
+        }
     }
 
     /// <summary>Captures the sole outstanding frame on an exclusively rented connection.</summary>
@@ -2368,6 +2379,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     // because the bytes are already on the socket and this thread still completes
                     // the buffer's waiters.
                     Volatile.Write(ref _sending, false);
+                    if (_responseTimeout is not null && sending.HasBorrowedPayloads)
+                        CompleteGatheredWriteWatch();
                     sending.CompleteWrite();
                     sending.Reset();
                     sending = null;

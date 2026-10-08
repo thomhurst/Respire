@@ -79,7 +79,10 @@ Cancellation and command deadlines can wait for an accepted socket write to fini
 operation returns. TLS, custom streams, and unsupported command shapes retain the copying path.
 Set `ConnectionIdleReadTimeout` to bound a stalled borrowed write: when no completed socket send
 makes progress for that period, the connection watchdog closes the socket and waits for the
-kernel send to release caller memory before completing the operation. The connection is then
+kernel send to release caller memory before completing the operation. Borrowed memory is
+watched from the moment it is queued, including while a preceding copied command
+is sending. Completed sends advance the watchdog; further enqueues do not restart its timer.
+The connection is then
 discarded; other pending commands on it can fail, and Redis may have received part or all of
 the SET. A paused `GetStreamAsync` consumer suppresses receive checks but does not suspend this
 write watchdog. Cancellation alone does not abort an accepted frame. With this watchdog disabled

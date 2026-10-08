@@ -34,6 +34,13 @@ internal sealed partial class RespireConnection
                 frameLength = checked(_activeBuffer.Count - mark + command.Payload.Count);
             }
             catch { _activeBuffer.TruncateTo(mark); throw; }
+            if (_responseTimeout is not null && !_activeBuffer.HasBorrowedPayloads)
+            {
+                // Arm when ownership is accepted, even if a preceding copied buffer is stalled.
+                // Further enqueues must not postpone a stall already being watched.
+                if (_flushProgress.GatheredWriteBufferCount++ == 0)
+                    Volatile.Write(ref _flushProgress.GatheredWriteDeadlineTimestamp, Stopwatch.GetTimestamp());
+            }
             _activeBuffer.AddBorrowedPayload(offset, command.Payload, command.Lease);
             if (_responseTimeout is not null) _activeReplyCount += discardRepliesBefore + 1;
             var start = StampWritePosition(source, frameLength);
@@ -52,36 +59,34 @@ internal sealed partial class RespireConnection
 #endif
     private async ValueTask SendGatheredBufferAsync(WriteBuffer buffer)
     {
-        var watchWrite = _responseTimeout is not null;
-        if (watchWrite) SetGatheredWriteDeadline(Stopwatch.GetTimestamp());
-        try
+        var part = 0;
+        while (true)
         {
-            var part = 0;
-            while (true)
+            var segments = buffer.GetSendSegments(ref part);
+            if (segments.Count == 0) return;
+            while (segments.Count != 0)
             {
-                var segments = buffer.GetSendSegments(ref part);
-                if (segments.Count == 0) return;
-                while (segments.Count != 0)
-                {
-                    // Response cancellation cannot abandon an open RESP frame. When configured,
-                    // the connection watchdog bounds stalled writes by closing the whole socket.
-                    // The lease is released only after this kernel send has returned.
-                    var sent = await buffer.SendSegmentsAsync(_socket!, segments).ConfigureAwait(false);
-                    if (sent <= 0) throw new IOException("Socket closed during gathered SET write.");
-                    RecordWrite(sent);
-                    if (watchWrite) SetGatheredWriteDeadline(Stopwatch.GetTimestamp());
-                    WriteBuffer.ConsumeSentSegments(segments, sent);
-                }
+                // Response cancellation cannot abandon an open RESP frame. When configured,
+                // the connection watchdog bounds stalled writes by closing the whole socket.
+                // The lease is released only after this kernel send has returned.
+                var sent = await buffer.SendSegmentsAsync(_socket!, segments).ConfigureAwait(false);
+                if (sent <= 0) throw new IOException("Socket closed during gathered SET write.");
+                RecordWrite(sent);
+                WriteBuffer.ConsumeSentSegments(segments, sent);
             }
         }
-        finally { if (watchWrite) SetGatheredWriteDeadline(0); }
     }
 
-    private void SetGatheredWriteDeadline(long timestamp)
+    private void CompleteGatheredWriteWatch()
     {
-        // Clearing or advancing progress cannot race the watchdog's terminal decision.
-        // This gate is used only when the existing watchdog is configured.
-        lock (_receiveDeadlineGate) Volatile.Write(ref _flushProgress.GatheredWriteDeadlineTimestamp, timestamp);
+        // The sender has finished every byte in this buffer, including copied trailing commands.
+        // Keep watching if the producer accepted another borrowed buffer while this one sent.
+        lock (_writeGate)
+        {
+            Debug.Assert(_flushProgress.GatheredWriteBufferCount > 0);
+            if (--_flushProgress.GatheredWriteBufferCount == 0)
+                Volatile.Write(ref _flushProgress.GatheredWriteDeadlineTimestamp, 0);
+        }
     }
 
     private bool TryAbortStalledGatheredWrite(TimeSpan timeout)
@@ -89,7 +94,7 @@ internal sealed partial class RespireConnection
         var timestamp = Volatile.Read(ref _flushProgress.GatheredWriteDeadlineTimestamp);
         if (timestamp == 0 || Stopwatch.GetElapsedTime(timestamp) < timeout) return false;
         bool closed;
-        lock (_receiveDeadlineGate)
+        lock (_writeGate)
         {
             var effectiveTimeout = MaintenanceTimeout(timeout, Environment.TickCount64, out _, out _);
             if (timestamp != _flushProgress.GatheredWriteDeadlineTimestamp
