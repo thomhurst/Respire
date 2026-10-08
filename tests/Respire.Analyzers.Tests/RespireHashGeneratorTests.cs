@@ -18,6 +18,8 @@ public class RespireHashGeneratorTests
     [Arguments("[RespireHash(\"{Id}\")] public partial class User { public int Id { get; set; } protected internal User(int id) { Id = id; } }")]
     [Arguments("[RespireHash(\"{Id}\")] public partial class User { public required int Id { get; set; } public User(int id) { Id = id; } }")]
     [Arguments("[RespireHash(\"{Id}\")] public partial class User { public required int Id { get; set; } [System.Diagnostics.CodeAnalysis.SetsRequiredMembers] public User(int id) { Id = id; } }")]
+    [Arguments("[RespireHash(\"{Id}\")] internal partial class User { public int Id { get; set; } internal required string Secret { get; init; } [System.Diagnostics.CodeAnalysis.SetsRequiredMembers] public User() { Secret = \"secret\"; } }")]
+    [Arguments("[RespireHash(\"{Id}\")] internal partial class User { public int Id { get; set; } internal required string Secret; [System.Diagnostics.CodeAnalysis.SetsRequiredMembers] public User() { Secret = \"secret\"; } }")]
     public async Task SupportedModelsCompileWithoutWarnings(string declaration)
     {
         var (_, generated, diagnostics) = Generate(declaration);
@@ -44,6 +46,9 @@ public class RespireHashGeneratorTests
     [Arguments("[RespireHash(\"\")] public partial record User(string Id);")]
     [Arguments("[RespireHash(null)] public partial record User(string Id);")]
     [Arguments("[RespireHash(\"{Id}\")] public partial record User(string Id); public class UserHashMapper { }")]
+    [Arguments("namespace Models { [RespireHash(\"{Id}\")] public partial record User(string Id); } namespace Models.UserHashMapper { }")]
+    [Arguments("[RespireHash(\"{Id}\")] internal partial class User { public int Id { get; set; } internal required string Secret { get; init; } }")]
+    [Arguments("[RespireHash(\"{Id}\")] internal partial class User { public int Id { get; set; } internal required string Secret; }")]
     [Arguments("[RespireHash(\"{Id}\")] public partial class User { public string Id { get; } = \"a\"; }")]
     [Arguments("[RespireHash(\"{Id}\")] public partial class User { public string Id { get; private set; } = \"a\"; }")]
     [Arguments("[RespireHash(\"{Id}\")] public partial class User { public string Id = \"a\"; }")]

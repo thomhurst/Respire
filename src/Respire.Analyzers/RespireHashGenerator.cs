@@ -70,9 +70,13 @@ public sealed class RespireHashGenerator : IIncrementalGenerator
             .OrderBy(candidate => candidate.Parameters.Length).FirstOrDefault();
         if (constructor is null)
             return GeneratedModel.Failed(type, "Hash models need an accessible constructor whose parameters match public properties by name and type, or an accessible parameterless constructor.");
+        if (!SetsRequiredMembers(constructor) && type.GetMembers().Any(member =>
+                member.DeclaredAccessibility != Accessibility.Public
+                && (member is IPropertySymbol { IsRequired: true } or IFieldSymbol { IsRequired: true })))
+            return GeneratedModel.Failed(type, "Non-public required members need a selected constructor marked [SetsRequiredMembers].");
 
         var mapper = type.Name + "HashMapper";
-        if (type.ContainingNamespace.GetTypeMembers(mapper).Length != 0)
+        if (type.ContainingNamespace.GetMembers(mapper).Any())
             return GeneratedModel.Failed(type, $"Generated mapper '{mapper}' already exists in this namespace.");
         if (attribute.ConstructorArguments.Length != 1 || attribute.ConstructorArguments[0].Value is not string template
             || template.Length == 0)
@@ -138,8 +142,7 @@ public sealed class RespireHashGenerator : IIncrementalGenerator
         }
         var constructorProperties = constructor.Parameters.Select(parameter => Array.FindIndex(properties,
             property => property.Name.Equals(parameter.Name, StringComparison.OrdinalIgnoreCase))).ToArray();
-        var setsRequiredMembers = constructor.GetAttributes().Any(attribute =>
-            attribute.AttributeClass?.ToDisplayString() == "System.Diagnostics.CodeAnalysis.SetsRequiredMembersAttribute");
+        var setsRequiredMembers = SetsRequiredMembers(constructor);
         var initializerProperties = Enumerable.Range(0, properties.Length).Where(index =>
             !constructorProperties.Contains(index) || properties[index].IsRequired && !setsRequiredMembers).ToArray();
         source.Append("        return new ").Append(modelType).Append('(')
@@ -163,6 +166,9 @@ public sealed class RespireHashGenerator : IIncrementalGenerator
         if (!type.ContainingNamespace.IsGlobalNamespace) source.Append("}\n");
         return source.ToString();
     }
+
+    private static bool SetsRequiredMembers(IMethodSymbol constructor) => constructor.GetAttributes().Any(attribute =>
+        attribute.AttributeClass?.ToDisplayString() == "System.Diagnostics.CodeAnalysis.SetsRequiredMembersAttribute");
 
     private static string? RenderKey(string template, IPropertySymbol[] properties)
     {
