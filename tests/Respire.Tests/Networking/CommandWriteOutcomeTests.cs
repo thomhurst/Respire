@@ -102,7 +102,7 @@ public class CommandWriteOutcomeTests
         using var caller = new CancellationTokenSource();
         await using var source = new MemoryStream("data"u8.ToArray());
         var command = new StreamedSetCommand((RespireValue)"key", source, 4, default, SetWhen.Always);
-        var asking = new RawCommand("*1\r\n$6\r\nASKING\r\n"u8.ToArray());
+        var asking = new ProtocolCommand<RawCommand>(new("*1\r\n$6\r\nASKING\r\n"u8.ToArray()));
         var pending = connection.SendAskingStreamAttemptAsync(asking, command, caller.Token,
             CommandDeadline.None, default).AsTask();
         await askingReceived.Task.WaitAsync(Guard);

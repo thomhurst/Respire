@@ -338,7 +338,7 @@ internal sealed partial class SubscriptionHub
         ConnectAndReplayNotificationNodeAsync(ClusterNotificationNode node, long epoch, CancellationToken cancellationToken)
     {
         var endpoint = node.Endpoint;
-        var options = core.Options.ToConnectionOptions(
+        var options = core.CreateConnectionOptions(
             (in RespValue value) => OnNotificationPush(node, epoch, in value)) with
         {
             SubscriptionConfirmationHandler = (in RespValue _) => { },

@@ -390,7 +390,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
             : default;
         try
         {
-            var command = new Cmd1(verb, name.AsValue());
+            var command = new ProtocolCommand<Cmd1>(new Cmd1(verb, name.AsValue()));
             var reply = ask
                 ? await ClusterRouter.SendAskingAsync(connection, in command, cancellationToken, operation).ConfigureAwait(false)
                 : await connection.SendAsync(command, cancellationToken).ConfigureAwait(false);
@@ -451,7 +451,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
                 endpoint = core.Options.PrimaryEndpoint;
             }
 
-            var options = core.Options.ToConnectionOptions((in RespValue value) => OnPush(epoch, in value)) with
+            var options = core.CreateConnectionOptions((in RespValue value) => OnPush(epoch, in value)) with
             {
                 SubscriptionConfirmationHandler = (in RespValue value) => OnSubscriptionConfirmation(epoch, in value),
                 UnexpectedConnectionClosed = core.Options.ReconnectEpisodeStarted is null ? null : OnUnexpectedConnectionClosed,

@@ -663,7 +663,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 if (_closed || !router.IsCurrent(this))
                     throw new RespireConnectionException($"Read replica {endpoint} was removed from the topology.");
                 // Standalone replicas use ROLE validation, not Cluster's READONLY handshake.
-                pool = _dedicatedPool ??= new(endpoint.Host, endpoint.Port, owner.Options.ToConnectionOptions(), owner.Logger);
+                pool = _dedicatedPool ??= new(endpoint.Host, endpoint.Port, owner.CreateConnectionOptions(), owner.Logger);
             }
             finally { _gate.Release(); }
 
@@ -747,7 +747,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 {
                     var multiplexer = await RespireConnectionMultiplexer.CreateAsync(
                         endpoint.Host, endpoint.Port, owner.Options.Connections,
-                        owner.Options.ToConnectionOptions(), owner.Logger, linked.Token).ConfigureAwait(false);
+                        owner.CreateConnectionOptions(), owner.Logger, linked.Token).ConfigureAwait(false);
                     try
                     {
                         Action<RespireConnectionStateChange> stateChanged = change =>

@@ -518,7 +518,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                             importSubmissionAttempted = true;
                             // Import-only MULTI cannot reroute; keep this decision in the shared policy.
                             using var multi = await _client.SendOnConnectionAsync("MULTI", connection,
-                                new Cmd(RespireCommands.Transaction.MULTI.Verb), cancellationToken, commandDeadline: deadline,
+                                new ProtocolCommand<Cmd>(new Cmd(RespireCommands.Transaction.MULTI.Verb)), cancellationToken, commandDeadline: deadline,
                                 allowStreamingConnectionReroute: ConnectionPolicy.CanReplayRejectedCommands).ConfigureAwait(false);
                             ResponseReader.ExpectOk(in multi);
                             importTransactionStarted = true;

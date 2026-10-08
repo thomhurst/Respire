@@ -246,16 +246,17 @@ public sealed partial class RespireServerNode
         CancellationToken cancellationToken, NodeCallKind callKind = NodeCallKind.Read,
         TimeSpan? commandTimeout = null)
         => WithNodeConnectionAsync(operation, callKind,
-            (Client: _client, Operation: operation, Arguments: arguments, Parser: parser),
-            static async (connection, state, token) =>
+            (Client: _client, Operation: operation, Arguments: arguments, Parser: parser, ReadOnly: callKind == NodeCallKind.Read),
+            static async (connection, state, token, fence) =>
             {
+                var command = new ReadOnlyCommand<CmdN>(new CmdN(new Verb(-1, state.Operation), state.Arguments), state.ReadOnly);
                 using var reply = await state.Client.SendOnPinnedConnectionAsync(state.Operation, connection,
-                    new CmdN(new Verb(-1, state.Operation), state.Arguments), token).ConfigureAwait(false);
+                    new MutationCommand<ReadOnlyCommand<CmdN>>(command, fence), token).ConfigureAwait(false);
                 return state.Parser(in reply);
             }, cancellationToken, commandTimeout);
 
     private async ValueTask<T> WithNodeConnectionAsync<TState, T>(string operation, NodeCallKind callKind,
-        TState state, Func<RespireConnection, TState, CancellationToken, ValueTask<T>> execute,
+        TState state, Func<RespireConnection, TState, CancellationToken, ClientSideCacheCoordinator.MutationFence, ValueTask<T>> execute,
         CancellationToken cancellationToken, TimeSpan? commandTimeout = null)
     {
         var mutation = callKind is NodeCallKind.Mutation or NodeCallKind.ControlMutation;
@@ -270,7 +271,7 @@ public sealed partial class RespireServerNode
             pool = _client.Core.CreateServerPool(Endpoint,
                 controlConnection: callKind == NodeCallKind.ControlMutation, commandTimeout: commandTimeout);
             var connection = await pool.RentAsync(cancellationToken).ConfigureAwait(false);
-            return await execute(connection, state, cancellationToken).ConfigureAwait(false);
+            return await execute(connection, state, cancellationToken, fence).ConfigureAwait(false);
         }
         finally
         {
@@ -287,9 +288,10 @@ public sealed partial class RespireServerNode
 
     private async ValueTask ShutdownWriteAsync(RespireValue[] arguments, CancellationToken cancellationToken)
         => _ = await WithNodeConnectionAsync("SHUTDOWN", NodeCallKind.ControlMutation, arguments,
-            static async (connection, tokens, token) =>
+            static async (connection, tokens, token, fence) =>
             {
-                await connection.SendFireAndForgetAsync(new CmdN(new Verb(-1, "SHUTDOWN"), tokens), token, "SHUTDOWN").ConfigureAwait(false);
+                await connection.SendFireAndForgetAsync(new MutationCommand<CmdN>(new CmdN(new Verb(-1, "SHUTDOWN"), tokens), fence),
+                    token, "SHUTDOWN").ConfigureAwait(false);
                 return true;
             }, cancellationToken).ConfigureAwait(false);
 

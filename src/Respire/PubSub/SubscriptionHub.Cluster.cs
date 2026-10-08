@@ -217,7 +217,7 @@ internal sealed partial class SubscriptionHub
         RespireConnectionMultiplexer owner, RespireConnectionMultiplexer? askSource, CancellationToken cancellationToken)
     {
         var primary = new PrimarySubscriptionConnection(owner, askSource);
-        var options = core.Options.ToConnectionOptions((in RespValue value) => OnPrimaryPush(primary, in value));
+        var options = core.CreateConnectionOptions((in RespValue value) => OnPrimaryPush(primary, in value));
         options = options with
         {
             SubscriptionConfirmationHandler = (in RespValue value) => OnSubscriptionConfirmation(0, in value, primary),

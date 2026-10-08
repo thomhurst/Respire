@@ -38,7 +38,7 @@ public sealed class StreamedSetTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await using var source = new MemoryStream("data"u8.ToArray());
         var command = new StreamedSetCommand((RespireValue)"key", source, 4, default, SetWhen.Always);
-        var asking = new RawCommand("*1\r\n$6\r\nASKING\r\n"u8.ToArray());
+        var asking = new ProtocolCommand<RawCommand>(new("*1\r\n$6\r\nASKING\r\n"u8.ToArray()));
         var pending = connection.SendAskingStreamedSetAsync(in asking, command, timeout.Token,
             CommandDeadline.After(10_000), new DedicatedStreamRoute(client.Core, pool, connection)).AsTask();
         while (!oldTarget.ReceivedCommands.Contains("ASKING"))

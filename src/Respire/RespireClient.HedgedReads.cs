@@ -30,7 +30,7 @@ public sealed partial class RespireClient
 
             // Either leg may outlive its caller. Own the argument bytes before dispatching either
             // request, including when admission/backpressure delays serialization of the loser.
-            var snapshot = SnapshotCommand.Create(in command);
+            var snapshot = SnapshotCommand.Create(in command, captureCacheMetadata: _core.ClientCache is not null);
             var originalRoute = cluster is null ? null : new HedgeOriginalRoute(connection);
             var pending = SendHedgedReadLegAsync(operation, snapshot, connection, flags, cancellationToken, originalRoute);
             if (pending.IsCompletedSuccessfully) return pending.Result;

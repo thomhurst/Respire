@@ -16,6 +16,7 @@ internal readonly struct GatheredSetCommand(SetCommand command, ArraySegment<byt
     internal GatheredSetWriteLease Lease => lease;
     public int GetWriteSizeHint() => command.GetWriteSizeHint();
     public ReadCommandKind ReadKind => command.ReadKind;
+    public bool IsConnectionProtocol => false;
     public RespireCacheMutation GetCacheMutation(string operation) => command.GetCacheMutation(operation);
     public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => command.GetClientCacheMetadata(operation);
     public bool TryGetPrimaryKey(out RespireValue key) => command.TryGetPrimaryKey(out key);

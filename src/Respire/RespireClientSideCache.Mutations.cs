@@ -195,6 +195,12 @@ internal sealed partial class ClientSideCacheCoordinator
             return lease._fence;
         }
 
+        internal bool IsLiveFor(long epoch, ClientSideCacheCoordinator owner)
+        {
+            var state = Volatile.Read(ref _state);
+            return (state & EpochMask) == epoch && (state & ReferenceMask) != 0 && ReferenceEquals(owner, _owner);
+        }
+
         internal bool RetainNative(long epoch)
         {
             while (true)

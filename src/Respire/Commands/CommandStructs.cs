@@ -6,14 +6,15 @@ namespace Respire.Commands;
 
 /// <summary>An owned RESP frame used when caller-owned arguments must survive an async send.</summary>
 /// <remarks>
-/// Captures argument bytes and routing metadata, not execution policy. Used by ordinary cached
+/// Captures argument bytes, routing metadata, and immutable mutation classification. Used by ordinary cached
 /// queries and deferred vector batches; commands with admission or acceptance callbacks must retain
 /// their command value through an <see cref="IRespCommandWrapper"/> instead.
 /// </remarks>
 internal readonly struct SnapshotCommand(byte[] frame, int? clusterSlot, ReadCommandKind readKind,
-    int cursorArgumentIndex = -1) : IRespCommand
+    int cursorArgumentIndex = -1, ClientCacheCommandMetadata cacheMetadata = default,
+    RespireCacheMutation cacheMutation = RespireCacheMutation.Unknown) : IRespCommand
 {
-    public static SnapshotCommand Create<TCommand>(in TCommand command)
+    public static SnapshotCommand Create<TCommand>(in TCommand command, bool captureCacheMetadata = true)
         where TCommand : struct, IRespCommand
     {
         var slot = command.TryGetClusterSlot(out var value) ? value : (int?)null;
@@ -23,7 +24,9 @@ internal readonly struct SnapshotCommand(byte[] frame, int? clusterSlot, ReadCom
             var writer = new RespWriter(buffer, command.GetWriteSizeHint());
             command.Write(ref writer);
             writer.Complete();
-            return new SnapshotCommand(buffer.WrittenMemory.ToArray(), slot, command.ReadKind, command.CursorArgumentIndex);
+            return new SnapshotCommand(buffer.WrittenMemory.ToArray(), slot, command.ReadKind, command.CursorArgumentIndex,
+                captureCacheMetadata ? command.GetClientCacheMetadata(string.Empty) : default,
+                captureCacheMetadata ? command.GetCacheMutation(string.Empty) : RespireCacheMutation.Unknown);
         }
         finally
         {
@@ -39,6 +42,8 @@ internal readonly struct SnapshotCommand(byte[] frame, int? clusterSlot, ReadCom
 
     public ReadCommandKind ReadKind => readKind;
     public int CursorArgumentIndex => cursorArgumentIndex;
+    public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => cacheMetadata;
+    public RespireCacheMutation GetCacheMutation(string operation) => cacheMutation;
 
     public int GetWriteSizeHint() => frame.Length;
 
@@ -721,11 +726,15 @@ internal readonly struct CatalogCommand(RespireCommand command, RespireValue[] a
     public int CursorArgumentIndex => command.CursorArgumentIndex;
 
     public ClientCacheCommandMetadata GetClientCacheMetadata(string operation)
-        => operation.Equals(command.Name, StringComparison.OrdinalIgnoreCase) && command.Verb.CacheMetadata.IsInitialized
+    {
+        if (operation.Length == 0) operation = command.Name;
+        return operation.Equals(command.Name, StringComparison.OrdinalIgnoreCase) && command.Verb.CacheMetadata.IsInitialized
             ? command.Verb.CacheMetadata : ClientCacheCommandMetadata.Get(operation);
+    }
 
     public RespireCacheMutation GetCacheMutation(string operation)
     {
+        if (operation.Length == 0) operation = command.Name;
         if (command.HasExplicitCacheMutation) return command.CacheMutation;
         if (!operation.Equals(command.Name, StringComparison.OrdinalIgnoreCase)
             || command.CacheMutation == RespireCacheMutation.Unknown)

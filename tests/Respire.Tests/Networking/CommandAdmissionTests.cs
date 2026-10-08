@@ -13,6 +13,54 @@ public class CommandAdmissionTests
 {
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(5);
 
+    [Test]
+    [NotInParallel]
+    public async Task HealthyMutationAdmissionChecksDoNotAllocate()
+    {
+        var cache = new ClientSideCacheCoordinator(new());
+        var read = new Cmd1(Verbs.Get, "allocation-key");
+        var protocol = new ProtocolCommand<Cmd>(new Cmd(Verbs.ReadOnly));
+        var fence = cache.BeforeCommand("SET", new Cmd2(Verbs.Set, "allocation-key", "value"));
+        var write = new MutationCommand<Cmd2>(new Cmd2(Verbs.Set, "allocation-key", "value"), fence);
+        try
+        {
+            _ = MeasureDispatchAdmission(null, in read);
+            _ = MeasureDispatchAdmission(cache, in read);
+            _ = MeasureDispatchAdmission(cache, in write);
+            _ = MeasureDispatchAdmission(cache, in protocol);
+            _ = MeasureAllocatingControl();
+            var measured = AllocationMeasurement.WithoutConcurrentGc(() => (
+                Disabled: MeasureDispatchAdmission(null, in read),
+                Read: MeasureDispatchAdmission(cache, in read),
+                Write: MeasureDispatchAdmission(cache, in write),
+                Protocol: MeasureDispatchAdmission(cache, in protocol),
+                Control: MeasureAllocatingControl()));
+            await Assert.That(measured.Disabled).IsEqualTo(0);
+            await Assert.That(measured.Read).IsEqualTo(0);
+            await Assert.That(measured.Write).IsEqualTo(0);
+            await Assert.That(measured.Protocol).IsEqualTo(0);
+            await Assert.That(measured.Control).IsGreaterThan(0);
+        }
+        finally { cache.CompleteMutation(in fence); }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long MeasureDispatchAdmission<TCommand>(ClientSideCacheCoordinator? cache, in TCommand command)
+        where TCommand : struct, IRespCommand
+    {
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        for (var iteration = 0; iteration < 1024; iteration++) cache?.ValidateDispatchAdmission(in command);
+        return GC.GetAllocatedBytesForCurrentThread() - before;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long MeasureAllocatingControl()
+    {
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        for (var iteration = 0; iteration < 1024; iteration++) GC.KeepAlive(new byte[32]);
+        return GC.GetAllocatedBytesForCurrentThread() - before;
+    }
+
     private sealed class AdmissionState
     {
         public Exception? Failure;
@@ -39,8 +87,12 @@ public class CommandAdmissionTests
     [Test]
     public async Task RetainedCommandsRequireExplicitAdmissionPolicy()
     {
-        var wrappers = typeof(RespireClient).Assembly.GetTypes().Where(type =>
-            type.IsValueType && typeof(IRespCommand).IsAssignableFrom(type) &&
+        var commands = typeof(RespireClient).Assembly.GetTypes().Where(type =>
+            type.IsValueType && typeof(IRespCommand).IsAssignableFrom(type)).ToArray();
+        foreach (var command in commands.Where(type => type.GetMethod(nameof(IRespCommand.GetMutationFence),
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly) is not null))
+            await Assert.That(typeof(IMutationAdmissionCommand).IsAssignableFrom(command)).IsTrue();
+        var wrappers = commands.Where(type =>
             type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
                 .Any(field => typeof(IRespCommand).IsAssignableFrom(field.FieldType) ||
                     field.FieldType.IsGenericParameter && field.FieldType.GetGenericParameterConstraints()
@@ -50,6 +102,15 @@ public class CommandAdmissionTests
         {
             await Assert.That(typeof(IRespCommandWrapper).IsAssignableFrom(wrapper)).IsTrue();
             await Assert.That(wrapper.GetMethod(nameof(IRespCommand.GetMutationFence),
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+                .IsNotNull();
+            await Assert.That(wrapper.GetProperty(nameof(IRespCommand.IsConnectionProtocol),
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+                .IsNotNull();
+            await Assert.That(wrapper.GetMethod(nameof(IRespCommand.GetCacheMutation),
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+                .IsNotNull();
+            await Assert.That(wrapper.GetMethod(nameof(IRespCommand.GetClientCacheMetadata),
                 BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
                 .IsNotNull();
         }

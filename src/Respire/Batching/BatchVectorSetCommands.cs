@@ -119,7 +119,8 @@ internal sealed class BatchVectorSetCommands(IPendingSink sink) : IBatchVectorSe
     {
         // Transactions serialize immediately. Batches otherwise retain borrowed member/vector memory.
         if (sink.DefersSerialization)
-            return sink.Add(operation, SnapshotCommand.Create(in command), convert);
+            return sink.Add(operation, SnapshotCommand.Create(in command,
+                captureCacheMetadata: sink.Client.Core.ClientCache is not null), convert);
         return sink.Add(operation, command, convert);
     }
 }

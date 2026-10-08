@@ -38,7 +38,7 @@ internal sealed partial class ClusterRouter
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
             if (!_correctionPools.TryGetValue(identity, out entry!))
             {
-                var options = (original.Multiplexer?.Options ?? _options.ToConnectionOptions()) with
+                var options = (original.Multiplexer?.Options ?? CreateConnectionOptions()) with
                 {
                     EnableClientTracking = false, PushHandler = null, SubscriptionConfirmationHandler = null,
                     MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,

@@ -55,7 +55,7 @@ internal sealed partial class RespireConnection
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
     internal async ValueTask<CommandAttemptResult> SendAskingStreamAttemptAsync(
-        RawCommand asking, StreamedSetCommand command, CancellationToken cancellationToken,
+        ProtocolCommand<RawCommand> asking, StreamedSetCommand command, CancellationToken cancellationToken,
         CommandDeadline commandDeadline, DedicatedStreamRoute streamingRoute)
     {
         var observation = new CommandWriteObservation();

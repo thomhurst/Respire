@@ -34,7 +34,8 @@ internal abstract partial class PendingResponse
         if (_mutationReference.IsRequired)
             throw new InvalidOperationException("A native response already owns a cache mutation fence.");
         _mutationReference = fence.BindNative();
-        Debug.Assert(_mutationReference.IsRequired, "An accepted mutation must retain its live fence.");
+        if (!_mutationReference.IsRequired)
+            throw new InvalidOperationException("An accepted mutation must retain its live fence.");
     }
 
     /// <summary>
