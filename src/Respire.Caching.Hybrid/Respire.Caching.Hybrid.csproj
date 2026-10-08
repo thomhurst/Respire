@@ -3,12 +3,13 @@
   <PropertyGroup>
     <PackageId>Respire.Caching.Hybrid</PackageId>
     <Title>Respire.Caching.Hybrid</Title>
-    <Description>HybridCache L2 backend integration backed by Respire.</Description>
-    <PackageTags>$(PackageTags);hybridcache;distributed-cache;extensions-caching</PackageTags>
+    <Description>HybridCache Redis backend and opt-in server-assisted L1 coherence backed by Respire.</Description>
+    <PackageTags>$(PackageTags);hybridcache;distributed-cache;client-side-cache;extensions-caching</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Respire.Caching\Respire.Caching.csproj" />
+    <InternalsVisibleTo Include="Respire.Caching.Hybrid.Tests" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">

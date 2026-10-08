@@ -36,6 +36,8 @@ builder.Services.AddRespireDistributedCache(options =>
 `RespireDistributedCache` uses atomic Lua reads to implement sliding expiration, so RESP3
 client-side caching does not apply to `IDistributedCache` operations. Applications can still
 enable it on a separately registered `IRespireClient` used for direct eligible reads.
+The [opt-in HybridCache bridge](#opt-in-l1-coherence) uses a separate tracked hash read to
+invalidate HybridCache's L1 while retaining these atomic distributed-cache reads.
 
 The cache owns and disposes clients created from `ClientOptions` or `ConnectionString`. If neither
 is set, it uses a separately registered `IRespireClient` without taking ownership.
@@ -83,6 +85,80 @@ builder.Services.AddRespireHybridCache(
 ```
 
 This combines an in-process L1 with Redis-backed L2 storage.
+
+### Opt-in L1 coherence
+
+The default registration provides L2 storage. A different process can update Redis while an
+existing `HybridCache` provider continues to serve its earlier L1 value until local expiry.
+Enable server-assisted local invalidation explicitly:
+
+```csharp
+builder.Services.AddRespireHybridCache(
+    "redis://localhost",
+    instanceName: "myapp:")
+    .WithRespireClientSideCoherence(options =>
+    {
+        options.MaxObservedKeys = 1_024;
+        options.MaxRememberedTagInvalidations = 1_024;
+    });
+```
+
+The same builder extension works when `AddRespireHybridCache` uses a registered
+`IRespireClient` instead of a connection string, including client key-prefix views,
+`InstanceName`, configured value codecs, and the buffer-oriented L2 API. The underlying
+client must be a `RespireClient`; custom client wrappers remain usable with the L2-only mode.
+
+The bridge owns a separate RESP3 tracking client with the distributed client's connection,
+authentication, database, and routing settings. Before admitting a logical key to L1, it
+subscribes to that key's **physical** Redis name and performs a tracked `HEXISTS` read of the
+hash's `data` field. A subscription alone does not establish Redis OPTIN tracking. The
+separate client avoids treating the distributed cache's Lua reads as local mutations and
+does not duplicate the serialized payload in its tracking cache.
+
+`TrackingOptions` defaults to OPTIN for all physical keys. Configure Broadcast and narrow
+physical prefixes in the builder callback when appropriate:
+
+```csharp
+options.TrackingOptions = new()
+{
+    TrackingMode = RespireClientTrackingMode.Broadcast,
+    KeyPrefixes = ["tenant:myapp:"], // client prefix + InstanceName
+};
+```
+
+Redis tracking requires RESP3 and server support, plus permission for the tracking handshake
+and hash read. Keys outside the configured tracking prefixes, failed tracking reads, and keys
+beyond `MaxObservedKeys` use L2 with local caching disabled. A tracking-client shutdown also
+retires L1 and disables further local admission. Explicit clears and continuity losses from
+an observed registered client's cache retire its corresponding local generations.
+
+Invalidation is **eventual**, delivered asynchronously. A read already in progress can return
+its earlier value; connection-failure detection and callback delivery also take time. After
+the bridge processes an invalidation, later reads cannot join the old fill or use its local
+value. Late factory or `SetAsync` completions cannot publish into the new local generation,
+including when the final factory caller cancels. Observers only retire local state: they do
+not delete or rewrite shared L2 values. This is not a distributed factory lock or a conditional
+L2 write; concurrent factories can still overwrite each other's L2 results under the normal
+`HybridCache` contract. Use application-level coordination when that ordering matters.
+
+Each observed key has its own Microsoft `HybridCache` context and local memory namespace.
+The logical L2 key, payload format, serializers, mutable-value copies, entry flags, and normal
+factory cancellation and coalescing behavior stay intact. This opt-in mode adds a tracking
+client, an initial tracked read, subscriptions, and context/metadata allocations per observed
+key. Choose the observation bound for the application's working set. Expired or evicted local
+entries release idle observations; a sweep checks expired entries every 30 seconds by default.
+Active requests can keep observations until they complete or cancel.
+
+Local `RemoveByTagAsync` writes the shared tag marker once and preserves its timestamp across
+local generations. `MaxRememberedTagInvalidations` bounds this additional history: exhausting
+it permanently disables L1 for that provider, preserving ordinary L2/tag behavior. Use tags
+consistently across calls, as with ordinary `HybridCache`. Propagating another process's tag
+removal to already populated L1 remains separate work tracked by
+[#1225](https://github.com/thomhurst/Respire/issues/1225).
+
+Disposing the provider stops the bridge's timer, subscriptions, and owned tracker. It never
+disposes an externally registered client; the distributed cache retains its existing ownership
+rules. The default L2-only registration creates no bridge or tracking client.
 
 ## Opt-in payload compression
 
@@ -170,3 +246,5 @@ EVALSHA EVAL SET UNLINK HSET HMGET PTTL PEXPIRE PERSIST EXISTS
 ```
 
 Timeout- or cancellation-safe operations also require `CLIENT ID` and `CLIENT KILL`.
+Opt-in HybridCache coherence additionally needs `HEXISTS`, `CLIENT TRACKING`, and, for OPTIN,
+`CLIENT CACHING`, together with the client's normal RESP3 handshake commands.
