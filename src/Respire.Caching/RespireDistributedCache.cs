@@ -189,11 +189,18 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         {
             KeyPrefix = default,
             Connections = 1,
+            ReadFrom = RespireReadFrom.Primary,
             ClientSideCache = trackingOptions,
         });
     }
 
     internal IRespireClientSideCache? CoherenceSourceCache => _client.ClientSideCache;
+
+    internal static bool CanTrackCoherenceKey(RespireClient client, in RespireKey key)
+        => client.Core.ClientCache?.CanTrack(in key) == true;
+
+    internal bool CanObserveCoherenceSourceKey(in RespireKey key)
+        => _wireClient is not null && CanTrackCoherenceKey(_wireClient, in key);
 
     /// <summary>Wraps an existing client; the caller keeps ownership of it.</summary>
     public RespireDistributedCache(IRespireClient client, RespireCacheOptions? options = null)

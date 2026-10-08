@@ -109,7 +109,8 @@ The same builder extension works when `AddRespireHybridCache` uses a registered
 client must be a `RespireClient`; custom client wrappers remain usable with the L2-only mode.
 
 The bridge owns a separate RESP3 tracking client with the distributed client's connection,
-authentication, database, and routing settings. Before admitting a logical key to L1, it
+authentication, and database settings. Tracking reads always use the primary, including
+when the registered client routes application reads to replicas. Before admitting a logical key to L1, it
 subscribes to that key's **physical** Redis name and performs a tracked `HEXISTS` read of the
 hash's `data` field. A subscription alone does not establish Redis OPTIN tracking. The
 separate client avoids treating the distributed cache's Lua reads as local mutations and
@@ -119,11 +120,15 @@ does not duplicate the serialized payload in its tracking cache.
 physical prefixes in the builder callback when appropriate:
 
 ```csharp
-options.TrackingOptions = new()
-{
-    TrackingMode = RespireClientTrackingMode.Broadcast,
-    KeyPrefixes = ["tenant:myapp:"], // client prefix + InstanceName
-};
+builder.Services.AddRespireHybridCache("redis://localhost", instanceName: "myapp:")
+    .WithRespireClientSideCoherence(coherence =>
+    {
+        coherence.TrackingOptions = new()
+        {
+            TrackingMode = RespireClientTrackingMode.Broadcast,
+            KeyPrefixes = ["myapp:"], // physical InstanceName prefix for this client
+        };
+    });
 ```
 
 Redis tracking requires RESP3 and server support, plus permission for the tracking handshake
@@ -148,6 +153,12 @@ client, an initial tracked read, subscriptions, and context/metadata allocations
 key. Choose the observation bound for the application's working set. Expired or evicted local
 entries release idle observations; a sweep checks expired entries every 30 seconds by default.
 Active requests can keep observations until they complete or cancel.
+
+The provider's own L2 writes also notify the separate tracker. A factory miss or `SetAsync`
+can therefore retire its initial L1 generation. The next read reloads L2 and establishes a
+new local generation; later reads use L1 until another invalidation or local expiry. The
+bridge does not suppress notifications during its own writes, because a concurrent external
+write must still retire local state.
 
 Local `RemoveByTagAsync` writes the shared tag marker once and preserves its timestamp across
 local generations. `MaxRememberedTagInvalidations` bounds this additional history: exhausting

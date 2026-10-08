@@ -4,12 +4,15 @@ using Microsoft.Extensions.Caching.Hybrid;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+#if !NET9_0_OR_GREATER
+using Lock = System.Object;
+#endif
 
 namespace Respire.Caching.Hybrid;
 
 internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAsyncDisposable
 {
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly Dictionary<string, Observation> _observations = new(StringComparer.Ordinal);
     private readonly Dictionary<string, DateTimeOffset> _removedTags = new(StringComparer.Ordinal);
     private readonly IServiceProvider _services;
@@ -67,7 +70,7 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
         {
             var cache = await SelectCacheAsync(observation, cancellationToken).ConfigureAwait(false);
             return await cache.GetOrCreateAsync(key, state, underlyingDataCallback,
-                observation is null || ReferenceEquals(cache, _unobserved) ? WithoutLocalCache(options) : options,
+                ReferenceEquals(cache, _unobserved) ? WithoutLocalCache(options) : options,
                 tags, cancellationToken).ConfigureAwait(false);
         }
         finally { Release(observation); }
@@ -84,7 +87,7 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
         {
             var cache = await SelectCacheAsync(observation, cancellationToken).ConfigureAwait(false);
             await cache.SetAsync(key, value,
-                observation is null || ReferenceEquals(cache, _unobserved) ? WithoutLocalCache(options) : options,
+                ReferenceEquals(cache, _unobserved) ? WithoutLocalCache(options) : options,
                 tags, cancellationToken).ConfigureAwait(false);
         }
         finally { Release(observation); }
@@ -158,30 +161,29 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
             }
             if (_observations.Count >= _maxObservedKeys) return null;
 
+            var physicalKey = _distributed.ResolveCoherenceKey(key);
+            if (!RespireDistributedCache.CanTrackCoherenceKey(TrackingClient, in physicalKey)) return null;
+
             var observation = new Observation(this, key);
             _observations.Add(key, observation);
             try
             {
-                var physicalKey = _distributed.ResolveCoherenceKey(key);
                 observation.Subscription = TrackingClient.ClientSideCache!.SubscribeInvalidations(
                     physicalKey, _ => Retire(observation));
                 observation.Stopped = observation.Subscription.Stopped.UnsafeRegister(
                     static state => ((Observation)state!).Owner.TrackingStopped((Observation)state!), observation);
-                if (_distributed.CoherenceSourceCache is { } source)
+                if (_distributed.CanObserveCoherenceSourceKey(in physicalKey)
+                    && _distributed.CoherenceSourceCache is { } source)
                 {
-                    try
+                    observation.SourceSubscription = source.SubscribeInvalidations(physicalKey, invalidation =>
                     {
-                        observation.SourceSubscription = source.SubscribeInvalidations(physicalKey, invalidation =>
-                        {
-                            // Lua reads conservatively signal LocalMutation on the original
-                            // connection. Actual writes are observed by the independent tracker.
-                            if ((invalidation.Reasons & (RespireClientCacheInvalidationReason.ExplicitClear
-                                | RespireClientCacheInvalidationReason.ContinuityLost)) != 0) Retire(observation);
-                        });
-                        observation.SourceStopped = observation.SourceSubscription.Stopped.UnsafeRegister(
-                            static state => ((Observation)state!).Owner.TrackingStopped((Observation)state!), observation);
-                    }
-                    catch (ArgumentException) { /* The source cache may cover a narrower prefix. */ }
+                        // Lua reads conservatively signal LocalMutation on the original
+                        // connection. Actual writes are observed by the independent tracker.
+                        if ((invalidation.Reasons & (RespireClientCacheInvalidationReason.ExplicitClear
+                            | RespireClientCacheInvalidationReason.ContinuityLost)) != 0) Retire(observation);
+                    });
+                    observation.SourceStopped = observation.SourceSubscription.Stopped.UnsafeRegister(
+                        static state => ((Observation)state!).Owner.TrackingStopped((Observation)state!), observation);
                 }
 
                 observation.Cache = CreateContext(observation, new TagReplayBackend(_distributed, _clock));
@@ -191,11 +193,6 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
                 // tracking before L2 is read, without duplicating the serialized payload.
                 observation.Tracking = TrackingClient.Hashes.ExistsAsync(physicalKey, "data").AsTask();
                 return observation;
-            }
-            catch (ArgumentException)
-            {
-                Retire(observation);
-                return null;
             }
             catch (ObjectDisposedException)
             {
@@ -296,6 +293,8 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
             _memory.Remove(observation.MemoryKey);
             observation.Stopped.Unregister();
             observation.SourceStopped.Unregister();
+            // Unregister never joins callbacks, and subscription Dispose explicitly does
+            // not join observers. Retire may therefore run from either callback itself.
             observation.Subscription?.Dispose();
             observation.SourceSubscription?.Dispose();
         }

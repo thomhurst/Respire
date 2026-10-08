@@ -5,6 +5,7 @@ using Microsoft.Extensions.Caching.Hybrid;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using Respire.Compression;
+using Respire.Testing.Containers;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -20,6 +21,32 @@ public class RespireHybridCacheCoherenceTests(RedisTestContainer fixture)
         Expiration = TimeSpan.FromHours(1),
         LocalCacheExpiration = TimeSpan.FromHours(1),
     };
+
+    [Test]
+    [NotInParallel]
+    public async Task ReplicaRoutingOnTheSourceStillTracksPrimaryInvalidations()
+    {
+        await using var topology = await RespireContainerFixture.StartAsync(new()
+        {
+            Topology = RespireContainerTopology.Sentinel,
+        });
+        await using var source = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [topology.DataEndpoints[0]],
+            ReplicaEndpoints = [topology.DataEndpoints[1]],
+            ReadFrom = RespireReadFrom.Replica,
+            Connections = 1,
+        });
+        var key = NewKey();
+        await using var writer = BuildProvider(false, source);
+        await using var reader = BuildProvider(true, source);
+        await writer.GetRequiredService<HybridCache>().SetAsync(key, "old", LongLived);
+        await UntilAsync(async () => await source.Hashes.ExistsAsync(InstanceName + key, "data"));
+        await PrimeAsync(reader.GetRequiredService<HybridCache>(), key);
+        await writer.GetRequiredService<HybridCache>().SetAsync(key, "new", LongLived);
+        await UntilAsync(() => Coherent(reader).ObservationCount == 0);
+        await Assert.That(await ReadAsync(reader.GetRequiredService<HybridCache>(), key)).IsEqualTo("new");
+    }
 
     [Test]
     [Arguments(false, false)]
@@ -492,8 +519,111 @@ public class RespireHybridCacheCoherenceTests(RedisTestContainer fixture)
         finally { using var removed = await admin.ExecuteAsync("ACL", "DELUSER", username); }
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task OwnWritesRetireTheInitialFillAndLaterReadsStayLocal(bool factoryMiss)
+    {
+        var key = NewKey();
+        var codec = new CountingCodec();
+        await using var provider = BuildProvider(true, valueCodec: codec);
+        var cache = provider.GetRequiredService<HybridCache>();
+        if (factoryMiss)
+            await cache.GetOrCreateAsync(key, _ => ValueTask.FromResult("value"), LongLived);
+        else
+            await cache.SetAsync(key, "value", LongLived);
+        await UntilAsync(() => codec.Encodes == 1 && Coherent(provider).ObservationCount == 0);
+        await Assert.That(await ReadAsync(cache, key)).IsEqualTo("value");
+        var decodes = codec.Decodes;
+        await Assert.That(decodes).IsEqualTo(1);
+        await Assert.That(await ReadAsync(cache, key)).IsEqualTo("value");
+        await Assert.That(codec.Decodes).IsEqualTo(decodes);
+        await Assert.That(Coherent(provider).ObservationCount).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task TagReplayUsesOneL2WriteAcrossExistingAndNewContexts()
+    {
+        var first = NewKey();
+        var second = NewKey();
+        var tag = "tag-" + first;
+        var codec = new CountingCodec();
+        await using var writer = BuildProvider(false);
+        await using var reader = BuildProvider(true, valueCodec: codec);
+        var cache = reader.GetRequiredService<HybridCache>();
+        await writer.GetRequiredService<HybridCache>().SetAsync(first, "old", LongLived, [tag]);
+        await writer.GetRequiredService<HybridCache>().SetAsync(second, "old", LongLived, [tag]);
+        await PrimeAsync(cache, first);
+        await PrimeAsync(cache, second);
+        await Assert.That(Coherent(reader).ObservationCount).IsEqualTo(2);
+        await cache.RemoveByTagAsync(tag);
+        await Assert.That(codec.Encodes).IsEqualTo(1);
+        ((MemoryCache)reader.GetRequiredService<IMemoryCache>()).Compact(1);
+        await UntilAsync(() => Coherent(reader).ObservationCount == 0);
+        await Assert.That(await cache.GetOrCreateAsync(first, _ => ValueTask.FromResult("replacement"),
+            new HybridCacheEntryOptions { Flags = HybridCacheEntryFlags.DisableDistributedCacheWrite }, [tag]))
+            .IsEqualTo("replacement");
+        await Assert.That(codec.Encodes).IsEqualTo(1);
+        await Assert.That(((MemoryCache)reader.GetRequiredService<IMemoryCache>()).Count).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task NarrowSourcePrefixesDoNotPreventIndependentTracking()
+    {
+        var key = NewKey();
+        await using var source = RespireClient.Create(RespireOptions.Parse(fixture.ConnectionString) with
+        {
+            ClientSideCache = new() { KeyPrefixes = ["elsewhere:"] },
+        });
+        await using var writer = BuildProvider(false);
+        await using var reader = BuildProvider(true, source);
+        await writer.GetRequiredService<HybridCache>().SetAsync(key, "old", LongLived);
+        await PrimeAsync(reader.GetRequiredService<HybridCache>(), key);
+        await writer.GetRequiredService<HybridCache>().SetAsync(key, "new", LongLived);
+        await UntilAsync(() => Coherent(reader).ObservationCount == 0);
+        await Assert.That(await ReadAsync(reader.GetRequiredService<HybridCache>(), key)).IsEqualTo("new");
+    }
+
+    [Test]
+    public async Task SynchronousDisposalDoesNotJoinAnActiveObserver()
+    {
+        var key = NewKey();
+        await using var writer = BuildProvider(false);
+        await using var reader = BuildProvider(true);
+        await writer.GetRequiredService<HybridCache>().SetAsync(key, "value", LongLived);
+        await PrimeAsync(reader.GetRequiredService<HybridCache>(), key);
+        var coherent = Coherent(reader);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        var exited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var subscription = coherent.TrackingClient.ClientSideCache!.SubscribeInvalidations(InstanceName + key, _ =>
+        {
+            entered.TrySetResult();
+            try
+            {
+                if (!release.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("Observer was not released.");
+            }
+            finally { exited.TrySetResult(); }
+        });
+        try
+        {
+            coherent.TrackingClient.ClientSideCache.Clear();
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Task.Run(coherent.Dispose).WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(subscription.Stopped.IsCancellationRequested).IsTrue();
+            await Assert.That(Coherent(reader).ObservationCount).IsEqualTo(0);
+        }
+        finally
+        {
+            release.Set();
+            if (entered.Task.IsCompleted) await exited.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        await Assert.That(subscription.LastObserverException).IsNull();
+    }
+
     private ServiceProvider BuildProvider(bool coherent, RespireClient? client = null, string? clientPrefix = null,
-        bool codec = false, Action<RespireHybridCacheCoherenceOptions>? configure = null, ParkedSerializer? serializer = null)
+        bool codec = false, Action<RespireHybridCacheCoherenceOptions>? configure = null, ParkedSerializer? serializer = null,
+        IRespireValueCodec? valueCodec = null)
     {
         var services = new ServiceCollection();
         if (client is not null) services.AddSingleton<IRespireClient>(client);
@@ -502,6 +632,7 @@ public class RespireHybridCacheCoherenceTests(RedisTestContainer fixture)
             if (client is null) options.ClientOptions = _ => RespireOptions.Parse(fixture.ConnectionString) with { KeyPrefix = clientPrefix ?? "" };
             options.InstanceName = InstanceName;
             if (codec) options.ValueCodec = new BrotliValueCodec();
+            if (valueCodec is not null) options.ValueCodec = valueCodec;
         });
         if (serializer is not null) builder.AddSerializer<TestValue>(serializer);
         if (coherent) builder.WithRespireClientSideCoherence(configure);
@@ -533,6 +664,24 @@ public class RespireHybridCacheCoherenceTests(RedisTestContainer fixture)
     }
 
     private sealed class TestValue(string text) { public string Text { get; } = text; }
+
+    private sealed class CountingCodec : IRespireValueCodec
+    {
+        private int _encodes;
+        private int _decodes;
+        internal int Encodes => Volatile.Read(ref _encodes);
+        internal int Decodes => Volatile.Read(ref _decodes);
+        public byte[] Encode(ReadOnlySpan<byte> payload)
+        {
+            Interlocked.Increment(ref _encodes);
+            return payload.ToArray();
+        }
+        public byte[] Decode(ReadOnlySpan<byte> payload)
+        {
+            Interlocked.Increment(ref _decodes);
+            return payload.ToArray();
+        }
+    }
 
     private sealed class ParkedSerializer : IHybridCacheSerializer<TestValue>, IDisposable
     {
