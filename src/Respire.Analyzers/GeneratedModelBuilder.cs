@@ -38,6 +38,9 @@ internal static class GeneratedModelBuilder
                 || property.SetMethod?.DeclaredAccessibility != Accessibility.Public || property.ReturnsByRef
                 || property.ReturnsByRefReadonly || ScalarKind(property.Type) is null)
                 return GeneratedModel.Failed(property, $"Property '{property.Name}' needs public get and set/init accessors and a supported scalar type: string, bool, int, long, double, decimal, Guid or DateTimeOffset (including nullable variants).");
+            var ttl = json ? null : FieldTtl(property);
+            if (ttl is not null && ttl <= 0)
+                return GeneratedModel.Failed(property, "[RespireFieldTtl] requires a positive expiry in milliseconds.");
         }
 
         if (json && type.GetMembers().Any(member => member.GetAttributes().Any(attribute =>
@@ -171,15 +174,35 @@ internal static class GeneratedModelBuilder
         const string client = "global::Respire.IRespireClient client";
         const string key = "global::Respire.RespireKey key";
         const string token = "global::System.Threading.CancellationToken cancellationToken = default";
+        source.Append("    private static readonly global::System.Collections.Generic.Dictionary<string, long> s_fieldTtls = new(global::System.StringComparer.Ordinal) { ")
+            .Append(string.Join(", ", properties.Where(property => FieldTtl(property) is not null)
+                .Select(property => "{ " + Literal(property.Name) + ", " + FieldTtl(property)!.Value.ToString(System.Globalization.CultureInfo.InvariantCulture) + "L }")))
+            .Append(" };\n")
+            .Append("    /// <summary>Tracks an explicit key. A null baseline creates a full first write; otherwise the baseline is assumed persisted.</summary>\n")
+            .Append("    public static global::Respire.RespireHashChangeTracker<").Append(modelType).Append("> Track(")
+            .Append(client).Append(", ").Append(key).Append(", ").Append(modelType).Append("? baseline = null, global::Respire.RespireHashExpiryMode expiryMode = global::Respire.RespireHashExpiryMode.HSetEx)\n")
+            .Append("        => new(client, key, ToFields, s_mappedFields, s_fieldTtls, baseline, expiryMode);\n")
+            .Append("    /// <summary>Tracks an assumed persisted model at its generated key.</summary>\n")
+            .Append("    public static global::Respire.RespireHashChangeTracker<").Append(modelType).Append("> Track(")
+            .Append(client).Append(", ").Append(modelType).Append(" baseline, global::Respire.RespireHashExpiryMode expiryMode = global::Respire.RespireHashExpiryMode.HSetEx)\n")
+            .Append("        => Track(client, GetKey(baseline), baseline, expiryMode);\n");
         source.Append("    private static readonly string[] s_mappedFields = ").Append(mapped).Append(";\n")
             .Append("    /// <summary>Writes the model at its generated key; null mapped fields are removed.</summary>\n")
             .Append("    public static global::System.Threading.Tasks.ValueTask SetAsync(").Append(client).Append(", ")
             .Append(modelType).Append(" value, ").Append(token).Append(")\n")
-            .Append("        => SetAsync(client, GetKey(value), value, cancellationToken);\n")
-            .Append("    /// <summary>Writes at an explicit key. HSET then HDEL are not an atomic replacement; unknown fields remain.</summary>\n")
+            .Append("        => SetAsync(client, GetKey(value), global::Respire.RespireHashExpiryMode.HSetEx, value, cancellationToken);\n")
+            .Append("    /// <summary>Writes with an explicit field expiry mode.</summary>\n")
+            .Append("    public static global::System.Threading.Tasks.ValueTask SetAsync(").Append(client).Append(", ")
+            .Append("global::Respire.RespireHashExpiryMode expiryMode, ").Append(modelType).Append(" value, ").Append(token).Append(")\n")
+            .Append("        => SetAsync(client, GetKey(value), expiryMode, value, cancellationToken);\n")
+            .Append("    /// <summary>Writes at an explicit key. Multiple command groups are not atomic; unknown fields remain.</summary>\n")
             .Append("    public static global::System.Threading.Tasks.ValueTask SetAsync(").Append(client).Append(", ").Append(key)
             .Append(", ").Append(modelType).Append(" value, ").Append(token).Append(")\n")
-            .Append("        => global::Respire.RespireHashModelIO.WriteAsync(client, key, ToFields(value), s_mappedFields, cancellationToken);\n")
+            .Append("        => SetAsync(client, key, global::Respire.RespireHashExpiryMode.HSetEx, value, cancellationToken);\n")
+            .Append("    /// <summary>Writes at an explicit key with an explicit field expiry mode.</summary>\n")
+            .Append("    public static global::System.Threading.Tasks.ValueTask SetAsync(").Append(client).Append(", ").Append(key)
+            .Append(", global::Respire.RespireHashExpiryMode expiryMode, ").Append(modelType).Append(" value, ").Append(token).Append(")\n")
+            .Append("        => global::Respire.RespireHashModelIO.WriteAsync(client, key, ToFields(value), s_mappedFields, s_fieldTtls, expiryMode, cancellationToken);\n")
             .Append("    /// <summary>Reads a full model with HGETALL; an absent or empty hash returns null.</summary>\n")
             .Append("    public static async global::System.Threading.Tasks.ValueTask<").Append(modelType).Append("?> GetAsync(")
             .Append(client).Append(", ").Append(key).Append(", ").Append(token).Append(")\n    {\n")
@@ -218,6 +241,10 @@ internal static class GeneratedModelBuilder
 
     internal static bool SetsRequiredMembers(IMethodSymbol constructor) => constructor.GetAttributes().Any(attribute =>
         attribute.AttributeClass?.ToDisplayString() == "System.Diagnostics.CodeAnalysis.SetsRequiredMembersAttribute");
+
+    private static long? FieldTtl(IPropertySymbol property) => property.GetAttributes()
+        .FirstOrDefault(attribute => attribute.AttributeClass?.ToDisplayString() == "Respire.RespireFieldTtlAttribute")
+        ?.ConstructorArguments.FirstOrDefault().Value as long?;
 
     private static string? RenderKey(string template, IPropertySymbol[] properties)
     {

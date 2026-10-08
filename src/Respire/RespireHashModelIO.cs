@@ -9,32 +9,100 @@ namespace Respire;
 public static class RespireHashModelIO
 {
     /// <summary>Writes present fields, then removes absent mapped fields. The two commands are not atomic.</summary>
-    public static async ValueTask WriteAsync(IRespireClient client, RespireKey key,
+    public static ValueTask WriteAsync(IRespireClient client, RespireKey key,
         IReadOnlyDictionary<string, string> fields, string[] mappedFields, CancellationToken cancellationToken = default)
+        => WriteAsync(client, key, fields, mappedFields, new Dictionary<string, long>(),
+            RespireHashExpiryMode.HSetEx, cancellationToken);
+
+    /// <summary>Writes mapped fields with explicit field expiries, then removes absent mapped fields.</summary>
+    public static async ValueTask WriteAsync(IRespireClient client, RespireKey key,
+        IReadOnlyDictionary<string, string> fields, string[] mappedFields,
+        IReadOnlyDictionary<string, long> fieldTtls, RespireHashExpiryMode expiryMode,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(client);
         ArgumentNullException.ThrowIfNull(fields);
         ArgumentNullException.ThrowIfNull(mappedFields);
+        ArgumentNullException.ThrowIfNull(fieldTtls);
+        if (!Enum.IsDefined(expiryMode)) throw new ArgumentOutOfRangeException(nameof(expiryMode));
         cancellationToken.ThrowIfCancellationRequested();
-        // Own the key across both commands, including caller-owned binary memory.
+        // Own all inputs across commands, including caller-owned binary key memory.
         var keyValue = key.Snapshot().AsValue();
-        var writes = new RespireValue[1 + fields.Count * 2];
+        var snapshot = new Dictionary<string, string>(fields, StringComparer.Ordinal);
+        var names = (string[])mappedFields.Clone();
+        var expiries = new Dictionary<string, long>(fieldTtls, StringComparer.Ordinal);
+        if (expiries.Values.Any(ttl => ttl <= 0)) throw new ArgumentOutOfRangeException(nameof(fieldTtls));
+        var expiring = snapshot.Where(field => expiries.ContainsKey(field.Key))
+            .GroupBy(field => expiries[field.Key]).Select(group => (Ttl: group.Key, Fields: group.ToArray())).ToArray();
+        var ordinary = snapshot.Where(field => !expiries.ContainsKey(field.Key)).ToArray();
+        var writes = new RespireValue[1 + ordinary.Length * 2];
         writes[0] = keyValue;
         var index = 1;
-        foreach (var field in fields)
+        foreach (var field in snapshot) ArgumentNullException.ThrowIfNull(field.Value);
+        foreach (var field in ordinary)
         {
-            ArgumentNullException.ThrowIfNull(field.Value);
             writes[index++] = field.Key;
             writes[index++] = field.Value;
         }
         var removals = new List<RespireValue> { keyValue };
-        foreach (var field in mappedFields)
-            if (!fields.ContainsKey(field)) removals.Add(field);
+        foreach (var field in names)
+            if (!snapshot.ContainsKey(field)) removals.Add(field);
+
+        // Check every discovered node, without caching capabilities across failover or topology changes.
+        // HSETEX is attempted first below; an unknown command refuses before ordinary writes/removals.
+        if (expiring.Length != 0 && expiryMode == RespireHashExpiryMode.HSetThenExpire)
+        {
+            var nodes = await client.Server.CommandInfoOnAllNodesAsync([RespireCommands.Hash.HPEXPIRE], cancellationToken).ConfigureAwait(false);
+            if (nodes.Length == 0) throw new NotSupportedException("Cannot establish HPEXPIRE server support.");
+            foreach (var node in nodes)
+            {
+                if (!node.IsSuccess) throw node.Error!;
+                if (node.Value.Length != 1 || node.Value[0] is null)
+                    throw new NotSupportedException("Generated field expiry requires HPEXPIRE (Redis 7.4+). No fields were written.");
+            }
+        }
+        foreach (var group in expiring)
+        {
+            var pairs = new RespireValue[group.Fields.Length * 2];
+            for (var field = 0; field < group.Fields.Length; field++)
+            {
+                pairs[field * 2] = group.Fields[field].Key;
+                pairs[field * 2 + 1] = group.Fields[field].Value;
+            }
+            if (expiryMode == RespireHashExpiryMode.HSetEx)
+            {
+                try
+                {
+                    using var reply = await client.ExecuteAsync(RespireCommands.Hash.HSETEX,
+                        [keyValue, "PX", group.Ttl, "FIELDS", group.Fields.Length, .. pairs], cancellationToken: cancellationToken).ConfigureAwait(false);
+                    if (reply.Type != RespDataType.Integer || reply.AsInteger() != 1)
+                        throw new RespireProtocolException("Unconditional HSETEX must return 1.");
+                }
+                catch (RespireServerException error) when (error.Message.StartsWith("ERR unknown command 'HSETEX'", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new NotSupportedException("Generated field expiry requires HSETEX (Redis 8.0+). Opt in to HSetThenExpire for Redis 7.4+.", error);
+                }
+            }
+            else
+            {
+                using (var reply = await client.ExecuteAsync(RespireCommands.Hash.HSET,
+                    [keyValue, .. pairs], cancellationToken: cancellationToken).ConfigureAwait(false))
+                    ValidateWriteReply(reply, group.Fields.Length);
+                using var expiry = await client.ExecuteAsync(RespireCommands.Hash.HPEXPIRE,
+                    [keyValue, group.Ttl, "FIELDS", group.Fields.Length, .. group.Fields.Select(field => (RespireValue)field.Key)],
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
+                if (expiry.Type != RespDataType.Array || expiry.Count != group.Fields.Length)
+                    throw new RespireProtocolException("HPEXPIRE must return one status per field.");
+                for (var field = 0; field < expiry.Count; field++)
+                    if (expiry[field].Type != RespDataType.Integer || expiry[field].AsInteger() != 1)
+                        throw new RespireProtocolException("HPEXPIRE did not apply the requested field expiry.");
+            }
+        }
 
         if (writes.Length > 1)
         {
             using var reply = await client.ExecuteAsync(RespireCommands.Hash.HSET, writes, cancellationToken: cancellationToken).ConfigureAwait(false);
-            ValidateWriteReply(reply, fields.Count);
+            ValidateWriteReply(reply, ordinary.Length);
         }
         if (removals.Count > 1)
         {

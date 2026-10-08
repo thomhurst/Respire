@@ -79,9 +79,9 @@ acceptance criteria, dependencies, and current status:
 - [Higher-level capabilities](https://github.com/thomhurst/Respire/issues/860): stream workers,
   source-generated object mapping, distributed `HybridCache` tag propagation, and field-level caching research.
   [Generated hash codecs](./guides/generated-hash-codecs) provide scalar model conversion, key templates,
-  Redis hash writes/full reads and explicit partial reads. The remaining
+  Redis hash writes/full reads, explicit partial reads, field TTL and change tracking. The remaining
   [object mapper work](https://github.com/thomhurst/Respire/issues/895) includes
-  field TTL, change tracking, Search, and final AOT/performance acceptance.
+  Search and final AOT/performance acceptance.
 - [Documentation and samples](https://github.com/thomhurst/Respire/issues/861): guides and runnable
   examples for the expanded feature set.
 

@@ -20,6 +20,7 @@ public class RespireHashGeneratorTests
     [Arguments("[RespireHash(\"{Id}\")] public partial class User { public required int Id { get; set; } [System.Diagnostics.CodeAnalysis.SetsRequiredMembers] public User(int id) { Id = id; } }")]
     [Arguments("[RespireHash(\"{Id}\")] internal partial class User { public int Id { get; set; } internal required string Secret { get; init; } [System.Diagnostics.CodeAnalysis.SetsRequiredMembers] public User() { Secret = \"secret\"; } }")]
     [Arguments("[RespireHash(\"{Id}\")] internal partial class User { public int Id { get; set; } internal required string Secret; [System.Diagnostics.CodeAnalysis.SetsRequiredMembers] public User() { Secret = \"secret\"; } }")]
+    [Arguments("[RespireHash(\"{Id}\")] public partial record User(string Id, [property: RespireFieldTtl(2500)] string? Token);")]
     public async Task SupportedModelsCompileWithoutWarnings(string declaration)
     {
         var (_, generated, diagnostics) = Generate(declaration);
@@ -60,6 +61,8 @@ public class RespireHashGeneratorTests
     [Arguments("[RespireHash(\"{Id}\")] public partial class User { public string Id { get; set; } = \"a\"; public User(object unknown) { } }")]
     [Arguments("[RespireHash(\"constant\")] public partial class User { }")]
     [Arguments("[RespireHash(\"constant\")] public partial record User(string Id, string id);")]
+    [Arguments("[RespireHash(\"{Id}\")] public partial record User(string Id, [property: RespireFieldTtl(0)] string Token);")]
+    [Arguments("[RespireHash(\"{Id}\")] public partial record User(string Id, [property: RespireFieldTtl(-1)] string Token);")]
     public async Task InvalidModelsHaveActionableDiagnosticWithoutOutput(string declaration)
     {
         var (_, generated, diagnostics) = Generate(declaration);
@@ -130,8 +133,30 @@ public class RespireHashGeneratorTests
             string? name = partial.Name.Value;
             bool idRequested = partial.Id.Selected;
 
+            var tracker = UserHashMapper.Track(client, key);
+            await tracker.UpdateAsync(user);
+            await tracker.UpdateAsync(user with { Name = "Grace", SessionToken = null });
+            var existing = UserHashMapper.Track(client, user);
+            await existing.UpdateAsync(user with { Name = "Grace" });
+            var expiring = new ExpiringUser("42", "Ada", "session");
+            await ExpiringUserHashMapper.SetAsync(client, expiring);
+            await ExpiringUserHashMapper.SetAsync(client, RespireHashExpiryMode.HSetThenExpire, expiring);
+            await UserHashMapper.SetAsync(client, user, default);
+            await UserHashMapper.SetAsync(client, user, default(System.Threading.CancellationToken));
+            await UserHashMapper.SetAsync(client, binaryKey, user, default);
+            await UserHashMapper.SetAsync(client, binaryKey, user, default(System.Threading.CancellationToken));
+            System.Func<IRespireClient, User, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask> save = UserHashMapper.SetAsync;
+            System.Func<IRespireClient, RespireKey, User, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask> saveAtKey = UserHashMapper.SetAsync;
+            await save(client, user, default);
+            await saveAtKey(client, binaryKey, user, default);
+            var fallbackTracker = ExpiringUserHashMapper.Track(client, key, expiryMode: RespireHashExpiryMode.HSetThenExpire);
+            await fallbackTracker.UpdateAsync(expiring);
+
             [RespireHash("user:{{{Id}}}")]
             public partial record User(string Id, string Name, string? SessionToken);
+            [RespireHash("user:{Id}")]
+            public partial record ExpiringUser(string Id, string Name,
+                [property: RespireFieldTtl(60000)] string? SessionToken);
             """;
         GeneratorDriver driver = CSharpGeneratorDriver.Create([new RespireHashGenerator().AsSourceGenerator()],
             parseOptions: ParseOptions);
