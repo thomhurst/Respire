@@ -12,6 +12,24 @@ namespace Respire.Tests;
 public class ClientCacheCommandMetadataTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task StreamReadMetadataMatchesInvocationKind(bool group)
+    {
+        var command = new StreamReadCommand(["key"], ["0-0"], null, null,
+            group: group ? "group" : null, consumer: group ? "consumer" : null);
+        var operation = group ? "XREADGROUP" : "XREAD";
+        var expected = ClientCacheCommandMetadata.Get(operation);
+        var actual = command.GetClientCacheMetadata(operation);
+        await Assert.That(actual.IsInitialized).IsTrue();
+        await Assert.That(actual.Policy).IsEqualTo(expected.Policy);
+        await Assert.That(actual.ArgumentLayout).IsEqualTo(expected.ArgumentLayout);
+        await Assert.That(actual.MutationKind).IsEqualTo(expected.MutationKind);
+        await Assert.That(actual.CacheableRead).IsEqualTo(expected.CacheableRead);
+        await Assert.That(command.GetCacheMutation(operation)).IsEqualTo(expected.Policy);
+    }
+
+    [Test]
     [Arguments("SCRIPT  LOAD", 2, "$6\r\nSCRIPT\r\n$4\r\nLOAD\r\n")]
     [Arguments("  CLIENT   LIST  ", 2, "$6\r\nCLIENT\r\n$4\r\nLIST\r\n")]
     [Arguments("ABCDEFGHIJ", 1, "$10\r\nABCDEFGHIJ\r\n")]
@@ -47,13 +65,15 @@ public class ClientCacheCommandMetadataTests
 
     [Test]
     [NotInParallel]
-    public async Task CacheDisabledVerbsLeaveCacheTablesColdUntilFirstClassification()
+    [Arguments("verbs")]
+    [Arguments("stream-read")]
+    public async Task CacheDisabledCommandsLeaveCacheTablesColdUntilFirstClassification(string firstCommand)
     {
         // Warm the measurement and reflection machinery in a separate collectible context.
-        using var warm = new ColdMetadataContext();
+        using var warm = new ColdMetadataContext(firstCommand);
         _ = MeasureFirstAndRepeatedClassification(warm.GetMetadata);
         _ = MeasureFirstAndRepeatedClassification(warm.GetMetadata);
-        using var cold = new ColdMetadataContext();
+        using var cold = new ColdMetadataContext(firstCommand);
         var result = AllocationMeasurement.WithoutConcurrentGc(() =>
             MeasureFirstAndRepeatedClassification(cold.GetMetadata));
         await Assert.That(result.First - result.Repeated).IsGreaterThan(16_384);
@@ -76,11 +96,19 @@ public class ClientCacheCommandMetadataTests
         private readonly AssemblyLoadContext _context = new($"cold-cache-{Guid.NewGuid()}", isCollectible: true);
         internal MethodInfo GetMetadata { get; }
 
-        internal ColdMetadataContext()
+        internal ColdMetadataContext(string firstCommand)
         {
             var assembly = _context.LoadFromAssemblyPath(typeof(RespireClient).Assembly.Location);
-            // Materialize all normal typed verbs without invoking a cache-specific API.
-            _ = assembly.GetType("Respire.Commands.Verbs")!.GetField("Set")!.GetValue(null);
+            if (firstCommand == "verbs")
+            {
+                // Materialize all normal typed verbs without invoking a cache-specific API.
+                _ = assembly.GetType("Respire.Commands.Verbs")!.GetField("Set")!.GetValue(null);
+            }
+            else
+            {
+                var stream = assembly.GetType("Respire.Commands.StreamReadCommand")!;
+                _ = stream.GetProperty("ReadKind")!.GetValue(Activator.CreateInstance(stream));
+            }
             GetMetadata = assembly.GetType("Respire.Commands.ClientCacheCommandMetadata")!
                 .GetMethod("Get", BindingFlags.Static | BindingFlags.NonPublic)!;
         }
