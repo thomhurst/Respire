@@ -610,6 +610,10 @@ retirement. Their local invalidation notifications and counter increments still 
 completion. Failed, cancelled, unbound, and unknown-effect mutations keep conservative completion
 invalidation. Unknown effects, batches, transactions, streamed uploads, and native lock mutations
 retain their completion fencing; a cancelled caller cannot release accepted native ownership.
+Native reply ownership retires when the final FIFO reply is parsed, before delivery can run
+inline caller continuations. Connection teardown retains the fence until native owners release.
+Blocking `XREADGROUP` flushes at admission and completion without suppressing unrelated cache
+publication or shared misses during an indefinite wait.
 
 Dependency generations exist only while queries are pending. Completion, cancellation,
 failed replies, and redirect rebasing release those registrations. This state scales with

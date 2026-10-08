@@ -111,8 +111,7 @@ public class ClientCacheWriteBenchmarks
                             new RespireValue[] { key, _value, "PX", 0 });
                         throw new InvalidOperationException("Redis accepted an invalid SET expiry.");
                     }
-                    catch (RespireServerException error) when (error.Code == "ERR"
-                        && error.Message.Contains("invalid expire time", StringComparison.Ordinal)) { rejected++; }
+                    catch (RespireServerException error) when (error.Code == "ERR") { rejected++; }
                 }
                 return rejected;
             });

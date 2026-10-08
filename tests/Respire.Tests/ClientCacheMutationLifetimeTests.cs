@@ -13,6 +13,56 @@ namespace Respire.Tests;
 public class ClientCacheMutationLifetimeTests
 {
     [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task ParsedFinalReplyReleasesFenceBeforeInlineCallerReads(bool unknown, bool multiple)
+    {
+        var cache = new ClientSideCacheCoordinator(new());
+        var key = new RespireKey("key");
+        var command = new CatalogCommand(RespireCommands.String.SET, ["key", "new"]);
+        var fence = unknown ? cache.BeginUnknownMutation() : cache.BeforeCommand("SET", in command);
+        PendingResponse source;
+        ValueTask<RespValue> response;
+        if (multiple)
+        {
+            var transaction = MultiReplyPendingResponseSource.Rent(2, 0, "MULTI/EXEC");
+            source = transaction;
+            response = transaction.Task;
+        }
+        else
+        {
+            var single = new PendingResponsePool(1).Rent();
+            source = single;
+            response = single.Task;
+        }
+        source.BindMutationFence(in fence);
+        var observed = -1;
+        var awaiter = response.GetAwaiter();
+        awaiter.UnsafeOnCompleted(() =>
+        {
+            using var result = awaiter.GetResult();
+            cache.CompleteMutation(in fence, succeeded: true);
+            using var fresh = RespValue.BulkString("new"u8.ToArray());
+            var read = cache.BeginRead(in key);
+            cache.CompleteRead(in read, in fresh, allowInsert: true);
+            observed = cache.Count;
+        });
+        var scheduler = new CompletionScheduler();
+        var reply = RespValue.Integer(1);
+        if (multiple)
+        {
+            scheduler.Add(source, in reply);
+            await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(1);
+        }
+        scheduler.Add(source, in reply);
+        if (scheduler.FlushDeferred()) scheduler.Execute();
+        await Assert.That(observed).IsEqualTo(1);
+        await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task MutationLeaseSupportsNativeOwnersBeyondTheFormerSeventeenBitLimit()
     {
         var cache = new ClientSideCacheCoordinator(new());

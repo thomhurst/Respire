@@ -16,6 +16,63 @@ public class ClientSideCacheTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
+    public async Task BlockingGroupReadAllowsUnrelatedCachePublicationAndSharing(bool raw)
+    {
+        await using var server = new FakeRespServer(100, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("HELLO ", StringComparison.Ordinal)
+                ? HelloReply : command.StartsWith("GET ", StringComparison.Ordinal)
+                    ? "$5\r\nvalue\r\n"u8.ToArray() : FakeRespServer.OkReply,
+        };
+        var parked = new ParkedReply(server, "XREADGROUP ");
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
+            ClientSideCache = new() { CoalesceConcurrentMisses = true },
+        });
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await using var entries = client.Streams.ReadGroupAsync(new StreamReadOptions
+        {
+            WaitFor = Timeout.InfiniteTimeSpan,
+        }, "events", "group", "consumer", cancellationToken: cancellation.Token).GetAsyncEnumerator();
+        var pending = raw
+            ? client.ExecuteAsync(RespireCommands.Stream.XREADGROUP,
+                ["GROUP", "group", "consumer", "BLOCK", 0, "STREAMS", "events", ">"], cancellationToken: cancellation.Token).AsTask()
+            : AwaitEntryAsync();
+        async Task<RespireResult> AwaitEntryAsync()
+        {
+            _ = await entries.MoveNextAsync();
+            return default;
+        }
+        await parked.WaitAsync();
+        try
+        {
+            await Assert.That(await client.GetStringAsync("other")).IsEqualTo("value");
+            await Assert.That(await client.GetStringAsync("other")).IsEqualTo("value");
+            await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
+            await Assert.That(server.ReceivedCommands.Count(command => command == "GET other")).IsEqualTo(1);
+            var shared = new ParkedReply(server, "GET shared");
+            var first = client.GetStringAsync("shared").AsTask();
+            await shared.WaitAsync();
+            var second = client.GetStringAsync("shared").AsTask();
+            await Assert.That(client.Core.ClientCache!.ActiveSharedReadCount).IsEqualTo(1);
+            await shared.ReleaseAsync("$5\r\nvalue\r\n"u8.ToArray());
+            await Assert.That(await first).IsEqualTo("value");
+            await Assert.That(await second).IsEqualTo("value");
+            await Assert.That(server.ReceivedCommands.Count(command => command == "GET shared")).IsEqualTo(1);
+        }
+        finally
+        {
+            cancellation.Cancel();
+            await Assert.That(async () => { using var reply = await pending; }).Throws<OperationCanceledException>();
+        }
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
     public async Task ExtendedIncrementFencesOnlyItsPrefixedKeyAcrossReply(bool floating)
     {
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

@@ -10,7 +10,7 @@ Respire.ClientSideCacheCoordinator | constructor ClientSideCacheCoordinator(Resp
 Respire.ClientSideCacheCoordinator | delegate GetReadConverter`2(TState, in GetReadResult) : TResult
 Respire.ClientSideCacheCoordinator | enum CacheRemoval : int
 Respire.ClientSideCacheCoordinator | enum MutationFenceKind : byte
-Respire.ClientSideCacheCoordinator | method BeforeCommand`1(string, in TCommand) : MutationFence
+Respire.ClientSideCacheCoordinator | method BeforeCommand`1(string, in TCommand, bool) : MutationFence
 Respire.ClientSideCacheCoordinator | method BeginRead(in RespireKey) : ReadToken
 Respire.ClientSideCacheCoordinator | method BeginRead(string, in QueryRequest) : QueryReadToken
 Respire.ClientSideCacheCoordinator | method BeginUnknownMutation() : MutationFence

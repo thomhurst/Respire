@@ -34,6 +34,7 @@ internal abstract partial class PendingResponse
         if (_mutationReference.IsRequired)
             throw new InvalidOperationException("A native response already owns a cache mutation fence.");
         _mutationReference = fence.BindNative();
+        Debug.Assert(_mutationReference.IsRequired, "An accepted mutation must retain its live fence.");
     }
 
     /// <summary>
@@ -74,7 +75,23 @@ internal abstract partial class PendingResponse
 
     // The receive loop reserves completion before handing the reply to the scheduler.
     // Cancellation must not discard a reply already parsed while an earlier continuation runs.
-    internal virtual bool TryReserveResult() => TryAcquireCompletion();
+    internal virtual bool TryReserveResult()
+    {
+        // The FIFO slot has been dequeued and its full reply parsed. Release the native
+        // fence before delivery can run an inline caller and its subsequent cache reads.
+        // Multi-reply sources reach this only for their final reply. Cancellation still
+        // retains the fence until that reply drains or connection teardown returns us.
+        RetireMutationFence();
+        return TryAcquireCompletion();
+    }
+
+    private void RetireMutationFence()
+    {
+        if (!_mutationReference.IsRequired) return;
+        var mutationReference = _mutationReference;
+        _mutationReference = default;
+        mutationReference.Release();
+    }
 
     internal virtual bool CompleteReservedResult(in RespValue result)
     {
@@ -209,9 +226,7 @@ internal abstract partial class PendingResponse
         Volatile.Write(ref _state, ((Volatile.Read(ref _state) >> 1) + 1) << 1);
         if (_mutationReference.IsRequired)
         {
-            var mutationReference = _mutationReference;
-            _mutationReference = default;
-            try { mutationReference.Release(); }
+            try { RetireMutationFence(); }
             finally { ResetAndReturn(); }
         }
         else ResetAndReturn();

@@ -674,7 +674,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         return removed;
     }
 
-    internal MutationFence BeforeCommand<TCommand>(string operation, in TCommand command)
+    internal MutationFence BeforeCommand<TCommand>(string operation, in TCommand command, bool blocking = false)
         where TCommand : struct, IRespCommand
     {
         var metadata = command.GetClientCacheMetadata(operation);
@@ -693,6 +693,11 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
 
         var mutation = command.GetCacheMutation(operation);
         if (mutation == RespireCacheMutation.ReadOnly) return default;
+
+        // An indefinite consumer-group wait must not suppress unrelated reads for its
+        // lifetime. Preserve the conservative admission/completion flushes instead.
+        if (blocking && operation == "XREADGROUP")
+            return BeginMutation(MutationFenceKind.FlushOnly, default, null);
 
         if (mutation == RespireCacheMutation.SingleKey
             && command.TryGetClientCacheKey(operation, out var singleKeyArguments)
@@ -762,6 +767,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                     else InvalidateState(in key);
                 break;
             case MutationFenceKind.All:
+            case MutationFenceKind.FlushOnly:
                 Flush(continuityLost: false);
                 break;
         }
@@ -1722,6 +1728,8 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         Keys,
         /// <summary>Flush the whole cache on completion.</summary>
         All,
+        /// <summary>Flush at admission and completion without suppressing publication during a blocking wait.</summary>
+        FlushOnly,
     }
 
     /// <summary>

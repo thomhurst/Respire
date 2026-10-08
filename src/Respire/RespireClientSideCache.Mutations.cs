@@ -38,7 +38,7 @@ internal sealed partial class ClientSideCacheCoordinator
                     AddMutationWriter(in key);
                     registered = 1;
                 }
-                else
+                else if (kind == MutationFenceKind.Keys)
                 {
                     foreach (var affected in keys!)
                     {
@@ -134,7 +134,8 @@ internal sealed partial class ClientSideCacheCoordinator
                     var key = fence.Key;
                     RemoveMutationWriter(in key);
                 }
-                else foreach (var key in fence.Keys!) RemoveMutationWriter(in key);
+                else if (fence.Kind == MutationFenceKind.Keys)
+                    foreach (var key in fence.Keys!) RemoveMutationWriter(in key);
                 Volatile.Write(ref _activeMutations, _activeMutations - 1);
                 // Large multi-key calls may grow the live map. Do not retain that peak
                 // capacity indefinitely once every mutation has retired.
@@ -229,7 +230,7 @@ internal sealed partial class ClientSideCacheCoordinator
                 if ((next & ReferenceMask) != 0) return;
                 try
                 {
-                    var reinvalidate = _fence.Kind == MutationFenceKind.All
+                    var reinvalidate = _fence.Kind is MutationFenceKind.All or MutationFenceKind.FlushOnly
                         || (next & NativeAttached) == 0 || (next & Failed) != 0;
                     _owner!.EndMutation(in _fence, reinvalidate);
                 }

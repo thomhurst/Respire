@@ -3729,7 +3729,7 @@ public sealed partial class RespireClient : IRespireClient
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         var readFrom = GetReadFromForCommand(in command, allowReadFrom);
         var cache = core.ClientCache;
-        var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
+        var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command, blocking: true);
         try
         {
             var started = RespireTelemetry.CaptureOperationStart(operation);
