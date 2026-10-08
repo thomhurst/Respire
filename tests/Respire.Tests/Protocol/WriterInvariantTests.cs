@@ -10,6 +10,128 @@ public class WriterInvariantTests
 {
 #if DEBUG
     [Test]
+    [NotInParallel]
+    [Arguments(false, 16)]
+    [Arguments(true, 16)]
+    [Arguments(false, 65_536)]
+    [Arguments(true, 65_536)]
+    public async Task EarlierWriterCannotResumeAfterAnotherWriterPublishes(bool complete, int payloadLength)
+    {
+        var buffer = new WriteBuffer(128);
+        try
+        {
+            buffer.Append("+before\r\n"u8);
+            var payload = "x" + new string('é', payloadLength);
+            var bytes = System.Text.Encoding.UTF8.GetBytes(payload);
+            var expected = System.Text.Encoding.UTF8.GetBytes($"+before\r\n${bytes.Length}\r\n{payload}\r\n");
+            await Assert.That(() => ResumeEarlierWriter(buffer, complete, payload))
+                .ThrowsExactly<InvalidOperationException>();
+            await Assert.That(buffer.Count).IsEqualTo(expected.Length);
+            await Assert.That(buffer.WrittenMemory.Span.SequenceEqual(expected)).IsTrue();
+            WritePong(buffer, 7);
+            await Assert.That(buffer.WrittenMemory.Span.SequenceEqual([.. expected, .. "+PONG\r\n"u8])).IsTrue();
+        }
+        finally { buffer.Release(); }
+    }
+
+    [Test]
+    [NotInParallel]
+    [Arguments(false, 0)]
+    [Arguments(true, 0)]
+    [Arguments(false, 1)]
+    [Arguments(true, 1)]
+    [Arguments(false, 2)]
+    [Arguments(true, 2)]
+    public async Task DiscardingTheBufferInvalidatesItsExistingWriter(bool complete, int discard)
+    {
+        var buffer = new WriteBuffer(128);
+        try
+        {
+            await Assert.That(() => ResumeDiscardedWriter(buffer, complete, discard))
+                .ThrowsExactly<InvalidOperationException>();
+            await Assert.That(buffer.Count).IsEqualTo(0);
+            await Assert.That(buffer.WrittenMemory.Length).IsEqualTo(0);
+            WritePong(buffer, 7);
+            await Assert.That(buffer.WrittenMemory.Span.SequenceEqual("+PONG\r\n"u8)).IsTrue();
+        }
+        finally { buffer.Release(); }
+    }
+
+    [Test]
+    [NotInParallel]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ReplacingTheArrayInvalidatesAnEmptyEarlierWriter(bool complete)
+    {
+        var buffer = new WriteBuffer(128);
+        try
+        {
+            await Assert.That(() => ResumeWriterAfterAnotherReservationGrows(buffer, complete))
+                .ThrowsExactly<InvalidOperationException>();
+            await Assert.That(buffer.Count).IsEqualTo(0);
+            await Assert.That(buffer.WrittenMemory.Length).IsEqualTo(0);
+            WritePong(buffer, 7);
+            await Assert.That(buffer.WrittenMemory.Span.SequenceEqual("+PONG\r\n"u8)).IsTrue();
+        }
+        finally { buffer.Release(); }
+    }
+
+    private static void ResumeEarlierWriter(WriteBuffer buffer, bool complete, string payload)
+    {
+        var earlier = new RespWriter(buffer);
+        var later = new RespWriter(buffer);
+        later.WriteBulkString(payload);
+        later.Complete();
+        if (complete) earlier.Complete();
+        else earlier.WriteRaw("+FAIL\r\n"u8);
+    }
+
+    [Test]
+    [NotInParallel]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task AppendingPublishedBytesInvalidatesAnEarlierWriter(bool complete)
+    {
+        var buffer = new WriteBuffer(128);
+        try
+        {
+            await Assert.That(() => ResumeWriterAfterAppend(buffer, complete))
+                .ThrowsExactly<InvalidOperationException>();
+            await Assert.That(buffer.WrittenMemory.Span.SequenceEqual("+PONG\r\n"u8)).IsTrue();
+            WritePong(buffer, 7);
+            await Assert.That(buffer.WrittenMemory.Span.SequenceEqual("+PONG\r\n+PONG\r\n"u8)).IsTrue();
+        }
+        finally { buffer.Release(); }
+    }
+
+    private static void ResumeWriterAfterAppend(WriteBuffer buffer, bool complete)
+    {
+        var writer = new RespWriter(buffer);
+        buffer.Append("+PONG\r\n"u8);
+        if (complete) writer.Complete();
+        else writer.WriteRaw("+FAIL\r\n"u8);
+    }
+
+    private static void ResumeDiscardedWriter(WriteBuffer buffer, bool complete, int discard)
+    {
+        var writer = new RespWriter(buffer);
+        writer.WriteRaw("+PONG\r\n"u8);
+        if (discard == 0) buffer.TruncateTo(0);
+        else if (discard == 1) buffer.Reset();
+        else buffer.Release();
+        if (complete) writer.Complete();
+        else writer.WriteRaw("+FAIL\r\n"u8);
+    }
+
+    private static void ResumeWriterAfterAnotherReservationGrows(WriteBuffer buffer, bool complete)
+    {
+        var earlier = new RespWriter(buffer);
+        _ = new RespWriter(buffer, buffer.Capacity + 1);
+        if (complete) earlier.Complete();
+        else earlier.WriteRaw("+FAIL\r\n"u8);
+    }
+
+    [Test]
     [Arguments(16)]
     [Arguments(65_536)]
     public async Task SecondWriterCannotDiscardUnpublishedBytes(int payloadLength)

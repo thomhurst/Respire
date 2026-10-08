@@ -17,6 +17,8 @@ internal sealed class WriteBuffer
     internal bool HasUnpublishedWriterBytes;
     internal long NextWriterSequence;
     internal long UnpublishedWriterSequence;
+    // Publishing, discarding, or replacing storage invalidates other writers' cached spans.
+    internal long WriterMutationVersion;
 #endif
 
     public WriteBuffer(int initialCapacity)
@@ -48,6 +50,9 @@ internal sealed class WriteBuffer
     {
         bytes.CopyTo(GetSpan(bytes.Length));
         _count += bytes.Length;
+#if DEBUG
+        WriterMutationVersion++;
+#endif
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -62,7 +67,13 @@ internal sealed class WriteBuffer
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Advance(int count) => _count += count;
+    public void Advance(int count)
+    {
+        _count += count;
+#if DEBUG
+        WriterMutationVersion++;
+#endif
+    }
 
     /// <summary>Reserves a frame for rewriting while retaining bytes written beyond the committed count.</summary>
     /// <remarks>
@@ -98,6 +109,7 @@ internal sealed class WriteBuffer
         _count = 0;
 #if DEBUG
         HasUnpublishedWriterBytes = false;
+        WriterMutationVersion++;
 #endif
     }
 
@@ -112,6 +124,7 @@ internal sealed class WriteBuffer
         _count = position;
 #if DEBUG
         HasUnpublishedWriterBytes = false;
+        WriterMutationVersion++;
 #endif
     }
 
@@ -129,6 +142,9 @@ internal sealed class WriteBuffer
         _array.AsSpan(0, _count).CopyTo(newArray);
         RespirePools.WriteBuffers.Return(_array);
         _array = newArray;
+#if DEBUG
+        WriterMutationVersion++;
+#endif
     }
 
     public void Release()
@@ -138,6 +154,7 @@ internal sealed class WriteBuffer
         _count = 0;
 #if DEBUG
         HasUnpublishedWriterBytes = false;
+        WriterMutationVersion++;
 #endif
         if (array.Length > 0)
         {

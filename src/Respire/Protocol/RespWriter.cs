@@ -18,7 +18,7 @@ namespace Respire.Protocol;
 /// <remarks>
 /// The cached span must not survive external buffer mutation or an await. Complete
 /// synchronous serialization before exposing WrittenMemory or leaving the write gate.
-/// Debug builds reject unfinished-buffer consumption and positive bounds smaller than the bytes published.
+/// Debug builds reject stale writers, unfinished-buffer consumption, and positive bounds smaller than the bytes published.
 /// </remarks>
 internal ref struct RespWriter
 {
@@ -33,6 +33,7 @@ internal ref struct RespWriter
 #if DEBUG
     private int _remainingReservation;
     private readonly long _writerSequence;
+    private long _bufferVersion;
 #endif
 
     internal RespWriter(WriteBuffer buffer, int sizeHint = 0)
@@ -50,6 +51,7 @@ internal ref struct RespWriter
         _position = 0;
 #if DEBUG
         _remainingReservation = sizeHint;
+        _bufferVersion = buffer.WriterMutationVersion;
 #endif
     }
 
@@ -58,6 +60,8 @@ internal ref struct RespWriter
     internal void Complete()
     {
 #if DEBUG
+        if (_bufferVersion != _buffer.WriterMutationVersion)
+            throw new InvalidOperationException("The RESP writer's cached span was invalidated by buffer mutation.");
         if (_buffer.HasUnpublishedWriterBytes && _buffer.UnpublishedWriterSequence != _writerSequence)
             throw new InvalidOperationException("Only the owning RESP writer can publish its unfinished bytes.");
         if (!_allowGrowth)
@@ -73,6 +77,7 @@ internal ref struct RespWriter
         _position = 0;
 #if DEBUG
         _buffer.HasUnpublishedWriterBytes = false;
+        _bufferVersion = _buffer.WriterMutationVersion;
 #endif
     }
 
@@ -80,6 +85,8 @@ internal ref struct RespWriter
     private Span<byte> GetSpan(int sizeHint)
     {
 #if DEBUG
+        if (_bufferVersion != _buffer.WriterMutationVersion)
+            throw new InvalidOperationException("The RESP writer's cached span was invalidated by buffer mutation.");
         if (_buffer.HasUnpublishedWriterBytes && _buffer.UnpublishedWriterSequence != _writerSequence)
             throw new InvalidOperationException("Only the owning RESP writer can change its unfinished bytes.");
 #endif
@@ -99,7 +106,12 @@ internal ref struct RespWriter
     private void EnsureCapacity(int required)
     {
         if (required > _destination.Length)
+        {
             _destination = _buffer.GetSpanForRewrite(_start, _position, required);
+#if DEBUG
+            _bufferVersion = _buffer.WriterMutationVersion;
+#endif
+        }
     }
 
     /// <summary>Writes "*&lt;count&gt;\r\n".</summary>
