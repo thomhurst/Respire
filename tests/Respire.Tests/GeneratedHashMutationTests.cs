@@ -230,6 +230,49 @@ public class GeneratedHashMutationTests
     [Test]
     [Arguments(1)]
     [Arguments(2)]
+    public async Task CapabilityCheckTimeoutKeepsTrackerRetryable(int connections)
+    {
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var commandInfo = "*1\r\n*6\r\n$8\r\nhpexpire\r\n:-6\r\n*0\r\n:1\r\n:1\r\n:1\r\n"u8.ToArray();
+        await using var server = new FakeRespServer(connections + 2, ":0\r\n"u8.ToArray())
+        {
+            SuppressReply = command => { received.TrySetResult(); return command == "COMMAND INFO HPEXPIRE"; },
+            ReplyOverride = (_, command) => command switch
+            {
+                "COMMAND INFO HPEXPIRE" => commandInfo,
+                _ when command.StartsWith("HPEXPIRE", StringComparison.Ordinal) => "*1\r\n:1\r\n"u8.ToArray(),
+                _ => null,
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = connections,
+            CommandTimeout = TimeSpan.FromMilliseconds(200),
+        });
+        var first = new ExpiringHashModel("x", "name", "old", null);
+        var tracker = ExpiringHashModelHashMapper.Track(client, first, RespireHashExpiryMode.HSetThenExpire);
+        var next = first with { Token = "new" };
+        var pending = tracker.UpdateAsync(next).AsTask();
+        await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(async () => await pending).Throws<RespireTimeoutException>();
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { "COMMAND INFO HPEXPIRE" });
+
+        server.SuppressReply = null;
+        // Fan-out disposes its dedicated inspection connection after the timeout.
+        await tracker.UpdateAsync(next);
+        await tracker.UpdateAsync(next);
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
+        {
+            "COMMAND INFO HPEXPIRE", "COMMAND INFO HPEXPIRE",
+            "HSET expiring:x Token new", "HPEXPIRE expiring:x 10000 FIELDS 1 Token",
+        });
+    }
+
+    [Test]
+    [Arguments(1)]
+    [Arguments(2)]
     public async Task CommandTimeoutRejectsRetryWhileAcceptedWriteRemainsUnsettled(int connections)
     {
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

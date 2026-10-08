@@ -15,10 +15,16 @@ public static class RespireHashModelIO
             RespireHashExpiryMode.HSetEx, cancellationToken);
 
     /// <summary>Writes mapped fields with explicit field expiries, then removes absent mapped fields.</summary>
-    public static async ValueTask WriteAsync(IRespireClient client, RespireKey key,
+    public static ValueTask WriteAsync(IRespireClient client, RespireKey key,
         IReadOnlyDictionary<string, string> fields, string[] mappedFields,
         IReadOnlyDictionary<string, long> fieldTtls, RespireHashExpiryMode expiryMode,
         CancellationToken cancellationToken = default)
+        => WriteAsync(client, key, fields, mappedFields, fieldTtls, expiryMode, cancellationToken, null);
+
+    internal static async ValueTask WriteAsync(IRespireClient client, RespireKey key,
+        IReadOnlyDictionary<string, string> fields, string[] mappedFields,
+        IReadOnlyDictionary<string, long> fieldTtls, RespireHashExpiryMode expiryMode,
+        CancellationToken cancellationToken, Action? onWriteStarting)
     {
         ArgumentNullException.ThrowIfNull(client);
         ArgumentNullException.ThrowIfNull(fields);
@@ -61,6 +67,9 @@ public static class RespireHashModelIO
                     throw new NotSupportedException("Generated field expiry requires HPEXPIRE (Redis 7.4+). No fields were written.");
             }
         }
+        // Preflight is read-only. Only mutating commands can leave uncertain writes behind.
+        if (expiring.Length != 0 || writes.Length > 1 || removals.Count > 1)
+            onWriteStarting?.Invoke();
         foreach (var group in expiring)
         {
             var pairs = new RespireValue[group.Fields.Length * 2];

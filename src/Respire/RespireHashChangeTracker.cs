@@ -42,7 +42,7 @@ public sealed class RespireHashChangeTracker<T> where T : class
     /// <summary>Writes changed fields and removes fields changed to null. An unchanged model sends no commands.</summary>
     /// <remarks>No server comparison or rollback occurs. On failure the entire previous baseline remains available for retry.
     /// Cancellation after encoding waits for the write group to finish before releasing the tracker.
-    /// A timeout of a possibly submitted command invalidates the tracker: later updates throw.</remarks>
+    /// A timeout of a possibly submitted write invalidates the tracker: later updates throw.</remarks>
     public async ValueTask UpdateAsync(T value, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(value);
@@ -66,20 +66,21 @@ public sealed class RespireHashChangeTracker<T> where T : class
             }
             if (changed.Count != 0)
             {
+                var writeStarted = false;
                 try
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     // Accepted writes must settle before a retry can use another connection.
                     // Cancelling the response wait would release this tracker too early.
                     await RespireHashModelIO.WriteAsync(_client, _key, writes, changed.ToArray(),
-                        _fieldTtls, _expiryMode, CancellationToken.None).ConfigureAwait(false);
+                        _fieldTtls, _expiryMode, CancellationToken.None, () => writeStarted = true).ConfigureAwait(false);
                     cancellationToken.ThrowIfCancellationRequested();
                 }
                 catch (Exception error)
                 {
                     // A command timeout abandons only the response wait. No retry through this
                     // client can prove that an accepted write on another connection has settled.
-                    if (error is RespireTimeoutException { IsCommandNotSubmitted: false }) _writeTimedOut = true;
+                    if (writeStarted && error is RespireTimeoutException { IsCommandNotSubmitted: false }) _writeTimedOut = true;
                     // Some commands may have applied. Resend these fields even if the caller
                     // reverts to the old baseline, so partially applied values can be corrected.
                     foreach (var field in changed) _retryFields.Add(field);
