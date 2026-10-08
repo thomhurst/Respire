@@ -423,6 +423,9 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
             catch (Exception error)
             {
                 outcome = candidate.MarkFailed(error, _clock.GetUtcNow(), _options, openCircuit: permit.ProbeSlot >= 0);
+                // Start the open period before synchronous observers can delay completion.
+                // Complete clears the permit, so the finally guard remains safe for earlier exceptions.
+                candidate.CompleteProbe(ref permit, outcome);
                 RespireTelemetry.RecordFailoverProbe(
                     candidate.TelemetryEndpoint,
                     succeeded: false,
@@ -434,6 +437,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
             // probes. It is checked again whenever its circuit allows the next probe.
             outcome = candidate.MarkFailed(new RespireConfigurationException(conflict), _clock.GetUtcNow(),
                 _options, openCircuit: true);
+            candidate.CompleteProbe(ref permit, outcome);
             RespireTelemetry.RecordFailoverProbe(
                 candidate.TelemetryEndpoint,
                 succeeded: false,

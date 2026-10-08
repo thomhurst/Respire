@@ -48,10 +48,13 @@ controls consecutive failures, probe timeout, open duration, and failback grace;
 failure thresholds have no rolling-history count limit. Application commands are
 not gated or replayed by this probe circuit.
 
-Each admitted probe completes its permit in `finally`. Parent cancellation is
+Each admitted probe completes its permit with a `finally` fallback. Failed probes
+complete before metrics or logging callbacks, so observer delays do not extend the
+circuit's open period. Parent cancellation is
 ignored for health and releases recovery capacity, including cancellation before
-dispatch. A probe timeout or failed recovery probe reopens the circuit for the
-configured duration. Open delays use monotonic time; the public UTC deadline is a
+dispatch. A failed or timed-out recovery probe reopens the circuit for the
+configured duration. Ordinary probe timeouts count toward `FailureThreshold`.
+Open delays use monotonic time; the public UTC deadline is a
 status snapshot and saturates at `DateTimeOffset.MaxValue` for very long durations.
 
 Standalone health probes use `PING`. Cluster probes use `CLUSTER INFO`. Sentinel probes check
