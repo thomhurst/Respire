@@ -63,7 +63,7 @@ Acquire the Redis lock before acting on an item: `pr-<N>` for PR work or recover
 | `pwsh $agentLocks status -LockName $lockName` | Read-only `FREE` / `HELD` / `HELD-BY-ME`; verify ownership before pushing or merging. |
 | `pwsh $agentLocks release -LockName $lockName` | Release in cleanup/finally; exit 0 confirms release, 5 means stale ownership, leave the key alone. |
 
-Redis is authoritative: never steal locks based on PIDs/files/inactivity or add another backend. Do not print/manage cached tokens. Codex supplies `CODEX_THREAD_ID`, and `scripts/Start-IssuePrLoop.ps1` sets `RESPIRE_AGENT_LOCK_OWNER_ID` for each run. In an interactive Claude Code session, pass `-OwnerId $env:CLAUDE_CODE_SESSION_ID` on every verb. Other automation needs the same stable unique `-OwnerId` on every verb. Renew when needed, without periodic heartbeats. Required `renew -Worktree $worktree` after checkout records the path for release cleanup; keep explicit lock names. The issue's `in-progress` label persists independently.
+Redis is authoritative: never steal locks based on PIDs/files/inactivity or add another backend. Do not print/manage cached tokens. Codex supplies `CODEX_THREAD_ID`, and `scripts/Start-IssuePrLoop.ps1` sets the lock script's owner variable for each run. In an interactive Claude Code session, pass `-OwnerId $env:CLAUDE_CODE_SESSION_ID` on every verb. Other automation needs the same stable unique `-OwnerId` on every verb. Renew when needed, without periodic heartbeats. Required `renew -Worktree $worktree` after checkout records the path for release cleanup; keep explicit lock names. The issue's `in-progress` label persists independently.
 
 After claiming an issue, create branch/worktree `issue-<N>-<short-desc>` from freshly fetched `origin/main`. For PR fixes, create a detached worktree from `origin/main`, then run `gh pr checkout <N>` with that worktree as `workdir`. PR directories use `pr-<N>-<description>`; never rename or reuse them for another PR. A separate local review/rebase branch must retain the same `pr-<N>` identity.
 
@@ -95,9 +95,9 @@ Resolve every review thread under the PR lock, whether a human or a bot opened i
 
 ### Rework budget
 
-A PR that keeps getting new heads never reaches the merge gate, because each push needs a new review and disposition. Before working a PR, count its Claude reviews (`issues/<N>/comments` bodies containing `<!-- claude-code-review -->`) and its force-pushes. A PR is over budget when either condition is true:
+A PR that keeps getting new heads never reaches the merge gate, because each push needs a new review and disposition. Before working a PR, count its automated review rounds (for Claude Code Review, `issues/<N>/comments` bodies containing `<!-- claude-code-review -->`) and its force-pushes. A PR is over budget when either condition is true:
 
-- It has 6 or more Claude reviews, and the latest review still has a blocking finding.
+- It has 6 or more automated review rounds, and the latest review still has a blocking finding.
 - It has 3 or more force-pushes (`head_ref_force_pushed` events in `issues/<N>/timeline`) after it first had conflicts.
 
 Do not push to an over-budget PR. Ensure the `needs-human` label exists, add it to the PR, and post one comment. The comment states the open blocking findings, the files that keep conflicting, and a proposed split into smaller PRs that can each merge on their own. Release the lock and skip the PR in later surveys while it has `needs-human`. A human removes the label to return it to the queue. Do not open split PRs yourself unless the user authorizes them.

@@ -8,7 +8,8 @@
 #   - CODEX_THREAD_ID set -> launched from Codex, so run `codex exec`.
 #   - otherwise           -> the only agent CLI on PATH; Codex when both are present.
 #
-# Each run gets its own RESPIRE_AGENT_LOCK_OWNER_ID, so AgentLocks.ps1 ownership never
+# Each run gets its own lock owner (the *_AGENT_LOCK_OWNER_ID variable that
+# scripts/AgentLocks.ps1 reads), so ownership never
 # leaks between units. The agent ends with a `RESULT: ...` line (see the skill's
 # single-unit mode). On `RESULT: queue-empty` the loop waits -IdleSeconds before the
 # next survey, because pending CI and reviews make new work appear later.
@@ -49,6 +50,19 @@ if ($LASTEXITCODE -ne 0 -or -not $repo) { throw 'Start-IssuePrLoop.ps1 must run 
 $repo = $repo.Trim()
 $stopFile = Join-Path (Resolve-Path (git -C $repo rev-parse --git-common-dir)) 'issue-pr-loop.stop'
 $selected = Resolve-Agent $Agent
+
+# Each repository's lock script names its own owner variable (for example RESPIRE_AGENT_LOCK_OWNER_ID).
+$ownerVariable = Select-String -LiteralPath (Join-Path $repo 'scripts/AgentLocks.ps1') -CaseSensitive -Pattern '\b([A-Z][A-Z0-9_]*_AGENT_LOCK_OWNER_ID)\b' |
+    Select-Object -First 1 |
+    ForEach-Object { $_.Matches[0].Groups[1].Value }
+if (-not $ownerVariable) { throw 'scripts/AgentLocks.ps1 does not name an *_AGENT_LOCK_OWNER_ID variable.' }
+
+# The skill lives under .claude or .agents depending on the repository; name it by path so either agent finds it.
+$skill = @('.claude/skills/issue-pr-loop/SKILL.md', '.agents/skills/issue-pr-loop/SKILL.md') |
+    Where-Object { Test-Path -LiteralPath (Join-Path $repo $_) } |
+    Select-Object -First 1
+if (-not $skill) { throw 'issue-pr-loop SKILL.md not found under .claude/skills or .agents/skills.' }
+$prompt = "Read $skill and follow the issue-pr-loop skill in single-unit mode."
 New-Item -ItemType Directory -Force $LogDirectory | Out-Null
 
 Write-Host "issue-pr-loop: agent=$selected repo=$repo"
@@ -65,15 +79,13 @@ while (-not (Test-Path -LiteralPath $stopFile)) {
 
     $runId = '{0:yyyyMMdd-HHmmss}-{1}' -f (Get-Date), ([guid]::NewGuid().ToString('N').Substring(0, 8))
     $log = Join-Path $LogDirectory "$runId.log"
-    $env:RESPIRE_AGENT_LOCK_OWNER_ID = "issue-pr-loop-$runId"
+    Set-Item -Path "Env:$ownerVariable" -Value "issue-pr-loop-$runId"
 
     Write-Host "issue-pr-loop: unit $units ($runId) started"
     if ($selected -eq 'codex') {
-        $prompt = 'Run the $issue-pr-loop skill in single-unit mode.'
         codex exec --dangerously-bypass-approvals-and-sandbox -C $repo -o $log $prompt
     }
     else {
-        $prompt = '/issue-pr-loop Run in single-unit mode.'
         Push-Location $repo
         try { claude -p $prompt --dangerously-skip-permissions *> $log }
         finally { Pop-Location }
@@ -102,5 +114,5 @@ while (-not (Test-Path -LiteralPath $stopFile)) {
 
 # Clear the stop request so the next start runs.
 Remove-Item -LiteralPath $stopFile -ErrorAction SilentlyContinue
-Remove-Item Env:RESPIRE_AGENT_LOCK_OWNER_ID -ErrorAction SilentlyContinue
+Remove-Item -Path "Env:$ownerVariable" -ErrorAction SilentlyContinue
 Write-Host "issue-pr-loop: stopped after $units unit(s)"
