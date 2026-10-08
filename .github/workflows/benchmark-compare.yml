@@ -59,6 +59,10 @@ on:
         description: BenchmarkDotNet measurement preset (Short, Default, or Medium)
         default: Medium
         type: string
+      require-eventpipe-traces:
+        description: Require separate EventPipe profile artifacts for every measured case
+        default: false
+        type: boolean
       redis-server:
         description: Start a pinned Redis service for fixtures that use a real server
         default: false
@@ -172,6 +176,29 @@ jobs:
                                   '--exporters', 'json', 'markdown',
                                   '--artifacts', str(workspace / 'results' / phase)],
                                  cwd=source, stdout=log, stderr=subprocess.STDOUT, check=True)
+      - name: Require separate profile traces
+        if: inputs.require-eventpipe-traces
+        shell: python
+        run: |
+          import json, os
+          from pathlib import Path
+          for phase in ('baseline-a', 'candidate', 'baseline-b'):
+              cases = []
+              for report in Path('results', phase, 'results').glob('*-report-full-compressed.json'):
+                  cases.extend(json.loads(report.read_text())['Benchmarks'])
+              expected = int(os.environ['EXPECTED_COUNT'])
+              names = {case['FullName'] for case in cases}
+              assert len(cases) == len(names) == expected, f'Incomplete profile identities: {phase}'
+              traces = list(Path('results', phase).rglob('*.nettrace'))
+              profiles = list(Path('results', phase).rglob('*.speedscope.json'))
+              assert len(traces) == len(profiles) == expected, f'Missing or duplicate EventPipe profiles: {phase}'
+              for name in names:
+                  matches = [trace for trace in traces if trace.name.startswith(name + '-')]
+                  assert len(matches) == 1, f'Missing or duplicate case trace: {phase}/{name}'
+                  trace = matches[0]
+                  profile = trace.with_suffix('.speedscope.json')
+                  assert profile in profiles, f'Missing matching profile: {phase}/{name}'
+                  assert trace.stat().st_size > 0 and profile.stat().st_size > 0, f'Empty profile artifact: {phase}/{name}'
       - name: Require complete results and summarize both controls
         shell: python
         run: |

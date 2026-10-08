@@ -21,6 +21,7 @@ jobs:
       expected-head-sha: ${{ github.event.pull_request.head.sha }}
       fixture: benchmarks/Respire.Benchmarks/ClientCacheWriteBenchmarks.cs
       filter: '*ClientCacheWriteBenchmarks*'
-      expected-case-count: 5
-      expected-methods: SetConcurrent50Coalescing,SetConcurrent50WithoutCoalescing,SetConcurrent50CacheDisabled,ReadWriteConcurrent50,CoalescedGetMissBurst
+      expected-case-count: 7
+      expected-methods: SetConcurrent50Coalescing,SetConcurrent50WithoutCoalescing,SetConcurrent50CacheDisabled,SetConcurrent50SameKey,FailedSetConcurrent50,ReadWriteConcurrent50,CoalescedGetMissBurst
+      require-eventpipe-traces: true
       artifact-prefix: cache-write-comparison

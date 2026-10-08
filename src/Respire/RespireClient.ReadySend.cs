@@ -36,13 +36,22 @@ public sealed partial class RespireClient
         var durationStarted = sender.ObserveDuration ? RespireTelemetry.CaptureOperationStart(operation) : default;
         try
         {
-            var response = sender.Send(multiplexer.GetConnection(), operation, in command, cancellationToken, durationStarted);
-            return mutationFence.IsRequired ? CompleteMutationAsync(response, cache!, mutationFence) : response;
+            var connection = multiplexer.GetConnection();
+            if (!mutationFence.IsRequired)
+                return sender.Send(connection, operation, in command, cancellationToken, durationStarted);
+            var bound = new MutationCommand<TCommand>(command, mutationFence);
+            return CompleteMutationAsync(sender.Send(connection, operation, in bound, cancellationToken, durationStarted),
+                cache!, mutationFence);
         }
         // _core is readonly: this filter observes the same core captured by the caller.
         catch (Exception error) when (_core.Sentinel is not null || durationStarted.MetricEnabled)
         {
             return CaptureReadySendFailure<TResult>(error, cache, mutationFence);
+        }
+        catch
+        {
+            if (mutationFence.IsRequired) cache!.CompleteMutation(in mutationFence);
+            throw;
         }
     }
 

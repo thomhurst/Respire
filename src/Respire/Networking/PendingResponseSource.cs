@@ -26,6 +26,16 @@ internal abstract partial class PendingResponse
     // captured state carries the old epoch and the CAS fails.
     private long _state;
     private int _refs;
+    private ClientSideCacheCoordinator.MutationReference _mutationReference;
+
+    internal void BindMutationFence(in ClientSideCacheCoordinator.MutationFence fence)
+    {
+        if (!fence.IsRequired) return;
+        if (_mutationReference.IsRequired)
+            throw new InvalidOperationException("A native response already owns a cache mutation fence.");
+        _mutationReference = fence.BindNative();
+        Debug.Assert(_mutationReference.IsRequired, "An accepted mutation must retain its live fence.");
+    }
 
     /// <summary>
     /// Absolute <see cref="Environment.TickCount64"/> deadline stamped at enqueue, or
@@ -65,7 +75,23 @@ internal abstract partial class PendingResponse
 
     // The receive loop reserves completion before handing the reply to the scheduler.
     // Cancellation must not discard a reply already parsed while an earlier continuation runs.
-    internal virtual bool TryReserveResult() => TryAcquireCompletion();
+    internal virtual bool TryReserveResult()
+    {
+        // The FIFO slot has been dequeued and its full reply parsed. Release the native
+        // fence before delivery can run an inline caller and its subsequent cache reads.
+        // Multi-reply sources reach this only for their final reply. Cancellation still
+        // retains the fence until that reply drains or connection teardown returns us.
+        RetireMutationFence();
+        return TryAcquireCompletion();
+    }
+
+    private void RetireMutationFence()
+    {
+        if (!_mutationReference.IsRequired) return;
+        var mutationReference = _mutationReference;
+        _mutationReference = default;
+        mutationReference.Release();
+    }
 
     internal virtual bool CompleteReservedResult(in RespValue result)
     {
@@ -128,7 +154,7 @@ internal abstract partial class PendingResponse
     /// paths — cancellation callbacks on arbitrary user threads, connection teardown — must
     /// hop to the pool themselves rather than run caller continuations where they stand.
     /// </summary>
-    private void DispatchException(Exception exception)
+    protected virtual void DispatchException(Exception exception)
     {
         // Completion has been claimed, and the caller still owns a reference. Capture
         // observations now: queue latency must not replace the timeout with recovered state.
@@ -198,7 +224,12 @@ internal abstract partial class PendingResponse
         // Bump the reuse epoch and clear the completed bit in one atomic store, invalidating
         // any state the deadline sweep captured for this incarnation.
         Volatile.Write(ref _state, ((Volatile.Read(ref _state) >> 1) + 1) << 1);
-        ResetAndReturn();
+        if (_mutationReference.IsRequired)
+        {
+            try { RetireMutationFence(); }
+            finally { ResetAndReturn(); }
+        }
+        else ResetAndReturn();
     }
 
     protected abstract void SetResultCore(in RespValue result);
@@ -206,6 +237,39 @@ internal abstract partial class PendingResponse
     protected abstract void SetExceptionCore(Exception exception);
 
     protected abstract void ResetAndReturn();
+}
+
+/// <summary>A discarded reply that still owns a mutation until its native FIFO slot retires.</summary>
+internal sealed class MutationDiscardPendingResponse : PendingResponse
+{
+    private static readonly ObjectPool<MutationDiscardPendingResponse, PoolPolicy> Pool = new(4096);
+    private string? _commandName;
+    internal override string? CommandName => _commandName;
+
+    internal static MutationDiscardPendingResponse Rent(string? commandName)
+    {
+        var source = Pool.Rent();
+        source._commandName = commandName;
+        source.PrepareForUse();
+        return source;
+    }
+
+    // No caller observes a response or exception. In particular, do not queue a callback
+    // against this source after its native owner can return it to the pool.
+    protected override void DispatchException(Exception exception) { }
+    protected override void SetExceptionCore(Exception exception) { }
+    protected override void SetResultCore(in RespValue result) => result.Dispose();
+    protected override void ResetAndReturn() => Pool.Return(this);
+
+    private readonly struct PoolPolicy : IPooledObjectPolicy<MutationDiscardPendingResponse>
+    {
+        public MutationDiscardPendingResponse Create() => new();
+        public bool TryReset(MutationDiscardPendingResponse source)
+        {
+            source._commandName = null;
+            return true;
+        }
+    }
 }
 
 /// <summary>

@@ -16,6 +16,63 @@ public class ClientSideCacheTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
+    public async Task BlockingGroupReadAllowsUnrelatedCachePublicationAndSharing(bool raw)
+    {
+        await using var server = new FakeRespServer(100, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("HELLO ", StringComparison.Ordinal)
+                ? HelloReply : command.StartsWith("GET ", StringComparison.Ordinal)
+                    ? "$5\r\nvalue\r\n"u8.ToArray() : FakeRespServer.OkReply,
+        };
+        var parked = new ParkedReply(server, "XREADGROUP ");
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
+            ClientSideCache = new() { CoalesceConcurrentMisses = true },
+        });
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await using var entries = client.Streams.ReadGroupAsync(new StreamReadOptions
+        {
+            WaitFor = Timeout.InfiniteTimeSpan,
+        }, "events", "group", "consumer", cancellationToken: cancellation.Token).GetAsyncEnumerator();
+        var pending = raw
+            ? client.ExecuteAsync(RespireCommands.Stream.XREADGROUP,
+                ["GROUP", "group", "consumer", "BLOCK", 0, "STREAMS", "events", ">"], cancellationToken: cancellation.Token).AsTask()
+            : AwaitEntryAsync();
+        async Task<RespireResult> AwaitEntryAsync()
+        {
+            _ = await entries.MoveNextAsync();
+            return default;
+        }
+        await parked.WaitAsync();
+        try
+        {
+            await Assert.That(await client.GetStringAsync("other")).IsEqualTo("value");
+            await Assert.That(await client.GetStringAsync("other")).IsEqualTo("value");
+            await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
+            await Assert.That(server.ReceivedCommands.Count(command => command == "GET other")).IsEqualTo(1);
+            var shared = new ParkedReply(server, "GET shared");
+            var first = client.GetStringAsync("shared").AsTask();
+            await shared.WaitAsync();
+            var second = client.GetStringAsync("shared").AsTask();
+            await Assert.That(client.Core.ClientCache!.ActiveSharedReadCount).IsEqualTo(1);
+            await shared.ReleaseAsync("$5\r\nvalue\r\n"u8.ToArray());
+            await Assert.That(await first).IsEqualTo("value");
+            await Assert.That(await second).IsEqualTo("value");
+            await Assert.That(server.ReceivedCommands.Count(command => command == "GET shared")).IsEqualTo(1);
+        }
+        finally
+        {
+            cancellation.Cancel();
+            await Assert.That(async () => { using var reply = await pending; }).Throws<OperationCanceledException>();
+        }
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
     public async Task ExtendedIncrementFencesOnlyItsPrefixedKeyAcrossReply(bool floating)
     {
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -905,7 +962,7 @@ public class ClientSideCacheTests
     }
 
     [Test]
-    public async Task TransactionCompletion_FlushesEntriesInsertedDuringExecution()
+    public async Task TransactionCompletion_RejectsPublicationDuringExecution()
     {
         await using var server = new FakeRespServer(
             2,
@@ -921,13 +978,17 @@ public class ClientSideCacheTests
         var commit = transaction.CommitAsync().AsTask();
         await parked.WaitAsync();
         var cache = client.Core.ClientCache!;
+        await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(1);
         InsertCachedValue(cache, "key", "old");
-        await Assert.That(cache.Count).IsEqualTo(1);
+        await Assert.That(cache.Count).IsEqualTo(0);
 
         await parked.ReleaseAsync("*1\r\n+OK\r\n"u8.ToArray());
         await commit;
 
+        await WaitUntilAsync(() => cache.InspectForTests().ActiveMutationCount == 0);
         await Assert.That(cache.Count).IsEqualTo(0);
+        InsertCachedValue(cache, "key", "new");
+        await Assert.That(cache.Count).IsEqualTo(1);
     }
 
     [Test]
@@ -1370,6 +1431,7 @@ public class ClientSideCacheTests
             FakeRespServer.OkReply,
             "$5\r\nvalue\r\n"u8.ToArray(),
             FakeRespServer.OkReply);
+        var parked = new ParkedReply(target, "SCRIPT FLUSH");
         var topology = Encoding.ASCII.GetBytes(
             $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n");
         await using var seed = new FakeRespServer(
@@ -1386,10 +1448,17 @@ public class ClientSideCacheTests
 
         await client.GetStringAsync("key");
         await client.ExecuteFireAndForgetAsync(RespireCommands.Scripting.SCRIPT_FLUSH);
-        await WaitUntilAsync(() => target.CommandsSeen >= 5);
+        await parked.WaitAsync();
 
-        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
+        var cache = client.Core.ClientCache!;
+        await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(1);
+        InsertCachedValue(cache, "key", "stale");
+        await Assert.That(cache.Count).IsEqualTo(0);
         await Assert.That(target.ReceivedCommands[^1]).IsEqualTo("SCRIPT FLUSH");
+        await parked.ReleaseAsync(FakeRespServer.OkReply);
+        await WaitUntilAsync(() => cache.InspectForTests().ActiveMutationCount == 0);
+        InsertCachedValue(cache, "key", "fresh");
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("fresh");
     }
 
     [Test]
@@ -1694,6 +1763,65 @@ public class ClientSideCacheTests
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("old");
         await Assert.That(server.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments(0)]
+    [Arguments(1)]
+    [Arguments(2)]
+    [Arguments(3)]
+    [Arguments(4)]
+    public async Task CancelledMutationRetainsPublicationFenceUntilLateNativeReply(int path)
+    {
+        await using var server = new FakeRespServer(HelloReply, FakeRespServer.OkReply);
+        var parked = new ParkedReply(server, path switch
+        {
+            2 => "MSET ",
+            3 => "EVALSHA ",
+            _ => "SET ",
+        });
+        await using var client = await ConnectAsync(server);
+        using var cancellation = new CancellationTokenSource();
+        using var batch = client.CreateBatch();
+        var cache = client.Core.ClientCache!;
+        InsertCachedValue(cache, "key", "old");
+        var mutation = SendAsync();
+        await parked.WaitAsync();
+        cancellation.Cancel();
+        await Assert.That(async () => await mutation).Throws<OperationCanceledException>();
+        await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(1);
+        cache.Clear();
+        cache.FlushForContinuityLoss();
+        InsertCachedValue(cache, "key", "stale");
+        await Assert.That(cache.Count).IsEqualTo(0);
+
+        await parked.ReleaseAsync(path == 3 ? ":1\r\n"u8.ToArray() : FakeRespServer.OkReply);
+        await WaitUntilAsync(() => cache.InspectForTests().ActiveMutationCount == 0);
+        InsertCachedValue(cache, "key", "new");
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("new");
+
+        async Task SendAsync()
+        {
+            switch (path)
+            {
+                case 0:
+                    await client.Strings.SetAsync("key", "new", cancellationToken: cancellation.Token);
+                    break;
+                case 1:
+                    using (await client.ExecuteAsync(RespireCommands.String.SET, ["key", "new"], cancellationToken: cancellation.Token)) { }
+                    break;
+                case 2:
+                    using (await client.ExecuteAsync(RespireCommands.String.MSET, ["key", "new", "other", "new"], cancellationToken: cancellation.Token)) { }
+                    break;
+                case 3:
+                    await client.Scripts.ExecuteIntegerAsync(RespireScript.Create("return 1"), ["key"], cancellationToken: cancellation.Token);
+                    break;
+                default:
+                    _ = batch.Strings.Set("key", "new");
+                    await batch.ExecuteAsync(cancellation.Token);
+                    break;
+            }
+        }
     }
 
     private static ValueTask<RespireClient> ConnectAsync(FakeRespServer server)

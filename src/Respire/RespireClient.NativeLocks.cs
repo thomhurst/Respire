@@ -127,7 +127,7 @@ public sealed partial class RespireClient
             // RespireLock_CancelledReleaseConservativelyStopsProtectedWork fails if that happens.
             var response = ExecuteRoutedLockAsync(
                 execution, connection, wireKey, token.AsValue(), milliseconds, slot, requireIdentity,
-                allowUnfencedFallback, cancellationToken);
+                allowUnfencedFallback, cancellationToken, mutationFence);
             execution.Response = mutationFence.IsRequired
                 ? CompleteMutationAsync(response, cache!, mutationFence)
                 : response;
@@ -146,7 +146,7 @@ public sealed partial class RespireClient
     private async ValueTask<bool> ExecuteRoutedLockAsync(
         TrackedLockExecution execution, RespireConnection connection, RespireValue key,
         RespireValue token, long? milliseconds, int? slot, bool requireIdentity, bool allowUnfencedFallback,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, ClientSideCacheCoordinator.MutationFence mutationFence)
     {
         ClusterRouter.DiscoveryRound? discovery = null;
         var discoveryPending = false;
@@ -158,7 +158,7 @@ public sealed partial class RespireClient
                 try
                 {
                     execution.CommandMayBeOutstanding = true;
-                    return await ExecuteCompatibleLockAsync(connection, key, token, milliseconds, sendAsking, cancellationToken)
+                    return await ExecuteCompatibleLockAsync(connection, key, token, milliseconds, sendAsking, cancellationToken, mutationFence)
                         .ConfigureAwait(false);
                 }
                 catch (RespireConnectionRetiredException error) when (
@@ -268,7 +268,7 @@ public sealed partial class RespireClient
 
     private async ValueTask<bool> ExecuteCompatibleLockAsync(
         RespireConnection connection, RespireValue key, RespireValue token, long? milliseconds,
-        bool sendAsking, CancellationToken cancellationToken)
+        bool sendAsking, CancellationToken cancellationToken, ClientSideCacheCoordinator.MutationFence mutationFence)
     {
         var capabilities = LockConnectionCapabilities.GetValue(connection, static _ => new LockCapabilities());
         if (milliseconds is { } duration)
@@ -277,10 +277,10 @@ public sealed partial class RespireClient
             {
                 try
                 {
-                    var reply = await SendOnConnectionAsync("SET", connection,
+                    var reply = await SendMutationOnConnectionAsync("SET", connection,
                             new ConditionalSetCommand(key, token, RespireValueCondition.EqualTo(token),
                                 RespireExpiry.In(TimeSpan.FromMilliseconds(duration)), false),
-                            cancellationToken, sendAsking: sendAsking)
+                            mutationFence, cancellationToken, sendAsking: sendAsking)
                         .ConfigureAwait(false);
                     try { return !reply.IsNull; }
                     finally { reply.Dispose(); }
@@ -300,7 +300,7 @@ public sealed partial class RespireClient
                 try
                 {
                     return await SendLockIntegerAsync("DELEX", connection,
-                            new Cmd3(RespireCommands.String.DELEX.Verb, key, "IFEQ", token), sendAsking, cancellationToken)
+                            new Cmd3(RespireCommands.String.DELEX.Verb, key, "IFEQ", token), sendAsking, cancellationToken, mutationFence)
                         .ConfigureAwait(false);
                 }
                 catch (RespireServerException error) when (IsUnknownLockCommand(error, "DELEX"))
@@ -314,7 +314,7 @@ public sealed partial class RespireClient
                 try
                 {
                     return await SendLockIntegerAsync("DELIFEQ", connection,
-                            new Cmd2(RespireCommands.String.DELIFEQ.Verb, key, token), sendAsking, cancellationToken)
+                            new Cmd2(RespireCommands.String.DELIFEQ.Verb, key, token), sendAsking, cancellationToken, mutationFence)
                         .ConfigureAwait(false);
                 }
                 catch (RespireServerException error) when (IsUnknownLockCommand(error, "DELIFEQ"))
@@ -329,23 +329,24 @@ public sealed partial class RespireClient
         try
         {
             return await SendLockIntegerAsync(script.EvalShaOperation, connection,
-                    new Cmd2N(script.EvalShaVerb, script.Sha1, 1, args), sendAsking, cancellationToken, script.Sha1)
+                    new Cmd2N(script.EvalShaVerb, script.Sha1, 1, args), sendAsking, cancellationToken, mutationFence, script.Sha1)
                 .ConfigureAwait(false);
         }
         catch (RespireServerException error) when (error.Code == RespireErrorCodes.NoScript)
         {
             return await SendLockIntegerAsync(script.EvalOperation, connection,
-                    new Cmd2N(script.EvalVerb, script.Source, 1, args), sendAsking, cancellationToken, script.Sha1)
+                    new Cmd2N(script.EvalVerb, script.Source, 1, args), sendAsking, cancellationToken, mutationFence, script.Sha1)
                 .ConfigureAwait(false);
         }
     }
 
     private async ValueTask<bool> SendLockIntegerAsync<TCommand>(
         string operation, RespireConnection connection, TCommand command, bool sendAsking,
-        CancellationToken cancellationToken, string? storedProcedureName = null)
+        CancellationToken cancellationToken, ClientSideCacheCoordinator.MutationFence mutationFence,
+        string? storedProcedureName = null)
         where TCommand : struct, IRespCommand
     {
-        var reply = await SendOnConnectionAsync(operation, connection, command, cancellationToken,
+        var reply = await SendMutationOnConnectionAsync(operation, connection, command, mutationFence, cancellationToken,
                 storedProcedureName, sendAsking)
             .ConfigureAwait(false);
         try { return reply.AsInteger() >= 1; }

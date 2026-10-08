@@ -170,6 +170,7 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
 
         // BatchScriptCommand has no acceptance side effects.
         public void OnAccepted() { }
+        public ClientSideCacheCoordinator.MutationFence GetMutationFence() => default;
 
         public void ValidateAdmission()
         {

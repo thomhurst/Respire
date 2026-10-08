@@ -286,6 +286,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
         var importTransactionStarted = false;
         RespireConnection.CredentialSequenceLease credentialSequence = default;
         var returnWatchConnection = false;
+        var mutationFence = default(ClientSideCacheCoordinator.MutationFence);
         try
         {
             if (_ops.Count == 0 && (!validateEmptyWatch || _watchConnection is null))
@@ -300,7 +301,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             }
 
             // MULTI/EXEC bypasses the regular send path and can contain arbitrary mutations.
-            if (_ops.Count != 0) core.ClientCache?.FlushForUnknownCommand();
+            if (_ops.Count != 0 && core.ClientCache is { } cache) mutationFence = cache.BeginUnknownMutation();
 
             RespValue result;
             try
@@ -437,10 +438,10 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                         transactionStateUncertain: importTransactionStarted).ConfigureAwait(false);
                 }
             }
-            finally { credentialSequence.Dispose(); }
-            if (_ops.Count != 0)
+            finally
             {
-                core.ClientCache?.FlushForUnknownCommand();
+                credentialSequence.Dispose();
+                core.ClientCache?.CompleteMutation(in mutationFence);
             }
 
             try
@@ -524,7 +525,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                         }
                         reply = await connection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count,
                                 cancellationToken, includeMulti: !ConnectionPolicy.IsImportSession, commandDeadline: deadline,
-                                transaction: this)
+                                transaction: this, mutationFence: mutationFence)
                             .ConfigureAwait(false);
                         connection = ExecutingConnection ?? connection;
                         if (ConnectionPolicy.IsImportSession && (reply.Type == RespDataType.Array || reply.IsNull

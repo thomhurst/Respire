@@ -1,5 +1,10 @@
 using BenchmarkDotNet.Attributes;
+using BenchmarkDotNet.Configs;
+using BenchmarkDotNet.Diagnosers;
 using DotNet.Testcontainers.Containers;
+using Microsoft.Diagnostics.NETCore.Client;
+using Microsoft.Diagnostics.Tracing.Parsers;
+using System.Diagnostics.Tracing;
 using Testcontainers.Redis;
 
 namespace Respire.Benchmarks;
@@ -7,8 +12,20 @@ namespace Respire.Benchmarks;
 /// <summary>Public cache-on writes with empty sharing, cache-off controls, and concurrent read/write churn.</summary>
 [MemoryDiagnoser]
 [ThreadingDiagnoser]
+[Config(typeof(MutationTraceConfig))]
 public class ClientCacheWriteBenchmarks
 {
+    // Profile a separate execution so the bracketed timing samples exclude tracing overhead.
+    // Override the runtime provider by name to retain contention, threading and GC events.
+    public sealed class MutationTraceConfig : ManualConfig
+    {
+        public MutationTraceConfig() => AddDiagnoser(new EventPipeProfiler(EventPipeProfile.CpuSampling,
+            [new EventPipeProvider("Microsoft-Windows-DotNETRuntime", EventLevel.Verbose,
+                (long)(ClrTraceEventParser.Keywords.Default | ClrTraceEventParser.Keywords.Contention
+                    | ClrTraceEventParser.Keywords.Threading | ClrTraceEventParser.Keywords.GC))],
+            performExtraBenchmarksRun: true));
+    }
+
     private const int Callers = 50;
     private const int WritesPerCaller = 16;
     private readonly Task<long>[] _workers = new Task<long>[Callers];
@@ -49,6 +66,8 @@ public class ClientCacheWriteBenchmarks
             if (await SetConcurrent50Coalescing() != Callers * WritesPerCaller
                 || await SetConcurrent50WithoutCoalescing() != Callers * WritesPerCaller
                 || await SetConcurrent50CacheDisabled() != Callers * WritesPerCaller
+                || await SetConcurrent50SameKey() != Callers * WritesPerCaller
+                || await FailedSetConcurrent50() != Callers * WritesPerCaller
                 || await ReadWriteConcurrent50() != Callers * WritesPerCaller
                 || await CoalescedGetMissBurst() != Callers * _value.Length)
                 throw new InvalidOperationException("Cache write fixture did not preserve SET/GET results.");
@@ -71,17 +90,46 @@ public class ClientCacheWriteBenchmarks
     [Benchmark(OperationsPerInvoke = Callers * WritesPerCaller)]
     public Task<long> SetConcurrent50CacheDisabled() => RunWrites(_withoutCache, readAfterWrite: false);
 
+    [Benchmark(OperationsPerInvoke = Callers * WritesPerCaller)]
+    public Task<long> SetConcurrent50SameKey() => RunWrites(_coalescing, readAfterWrite: false, sameKey: true);
+
+    /// <summary>Known-key server rejection retains conservative completion fencing.</summary>
+    [Benchmark(OperationsPerInvoke = Callers * WritesPerCaller)]
+    public async Task<long> FailedSetConcurrent50()
+    {
+        for (var index = 0; index < _workers.Length; index++)
+        {
+            var key = _keys[index];
+            _workers[index] = Task.Run(async () =>
+            {
+                long rejected = 0;
+                for (var write = 0; write < WritesPerCaller; write++)
+                {
+                    try
+                    {
+                        using var reply = await _coalescing.ExecuteAsync(RespireCommands.String.SET,
+                            new RespireValue[] { key, _value, "PX", 0 });
+                        throw new InvalidOperationException("Redis accepted an invalid SET expiry.");
+                    }
+                    catch (RespireServerException error) when (error.Code == "ERR") { rejected++; }
+                }
+                return rejected;
+            });
+        }
+        return (await Task.WhenAll(_workers)).Sum();
+    }
+
     /// <summary>One SET/GET pair, with overlapping shared reads and local cache mutation fences.</summary>
     [Benchmark(OperationsPerInvoke = Callers * WritesPerCaller)]
     public Task<long> ReadWriteConcurrent50() => RunWrites(_coalescing, readAfterWrite: true);
 
-    private async Task<long> RunWrites(RespireClient client, bool readAfterWrite)
+    private async Task<long> RunWrites(RespireClient client, bool readAfterWrite, bool sameKey = false)
     {
         // These loops define fifty concurrent producers; each write or write/read pair is
         // counted once. BenchmarkDotNet still controls the iteration and invocation loops.
         for (var index = 0; index < _workers.Length; index++)
         {
-            var key = _keys[index];
+            var key = _keys[sameKey ? 0 : index];
             _workers[index] = Task.Run(async () =>
             {
                 long completed = 0;

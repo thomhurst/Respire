@@ -2448,20 +2448,40 @@ public sealed partial class RespireClient : IRespireClient
         }
 
         var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
-        ValueTask<RespValue> response;
+        if (!mutationFence.IsRequired)
+            return SendRoutedResponseAsync(operation, command, cancellationToken, flags, allowReadFrom, cursorAffinity, readKind);
+        try
+        {
+            var bound = new MutationCommand<TCommand>(command, mutationFence);
+            return CompleteMutationAsync(
+                SendRoutedResponseAsync(operation, bound, cancellationToken, flags, allowReadFrom, cursorAffinity, readKind),
+                cache!, mutationFence);
+        }
+        catch
+        {
+            cache!.CompleteMutation(in mutationFence);
+            throw;
+        }
+    }
+
+    private ValueTask<RespValue> SendRoutedResponseAsync<TCommand>(string operation, TCommand command,
+        CancellationToken cancellationToken, RespireCommandFlags flags, bool allowReadFrom,
+        ReadAffinity? cursorAffinity, ReadCommandKind readKind) where TCommand : struct, IRespCommand
+    {
+        var core = _core;
         if (readKind == ReadCommandKind.Read && core.HedgedReads is { } hedgeBudget
             && command is not IRespCommandWrapper && HedgedReadPolicy.IsEligible(operation)
             && (core.Cluster is null || command.TryGetClusterSlot(out _)))
         {
-            response = SendHedgedReadAsync(operation, command, hedgeBudget, flags, cancellationToken);
+            return SendHedgedReadAsync(operation, command, hedgeBudget, flags, cancellationToken);
         }
-        else if (routeRead && core.Cluster is null)
+        else if (readKind != ReadCommandKind.None && core.Cluster is null)
         {
-            response = SendReadFromAsync(operation, command, readKind, cursorAffinity, cancellationToken);
+            return SendReadFromAsync(operation, command, readKind, cursorAffinity, cancellationToken);
         }
         else if (core.Cluster is { } cluster)
         {
-            response = SendClusterAsync(
+            return SendClusterAsync(
                 operation,
                 cluster,
                 command,
@@ -2474,16 +2494,12 @@ public sealed partial class RespireClient : IRespireClient
         }
         else if (core.TryGetReadyPrimaryMultiplexer(out var readyMultiplexer))
         {
-            response = SendOnReadyPrimaryAsync(operation, readyMultiplexer, command, cancellationToken);
+            return SendOnReadyPrimaryAsync(operation, readyMultiplexer, command, cancellationToken);
         }
         else
         {
-            response = SendAfterConnectAsync(operation, command, cancellationToken);
+            return SendAfterConnectAsync(operation, command, cancellationToken);
         }
-
-        return mutationFence.IsRequired
-            ? CompleteMutationAsync(response, cache!, mutationFence)
-            : response;
     }
 
 #if NET
@@ -2610,13 +2626,16 @@ public sealed partial class RespireClient : IRespireClient
         ClientSideCacheCoordinator cache,
         ClientSideCacheCoordinator.MutationFence fence)
     {
+        var succeeded = false;
         try
         {
-            return await response.ConfigureAwait(false);
+            var result = await response.ConfigureAwait(false);
+            succeeded = true;
+            return result;
         }
         finally
         {
-            cache.CompleteMutation(in fence);
+            cache.CompleteMutation(in fence, succeeded);
         }
     }
 
@@ -2628,13 +2647,15 @@ public sealed partial class RespireClient : IRespireClient
         ClientSideCacheCoordinator cache,
         ClientSideCacheCoordinator.MutationFence fence)
     {
+        var succeeded = false;
         try
         {
             await response.ConfigureAwait(false);
+            succeeded = true;
         }
         finally
         {
-            cache.CompleteMutation(in fence);
+            cache.CompleteMutation(in fence, succeeded);
         }
     }
 
@@ -2677,7 +2698,7 @@ public sealed partial class RespireClient : IRespireClient
                 return await SendClusterAsync(
                         operation,
                         cluster,
-                        command,
+                        new MutationCommand<TCommand>(command, mutationFence),
                         cancellationToken,
                         storedProcedureName,
                         HasFlag(flags, RespireCommandFlags.NoRedirect),
@@ -2695,8 +2716,8 @@ public sealed partial class RespireClient : IRespireClient
                 await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
                 connection = core.Multiplexer.GetConnection();
             }
-            return await SendOnConnectionAsync(
-                    operation, connection, command, cancellationToken, storedProcedureName)
+            return await SendMutationOnConnectionAsync(
+                    operation, connection, command, mutationFence, cancellationToken, storedProcedureName)
                 .ConfigureAwait(false);
         }
         finally
@@ -2956,7 +2977,7 @@ public sealed partial class RespireClient : IRespireClient
                         {
                             try
                             {
-                                reply = await SendOnConnectionAsync(operation, target, command, cancellationToken)
+                                reply = await SendMutationOnConnectionAsync(operation, target, command, mutationFence, cancellationToken)
                                     .ConfigureAwait(false);
                                 break;
                             }
@@ -3082,7 +3103,7 @@ public sealed partial class RespireClient : IRespireClient
             if (core.Cluster is { } cluster)
             {
                 await SendFireAndForgetClusterAsync(
-                        operation, cluster, command, cancellationToken, storedProcedureName)
+                        operation, cluster, new MutationCommand<TCommand>(command, mutationFence), cancellationToken, storedProcedureName)
                     .ConfigureAwait(false);
                 return;
             }
@@ -3092,15 +3113,15 @@ public sealed partial class RespireClient : IRespireClient
             if (RespireCommand.MayCloseWithoutReply(operation))
             {
                 await SendFireAndForgetOnConnectionAsync(
-                        operation, connection, command, cancellationToken, storedProcedureName)
+                        operation, connection, new MutationCommand<TCommand>(command, mutationFence), cancellationToken, storedProcedureName)
                     .ConfigureAwait(false);
                 return;
             }
 
             try
             {
-                using var response = await SendOnConnectionAsync(
-                        operation, connection, command, cancellationToken, storedProcedureName)
+                using var response = await SendMutationOnConnectionAsync(
+                        operation, connection, command, mutationFence, cancellationToken, storedProcedureName)
                     .ConfigureAwait(false);
             }
             catch (Exception error) when (RespireException.GetDefinitiveServerError(error) is not null)
@@ -3289,7 +3310,7 @@ public sealed partial class RespireClient : IRespireClient
                             try
                             {
                                 await SendFireAndForgetOnConnectionAsync(
-                                        operation, target, command, cancellationToken, storedProcedureName)
+                                        operation, target, new MutationCommand<TCommand>(command, mutationFence), cancellationToken, storedProcedureName)
                                     .ConfigureAwait(false);
                                 break;
                             }
@@ -3630,6 +3651,19 @@ public sealed partial class RespireClient : IRespireClient
             : SendOnConnectionCoreAsync(operation, connection, command, cancellationToken, sendAsking,
                 commandDeadline, allowStreamingConnectionReroute);
 
+    internal ValueTask<RespValue> SendMutationOnConnectionAsync<TCommand>(
+        string operation, RespireConnection connection, in TCommand command,
+        ClientSideCacheCoordinator.MutationFence mutationFence, CancellationToken cancellationToken,
+        string? storedProcedureName = null, bool sendAsking = false,
+        bool allowStreamingConnectionReroute = true)
+        where TCommand : struct, IRespCommand
+        => mutationFence.IsRequired
+            ? SendOnConnectionAsync(operation, connection, new MutationCommand<TCommand>(command, mutationFence),
+                cancellationToken, storedProcedureName, sendAsking,
+                allowStreamingConnectionReroute: allowStreamingConnectionReroute)
+            : SendOnConnectionAsync(operation, connection, command, cancellationToken, storedProcedureName, sendAsking,
+                allowStreamingConnectionReroute: allowStreamingConnectionReroute);
+
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
@@ -3695,14 +3729,14 @@ public sealed partial class RespireClient : IRespireClient
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         var readFrom = GetReadFromForCommand(in command, allowReadFrom);
         var cache = core.ClientCache;
-        var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
+        var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command, blocking: true);
         try
         {
             var started = RespireTelemetry.CaptureOperationStart(operation);
             if (core.Cluster is { } cluster)
             {
                 return await SendBlockingClusterAsync(
-                        operation, cluster, command, cancellationToken, storedProcedureName, noRedirect,
+                        operation, cluster, new MutationCommand<TCommand>(command, mutationFence), cancellationToken, storedProcedureName, noRedirect,
                         cancellationTimeout, callerCancellationToken, readFrom, started)
                     .ConfigureAwait(false);
             }
@@ -3750,7 +3784,9 @@ public sealed partial class RespireClient : IRespireClient
                         // Keep one logical span while routing advances to a replacement lease.
                         telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
                     }
-                    response = await connection.SendWithoutResponseTimeoutAsync(command, cancellationToken).ConfigureAwait(false);
+                    response = mutationFence.IsRequired
+                        ? await connection.SendWithoutResponseTimeoutAsync(new MutationCommand<TCommand>(command, mutationFence), cancellationToken).ConfigureAwait(false)
+                        : await connection.SendWithoutResponseTimeoutAsync(command, cancellationToken).ConfigureAwait(false);
                     if (response.IsError && fallback.OriginalFailure is null && readFrom != RespireReadFrom.Primary)
                     {
                         var error = ResponseReader.ServerError(in response, operation);
@@ -4223,6 +4259,8 @@ public sealed partial class RespireClient : IRespireClient
 
         public ReadCommandKind ReadKind => command.ReadKind;
 
+        public ClientSideCacheCoordinator.MutationFence GetMutationFence() => command.GetMutationFence();
+
         public void OnAccepted()
         {
             command.OnAccepted();
@@ -4258,7 +4296,7 @@ public sealed partial class RespireClient : IRespireClient
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         var cache = core.ClientCache;
         var mutationFence = cache is null || script.IsCacheReadOnly ? default : cache.BeginUnknownMutation();
-        var response = ExecuteScriptCoreAsync(script, tail, cancellationToken);
+        var response = ExecuteScriptCoreAsync(script, tail, cancellationToken, mutationFence);
         return mutationFence.IsRequired
             ? CompleteMutationAsync(response, cache!, mutationFence)
             : response;
@@ -4270,7 +4308,7 @@ public sealed partial class RespireClient : IRespireClient
     private async ValueTask<RespireResult> ExecuteScriptCoreAsync(
         RespireScript script,
         RespireValue[] tail,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, ClientSideCacheCoordinator.MutationFence mutationFence)
     {
         var core = _core;
         var started = RespireTelemetry.CaptureOperationStart(script.EvalShaOperation);
@@ -4286,7 +4324,7 @@ public sealed partial class RespireClient : IRespireClient
                 {
                     clusterReply = await SendClusterAsync(
                         script.EvalShaOperation, cluster,
-                        new Cmd2N(script.EvalShaVerb, script.Sha1, tail[0], arguments),
+                        new MutationCommand<Cmd2N>(new Cmd2N(script.EvalShaVerb, script.Sha1, tail[0], arguments), mutationFence),
                         cancellationToken, script.Sha1, allowReadFrom: true,
                         suppressTelemetry: true, scriptTelemetry: scriptTelemetry).ConfigureAwait(false);
                 }
@@ -4294,7 +4332,7 @@ public sealed partial class RespireClient : IRespireClient
                 {
                     clusterReply = await SendClusterAsync(
                         script.EvalOperation, cluster,
-                        new Cmd2N(script.EvalVerb, script.Source, tail[0], arguments),
+                        new MutationCommand<Cmd2N>(new Cmd2N(script.EvalVerb, script.Source, tail[0], arguments), mutationFence),
                         cancellationToken, script.Sha1, allowReadFrom: true,
                         suppressTelemetry: true, scriptTelemetry: scriptTelemetry).ConfigureAwait(false);
                 }
@@ -4321,7 +4359,7 @@ public sealed partial class RespireClient : IRespireClient
             }
             telemetry = RespireTelemetry.StartOperation(script.EvalShaOperation, connection,
                 core.Options.Database, storedProcedureName: script.Sha1, started: started);
-            var result = await ExecuteScriptOnConnectionCoreAsync(connection, script, tail, cancellationToken)
+            var result = await ExecuteScriptOnConnectionCoreAsync(connection, script, tail, cancellationToken, mutationFence)
                 .ConfigureAwait(false);
             telemetry.Complete(core, script.EvalShaOperation, script.Sha1, connection: connection);
             return result;
@@ -4397,12 +4435,12 @@ public sealed partial class RespireClient : IRespireClient
             if (core.Cluster is { } router)
             {
                 response = ExecuteTrackedClusterScriptAsync(
-                    execution, router, connection, script, tail, requiresIdentity, cancellationToken, started);
+                    execution, router, connection, script, tail, requiresIdentity, cancellationToken, started, mutationFence);
             }
             else
             {
                 execution.StartedTimestamp = Stopwatch.GetTimestamp();
-                response = ExecuteScriptOnConnectionAsync(connection, script, tail, cancellationToken, execution, started);
+                response = ExecuteScriptOnConnectionAsync(connection, script, tail, cancellationToken, execution, started, mutationFence);
             }
             execution.Response = mutationFence.IsRequired
                 ? CompleteMutationAsync(response, cache!, mutationFence)
@@ -4551,7 +4589,7 @@ public sealed partial class RespireClient : IRespireClient
         RespireValue[] tail,
         bool requiresIdentity,
         CancellationToken cancellationToken,
-        RespireTelemetry.OperationStart started)
+        RespireTelemetry.OperationStart started, ClientSideCacheCoordinator.MutationFence mutationFence)
     {
         var telemetry = started.Timestamp == 0 ? null : new ClusterScriptTelemetry(_core, script, started);
         try
@@ -4561,13 +4599,13 @@ public sealed partial class RespireClient : IRespireClient
             {
                 result = await ExecuteTrackedClusterCommandAsync(
                     execution, cluster, connection, script.EvalShaOperation, script.EvalShaVerb, script.Sha1, tail,
-                    requiresIdentity, cancellationToken, telemetry).ConfigureAwait(false);
+                    requiresIdentity, cancellationToken, telemetry, mutationFence).ConfigureAwait(false);
             }
             catch (RespireServerException ex) when (ex.Code == RespireErrorCodes.NoScript)
             {
                 result = await ExecuteTrackedClusterCommandAsync(
                     execution, cluster, execution.Connection, script.EvalOperation, script.EvalVerb, script.Source, tail,
-                    requiresIdentity, cancellationToken, telemetry).ConfigureAwait(false);
+                    requiresIdentity, cancellationToken, telemetry, mutationFence).ConfigureAwait(false);
             }
             telemetry?.Complete();
             return result;
@@ -4592,7 +4630,7 @@ public sealed partial class RespireClient : IRespireClient
         RespireValue[] tail,
         bool requiresIdentity,
         CancellationToken cancellationToken,
-        ClusterScriptTelemetry? telemetry)
+        ClusterScriptTelemetry? telemetry, ClientSideCacheCoordinator.MutationFence mutationFence)
     {
         var command = new Cmd2N(verb, body, tail[0], tail[1..]);
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
@@ -4609,7 +4647,8 @@ public sealed partial class RespireClient : IRespireClient
                     execution.StartedTimestamp = Stopwatch.GetTimestamp();
                     telemetry?.UseConnection(connection);
                     var reply = await SendOnConnectionCoreAsync(
-                            operation, connection, new SendTimestampCommand<Cmd2N>(command, execution),
+                            operation, connection, new MutationCommand<SendTimestampCommand<Cmd2N>>(
+                                new SendTimestampCommand<Cmd2N>(command, execution), mutationFence),
                             cancellationToken, sendAsking)
                         .ConfigureAwait(false);
                     return new RespireResult(in reply, _core.Options.Serializer);
@@ -4659,7 +4698,7 @@ public sealed partial class RespireClient : IRespireClient
         RespireValue[] tail,
         CancellationToken cancellationToken,
         TrackedScriptExecution execution,
-        RespireTelemetry.OperationStart started)
+        RespireTelemetry.OperationStart started, ClientSideCacheCoordinator.MutationFence mutationFence)
     {
         var core = _core;
         var telemetry = RespireTelemetry.StartOperation(
@@ -4670,7 +4709,7 @@ public sealed partial class RespireClient : IRespireClient
         try
         {
             var result = await ExecuteScriptOnConnectionCoreAsync(
-                    connection, script, tail, cancellationToken, execution)
+                    connection, script, tail, cancellationToken, mutationFence, execution)
                 .ConfigureAwait(false);
             telemetry.Complete(core, script.EvalShaOperation, script.Sha1, connection: connection);
             return result;
@@ -4690,13 +4729,14 @@ public sealed partial class RespireClient : IRespireClient
         RespireScript script,
         RespireValue[] tail,
         CancellationToken cancellationToken,
+        ClientSideCacheCoordinator.MutationFence mutationFence,
         TrackedScriptExecution? execution = null)
     {
         try
         {
             var reply = await SendScriptCommandAsync(
                     script.EvalShaOperation, connection, new Cmd2N(script.EvalShaVerb, script.Sha1, tail[0], tail[1..]),
-                    cancellationToken, execution)
+                    cancellationToken, execution, mutationFence)
                 .ConfigureAwait(false);
             return new RespireResult(in reply, _core.Options.Serializer);
         }
@@ -4706,7 +4746,7 @@ public sealed partial class RespireClient : IRespireClient
             if (execution is not null) execution.StartedTimestamp = Stopwatch.GetTimestamp();
             var reply = await SendScriptCommandAsync(
                     script.EvalOperation, connection, new Cmd2N(script.EvalVerb, script.Source, tail[0], tail[1..]),
-                    cancellationToken, execution)
+                    cancellationToken, execution, mutationFence)
                 .ConfigureAwait(false);
             return new RespireResult(in reply, _core.Options.Serializer);
         }
@@ -4717,11 +4757,19 @@ public sealed partial class RespireClient : IRespireClient
         RespireConnection connection,
         Cmd2N command,
         CancellationToken cancellationToken,
-        TrackedScriptExecution? execution)
-        => execution is null
-            ? SendOnConnectionCoreAsync(operation, connection, command, cancellationToken)
-            : SendOnConnectionCoreAsync(
-                operation, connection, new SendTimestampCommand<Cmd2N>(command, execution), cancellationToken);
+        TrackedScriptExecution? execution, ClientSideCacheCoordinator.MutationFence mutationFence)
+    {
+        if (!mutationFence.IsRequired)
+            return execution is null
+                ? SendOnConnectionCoreAsync(operation, connection, command, cancellationToken)
+                : SendOnConnectionCoreAsync(
+                    operation, connection, new SendTimestampCommand<Cmd2N>(command, execution), cancellationToken);
+        var bound = new MutationCommand<Cmd2N>(command, mutationFence);
+        return execution is null
+            ? SendOnConnectionCoreAsync(operation, connection, bound, cancellationToken)
+            : SendOnConnectionCoreAsync(operation, connection,
+                new SendTimestampCommand<MutationCommand<Cmd2N>>(bound, execution), cancellationToken);
+    }
 
     /// <summary>
     /// Kills one multiplexed Redis client through a separate control connection and waits for
@@ -5066,7 +5114,7 @@ public sealed partial class RespireClient : IRespireClient
                     multiplexer = core.Multiplexer;
                 }
             }
-            var command = new Cmd2N(Verbs.Eval, script.Source, tail[0], tail[1..]);
+            var command = new MutationCommand<Cmd2N>(new Cmd2N(Verbs.Eval, script.Source, tail[0], tail[1..]), mutationFence);
             try
             {
                 await multiplexer.SendToAllConnectionsAsync(command,

@@ -47,7 +47,12 @@ public class CommandAdmissionTests
                         .Any(constraint => typeof(IRespCommand).IsAssignableFrom(constraint)))).ToArray();
         await Assert.That(wrappers.Length).IsGreaterThanOrEqualTo(3);
         foreach (var wrapper in wrappers)
+        {
             await Assert.That(typeof(IRespCommandWrapper).IsAssignableFrom(wrapper)).IsTrue();
+            await Assert.That(wrapper.GetMethod(nameof(IRespCommand.GetMutationFence),
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+                .IsNotNull();
+        }
     }
 
     [Test]

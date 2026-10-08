@@ -43,6 +43,7 @@ jobs:
         run: |
           python scripts/workflows/BenchmarkWorkflowPolicyTests.py
           python scripts/workflows/BenchmarkRetentionTests.py
+          python scripts/workflows/BenchmarkProfileTests.py
           python -B -m unittest discover -s scripts/benchmarks -p '*Tests.py'
           python scripts/workflows/BenchmarkWorkflowPolicy.py
 

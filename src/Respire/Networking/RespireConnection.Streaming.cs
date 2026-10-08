@@ -125,6 +125,7 @@ internal sealed partial class RespireConnection
         Task<ReadOnlyMemory<byte>>? firstChunkRead = null;
         try
         {
+            source.BindMutationFence(command.GetMutationFence());
             // Respect the credential-renewal fence like ordinary commands: AUTH must be admitted
             // and acknowledged before a (potentially long) upload takes the wire.
             await WaitForStreamingAdmissionAsync(static connection =>

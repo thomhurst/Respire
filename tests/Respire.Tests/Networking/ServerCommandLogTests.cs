@@ -40,6 +40,10 @@ public class ServerCommandLogTests
             var cache = client.Core.ClientCache;
             if (cache is not null)
             {
+                // Reset replies can finish the caller before their native owner retires.
+                using var retirement = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                while (cache.InspectForTests().ActiveMutationCount != 0)
+                    await Task.Delay(1, retirement.Token);
                 RespireKey key = "cached";
                 var token = cache.BeginRead(in key);
                 var value = RespValue.BulkString("retained");

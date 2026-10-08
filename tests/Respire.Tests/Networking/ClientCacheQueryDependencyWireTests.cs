@@ -15,6 +15,56 @@ public class ClientCacheQueryDependencyWireTests
     [Arguments(false, true)]
     [Arguments(true, false)]
     [Arguments(true, true)]
+    public async Task RedirectAfterMutationRetirementDoesNotPublishUntrackedReply(bool moved, bool coalesce)
+    {
+        var reads = 0;
+        await using var target = new FakeRespServer(100, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "STRLEN key"
+                ? System.Text.Encoding.ASCII.GetBytes($":{Interlocked.Increment(ref reads) + 2}\r\n")
+                : Handshake(command),
+        };
+        var slot = Respire.Internal.ClusterHash.GetSlot("key");
+        var redirect = System.Text.Encoding.ASCII.GetBytes($"-{(moved ? "MOVED" : "ASK")} {slot} 127.0.0.1:{target.Port}\r\n");
+        await using var seed = new FakeRespServer(100, FakeRespServer.OkReply)
+        {
+            SuppressReply = command => command == "STRLEN key",
+            ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? "*0\r\n"u8.ToArray()
+                : command == "STRLEN key" ? redirect : Handshake(command),
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            UseCluster = true, Endpoints = [new("127.0.0.1", seed.Port)], Connections = 1,
+            Protocol = RespProtocol.Resp3, ClientSideCache = new() { CoalesceConcurrentMisses = coalesce },
+            CommandTimeout = Limit, ConnectTimeout = Limit,
+        });
+        var cache = client.Core.ClientCache!;
+        var mutation = cache.BeginUnknownMutation();
+        try
+        {
+            var reading = client.Strings.LengthAsync("key").AsTask();
+            await WaitUntilAsync(() => seed.ReceivedCommands.Contains("STRLEN key"));
+            cache.CompleteMutation(in mutation);
+            seed.SuppressReply = null;
+            await seed.SendRawAsync(redirect);
+            await Assert.That(await reading.WaitAsync(Limit)).IsEqualTo(3);
+            await Assert.That(cache.Count).IsEqualTo(0);
+            await Assert.That(target.ReceivedCommands.Contains("CLIENT CACHING YES")).IsFalse();
+            await Assert.That(await client.Strings.LengthAsync("key")).IsEqualTo(4);
+            await Assert.That(await client.Strings.LengthAsync("key")).IsEqualTo(4);
+            await Assert.That(cache.Count).IsEqualTo(1);
+            await Assert.That(target.ReceivedCommands.Count(command => command == "STRLEN key")).IsEqualTo(2);
+            await Assert.That(target.ReceivedCommands.Count(command => command == "CLIENT CACHING YES")).IsEqualTo(1);
+            await Assert.That(Pending(client)).IsEqualTo(0);
+        }
+        finally { cache.CompleteMutation(in mutation); }
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
     public async Task PrefixedMissingHashFieldsPublishAcrossUnrelatedInvalidations(bool coalesce, bool affected)
     {
         await using var server = Server();

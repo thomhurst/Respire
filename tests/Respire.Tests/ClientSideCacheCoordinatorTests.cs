@@ -563,7 +563,7 @@ public class ClientSideCacheCoordinatorTests
         await Assert.That(cache.Count).IsEqualTo(1);
         await Assert.That(Read(cache, "unrelated")).IsEqualTo("retained");
         CacheLength();
-        await Assert.That(cache.Count).IsEqualTo(2);
+        await Assert.That(cache.Count).IsEqualTo(1);
         cache.CompleteMutation(in fence);
         await Assert.That(cache.Count).IsEqualTo(1);
         await Assert.That(Read(cache, "unrelated")).IsEqualTo("retained");

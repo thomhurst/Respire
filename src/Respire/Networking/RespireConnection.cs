@@ -1314,12 +1314,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     public ValueTask<RespValue> SendTransactionAsync(
         ReadOnlyMemory<byte> serializedCommands, int commandCount, CancellationToken cancellationToken = default,
         TimeSpan? cancellationTimeout = null, CancellationToken callerCancellationToken = default, bool includeMulti = true,
-        CommandDeadline commandDeadline = default, RespireTransactionBase? transaction = null)
+        CommandDeadline commandDeadline = default, RespireTransactionBase? transaction = null,
+        ClientSideCacheCoordinator.MutationFence mutationFence = default)
     {
         ValidateTransactionCapacity(commandCount, includeMulti);
         var prefixReplies = includeMulti ? 1 : 0;
         return SendMultiReplyCoreAsync(
-            new TransactionCommand(serializedCommands, includeMulti, transaction), repliesBeforeFinal: commandCount + prefixReplies,
+            new TransactionCommand(serializedCommands, includeMulti, transaction, mutationFence), repliesBeforeFinal: commandCount + prefixReplies,
             firstQueueReply: prefixReplies, cancellationToken, commandName: "MULTI/EXEC", cancellationTimeout, callerCancellationToken,
             commandDeadline);
     }
@@ -1667,6 +1668,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         out Task writeTask)
         where TCommand : struct, IRespCommand
     {
+        if (command.GetMutationFence().IsRequired)
+            return TryEnqueueMutationForWrite(in command, commandName, out startedBatch, out writeTask);
         var enqueued = TryEnqueue(
             in command,
             InflightRing.DiscardSentinel,
@@ -1675,6 +1678,28 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             out var trackedWrite,
             trackWrite: true,
             discardedOperation: _generation is not null || RespireTelemetry.ShouldRetainPublication(commandName) ? commandName : null);
+        writeTask = trackedWrite ?? Task.CompletedTask;
+        return enqueued;
+    }
+
+    private bool TryEnqueueMutationForWrite<TCommand>(in TCommand command, string? commandName,
+        out bool startedBatch, out Task writeTask) where TCommand : struct, IRespCommand
+    {
+        var source = MutationDiscardPendingResponse.Rent(commandName);
+        bool enqueued;
+        Task? trackedWrite;
+        try
+        {
+            enqueued = TryEnqueue(in command, source, CommandDeadline.None, out startedBatch,
+                out trackedWrite, trackWrite: true);
+        }
+        catch
+        {
+            ReclaimUnpublished(source);
+            throw;
+        }
+        if (enqueued) source.ReleaseRef(); // Drop the publisher; the FIFO owns the other reference.
+        else ReclaimUnpublished(source);
         writeTask = trackedWrite ?? Task.CompletedTask;
         return enqueued;
     }
@@ -1695,6 +1720,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         startedBatch = false;
         writeTask = null;
 
+        Debug.Assert(!ReferenceEquals(source, InflightRing.DiscardSentinel) || !command.GetMutationFence().IsRequired,
+            "A mutation command requires an owned native response, even when its reply is discarded.");
         ThrowIfRetired(IsMaintenanceDrainBarrier<TCommand>());
         // Racy pre-check; the authoritative one runs under the gate below. This keeps the
         // ring-full retry loop from re-serializing the frame on every attempt.
@@ -1748,6 +1775,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 // flush loop is already cycling, and stealing the producer thread for the
                 // send costs more than the dispatch it saves.
                 command.ValidateAdmission();
+                if (!ReferenceEquals(source, InflightRing.DiscardSentinel))
+                    source.BindMutationFence(command.GetMutationFence());
                 startedBatch = _activeBuffer.Count == 0 && _inflight.Count == 0;
                 _activeBuffer.Append(frame);
                 if (_responseTimeout is not null)
@@ -1830,6 +1859,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 var writer = new RespWriter(_activeBuffer, writeSizeHint);
                 command.Write(ref writer);
                 command.ValidateAdmission();
+                if (!ReferenceEquals(source, InflightRing.DiscardSentinel))
+                    source.BindMutationFence(command.GetMutationFence());
                 writer.Complete();
             }
             catch
@@ -3293,7 +3324,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// <summary>Writes an optional MULTI, a pre-serialized command block, and EXEC.
     /// Only an exclusive caller that already confirmed MULTI may omit it.</summary>
     private readonly struct TransactionCommand(ReadOnlyMemory<byte> serializedCommands, bool includeMulti,
-        RespireTransactionBase? transaction) : IRespCommand
+        RespireTransactionBase? transaction, ClientSideCacheCoordinator.MutationFence mutationFence) : IRespCommand
     {
         public int GetWriteSizeHint() => checked(serializedCommands.Length + RespCommands.Exec.Length
             + (includeMulti ? RespCommands.Multi.Length : 0));
@@ -3303,6 +3334,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         public ReadCommandKind ReadKind => ReadCommandKind.None;
+
+        public ClientSideCacheCoordinator.MutationFence GetMutationFence() => mutationFence;
 
         public void Write(ref RespWriter writer)
         {
@@ -3336,6 +3369,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         public void OnAccepted() => _command.OnAccepted();
+        public ClientSideCacheCoordinator.MutationFence GetMutationFence() => _command.GetMutationFence();
         public void ValidateAdmission() => _command.ValidateAdmission();
         public CancellationToken GetResponseCancellationToken(CancellationToken admissionToken)
             => _command.GetResponseCancellationToken(admissionToken);

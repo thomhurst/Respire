@@ -7,6 +7,15 @@ internal sealed partial class ClientSideCacheCoordinator
 
     internal readonly ref struct TestInspection(ClientSideCacheCoordinator owner)
     {
+        /// <summary>Mutations retaining either a logical caller or native response ownership.</summary>
+        internal int ActiveMutationCount => Volatile.Read(ref owner._activeMutations);
+
+        /// <summary>Copies active key count and allocated map capacity under the mutation gate.</summary>
+        internal (int Keys, int Capacity) MutationWriterStorage
+        {
+            get { lock (owner._queryLock) return (owner._mutationWriters.Count, owner._mutationWriters.EnsureCapacity(0)); }
+        }
+
         /// <summary>Borrowed gate used to hold a controlled shared-read admission barrier.</summary>
         /// <remarks>Own an EnterScope lease before inspecting gate-protected state; never dispose the gate.</remarks>
         internal Lock SharedReadGate => owner._sharedReadLock;

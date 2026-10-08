@@ -82,13 +82,14 @@ internal sealed partial class ClientSideCacheCoordinator
             lock (_sharedReadLock)
             {
                 ObjectDisposedException.ThrowIf(_sharedReadsStopped, this);
-                if (Volatile.Read(ref _sharedReadInvalidations) != 0 || !_sharedReads.TryGetValue(identity, out shared!))
+                var mutationActive = HasActiveMutation(in identity);
+                if (mutationActive || Volatile.Read(ref _sharedReadInvalidations) != 0 || !_sharedReads.TryGetValue(identity, out shared!))
                 {
                     // Borrowed binary arguments must not outlive the caller that supplied them.
                     shared = new SharedRead<T>(identity.Snapshot());
                     // Reads starting during invalidation cannot become joinable: their producer
                     // may still observe the store before its entries have been removed.
-                    if (Volatile.Read(ref _sharedReadInvalidations) == 0)
+                    if (!mutationActive && Volatile.Read(ref _sharedReadInvalidations) == 0)
                         AddSharedRead(shared);
                     _activeSharedReads.Add(shared);
                     owner = true;

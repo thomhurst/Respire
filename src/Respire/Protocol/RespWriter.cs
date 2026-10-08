@@ -319,6 +319,9 @@ internal interface IRespCommand
 
     void OnAccepted() { }
 
+    /// <summary>Retains cache mutation ownership through native FIFO response retirement.</summary>
+    ClientSideCacheCoordinator.MutationFence GetMutationFence() => default;
+
     /// <summary>Checks admission before redirect recovery and immediately before frame and response-slot publication.</summary>
     void ValidateAdmission() { }
 
@@ -390,6 +393,7 @@ internal interface IRespCommandWrapper : IRespCommand
     new void ValidateAdmission();
     new CancellationToken GetResponseCancellationToken(CancellationToken admissionToken);
     new void OnAccepted();
+    new ClientSideCacheCoordinator.MutationFence GetMutationFence();
 }
 
 /// <summary>A streamed command that can reset its source and resend after a Cluster redirect.</summary>

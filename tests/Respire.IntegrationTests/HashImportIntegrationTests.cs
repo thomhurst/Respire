@@ -191,6 +191,10 @@ public class HashImportIntegrationTests(Redis810HashImportTestContainer fixture)
         await using var client = await RespireClient.ConnectAsync(Options(null, 3) with { ClientSideCache = new() });
         var key = $"cache-import:{Guid.NewGuid():N}";
         await client.Hashes.SetAsync(key, "field", "old");
+        // Cache population must follow the write's native retirement, not only its caller.
+        using var retirement = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (client.Core.ClientCache!.InspectForTests().ActiveMutationCount != 0)
+            await Task.Delay(1, retirement.Token);
         (await client.Hashes.GetStringAsync(key, "field")).Should().Be("old");
         (await client.Hashes.GetStringAsync(key, "field")).Should().Be("old");
         client.ClientSideCache!.GetStatistics().Hits.Should().BeGreaterThan(0);
