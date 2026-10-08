@@ -33,7 +33,7 @@ jobs:
     timeout-minutes: 40
     concurrency:
       # An older selector must not cancel a newer head or another control.
-      group: ${{ github.workflow }}-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}-${{ matrix.framework }}-${{ matrix.baseline }}
+      group: ${{ github.workflow }}-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}-${{ matrix.framework }}-${{ matrix.baseline }}-${{ github.event.label.name }}
       cancel-in-progress: true
     strategy:
       fail-fast: false
