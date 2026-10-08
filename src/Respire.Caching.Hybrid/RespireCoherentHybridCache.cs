@@ -14,6 +14,7 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
 {
     private readonly Lock _gate = new();
     private readonly Dictionary<string, Observation> _observations = new(StringComparer.Ordinal);
+    private readonly Queue<Observation> _retiredObservations = new();
     private readonly Dictionary<string, DateTimeOffset> _removedTags = new(StringComparer.Ordinal);
     private readonly IServiceProvider _services;
     private readonly Func<IServiceProvider, HybridCache> _factory;
@@ -102,30 +103,53 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
 
     public override async ValueTask RemoveByTagAsync(string tag, CancellationToken cancellationToken = default)
     {
-        Task[] localUpdates;
-        ValueTask remoteUpdate;
-        lock (_gate)
+        Task[]? updates = null;
+        try
         {
-            ThrowIfDisposed();
-            if (string.IsNullOrWhiteSpace(tag)) return;
-            var timestamp = _clock.GetUtcNow();
-            if (!_tagHistoryExhausted)
+            lock (_gate)
             {
-                if (!_removedTags.ContainsKey(tag) && _removedTags.Count >= _maxRememberedTags)
+                ThrowIfDisposed();
+                if (string.IsNullOrWhiteSpace(tag)) return;
+                var timestamp = _clock.GetUtcNow();
+                if (!_tagHistoryExhausted)
                 {
-                    _tagHistoryExhausted = true;
-                    _removedTags.Clear();
-                    RetireAll();
+                    if (!_removedTags.ContainsKey(tag) && _removedTags.Count >= _maxRememberedTags)
+                    {
+                        _tagHistoryExhausted = true;
+                        _removedTags.Clear();
+                        RetireAll();
+                    }
+                    else _removedTags[tag] = timestamp;
                 }
-                else _removedTags[tag] = timestamp;
+                var localUpdates = _observations.Values.Select(observation =>
+                    ReplayTagAsync(observation.Cache, tag, timestamp)).ToArray();
+                // The fallback uses the original backend: this is the single shared L2 write.
+                Task remoteUpdate;
+                try
+                {
+                    using (_clock.Replay(timestamp))
+                        remoteUpdate = _unobserved.RemoveByTagAsync(tag, cancellationToken).AsTask();
+                }
+                catch (Exception error) { remoteUpdate = Task.FromException(error); }
+                updates = [remoteUpdate, .. localUpdates];
             }
-            localUpdates = _observations.Values.Select(observation =>
-                ReplayTagAsync(observation.Cache, tag, timestamp)).ToArray();
-            // The fallback uses the original backend: this is the single shared L2 write.
-            using (_clock.Replay(timestamp)) remoteUpdate = _unobserved.RemoveByTagAsync(tag, cancellationToken);
         }
-        await Task.WhenAll(localUpdates).ConfigureAwait(false);
-        await remoteUpdate.ConfigureAwait(false);
+        finally
+        {
+            try { DrainRetiredObservations(); }
+            catch (Exception error) when (updates is not null)
+            {
+                // A custom memory-cache failure must not abandon an already-started marker write.
+                updates = [.. updates, Task.FromException(error)];
+            }
+        }
+        var completion = Task.WhenAll(updates);
+        try { await completion.ConfigureAwait(false); }
+        catch when (completion.Exception?.InnerExceptions.Count > 1)
+        {
+            // Observe every operation, preserving both shared-marker and local failures.
+            throw completion.Exception;
+        }
     }
 
     private async Task ReplayTagAsync(HybridCache cache, string tag, DateTimeOffset timestamp)
@@ -146,66 +170,70 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
 
     private Observation? Acquire(string key, HybridCacheEntryOptions? options)
     {
-        lock (_gate)
+        try
         {
-            ThrowIfDisposed();
-            // Let HybridCache itself retain its validation and uncached-factory behavior.
-            if (_trackingStopped || _tagHistoryExhausted || string.IsNullOrWhiteSpace(key) || key.Length > _hybridOptions.MaximumKeyLength
-                || HasControlCharacter(key)
-                || (EffectiveFlags(options) & HybridCacheEntryFlags.DisableLocalCache) == HybridCacheEntryFlags.DisableLocalCache)
-                return null;
-            if (_observations.TryGetValue(key, out var current))
+            lock (_gate)
             {
-                current.ActiveCalls++;
-                return current;
-            }
-            if (_observations.Count >= _maxObservedKeys) return null;
-
-            var physicalKey = _distributed.ResolveCoherenceKey(key);
-            if (!RespireDistributedCache.CanTrackCoherenceKey(TrackingClient, in physicalKey)) return null;
-
-            var observation = new Observation(this, key);
-            _observations.Add(key, observation);
-            try
-            {
-                observation.Subscription = TrackingClient.ClientSideCache!.SubscribeInvalidations(
-                    physicalKey, _ => Retire(observation));
-                observation.Stopped = observation.Subscription.Stopped.UnsafeRegister(
-                    static state => ((Observation)state!).Owner.TrackingStopped((Observation)state!), observation);
-                if (_distributed.CanObserveCoherenceSourceKey(in physicalKey)
-                    && _distributed.CoherenceSourceCache is { } source)
+                ThrowIfDisposed();
+                // Let HybridCache itself retain its validation and uncached-factory behavior.
+                if (_trackingStopped || _tagHistoryExhausted || string.IsNullOrWhiteSpace(key) || key.Length > _hybridOptions.MaximumKeyLength
+                    || HasControlCharacter(key)
+                    || (EffectiveFlags(options) & HybridCacheEntryFlags.DisableLocalCache) == HybridCacheEntryFlags.DisableLocalCache)
+                    return null;
+                if (_observations.TryGetValue(key, out var current))
                 {
-                    observation.SourceSubscription = source.SubscribeInvalidations(physicalKey, invalidation =>
-                    {
-                        // Lua reads conservatively signal LocalMutation on the original
-                        // connection. Actual writes are observed by the independent tracker.
-                        if ((invalidation.Reasons & (RespireClientCacheInvalidationReason.ExplicitClear
-                            | RespireClientCacheInvalidationReason.ContinuityLost)) != 0) Retire(observation);
-                    });
-                    observation.SourceStopped = observation.SourceSubscription.Stopped.UnsafeRegister(
-                        static state => ((Observation)state!).Owner.TrackingStopped((Observation)state!), observation);
+                    current.ActiveCalls++;
+                    return current;
                 }
+                if (_observations.Count >= _maxObservedKeys) return null;
 
-                observation.Cache = CreateContext(observation, new TagReplayBackend(_distributed, _clock));
-                observation.TagReplay = Task.WhenAll(_removedTags.Select(pair =>
-                    ReplayTagAsync(observation.Cache, pair.Key, pair.Value)));
-                // HEXISTS is a typed, cache-eligible hash read. It establishes actual OPTIN
-                // tracking before L2 is read, without duplicating the serialized payload.
-                observation.Tracking = TrackingClient.Hashes.ExistsAsync(physicalKey, "data").AsTask();
-                return observation;
-            }
-            catch (ObjectDisposedException)
-            {
-                _trackingStopped = true;
-                RetireAll();
-                return null;
-            }
-            catch
-            {
-                Retire(observation);
-                throw;
+                var physicalKey = _distributed.ResolveCoherenceKey(key);
+                if (!RespireDistributedCache.CanTrackCoherenceKey(TrackingClient, in physicalKey)) return null;
+
+                var observation = new Observation(this, key);
+                _observations.Add(key, observation);
+                try
+                {
+                    observation.Subscription = TrackingClient.ClientSideCache!.SubscribeInvalidations(
+                        physicalKey, _ => Retire(observation));
+                    observation.Stopped = observation.Subscription.Stopped.UnsafeRegister(
+                        static state => ((Observation)state!).Owner.TrackingStopped((Observation)state!), observation);
+                    if (_distributed.CanObserveCoherenceSourceKey(in physicalKey)
+                        && _distributed.CoherenceSourceCache is { } source)
+                    {
+                        observation.SourceSubscription = source.SubscribeInvalidations(physicalKey, invalidation =>
+                        {
+                            // Lua reads conservatively signal LocalMutation on the original
+                            // connection. Actual writes are observed by the independent tracker.
+                            if ((invalidation.Reasons & (RespireClientCacheInvalidationReason.ExplicitClear
+                                | RespireClientCacheInvalidationReason.ContinuityLost)) != 0) Retire(observation);
+                        });
+                        observation.SourceStopped = observation.SourceSubscription.Stopped.UnsafeRegister(
+                            static state => ((Observation)state!).Owner.TrackingStopped((Observation)state!), observation);
+                    }
+
+                    observation.Cache = CreateContext(observation, new TagReplayBackend(_distributed, _clock));
+                    observation.TagReplay = Task.WhenAll(_removedTags.Select(pair =>
+                        ReplayTagAsync(observation.Cache, pair.Key, pair.Value)));
+                    // HEXISTS is a typed, cache-eligible hash read. It establishes actual OPTIN
+                    // tracking before L2 is read, without duplicating the serialized payload.
+                    observation.Tracking = TrackingClient.Hashes.ExistsAsync(physicalKey, "data").AsTask();
+                    return observation;
+                }
+                catch (ObjectDisposedException)
+                {
+                    _trackingStopped = true;
+                    RetireAll();
+                    return null;
+                }
+                catch
+                {
+                    Retire(observation);
+                    throw;
+                }
             }
         }
+        finally { DrainRetiredObservations(); }
     }
 
     private static bool HasControlCharacter(string key)
@@ -241,6 +269,7 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
             observation.ActiveCalls--;
             RetireIfIdle(observation);
         }
+        DrainRetiredObservations();
     }
 
     private void RetireIfIdle(Observation observation)
@@ -255,6 +284,7 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
         {
             foreach (var observation in _observations.Values.ToArray()) RetireIfIdle(observation);
         }
+        DrainRetiredObservations();
     }
 
     private void TrackingStopped(Observation observation)
@@ -265,6 +295,7 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
             _trackingStopped = true;
             RetireAll();
         }
+        DrainRetiredObservations();
     }
 
     private void RetireKey(string key)
@@ -273,6 +304,7 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
         {
             if (key is not null && _observations.TryGetValue(key, out var observation)) Retire(observation);
         }
+        DrainRetiredObservations();
     }
 
     private void RetireAll()
@@ -281,6 +313,7 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
         {
             foreach (var observation in _observations.Values.ToArray()) Retire(observation);
         }
+        DrainRetiredObservations();
     }
 
     private void Retire(Observation observation)
@@ -290,13 +323,38 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
             if (observation.Retired) return;
             observation.Retired = true;
             _observations.Remove(observation.Key);
-            _memory.Remove(observation.MemoryKey);
-            observation.Stopped.Unregister();
-            observation.SourceStopped.Unregister();
-            // Unregister never joins callbacks, and subscription Dispose explicitly does
-            // not join observers. Retire may therefore run from either callback itself.
-            observation.Subscription?.Dispose();
-            observation.SourceSubscription?.Dispose();
+            _retiredObservations.Enqueue(observation);
+        }
+        DrainRetiredObservations();
+    }
+
+    private void DrainRetiredObservations()
+    {
+        // Subscribe/Stopped registration can invoke a callback synchronously during Acquire.
+        // The outer gate owner drains after publishing all handles and releasing the gate.
+#if NET9_0_OR_GREATER
+        if (_gate.IsHeldByCurrentThread) return;
+#else
+        if (Monitor.IsEntered(_gate)) return;
+#endif
+        while (true)
+        {
+            Observation observation;
+            lock (_gate)
+            {
+                if (!_retiredObservations.TryDequeue(out observation!)) return;
+            }
+            // No external memory-cache or subscription cleanup runs under the bridge gate.
+            try { _memory.Remove(observation.MemoryKey); }
+            finally
+            {
+                observation.Stopped.Unregister();
+                observation.SourceStopped.Unregister();
+                // Unregister never joins callbacks, and subscription Dispose explicitly does
+                // not join observers. Retire may therefore run from either callback itself.
+                observation.Subscription?.Dispose();
+                observation.SourceSubscription?.Dispose();
+            }
         }
     }
 
@@ -307,6 +365,8 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         _sweep.Dispose();
         RetireAll();
+        // RespireClient exposes only async disposal. Its owned shutdown awaits use
+        // ConfigureAwait(false), so this wait does not require the caller's context.
         TrackingClient.DisposeAsync().AsTask().GetAwaiter().GetResult();
     }
 
@@ -361,6 +421,7 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
         public IDisposable? OnChange(Action<HybridCacheOptions, string?> listener) => null;
     }
 
+    // Replay scopes wrap only RemoveByTagAsync, never GetOrCreateAsync or user factories.
     // Replay public tag removal at its original timestamp, changing only the context's
     // local metadata. No payload parsing, private fields, or duplicate tag-marker writes.
     private sealed class TagReplayClock(TimeProvider clock) : TimeProvider
@@ -463,11 +524,13 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
                         {
                             var observed = (Observation)state!;
                             lock (observed.Owner._gate) observed.Owner.RetireIfIdle(observed);
+                            observed.Owner.DrainRetiredObservations();
                         },
                     });
                 }
                 entry.Dispose();
             }
+            owner.DrainRetiredObservations();
         }
     }
 }
