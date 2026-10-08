@@ -1597,6 +1597,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private static WriteBuffer? _serializeScratch;
 
     private const int ScratchInitialSize = 4 * 1024;
+    // Also selects direct serialization: known frames larger than retained scratch bypass the scratch copy.
     private const int ScratchRetainLimit = 64 * 1024;
 
     /// <summary>

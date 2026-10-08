@@ -91,6 +91,73 @@ public class FrameSerializationSelectionTests
     }
 
     [Test]
+    [Arguments(1, true)]
+    [Arguments(1, false)]
+    [Arguments(2, true)]
+    [Arguments(2, false)]
+    public async Task PrefixSelectionUsesAllFramesAndPropagatesUnknownBounds(int prefixCount, bool knownBound)
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        await using var connection = await ConnectAsync(server);
+        var gateHeld = ObserveWriteGate(connection);
+        var payload = Enumerable.Repeat((byte)'a', 66_000 / (prefixCount + 1)).ToArray();
+        var frame = Serialize(new Cmd1(RespireCommands.Connection.ECHO.Verb, payload));
+        await Assert.That(frame.Length).IsLessThanOrEqualTo(65_536);
+        await Assert.That(frame.Length * (prefixCount + 1)).IsGreaterThan(65_536);
+        var observations = new List<bool>();
+        var hints = 0;
+        var prefix = new ObservedCommand(frame, knownBound ? frame.Length : 0,
+            () => hints++, () => observations.Add(gateHeld()));
+        var command = new ObservedCommand(frame, frame.Length,
+            () => hints++, () => observations.Add(gateHeld()));
+        using var reply = prefixCount == 1
+            ? await connection.SendPrefixedAsync(prefix, command, throwOnError: true)
+            : await connection.SendValidatedPrefixedAsync(prefix, command, command);
+        await Assert.That(reply.AsString()).IsEqualTo("OK");
+        await Assert.That(hints).IsEqualTo(prefixCount + 1);
+        await Assert.That(observations.Count).IsEqualTo(prefixCount + 1);
+        await Assert.That(observations.All(held => held == knownBound)).IsTrue();
+        var received = server.ReceivedArguments;
+        await Assert.That(received.Count).IsEqualTo(prefixCount + 1);
+        foreach (var arguments in received)
+        {
+            await Assert.That(arguments[0].AsSpan().SequenceEqual("ECHO"u8)).IsTrue();
+            await Assert.That(arguments[1].AsSpan().SequenceEqual(payload)).IsTrue();
+        }
+        await Assert.That(connection.InspectForTests().Inflight.Count).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task TransactionBoundIncludesCommandBlockAndEveryEnvelopeFrame(bool includeMulti)
+    {
+        var block = Serialize(new Cmd1(RespireCommands.Connection.ECHO.Verb, new byte[65_500]));
+        await Assert.That(block.Length).IsLessThanOrEqualTo(65_536);
+        var type = typeof(RespireConnection).GetNestedType("TransactionCommand", BindingFlags.NonPublic)!;
+        var command = (IRespCommand)Activator.CreateInstance(type,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, binder: null,
+            args: [new ReadOnlyMemory<byte>(block), includeMulti, null], culture: null)!;
+        byte[] expected = includeMulti
+            ? [.. RespCommands.Multi, .. block, .. RespCommands.Exec]
+            : [.. block, .. RespCommands.Exec];
+        var bound = command.GetWriteSizeHint();
+        await Assert.That(bound).IsEqualTo(expected.Length);
+        await Assert.That(bound).IsGreaterThan(65_536);
+        var buffer = new WriteBuffer(bound);
+        try
+        {
+            var capacity = buffer.Capacity;
+            var writer = new RespWriter(buffer, bound);
+            command.Write(ref writer);
+            writer.Complete();
+            await Assert.That(buffer.Capacity).IsEqualTo(capacity);
+            await Assert.That(buffer.WrittenMemory.Span.SequenceEqual(expected)).IsTrue();
+        }
+        finally { buffer.Release(); }
+    }
+
+    [Test]
     public async Task MixedProducersPreserveExactPayloadsAndFifoRepliesAcrossCapacityWaits()
     {
         var full = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
