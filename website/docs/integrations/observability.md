@@ -481,10 +481,61 @@ requires a separate explicit contract.
 
 The internal error metric foundation provides failure-only `ErrorObservation` leases.
 These leases do not consume responses, own transport references, or wrap deferred results.
-Command-family integration and the independent route-owner guard are tracked separately
-in [#1023](https://github.com/thomhurst/Respire/issues/1023) and
-[#1264](https://github.com/thomhurst/Respire/issues/1264); the leases alone do not enable
-error metrics for every command path.
+Command-family integration is tracked in
+[#1023](https://github.com/thomhurst/Respire/issues/1023); the leases and the test-only
+route-owner guard do not enable error metrics for every command path.
+
+When adding a core command path, update
+`tests/Respire.Tests/CommandRouteOwners.json` in the same change. The inventory pins
+public source signatures, not the number or location of telemetry recorder calls.
+`Surfaces` maps each declared signature to an executable final owner: `OwnerType`
+uses the same signature on that implementation type, and `Overrides` names a
+different complete source member when delegation changes the signature.
+`AdditionalOwnerTypes` pins alternative implementations, such as batch and
+transaction implementations of the same queue interface. Generic
+arity uses a backtick followed by the parameter count. Parameter names and defaults
+are omitted; parameter types, modifiers and return types are retained. Interface
+declarations alone cannot be final owners.
+
+Declare the owner before argument validation, disposal checks, cancellation checks,
+command construction or setup parsing can fail. Explain the complete lifetime in
+the surface's `Contract`. Forwarding overloads and facet interfaces retain the
+logical caller's ownership when delegating to their declared implementation.
+Native pooled inspection and typed converter inspection have separate boundaries;
+keep conversion and response cleanup inside the caller's lifetime. Raw, catalog and
+interpolated commands use their public caller boundary even when dispatch is shared.
+Transfer the same final-owner lease to the appropriate final inspection boundary;
+these declarations never authorize two final publications for one caller.
+
+`Boundaries` declares non-public branches by complete source member, ownership role
+and lifetime contract. Use `final` for a caller's final inspection, `helper` for
+delegated work, `borrower` for shared attempts or retries, and `internal` for an
+observation with no caller final failure. Helpers and borrowers name the enclosing
+owner; they cannot declare themselves final owners. Internal observations have no
+caller owner. Shared helpers may serve many enclosing public routes: the boundary's
+owner anchor identifies the relevant dispatch lifetime, while each applicable
+surface retains its distinct logical caller. Do not interpret an anchor as a
+global lease shared by unrelated callers.
+
+Keep explicit declarations for cache producers and each waiter, upload fills and
+later download reads, fan-out targets, deferred execution and later pending-result
+inspection, and cleanup. A shared producer cannot publish every waiter's final
+failure. A returned stream's later read has its own caller boundary. Queue-time
+validation, batch execution and pending inspection have distinct lifetimes.
+Returned per-node failures must not also become duplicate parent failures.
+
+Run `CommandRouteOwnershipTests` on net8.0 and net10.0. The guard scans the core
+library source, including catalog dispatch and framework
+branches. New signatures, missing declarations and removed executable owners fail;
+negative controls exercise those failures. The inventory is a reviewed declaration
+of required ownership, not proof that runtime instrumentation is present or that a
+delegate passes its lease correctly. Route-family integration must also test final
+publication, retries and original exception/cancellation behavior. Extension package
+integration requires its own route declarations when its scope is added.
+
+Keep this guard test-only. Do not add production reflection, a successful-path
+observation rental, or a universal response wrapper to satisfy it. Preserve native
+transport references, deferred result contracts and existing allocation tests.
 
 Keep a default `ErrorObservation.FinalOwner` on a successful path. Call `StartFailure`
 only after the first failure or handled retry, and complete the lease in `finally`.

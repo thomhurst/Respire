@@ -22,6 +22,8 @@
 
     <ItemGroup>
         <EmbeddedResource Include="LifecycleLogContract.json" />
+        <EmbeddedResource Include="CommandRouteOwners.json" />
+        <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
         <Compile Include="../TestRespSession.cs" Link="TestRespSession.cs" />
         <Compile Include="../GeneratedHashModelScenarios.cs" Link="GeneratedHashModelScenarios.cs" />
         <Compile Include="../GeneratedSearchModels.cs" Link="GeneratedSearchModels.cs" />
