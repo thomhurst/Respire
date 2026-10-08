@@ -123,6 +123,8 @@ error completion is lost or the receiver uses Microsoft's provider. Caller cance
 on a Respire origin cancels the invocation task with the original caller token, including
 after publication. Late completions are ignored. Remote state remains bounded by the
 receiver timeout because the compatible envelope carries no cancellation notification.
+The debug log event `RemoteResultExpired` (18) records the invocation ID and a `timeout`
+or `disconnect` reason when receiver state expires, separately from a client error result.
 [Ordinary Cluster `PUBLISH`](https://redis.io/docs/latest/commands/publish/) reports only
 node-local receiver counts, so zero receivers cannot establish that a remote client is
 missing. Standalone and sharded sends can detect a missing subscriber immediately.

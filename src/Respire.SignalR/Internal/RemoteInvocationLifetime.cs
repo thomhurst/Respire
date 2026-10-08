@@ -75,10 +75,12 @@ internal sealed class RemoteInvocationLifetime
     {
         if (_results.RemoveInvocation(_invocationId) is { } pending)
         {
-            var error = _disconnected.IsCancellationRequested
+            var disconnected = _disconnected.IsCancellationRequested;
+            var error = disconnected
                 ? "Connection disconnected." : "Remote client result timed out.";
             _ = CompleteExpiredAsync(pending.Completion, pending.Tcs,
                 CompletionMessage.WithError(_invocationId, error));
+            RedisLog.RemoteResultExpired(_logger, _invocationId, disconnected ? "disconnect" : "timeout");
         }
     }
 
