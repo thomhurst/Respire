@@ -233,7 +233,7 @@ Respire.Networking.PendingResponseSource | readonly struct PoolPolicy(PendingRes
 # Count: Respire.Networking.PendingResponseSource.PoolPolicy | 2
 Respire.Networking.PendingResponseSource.PoolPolicy | method Create() : PendingResponseSource
 Respire.Networking.PendingResponseSource.PoolPolicy | method TryReset(PendingResponseSource) : bool
-# Count: Respire.Networking.RespireConnection | 85
+# Count: Respire.Networking.RespireConnection | 87
 Respire.Networking.RespireConnection | event MovingNotification : Action<Respire.Infrastructure.MovingAnnouncement>?
 Respire.Networking.RespireConnection | event PendingCommandsFailing : Action?
 Respire.Networking.RespireConnection | field LastQueuedMovingSequence : long
@@ -283,7 +283,9 @@ Respire.Networking.RespireConnection | method SendValidatedPrefixedAsync`3(in TF
 Respire.Networking.RespireConnection | method SendWithoutResponseTimeoutAsync`1(TCommand, CancellationToken, int) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SetLeaseRented(bool) : void
 Respire.Networking.RespireConnection | method StopAcceptingCommands() : void
+Respire.Networking.RespireConnection | method ThrowIfRetired(bool) : void
 Respire.Networking.RespireConnection | method TryAcquireCredentialSequence(CancellationToken, out CredentialSequenceLease) : bool
+Respire.Networking.RespireConnection | method TryReroute(bool, CommandDeadline, out RespireConnection, out CommandDeadline, string?) : bool
 Respire.Networking.RespireConnection | method ValidateBulkResponseSize(long, long) : void
 Respire.Networking.RespireConnection | method ValidateTransactionCapacity(int, bool) : void
 Respire.Networking.RespireConnection | method WaitForActiveBulkStreamToCompleteAsync(TimeSpan, CancellationToken) : Task<bool>

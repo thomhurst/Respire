@@ -36,6 +36,36 @@ public class StandaloneCircuitRegistryTests
     }
 
     [Test]
+    public async Task HostnameCaseSharesOpenHistoryAndRetainsCurrentEndpoint()
+    {
+        var endpoint = new RespireEndpoint("CURRENT");
+        var current = new RespireEndpoint("current");
+        var registry = new StandaloneCircuitRegistry(new() { MinimumFailureCount = 1 }, () => current);
+        var failed = registry.Acquire(endpoint, default);
+        failed.Failed(new RespireConnectionException("failed"), default);
+        failed.Dispose();
+        var original = registry.GetForTests(endpoint);
+        await Assert.That(() => registry.Acquire(current, default)).Throws<RespireCircuitOpenException>();
+        for (var i = 0; i < 64; i++) registry.Acquire(new("history", 1000 + i), default).Dispose();
+        await Assert.That(registry.CountForTests).IsEqualTo(StandaloneCircuitRegistry.RetainedEndpointLimit);
+        await Assert.That(ReferenceEquals(registry.GetForTests(current), original)).IsTrue();
+        await Assert.That(() => registry.Acquire(current, default)).Throws<RespireCircuitOpenException>();
+    }
+
+    [Test]
+    public async Task UnixSocketPathCaseRetainsDistinctCircuitHistories()
+    {
+        var registry = new StandaloneCircuitRegistry(new() { MinimumFailureCount = 1 });
+        var endpoint = RespireEndpoint.UnixSocket("/tmp/Redis.sock");
+        var failed = registry.Acquire(endpoint, default);
+        failed.Failed(new RespireConnectionException("failed"), default);
+        failed.Dispose();
+        registry.Acquire(RespireEndpoint.UnixSocket("/tmp/redis.sock"), default).Dispose();
+        await Assert.That(registry.CountForTests).IsEqualTo(2);
+        await Assert.That(() => registry.Acquire(endpoint, default)).Throws<RespireCircuitOpenException>();
+    }
+
+    [Test]
     public async Task IdleHistoryIsBoundedAndCurrentEndpointKeepsItsOpenState()
     {
         var current = new RespireEndpoint("current");

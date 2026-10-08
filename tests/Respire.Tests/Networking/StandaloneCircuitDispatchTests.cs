@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Diagnostics.Metrics;
 using System.Runtime.CompilerServices;
 using System.Text;
 using Respire.Commands;
@@ -90,6 +92,17 @@ public class StandaloneCircuitDispatchTests
     [Arguments("cache", true)]
     public async Task MaintenanceHandoffReacquiresAdmissionForActualEndpoint(string shape, bool targetOpen)
     {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Command });
+        var durations = new ConcurrentQueue<Dictionary<string, object?>>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = static (instrument, meter) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.operation.duration")
+                meter.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<double>((_, _, tags, _) =>
+            durations.Enqueue(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value)));
+        listener.Start();
         await using var target = Server();
         await using var source = Server();
         await using var client = await RespireClient.ConnectAsync(Options(source) with
@@ -111,6 +124,7 @@ public class StandaloneCircuitDispatchTests
         if (targetOpen) targetAdmission.Failed(new RespireConnectionException("target unavailable"), default);
         targetAdmission.Dispose();
         var targetCircuit = client.Core.Circuits.GetForTests(endpoint);
+        durations.Clear();
         var pending = Dispatch();
         await Assert.That(pending.IsCompleted).IsFalse();
         await source.SendRawAsync(Encoding.UTF8.GetBytes($">4\r\n+MOVING\r\n:1\r\n:10\r\n+127.0.0.1:{target.Port}\r\n"));
@@ -128,6 +142,15 @@ public class StandaloneCircuitDispatchTests
             await Assert.That(targetCircuit.Snapshot().State).IsEqualTo(targetOpen ? EndpointCircuitState.Open : EndpointCircuitState.Closed);
             await Assert.That(source.ReceivedCommands.Any(command => command.Contains("routed", StringComparison.Ordinal))).IsFalse();
             await Assert.That(target.ReceivedCommands.Count(command => command.Contains("routed", StringComparison.Ordinal))).IsEqualTo(targetOpen ? 0 : 1);
+            if (shape is "string" or "bytes" or "integer")
+            {
+                await Assert.That(durations.Count).IsEqualTo(1);
+                var duration = durations.Single();
+                await Assert.That(duration["server.port"]).IsEqualTo(target.Port);
+                await Assert.That(duration.ContainsKey("error.type")).IsEqualTo(targetOpen);
+                if (targetOpen)
+                    await Assert.That(duration["error.type"]).IsEqualTo(typeof(RespireCircuitOpenException).FullName);
+            }
         }
         finally
         {
@@ -357,6 +380,42 @@ public class StandaloneCircuitDispatchTests
         await transaction.CommitAsync();
         await Assert.That(await transactional).IsEqualTo("transaction");
         await Assert.That(circuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Open);
+    }
+
+    [Test]
+    [Arguments("blocking")]
+    [Arguments("upload")]
+    public async Task RejectedDedicatedCommandsReturnHealthyLeaseWithoutNewHandshakes(string shape)
+    {
+        await using var server = Server();
+        await using var client = await RespireClient.ConnectAsync(Options(server));
+        await Prepare(client, server);
+        var pool = await client.Core.GetDedicatedPoolAsync(default);
+        var lease = await pool.RentAsync(default,
+            kind: shape == "upload" ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary);
+        pool.Return(lease);
+        await Trip(client, server);
+        var commands = server.CommandsSeen;
+        for (var i = 0; i < 8; i++)
+        {
+            using var payload = new MemoryStream("value"u8.ToArray());
+            var error = await Failure(async () =>
+            {
+                if (shape == "upload")
+                {
+                    await client.Strings.SetAsync("rejected", payload, 5);
+                }
+                else using (var response = await client.ExecuteAsync("BLPOP", "rejected", "1")) { }
+            });
+            await Assert.That(error).IsTypeOf<RespireCircuitOpenException>();
+            await Assert.That(payload.Position).IsEqualTo(0);
+            var reused = await pool.RentAsync(default,
+                kind: shape == "upload" ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary);
+            try { await Assert.That(ReferenceEquals(reused, lease)).IsTrue(); }
+            finally { pool.Return(reused); }
+            await Assert.That(pool.CaptureRetirementState().Borrowed).IsEqualTo(0);
+        }
+        await Assert.That(server.CommandsSeen).IsEqualTo(commands);
     }
 
     [Test]

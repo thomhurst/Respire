@@ -114,20 +114,24 @@ public sealed partial class RespireClient
         where TSend : struct, IReadySend<TResult>
     {
         var commandDeadline = CreateCircuitDeadline();
+        var attemptStarted = durationStarted with { SuppressRetirement = true };
+        var durationOwnedByTransport = false;
         // Circuit rejection must release the logical command's mutation fence too.
         try
         {
             while (true)
             {
+                durationOwnedByTransport = false;
                 CircuitAdmission admission = default;
                 try
                 {
                     connection.ThrowIfRetired();
                     admission = AcquireCircuit(connection, cancellationToken);
+                    durationOwnedByTransport = true;
                     var response = mutationFence.IsRequired
                         ? await sender.Send(connection, operation, new MutationCommand<TCommand>(command, mutationFence),
-                            cancellationToken, durationStarted, commandDeadline, pinToConnection: true).ConfigureAwait(false)
-                        : await sender.Send(connection, operation, command, cancellationToken, durationStarted,
+                            cancellationToken, attemptStarted, commandDeadline, pinToConnection: true).ConfigureAwait(false)
+                        : await sender.Send(connection, operation, command, cancellationToken, attemptStarted,
                             commandDeadline, pinToConnection: true).ConfigureAwait(false);
                     admission.Success();
                     return response;
@@ -145,6 +149,17 @@ public sealed partial class RespireClient
                 }
                 finally { admission.Dispose(); }
             }
+        }
+        catch (Exception error)
+        {
+            // Final response sources own completion before user conversion. Undispatched
+            // retirement retains the original start for retry or terminal failure here.
+            if (!durationOwnedByTransport || error is RespireConnectionRetiredException)
+            {
+                var duration = new RespireTelemetry.DurationObservation(connection, durationStarted);
+                duration.Complete(operation, error);
+            }
+            throw;
         }
         finally
         {

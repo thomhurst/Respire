@@ -446,18 +446,21 @@ internal static partial class RespireTelemetry
     }
 
     /// <summary>Retains metric eligibility and timing before connection acquisition can await.</summary>
-    internal readonly record struct OperationStart(long Timestamp, bool MetricEnabled);
+    internal readonly record struct OperationStart(long Timestamp, bool MetricEnabled, bool SuppressRetirement = false);
 
     /// <summary>Retains one command's duration until its pooled response is consumed.</summary>
     /// <remarks>
     /// One caller owns completion. Unpublished sources discard their copy; admission
     /// failures and reroutes retain the original start in the sending method instead.
+    /// Circuit retries suppress undispatched retirement while retaining response timing
+    /// and completing telemetry before user conversion on the final attempt.
     /// </remarks>
     internal struct DurationObservation(RespireConnection? connection, OperationStart started)
     {
         private RespireConnection? _connection = started.MetricEnabled ? connection : null;
         private long _timestamp = started.MetricEnabled ? started.Timestamp : 0;
         private long _completedTimestamp;
+        private bool _suppressRetirement = started.SuppressRetirement;
 
         /// <summary>Freezes duration before publishing completion, independently of delayed consumption.</summary>
         internal void MarkCompleted()
@@ -471,7 +474,9 @@ internal static partial class RespireTelemetry
             var connection = _connection;
             var timestamp = _timestamp;
             var completed = _completedTimestamp;
+            var suppressRetirement = _suppressRetirement;
             this = default;
+            if (suppressRetirement && error is RespireConnectionRetiredException) return;
             if (connection is null || timestamp == 0 || !OperationDuration.Enabled) return;
             try
             {

@@ -8,7 +8,7 @@ internal sealed class StandaloneCircuitRegistry(RespireCircuitBreakerOptions opt
     private readonly Lock _gate = new();
     // Ordinary standalone clients reuse their configured host (not each resolved IP).
     // Retain current and in-flight endpoint state; trim only idle maintenance history.
-    private readonly Dictionary<RespireEndpoint, Entry> _circuits = [];
+    private readonly Dictionary<RespireEndpoint, Entry> _circuits = new(RespireEndpointComparer.Instance);
     private long _lastUse;
 
     internal sealed class Entry(EndpointCircuitBreaker circuit)
@@ -52,7 +52,8 @@ internal sealed class StandaloneCircuitRegistry(RespireCircuitBreakerOptions opt
             Entry? oldest = null;
             foreach (var entry in _circuits.Values)
             {
-                if (entry.ActiveAdmissions != 0 || entry.Circuit.Endpoint == current) continue;
+                if (entry.ActiveAdmissions != 0 || current is { } endpoint
+                    && RespireEndpointComparer.Instance.Equals(entry.Circuit.Endpoint, endpoint)) continue;
                 if (oldest is null || entry.LastUse < oldest.LastUse) oldest = entry;
             }
             // Active work owns its state until completion; it cannot be evicted to meet a cap.

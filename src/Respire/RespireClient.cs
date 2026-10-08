@@ -4172,7 +4172,8 @@ public sealed partial class RespireClient : IRespireClient
                 telemetry.Complete(core, operation, storedProcedureName, timeoutError ?? ex, connection);
                 if (connection is not null && !returned)
                 {
-                    await pool!.DiscardAsync(connection).ConfigureAwait(false);
+                    if (ex is RespireCircuitOpenException) pool!.Return(connection);
+                    else await pool!.DiscardAsync(connection).ConfigureAwait(false);
                 }
 
                 if (observeErrors)
