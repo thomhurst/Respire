@@ -421,7 +421,7 @@ jobs:
         run: >-
           dotnet run --project tests/Respire.Tests -c Release -f net8.0 --no-build --
           --treenode-filter '/*/*/GatheredSetTests/*'
-          --minimum-expected-tests 22
+          --minimum-expected-tests 32
 
       - name: Upload standalone replica regression report (net8.0)
         if: always()

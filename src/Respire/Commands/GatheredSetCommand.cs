@@ -44,25 +44,20 @@ internal readonly struct GatheredSetCommand(SetCommand command, ArraySegment<byt
             ? SendBorrowedAsync(client, command, payload, cancellationToken)
             : client.OkOrNullAsync("SET", command, cancellationToken);
 
-#if NET
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-#endif
-    private static async ValueTask<bool> SendBorrowedAsync(RespireClient client, SetCommand command,
+    private static ValueTask<bool> SendBorrowedAsync(RespireClient client, SetCommand command,
         ArraySegment<byte> payload, CancellationToken cancellationToken)
     {
         var lease = GatheredSetWriteLease.Rent();
+        ValueTask<bool> response;
         try
         {
-            return await client.OkOrNullAsync("SET", new GatheredSetCommand(command, payload, lease), cancellationToken)
-                .ConfigureAwait(false);
+            response = client.OkOrNullAsync("SET", new GatheredSetCommand(command, payload, lease), cancellationToken);
         }
-        finally
+        catch (Exception error)
         {
-            // Response cancellation, deadlines and connection failure can precede socket completion.
-            // Only the persistent sender releases an in-flight write reference; queued writes are
-            // released by abort before they can reach the socket. No caller memory is reused early.
-            await lease.FinishOperation().ConfigureAwait(false);
+            response = ValueTask.FromException<bool>(error);
         }
+        return lease.CompleteResponseAsync(response);
     }
 }
 
@@ -92,6 +87,23 @@ internal sealed class GatheredSetWriteLease : IValueTaskSource<bool>
         var pending = new ValueTask<bool>(this, _core.Version);
         ReleaseWrite();
         return pending;
+    }
+
+    // Keep the async frame independent of the client, command and payload descriptors.
+    // A pooled builder also queues its state-machine box without a callback allocation.
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    internal async ValueTask<bool> CompleteResponseAsync(ValueTask<bool> response)
+    {
+        try { return await response.ConfigureAwait(false); }
+        finally
+        {
+            // Cancellation, deadlines and connection failure can precede socket completion.
+            // The persistent sender releases in-flight writes; abort releases queued writes.
+            // Publish the response only after every accepted write releases caller memory.
+            await FinishOperation().ConfigureAwait(false);
+        }
     }
 
     bool IValueTaskSource<bool>.GetResult(short token)

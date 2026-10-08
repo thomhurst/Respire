@@ -1,6 +1,7 @@
 using System.Net.Sockets;
 using System.Reflection;
 using System.Buffers;
+using System.Threading.Tasks.Sources;
 using Respire.Commands;
 using Respire.Networking;
 using Respire.Protocol;
@@ -12,6 +13,92 @@ namespace Respire.Tests.Networking;
 
 public sealed class GatheredSetTests
 {
+    [Test]
+    [Arguments("true", true)]
+    [Arguments("false", true)]
+    [Arguments("error", true)]
+    [Arguments("cancel", true)]
+    [Arguments("true", false)]
+    [Arguments("false", false)]
+    [Arguments("error", false)]
+    [Arguments("cancel", false)]
+    public async Task ResponseAndWriteMustBothFinishBeforePublicCompletion(string outcome, bool responseFirst)
+    {
+        var ambient = new AsyncLocal<string?> { Value = "caller" };
+        var response = new ControlledResponse(ambient);
+        var lease = GatheredSetWriteLease.Rent();
+        lease.RetainWrite();
+        var completion = lease.CompleteResponseAsync(response.Task);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        Exception? expected = outcome switch
+        {
+            "error" => new InvalidOperationException("response error"),
+            "cancel" => new OperationCanceledException(cancellation.Token),
+            _ => null,
+        };
+        if (responseFirst)
+        {
+            response.Complete(outcome == "true", expected);
+            await response.Consumed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(completion.IsCompleted).IsFalse();
+            lease.ReleaseWrite();
+        }
+        else
+        {
+            lease.ReleaseWrite();
+            await Assert.That(completion.IsCompleted).IsFalse();
+            response.Complete(outcome == "true", expected);
+        }
+        if (expected is null) await Assert.That(await completion).IsEqualTo(outcome == "true");
+        else
+        {
+            Exception? actual = null;
+            try { await completion; }
+            catch (Exception error) { actual = error; }
+            await Assert.That(ReferenceEquals(actual, expected)).IsTrue();
+        }
+        await Assert.That(response.ConsumptionCount).IsEqualTo(1);
+        await Assert.That(response.ObservedAmbient).IsEqualTo("caller");
+    }
+
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task SynchronousResponseRetainsItsValueUntilWriteRelease(bool result)
+    {
+        var lease = GatheredSetWriteLease.Rent();
+        lease.RetainWrite();
+        var completion = lease.CompleteResponseAsync(ValueTask.FromResult(result));
+        await Assert.That(completion.IsCompleted).IsFalse();
+        lease.ReleaseWrite();
+        await Assert.That(await completion).IsEqualTo(result);
+    }
+
+    private sealed class ControlledResponse(AsyncLocal<string?> ambient) : IValueTaskSource<bool>
+    {
+        private ManualResetValueTaskSourceCore<bool> _core = new() { RunContinuationsAsynchronously = true };
+        internal TaskCompletionSource Consumed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal int ConsumptionCount { get; private set; }
+        internal string? ObservedAmbient { get; private set; }
+        internal ValueTask<bool> Task => new(this, _core.Version);
+        internal void Complete(bool result, Exception? error)
+        {
+            if (error is null) _core.SetResult(result);
+            else _core.SetException(error);
+        }
+        bool IValueTaskSource<bool>.GetResult(short token)
+        {
+            ConsumptionCount++;
+            ObservedAmbient = ambient.Value;
+            try { return _core.GetResult(token); }
+            finally { Consumed.TrySetResult(); }
+        }
+        ValueTaskSourceStatus IValueTaskSource<bool>.GetStatus(short token) => _core.GetStatus(token);
+        void IValueTaskSource<bool>.OnCompleted(Action<object?> continuation, object? state, short token,
+            ValueTaskSourceOnCompletedFlags flags) => _core.OnCompleted(continuation, state, token, flags);
+    }
+
     [Test]
     public async Task PublicOperationCannotFinishBeforeItsLastWriteAndLeaseCanBeReused()
     {
