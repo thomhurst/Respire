@@ -25,3 +25,4 @@ jobs:
       expected-methods: StringGetMiss,BytesGetMiss,StringLength
       zero-allocation-methods: StringGetMiss,BytesGetMiss,StringLength
       artifact-prefix: command-duration-comparison
+      redis-server: true

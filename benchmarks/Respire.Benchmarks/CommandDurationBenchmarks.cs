@@ -11,15 +11,24 @@ public class CommandDurationBenchmarks
     private readonly MeterListener _listener = new();
     private RespireMetricsOptions _previous = null!;
     private long _measurements;
+    private string _expectedOperation = null!;
 
     [Params(false, true)]
     public bool DurationEnabled { get; set; }
 
-    [GlobalSetup]
-    public async Task Setup()
+    /// <summary>Prepares a GET case and verifies subsequent GET duration observations.</summary>
+    [GlobalSetup(Targets = new[] { nameof(StringGetMiss), nameof(BytesGetMiss) })]
+    public Task SetupGet() => Setup("GET");
+
+    /// <summary>Prepares a STRLEN case and verifies subsequent STRLEN duration observations.</summary>
+    [GlobalSetup(Target = nameof(StringLength))]
+    public Task SetupLength() => Setup("STRLEN");
+
+    private async Task Setup(string expectedOperation)
     {
+        _expectedOperation = expectedOperation;
         _previous = RespireMetrics.Configuration;
-        RespireMetrics.Configure(new() { Groups = RespireMetricGroups.None });
+        RespireMetrics.Configure(new() { Groups = DurationEnabled ? RespireMetricGroups.Command : RespireMetricGroups.None });
         var host = Environment.GetEnvironmentVariable("REDIS_HOST") ?? "127.0.0.1";
         var port = int.TryParse(Environment.GetEnvironmentVariable("REDIS_PORT"), out var configured) ? configured : 6379;
         _client = await RespireClient.ConnectAsync(new RespireOptions
@@ -33,13 +42,23 @@ public class CommandDurationBenchmarks
             if (DurationEnabled && instrument.Meter.Name == "Respire" && instrument.Name == "db.client.operation.duration")
                 listener.EnableMeasurementEvents(instrument);
         };
-        _listener.SetMeasurementEventCallback<double>((_, _, _, _) => Interlocked.Increment(ref _measurements));
+        _listener.SetMeasurementEventCallback<double>((_, _, tags, _) =>
+        {
+            foreach (var tag in tags)
+                if (tag.Key == "db.operation.name" && tag.Value is string operation && operation == _expectedOperation)
+                {
+                    Interlocked.Increment(ref _measurements);
+                    break;
+                }
+        });
         _listener.Start();
-        RespireMetrics.Configure(new() { Groups = DurationEnabled ? RespireMetricGroups.Command : RespireMetricGroups.None });
         if (await StringGetMiss() is not null || await BytesGetMiss() is not null || await StringLength() != 0)
             throw new InvalidOperationException("Duration benchmark key must be absent.");
+        // Setup exercises every command; only later measurements of this case count.
+        Interlocked.Exchange(ref _measurements, 0);
     }
 
+    /// <summary>Releases the client and requires this case's operation to match the listener mode.</summary>
     [GlobalCleanup]
     public async Task Cleanup()
     {

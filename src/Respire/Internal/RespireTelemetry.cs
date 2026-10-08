@@ -448,21 +448,24 @@ internal static class RespireTelemetry
     /// <summary>Retains metric eligibility and timing before connection acquisition can await.</summary>
     internal readonly record struct OperationStart(long Timestamp, bool MetricEnabled);
 
-    // One caller owns completion. Unpublished sources discard their copy; admission
-    // failures and reroutes retain the original start in the sending method instead.
+    /// <summary>Retains one command's duration until its pooled response is consumed.</summary>
+    /// <remarks>
+    /// One caller owns completion. Unpublished sources discard their copy; admission
+    /// failures and reroutes retain the original start in the sending method instead.
+    /// </remarks>
     internal struct DurationObservation(RespireConnection? connection, OperationStart started)
     {
         private RespireConnection? _connection = started.MetricEnabled ? connection : null;
         private long _timestamp = started.MetricEnabled ? started.Timestamp : 0;
         private long _completedTimestamp;
 
-        // Stamp before publishing completion. The listener runs only on the caller,
-        // so delayed ValueTask consumption cannot inflate transport duration.
+        /// <summary>Freezes duration before publishing completion, independently of delayed consumption.</summary>
         internal void MarkCompleted()
         {
             if (_timestamp != 0) _completedTimestamp = Stopwatch.GetTimestamp();
         }
 
+        /// <summary>Consumes the observation once and isolates listener failures from the command outcome.</summary>
         internal void Complete(string? operation, Exception? error = null)
         {
             var connection = _connection;
@@ -481,6 +484,7 @@ internal static class RespireTelemetry
         }
     }
 
+    /// <summary>Creates the connection's reusable database and endpoint metric tags.</summary>
     internal static TagList CreateOperationMetricTags(string host, int port, string databaseNamespace,
         string? peerAddress, int? peerPort)
     {
@@ -566,6 +570,7 @@ internal static class RespireTelemetry
         int? batchSize = null, string? storedProcedureName = null)
         => StartOperation(operation, endpoint.Host, endpoint.Port, database, batchSize, storedProcedureName);
 
+    /// <summary>Starts an operation using the executing connection's cached namespace when applicable.</summary>
     internal static OperationScope StartOperation(string operation, RespireConnection connection, int database,
         int? batchSize = null, string? storedProcedureName = null, OperationStart? started = null)
         => StartOperationCore(operation, connection.Host, connection.Port, database, batchSize, storedProcedureName,
@@ -800,6 +805,7 @@ internal static class RespireTelemetry
         }
     }
 
+    /// <summary>Records duration and outcome tags without mutating cached connection tags.</summary>
     private static void RecordOperationDuration(double seconds, string operation, string? host, int port,
         int database, Exception? error, RespireConnection? connection, int? batchSize)
     {

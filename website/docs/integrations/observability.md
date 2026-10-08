@@ -124,6 +124,7 @@ Metric selection is captured before admission and remains fixed while a response
 Duration ends when the source completes, before delayed result consumption or user conversion.
 Listener callbacks run when the caller consumes the result, outside transport locks; listener
 failures cannot replace the command result or its error on this direct path.
+An unconsumed direct result does not emit its duration observation.
 
 Each connection caches its database namespace and endpoint tags, including boxed port values.
 This moves their formatting cost to connection creation. The three specialized source types
