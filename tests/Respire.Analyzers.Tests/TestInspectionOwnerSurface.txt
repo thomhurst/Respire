@@ -1,6 +1,6 @@
 # Reviewed source-declared member signatures: 312 total; per-type counts include owner, derived and accessible nested declarations.
-# Count: Respire.ClientSideCacheCoordinator | 50
-Respire.ClientSideCacheCoordinator | class CacheEntry(byte[]?, long, long)
+# Count: Respire.ClientSideCacheCoordinator | 53
+Respire.ClientSideCacheCoordinator | class CacheEntry(byte[]?, long, long, string?)
 Respire.ClientSideCacheCoordinator | class CacheStore()
 Respire.ClientSideCacheCoordinator | class InflightRead(RespireKey, bool)
 Respire.ClientSideCacheCoordinator | class QueryCacheEntry(RespValue, RespireKey[], long, long)
@@ -14,10 +14,11 @@ Respire.ClientSideCacheCoordinator | method BeginUnknownMutation() : MutationFen
 Respire.ClientSideCacheCoordinator | method CanCacheOperation(string) : bool
 Respire.ClientSideCacheCoordinator | method CanTrack(in RespireKey) : bool
 Respire.ClientSideCacheCoordinator | method Clear() : void
+Respire.ClientSideCacheCoordinator | method CoalesceGetReadAsync`1(ClientCacheCommandKey, TState, Func<TState, CancellationToken, ValueTask<GetReadResult>>, CancellationToken) : ValueTask<GetReadResult>
 Respire.ClientSideCacheCoordinator | method CoalesceReadAsync`1(ClientCacheCommandKey, TState, Func<TState, CancellationToken, ValueTask<RespValue>>, CancellationToken) : ValueTask<RespValue>
 Respire.ClientSideCacheCoordinator | method CompleteMutation(in MutationFence) : void
 Respire.ClientSideCacheCoordinator | method CompleteRead(in QueryReadToken, in RespValue, bool) : void
-Respire.ClientSideCacheCoordinator | method CompleteRead(in ReadToken, in RespValue, bool) : void
+Respire.ClientSideCacheCoordinator | method CompleteRead(in ReadToken, in RespValue, bool, string?) : CacheEntry?
 Respire.ClientSideCacheCoordinator | method FlushForContinuityLoss() : void
 Respire.ClientSideCacheCoordinator | method FlushForContinuityLossWithoutMetrics() : int
 Respire.ClientSideCacheCoordinator | method FlushForMovingRetirementFence() : void
@@ -40,6 +41,7 @@ Respire.ClientSideCacheCoordinator | method TryGet(in RespireKey, out RespValue)
 Respire.ClientSideCacheCoordinator | method TryGetString(in RespireKey, out string?) : bool
 Respire.ClientSideCacheCoordinator | method TryPeek(in QueryRequest, out RespValue) : bool
 Respire.ClientSideCacheCoordinator | method TryPeek(in RespireKey, out RespValue) : bool
+Respire.ClientSideCacheCoordinator | method TryPeekRead(in RespireKey, out GetReadResult) : bool
 Respire.ClientSideCacheCoordinator | property ActiveSharedReadCount [internal; get] : int
 Respire.ClientSideCacheCoordinator | property CoalesceConcurrentMisses [internal; get] : bool
 Respire.ClientSideCacheCoordinator | property Count [public; get] : int
@@ -52,26 +54,34 @@ Respire.ClientSideCacheCoordinator | readonly record struct ReadToken(InflightRe
 # Designated borrowed view; source keys retain readonly/ref and compiled metadata checks stack-only visibility.
 Respire.ClientSideCacheCoordinator | readonly ref struct TestInspection(ClientSideCacheCoordinator)
 Respire.ClientSideCacheCoordinator | readonly struct MutationFence()
-# Count: Respire.ClientSideCacheCoordinator.CacheEntry | 5
+Respire.ClientSideCacheCoordinator | readonly struct GetReadResult(RespValue, RespireKey, CacheStore?, CacheEntry?, string?)
+# Count: Respire.ClientSideCacheCoordinator.CacheEntry | 6
+Respire.ClientSideCacheCoordinator.CacheEntry | method DecodedSize(string) : long
 # Reviewed accessible nested operational members; new inspection state belongs in the designated borrowed view.
 Respire.ClientSideCacheCoordinator.CacheEntry | method SetDecodedText(string, long) : void
 Respire.ClientSideCacheCoordinator.CacheEntry | property DecodedText [internal; get] : string?
 Respire.ClientSideCacheCoordinator.CacheEntry | property ExpiresAt [public; get] : long
 Respire.ClientSideCacheCoordinator.CacheEntry | property Payload [public; get] : byte[]?
 Respire.ClientSideCacheCoordinator.CacheEntry | property Size [public; get] : long
-# Count: Respire.ClientSideCacheCoordinator.CacheStore | 12
+# Count: Respire.ClientSideCacheCoordinator.CacheStore | 14
 Respire.ClientSideCacheCoordinator.CacheStore | constructor CacheStore(RespireClientSideCacheOptions, Action<CacheRemoval>)
+Respire.ClientSideCacheCoordinator.CacheStore | method GetString(in RespireKey, CacheEntry) : string?
 Respire.ClientSideCacheCoordinator.CacheStore | method Invalidate(in RespireKey) : int
 Respire.ClientSideCacheCoordinator.CacheStore | method Retire() : int
-Respire.ClientSideCacheCoordinator.CacheStore | method Set(RespireKey, in RespValue) : void
+Respire.ClientSideCacheCoordinator.CacheStore | method Set(RespireKey, in RespValue, string?) : CacheEntry?
 Respire.ClientSideCacheCoordinator.CacheStore | method Set(in ClientCacheCommandKey, QueryCacheEntry) : bool
 Respire.ClientSideCacheCoordinator.CacheStore | method Trim() : void
 Respire.ClientSideCacheCoordinator.CacheStore | method TryCreateEntry(in ClientCacheCommandKey, RespireKey[], in RespValue, out QueryCacheEntry?) : bool
 Respire.ClientSideCacheCoordinator.CacheStore | method TryGet(in ClientCacheCommandKey, out RespValue) : bool
 Respire.ClientSideCacheCoordinator.CacheStore | method TryGet(in RespireKey, out byte[]?) : bool
 Respire.ClientSideCacheCoordinator.CacheStore | method TryGetString(in RespireKey, out string?) : bool
+Respire.ClientSideCacheCoordinator.CacheStore | method TryGetRead(in RespireKey, out GetReadResult) : bool
 Respire.ClientSideCacheCoordinator.CacheStore | property Count [public; get] : int
 Respire.ClientSideCacheCoordinator.CacheStore | property SizeBytes [public; get] : long
+# Count: Respire.ClientSideCacheCoordinator.GetReadResult | 3
+Respire.ClientSideCacheCoordinator.GetReadResult | field Response : RespValue
+Respire.ClientSideCacheCoordinator.GetReadResult | method GetString() : string?
+Respire.ClientSideCacheCoordinator.GetReadResult | method ToOwned(bool) : GetReadResult
 # Count: Respire.ClientSideCacheCoordinator.InflightRead | 5
 Respire.ClientSideCacheCoordinator.InflightRead | field Generation : long
 Respire.ClientSideCacheCoordinator.InflightRead | field Readers : int
