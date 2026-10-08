@@ -110,28 +110,24 @@ public sealed partial class RespireClient
     {
         // Each field uses the existing HGET identity and hash-key dependency. A single hash
         // invalidation therefore removes every projection, regardless of the requested list.
-        // QueryReadToken is an owned snapshot of keys, epochs and the store. BeginRead
-        // registers no pending reader state, so failed/cancelled reads need no abandonment.
-        var tokens = new ClientSideCacheCoordinator.QueryReadToken[fields.Length];
-        for (var index = 0; index < fields.Length; index++)
-        {
-            var request = new ClientSideCacheCoordinator.QueryRequest(
-                new ClientCacheCommandKey("HGET", key.AsValue(), fields[index]), key);
-            tokens[index] = cache.BeginRead("HGET", in request);
-        }
-        Action? onRedirect = null;
-        if (_core.Cluster is not null)
-        {
-            onRedirect = () =>
-            {
-                for (var index = 0; index < tokens.Length; index++)
-                    tokens[index] = cache.RebaseRead(in tokens[index]);
-            };
-        }
-        var response = await SendTrackedAsync("HMGET", new Cmd1N(Verbs.HMGet, key.AsValue(), fields),
-            cancellationToken, onRedirect).ConfigureAwait(false);
+        // Each pending field owns a dependency lease. Always abandon remaining leases,
+        // including partial registration, send failures, cancellation, and malformed replies.
+        using var queryReads = new HashQueryReadScope(cache, key, fields);
+        var tokens = queryReads.Tokens;
+        var response = default(RespValue);
         try
         {
+            Action? onRedirect = null;
+            if (_core.Cluster is not null)
+            {
+                onRedirect = () =>
+                {
+                    for (var index = 0; index < tokens.Length; index++)
+                        tokens[index] = cache.RebaseRead(in tokens[index]);
+                };
+            }
+            response = await SendTrackedAsync("HMGET", new Cmd1N(Verbs.HMGet, key.AsValue(), fields),
+                cancellationToken, onRedirect).ConfigureAwait(false);
             if (response.Type != RespDataType.Array || response.AsArray().Length != fields.Length)
                 throw new RespireProtocolException($"HMGET must return an array with {fields.Length} field values.");
             // Validate the entire reply before publishing any field from an untrusted frame.
@@ -152,6 +148,40 @@ public sealed partial class RespireClient
         {
             response.Dispose();
             throw;
+        }
+    }
+
+    // A value scope adds no separate owner allocation. Its array is also the
+    // redirect callback's array, so disposal abandons the rebased leases.
+    private readonly struct HashQueryReadScope : IDisposable
+    {
+        private readonly ClientSideCacheCoordinator _cache;
+        internal ClientSideCacheCoordinator.QueryReadToken[] Tokens { get; }
+
+        internal HashQueryReadScope(ClientSideCacheCoordinator cache, RespireKey key, RespireValue[] fields)
+        {
+            _cache = cache;
+            Tokens = new ClientSideCacheCoordinator.QueryReadToken[fields.Length];
+            var registered = 0;
+            try
+            {
+                for (; registered < fields.Length; registered++)
+                {
+                    var request = new ClientSideCacheCoordinator.QueryRequest(
+                        new ClientCacheCommandKey("HGET", key.AsValue(), fields[registered]), key);
+                    Tokens[registered] = cache.BeginRead("HGET", in request);
+                }
+            }
+            catch { Abandon(registered); throw; }
+        }
+
+        public void Dispose() => Abandon(Tokens.Length);
+
+        private void Abandon(int registered)
+        {
+            var unused = default(RespValue);
+            for (var index = 0; index < registered; index++)
+                _cache.CompleteRead(in Tokens[index], in unused, allowInsert: false);
         }
     }
 }

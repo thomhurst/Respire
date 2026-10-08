@@ -170,8 +170,9 @@ public interface IRespireClientSideCache
 /// <para>
 /// Insertion invariant: a per-key read publishes only if its key generation, the continuity epoch,
 /// and the active <see cref="CacheStore"/> all still match the values captured when the read began;
-/// a query read additionally matches the query epoch. Invalidation advances the generation and
-/// query epoch before removing dependent projections, and publication and invalidation are
+/// a query read additionally matches every registered dependency generation and the query epoch.
+/// Key invalidation advances dependency generations; full-store flushes advance the global epochs.
+/// These barriers precede removal of dependent projections, and publication and invalidation are
 /// serialized, so a racing invalidation is never undone by a stale insert. Cancellation, timeout,
 /// protocol failure, and conversion failure release the token without publishing. A Cluster
 /// redirect rebases the token after the continuity flush so the retried read can insert.
@@ -200,6 +201,9 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     private readonly ClientCachePrefixSet _keyPrefixes;
     private readonly ConcurrentDictionary<RespireKey, InflightRead> _inflight = new();
     private readonly Lock _queryLock = new();
+    // Only pending query dependencies live here. Last-reader removal drops the owned key
+    // and its generation; unrelated invalidations never create historical key state.
+    private readonly Dictionary<RespireKey, InflightRead> _queryDependencies = new();
     private CacheStore _store;
     private long _continuityEpoch;
     private long _queryEpoch;
@@ -340,58 +344,111 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         var query = request.Query.Snapshot();
         var primaryKey = request.PrimaryKey;
         var dependencies = CreateDependencies(operation, in query, in primaryKey);
-        return new QueryReadToken(
-            query,
-            dependencies,
-            Volatile.Read(ref _queryEpoch),
-            Volatile.Read(ref _continuityEpoch),
-            Volatile.Read(ref _store),
-            CanTrackAll(dependencies));
+        var lease = CanTrackAll(dependencies) ? new QueryReadLease(dependencies.Length) : null;
+        lock (_queryLock)
+        {
+            return RegisterQueryRead(in query, dependencies, lease);
+        }
+    }
+
+    // Call under _queryLock. Query dependency states use this gate, not the separate
+    // GET states in _inflight, so publication and invalidation share one lock order.
+    private QueryReadToken RegisterQueryRead(in ClientCacheCommandKey query, RespireKey[] dependencies, QueryReadLease? lease)
+    {
+        if (lease is not null)
+        {
+            try
+            {
+                foreach (var key in dependencies)
+                {
+                    if (!_queryDependencies.TryGetValue(key, out var state))
+                    {
+                        state = new InflightRead(key);
+                        _queryDependencies.Add(key, state);
+                    }
+                    lease.Capture(state);
+                    state.Readers++;
+                }
+            }
+            catch
+            {
+                ReleaseQueryRead(lease);
+                throw;
+            }
+        }
+        return new(query, dependencies, Volatile.Read(ref _queryEpoch), Volatile.Read(ref _continuityEpoch),
+            Volatile.Read(ref _store), lease is not null, lease);
     }
 
     internal void CompleteRead(in QueryReadToken token, in RespValue response, bool allowInsert)
     {
-        if (!allowInsert
-            || !token.CanCache
-            || Volatile.Read(ref _queryEpoch) != token.QueryEpoch
-            || Volatile.Read(ref _continuityEpoch) != token.ContinuityEpoch
-            || !ReferenceEquals(Volatile.Read(ref _store), token.Store))
-        {
-            return;
-        }
-
-        var query = token.Query;
-        if (!token.Store.TryCreateEntry(
-                in query, token.Dependencies, in response, out var entry))
-        {
-            return;
-        }
-
+        // Copies and the caller's abandonment finally may revisit a completed lease.
+        // They own no remaining state and need not acquire the publication gate again.
+        if (token.Lease is not { } lease || Volatile.Read(ref lease.Completed)) return;
         var published = false;
-        lock (_queryLock)
+        try
         {
-            if (Volatile.Read(ref _queryEpoch) == token.QueryEpoch
-                && Volatile.Read(ref _continuityEpoch) == token.ContinuityEpoch
-                && ReferenceEquals(Volatile.Read(ref _store), token.Store))
+            if (!allowInsert) return;
+            lock (_queryLock)
             {
-                published = token.Store.Set(in query, entry);
+                if (!CanPublishQuery(in token)) return;
+            }
+            var query = token.Query;
+            if (!token.Store.TryCreateEntry(in query, token.Dependencies, in response, out var entry)) return;
+            lock (_queryLock)
+            {
+                if (CanPublishQuery(in token)) published = token.Store.Set(in query, entry);
+                // Retire dependencies under the publication gate we already own.
+                ReleaseQueryRead(lease);
             }
         }
-
-        if (published)
+        finally
         {
-            token.Store.Trim();
+            // Failed entry creation/publication still abandons the lease. A
+            // successful publication or another copied token has released it.
+            if (!Volatile.Read(ref lease.Completed))
+            {
+                lock (_queryLock) ReleaseQueryRead(lease);
+            }
         }
+        if (published) token.Store.Trim();
     }
 
     internal QueryReadToken RebaseRead(in QueryReadToken token)
-        => new(
-            token.Query,
-            token.Dependencies,
-            Volatile.Read(ref _queryEpoch),
-            Volatile.Read(ref _continuityEpoch),
-            Volatile.Read(ref _store),
-            token.CanCache);
+    {
+        var replacement = token.CanCache ? new QueryReadLease(token.Dependencies.Length) : null;
+        lock (_queryLock)
+        {
+            if (token.Lease is { } lease) ReleaseQueryRead(lease);
+            var query = token.Query;
+            return RegisterQueryRead(in query, token.Dependencies, replacement);
+        }
+    }
+
+    private bool CanPublishQuery(in QueryReadToken token)
+    {
+        if (!token.CanCache || token.Lease is not { Completed: false } lease
+            || Volatile.Read(ref _queryEpoch) != token.QueryEpoch
+            || Volatile.Read(ref _continuityEpoch) != token.ContinuityEpoch
+            || !ReferenceEquals(Volatile.Read(ref _store), token.Store)) return false;
+        for (var index = 0; index < lease.Registered; index++)
+        {
+            var stamp = lease.GetDependency(index);
+            if (stamp.State.Generation != stamp.Generation) return false;
+        }
+        return true;
+    }
+
+    private void ReleaseQueryRead(QueryReadLease lease)
+    {
+        if (lease.Completed) return;
+        Volatile.Write(ref lease.Completed, true);
+        for (var index = 0; index < lease.Registered; index++)
+        {
+            var state = lease.GetDependency(index).State;
+            if (--state.Readers == 0) _queryDependencies.Remove(state.Key);
+        }
+    }
 
     internal ReadToken BeginRead(in RespireKey key)
     {
@@ -492,7 +549,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
 
             lock (_queryLock)
             {
-                Interlocked.Increment(ref _queryEpoch);
+                if (_queryDependencies.TryGetValue(key, out var dependency)) dependency.Generation++;
                 removed = Volatile.Read(ref _store).Invalidate(in key);
             }
         }
@@ -706,10 +763,15 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         int removed;
         try
         {
-            Interlocked.Increment(ref _continuityEpoch);
-            Interlocked.Increment(ref _queryEpoch);
-            var replacement = new CacheStore(_options, RecordRemoval);
-            removed = Interlocked.Exchange(ref _store, replacement).Retire();
+            lock (_queryLock)
+            {
+                Interlocked.Increment(ref _continuityEpoch);
+                Interlocked.Increment(ref _queryEpoch);
+                var replacement = new CacheStore(_options, RecordRemoval);
+                // Retirement takes the old store's _removalLock while _queryLock is held;
+                // preserve this query-then-removal order for publication and full flushes.
+                removed = Interlocked.Exchange(ref _store, replacement).Retire();
+            }
             if (removed > 0)
             {
                 Interlocked.Add(ref _evictions, removed);
@@ -999,7 +1061,30 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         long QueryEpoch,
         long ContinuityEpoch,
         CacheStore Store,
-        bool CanCache);
+        bool CanCache,
+        QueryReadLease? Lease);
+
+    internal sealed class QueryReadLease(int dependencyCount)
+    {
+        private QueryDependencyStamp _first;
+        private readonly QueryDependencyStamp[]? _additional = dependencyCount > 1
+            ? new QueryDependencyStamp[dependencyCount - 1] : null;
+        internal int Registered;
+        // After construction, access through Volatile or while holding the coordinator's _queryLock.
+        internal bool Completed;
+
+        internal void Capture(InflightRead state)
+        {
+            var stamp = new QueryDependencyStamp(state, state.Generation);
+            if (Registered == 0) _first = stamp;
+            else _additional![Registered - 1] = stamp;
+            Registered++;
+        }
+
+        internal QueryDependencyStamp GetDependency(int index) => index == 0 ? _first : _additional![index - 1];
+    }
+
+    internal readonly record struct QueryDependencyStamp(InflightRead State, long Generation);
 
     internal sealed class InflightRead(RespireKey key, bool canCache = true)
     {
