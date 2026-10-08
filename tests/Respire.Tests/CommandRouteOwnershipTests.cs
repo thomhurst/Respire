@@ -19,7 +19,9 @@ public class CommandRouteOwnershipTests
     private const string Route = "GetAsync(int):ValueTask<int>";
     private const string Owner = "Respire.ExampleCommands." + Route;
     private static CommandRouteOwnership.Member[] Discover(string source)
-        => CommandRouteOwnership.Discover([("fixture.cs", source)]).Where(m => m.Framework == "net8.0").ToArray();
+        => Discover([("fixture.cs", source)]);
+    private static CommandRouteOwnership.Member[] Discover(IEnumerable<(string File, string Source)> files)
+        => CommandRouteOwnership.Discover(files).Where(m => m.Framework == "net8.0").ToArray();
     private static CommandRouteOwnership.Inventory ControlInventory(params CommandRouteOwnership.Boundary[] boundaries)
         => new([new("Respire.IExampleCommands", "Respire.ExampleCommands", [Route], Contract: "Own validation through cleanup.")], boundaries);
 
@@ -157,7 +159,7 @@ public class CommandRouteOwnershipTests
                 .Concat(declaration.Inventory.Boundaries.Select(b => b.Member))
                 .Concat((declaration.Inventory.NonRoutes ?? []).Select(n => n.Member));
             foreach (var id in ids)
-                if (!source.Any(m => m.Id == id && m.File == declaration.File))
+                if (!source.Any(m => m.Id == id && (m.Files ?? [m.File]).Contains(declaration.File, StringComparer.Ordinal)))
                     errors.Add("Declaration must stay beside its source: " + id + " in " + declaration.File);
         }
         await Assert.That(string.Join(Environment.NewLine, errors)).IsEqualTo("");
@@ -359,6 +361,51 @@ public class CommandRouteOwnershipTests
     {
         await Assert.That(CommandRouteOwnership.Validate(Discover(Fixture.Replace("public ValueTask<int> GetAsync", "private ValueTask<int> GetAsync")), ControlInventory())
             .Any(e => e.StartsWith("Owner does not implement public contract:", StringComparison.Ordinal))).IsTrue();
+    }
+
+    [Test]
+    public async Task StaticLookalikeCannotImplementInstanceContract()
+    {
+        var source = Fixture.Replace("public ValueTask<int> GetAsync", "public static ValueTask<int> GetAsync");
+        await Assert.That(CommandRouteOwnership.Validate(Discover(source), ControlInventory())
+            .Any(e => e.StartsWith("Owner does not implement public contract:", StringComparison.Ordinal))).IsTrue();
+    }
+
+    [Test]
+    [Arguments("", false)]
+    [Arguments(", IExampleCommands", true)]
+    public async Task HidingMethodImplementsOnlyReimplementedContracts(string reimplementation, bool implements)
+    {
+        var source = Discover("""
+            namespace Respire;
+            public interface IExampleCommands { ValueTask<int> GetAsync(int key); }
+            internal class BaseCommands : IExampleCommands { public ValueTask<int> GetAsync(int key) => default; }
+            """ + "internal class ExampleCommands : BaseCommands" + reimplementation
+            + " { public new ValueTask<int> GetAsync(int key) => default; }");
+        await Assert.That(CommandRouteOwnership.Validate(source, ControlInventory()).Length == 0).IsEqualTo(implements);
+    }
+
+    [Test]
+    [Arguments("protected")]
+    [Arguments("protected internal")]
+    [Arguments("private protected")]
+    public async Task ProtectedInterfaceMembersAreNotPublicRoutes(string visibility)
+    {
+        var source = Discover("public interface Commands { " + visibility + " void Probe() { } void Run(); }");
+        await Assert.That(source.Single(m => m.Name == "Probe").PublicRoute).IsFalse();
+        await Assert.That(source.Single(m => m.Name == "Run").PublicRoute).IsTrue();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task PartialRoutesKeepEveryContributingSourceFile(bool reversed)
+    {
+        (string File, string Source)[] files = [
+            ("declaration.cs", "public partial class Routes { public partial int Added(); }"),
+            ("implementation.cs", "public partial class Routes { public partial int Added() => 1; }")];
+        var member = Discover(reversed ? files.AsEnumerable().Reverse() : files);
+        await Assert.That(member.Single().Files!).IsEquivalentTo(new[] { "declaration.cs", "implementation.cs" });
     }
 
     [Test]

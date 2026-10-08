@@ -501,8 +501,10 @@ arity uses a backtick followed by the parameter count. Parameter names and defau
 are omitted; parameter types, modifiers and return types are retained. Interface
 declarations alone cannot be final owners, except executable default interface
 methods. Same-signature implementation owners must have a public executable method
-and list the contract in their source base types (including inherited and partial
-declarations). Explicit interface implementations retain their interface-qualified
+with the same static or instance kind, and list the contract in their source base
+types (including inherited and partial declarations). A `new` hiding method owns the
+contract only when its type re-lists that interface. A partial route's declaration
+may sit beside either its defining or implementing source file. Explicit interface implementations retain their interface-qualified
 source signature; they cannot masquerade as implicit public implementations.
 
 Declare the owner before argument validation, disposal checks, cancellation checks,

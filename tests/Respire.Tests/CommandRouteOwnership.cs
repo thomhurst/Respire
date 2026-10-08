@@ -9,7 +9,7 @@ internal static class CommandRouteOwnership
 {
     internal sealed record Member(string Id, string Type, string Signature, string Name,
         bool PublicRoute, bool HasBody, string File, bool IsInterface = false,
-        bool PublicImplementation = false, string[]? Contracts = null, string Framework = "");
+        string[]? ImplementedContracts = null, string Framework = "", bool IsStatic = false, string[]? Files = null);
     internal sealed record Surface(string Type, string OwnerType, string[] Members,
         Dictionary<string, string>? Overrides = null, string Contract = "", string[]? AdditionalOwnerTypes = null);
     internal sealed record Boundary(string Name, string Role, string Member, string? Owner, string Contract);
@@ -116,6 +116,10 @@ internal static class CommandRouteOwnership
             Visit(type);
             return contractCache[type] = result.ToArray();
         }
+        string[] Reimplemented(string type) => (typesById.GetValueOrDefault(type) ?? [])
+            .SelectMany(declaration => (declaration.BaseList?.Types ?? []).Select(parent => ResolveContract(parent.Type, declaration)))
+            .Where(contract => typesById.TryGetValue(contract, out var declarations) && declarations.Any(d => d is InterfaceDeclarationSyntax))
+            .SelectMany(contract => Contracts(contract).Prepend(contract)).Distinct(StringComparer.Ordinal).ToArray();
         foreach (var (file, root) in roots)
         {
             // Merge partial declarations only within this target framework, independently of telemetry.
@@ -131,14 +135,20 @@ internal static class CommandRouteOwnership
                 var visible = types.All(t => publicTypes.Contains(TypeId(t)));
                 var publicMethod = method.Modifiers.Any(SyntaxKind.PublicKeyword) ||
                     (types[^1] is InterfaceDeclarationSyntax && !method.Modifiers.Any(SyntaxKind.PrivateKeyword)
-                        && !method.Modifiers.Any(SyntaxKind.InternalKeyword));
+                        && !method.Modifiers.Any(SyntaxKind.InternalKeyword) && !method.Modifiers.Any(SyntaxKind.ProtectedKeyword));
                 var route = visible && publicMethod;
                 var contracts = Contracts(type);
-                var implements = publicMethod || (explicitContractId is not null && contracts.Any(c =>
-                    c == explicitContractId || c.EndsWith("." + explicitContractId, StringComparison.Ordinal)));
+                // Interface dispatch reaches an explicit implementation only for its named contract, and a
+                // hiding method only for interfaces its type re-implements; TreatWarningsAsErrors makes `new` mandatory.
+                var implemented = explicitContractId is not null
+                    ? contracts.Where(c => c == explicitContractId || c.EndsWith("." + explicitContractId, StringComparison.Ordinal)).ToArray()
+                    : !publicMethod ? []
+                    : method.Modifiers.Any(SyntaxKind.NewKeyword) ? Reimplemented(type)
+                    : contracts;
                 members.Add(new(type + "." + signature, type, signature, method.Identifier.ValueText,
                     route, method.Body is not null || method.ExpressionBody is not null, file,
-                    types[^1] is InterfaceDeclarationSyntax, implements, contracts, framework));
+                    types[^1] is InterfaceDeclarationSyntax, implemented, framework,
+                    method.Modifiers.Any(SyntaxKind.StaticKeyword)));
             }
             // Deferred inspection and borrowed payload state also have property boundaries.
             foreach (var property in root.DescendantNodes().OfType<PropertyDeclarationSyntax>())
@@ -153,9 +163,11 @@ internal static class CommandRouteOwnership
             }
         }
         return members.GroupBy(m => m.Id).Select(g => g.First() with {
-            PublicRoute = g.Any(m => m.PublicRoute), HasBody = g.Any(m => m.HasBody),
-            PublicImplementation = g.Any(m => m.HasBody && m.PublicImplementation),
-            Contracts = g.SelectMany(m => m.Contracts ?? []).Distinct(StringComparer.Ordinal).ToArray()
+            PublicRoute = g.Any(m => m.PublicRoute), HasBody = g.Any(m => m.HasBody), IsStatic = g.Any(m => m.IsStatic),
+            ImplementedContracts = g.Where(m => m.HasBody).SelectMany(m => m.ImplementedContracts ?? [])
+                .Distinct(StringComparer.Ordinal).ToArray(),
+            // Partial declaration and implementation files are both valid homes for an ownership declaration.
+            Files = g.Select(m => m.File).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray()
         }).OrderBy(m => m.Id, StringComparer.Ordinal).ToArray();
     }
 
@@ -210,6 +222,9 @@ internal static class CommandRouteOwnership
         return errors.ToArray();
     }
 
+    private static bool Implements(Member owner, Member contract) => owner.IsStatic == contract.IsStatic
+        && (owner.ImplementedContracts ?? []).Contains(contract.Type, StringComparer.Ordinal);
+
     private static string[] ValidateFramework(Member[] source, Inventory inventory)
     {
         var errors = new List<string>();
@@ -228,15 +243,14 @@ internal static class CommandRouteOwnership
                 if (!members.TryGetValue(owner, out var final) || !final.HasBody)
                     errors.Add("Missing final owner: " + route + " => " + owner);
                 else if (entry?.IsInterface == true && entry.Id != final.Id && final.Signature == entry.Signature
-                    && (!final.PublicImplementation || !(final.Contracts ?? []).Contains(entry.Type, StringComparer.Ordinal)))
+                    && !Implements(final, entry))
                     errors.Add("Owner does not implement public contract: " + route + " => " + owner);
                 foreach (var additionalType in surface.AdditionalOwnerTypes ?? [])
                 {
                     var additionalOwner = additionalType + "." + signature;
                     if (!members.TryGetValue(additionalOwner, out var additional) || !additional.HasBody)
                         errors.Add("Missing alternative final owner: " + route + " => " + additionalOwner);
-                    else if (entry?.IsInterface == true && (!additional.PublicImplementation
-                        || !(additional.Contracts ?? []).Contains(entry.Type, StringComparer.Ordinal)))
+                    else if (entry?.IsInterface == true && !Implements(additional, entry))
                         errors.Add("Alternative owner does not implement public contract: " + route + " => " + additionalOwner);
                 }
             }
