@@ -505,10 +505,13 @@ create another reference. Repeated completion is harmless, including after the p
 storage has been reused, so cleanup in `finally` cannot replace the original failure.
 Storage returns to the bounded pool only after the owner and every distinct borrower
 complete. Owner completion does not complete a still-live borrower. Final publication
-closes retry reporting and new borrowing. Recording retries, borrowing, or publishing
-with a lease after storage has been reused throws a stale-generation diagnostic, which
-differs from intentional repeated final inspection. Do not retain completed leases for
-later asynchronous work.
+closes retry reporting and new borrowing. `RecordHandled` and `PublishFinal` return
+`false` for default, completed, closed, or stale leases without emitting a metric.
+`Borrow` returns a default, inert borrower in those states. These checks apply in every
+build, so a final-inspection race or stale asynchronous callback cannot replace the
+original failure or affect a new caller's observation. Do not retain completed leases
+for later asynchronous work. Storage returns outside the ownership gate after the last
+completion. Retry counts saturate at `int.MaxValue`.
 
 When adding a command path, declare its public boundary and delegated final owner in
 the independent route inventory. Helper, borrower, transport, and cleanup observations

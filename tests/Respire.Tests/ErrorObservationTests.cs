@@ -96,12 +96,10 @@ public class ErrorObservationTests
         try
         {
             for (var i = 0; i < 33; i++) rentals.Add(ErrorObservation.StartFailure());
-            Exception? ownerError = null;
-            Exception? borrowerError = null;
-            try { old.PublishFinal(error); } catch (Exception caught) { ownerError = caught; }
-            try { borrower.RecordHandled(error); } catch (Exception caught) { borrowerError = caught; }
-            await Assert.That(ownerError?.Message).IsEqualTo("The error observation lease belongs to a reused generation.");
-            await Assert.That(borrowerError?.Message).IsEqualTo("The error observation lease belongs to a reused generation.");
+            await Assert.That(old.PublishFinal(error)).IsFalse();
+            await Assert.That(borrower.RecordHandled(error)).IsFalse();
+            await Assert.That(old.Borrow().RecordHandled(error)).IsFalse();
+            await Assert.That(borrower.Borrow().RecordHandled(error)).IsFalse();
             old.Complete();
             borrower.Complete();
             rentals[0].PublishFinal(error);
@@ -186,9 +184,8 @@ public class ErrorObservationTests
         var owner = ErrorObservation.StartFailure();
         var borrower = owner.Borrow();
         borrower.Complete();
-        Exception? actual = null;
-        try { borrower.RecordHandled(new IOException()); } catch (Exception error) { actual = error; }
-        await Assert.That(actual?.Message).IsEqualTo("The error observation lease has completed.");
+        await Assert.That(borrower.RecordHandled(new IOException())).IsFalse();
+        await Assert.That(borrower.Borrow().RecordHandled(new IOException())).IsFalse();
         await Assert.That(typeof(ErrorObservation.Borrower).GetMethods(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
             .Any(method => method.Name == "PublishFinal")).IsFalse();
         owner.Complete();
@@ -205,15 +202,137 @@ public class ErrorObservationTests
         try
         {
             owner.PublishFinal(error);
-            Exception? retryError = null;
-            Exception? borrowError = null;
-            try { borrower.RecordHandled(error); } catch (Exception caught) { retryError = caught; }
-            try { owner.Borrow(); } catch (Exception caught) { borrowError = caught; }
-            await Assert.That(retryError?.Message).IsEqualTo("The error observation lease has completed.");
-            await Assert.That(borrowError?.Message).IsEqualTo("The error observation lease has completed.");
+            await Assert.That(borrower.RecordHandled(error)).IsFalse();
+            await Assert.That(owner.RecordHandled(error)).IsFalse();
+            await Assert.That(owner.Borrow().RecordHandled(error)).IsFalse();
+            await Assert.That(borrower.Borrow().RecordHandled(error)).IsFalse();
             await Assert.That(capture.Items.Count).IsEqualTo(1);
         }
         finally { borrower.Complete(); owner.Complete(); }
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task RejectedBookkeepingPreservesOriginalException(bool reuse, bool cancelled)
+    {
+        using var configuration = new MetricConfigurationScope();
+        using var capture = new Capture();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        Exception expected = cancelled ? new OperationCanceledException(cancellation.Token) : new IOException();
+        var owner = ErrorObservation.StartFailure();
+        var borrower = owner.Borrow();
+        owner.PublishFinal(expected);
+        var rentals = new List<ErrorObservation.FinalOwner>();
+        Exception? actual = null;
+        try
+        {
+            if (reuse)
+            {
+                borrower.Complete();
+                owner.Complete();
+                for (var i = 0; i < 33; i++) rentals.Add(ErrorObservation.StartFailure());
+            }
+            try { throw expected; }
+            catch (Exception error)
+            {
+                owner.RecordHandled(error);
+                borrower.RecordHandled(error);
+                owner.Borrow().RecordHandled(error);
+                borrower.Borrow().RecordHandled(error);
+                owner.PublishFinal(error);
+                throw;
+            }
+            finally { borrower.Complete(); owner.Complete(); }
+        }
+        catch (Exception error) { actual = error; }
+        finally { foreach (var rental in rentals) rental.Complete(); }
+        await Assert.That(ReferenceEquals(actual, expected)).IsTrue();
+        if (cancelled) await Assert.That(((OperationCanceledException)actual!).CancellationToken).IsEqualTo(cancellation.Token);
+        await Assert.That(capture.Items.Count).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task DefaultLeasesRejectBookkeepingWithoutMetrics()
+    {
+        using var configuration = new MetricConfigurationScope();
+        using var capture = new Capture();
+        var owner = default(ErrorObservation.FinalOwner);
+        var borrower = default(ErrorObservation.Borrower);
+        var error = new IOException();
+        await Assert.That(owner.RecordHandled(error)).IsFalse();
+        await Assert.That(owner.PublishFinal(error)).IsFalse();
+        await Assert.That(owner.Borrow().RecordHandled(error)).IsFalse();
+        await Assert.That(borrower.RecordHandled(error)).IsFalse();
+        await Assert.That(borrower.Borrow().RecordHandled(error)).IsFalse();
+        owner.Complete();
+        borrower.Complete();
+        await Assert.That(capture.Items.Count).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task GenerationMismatchCannotChangeLiveObservation()
+    {
+        using var configuration = new MetricConfigurationScope();
+        using var capture = new Capture();
+        var observation = new ErrorObservation.Observation { Generation = 2, References = 1, RetryAttempts = 7 };
+        var stale = new ErrorObservation.FinalOwner(new ErrorObservation.Lease(observation, 1));
+        var current = new ErrorObservation.FinalOwner(new ErrorObservation.Lease(observation, 2));
+        var error = new IOException();
+        try
+        {
+            await Assert.That(stale.RecordHandled(error)).IsFalse();
+            await Assert.That(stale.Borrow().RecordHandled(error)).IsFalse();
+            await Assert.That(stale.PublishFinal(error)).IsFalse();
+            stale.Complete();
+            await Assert.That(observation.References).IsEqualTo(1);
+            await Assert.That(current.PublishFinal(error)).IsTrue();
+            await Assert.That(capture.Items.Single().RetryAttempts).IsEqualTo(7);
+        }
+        finally { stale.Complete(); current.Complete(); }
+    }
+
+    [Test]
+    public async Task RetryAndReferenceLimitsDoNotThrowOrOverflow()
+    {
+        using var configuration = new MetricConfigurationScope();
+        using var capture = new Capture();
+        var observation = new ErrorObservation.Observation { Generation = 1, References = int.MaxValue, RetryAttempts = int.MaxValue };
+        var owner = new ErrorObservation.FinalOwner(new ErrorObservation.Lease(observation, 1));
+        var error = new IOException();
+        try
+        {
+            await Assert.That(owner.Borrow().RecordHandled(error)).IsFalse();
+            await Assert.That(observation.References).IsEqualTo(int.MaxValue);
+            await Assert.That(owner.RecordHandled(error)).IsTrue();
+            await Assert.That(owner.PublishFinal(error)).IsTrue();
+            await Assert.That(capture.Items.Count).IsEqualTo(2);
+            await Assert.That(capture.Items.All(item => item.RetryAttempts == int.MaxValue)).IsTrue();
+        }
+        finally { observation.References = 1; owner.Complete(); }
+    }
+
+    [Test]
+    public async Task FinalInspectionRacingRetriesRejectsLateWorkWithoutThrowing()
+    {
+        using var configuration = new MetricConfigurationScope();
+        using var capture = new Capture();
+        var owner = ErrorObservation.StartFailure();
+        var borrowers = Enumerable.Range(0, 32).Select(_ => owner.Borrow()).ToArray();
+        var error = new IOException();
+        try
+        {
+            var final = Task.Run(() => owner.PublishFinal(error));
+            var retries = await Task.WhenAll(borrowers.Select(borrower => Task.Run(() => borrower.RecordHandled(error))));
+            await Assert.That(await final).IsTrue();
+            await Assert.That(capture.Items.Count(item => item.Internal)).IsEqualTo(retries.Count(accepted => accepted));
+            await Assert.That(capture.Items.Single(item => !item.Internal).RetryAttempts).IsEqualTo(retries.Count(accepted => accepted));
+            await Assert.That(borrowers[0].RecordHandled(error)).IsFalse();
+        }
+        finally { foreach (var borrower in borrowers) borrower.Complete(); owner.Complete(); }
     }
 
     [Test]
