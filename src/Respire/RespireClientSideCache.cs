@@ -423,7 +423,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         }
     }
 
-    internal void CompleteRead(in ReadToken token, in RespValue response, bool allowInsert)
+    internal CacheEntry? CompleteRead(in ReadToken token, in RespValue response, bool allowInsert, string? decodedText = null)
     {
         var state = token.State;
         lock (state)
@@ -436,8 +436,9 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                     && Volatile.Read(ref _continuityEpoch) == token.ContinuityEpoch
                     && ReferenceEquals(Volatile.Read(ref _store), token.Store))
                 {
-                    token.Store.Set(state.Key, in response);
+                    return token.Store.Set(state.Key, in response, decodedText);
                 }
+                return null;
             }
             finally
             {
@@ -942,6 +943,53 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         long ContinuityEpoch,
         CacheStore Store);
 
+    // Canonical GET text is separate from arbitrary caller converters. Coalesced
+    // callers copy response storage but share this immutable text/publication handle.
+    internal readonly struct GetReadResult(
+        RespValue response, RespireKey key, CacheStore? store, CacheEntry? entry, string? text)
+    {
+        internal readonly RespValue Response = response;
+        private readonly RespireKey _key = key;
+        private readonly CacheStore? _store = store;
+        private readonly CacheEntry? _entry = entry;
+        private readonly string? _text = text;
+        private readonly SharedText? _sharedText;
+
+        private GetReadResult(RespValue response, RespireKey key, CacheStore? store,
+            CacheEntry? entry, string? text, SharedText? sharedText)
+            : this(response, key, store, entry, text) => _sharedText = sharedText;
+
+        internal string? GetString()
+            => _text ?? (_sharedText is not null ? _sharedText.GetString(in this) : GetPublicationString());
+
+        private string? GetPublicationString()
+            => _text ?? (_entry is not null ? _store!.GetString(in _key, _entry)
+                : Internal.ResponseReader.StringOrNull(in Response));
+
+        internal GetReadResult ToOwned(bool shareText = false)
+            => new(Response.ToOwned(), _key, _store, _entry, _text,
+                _sharedText ?? (shareText && _text is null ? new SharedText() : null));
+
+        // A byte/custom producer may have no resident entry, or its entry may be
+        // invalidated before a string waiter runs. Share text independently of
+        // admission, without retaining response bytes or changing cache accounting.
+        private sealed class SharedText
+        {
+            private string? _value;
+
+            internal string? GetString(in GetReadResult result)
+            {
+                var value = Volatile.Read(ref _value);
+                if (value is not null) return value;
+                value = result.GetPublicationString();
+                return value is null ? null : Interlocked.CompareExchange(ref _value, value, null) ?? value;
+            }
+        }
+    }
+
+    internal bool TryPeekRead(in RespireKey key, out GetReadResult result)
+        => Volatile.Read(ref _store).TryGetRead(in key, out result);
+
     internal readonly record struct QueryRequest(ClientCacheCommandKey Query, RespireKey PrimaryKey);
 
     internal readonly record struct QueryReadToken(
@@ -1024,6 +1072,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                 value = null;
                 return false;
             }
+            // Preserve the warm-hit probe without another helper call.
             if (entry.Payload is null)
             {
                 value = null;
@@ -1031,23 +1080,47 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             }
             value = entry.DecodedText;
             if (value is not null) return true;
+            value = GetString(in key, entry);
+            return true;
+        }
+
+        internal bool TryGetRead(in RespireKey key, out GetReadResult result)
+        {
+            if (!TryGetEntry(in key, out var entry))
+            {
+                result = default;
+                return false;
+            }
+            var response = entry.Payload is null ? RespValue.Null : RespValue.BulkString(entry.Payload);
+            result = new(response, key.Snapshot(), this, entry, entry.DecodedText);
+            return true;
+        }
+
+        internal string? GetString(in RespireKey key, CacheEntry entry)
+        {
+            if (entry.Payload is null)
+            {
+                return null;
+            }
+            var value = entry.DecodedText;
+            if (value is not null) return value;
 
             var decoded = Encoding.UTF8.GetString(entry.Payload);
             lock (_removalLock)
             {
                 value = entry.DecodedText;
-                if (value is not null) return true;
+                if (value is not null) return value;
                 value = decoded;
                 // An invalidated/replaced/retired entry can still serve this borrowed
                 // lookup, but must never increase the current store's accounted size.
                 if (_state == StoreState.Retired || !_entries.TryGetValue(key, out var current)
-                    || !ReferenceEquals(current, entry)) return true;
-                var added = (24L + decoded.Length * sizeof(char) + 7) & ~7L;
+                    || !ReferenceEquals(current, entry)) return value;
+                var added = CacheEntry.DecodedSize(decoded);
                 entry.SetDecodedText(decoded, added);
                 Interlocked.Add(ref _sizeBytes, added);
             }
             Trim();
-            return true;
+            return value;
         }
 
         private bool TryGetEntry(in RespireKey key, [NotNullWhen(true)] out CacheEntry? found)
@@ -1090,26 +1163,27 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             return false;
         }
 
-        public void Set(RespireKey key, in RespValue response)
+        public CacheEntry? Set(RespireKey key, in RespValue response, string? decodedText = null)
         {
             if (!response.IsNull && response.Type is not RespDataType.BulkString and not RespDataType.SimpleString)
             {
-                return;
+                return null;
             }
 
             var payloadLength = response.IsNull ? 0 : response.AsSpan().Length;
             var size = (long)EntryOverhead + key.WireLength + payloadLength;
+            if (decodedText is not null) size += CacheEntry.DecodedSize(decodedText);
             if (size > _options.MaxSizeBytes)
             {
-                return;
+                return null;
             }
 
             var payload = response.IsNull ? null : response.AsSpan().ToArray();
             var expiresAt = ExpirationTimestamp(_options.LocalExpiration);
-            var entry = new CacheEntry(payload, size, expiresAt);
+            var entry = new CacheEntry(payload, size, expiresAt, decodedText);
             lock (_removalLock)
             {
-                if (_state == StoreState.Retired) return;
+                if (_state == StoreState.Retired) return null;
                 if (_entries.TryGetValue(key, out var previous))
                 {
                     if (_entries.TryUpdate(key, entry, previous))
@@ -1124,6 +1198,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             }
 
             Trim();
+            return entry;
         }
 
         public bool TryCreateEntry(
@@ -1387,14 +1462,16 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         }
     }
 
-    internal sealed class CacheEntry(byte[]? payload, long size, long expiresAt)
+    internal sealed class CacheEntry(byte[]? payload, long size, long expiresAt, string? decodedText = null)
     {
-        private string? _decodedText;
+        private string? _decodedText = decodedText;
         private long _size = size;
         public byte[]? Payload { get; } = payload;
         public long Size => Interlocked.Read(ref _size);
         public long ExpiresAt { get; } = expiresAt;
         internal string? DecodedText => Volatile.Read(ref _decodedText);
+
+        internal static long DecodedSize(string text) => (24L + text.Length * sizeof(char) + 7) & ~7L;
 
         // The store's removal gate serializes accounting, publication and removal.
         internal void SetDecodedText(string text, long addedSize)

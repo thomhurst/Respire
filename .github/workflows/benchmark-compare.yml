@@ -51,6 +51,10 @@ on:
         description: Require and summarize RECEIVE_MEMORY snapshots from the fixture
         default: false
         type: boolean
+      retained-memory-stages:
+        description: Comma-separated snapshot stages required in every phase
+        default: before-connect,connected-idle,after-dispose
+        type: string
       job:
         description: BenchmarkDotNet measurement preset (Short, Default, or Medium)
         default: Medium
@@ -81,6 +85,7 @@ jobs:
       IMPROVEMENT_METHODS: ${{ inputs.improvement-methods }}
       FRAMEWORK: ${{ matrix.framework }}
       RETAINED_MEMORY: ${{ inputs.retained-memory }}
+      RETAINED_MEMORY_STAGES: ${{ inputs.retained-memory-stages }}
     steps:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
@@ -207,6 +212,8 @@ jobs:
                   if not intervals[1]['Upper'] < min(intervals[0]['Lower'], intervals[2]['Lower']):
                       failures.append(f'No demonstrated improvement against both controls: {label}')
           if os.environ['RETAINED_MEMORY'].lower() == 'true':
+              stages = list(filter(None, os.environ['RETAINED_MEMORY_STAGES'].split(',')))
+              assert stages and len(stages) == len(set(stages)), 'Missing or duplicate retention stages'
               lines.extend(['', '## Whole-process retained memory', '',
                             'Full-GC snapshots describe the benchmark process; see the identical fixture for its clients, pools, and peer scope. POH size includes fragmentation; medians across fixture processes are descriptive. Working-set variation requires manual review.', '',
                             '| Phase | Stage | Samples | Managed bytes | POH bytes | POH fragmented bytes | Working-set bytes |',
@@ -215,7 +222,7 @@ jobs:
                   snapshots = [json.loads(line.removeprefix('RECEIVE_MEMORY '))
                                for line in Path(f'{phase}.log').read_text().splitlines()
                                if line.startswith('RECEIVE_MEMORY ')]
-                  for stage in ('before-connect', 'connected-idle', 'after-dispose'):
+                  for stage in stages:
                       samples = [item for item in snapshots if item['stage'] == stage]
                       assert len(samples) >= expected_count, f'Missing retention snapshots: {phase}/{stage}'
                       values = []

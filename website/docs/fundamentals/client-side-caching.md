@@ -37,9 +37,14 @@ arguments.
 
 Missing keys are cached too. Replies are deep-owned internally and converted for each call, so
 enabling caching does not introduce shared mutable objects; serializers run on every hit and
-`GetBytesAsync` still returns a caller-owned array. `GetStringAsync` lazily retains the decoded
-immutable string for a cached `GET`, avoiding repeated decoding on later hits. Its storage counts
-against `MaxSizeBytes`; decoding can evict entries when that limit is crossed. Other conversions
+`GetBytesAsync` still returns a caller-owned array. `GetStringAsync` retains its canonical decoded
+immutable string when a `GET` miss is published, so the first local hit reuses that same string.
+Coalesced string readers share the canonical text while binary readers keep independent arrays.
+Byte-only and custom serializer reads keep decoded string storage lazy; their first string reader
+decodes and retains the wire text. String storage counts against `MaxSizeBytes` before a string miss
+returns. An entry whose bytes and decoded text exceed the limit is returned uncached; decoding an
+existing byte-only entry can evict entries when that limit is crossed. One-off string reads therefore
+retain more memory immediately than byte-only reads, within the same cache limit. Other conversions
 keep their existing behavior. One cache belongs to each client and is shared
 by all of its `WithKeyPrefix` views.
 

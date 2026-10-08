@@ -14,6 +14,9 @@ internal sealed partial class ClientSideCacheCoordinator
     private readonly Dictionary<ClientCacheCommandKey, SharedRead> _sharedReads = new();
     private readonly HashSet<SharedRead> _activeSharedReads = new();
     private bool _sharedReadsStopped;
+    // Invalidation publishes its barrier before reading admissions, then joinable reads.
+    // Admission reserves before the gate and releases only after publishing the joinable
+    // count there. A publisher is observed by invalidation or sees the barrier and cannot join.
     private int _sharedReadInvalidations;
     private int _sharedReadAdmissions;
     private int _joinableSharedReadCount;
@@ -31,8 +34,31 @@ internal sealed partial class ClientSideCacheCoordinator
         cancellationToken.ThrowIfCancellationRequested();
         if (!_options.CoalesceConcurrentMisses) return read(state, cancellationToken);
 
+        var shared = JoinSharedRead<RespValue>(identity, out var owner);
+
+        // Start outside the gate: transport callbacks and metrics may reenter the cache.
+        // Every producer snapshots its inputs before its first asynchronous suspension.
+        // ProduceSharedReadAsync must capture every failure in Completion; it is not awaited here.
+        if (owner) _ = ProduceSharedReadAsync(shared, state, read);
+        return WaitForSharedReadAsync(shared, cancellationToken);
+    }
+
+    internal ValueTask<GetReadResult> CoalesceGetReadAsync<TState>(
+        ClientCacheCommandKey identity, TState state,
+        Func<TState, CancellationToken, ValueTask<GetReadResult>> read,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!_options.CoalesceConcurrentMisses) return read(state, cancellationToken);
+        var shared = JoinSharedRead<GetReadResult>(identity, out var owner);
+        if (owner) _ = ProduceSharedGetReadAsync(shared, state, read);
+        return WaitForSharedGetReadAsync(shared, cancellationToken);
+    }
+
+    private SharedRead<T> JoinSharedRead<T>(ClientCacheCommandKey identity, out bool owner)
+    {
         SharedRead shared;
-        var owner = false;
+        owner = false;
         // Reserve admission before taking the gate. An invalidation that sees no joinable
         // reads must still wait for a publisher already inside or approaching this gate.
         Interlocked.Increment(ref _sharedReadAdmissions);
@@ -44,7 +70,7 @@ internal sealed partial class ClientSideCacheCoordinator
                 if (Volatile.Read(ref _sharedReadInvalidations) != 0 || !_sharedReads.TryGetValue(identity, out shared!))
                 {
                     // Borrowed binary arguments must not outlive the caller that supplied them.
-                    shared = new SharedRead(identity.Snapshot());
+                    shared = new SharedRead<T>(identity.Snapshot());
                     // Reads starting during invalidation cannot become joinable: their producer
                     // may still observe the store before its entries have been removed.
                     if (Volatile.Read(ref _sharedReadInvalidations) == 0)
@@ -62,15 +88,11 @@ internal sealed partial class ClientSideCacheCoordinator
         // reads admissions before that count; reversing this order could hide a publisher.
         finally { Interlocked.Decrement(ref _sharedReadAdmissions); }
 
-        // Start outside the gate: transport callbacks and metrics may reenter the cache.
-        // Every producer snapshots its inputs before its first asynchronous suspension.
-        // ProduceSharedReadAsync must capture every failure in Completion; it is not awaited here.
-        if (owner) _ = ProduceSharedReadAsync(shared, state, read);
-        return WaitForSharedReadAsync(shared, cancellationToken);
+        return (SharedRead<T>)shared;
     }
 
     private async Task ProduceSharedReadAsync<TState>(
-        SharedRead shared, TState state, Func<TState, CancellationToken, ValueTask<RespValue>> read)
+        SharedRead<RespValue> shared, TState state, Func<TState, CancellationToken, ValueTask<RespValue>> read)
     {
         RespValue owned = default;
         try
@@ -97,7 +119,7 @@ internal sealed partial class ClientSideCacheCoordinator
     }
 
     private async ValueTask<RespValue> WaitForSharedReadAsync(
-        SharedRead shared, CancellationToken cancellationToken)
+        SharedRead<RespValue> shared, CancellationToken cancellationToken)
     {
         try
         {
@@ -113,22 +135,64 @@ internal sealed partial class ClientSideCacheCoordinator
             }
             return response.ToOwned();
         }
-        finally
+        finally { ReleaseSharedRead(shared); }
+    }
+
+    private async Task ProduceSharedGetReadAsync<TState>(
+        SharedRead<GetReadResult> shared, TState state,
+        Func<TState, CancellationToken, ValueTask<GetReadResult>> read)
+    {
+        GetReadResult owned = default;
+        try
         {
-            var cancel = false;
-            var dispose = false;
+            try
+            {
+                var result = await read(state, shared.Cancellation.Token).ConfigureAwait(false);
+                using var response = result.Response;
+                owned = result.ToOwned(shareText: true);
+            }
+            finally { FinishSharedRead(shared); }
+            shared.Completion.TrySetResult(owned);
+        }
+        catch (Exception error)
+        {
+            owned.Response.Dispose();
+            shared.Fail(error);
+        }
+    }
+
+    private async ValueTask<GetReadResult> WaitForSharedGetReadAsync(
+        SharedRead<GetReadResult> shared, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await shared.Completion.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            // As with ordinary replies, copy mutable response storage before releasing
+            // the waiter. Only canonical immutable text and the publication handle are shared.
             lock (_sharedReadLock)
             {
-                if (--shared.Waiters == 0)
-                {
-                    RemoveSharedRead(shared);
-                    cancel = BeginCancellation(shared);
-                    dispose = shared.Finished && !shared.Canceling;
-                }
+                if (shared.Waiters == 1) return result;
             }
-            if (cancel) CancelSharedRead(shared);
-            else if (dispose) shared.Cancellation.Dispose();
+            return result.ToOwned();
         }
+        finally { ReleaseSharedRead(shared); }
+    }
+
+    private void ReleaseSharedRead(SharedRead shared)
+    {
+        var cancel = false;
+        var dispose = false;
+        lock (_sharedReadLock)
+        {
+            if (--shared.Waiters == 0)
+            {
+                RemoveSharedRead(shared);
+                cancel = BeginCancellation(shared);
+                dispose = shared.Finished && !shared.Canceling;
+            }
+        }
+        if (cancel) CancelSharedRead(shared);
+        else if (dispose) shared.Cancellation.Dispose();
     }
 
     private void FinishSharedRead(SharedRead shared)
@@ -170,8 +234,7 @@ internal sealed partial class ClientSideCacheCoordinator
         {
             // Factory cancellation callbacks are user code. Their failures must not
             // interrupt caller cancellation or disposal of the remaining resources.
-            shared.Completion.TrySetException(error);
-            _ = shared.Completion.Task.Exception;
+            shared.Fail(error);
         }
         finally
         {
@@ -225,14 +288,25 @@ internal sealed partial class ClientSideCacheCoordinator
         foreach (var shared in cancel) CancelSharedRead(shared);
     }
 
-    private sealed class SharedRead(ClientCacheCommandKey identity)
+    private abstract class SharedRead(ClientCacheCommandKey identity)
     {
         internal readonly ClientCacheCommandKey Identity = identity;
         internal readonly CancellationTokenSource Cancellation = new();
-        internal readonly TaskCompletionSource<RespValue> Completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal int Waiters;
         internal bool Finished;
         internal bool CancellationStarted;
         internal bool Canceling;
+        internal abstract void Fail(Exception error);
+    }
+
+    private sealed class SharedRead<T>(ClientCacheCommandKey identity) : SharedRead(identity)
+    {
+        internal readonly TaskCompletionSource<T> Completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal override void Fail(Exception error)
+        {
+            Completion.TrySetException(error);
+            // Every caller may have canceled before the producer fails.
+            _ = Completion.Task.Exception;
+        }
     }
 }
