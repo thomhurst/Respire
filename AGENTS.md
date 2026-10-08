@@ -41,6 +41,7 @@ Pull request benchmark workflows start only when someone adds their label. They 
 | `benchmark-idle-read-watchdog.yml` | `run-idle-read-watchdog-benchmarks` |
 | `benchmark-inflight.yml` | `run-inflight-benchmarks` |
 | `benchmark-key-prefix.yml` | `run-key-prefix-benchmarks` |
+| `benchmark-large-command-serialization.yml` | `run-large-command-serialization-benchmarks` |
 | `benchmark-pinned-receive.yml` | `run-pinned-receive-benchmarks` |
 | `benchmark-primitive-codec.yml` | `run-primitive-codec-benchmarks` |
 | `benchmark-pubsub.yml` | `run-pubsub-benchmarks` |

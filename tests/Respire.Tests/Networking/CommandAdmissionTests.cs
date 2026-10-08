@@ -21,9 +21,10 @@ public class CommandAdmissionTests
         public CancellationToken ResponseToken;
     }
 
-    private readonly struct AdmissionCommand(AdmissionState state) : IRespCommand
+    private readonly struct AdmissionCommand(AdmissionState state, int sizeHint = 0) : IRespCommand
     {
-        public int GetWriteSizeHint() => FakeRespServer.PingFrame.Length;
+        public int GetWriteSizeHint() => sizeHint;
+        public AdmissionCommand WithSizeHint(int bound) => new(state, bound);
         public ReadCommandKind ReadKind => ReadCommandKind.None;
         public void Write(ref RespWriter writer) => writer.WriteRaw(FakeRespServer.PingFrame);
         public void OnAccepted() => state.Accepted++;
@@ -183,20 +184,15 @@ public class CommandAdmissionTests
     private static ValueTask<RespValue> StartSend(RespireConnection connection, AdmissionCommand command,
         RespireClient.TrackedScriptExecution execution, bool direct, string wrapper, CancellationToken token = default)
     {
-        var budget = typeof(RespireConnection).GetField("_directPathBudget", BindingFlags.NonPublic | BindingFlags.Static)!;
-        var previous = budget.GetValue(null);
-        try
+        // An oversized complete upper bound selects direct admission without changing wire bytes.
+        command = command.WithSizeHint(direct ? 65_537 : FakeRespServer.PingFrame.Length);
+        return wrapper switch
         {
-            budget.SetValue(null, direct ? 1 : 0);
-            return wrapper switch
-            {
-                "timestamp" => connection.SendAsync(new RespireClient.SendTimestampCommand<AdmissionCommand>(command, execution), token),
-                "prefix" => connection.SendPrefixedCheckedAsync(new RawCommand("*1\r\n$6\r\nASKING\r\n"u8.ToArray()), command, token),
-                "validated-prefix" => connection.SendValidatedPrefixedAsync(new RawCommand("*1\r\n$6\r\nASKING\r\n"u8.ToArray()), command, token),
-                _ => connection.SendAsync(command, token),
-            };
-        }
-        finally { budget.SetValue(null, previous); }
+            "timestamp" => connection.SendAsync(new RespireClient.SendTimestampCommand<AdmissionCommand>(command, execution), token),
+            "prefix" => connection.SendPrefixedCheckedAsync(new RawCommand("*1\r\n$6\r\nASKING\r\n"u8.ToArray()), command, token),
+            "validated-prefix" => connection.SendValidatedPrefixedAsync(new RawCommand("*1\r\n$6\r\nASKING\r\n"u8.ToArray()), command, token),
+            _ => connection.SendAsync(command, token),
+        };
     }
 
     private static Task<RespireConnection> ConnectAsync(FakeRespServer server)

@@ -1,0 +1,26 @@
+name: Large command serialization benchmarks
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}-${{ github.event.label.name }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    if: github.event.label.name == 'run-large-command-serialization-benchmarks'
+    uses: ./.github/workflows/benchmark-compare.yml
+    with:
+      event-base-sha: ${{ github.event.pull_request.base.sha }}
+      candidate-sha: ${{ github.sha }}
+      expected-head-sha: ${{ github.event.pull_request.head.sha }}
+      fixture: benchmarks/Respire.Benchmarks/LargeCommandSerializationBenchmarks.cs
+      filter: '*LargeCommandSerializationBenchmarks*'
+      expected-case-count: 5
+      expected-methods: Set10KiB,Set1MiB,Set5MiB,LargeThenSmallPipeline,ConcurrentSmallSetPipelines
+      artifact-prefix: large-command-serialization-comparison
