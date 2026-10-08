@@ -15,6 +15,7 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
     private readonly Lock _gate = new();
     private readonly string _host = $"respire-fake-{Guid.NewGuid():N}";
     private readonly TimeProvider _clock;
+    private readonly bool _createConsumersOnEmptyReads;
     private readonly Dictionary<byte[], Entry> _entries = new(BinaryKeyComparer.Instance);
     private readonly HashSet<Connection> _connections = [];
     private readonly List<Exception> _failures = [];
@@ -24,7 +25,14 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
     private long _commandTime;
 
     /// <summary>Creates an isolated server. Supply RespireFakeClock to control expiry; otherwise wall-clock UTC is used.</summary>
-    public RespireFakeServer(TimeProvider? clock = null) => _clock = clock ?? TimeProvider.System;
+    public RespireFakeServer(TimeProvider? clock = null) : this(clock, createConsumersOnEmptyReads: false) { }
+
+    /// <summary>Creates a server with explicit stream consumer-registration semantics.</summary>
+    /// <param name="clock">Clock used for expiry and pending idle times, or wall-clock UTC when null.</param>
+    /// <param name="createConsumersOnEmptyReads">True models Redis 7.2 or later, which registers consumers
+    /// on empty new-entry reads. False preserves Redis 7.0 behavior and is the default.</param>
+    public RespireFakeServer(TimeProvider? clock, bool createConsumersOnEmptyReads)
+        => (_clock, _createConsumersOnEmptyReads) = (clock ?? TimeProvider.System, createConsumersOnEmptyReads);
 
     /// <summary>Returns fresh options for this server. Clone them to configure protocol, serialization, prefixing, and timeouts.</summary>
     /// <remarks>Database zero is supported. TLS, authentication, Cluster, Sentinel and client-side tracking are unsupported.

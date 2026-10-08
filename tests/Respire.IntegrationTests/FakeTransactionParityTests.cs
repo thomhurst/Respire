@@ -160,6 +160,8 @@ public class FakeTransactionParityTests(RedisTestContainer fixture)
                 ["XREADGROUP", "GROUP", "g", "c", "STREAMS", "key", ">"] ],
                 ["XREADGROUP", "GROUP", "g", "c", "STREAMS", "key", "0"], false),
             new([ ["XGROUP", "CREATE", "key", "g", "0", "MKSTREAM"] ], ["XACK", "key", "g", "1-0"], false),
+            new([ ["XGROUP", "CREATE", "key", "g", "0", "MKSTREAM"] ], ["XPENDING", "key", "g"], false),
+            new([ ["XGROUP", "CREATE", "key", "g", "0", "MKSTREAM"] ], ["XINFO", "GROUPS", "key"], false),
             new([ ["SET", "key", "value"] ], ["SET", "key", "value"], true),
             new([ ["SET", "key", "value"] ], ["SET", "key", "new", "NX"], false),
             new([], ["SET", "key", "new", "XX"], false),
@@ -344,7 +346,7 @@ public class FakeTransactionParityTests(RedisTestContainer fixture)
             "HIMPORT PREPARE", "HIMPORT DISCARD", "HIMPORT DISCARDALL",
             "SUBSCRIBE", "UNSUBSCRIBE", "PUBLISH", "XREAD",
             // Group cursor/PEL changes do not invalidate WATCH, unlike XGROUP CREATE ... MKSTREAM.
-            "XREADGROUP", "XACK",
+            "XREADGROUP", "XACK", "XPENDING", "XINFO",
             "SELECT", "CLIENT", "GET", "MGET", "EXISTS", "TYPE", "STRLEN", "TTL",
             "PTTL", "EXPIRETIME", "PEXPIRETIME", "HGET", "HMGET", "HGETALL", "HEXISTS", "HLEN",
             "HKEYS", "HVALS", "HSTRLEN", "SMEMBERS", "SCARD", "SISMEMBER", "SMISMEMBER", "SINTER",

@@ -227,6 +227,8 @@ public sealed partial class RespireFakeServer
         var streams = request.Keys.Select(key => Find(key)?.Stream).ToArray();
         if (request.Group is not null && streams.Any(stream => stream is null || !stream.Groups.ContainsKey(request.Group)))
             return FakeReply.Error("NOGROUP No such consumer group");
+        if (_createConsumersOnEmptyReads && request.Group is not null)
+            foreach (var stream in streams) stream!.Groups[request.Group].Consumers.Add(request.Consumer!);
         var pairs = new List<FakeReply>();
         long total = 0, bytes = 0;
         for (var i = 0; i < streams.Length; i++)

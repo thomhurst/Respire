@@ -17,7 +17,7 @@ using Respire;
 using Respire.DependencyInjection;
 using Respire.Streaming;
 
-var builder = Host.CreateApplicationBuilder(args);
+var builder = Host.CreateApplicationBuilder();
 builder.Services.AddRespire("redis://localhost:6379");
 builder.Services.AddRespireStreamWorker<OrderHandler>("orders", "fulfillment", new()
 {
@@ -38,7 +38,11 @@ public sealed class OrderHandler : IRespireStreamHandler<RespireStreamEntry>
 }
 ```
 
-Each registration creates a separate hosted service with unique consumer names.
+Each registration creates a separate hosted service with unique consumer names by default.
+Set `ConsumerName` to a stable name for a particular host slot when its next process should
+resume its own pending deliveries. Each reader appends its zero-based index to that name.
+Active hosts and registrations sharing a group must use different names; keep the same
+consumer count across restarts to retain all reader identities.
 Handlers are registered as scoped services unless already registered. A new asynchronous
 DI scope is created for each entry and disposed after handling and acknowledgement finish.
 Avoid registering a handler as a singleton when it depends on scoped services.
@@ -56,6 +60,7 @@ using System.Text.Json.Serialization;
 using Microsoft.Extensions.DependencyInjection;
 using Respire.Streaming;
 
+var services = new ServiceCollection();
 services.AddRespireStreamWorker<TypedOrderHandler, Order>("orders", "fulfillment",
     entry => JsonSerializer.Deserialize(entry["payload"], OrderJson.Default.Order)
         ?? throw new JsonException("Missing order payload."));
@@ -91,7 +96,11 @@ an unknown result, or handler cancellation leaves the entry pending. The worker 
 reading new entries. A warning reports handler/serializer failures without including their
 exception messages or payloads. DI activation, scope disposal, read and acknowledgement
 failures fault the background service and follow the application's `HostOptions`
-background-service failure policy.
+background-service failure policy. Handler activation failures, including transient dependency
+construction failures, stop the worker rather than retry activation. The first consumer's
+infrastructure failure reaches the host even when a sibling handler ignores cancellation;
+that sibling keeps its scope until it completes. Expected shutdown cancellation does not
+produce the handler-failure warning.
 
 On graceful shutdown, readers stop immediately and active handlers keep their cancellation
 token while draining. Undispatched entries from a fetched batch remain pending. When the
@@ -103,8 +112,15 @@ interrupt handling or acknowledgement.
 
 ## Pending messages and reliability
 
-This package currently provides the hosted consumer foundation. It does **not automatically
-retry pending entries**, apply a delivery limit or move messages to a dead-letter stream.
+This package currently provides the hosted consumer foundation. A configured stable
+`ConsumerName` replays that consumer's own pending IDs once at startup, in bounded pages,
+before reading new entries. A Nack during this replay remains pending and is not retried in
+a hot loop. Other consumers' pending entries are not claimed. Default random identities
+cannot resume a previous process's pending entries and accumulate consumer metadata across
+restarts; use stable host-slot identities and an external recovery/cleanup process as needed.
+
+The worker does **not automatically retry pending entries while running**, recover abandoned
+random identities, apply a delivery limit or move messages to a dead-letter stream.
 Inspect pending entries with `client.Streams.PendingSummaryAsync` and `PendingAsync`.
 Plan a separate recovery process before using this foundation for durable production jobs.
 
@@ -123,4 +139,7 @@ The full feature remains open in [#891](https://github.com/thomhurst/Respire/iss
 
 Use `RespireFakeServer` from `Respire.Testing` with its `CreateOptions()` client to test handlers
 without Docker. It supports this worker's group creation, blocking reads, acknowledgement,
-pending inspection and group metadata. Compatibility tests against real Redis remain necessary.
+pending inspection and group metadata. Default fake consumer registration matches Redis 7.0.
+Use `new RespireFakeServer(clock: null, createConsumersOnEmptyReads: true)` to model Redis 7.2
+or later registering consumers on empty new-entry reads. Compatibility tests against real
+Redis remain necessary.

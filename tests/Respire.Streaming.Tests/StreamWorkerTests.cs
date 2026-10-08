@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Threading.Channels;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Respire.Streaming;
 using Respire.Testing;
 using TUnit.Assertions;
@@ -63,6 +64,7 @@ public class StreamWorkerTests
         await UntilAsync(async () => (await fixture.View.Streams.PendingSummaryAsync("events", "workers")).Count == 1);
         await fixture.StopAsync();
         var pending = await fixture.View.Streams.PendingAsync("events", "workers");
+        await Assert.That(state.WarningCount).IsEqualTo(failure == "nack" ? 0 : 1);
         await Assert.That(pending.Length).IsEqualTo(1);
         await Assert.That(pending[0].DeliveryCount).IsEqualTo(1);
         await Assert.That(state.ScopeIds.Count).IsEqualTo(failure == "deserialize" ? 1 : 2);
@@ -237,6 +239,66 @@ public class StreamWorkerTests
     }
 
     [Test]
+    public async Task FirstConsumerFailureReachesTheHostWhileAnotherHandlerRemainsParked()
+    {
+        var release = NewSignal();
+        var canceled = NewSignal();
+        var state = new State { Handle = async (entry, token) =>
+        {
+            if (entry.GetString("payload") == "0")
+            {
+                using var registration = token.Register(() => canceled.TrySetResult());
+                await release.Task; // Ignore cancellation so the host and scope lifetimes differ.
+            }
+            return RespireStreamWorkerResult.Ack;
+        } };
+        await using var fixture = await Fixture.CreateAsync(state: state, options: new() { ConsumerCount = 2 });
+        using var fault = fixture.Server.InjectFault("XACK", RespireFakeFault.Loading());
+        await fixture.AddAsync(0);
+        await fixture.AddAsync(1);
+        try
+        {
+            await fixture.StartAsync();
+            await Assert.That(async () => await fixture.Service.ExecuteTask!.WaitAsync(Deadline))
+                .Throws<RespireServerException>();
+            await canceled.Task.WaitAsync(Deadline);
+            await Assert.That(state.Active).IsEqualTo(1);
+            await Assert.That(state.DisposedScopes).IsEqualTo(1);
+            fixture.Service.Dispose();
+            await Assert.That(state.DisposedScopes).IsEqualTo(1);
+            release.TrySetResult();
+            await UntilAsync(() => Task.FromResult(state.DisposedScopes == 2));
+            await Assert.That((await fixture.View.Streams.PendingSummaryAsync("events", "workers")).Count).IsEqualTo(2);
+        }
+        finally { release.TrySetResult(); }
+    }
+
+    [Test]
+    public async Task ExpectedShutdownCancellationDoesNotLogAHandlerFailure()
+    {
+        var canceled = NewSignal();
+        var state = new State { Handle = async (_, token) =>
+        {
+            try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
+            finally { canceled.TrySetResult(); }
+            return RespireStreamWorkerResult.Ack;
+        } };
+        await using var fixture = await Fixture.CreateAsync(state: state);
+        await fixture.AddAsync(0);
+        await fixture.StartAsync();
+        await state.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
+        using var stop = new CancellationTokenSource();
+        var stopping = fixture.Service.StopAsync(stop.Token);
+        stop.Cancel();
+        await stopping.WaitAsync(Deadline);
+        await canceled.Task.WaitAsync(Deadline);
+        await fixture.Service.ExecuteTask!.WaitAsync(Deadline);
+        await Assert.That(state.WarningCount).IsEqualTo(0);
+        await Assert.That(state.DisposedScopes).IsEqualTo(1);
+        await Assert.That((await fixture.View.Streams.PendingSummaryAsync("events", "workers")).Count).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task NewGroupPositionCanSkipExistingEntries()
     {
         await using var fixture = await Fixture.CreateAsync(options: new() { GroupStart = RespireStreamId.New });
@@ -247,6 +309,43 @@ public class StreamWorkerTests
         var entry = await fixture.State.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
         await Assert.That(entry.GetString("payload")).IsEqualTo("1");
     }
+
+    [Test]
+    [Arguments(2, false)]
+    [Arguments(2, true)]
+    [Arguments(3, false)]
+    [Arguments(3, true)]
+    public async Task StableConsumerReplaysItsOwnPendingOnceBeforeNewEntries(int protocol, bool nack)
+    {
+        var state = new State { Handle = (entry, _) => ValueTask.FromResult(
+            nack && entry.GetString("payload") == "0" ? RespireStreamWorkerResult.Nack : RespireStreamWorkerResult.Ack) };
+        await using var fixture = await Fixture.CreateAsync(protocol, state: state, options: new()
+        {
+            ConsumerName = "stable", BatchSize = 1, ReadWait = TimeSpan.FromMilliseconds(50),
+        });
+        for (var i = 0; i < 3; i++) await fixture.AddAsync(i);
+        await fixture.View.Streams.CreateGroupAsync("events", "workers", RespireStreamId.Beginning);
+        await fixture.View.Streams.ReadGroupOnceAsync("events", "workers", "stable-0", new() { Count = 1 });
+        await fixture.View.Streams.ReadGroupOnceAsync("events", "workers", "other-0", new() { Count = 1 });
+        await fixture.StartAsync();
+        var replay = await state.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
+        var fresh = await state.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
+        await Assert.That(replay.GetString("payload")).IsEqualTo("0");
+        await Assert.That(fresh.GetString("payload")).IsEqualTo("2");
+        await UntilAsync(async () => (await fixture.View.Streams.PendingSummaryAsync("events", "workers")).Count == (nack ? 2 : 1));
+        await Task.Delay(100); // Two new-entry blocking intervals must not redeliver the Nack.
+        await Assert.That(state.Deliveries.Reader.TryRead(out _)).IsFalse();
+        var pending = await fixture.View.Streams.PendingAsync("events", "workers");
+        await Assert.That(pending.Single(entry => entry.Consumer == "other-0").DeliveryCount).IsEqualTo(1);
+        if (nack) await Assert.That(pending.Single(entry => entry.Consumer == "stable-0").DeliveryCount).IsEqualTo(2);
+    }
+
+    [Test]
+    [Arguments("")]
+    [Arguments(" ")]
+    public async Task EmptyStableConsumerNamesFailDuringRegistration(string name)
+        => await Assert.That(() => new ServiceCollection().AddRespireStreamWorker<EntryHandler>("events", "workers",
+            new() { ConsumerName = name })).Throws<ArgumentException>();
 
     [Test]
     [Arguments(0, 1, 1)]
@@ -281,6 +380,7 @@ public class StreamWorkerTests
         public int Active;
         public int Peak;
         public int DisposedScopes;
+        public int WarningCount;
     }
 
     public sealed class ScopeProbe(State state) : IAsyncDisposable
@@ -318,6 +418,22 @@ public class StreamWorkerTests
         }
     }
 
+    private sealed class RecordingLoggerProvider(State state) : ILoggerProvider
+    {
+        public ILogger CreateLogger(string categoryName) => new RecordingLogger(state);
+        public void Dispose() { }
+        private sealed class RecordingLogger(State state) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState value) where TState : notnull => null;
+            public bool IsEnabled(LogLevel logLevel) => true;
+            public void Log<TState>(LogLevel logLevel, EventId eventId, TState value, Exception? exception,
+                Func<TState, Exception?, string> formatter)
+            {
+                if (logLevel == LogLevel.Warning) Interlocked.Increment(ref state.WarningCount);
+            }
+        }
+    }
+
     private sealed class Fixture : IAsyncDisposable
     {
         public required RespireFakeServer Server { get; init; }
@@ -338,6 +454,7 @@ public class StreamWorkerTests
             state ??= new State();
             var collection = new ServiceCollection().AddSingleton(state).AddScoped<ScopeProbe>()
                 .AddSingleton<IRespireClient>(view);
+            collection.AddLogging(logging => logging.AddProvider(new RecordingLoggerProvider(state)));
             for (var i = 0; i < registrations; i++)
             {
                 if (typed)

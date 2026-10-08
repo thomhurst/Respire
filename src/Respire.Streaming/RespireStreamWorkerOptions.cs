@@ -3,6 +3,11 @@ namespace Respire.Streaming;
 /// <summary>Immutable settings captured when registering a hosted stream consumer.</summary>
 public sealed record RespireStreamWorkerOptions
 {
+    /// <summary>Stable consumer-name base, suffixed with each reader's index. Null creates unique names.</summary>
+    /// <remarks>Reuse the same name and consumer count to replay owned pending entries once at startup.
+    /// Active registrations and hosts sharing a group must use different names.</remarks>
+    public string? ConsumerName { get; init; }
+
     /// <summary>Maximum simultaneous handlers and blocking readers. Defaults to one.</summary>
     public int ConsumerCount { get; init; } = 1;
 
@@ -20,6 +25,7 @@ public sealed record RespireStreamWorkerOptions
 
     internal void Validate()
     {
+        if (ConsumerName is not null) ArgumentException.ThrowIfNullOrWhiteSpace(ConsumerName);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(ConsumerCount);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(BatchSize);
         if (ReadWait <= TimeSpan.Zero || ReadWait > TimeSpan.FromMilliseconds(int.MaxValue))

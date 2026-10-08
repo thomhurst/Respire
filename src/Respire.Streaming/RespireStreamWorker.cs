@@ -12,30 +12,59 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
     where THandler : class, IRespireStreamHandler<TMessage>
 {
     private readonly CancellationTokenSource _handlers = new();
-    private readonly string _identity = Guid.NewGuid().ToString("N");
+    private readonly string _identity = options.ConsumerName ?? Guid.NewGuid().ToString("N");
+    private readonly TaskCompletionSource _firstFailure = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private Task? _consumerDrain;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var readers = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-        if (options.CreateGroup)
-            await client.Streams.CreateGroupAsync(stream, group, options.GroupStart,
-                cancellationToken: readers.Token).ConfigureAwait(false);
+        var readers = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+        try
+        {
+            if (options.CreateGroup)
+                await client.Streams.CreateGroupAsync(stream, group, options.GroupStart,
+                    cancellationToken: readers.Token).ConfigureAwait(false);
+        }
+        catch { readers.Dispose(); throw; }
 
         var consumers = new Task[options.ConsumerCount];
         for (var i = 0; i < consumers.Length; i++)
             consumers[i] = ConsumeAsync($"{_identity}-{i}", readers);
-        await Task.WhenAll(consumers).ConfigureAwait(false);
+        var drain = DrainConsumersAsync(consumers, readers);
+        Volatile.Write(ref _consumerDrain, drain);
+        // A failed reader must reach the host even if a sibling ignores cancellation.
+        // Its handler scope remains owned by that sibling until the separate drain ends.
+        await Task.WhenAny(_firstFailure.Task, drain).ConfigureAwait(false);
+        // The fault's asynchronous continuation can lose to an already completed drain.
+        // Its published state still takes precedence over clean completion.
+        if (_firstFailure.Task.IsCompleted) await _firstFailure.Task.ConfigureAwait(false);
+    }
+
+    private static async Task DrainConsumersAsync(Task[] consumers, CancellationTokenSource readers)
+    {
+        try { await Task.WhenAll(consumers).ConfigureAwait(false); }
+        catch { /* ConsumeAsync has already published the first fault to the host. */ }
+        finally { readers.Dispose(); }
     }
 
     private async Task ConsumeAsync(string consumer, CancellationTokenSource readers)
     {
         var readOptions = new StreamReadOptions { Count = options.BatchSize, WaitFor = options.ReadWait };
+        RespireStreamId? cursor = options.ConsumerName is null ? (RespireStreamId?)null : RespireStreamId.Beginning;
         try
         {
             while (!readers.IsCancellationRequested)
             {
-                var entries = await client.Streams.ReadGroupOnceAsync(stream, group, consumer, readOptions,
-                    cancellationToken: readers.Token).ConfigureAwait(false);
+                var entries = await client.Streams.ReadGroupOnceAsync(stream, group, consumer,
+                    cursor.HasValue ? readOptions with { WaitFor = null } : readOptions,
+                    cursor, readers.Token).ConfigureAwait(false);
+                if (cursor.HasValue)
+                {
+                    // Visit each owned pending ID once at startup, including a Nack. Moving
+                    // the cursor prevents a failed entry from becoming a hot retry loop.
+                    if (entries.Length == 0) { cursor = null; continue; }
+                    cursor = entries[^1].Id;
+                }
                 foreach (var entry in entries)
                 {
                     // A batch delivered during shutdown stays pending rather than starting more handlers.
@@ -45,10 +74,11 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             }
         }
         catch (OperationCanceledException) when (readers.IsCancellationRequested) { }
-        catch
+        catch (Exception error)
         {
-            await readers.CancelAsync().ConfigureAwait(false);
-            CancelHandlers();
+            _firstFailure.TrySetException(error);
+            try { await readers.CancelAsync().ConfigureAwait(false); }
+            finally { CancelHandlers(); }
             throw;
         }
     }
@@ -64,6 +94,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             if (result is not (RespireStreamWorkerResult.Ack or RespireStreamWorkerResult.Nack))
                 throw new InvalidOperationException("The stream handler returned an unknown completion result.");
         }
+        catch (OperationCanceledException) when (_handlers.IsCancellationRequested) { return; }
         catch (Exception)
         {
             // Exception messages may contain payloads. Do not pass them to the logger by default.
@@ -92,7 +123,8 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
     {
         CancelHandlers();
         base.Dispose();
-        if (ExecuteTask is not { IsCompleted: false } running)
+        var running = Volatile.Read(ref _consumerDrain) ?? ExecuteTask;
+        if (running is not { IsCompleted: false })
             _handlers.Dispose();
         else
             _ = running.ContinueWith(static (_, state) => ((CancellationTokenSource)state!).Dispose(), _handlers,
