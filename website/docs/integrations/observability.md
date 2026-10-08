@@ -505,12 +505,11 @@ exception does not create a new measurement. Caller cancellation retains the ori
 exception and token. Listener exceptions are isolated from propagation and recovery.
 
 Caller-requested cancellation is intentionally included when it escapes an observed
-operation: category `other`, with its original cancellation exception type. It is not
+operation: category `cancelled`, with its original cancellation exception type. It is not
 evidence of a transport outage. `RespireTimeoutException` uses `network` for the failed
 client transport/deadline boundary; this does not identify whether the underlying cause
 was a slow server, pool contention, or a network fault. Filter by `error.type` when
-separating cancellations or deadlines from outage alerts. The categories remain the five
-values used by this mapping; no `cancelled` or `timeout` category is introduced.
+separating cancellations or deadlines from outage alerts. No `timeout` category is introduced.
 
 Wrapper traversal is capped at sixteen links to bound observation work for external
 exception chains. A deeper chain is classified from the remaining wrapper, so its
