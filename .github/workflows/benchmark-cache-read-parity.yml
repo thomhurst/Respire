@@ -1,5 +1,7 @@
 name: Client cache read parity benchmarks
 
+# Keep fixture, filter, case count and allocation checks aligned with benchmark-cache-read.yml.
+# The sibling requires a concurrent-hit speedup; this workflow measures correctness parity.
 on:
   pull_request:
     types: [labeled]
