@@ -137,7 +137,7 @@ public sealed class RespireJsonGenerator : IIncrementalGenerator
     private static string TypeName(ITypeSymbol type) => type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat
         .WithMiscellaneousOptions(SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier));
 
-    private static string EscapePathName(string value)
+    internal static string EscapePathName(string value)
     {
         var escaped = new StringBuilder();
         foreach (var character in value)
@@ -152,6 +152,11 @@ public sealed class RespireJsonGenerator : IIncrementalGenerator
 
     private static void RenderPropertyConverter(StringBuilder source, IPropertySymbol property, int index)
     {
+        if (property.Type is IArrayTypeSymbol array)
+        {
+            RenderVectorConverter(source, property, array, index);
+            return;
+        }
         var type = TypeName(property.Type);
         var kind = ScalarKind(property.Type)!;
         var read = kind switch
@@ -187,5 +192,30 @@ public sealed class RespireJsonGenerator : IIncrementalGenerator
         else if (kind == "String") source.Append("            if (value is null) throw new global::System.Text.Json.JsonException(").Append(Literal("Null required JSON property: " + JsonName(property))).Append(");\n");
         var value = IsNullable(property.Type) && property.Type.IsValueType ? "value.Value" : "value";
         source.Append("            writer.").Append(write).Append('(').Append(value).Append(");\n        }\n    }\n");
+    }
+
+    private static void RenderVectorConverter(StringBuilder source, IPropertySymbol property, IArrayTypeSymbol array, int index)
+    {
+        var type = TypeName(property.Type);
+        var element = TypeName(array.ElementType);
+        var options = RespireSearchGenerator.VectorOptions(RespireSearchGenerator.VectorAttribute(property)!);
+        var getter = array.ElementType.SpecialType == SpecialType.System_Single ? "GetSingle" : "GetDouble";
+        source.Append("    private sealed class PropertyConverter").Append(index)
+            .Append(" : global::System.Text.Json.Serialization.JsonConverter<").Append(type).Append(">\n    {\n")
+            .Append("        private static readonly global::Respire.Search.RespireSearchVectorOptions VectorOptions = ").Append(options).Append(";\n")
+            .Append("        public override bool HandleNull => true;\n")
+            .Append("        public override ").Append(type).Append(" Read(ref global::System.Text.Json.Utf8JsonReader reader, global::System.Type typeToConvert, global::System.Text.Json.JsonSerializerOptions options)\n        {\n")
+            .Append("            if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null) return default!;\n")
+            .Append("            if (reader.TokenType != global::System.Text.Json.JsonTokenType.StartArray) throw new global::System.Text.Json.JsonException(\"Expected a vector array.\");\n")
+            .Append("            var elements = new global::System.Collections.Generic.List<").Append(element).Append(">();\n")
+            .Append("            while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndArray)\n            {\n")
+            .Append("                if (reader.TokenType != global::System.Text.Json.JsonTokenType.Number || elements.Count >= VectorOptions.Dimensions) throw new global::System.Text.Json.JsonException(\"Invalid vector dimensions or element.\");\n")
+            .Append("                elements.Add(reader.").Append(getter).Append("());\n            }\n")
+            .Append("            if (reader.TokenType != global::System.Text.Json.JsonTokenType.EndArray) throw new global::System.Text.Json.JsonException(\"Incomplete vector array.\");\n")
+            .Append("            var value = elements.ToArray();\n            global::Respire.Search.RespireSearchVectorValidation.ValidateJson(value, VectorOptions);\n            return value;\n        }\n")
+            .Append("        public override void Write(global::System.Text.Json.Utf8JsonWriter writer, ").Append(type).Append(" value, global::System.Text.Json.JsonSerializerOptions options)\n        {\n");
+        if (IsNullable(property.Type)) source.Append("            if (value is null) { writer.WriteNullValue(); return; }\n");
+        source.Append("            global::Respire.Search.RespireSearchVectorValidation.ValidateJson(value, VectorOptions);\n")
+            .Append("            writer.WriteStartArray();\n            foreach (var element in value) writer.WriteNumberValue(element);\n            writer.WriteEndArray();\n        }\n    }\n");
     }
 }

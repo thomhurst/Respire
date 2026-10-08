@@ -52,6 +52,8 @@ Server and protocol requirements vary by feature; each linked guide describes it
   [probabilistic](guides/probabilistic.md), and [vector-set](guides/vector-sets.md) APIs.
 - [Generated JSON mappers](guides/generated-json-mappers.md) with reflection-free scalar codecs,
   model key templates, and typed RedisJSON document and property operations.
+- [Generated Search schemas](guides/generated-search-schemas.md) for mapped hash and JSON properties,
+  with vector codecs, compile-time diagnostics and a public VectorStore metadata seam.
 
 ### Caching, integration, and testing
 
@@ -82,7 +84,7 @@ acceptance criteria, dependencies, and current status:
   [Generated hash codecs](./guides/generated-hash-codecs) provide scalar model conversion, key templates,
   Redis hash writes/full reads, explicit partial reads, field TTL and change tracking. The remaining
   [object mapper work](https://github.com/thomhurst/Respire/issues/895) includes
-  Search and final AOT/performance acceptance.
+  final AOT/performance acceptance.
 - [Documentation and samples](https://github.com/thomhurst/Respire/issues/861): guides and runnable
   examples for the expanded feature set.
 

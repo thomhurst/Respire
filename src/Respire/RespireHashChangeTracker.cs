@@ -9,12 +9,13 @@ public sealed class RespireHashChangeTracker<T> where T : class
 {
     private readonly IRespireClient _client;
     private readonly RespireKey _key;
-    private readonly Func<T, Dictionary<string, string>> _encode;
+    private readonly Func<T, Dictionary<string, RespireValue>> _encode;
     private readonly string[] _mappedFields;
     private readonly Dictionary<string, long> _fieldTtls;
     private readonly RespireHashExpiryMode _expiryMode;
+    private readonly bool _binary;
     private readonly HashSet<string> _retryFields = new(StringComparer.Ordinal);
-    private Dictionary<string, string>? _baseline;
+    private Dictionary<string, RespireValue>? _baseline;
     private int _updating;
     private bool _writeTimedOut;
 
@@ -24,6 +25,21 @@ public sealed class RespireHashChangeTracker<T> where T : class
         Func<T, Dictionary<string, string>> encode, string[] mappedFields,
         IReadOnlyDictionary<string, long> fieldTtls, T? baseline = null,
         RespireHashExpiryMode expiryMode = RespireHashExpiryMode.HSetEx)
+        : this(client, key, SnapshotEncoder(encode, static value => value), mappedFields, fieldTtls, baseline, expiryMode)
+    {
+    }
+
+    /// <summary>Infrastructure factory for generated mappers with binary vector fields.</summary>
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    public static RespireHashChangeTracker<T> CreateBinary(IRespireClient client, RespireKey key,
+        Func<T, Dictionary<string, byte[]>> encode, string[] mappedFields,
+        IReadOnlyDictionary<string, long> fieldTtls, T? baseline = null,
+        RespireHashExpiryMode expiryMode = RespireHashExpiryMode.HSetEx)
+        => new(client, key, SnapshotEncoder(encode, static value => (byte[])value.Clone()), mappedFields, fieldTtls, baseline, expiryMode, binary: true);
+
+    private RespireHashChangeTracker(IRespireClient client, RespireKey key,
+        Func<T, Dictionary<string, RespireValue>> encode, string[] mappedFields,
+        IReadOnlyDictionary<string, long> fieldTtls, T? baseline, RespireHashExpiryMode expiryMode, bool binary = false)
     {
         ArgumentNullException.ThrowIfNull(client);
         ArgumentNullException.ThrowIfNull(encode);
@@ -36,7 +52,25 @@ public sealed class RespireHashChangeTracker<T> where T : class
         _mappedFields = (string[])mappedFields.Clone();
         _fieldTtls = new Dictionary<string, long>(fieldTtls, StringComparer.Ordinal);
         _expiryMode = expiryMode;
-        _baseline = baseline is null ? null : new Dictionary<string, string>(encode(baseline), StringComparer.Ordinal);
+        _binary = binary;
+        _baseline = baseline is null ? null : encode(baseline);
+    }
+
+    private static Func<T, Dictionary<string, RespireValue>> SnapshotEncoder<TField>(
+        Func<T, Dictionary<string, TField>> encode, Func<TField, RespireValue> snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(encode);
+        return value =>
+        {
+            var encoded = encode(value);
+            var owned = new Dictionary<string, RespireValue>(encoded.Count, StringComparer.Ordinal);
+            foreach (var field in encoded)
+            {
+                ArgumentNullException.ThrowIfNull(field.Value);
+                owned.Add(field.Key, snapshot(field.Value));
+            }
+            return owned;
+        };
     }
 
     /// <summary>Writes changed fields and removes fields changed to null. An unchanged model sends no commands.</summary>
@@ -55,14 +89,14 @@ public sealed class RespireHashChangeTracker<T> where T : class
         {
             if (_writeTimedOut)
                 throw new InvalidOperationException("A timed-out hash write may still execute. Wait for prior commands to settle and recreate the tracker from persisted values.");
-            var next = new Dictionary<string, string>(_encode(value), StringComparer.Ordinal);
+            var next = _encode(value);
             var changed = new List<string>();
-            var writes = new Dictionary<string, string>(StringComparer.Ordinal);
+            var writes = new Dictionary<string, RespireValue>(StringComparer.Ordinal);
             foreach (var field in _mappedFields)
             {
                 var present = next.TryGetValue(field, out var text);
                 if (!_retryFields.Contains(field) && _baseline is not null && _baseline.TryGetValue(field, out var previous) == present
-                    && (!present || StringComparer.Ordinal.Equals(previous, text))) continue;
+                    && (!present || ValuesEqual(previous, text))) continue;
                 changed.Add(field);
                 if (present) writes.Add(field, text!);
             }
@@ -72,7 +106,7 @@ public sealed class RespireHashChangeTracker<T> where T : class
                 try
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    await RespireHashModelIO.WriteAsync(_client, _key, writes, changed.ToArray(),
+                    await RespireHashModelIO.WriteValuesAsync(_client, _key, writes, changed.ToArray(),
                         _fieldTtls, _expiryMode, cancellationToken, () => writeStarted = true).ConfigureAwait(false);
                 }
                 catch (Exception error)
@@ -96,4 +130,8 @@ public sealed class RespireHashChangeTracker<T> where T : class
             Volatile.Write(ref _updating, 0);
         }
     }
+
+    private bool ValuesEqual(RespireValue left, RespireValue right) => _binary
+        ? left.Equals(right)
+        : StringComparer.Ordinal.Equals(left.ToString(), right.ToString());
 }

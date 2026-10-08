@@ -93,9 +93,11 @@ insert literal braces, and numeric values use invariant formatting. A null model
 string key property fails before I/O. Nullable placeholders and malformed templates are rejected.
 
 `RESP005` reports unsupported shapes, inaccessible construction, invalid templates, mapper name
-collisions, duplicate storage names, and unsupported serialization attributes. Collections, nested
+collisions, duplicate storage names, and unsupported serialization attributes. Except for indexed
+`float[]`/`double[]` vectors in [generated Search schemas](generated-search-schemas.md), collections, nested
 objects, public fields, indexers, custom converters, `[JsonIgnore]`, `[JsonInclude]`, extension data,
 and polymorphic/type serialization attributes are not supported. Invalid models emit no mapper.
 
-Generated hash Redis I/O, field TTL, change tracking, Search mapping, and final mapper performance
-acceptance remain tracked by [#895](https://github.com/thomhurst/Respire/issues/895).
+Generated hash Redis I/O, field TTL, change tracking and [Search mapping](generated-search-schemas.md)
+are available. Final mapper performance acceptance remains tracked by
+[#895](https://github.com/thomhurst/Respire/issues/895).

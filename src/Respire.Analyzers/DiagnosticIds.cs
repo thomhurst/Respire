@@ -18,5 +18,8 @@ public static class DiagnosticIds
     /// <summary>A <c>[RespireJson]</c> model cannot be generated.</summary>
     public const string InvalidGeneratedJson = "RESP005";
 
+    /// <summary>A generated Search schema has an incompatible model, field or option.</summary>
+    public const string InvalidGeneratedSearch = "RESP006";
+
     internal const string Category = "Respire";
 }
