@@ -93,8 +93,17 @@ public class FrameSerializationSelectionTests
     [Test]
     public async Task MixedProducersPreserveExactPayloadsAndFifoRepliesAcrossCapacityWaits()
     {
+        var full = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var holdReplies = 1;
+        var heldCommands = 0;
         await using var server = new FakeRespServer(FakeRespServer.OkReply)
         {
+            SuppressReply = _ =>
+            {
+                if (Volatile.Read(ref holdReplies) == 0) return false;
+                if (Interlocked.Increment(ref heldCommands) == 4) full.TrySetResult();
+                return true;
+            },
             ReplyOverride = (_, command) => command.StartsWith("ECHO ", StringComparison.Ordinal)
                 ? Encoding.UTF8.GetBytes("+" + command[5..] + "\r\n") : null,
         };
@@ -103,6 +112,32 @@ public class FrameSerializationSelectionTests
         var binary = Enumerable.Range(0, 70_000).Select(index => (byte)index).ToArray();
         var text = new string('a', 35_000) + "é😀";
         var textBytes = Encoding.UTF8.GetBytes(text);
+        var first = new Task<RespValue>[4];
+        for (var worker = 0; worker < first.Length; worker++)
+        {
+            RespireValue payload = worker % 2 == 0 ? binary : text;
+            first[worker] = connection.SendAsync(new Cmd2(Verbs.Set, $"worker-{worker}-prime", payload)).AsTask();
+        }
+        await full.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var waitingFrame = Serialize(new Cmd1(RespireCommands.Connection.ECHO.Verb, "capacity-wait"));
+        var serialized = 0;
+        var waiting = connection.SendAsync(new ObservedCommand(waitingFrame, waitingFrame.Length,
+            static () => { }, () => Interlocked.Increment(ref serialized))).AsTask();
+        await Assert.That(connection.InspectForTests().Inflight.Count).IsEqualTo(4);
+        await Assert.That(server.CommandsSeen).IsEqualTo(4);
+        await Assert.That(waiting.IsCompleted).IsFalse();
+        await Assert.That(Volatile.Read(ref serialized)).IsEqualTo(0);
+        Volatile.Write(ref holdReplies, 0);
+        await server.SendRawAsync("+OK\r\n+OK\r\n+OK\r\n+OK\r\n"u8.ToArray());
+        foreach (var pending in first)
+        {
+            using var reply = await pending.WaitAsync(TimeSpan.FromSeconds(10));
+            await Assert.That(reply.AsString()).IsEqualTo("OK");
+        }
+        using (var reply = await waiting.WaitAsync(TimeSpan.FromSeconds(10)))
+            await Assert.That(reply.AsString()).IsEqualTo("capacity-wait");
+        await Assert.That(Volatile.Read(ref serialized)).IsEqualTo(1);
+
         await Task.WhenAll(Enumerable.Range(0, 8).Select(worker => Task.Run(async () =>
         {
             for (var iteration = 0; iteration < 3; iteration++)
@@ -118,7 +153,7 @@ public class FrameSerializationSelectionTests
             }
         }))).WaitAsync(TimeSpan.FromSeconds(10));
         var received = server.ReceivedArguments;
-        await Assert.That(received.Count).IsEqualTo(48);
+        await Assert.That(received.Count).IsEqualTo(53);
         var identities = new HashSet<string>();
         foreach (var arguments in received)
         {
@@ -128,7 +163,7 @@ public class FrameSerializationSelectionTests
             await Assert.That(identities.Add(identity)).IsTrue();
             await Assert.That(arguments[2].AsSpan().SequenceEqual(worker % 2 == 0 ? binary : textBytes)).IsTrue();
         }
-        await Assert.That(identities.Count).IsEqualTo(24);
+        await Assert.That(identities.Count).IsEqualTo(28);
         await Assert.That(connection.InspectForTests().Inflight.Count).IsEqualTo(0);
     }
 
