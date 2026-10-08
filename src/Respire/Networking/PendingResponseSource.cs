@@ -18,6 +18,9 @@ namespace Respire.Networking;
 /// </remarks>
 internal abstract partial class PendingResponse
 {
+    // RegisterCancellation publishes both fields on the caller thread before enqueue.
+    // ReleaseCallerRef drains and clears both before releasing caller ownership. Keep
+    // registration assignments in that pair so reuse cannot retain an old callback.
     private CancellationTokenRegistration _cancellationRegistration;
     private bool _hasCancellationRegistration;
 
