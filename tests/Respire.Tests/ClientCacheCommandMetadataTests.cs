@@ -12,6 +12,83 @@ namespace Respire.Tests;
 public class ClientCacheCommandMetadataTests
 {
     [Test]
+    [Arguments("SCRIPT  LOAD", 2, "$6\r\nSCRIPT\r\n$4\r\nLOAD\r\n")]
+    [Arguments("  CLIENT   LIST  ", 2, "$6\r\nCLIENT\r\n$4\r\nLIST\r\n")]
+    [Arguments("ABCDEFGHIJ", 1, "$10\r\nABCDEFGHIJ\r\n")]
+    public async Task SharedTokenizerPreservesWireBytes(string command, int count, string expected)
+    {
+        var verb = new Verb(command);
+        await Assert.That(verb.Tokens).IsEqualTo(count);
+        await Assert.That(System.Text.Encoding.ASCII.GetString(verb.Bulk)).IsEqualTo(expected);
+    }
+
+    [Test]
+    public async Task CopiedVerbsPublishCompleteMetadataToConcurrentFirstUsers()
+    {
+        var verb = new Verb("ZUNIONSTORE");
+        var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var readers = Enumerable.Range(0, 64).Select(async _ =>
+        {
+            var copy = new Cmd(verb);
+            await start.Task;
+            return copy.GetClientCacheMetadata("ZUNIONSTORE");
+        }).ToArray();
+        start.SetResult();
+        foreach (var value in await Task.WhenAll(readers))
+        {
+            await Assert.That(value.IsInitialized).IsTrue();
+            await Assert.That(value.Policy).IsEqualTo(CommandCacheMutationMetadata.Get("ZUNIONSTORE"));
+            await Assert.That(value.ArgumentLayout).IsEqualTo(RawCommandKeyLayouts.LayoutKind.CountedWithDestination);
+            await Assert.That(value.MutationKind).IsEqualTo(RawCommandKeyLayouts.MutationKind.FirstArgument);
+            await Assert.That(value.CacheableRead).IsFalse();
+        }
+        await Assert.That(default(Verb).CacheMetadata.IsInitialized).IsFalse();
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task CacheDisabledVerbsLeaveCacheTablesColdUntilFirstClassification()
+    {
+        // Warm the measurement and reflection machinery in a separate collectible context.
+        using var warm = new ColdMetadataContext();
+        _ = MeasureFirstAndRepeatedClassification(warm.GetMetadata);
+        _ = MeasureFirstAndRepeatedClassification(warm.GetMetadata);
+        using var cold = new ColdMetadataContext();
+        var result = AllocationMeasurement.WithoutConcurrentGc(() =>
+            MeasureFirstAndRepeatedClassification(cold.GetMetadata));
+        await Assert.That(result.First - result.Repeated).IsGreaterThan(16_384);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static (long First, long Repeated) MeasureFirstAndRepeatedClassification(MethodInfo method)
+    {
+        object[] arguments = ["SET"];
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        _ = method.Invoke(null, arguments);
+        var first = GC.GetAllocatedBytesForCurrentThread() - before;
+        before = GC.GetAllocatedBytesForCurrentThread();
+        _ = method.Invoke(null, arguments);
+        return (first, GC.GetAllocatedBytesForCurrentThread() - before);
+    }
+
+    private sealed class ColdMetadataContext : IDisposable
+    {
+        private readonly AssemblyLoadContext _context = new($"cold-cache-{Guid.NewGuid()}", isCollectible: true);
+        internal MethodInfo GetMetadata { get; }
+
+        internal ColdMetadataContext()
+        {
+            var assembly = _context.LoadFromAssemblyPath(typeof(RespireClient).Assembly.Location);
+            // Materialize all normal typed verbs without invoking a cache-specific API.
+            _ = assembly.GetType("Respire.Commands.Verbs")!.GetField("Set")!.GetValue(null);
+            GetMetadata = assembly.GetType("Respire.Commands.ClientCacheCommandMetadata")!
+                .GetMethod("Get", BindingFlags.Static | BindingFlags.NonPublic)!;
+        }
+
+        public void Dispose() => _context.Unload();
+    }
+
+    [Test]
     [Arguments("verb")]
     [Arguments("layout")]
     [Arguments("policy")]
@@ -41,7 +118,7 @@ public class ClientCacheCommandMetadataTests
                 var name = (string)type.GetProperty("Name")!.GetValue(descriptor)!;
                 await Assert.That(string.IsNullOrWhiteSpace(name)).IsFalse();
                 var verb = type.GetProperty("Verb", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(descriptor)!;
-                var metadata = verb.GetType().GetField("CacheMetadata")!.GetValue(verb)!;
+                var metadata = verb.GetType().GetProperty("CacheMetadata")!.GetValue(verb)!;
                 var policy = metadata.GetType().GetProperty("Policy", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(metadata)!;
                 await Assert.That(policy.ToString()).IsEqualTo(type.GetProperty("CacheMutation")!.GetValue(descriptor)!.ToString()).Because(name);
                 count++;
@@ -82,6 +159,8 @@ public class ClientCacheCommandMetadataTests
         }
         await Assert.That(new Verb("get").CacheMetadata.CacheableRead).IsTrue();
         await Assert.That(new Verb("set").CacheMetadata.Policy).IsEqualTo(RespireCacheMutation.Mutation);
+        await Assert.That(ClientCacheCommandMetadata.GetForWireVerb("script flush async").Policy)
+            .IsEqualTo(Verbs.ScriptFlush.CacheMetadata.Policy);
         var custom = new Cmd1(new Verb("CUSTOM.READ"), "key");
         await Assert.That(custom.GetClientCacheMetadata("CUSTOM.READ").CacheableRead).IsFalse();
         await Assert.That(custom.GetCacheMutation("CUSTOM.READ")).IsEqualTo(RespireCacheMutation.Unknown);

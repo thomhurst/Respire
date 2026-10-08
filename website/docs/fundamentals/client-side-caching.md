@@ -203,7 +203,9 @@ for `GET`, `MGET`, and `HGET`, plus hot `GET`, against both same-run baseline co
 include one complete burst and its local cache eviction. Process CPU counters include benchmark
 warmup/calibration and background client work; they are diagnostic, not per-operation CPU samples.
 
-Known command descriptors retain cache classification computed when their verbs initialize.
+Known command descriptors share cache classification computed on their first cache use.
+Normal typed verb construction does not initialize cache-only classification tables. Each
+verb retains one small lazy holder; cached callers then read its immutable four-byte value.
 Argument-dependent key counts, destination layouts, and `CLIENT` subcommands are still
 checked for each invocation. Explicit mutation declarations remain effective, and unknown
 commands retain conservative invalidation.
