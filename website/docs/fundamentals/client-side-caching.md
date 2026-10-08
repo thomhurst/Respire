@@ -195,6 +195,11 @@ counter `respire.client_cache.shared_read.retirements` counts pending identities
 clearing, or continuity loss. Normal completion and last-caller cancellation are excluded.
 Use this counter to assess how often churn prevents new callers from joining existing work.
 
+With sharing enabled, writes and continuity flushes skip the shared-read gate when no read
+is joinable or being admitted. Retired producers may still finish for their original callers.
+Read admission and overlapping invalidations remain fenced, and both pre-command and
+post-command cache invalidation remain in place.
+
 Sharing adds bookkeeping and owned-result copies on misses. Keep the default independent
 requests for workloads with little contention. A sole remaining waiter can take the producer's
 owned result; other waiters receive separate copies. Cache hits retain their existing fast path. The CI contention benchmark
@@ -202,6 +207,19 @@ compares default single-caller misses, opted-in single-caller misses, and opted-
 for `GET`, `MGET`, and `HGET`, plus hot `GET`, against both same-run baseline controls. Latency and allocations
 include one complete burst and its local cache eviction. Process CPU counters include benchmark
 warmup/calibration and background client work; they are diagnostic, not per-operation CPU samples.
+
+The separate cache-write comparison covers 50 concurrent `SET` callers with sharing enabled,
+sharing disabled, and caching disabled, plus concurrent `SET`/`GET` pairs and shared `GET` miss
+bursts. Its allocation and latency measurements include task scheduling and result validation.
+The threading diagnostic reports total monitor contention; it does not identify the cache's
+shared-read gate. Use workload-specific results before drawing throughput conclusions.
+
+In the [pinned net10.0 comparison](https://github.com/thomhurst/Respire/actions/runs/37712936222),
+empty-sharing cached `SET` measured 5.44 microseconds per normalized operation versus 5.53/5.54
+for the bracketing controls, with 37 bytes allocated in all three phases. Confidence intervals
+overlap, so this run does not establish a throughput gain. Cache-off, disabled-sharing,
+concurrent read/write, and shared-miss controls also have overlapping intervals. The specific
+benefit is eliminating empty shared-gate acquisitions; no general latency improvement is claimed.
 
 ## Partial hash reads
 

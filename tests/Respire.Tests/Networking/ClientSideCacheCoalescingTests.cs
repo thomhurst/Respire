@@ -13,6 +13,100 @@ public class ClientSideCacheCoalescingTests
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(5);
 
     [Test]
+    [Arguments(1)]
+    [Arguments(17)]
+    [Arguments(257)]
+    public async Task ConcurrentWritesAndRandomizedReadsLeaveOnlyCurrentCachedValues(int seed)
+    {
+        const int writes = 64;
+        var versions = new int[4];
+        var keys = Enumerable.Range(0, versions.Length).Select(index => $"stress:{index}").ToArray();
+        await using var server = new FakeRespServer(10_000, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) =>
+            {
+                if (command.StartsWith("HELLO ", StringComparison.Ordinal)) return Hello;
+                if (command.StartsWith("SET stress:", StringComparison.Ordinal))
+                {
+                    var parts = command.Split(' ');
+                    var index = int.Parse(parts[1].AsSpan("stress:".Length), System.Globalization.CultureInfo.InvariantCulture);
+                    Volatile.Write(ref versions[index], int.Parse(parts[2], System.Globalization.CultureInfo.InvariantCulture));
+                    return FakeRespServer.OkReply;
+                }
+                if (command.StartsWith("GET stress:", StringComparison.Ordinal))
+                {
+                    var index = int.Parse(command.AsSpan("GET stress:".Length), System.Globalization.CultureInfo.InvariantCulture);
+                    var value = Volatile.Read(ref versions[index]).ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    return Encoding.ASCII.GetBytes($"${value.Length}\r\n{value}\r\n");
+                }
+                return FakeRespServer.OkReply;
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Connections = 2, CommandTimeout = TimeSpan.FromSeconds(10),
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
+            ClientSideCache = new() { CoalesceConcurrentMisses = true },
+            Endpoints = [new("127.0.0.1", server.Port)],
+        });
+        foreach (var key in keys) await Assert.That(await client.GetStringAsync(key)).IsEqualTo("0");
+        using var stop = new CancellationTokenSource();
+        var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var tasks = new List<Task>();
+        for (var index = 0; index < keys.Length; index++)
+        {
+            var worker = index;
+            tasks.Add(Task.Run(async () =>
+            {
+                var random = new Random(seed + worker);
+                await start.Task;
+                for (var value = 1; value <= writes; value++)
+                {
+                    await PerturbAsync(random);
+                    await Assert.That(await client.SetAsync(keys[worker], value, cancellationToken: stop.Token)).IsTrue();
+                }
+            }));
+        }
+        for (var index = 0; index < 8; index++)
+        {
+            var worker = index;
+            tasks.Add(Task.Run(async () =>
+            {
+                var random = new Random(seed + 100 + worker);
+                await start.Task;
+                for (var read = 0; read < writes * 2; read++)
+                {
+                    await PerturbAsync(random);
+                    var value = await client.GetStringAsync(keys[random.Next(keys.Length)], stop.Token);
+                    var version = int.Parse(value!, System.Globalization.CultureInfo.InvariantCulture);
+                    await Assert.That(version >= 0 && version <= writes).IsTrue();
+                }
+            }));
+        }
+        var finished = Task.WhenAll(tasks);
+        start.SetResult();
+        try { await finished.WaitAsync(TimeSpan.FromSeconds(20)); }
+        finally
+        {
+            stop.Cancel();
+            try { await finished.WaitAsync(TimeSpan.FromSeconds(20)); }
+            catch (OperationCanceledException) { }
+        }
+        await Assert.That(client.Core.ClientCache!.ActiveSharedReadCount).IsEqualTo(0);
+        foreach (var key in keys) await Assert.That(await client.GetStringAsync(key)).IsEqualTo(writes.ToString());
+        var gets = server.ReceivedCommands.Count(command => command.StartsWith("GET stress:", StringComparison.Ordinal));
+        foreach (var key in keys) await Assert.That(await client.GetStringAsync(key)).IsEqualTo(writes.ToString());
+        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("GET stress:", StringComparison.Ordinal)))
+            .IsEqualTo(gets);
+
+        static async Task PerturbAsync(Random random)
+        {
+            if (random.Next(4) == 0) await Task.Yield();
+            if (random.Next(16) == 0) await Task.Delay(1);
+        }
+    }
+
+    [Test]
     [Arguments(false, false)]
     [Arguments(false, true)]
     [Arguments(true, false)]

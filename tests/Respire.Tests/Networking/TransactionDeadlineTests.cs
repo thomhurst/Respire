@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using Respire.Internal;
 using Respire.Networking;
+using Respire.Protocol;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -289,6 +290,13 @@ public class TransactionDeadlineTests
         var pending = transaction.Hashes.Import("k", "schema", "v");
         using var caller = new CancellationTokenSource();
         var started = new TaskCompletionSource<Task>(TaskCreationOptions.RunContinuationsAsynchronously);
+        // A real joinable flight makes invalidation require the gate. Empty invalidations
+        // deliberately skip it, so merely holding the gate cannot park commit admission.
+        var cache = client.Core.ClientCache!;
+        var readReply = new TaskCompletionSource<RespValue>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var flight = cache.CoalesceReadAsync(new ClientCacheCommandKey("GET", (RespireValue)"held-flight"), readReply,
+            static (reply, cancellation) => new ValueTask<RespValue>(reply.Task.WaitAsync(cancellation)), default).AsTask();
+        await Assert.That(cache.ActiveSharedReadCount).IsEqualTo(1);
         // Hold the pre-admission cache barrier until the budget is spent. No transport
         // timer or semaphore cancellation callback can win this failure path.
         var worker = new Thread(() =>
@@ -296,16 +304,16 @@ public class TransactionDeadlineTests
             try { started.TrySetResult(transaction.CommitAsync(caller.Token).AsTask()); }
             catch (Exception error) { started.TrySetException(error); }
         }) { IsBackground = true };
-        using (client.Core.ClientCache!.InspectForTests().SharedReadGate.EnterScope())
-        {
-            worker.Start();
-            if (!SpinWait.SpinUntil(() => (worker.ThreadState & ThreadState.WaitSleepJoin) != 0, Limit))
-                throw new TimeoutException("Commit did not enter the held cache barrier.");
-            if (cancelCaller) caller.Cancel();
-            else Thread.Sleep(timeout + TimeSpan.FromMilliseconds(20));
-        }
         try
         {
+            using (cache.InspectForTests().SharedReadGate.EnterScope())
+            {
+                worker.Start();
+                if (!SpinWait.SpinUntil(() => (worker.ThreadState & ThreadState.WaitSleepJoin) != 0, Limit))
+                    throw new TimeoutException("Commit did not enter the held cache barrier.");
+                if (cancelCaller) caller.Cancel();
+                else Thread.Sleep(timeout + TimeSpan.FromMilliseconds(20));
+            }
             var commit = await started.Task.WaitAsync(Limit);
             if (cancelCaller)
             {
@@ -323,6 +331,9 @@ public class TransactionDeadlineTests
         }
         finally
         {
+            readReply.TrySetCanceled();
+            try { (await flight.WaitAsync(Limit)).Dispose(); }
+            catch (OperationCanceledException) { }
             if (!worker.Join(Limit)) throw new TimeoutException("Commit worker did not stop.");
         }
         await Assert.That(server.ReceivedCommands.Contains("MULTI")).IsFalse();
