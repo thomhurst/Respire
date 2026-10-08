@@ -47,6 +47,7 @@ $requiredPackages = @(
     'Respire.Aws'
     'Respire.Caching.Hybrid'
     'Respire.FusionCache'
+    'Respire.SignalR'
     'Respire.Probabilistic'
     'Respire.DependencyInjection'
     'Respire.DataProtection'

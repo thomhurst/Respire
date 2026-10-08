@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>SignalR scale-out using Respire pub/sub, with Microsoft Redis backplane interoperability.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="../Respire/Respire.csproj" />
+    <PackageReference Include="MessagePack" />
+    <!-- Source-only System.Threading.Lock support on net8.0. -->
+    <PackageReference Include="Polyfill" PrivateAssets="all" />
+    <InternalsVisibleTo Include="Respire.SignalR.Tests" />
+    <None Include="LICENSE-Microsoft.txt" Pack="true" PackagePath="licenses/" />
+  </ItemGroup>
+</Project>

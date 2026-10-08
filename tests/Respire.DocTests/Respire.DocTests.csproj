@@ -23,6 +23,7 @@
     <PackageReference Include="Respire.Aws" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Caching.Hybrid" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.FusionCache" Version="$(RespirePackageVersion)" />
+    <PackageReference Include="Respire.SignalR" Version="$(RespirePackageVersion)" />
     <PackageReference Include="ZiggyCreatures.FusionCache.Serialization.SystemTextJson" Version="2.9.0" />
     <PackageReference Include="Respire.DependencyInjection" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.DataProtection" Version="$(RespirePackageVersion)" />

@@ -1,0 +1,258 @@
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
+using System.Linq;
+using Microsoft.AspNetCore.SignalR.Protocol;
+
+namespace Respire.SignalR.Internal;
+
+// Common type used by our HubLifetimeManager implementations to manage client results.
+// Handles cancellation, cleanup, and completion, so any bugs or improvements can be made in a single place
+internal sealed class ClientResultsManager : IInvocationBinder
+{
+    private readonly ConcurrentDictionary<string, (Type Type, string ConnectionId, object Tcs, Func<object, CompletionMessage, Task> Complete)> _pendingInvocations = new();
+
+    public Task<T> AddInvocation<T>(string connectionId, string invocationId, CancellationToken cancellationToken)
+    {
+        var tcs = new TaskCompletionSourceWithCancellation<T>(this, connectionId, invocationId, cancellationToken);
+        var result = _pendingInvocations.TryAdd(invocationId, (typeof(T), connectionId, tcs, static (state, completionMessage) =>
+        {
+            var tcs = (TaskCompletionSourceWithCancellation<T>)state;
+            if (completionMessage.HasResult)
+            {
+                tcs.SetResult((T)completionMessage.Result!);
+            }
+            else
+            {
+                tcs.SetException(new HubException(completionMessage.Error));
+            }
+            return Task.CompletedTask;
+        }
+        ));
+        Debug.Assert(result);
+
+        tcs.RegisterCancellation();
+
+        return tcs.Task;
+    }
+
+    public void AddInvocation(string invocationId, (Type Type, string ConnectionId, object Tcs, Func<object, CompletionMessage, Task> Complete) invocationInfo)
+    {
+        var result = _pendingInvocations.TryAdd(invocationId, invocationInfo);
+        Debug.Assert(result);
+        // Should have a 50% chance of happening once every 2.71 quintillion invocations (see UUID in Wikipedia)
+        if (!result)
+        {
+            throw new InvalidOperationException("Duplicate client invocation identifier.");
+        }
+    }
+
+    public Task TryCompleteResult(string connectionId, CompletionMessage message)
+    {
+        if (_pendingInvocations.TryGetValue(message.InvocationId!, out var item))
+        {
+            if (item.ConnectionId != connectionId)
+            {
+                throw new InvalidOperationException($"Connection ID '{connectionId}' is not valid for invocation ID '{message.InvocationId}'.");
+            }
+
+            // if false the connection disconnected right after the above TryGetValue
+            // or someone else completed the invocation (likely a bad client)
+            // we'll ignore both cases
+            if (_pendingInvocations.TryRemove(new(message.InvocationId!, item)))
+            {
+                return item.Complete(item.Tcs, message);
+            }
+        }
+        else
+        {
+            // connection was disconnected or someone else completed the invocation
+        }
+        return Task.CompletedTask;
+    }
+
+    public (Type Type, string ConnectionId, object Tcs, Func<object, CompletionMessage, Task> Completion)? RemoveInvocation(string invocationId)
+    {
+        return _pendingInvocations.TryRemove(invocationId, out var item) ? item : null;
+    }
+
+    private bool RemoveInvocation(string invocationId, string connectionId, object owner)
+    {
+        return _pendingInvocations.TryGetValue(invocationId, out var item)
+            && item.ConnectionId == connectionId && ReferenceEquals(item.Tcs, owner)
+            && _pendingInvocations.TryRemove(new(invocationId, item));
+    }
+
+    internal async Task CompleteAllAsync()
+    {
+        List<Task>? completions = null;
+        foreach (var id in _pendingInvocations.Keys)
+        {
+            if (RemoveInvocation(id) is not { } pending) continue;
+            completions ??= [];
+            try
+            {
+                completions.Add(pending.Completion(pending.Tcs,
+                    CompletionMessage.WithError(id, "SignalR backplane disposed.")));
+            }
+            catch (Exception error)
+            {
+                completions.Add(Task.FromException(error));
+            }
+        }
+        // Every owner is retired before joining callbacks; one fault must not strand the others.
+        if (completions is not null) await Task.WhenAll(completions).ConfigureAwait(false);
+    }
+
+    public bool TryGetType(string invocationId, [NotNullWhen(true)] out Type? type)
+    {
+        if (_pendingInvocations.TryGetValue(invocationId, out var item))
+        {
+            type = item.Type;
+            return true;
+        }
+        type = null;
+        return false;
+    }
+
+    public Type GetReturnType(string invocationId)
+    {
+        if (TryGetType(invocationId, out var type))
+        {
+            return type;
+        }
+        throw new InvalidOperationException($"Invocation ID '{invocationId}' is not associated with a pending client result.");
+    }
+
+    // Unused, here to honor the IInvocationBinder interface but should never be called
+    public IReadOnlyList<Type> GetParameterTypes(string methodName)
+    {
+        throw new NotImplementedException();
+    }
+
+    // Unused, here to honor the IInvocationBinder interface but should never be called
+    public Type GetStreamItemType(string streamId)
+    {
+        throw new NotImplementedException();
+    }
+
+    // Custom TCS type to avoid the extra allocation that would be introduced if we managed the cancellation separately
+    // Also makes it easier to keep track of the CancellationTokenRegistration for disposal
+    internal sealed class TaskCompletionSourceWithCancellation<T> : TaskCompletionSource<T>
+    {
+        private readonly ClientResultsManager _clientResultsManager;
+        private readonly string _connectionId;
+        private readonly string _invocationId;
+        private readonly CancellationToken _token;
+        private readonly Lock _gate = new();
+        private CancellationTokenRegistration _tokenRegistration;
+        private bool _completed;
+
+        public TaskCompletionSourceWithCancellation(ClientResultsManager clientResultsManager, string connectionId, string invocationId,
+            CancellationToken cancellationToken)
+            : base(TaskCreationOptions.RunContinuationsAsynchronously)
+        {
+            _clientResultsManager = clientResultsManager;
+            _connectionId = connectionId;
+            _invocationId = invocationId;
+            _token = cancellationToken;
+        }
+
+        // Needs to be called after adding the completion to the dictionary in order to avoid synchronous completions of the token registration
+        // not canceling when the dictionary hasn't been updated yet.
+        public void RegisterCancellation()
+        {
+            if (!_token.CanBeCanceled) return;
+            lock (_gate)
+            {
+                if (_completed) return;
+            }
+
+            var registration = _token.UnsafeRegister(static o =>
+            {
+                var tcs = (TaskCompletionSourceWithCancellation<T>)o!;
+                tcs.SetCanceled();
+            }, this);
+            lock (_gate)
+            {
+                if (!_completed)
+                {
+                    _tokenRegistration = registration;
+                    return;
+                }
+            }
+            // Completion can run before UnsafeRegister returns, including synchronous cancellation.
+            registration.Dispose();
+        }
+
+        public new void SetCanceled()
+        {
+            // Microsoft's wire protocol carries no cancellation notification. The
+            // receiving Respire server bounds its separate owner with RemoteClientResultTimeout.
+            if (_clientResultsManager.RemoveInvocation(_invocationId, _connectionId, this))
+            {
+                DisposeCancellationRegistration();
+                base.SetCanceled(_token);
+            }
+        }
+
+        public new void SetResult(T result)
+        {
+            DisposeCancellationRegistration();
+            base.SetResult(result);
+        }
+
+        public new void SetException(Exception exception)
+        {
+            DisposeCancellationRegistration();
+            base.SetException(exception);
+        }
+
+        private void DisposeCancellationRegistration()
+        {
+            CancellationTokenRegistration registration;
+            lock (_gate)
+            {
+                _completed = true;
+                registration = _tokenRegistration;
+                _tokenRegistration = default;
+            }
+            // Dispose can wait for the callback; never hold the gate while joining it.
+            registration.Dispose();
+        }
+
+#pragma warning disable IDE0060 // Remove unused parameter
+        // Just making sure we don't accidentally call one of these without knowing
+        public static new void SetCanceled(CancellationToken cancellationToken) => Debug.Assert(false);
+        public static new void SetException(IEnumerable<Exception> exceptions) => Debug.Assert(false);
+        public static new bool TrySetCanceled()
+        {
+            Debug.Assert(false);
+            return false;
+        }
+        public static new bool TrySetCanceled(CancellationToken cancellationToken)
+        {
+            Debug.Assert(false);
+            return false;
+        }
+        public static new bool TrySetException(IEnumerable<Exception> exceptions)
+        {
+            Debug.Assert(false);
+            return false;
+        }
+        public static new bool TrySetException(Exception exception)
+        {
+            Debug.Assert(false);
+            return false;
+        }
+        public static new bool TrySetResult(T result)
+        {
+            Debug.Assert(false);
+            return false;
+        }
+#pragma warning restore IDE0060 // Remove unused parameter
+    }
+}
