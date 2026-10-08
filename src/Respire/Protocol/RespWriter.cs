@@ -19,6 +19,7 @@ namespace Respire.Protocol;
 /// <remarks>
 /// The cached span must not survive external buffer mutation or an await. Complete
 /// synchronous serialization before exposing WrittenMemory or leaving the write gate.
+/// Debug builds reject stale writers, unfinished-buffer consumption, and positive bounds smaller than the bytes published.
 /// </remarks>
 internal ref struct RespWriter
 {
@@ -30,40 +31,79 @@ internal ref struct RespWriter
     private Span<byte> _destination;
     private int _start;
     private int _position;
+#if DEBUG
+    private int _remainingReservation;
+    private readonly long _writerSequence;
+    private long _bufferVersion;
+#endif
 
     internal RespWriter(WriteBuffer buffer, int sizeHint = 0)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(sizeHint);
+#if DEBUG
+        _writerSequence = buffer.BeginWriter();
+#endif
         _buffer = buffer;
         _allowGrowth = sizeHint == 0;
         _start = buffer.Count;
         _destination = buffer.GetSpan(sizeHint);
         _position = 0;
+#if DEBUG
+        _remainingReservation = sizeHint;
+        _bufferVersion = buffer.WriterMutationVersion;
+#endif
     }
 
     /// <summary>Publishes bytes after synchronous serialization and any final admission check.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal void Complete()
     {
+#if DEBUG
+        _buffer.ValidateWriter(_writerSequence, _bufferVersion, publishing: true);
+        if (!_allowGrowth)
+        {
+            if (_position > _remainingReservation)
+                throw new InvalidOperationException("The RESP command exceeded its positive write size hint.");
+            _remainingReservation -= _position;
+        }
+#endif
         _buffer.Advance(_position);
         _start += _position;
         _destination = _destination[_position..];
         _position = 0;
+#if DEBUG
+        _buffer.MarkWriterPublished();
+        _bufferVersion = _buffer.WriterMutationVersion;
+#endif
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private Span<byte> GetSpan(int sizeHint)
     {
+#if DEBUG
+        _buffer.ValidateWriter(_writerSequence, _bufferVersion, publishing: false);
+#endif
         // Known commands reserve their complete upper bound once. Unknown commands
         // preserve all unpublished bytes before replacing the backing array.
         if (_allowGrowth) EnsureCapacity(checked(_position + sizeHint));
+#if DEBUG
+        if (sizeHint > 0)
+        {
+            _buffer.MarkWriterUnpublished(_writerSequence);
+        }
+#endif
         return _destination[_position..];
     }
 
     private void EnsureCapacity(int required)
     {
         if (required > _destination.Length)
+        {
             _destination = _buffer.GetSpanForRewrite(_start, _position, required);
+#if DEBUG
+            _bufferVersion = _buffer.WriterMutationVersion;
+#endif
+        }
     }
 
     /// <summary>Writes "*&lt;count&gt;\r\n".</summary>

@@ -404,6 +404,23 @@ jobs:
           dotnet tests/Respire.Tests/bin/Debug/net8.0/Respire.Tests.dll \
             --treenode-filter '/*/*/(AggregatePayloadTests)|(AggregateStorageTests)|(RespParseStateTests)|(RespParserTests)|(ParserContextTests)/*'
 
+      # Reuse the Debug core build above; net8 correctness stays in its designated CI job.
+      - name: Verify reserved writer invariants (net8.0)
+        env:
+          TUNIT_DISABLE_HTML_REPORTER: 'true'
+        run: >-
+          dotnet run --project tests/Respire.Tests -c Debug -f net8.0 --no-build --
+          --treenode-filter "$(cat .github/writer-invariants-filter.txt)"
+          --minimum-expected-tests "$(cat .github/writer-invariants-minimum.txt)"
+          --report-trx --results-directory writer-invariants-net8.0
+
+      - name: Upload net8.0 writer invariant results
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: writer-invariants-net8.0
+          path: writer-invariants-net8.0/
+
       - name: Run samples
         uses: ./.github/actions/run-samples
         with:

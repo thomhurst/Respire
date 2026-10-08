@@ -248,6 +248,49 @@ public class CommandCatalogTests
     }
 
     [Test]
+    [Arguments(1024)]
+    [Arguments(1025)]
+    public async Task EveryCatalogFrameBoundCoversBoundaryArguments(int textLength)
+    {
+        RespireValue[] arguments = [new string('é', textLength - 1) + "\uD800",
+            long.MinValue, new byte[] { 0, 255, 13, 10 }];
+        foreach (var descriptor in RespireCommands.All.ToArray())
+        {
+            var command = new CatalogCommand(descriptor, arguments);
+            var bound = command.GetWriteSizeHint();
+            if (textLength == 1024) await Assert.That(bound).IsGreaterThan(0);
+            else await Assert.That(bound).IsEqualTo(0);
+            var buffer = new WriteBuffer(16);
+            try
+            {
+                var writer = new RespWriter(buffer, bound);
+                command.Write(ref writer);
+                writer.Complete();
+                if (bound > 0) await Assert.That(buffer.Count).IsLessThanOrEqualTo(bound);
+                var position = 0;
+                var status = RespParser.TryParseValue(buffer.WrittenMemory.Span, ref position, out var frame);
+                using (frame)
+                {
+                    await Assert.That(status).IsEqualTo(RespParseStatus.Done);
+                    await Assert.That(position).IsEqualTo(buffer.Count);
+                    var elements = frame.AsArray().ToArray();
+                    var words = descriptor.Name.Split(' ');
+                    await Assert.That(elements.Length).IsEqualTo(words.Length + arguments.Length);
+                    for (var index = 0; index < words.Length; index++)
+                        await Assert.That(elements[index].AsString()).IsEqualTo(words[index]);
+                    for (var index = 0; index < arguments.Length; index++)
+                    {
+                        var expected = new byte[arguments[index].GetWireLength()];
+                        arguments[index].WriteWirePayload(expected);
+                        await Assert.That(elements[words.Length + index].AsSpan().SequenceEqual(expected)).IsTrue();
+                    }
+                }
+            }
+            finally { buffer.Release(); }
+        }
+    }
+
+    [Test]
     public async Task EveryCatalogCommand_SerializesItsExactCommandWords()
     {
         var commands = RespireCommands.All.ToArray();

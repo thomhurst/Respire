@@ -1,0 +1,52 @@
+name: Reserved writer invariants
+
+on:
+  pull_request:
+    paths:
+      - 'src/Respire/Networking/WriteBuffer.cs'
+      - 'src/Respire/Protocol/RespWriter.cs'
+      - 'src/Respire/Commands/**'
+      - 'src/Respire/RespireValue.cs'
+      - 'tests/Respire.Tests/Protocol/**'
+      - 'tests/Respire.Tests/Networking/CommandCatalogTests.cs'
+      - '.github/workflows/writer-invariants.yml'
+      - '.github/writer-invariants-minimum.txt'
+      - '.github/writer-invariants-filter.txt'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  writer:
+    name: Writer invariants (${{ matrix.os }}, net10.0)
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      TUNIT_DISABLE_HTML_REPORTER: 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '10.0.x'
+      - name: Verify debug publication guards and complete frame bounds
+        shell: pwsh
+        run: >-
+          dotnet run --project tests/Respire.Tests -c Debug -f net10.0 --
+          --treenode-filter (Get-Content -LiteralPath .github/writer-invariants-filter.txt -Raw).Trim()
+          --minimum-expected-tests ([int](Get-Content -LiteralPath .github/writer-invariants-minimum.txt))
+          --report-trx --results-directory writer-invariants
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: writer-invariants-${{ matrix.os }}-net10.0
+          path: writer-invariants/
