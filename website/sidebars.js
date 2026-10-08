@@ -29,6 +29,7 @@ const sidebars = {
         'guides/failover-groups',
         'guides/coordination',
         'guides/blocking-queues',
+        'guides/stream-workers',
         'guides/vector-sets',
         'guides/json',
         'guides/search',

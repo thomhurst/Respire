@@ -22,6 +22,7 @@ Each library uses the same name for its NuGet package, assembly, project, and ro
 | `Respire.Caching.Hybrid` | Redis-backed L2 storage for `HybridCache` |
 | `Respire.FusionCache` | FusionCache backplane sharing an existing Respire client |
 | `Respire.SignalR` | SignalR scale-out sharing an existing Respire client |
+| `Respire.Streaming` | Hosted stream consumers with bounded concurrency and scoped handlers |
 | `Respire.Coordination` | Distributed coordination primitives |
 | `Respire.DependencyInjection` | .NET dependency injection registration |
 | `Respire.Compression.Lz4` | Optional LZ4 value codec |

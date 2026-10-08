@@ -6,6 +6,8 @@ namespace Respire.Testing;
 public sealed partial class RespireFakeServer
 {
     private TaskCompletionSource _streamChanged = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private static readonly IComparer<byte[]> StreamConsumerOrder = Comparer<byte[]>.Create(
+        static (left, right) => left.AsSpan().SequenceCompareTo(right));
 
     private sealed class FakeStream
     {
@@ -68,7 +70,16 @@ public sealed partial class RespireFakeServer
     private sealed class FakeStreamGroup(RespireStreamId last)
     {
         internal RespireStreamId Last = last;
-        internal Dictionary<RespireStreamId, byte[]> Pending { get; } = [];
+        internal long? EntriesRead;
+        internal HashSet<byte[]> Consumers { get; } = new(BinaryKeyComparer.Instance);
+        internal Dictionary<RespireStreamId, FakeStreamPending> Pending { get; } = [];
+    }
+
+    private sealed class FakeStreamPending(byte[] consumer, long deliveredAt)
+    {
+        internal byte[] Consumer = consumer;
+        internal long DeliveredAt = deliveredAt;
+        internal long DeliveryCount = 1;
     }
 
     private sealed record StreamRequest(byte[]? Group, byte[]? Consumer, long Count, long MaxCount,
@@ -158,7 +169,11 @@ public sealed partial class RespireFakeServer
         if (stream is null && args.Length != 6) return FakeReply.Error("ERR The XGROUP subcommand requires the key to exist");
         stream ??= new FakeStream();
         var start = Token(args[4]) == "$" ? stream.Last : StreamId(args[4]);
-        if (!stream.Groups.TryAdd(args[3], new(start))) return FakeReply.Error("BUSYGROUP Consumer Group name already exists");
+        var group = new FakeStreamGroup(start)
+        {
+            EntriesRead = start.CompareTo(RespireStreamId.Beginning) == 0 ? 0 : null,
+        };
+        if (!stream.Groups.TryAdd(args[3], group)) return FakeReply.Error("BUSYGROUP Consumer Group name already exists");
         if (Find(args[2]) is null) SetEntry(args[2], new Entry(stream));
         // Redis does not invalidate WATCH for group metadata on an existing stream.
         return FakeReply.Ok;
@@ -223,8 +238,10 @@ public sealed partial class RespireFakeServer
             var cursor = group is not null && !history ? group.Last
                 : request.Ids[i] == RespireStreamId.New ? stream.Last : request.Ids[i];
             using var candidates = stream.Entries.Where(entry => entry.Key > cursor
-                && (!history || group!.Pending.TryGetValue(entry.Key, out var owner) && owner.AsSpan().SequenceEqual(request.Consumer))).GetEnumerator();
+                && (!history || group!.Pending.TryGetValue(entry.Key, out var pending)
+                    && pending.Consumer.AsSpan().SequenceEqual(request.Consumer))).GetEnumerator();
             var hasEntry = candidates.MoveNext();
+            if (group is not null && (history || hasEntry)) group.Consumers.Add(request.Consumer!);
             if (!hasEntry && !history) continue;
             var keyReply = FakeReply.Bulk(request.Keys[i]);
             // Redis defers outer/entry-list headers; account the stream pair and bulk key now.
@@ -242,7 +259,14 @@ public sealed partial class RespireFakeServer
                 if (group is not null && !history)
                 {
                     group.Last = entry.Key;
-                    group.Pending[entry.Key] = request.Consumer!;
+                    if (group.EntriesRead.HasValue) group.EntriesRead++;
+                    else if (entry.Key == stream.Last) group.EntriesRead = stream.Entries.Count;
+                    group.Pending[entry.Key] = new(request.Consumer!, Now);
+                }
+                else if (group is not null)
+                {
+                    group.Pending[entry.Key].DeliveredAt = Now;
+                    group.Pending[entry.Key].DeliveryCount++;
                 }
                 // Do not advance through any remaining history once the page's budget is exhausted.
                 hasEntry = entries.Count < request.Count && total < request.MaxCount && bytes < request.MaxSize
@@ -264,6 +288,78 @@ public sealed partial class RespireFakeServer
         if (stream is null || !stream.Groups.TryGetValue(args[2], out var group)) return FakeReply.Integer(0);
         var removed = ids.Count(group.Pending.Remove);
         return FakeReply.Integer(removed);
+    }
+
+    private FakeReply StreamPending(byte[][] args)
+    {
+        var stream = Find(args[1])?.Stream;
+        if (stream is null || !stream.Groups.TryGetValue(args[2], out var group))
+            return FakeReply.Error("NOGROUP No such consumer group");
+        var pending = group.Pending.OrderBy(entry => entry.Key).ToArray();
+        if (args.Length == 3)
+        {
+            var consumers = group.Pending.Values.GroupBy(entry => entry.Consumer, BinaryKeyComparer.Instance)
+                .OrderBy(entries => entries.Key, StreamConsumerOrder)
+                .Select(entries => FakeReply.Array([FakeReply.Bulk(entries.Key),
+                    FakeReply.Text(entries.Count().ToString(CultureInfo.InvariantCulture))])).ToArray();
+            return FakeReply.Array([FakeReply.Integer(group.Pending.Count),
+                group.Pending.Count == 0 ? FakeReply.Null : FakeReply.Text(pending[0].Key.ToString()),
+                group.Pending.Count == 0 ? FakeReply.Null : FakeReply.Text(pending[^1].Key.ToString()),
+                group.Pending.Count == 0 ? FakeReply.NullArray : FakeReply.Array(consumers)]);
+        }
+
+        var index = 3;
+        long minIdle = 0;
+        if (Token(args[index]) == "IDLE")
+        {
+            if (args.Length < 8) return WrongArity("XPENDING");
+            minIdle = Integer(args[++index]);
+            if (minIdle < 0) return Syntax("XPENDING");
+            index++;
+        }
+        if (args.Length - index is not (3 or 4)) return WrongArity("XPENDING");
+        var start = PendingBound(args[index++]);
+        var end = PendingBound(args[index++]);
+        var count = Integer(args[index++]);
+        if (count <= 0) return Syntax("XPENDING");
+        var consumer = index == args.Length ? null : args[index];
+        return FakeReply.Array(pending.Where(entry =>
+            (start.Exclusive ? entry.Key > start.Id : entry.Key >= start.Id)
+            && (end.Exclusive ? entry.Key < end.Id : entry.Key <= end.Id)
+            && Math.Max(0, Now - entry.Value.DeliveredAt) >= minIdle
+            && (consumer is null || entry.Value.Consumer.AsSpan().SequenceEqual(consumer)))
+            .Take((int)Math.Min(count, int.MaxValue))
+            .Select(entry => FakeReply.Array([FakeReply.Text(entry.Key.ToString()), FakeReply.Bulk(entry.Value.Consumer),
+                FakeReply.Integer(Math.Max(0, Now - entry.Value.DeliveredAt)), FakeReply.Integer(entry.Value.DeliveryCount)]))
+            .ToArray());
+    }
+
+    private static (RespireStreamId Id, bool Exclusive) PendingBound(byte[] bytes)
+    {
+        var text = Encoding.UTF8.GetString(bytes);
+        var exclusive = text.StartsWith('(');
+        if (exclusive) text = text[1..];
+        if (text is "-" or "+") return (new(text), exclusive);
+        return (StreamId(Encoding.UTF8.GetBytes(text)), exclusive);
+    }
+
+    private FakeReply StreamGroupInfo(Connection connection, byte[][] args)
+    {
+        if (args.Length != 3 || Token(args[1]) != "GROUPS") return Syntax("XINFO");
+        var stream = Find(args[2])?.Stream;
+        if (stream is null) return FakeReply.Error("ERR no such key");
+        return FakeReply.Array(stream.Groups.Select(pair =>
+        {
+            var group = pair.Value;
+            FakeReply[] fields = [FakeReply.Text("name"), FakeReply.Bulk(pair.Key),
+                FakeReply.Text("consumers"), FakeReply.Integer(group.Consumers.Count),
+                FakeReply.Text("pending"), FakeReply.Integer(group.Pending.Count),
+                FakeReply.Text("last-delivered-id"), FakeReply.Text(group.Last.ToString()),
+                FakeReply.Text("entries-read"), group.EntriesRead is { } read ? FakeReply.Integer(read) : FakeReply.Null,
+                FakeReply.Text("lag"), group.Last == stream.Last || group.EntriesRead.HasValue
+                    ? FakeReply.Integer(stream.Entries.Keys.Count(id => id > group.Last)) : FakeReply.Null];
+            return connection.Resp3 ? FakeReply.Map(fields) : FakeReply.Array(fields);
+        }).ToArray());
     }
 
     private async Task<Outbound?> ExecuteStreamReadAsync(Connection connection, byte[][] args, RespireFakeFaultScope? scope)

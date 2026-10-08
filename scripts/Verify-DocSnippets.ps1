@@ -48,6 +48,7 @@ $requiredPackages = @(
     'Respire.Caching.Hybrid'
     'Respire.FusionCache'
     'Respire.SignalR'
+    'Respire.Streaming'
     'Respire.Probabilistic'
     'Respire.DependencyInjection'
     'Respire.DataProtection'

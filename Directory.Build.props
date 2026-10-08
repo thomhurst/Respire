@@ -39,6 +39,7 @@
       Respire.Probabilistic;
       Respire.Search;
       Respire.SignalR;
+      Respire.Streaming;
       Respire.TimeSeries;
       Respire.Testing;
       Respire.Testing.Containers;
