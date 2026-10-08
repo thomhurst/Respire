@@ -29,7 +29,11 @@ public class ReservedWriterTests
             writer.WriteBulkString("key");
             writer.WriteBulkString("value");
             await Assert.That(buffer.Count).IsEqualTo(leadingLength);
+#if DEBUG
+            await Assert.That(() => buffer.WrittenMemory).ThrowsExactly<InvalidOperationException>();
+#else
             await Assert.That(buffer.WrittenMemory.Length).IsEqualTo(leadingLength);
+#endif
         }
         finally { buffer.Release(); }
     }
@@ -44,6 +48,14 @@ public class ReservedWriterTests
     [Arguments(6)]
     [Arguments(7)]
     [Arguments(8)]
+    [Arguments(9)]
+    [Arguments(10)]
+    [Arguments(11)]
+    [Arguments(12)]
+    [Arguments(13)]
+    [Arguments(14)]
+    [Arguments(15)]
+    [Arguments(16)]
     public async Task CompleteBoundsPreserveEveryCommandShapeWithoutGrowth(int shape)
     {
         RespireValue key = RespireValue.Prefixed(new KeyPrefix("tenant:\uD800"), "\uDC00-é", default);
@@ -58,7 +70,15 @@ public class ReservedWriterTests
             5 => new DynamicCommand(["SET", .. arguments], 1),
             6 => new CatalogCommand(RespireCommands.String.SET, arguments),
             7 => new SetCommand(key, "a\uD800z", RespireExpiry.In(TimeSpan.FromSeconds(3)), SetWhen.Exists, true),
-            _ => new GetExCommand(key, RespireExpiry.At(DateTimeOffset.FromUnixTimeMilliseconds(123456))),
+            8 => new GetExCommand(key, RespireExpiry.At(DateTimeOffset.FromUnixTimeMilliseconds(123456))),
+            9 => new Cmd2(Verbs.Set, key, arguments[1]),
+            10 => new Cmd3(Verbs.Set, key, arguments[1], arguments[2]),
+            11 => new Cmd4(Verbs.Set, key, arguments[1], arguments[2], arguments[3]),
+            12 => new CmdN(Verbs.Set, arguments),
+            13 => new MSetExCommand(Verbs.Set, arguments),
+            14 => new IncrementCommand(Verbs.Set, Verbs.Set, key, 1),
+            15 => new IncrementCommand(Verbs.Set, Verbs.Set, key, long.MinValue),
+            _ => SnapshotCommand.Create(new Cmd2(Verbs.Set, key, arguments[1])),
         };
         var sizeHint = command.GetWriteSizeHint();
         await Assert.That(sizeHint).IsGreaterThan(0);

@@ -12,6 +12,10 @@ internal sealed class WriteBuffer
     private byte[] _array;
     private int _count;
     private TaskCompletionSource? _writeCompletion;
+#if DEBUG
+    // The writer owns unpublished bytes until Complete; rollback explicitly discards them.
+    internal bool HasUnpublishedWriterBytes;
+#endif
 
     public WriteBuffer(int initialCapacity)
     {
@@ -22,7 +26,17 @@ internal sealed class WriteBuffer
 
     public int Capacity => _array.Length;
 
-    public ReadOnlyMemory<byte> WrittenMemory => _array.AsMemory(0, _count);
+    public ReadOnlyMemory<byte> WrittenMemory
+    {
+        get
+        {
+#if DEBUG
+            if (HasUnpublishedWriterBytes)
+                throw new InvalidOperationException("Complete or roll back the RESP writer before consuming its buffer.");
+#endif
+            return _array.AsMemory(0, _count);
+        }
+    }
 
     public Task WriteCompletion
         => (_writeCompletion ??= new(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
@@ -56,6 +70,9 @@ internal sealed class WriteBuffer
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public Span<byte> GetSpanForRewrite(int position, int uncommittedLength, int frameLength)
     {
+#if DEBUG
+        var unpublished = HasUnpublishedWriterBytes;
+#endif
         // Growth copies only committed bytes. Include the unpublished suffix before
         // reserving, then reacquire the span after the old array can return to the pool.
         Advance(uncommittedLength);
@@ -66,11 +83,21 @@ internal sealed class WriteBuffer
         finally
         {
             TruncateTo(position);
+#if DEBUG
+            // Internal growth preserves unpublished bytes rather than abandoning the writer.
+            HasUnpublishedWriterBytes = unpublished;
+#endif
         }
         return GetSpan(frameLength);
     }
 
-    public void Reset() => _count = 0;
+    public void Reset()
+    {
+        _count = 0;
+#if DEBUG
+        HasUnpublishedWriterBytes = false;
+#endif
+    }
 
     public void CompleteWrite() => Interlocked.Exchange(ref _writeCompletion, null)?.TrySetResult();
 
@@ -78,7 +105,13 @@ internal sealed class WriteBuffer
         => Interlocked.Exchange(ref _writeCompletion, null)?.TrySetException(exception);
 
     /// <summary>Truncates back to a marked position (used to undo a partially written command).</summary>
-    public void TruncateTo(int position) => _count = position;
+    public void TruncateTo(int position)
+    {
+        _count = position;
+#if DEBUG
+        HasUnpublishedWriterBytes = false;
+#endif
+    }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void Grow(int sizeHint)
@@ -101,6 +134,9 @@ internal sealed class WriteBuffer
         var array = _array;
         _array = [];
         _count = 0;
+#if DEBUG
+        HasUnpublishedWriterBytes = false;
+#endif
         if (array.Length > 0)
         {
             RespirePools.WriteBuffers.Return(array);

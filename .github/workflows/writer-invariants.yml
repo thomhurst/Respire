@@ -1,0 +1,48 @@
+name: Reserved writer invariants
+
+on:
+  pull_request:
+    paths:
+      - 'src/Respire/Networking/WriteBuffer.cs'
+      - 'src/Respire/Protocol/RespWriter.cs'
+      - 'src/Respire/Commands/**'
+      - 'src/Respire/RespireValue.cs'
+      - 'tests/Respire.Tests/Protocol/**'
+      - 'tests/Respire.Tests/Networking/CommandCatalogTests.cs'
+      - '.github/workflows/writer-invariants.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  writer:
+    name: Writer invariants (${{ matrix.os }}, ${{ matrix.framework }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      TUNIT_DISABLE_HTML_REPORTER: 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        framework: [net8.0, net10.0]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-dotnet
+      - name: Verify debug publication guards and complete frame bounds
+        shell: pwsh
+        run: >-
+          dotnet run --project tests/Respire.Tests -c Debug -f ${{ matrix.framework }} --
+          --treenode-filter '/*/*/(WriterInvariantTests)|(ReservedWriterTests)|(CommandCatalogTests)|(RespWriterTests)|(CommandWriterTests)|(Utf8SuffixWriterTests)|(RespFramingTests)/*'
+          --minimum-expected-tests 483 --report-trx --results-directory writer-invariants
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: writer-invariants-${{ matrix.os }}-${{ matrix.framework }}
+          path: writer-invariants/

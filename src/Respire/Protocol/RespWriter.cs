@@ -18,6 +18,7 @@ namespace Respire.Protocol;
 /// <remarks>
 /// The cached span must not survive external buffer mutation or an await. Complete
 /// synchronous serialization before exposing WrittenMemory or leaving the write gate.
+/// Debug builds reject unfinished-buffer consumption and positive bounds smaller than the bytes published.
 /// </remarks>
 internal ref struct RespWriter
 {
@@ -29,6 +30,9 @@ internal ref struct RespWriter
     private Span<byte> _destination;
     private int _start;
     private int _position;
+#if DEBUG
+    private int _remainingReservation;
+#endif
 
     internal RespWriter(WriteBuffer buffer, int sizeHint = 0)
     {
@@ -38,16 +42,30 @@ internal ref struct RespWriter
         _start = buffer.Count;
         _destination = buffer.GetSpan(sizeHint);
         _position = 0;
+#if DEBUG
+        _remainingReservation = sizeHint;
+#endif
     }
 
     /// <summary>Publishes bytes after synchronous serialization and any final admission check.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal void Complete()
     {
+#if DEBUG
+        if (!_allowGrowth)
+        {
+            if (_position > _remainingReservation)
+                throw new InvalidOperationException("The RESP command exceeded its positive write size hint.");
+            _remainingReservation -= _position;
+        }
+#endif
         _buffer.Advance(_position);
         _start += _position;
         _destination = _destination[_position..];
         _position = 0;
+#if DEBUG
+        _buffer.HasUnpublishedWriterBytes = false;
+#endif
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -56,6 +74,9 @@ internal ref struct RespWriter
         // Known commands reserve their complete upper bound once. Unknown commands
         // preserve all unpublished bytes before replacing the backing array.
         if (_allowGrowth) EnsureCapacity(checked(_position + sizeHint));
+#if DEBUG
+        if (sizeHint > 0) _buffer.HasUnpublishedWriterBytes = true;
+#endif
         return _destination[_position..];
     }
 
