@@ -1,0 +1,21 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IBatchStreamCommands",
+      "OwnerType": "Respire.BatchStreamCommands",
+      "Members": [
+        "Acknowledge(RespireKey,string,params ReadOnlySpan<RespireStreamId>):RespirePending<long>",
+        "Add(RespireKey,StreamAddOptions,params ReadOnlySpan<(stringField,RespireValueValue)>):RespirePending<RespireStreamId?>",
+        "Add(RespireKey,params ReadOnlySpan<(stringField,RespireValueValue)>):RespirePending<RespireStreamId>",
+        "Count(RespireKey):RespirePending<long>",
+        "Range(RespireKey,RespireStreamId?,RespireStreamId?,int?,bool):RespirePending<RespireStreamEntry[]>",
+        "Remove(RespireKey,params ReadOnlySpan<RespireStreamId>):RespirePending<long>",
+        "Trim(RespireKey,StreamTrimOptions):RespirePending<long>",
+        "TrimByMaxLength(RespireKey,long,bool):RespirePending<long>"
+      ],
+      "Contract": "Queue methods own synchronous validation and serialization. Execute/commit owns transport and cleanup; each pending result owns its later caller inspection and conversion. Never consume a pending result to observe errors."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

@@ -1,0 +1,121 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.RespireClient",
+      "OwnerType": "Respire.RespireClient",
+      "Members": [
+        "ConnectAnyAsync(IEnumerable<RespireOptions>,CancellationToken):ValueTask<RespireClient>",
+        "ConnectAsync(RespireOptions,CancellationToken):ValueTask<RespireClient>",
+        "ConnectAsync(string,CancellationToken):ValueTask<RespireClient>",
+        "Create(RespireOptions):RespireClient",
+        "Create(string):RespireClient",
+        "CreateBatch():RespireBatch",
+        "CreateTransaction():RespireTransaction",
+        "CreateTransactionAsync(ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<RespireWatchedTransaction>",
+        "CreateTransactionAsync(RespireKey[],CancellationToken):ValueTask<RespireWatchedTransaction>",
+        "CreateTransactionAsync(params ReadOnlySpan<RespireKey>):ValueTask<RespireWatchedTransaction>",
+        "DisposeAsync():ValueTask",
+        "ExecuteAsync(RespireCommand,RespireValue[],RespireCommandFlags,CancellationToken):ValueTask<RespireResult>",
+        "ExecuteAsync(RespireCommand,params RespireValue[]):ValueTask<RespireResult>",
+        "ExecuteAsync(RespireCommandInterpolatedStringHandler,RespireCommandFlags,CancellationToken):ValueTask<RespireResult>",
+        "ExecuteFireAndForgetAsync(RespireCommand,RespireValue[],CancellationToken):ValueTask",
+        "ExecuteFireAndForgetAsync(RespireCommand,params RespireValue[]):ValueTask",
+        "ExecuteFireAndForgetAsync(RespireCommandInterpolatedStringHandler,CancellationToken):ValueTask",
+        "GetClusterRetirementSnapshot():RespireClusterRetirementSnapshot?",
+        "PingAsync(CancellationToken):ValueTask<TimeSpan>",
+        "PublishAsync(RespireChannel,RespireValue,CancellationToken):ValueTask<long>",
+        "PublishAsync(string,RespireValue,CancellationToken):ValueTask<long>",
+        "PublishShardedAsync(RespireChannel,RespireValue,CancellationToken):ValueTask<long>",
+        "PublishShardedAsync(string,RespireValue,CancellationToken):ValueTask<long>",
+        "ResolveChannel(RespireChannel):RespireChannel",
+        "ResolveKey(RespireKey):RespireKey",
+        "SubscribeAsync(ReadOnlySpan<RespireChannel>,CancellationToken):ValueTask<RespireSubscription>",
+        "SubscribeAsync(ReadOnlySpan<RespireChannel>,RespireSubscriptionOptions,CancellationToken):ValueTask<RespireSubscription>",
+        "SubscribeAsync(ReadOnlySpan<string>,CancellationToken):ValueTask<RespireSubscription>",
+        "SubscribeAsync(ReadOnlySpan<string>,RespireSubscriptionOptions,CancellationToken):ValueTask<RespireSubscription>",
+        "SubscribeAsync(RespireChannel,CancellationToken):ValueTask<RespireSubscription>",
+        "SubscribeAsync(RespireChannel,RespireSubscriptionOptions,CancellationToken):ValueTask<RespireSubscription>",
+        "SubscribeAsync(params ReadOnlySpan<string>):ValueTask<RespireSubscription>",
+        "SubscribeAsync(string,CancellationToken):ValueTask<RespireSubscription>",
+        "SubscribeAsync(string,RespireSubscriptionOptions,CancellationToken):ValueTask<RespireSubscription>",
+        "SubscribePatternAsync(ReadOnlySpan<RespireChannel>,CancellationToken):ValueTask<RespireSubscription>",
+        "SubscribePatternAsync(ReadOnlySpan<RespireChannel>,RespireSubscriptionOptions,CancellationToken):ValueTask<RespireSubscription>",
+        "SubscribePatternAsync(ReadOnlySpan<string>,CancellationToken):ValueTask<RespireSubscription>",
+        "SubscribePatternAsync(ReadOnlySpan<string>,RespireSubscriptionOptions,CancellationToken):ValueTask<RespireSubscription>",
+        "SubscribePatternAsync(RespireChannel,CancellationToken):ValueTask<RespireSubscription>",
+        "SubscribePatternAsync(RespireChannel,RespireSubscriptionOptions,CancellationToken):ValueTask<RespireSubscription>",
+        "SubscribePatternAsync(params ReadOnlySpan<string>):ValueTask<RespireSubscription>",
+        "SubscribePatternAsync(string,CancellationToken):ValueTask<RespireSubscription>",
+        "SubscribePatternAsync(string,RespireSubscriptionOptions,CancellationToken):ValueTask<RespireSubscription>",
+        "SubscribeShardedAsync(ReadOnlySpan<RespireChannel>,CancellationToken):ValueTask<RespireSubscription>",
+        "SubscribeShardedAsync(ReadOnlySpan<RespireChannel>,RespireSubscriptionOptions,CancellationToken):ValueTask<RespireSubscription>",
+        "SubscribeShardedAsync(ReadOnlySpan<string>,CancellationToken):ValueTask<RespireSubscription>",
+        "SubscribeShardedAsync(ReadOnlySpan<string>,RespireSubscriptionOptions,CancellationToken):ValueTask<RespireSubscription>",
+        "SubscribeShardedAsync(RespireChannel,CancellationToken):ValueTask<RespireSubscription>",
+        "SubscribeShardedAsync(RespireChannel,RespireSubscriptionOptions,CancellationToken):ValueTask<RespireSubscription>",
+        "SubscribeShardedAsync(params ReadOnlySpan<string>):ValueTask<RespireSubscription>",
+        "SubscribeShardedAsync(string,CancellationToken):ValueTask<RespireSubscription>",
+        "SubscribeShardedAsync(string,RespireSubscriptionOptions,CancellationToken):ValueTask<RespireSubscription>",
+        "WithKeyPrefix(RespireKey):IRespireClient",
+        "WithKeyPrefix(string):IRespireClient",
+        "WithPubSubPrefix(RespireKey):IRespireClient",
+        "WithPubSubPrefix(string):IRespireClient",
+        "WithReadFrom(RespireReadFrom):IRespireClient",
+        "WithoutClientCache():IRespireClient"
+      ],
+      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+    }
+  ],
+  "Boundaries": [
+    {
+      "Name": "raw-catalog-dispatch",
+      "Role": "final",
+      "Member": "Respire.RespireClient.ExecuteAsync(RespireCommand,RespireValue[],RespireCommandFlags,CancellationToken):ValueTask<RespireResult>",
+      "Owner": "Respire.RespireClient.ExecuteAsync(RespireCommand,RespireValue[],RespireCommandFlags,CancellationToken):ValueTask<RespireResult>",
+      "Contract": "Public catalog dispatch owns validation before delegating to raw or typed command construction and through returned result creation. A returned RespireResult keeps its existing ownership."
+    },
+    {
+      "Name": "raw-dispatch-helper",
+      "Role": "helper",
+      "Member": "Respire.RespireClient.ExecuteRawAsync(string,RespireValue[],RespireCommandFlags,CancellationToken,RespireCacheMutation,bool,ReadCommandKind,bool):ValueTask<RespireResult>",
+      "Owner": "Respire.RespireClient.ExecuteAsync(RespireCommand,RespireValue[],RespireCommandFlags,CancellationToken):ValueTask<RespireResult>",
+      "Contract": "Borrow the enclosing Execute caller owner; raw retry and conversion cannot independently publish that caller failure."
+    },
+    {
+      "Name": "catalog-dispatch-helper",
+      "Role": "helper",
+      "Member": "Respire.RespireClient.ExecuteCatalogAsync(RespireCommand,RespireValue[],RespireCommandFlags,CancellationToken):ValueTask<RespireResult>",
+      "Owner": "Respire.RespireClient.ExecuteAsync(RespireCommand,RespireValue[],RespireCommandFlags,CancellationToken):ValueTask<RespireResult>",
+      "Contract": "Borrow the public catalog caller owner through metadata validation and dispatch."
+    },
+    {
+      "Name": "interpolated-dispatch",
+      "Role": "final",
+      "Member": "Respire.RespireClient.ExecuteAsync(RespireCommandInterpolatedStringHandler,RespireCommandFlags,CancellationToken):ValueTask<RespireResult>",
+      "Owner": "Respire.RespireClient.ExecuteAsync(RespireCommandInterpolatedStringHandler,RespireCommandFlags,CancellationToken):ValueTask<RespireResult>",
+      "Contract": "Own handler validation and command construction before delegated dispatch; keep owner through result conversion and cleanup."
+    },
+    {
+      "Name": "interpolated-helper",
+      "Role": "helper",
+      "Member": "Respire.RespireClient.ExecuteInterpolatedAsync(RespireCommandInterpolatedStringHandler,RespireCommandFlags,CancellationToken):ValueTask<RespireResult>",
+      "Owner": "Respire.RespireClient.ExecuteAsync(RespireCommandInterpolatedStringHandler,RespireCommandFlags,CancellationToken):ValueTask<RespireResult>",
+      "Contract": "Delegate final publication to the public interpolated entry."
+    },
+    {
+      "Name": "connection-setup",
+      "Role": "final",
+      "Member": "Respire.RespireClient.ConnectAsync(RespireOptions,CancellationToken):ValueTask<RespireClient>",
+      "Owner": "Respire.RespireClient.ConnectAsync(RespireOptions,CancellationToken):ValueTask<RespireClient>",
+      "Contract": "Own credentials, handshake, authentication, setup parsing and failed-connect cleanup. Connect(string) and ConnectAny borrow or transfer their enclosing caller lease, never count a nested setup twice."
+    },
+    {
+      "Name": "caller-cleanup",
+      "Role": "final",
+      "Member": "Respire.RespireClient.DisposeAsync():ValueTask",
+      "Owner": "Respire.RespireClient.DisposeAsync():ValueTask",
+      "Contract": "Explicit disposal is its own caller operation; cleanup inside another command borrows that command owner and finishes before publication."
+    }
+  ],
+  "NonRoutes": []
+}

@@ -1,0 +1,45 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.RespireServerNode",
+      "OwnerType": "Respire.RespireServerNode",
+      "Members": [
+        "AbortFailoverAsync(CancellationToken):ValueTask",
+        "AbortShutdownAsync(CancellationToken):ValueTask",
+        "AclGeneratePasswordAsync(int?,CancellationToken):ValueTask<string>",
+        "AclLoadAsync(CancellationToken):ValueTask",
+        "AclSaveAsync(CancellationToken):ValueTask",
+        "AclUsersAsync(CancellationToken):ValueTask<byte[][]>",
+        "BackupAbortAsync(CancellationToken):ValueTask",
+        "BackupCleanupAsync(CancellationToken):ValueTask",
+        "BackupListAsync(CancellationToken):ValueTask<string[]>",
+        "BackupSealAsync(CancellationToken):ValueTask",
+        "BackupStartAsync(CancellationToken):ValueTask",
+        "BackupStatusAsync(CancellationToken):ValueTask<RespireBackupStatus>",
+        "CommandGetKeysAndFlagsAsync(RespireCommand,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<RespireCommandKeyFlags[]>",
+        "FailoverAsync(RespireFailoverOptions?,CancellationToken):ValueTask",
+        "FunctionKillAsync(CancellationToken):ValueTask",
+        "KeysAsync(RespireValue,CancellationToken):ValueTask<byte[][]>",
+        "LatencyGraphAsync(string,CancellationToken):ValueTask<string>",
+        "MemoryMallocStatsAsync(CancellationToken):ValueTask<string>",
+        "MigrateAsync(RespireEndpoint,ReadOnlySpan<RespireKey>,int,TimeSpan,RespireMigrateOptions?,CancellationToken):ValueTask<RespireMigrateResult>",
+        "ModuleLoadAsync(string,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask",
+        "ModuleLoadExtendedAsync(string,ReadOnlySpan<KeyValuePair<string,RespireValue>>,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask",
+        "ModuleUnloadAsync(string,CancellationToken):ValueTask",
+        "PromoteToPrimaryAsync(CancellationToken):ValueTask",
+        "ReplicaOfAsync(RespireEndpoint,CancellationToken):ValueTask",
+        "ScriptKillAsync(CancellationToken):ValueTask",
+        "SendShutdownAsync(RespireShutdownOptions?,CancellationToken):ValueTask",
+        "SwapDatabasesAsync(int,int,CancellationToken):ValueTask"
+      ],
+      "Contract": "Start before admin preflight or validation. Keep ownership through each node, conversion and cleanup. Returned per-node failures are caller observations; transparent retries borrow ownership."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": [
+    {
+      "Member": "Respire.RespireServerNodeExtensions.OnNode(this IServerCommands,RespireEndpoint):RespireServerNode",
+      "Reason": "Selects a node-specific facet; the selected command entry point owns dispatch."
+    }
+  ]
+}

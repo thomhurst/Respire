@@ -10,7 +10,7 @@ public class CommandRouteOwnershipTests
     private const string Fixture = """
         namespace Respire;
         public interface IExampleCommands { ValueTask<int> GetAsync(int key); }
-        internal class ExampleCommands {
+        internal class ExampleCommands : IExampleCommands {
             public ValueTask<int> GetAsync(int key) => default;
             private ValueTask<int> RetryAsync(int key) => default;
             private void Probe() { }
@@ -31,9 +31,22 @@ public class CommandRouteOwnershipTests
             .Where(f => !Path.GetRelativePath(repo, f).Split(Path.DirectorySeparatorChar).Any(p => p is "bin" or "obj"))
             .Select(f => (File: Path.GetRelativePath(repo, f), Source: File.ReadAllText(f)));
         var source = CommandRouteOwnership.Discover(files);
-        using var stream = typeof(CommandRouteOwnershipTests).Assembly.GetManifestResourceStream("Respire.Tests.CommandRouteOwners.json")!;
-        var inventory = JsonSerializer.Deserialize<CommandRouteOwnership.Inventory>(stream)!;
-        var errors = CommandRouteOwnership.Validate(source, inventory);
+        var declarations = Directory.EnumerateFiles(Path.Combine(repo, "src", "Respire"), "*.ownership.json", SearchOption.AllDirectories)
+            .Select(file => (File: Path.GetRelativePath(repo, file)[..^".ownership.json".Length],
+                Inventory: JsonSerializer.Deserialize<CommandRouteOwnership.Inventory>(File.ReadAllText(file))!)).ToArray();
+        var inventories = declarations.Select(d => d.Inventory).ToArray();
+        var inventory = new CommandRouteOwnership.Inventory(inventories.SelectMany(i => i.Surfaces).ToArray(),
+            inventories.SelectMany(i => i.Boundaries).ToArray(), inventories.SelectMany(i => i.NonRoutes ?? []).ToArray());
+        var errors = CommandRouteOwnership.Validate(source, inventory).ToList();
+        foreach (var declaration in declarations)
+        {
+            var ids = declaration.Inventory.Surfaces.SelectMany(s => s.Members.Select(m => s.Type + "." + m))
+                .Concat(declaration.Inventory.Boundaries.Select(b => b.Member))
+                .Concat((declaration.Inventory.NonRoutes ?? []).Select(n => n.Member));
+            foreach (var id in ids)
+                if (!source.Any(m => m.Id == id && m.File == declaration.File))
+                    errors.Add("Declaration must stay beside its source: " + id + " in " + declaration.File);
+        }
         await Assert.That(string.Join(Environment.NewLine, errors)).IsEqualTo("");
         // Pin the non-public families as well: deleting a declaration cannot silently erase its coverage.
         foreach (var name in RequiredBoundaries)
@@ -85,7 +98,7 @@ public class CommandRouteOwnershipTests
     [Test]
     public async Task EveryDeclaredAlternativeOwnerMustRemainExecutable()
     {
-        var source = Fixture + " internal class OtherCommands { public ValueTask<int> GetAsync(int key) => default; }";
+        var source = Fixture + " internal class OtherCommands : IExampleCommands { public ValueTask<int> GetAsync(int key) => default; }";
         var inventory = ControlInventory() with { Surfaces = [new("Respire.IExampleCommands", "Respire.ExampleCommands", [Route],
             Contract: "Both implementations own their caller.", AdditionalOwnerTypes: ["Respire.OtherCommands"])] };
         await Assert.That(CommandRouteOwnership.Validate(Discover(source), inventory)).IsEmpty();
@@ -146,6 +159,66 @@ public class CommandRouteOwnershipTests
         var methods = Discover(source).Where(m => m.PublicRoute).Select(m => m.Name).ToArray();
         await Assert.That(methods).Contains("EightAsync");
         await Assert.That(methods).Contains("TenAsync");
+    }
+
+    [Test]
+    public async Task SynchronousMethodsOnUnfamiliarTypesRequireClassification()
+    {
+        var source = Discover("public class NovelSurface { public int Foo() => 1; public bool TryX(int key) => true; }");
+        await Assert.That(source.All(m => m.PublicRoute)).IsTrue();
+        await Assert.That(CommandRouteOwnership.Validate(source, new([], [])).Length).IsEqualTo(2);
+        await Assert.That(source.Any(m => m.Id.StartsWith(".", StringComparison.Ordinal))).IsFalse();
+    }
+
+    [Test]
+    public async Task ExplicitNonRoutesRequireExistingPublicMethodsAndReasons()
+    {
+        var source = Discover("public class Value { public int GetHashCode() => 1; }");
+        var inventory = new CommandRouteOwnership.Inventory([], [], [new(source.Single().Id, "Local value comparison; no dispatch.")]);
+        await Assert.That(CommandRouteOwnership.Validate(source, inventory)).IsEmpty();
+        await Assert.That(CommandRouteOwnership.Validate(source, inventory with { NonRoutes = [new(source.Single().Id, "")] }))
+            .Contains("Missing non-route reason: Value.GetHashCode():int");
+        await Assert.That(CommandRouteOwnership.Validate([], inventory))
+            .Contains("Removed or non-public exclusion: Value.GetHashCode():int");
+    }
+
+    [Test]
+    public async Task UnrelatedOwnerWithMatchingMethodCannotImplementContract()
+    {
+        await Assert.That(CommandRouteOwnership.Validate(Discover(Fixture.Replace(" : IExampleCommands", "")), ControlInventory())
+            .Any(e => e.StartsWith("Owner does not implement public contract:", StringComparison.Ordinal))).IsTrue();
+    }
+
+    [Test]
+    public async Task PrivateLookalikeCannotImplementPublicContract()
+    {
+        await Assert.That(CommandRouteOwnership.Validate(Discover(Fixture.Replace("public ValueTask<int> GetAsync", "private ValueTask<int> GetAsync")), ControlInventory())
+            .Any(e => e.StartsWith("Owner does not implement public contract:", StringComparison.Ordinal))).IsTrue();
+    }
+
+    [Test]
+    public async Task ExplicitImplementationIsNotAnImplicitPublicMethod()
+    {
+        var source = Fixture.Replace("public ValueTask<int> GetAsync", "ValueTask<int> IExampleCommands.GetAsync");
+        await Assert.That(CommandRouteOwnership.Validate(Discover(source), ControlInventory())
+            .Any(e => e.StartsWith("Missing final owner:", StringComparison.Ordinal))).IsTrue();
+    }
+
+    [Test]
+    public async Task FrameworkBranchesMergeVisibilityAndBodies()
+    {
+        var source = Discover("""
+            public class Routes {
+            #if NET8_0
+                public partial int Foo();
+            #else
+                private int Foo() => 1;
+            #endif
+            }
+            """);
+        await Assert.That(source.Single().PublicRoute).IsTrue();
+        await Assert.That(source.Single().HasBody).IsTrue();
+        await Assert.That(source.Single().PublicImplementation).IsFalse();
     }
 
     private static readonly string[] RequiredBoundaries = [

@@ -1,0 +1,13 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "physical-connect-helper",
+      "Role": "borrower",
+      "Member": "Respire.Networking.RespireConnection.ConnectAsync(string,int,RespireConnectionOptions?,ILogger?,CancellationToken,bool):Task<RespireConnection>",
+      "Owner": "Respire.RespireClient.ConnectAsync(RespireOptions,CancellationToken):ValueTask<RespireClient>",
+      "Contract": "Physical attempts borrow setup ownership. Recovered connection attempts are handled retries; pool generations do not create caller ownership."
+    }
+  ],
+  "NonRoutes": []
+}

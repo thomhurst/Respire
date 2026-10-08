@@ -1,0 +1,19 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IStreamCommands",
+      "OwnerType": "Respire.StreamCommands",
+      "Members": [
+        "ReadAllAsync(ReadOnlySpan<(RespireKeyKey,RespireStreamIdAfter)>,int,CancellationToken):IAsyncEnumerable<RespireStreamReadEntry>",
+        "ReadAllAsync(RespireKey,RespireStreamId,int,CancellationToken):IAsyncEnumerable<RespireStreamEntry>",
+        "ReadAsync(ReadOnlySpan<(RespireKeyKey,RespireStreamIdAfter)>,int?,TimeSpan?,CancellationToken):ValueTask<RespireStreamReadResult[]>",
+        "ReadAsync(RespireKey,RespireStreamId,int?,TimeSpan?,CancellationToken):ValueTask<RespireStreamEntry[]>",
+        "ReadAsync(StreamReadOptions,ReadOnlySpan<(RespireKeyKey,RespireStreamIdAfter)>,CancellationToken):ValueTask<RespireStreamReadResult[]>",
+        "ReadAsync(StreamReadOptions,RespireKey,RespireStreamId,CancellationToken):ValueTask<RespireStreamEntry[]>"
+      ],
+      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

@@ -1,0 +1,57 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IBitmapCommands",
+      "OwnerType": "Respire.BitmapCommands",
+      "Members": [
+        "FieldAsync(RespireKey,ReadOnlySpan<BitFieldOperation>,CancellationToken):ValueTask<long?[]>",
+        "FieldAsync(RespireKey,params ReadOnlySpan<BitFieldOperation>):ValueTask<long?[]>",
+        "FieldReadOnlyAsync(RespireKey,ReadOnlySpan<BitFieldOperation>,CancellationToken):ValueTask<long?[]>",
+        "FieldReadOnlyAsync(RespireKey,params ReadOnlySpan<BitFieldOperation>):ValueTask<long?[]>",
+        "GetAsync(RespireKey,long,CancellationToken):ValueTask<bool>",
+        "OperateAsync(BitOperation,RespireKey,ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<long>",
+        "OperateAsync(BitOperation,RespireKey,params ReadOnlySpan<RespireKey>):ValueTask<long>",
+        "PositionAsync(RespireKey,bool,long?,long?,BitIndexUnit,CancellationToken):ValueTask<long?>",
+        "SetAsync(RespireKey,long,bool,CancellationToken):ValueTask<bool>",
+        "SetBitCountAsync(RespireKey,CancellationToken):ValueTask<long>",
+        "SetBitCountAsync(RespireKey,long,long,BitIndexUnit,CancellationToken):ValueTask<long>"
+      ],
+      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": [
+    {
+      "Member": "Respire.BitFieldEncoding.Signed(int):BitFieldEncoding",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.BitFieldEncoding.Unsigned(int):BitFieldEncoding",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.BitFieldOffset.Bits(long):BitFieldOffset",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.BitFieldOffset.Fields(long):BitFieldOffset",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.BitFieldOperation.Get(BitFieldEncoding,BitFieldOffset):BitFieldOperation",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.BitFieldOperation.Increment(BitFieldEncoding,BitFieldOffset,long):BitFieldOperation",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.BitFieldOperation.Set(BitFieldEncoding,BitFieldOffset,long):BitFieldOperation",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.BitFieldOperation.SetOverflow(BitFieldOverflow):BitFieldOperation",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.RespireServerNode",
+      "OwnerType": "Respire.RespireServerNode",
+      "Members": [
+        "ClusterMigrationCancelAllAsync(CancellationToken):ValueTask<long>",
+        "ClusterMigrationCancelAsync(string,CancellationToken):ValueTask<long>",
+        "ClusterMigrationImportAsync(ReadOnlySpan<RespireClusterSlotRange>,CancellationToken):ValueTask<string>",
+        "ClusterMigrationStatusAsync(RespireClusterMigrationStatusScope,CancellationToken):ValueTask<RespireClusterMigrationTask[]>",
+        "ClusterMigrationStatusAsync(string,CancellationToken):ValueTask<RespireClusterMigrationTask[]>"
+      ],
+      "Contract": "Start before admin preflight or validation. Keep ownership through each node, conversion and cleanup. Returned per-node failures are caller observations; transparent retries borrow ownership."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

@@ -1,0 +1,48 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IBatchHashCommands",
+      "OwnerType": "Respire.BatchHashCommands",
+      "Members": [
+        "Count(RespireKey):RespirePending<long>",
+        "Exists(RespireKey,string):RespirePending<bool>",
+        "Expire(RespireKey,RespireExpiry,ExpireWhen,params ReadOnlySpan<string>):RespirePending<HashFieldExpiryResult[]>",
+        "Expire(RespireKey,RespireExpiry,params ReadOnlySpan<string>):RespirePending<HashFieldExpiryResult[]>",
+        "Expiry(RespireKey,RespireKey):RespirePending<RespireTtl>",
+        "Expiry(RespireKey,params ReadOnlySpan<RespireKey>):RespirePending<RespireTtl[]>",
+        "Expiry(RespireKey,params ReadOnlySpan<string>):RespirePending<RespireTtl[]>",
+        "ExpiryTime(RespireKey,ExpiryTimePrecision,params ReadOnlySpan<string>):RespirePending<RespireExpiryTime[]>",
+        "ExpiryTime(RespireKey,params ReadOnlySpan<string>):RespirePending<RespireExpiryTime[]>",
+        "Fields(RespireKey):RespirePending<string[]>",
+        "GetAll(RespireKey):RespirePending<Dictionary<string,string>>",
+        "GetAll`1(RespireKey):RespirePending<Dictionary<string,T>>",
+        "GetAndExpire(RespireKey,RespireExpiry,params ReadOnlySpan<string>):RespirePending<string?[]>",
+        "GetAndRemove(RespireKey,params ReadOnlySpan<string>):RespirePending<string?[]>",
+        "GetBytes(RespireKey,RespireKey):RespirePending<byte[]?>",
+        "GetBytes(RespireKey,string):RespirePending<byte[]?>",
+        "GetMany(RespireKey,params ReadOnlySpan<string>):RespirePending<string?[]>",
+        "GetString(RespireKey,string):RespirePending<string?>",
+        "Get`1(RespireKey,string):RespirePending<T?>",
+        "Increment(RespireKey,string,double):RespirePending<double>",
+        "Increment(RespireKey,string,long):RespirePending<long>",
+        "Length(RespireKey,string):RespirePending<long>",
+        "RandomField(RespireKey):RespirePending<string?>",
+        "RandomFields(RespireKey,long):RespirePending<string[]>",
+        "RandomFieldsWithValues(RespireKey,long):RespirePending<KeyValuePair<string,string>[]>",
+        "Remove(RespireKey,params ReadOnlySpan<string>):RespirePending<long>",
+        "Set(RespireKey,params ReadOnlySpan<(stringField,RespireValueValue)>):RespirePending<long>",
+        "Set(RespireKey,string,RespireValue):RespirePending<bool>",
+        "Set(RespireKey,string,RespireValue,SetWhen):RespirePending<bool>",
+        "SetExpire(RespireKey,RespireExpiry,SetWhen,params ReadOnlySpan<(stringField,RespireValueValue)>):RespirePending<bool>",
+        "SetExpire(RespireKey,RespireExpiry,params ReadOnlySpan<(stringField,RespireValueValue)>):RespirePending<bool>",
+        "Set`1(RespireKey,string,T):RespirePending<bool>",
+        "Set`1(RespireKey,string,T,SetWhen):RespirePending<bool>",
+        "TryGet`1(RespireKey,string):RespirePending<RespireGet<T>>",
+        "Values(RespireKey):RespirePending<string[]>"
+      ],
+      "Contract": "Queue methods own synchronous validation and serialization. Execute/commit owns transport and cleanup; each pending result owns its later caller inspection and conversion. Never consume a pending result to observe errors."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

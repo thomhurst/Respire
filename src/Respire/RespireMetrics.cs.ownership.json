@@ -1,0 +1,10 @@
+{
+  "Surfaces": [],
+  "Boundaries": [],
+  "NonRoutes": [
+    {
+      "Member": "Respire.RespireMetrics.Configure(RespireMetricsOptions):void",
+      "Reason": "Process-wide metric configuration; no command dispatch."
+    }
+  ]
+}

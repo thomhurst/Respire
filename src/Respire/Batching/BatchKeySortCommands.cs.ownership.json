@@ -1,0 +1,18 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IBatchKeyCommands",
+      "OwnerType": "Respire.BatchKeyCommands",
+      "Members": [
+        "Move(RespireKey,int):RespirePending<bool>",
+        "Random():RespirePending<RespireKey?>",
+        "Sort(RespireKey,RespireSortOptions?):RespirePending<string?[]>",
+        "SortStore(RespireKey,RespireKey,RespireSortOptions?):RespirePending<long>",
+        "Sort`1(RespireKey,RespireSortOptions?):RespirePending<T?[]>"
+      ],
+      "Contract": "Queue methods own synchronous validation and serialization. Execute/commit owns transport and cleanup; each pending result owns its later caller inspection and conversion. Never consume a pending result to observe errors."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

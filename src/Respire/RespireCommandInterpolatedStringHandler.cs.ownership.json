@@ -1,0 +1,122 @@
+{
+  "Surfaces": [],
+  "Boundaries": [],
+  "NonRoutes": [
+    {
+      "Member": "Respire.RespireCommandInterpolatedStringHandler.AppendFormatted(ReadOnlyMemory<byte>):void",
+      "Reason": "Command argument construction helper; the enclosing interpolated dispatch owns caller failures."
+    },
+    {
+      "Member": "Respire.RespireCommandInterpolatedStringHandler.AppendFormatted(ReadOnlyMemory<byte>,int):void",
+      "Reason": "Command argument construction helper; the enclosing interpolated dispatch owns caller failures."
+    },
+    {
+      "Member": "Respire.RespireCommandInterpolatedStringHandler.AppendFormatted(ReadOnlyMemory<byte>,int,string?):void",
+      "Reason": "Command argument construction helper; the enclosing interpolated dispatch owns caller failures."
+    },
+    {
+      "Member": "Respire.RespireCommandInterpolatedStringHandler.AppendFormatted(ReadOnlyMemory<byte>,string?):void",
+      "Reason": "Command argument construction helper; the enclosing interpolated dispatch owns caller failures."
+    },
+    {
+      "Member": "Respire.RespireCommandInterpolatedStringHandler.AppendFormatted(RespireKey):void",
+      "Reason": "Command argument construction helper; the enclosing interpolated dispatch owns caller failures."
+    },
+    {
+      "Member": "Respire.RespireCommandInterpolatedStringHandler.AppendFormatted(RespireKey,int):void",
+      "Reason": "Command argument construction helper; the enclosing interpolated dispatch owns caller failures."
+    },
+    {
+      "Member": "Respire.RespireCommandInterpolatedStringHandler.AppendFormatted(RespireKey,int,string?):void",
+      "Reason": "Command argument construction helper; the enclosing interpolated dispatch owns caller failures."
+    },
+    {
+      "Member": "Respire.RespireCommandInterpolatedStringHandler.AppendFormatted(RespireKey,string?):void",
+      "Reason": "Command argument construction helper; the enclosing interpolated dispatch owns caller failures."
+    },
+    {
+      "Member": "Respire.RespireCommandInterpolatedStringHandler.AppendFormatted(RespireValue):void",
+      "Reason": "Command argument construction helper; the enclosing interpolated dispatch owns caller failures."
+    },
+    {
+      "Member": "Respire.RespireCommandInterpolatedStringHandler.AppendFormatted(RespireValue,int):void",
+      "Reason": "Command argument construction helper; the enclosing interpolated dispatch owns caller failures."
+    },
+    {
+      "Member": "Respire.RespireCommandInterpolatedStringHandler.AppendFormatted(RespireValue,int,string?):void",
+      "Reason": "Command argument construction helper; the enclosing interpolated dispatch owns caller failures."
+    },
+    {
+      "Member": "Respire.RespireCommandInterpolatedStringHandler.AppendFormatted(RespireValue,string?):void",
+      "Reason": "Command argument construction helper; the enclosing interpolated dispatch owns caller failures."
+    },
+    {
+      "Member": "Respire.RespireCommandInterpolatedStringHandler.AppendFormatted(bool):void",
+      "Reason": "Command argument construction helper; the enclosing interpolated dispatch owns caller failures."
+    },
+    {
+      "Member": "Respire.RespireCommandInterpolatedStringHandler.AppendFormatted(bool,int):void",
+      "Reason": "Command argument construction helper; the enclosing interpolated dispatch owns caller failures."
+    },
+    {
+      "Member": "Respire.RespireCommandInterpolatedStringHandler.AppendFormatted(bool,int,string?):void",
+      "Reason": "Command argument construction helper; the enclosing interpolated dispatch owns caller failures."
+    },
+    {
+      "Member": "Respire.RespireCommandInterpolatedStringHandler.AppendFormatted(bool,string?):void",
+      "Reason": "Command argument construction helper; the enclosing interpolated dispatch owns caller failures."
+    },
+    {
+      "Member": "Respire.RespireCommandInterpolatedStringHandler.AppendFormatted(byte[]):void",
+      "Reason": "Command argument construction helper; the enclosing interpolated dispatch owns caller failures."
+    },
+    {
+      "Member": "Respire.RespireCommandInterpolatedStringHandler.AppendFormatted(byte[]?,int):void",
+      "Reason": "Command argument construction helper; the enclosing interpolated dispatch owns caller failures."
+    },
+    {
+      "Member": "Respire.RespireCommandInterpolatedStringHandler.AppendFormatted(byte[]?,int,string?):void",
+      "Reason": "Command argument construction helper; the enclosing interpolated dispatch owns caller failures."
+    },
+    {
+      "Member": "Respire.RespireCommandInterpolatedStringHandler.AppendFormatted(byte[]?,string?):void",
+      "Reason": "Command argument construction helper; the enclosing interpolated dispatch owns caller failures."
+    },
+    {
+      "Member": "Respire.RespireCommandInterpolatedStringHandler.AppendFormatted(double):void",
+      "Reason": "Command argument construction helper; the enclosing interpolated dispatch owns caller failures."
+    },
+    {
+      "Member": "Respire.RespireCommandInterpolatedStringHandler.AppendFormatted(int):void",
+      "Reason": "Command argument construction helper; the enclosing interpolated dispatch owns caller failures."
+    },
+    {
+      "Member": "Respire.RespireCommandInterpolatedStringHandler.AppendFormatted(long):void",
+      "Reason": "Command argument construction helper; the enclosing interpolated dispatch owns caller failures."
+    },
+    {
+      "Member": "Respire.RespireCommandInterpolatedStringHandler.AppendFormatted(string?):void",
+      "Reason": "Command argument construction helper; the enclosing interpolated dispatch owns caller failures."
+    },
+    {
+      "Member": "Respire.RespireCommandInterpolatedStringHandler.AppendFormatted`1(T):void",
+      "Reason": "Command argument construction helper; the enclosing interpolated dispatch owns caller failures."
+    },
+    {
+      "Member": "Respire.RespireCommandInterpolatedStringHandler.AppendFormatted`1(T,int):void",
+      "Reason": "Command argument construction helper; the enclosing interpolated dispatch owns caller failures."
+    },
+    {
+      "Member": "Respire.RespireCommandInterpolatedStringHandler.AppendFormatted`1(T,int,string?):void",
+      "Reason": "Command argument construction helper; the enclosing interpolated dispatch owns caller failures."
+    },
+    {
+      "Member": "Respire.RespireCommandInterpolatedStringHandler.AppendFormatted`1(T,string?):void",
+      "Reason": "Command argument construction helper; the enclosing interpolated dispatch owns caller failures."
+    },
+    {
+      "Member": "Respire.RespireCommandInterpolatedStringHandler.AppendLiteral(string):void",
+      "Reason": "Command argument construction helper; the enclosing interpolated dispatch owns caller failures."
+    }
+  ]
+}

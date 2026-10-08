@@ -1,0 +1,31 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IServerCommands",
+      "OwnerType": "Respire.ServerCommands",
+      "Members": [
+        "BackgroundRewriteAofAsync(CancellationToken):ValueTask<RespireBackgroundPersistenceResult>",
+        "BackgroundRewriteAofOnAllNodesAsync(CancellationToken):ValueTask<RespireServerResult<RespireBackgroundPersistenceResult>[]>",
+        "BackgroundSaveAsync(bool,CancellationToken):ValueTask<RespireBackgroundPersistenceResult>",
+        "BackgroundSaveOnAllNodesAsync(bool,CancellationToken):ValueTask<RespireServerResult<RespireBackgroundPersistenceResult>[]>",
+        "CommandDocsAsync(ReadOnlySpan<RespireCommand>,CancellationToken):ValueTask<RespireCommandDocumentation[]>",
+        "CommandDocsOnAllNodesAsync(ReadOnlySpan<RespireCommand>,CancellationToken):ValueTask<RespireServerResult<RespireCommandDocumentation[]>[]>",
+        "CommandGetKeysAsync(RespireCommand,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<byte[][]>",
+        "CommandGetKeysOnAllNodesAsync(RespireCommand,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<RespireServerResult<byte[][]>[]>",
+        "CommandInfoAsync(ReadOnlySpan<RespireCommand>,CancellationToken):ValueTask<RespireCommandInfo?[]>",
+        "CommandInfoOnAllNodesAsync(ReadOnlySpan<RespireCommand>,CancellationToken):ValueTask<RespireServerResult<RespireCommandInfo?[]>[]>",
+        "ConfigResetStatisticsAsync(CancellationToken):ValueTask",
+        "ConfigResetStatisticsOnAllNodesAsync(CancellationToken):ValueTask<RespireServerResult<bool>[]>",
+        "ConfigRewriteAsync(CancellationToken):ValueTask",
+        "ConfigRewriteOnAllNodesAsync(CancellationToken):ValueTask<RespireServerResult<bool>[]>",
+        "ModuleListAsync(CancellationToken):ValueTask<RespireModuleInfo[]>",
+        "ModuleListOnAllNodesAsync(CancellationToken):ValueTask<RespireServerResult<RespireModuleInfo[]>[]>",
+        "SaveAsync(CancellationToken):ValueTask",
+        "SaveOnAllNodesAsync(CancellationToken):ValueTask<RespireServerResult<bool>[]>"
+      ],
+      "Contract": "Start before admin preflight or validation. Keep ownership through each node, conversion and cleanup. Returned per-node failures are caller observations; transparent retries borrow ownership."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

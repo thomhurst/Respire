@@ -1,0 +1,20 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "native-pooled-inspection",
+      "Role": "final",
+      "Member": "Respire.Networking.PendingResponseSource.IValueTaskSource<RespValue>.GetResult(short):RespValue",
+      "Owner": "Respire.Networking.PendingResponseSource.IValueTaskSource<RespValue>.GetResult(short):RespValue",
+      "Contract": "Native pooled GetResult owns final transport inspection. Keep response references, token checks and pool return intact. Never add a universal ValueTask wrapper."
+    },
+    {
+      "Name": "typed-converter-inspection",
+      "Role": "final",
+      "Member": "Respire.Networking.ConvertedPendingResponseSource`2.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Owner": "Respire.Networking.ConvertedPendingResponseSource`2.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Converted pooled GetResult keeps ownership through converter invocation and response disposal. Conversion and cleanup failures belong to this caller, not the underlying raw response."
+    }
+  ],
+  "NonRoutes": []
+}

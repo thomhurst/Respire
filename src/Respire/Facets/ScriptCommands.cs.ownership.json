@@ -1,0 +1,31 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IScriptCommands",
+      "OwnerType": "Respire.ScriptCommands",
+      "Members": [
+        "ExecuteAsync(RespireScript,RespireKey[]?,RespireValue[]?,CancellationToken):ValueTask<RespireResult>",
+        "ExecuteAsync`1(RespireScript,RespireKey[]?,RespireValue[]?,CancellationToken):ValueTask<T?>",
+        "ExecuteIntegerAsync(RespireScript,RespireKey[]?,RespireValue[]?,CancellationToken):ValueTask<long>",
+        "ExecuteSpanAsync(RespireScript,ReadOnlySpan<RespireKey>,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<RespireResult>",
+        "ExecuteStringAsync(RespireScript,RespireKey[]?,RespireValue[]?,CancellationToken):ValueTask<string?>",
+        "ExistsAsync(ReadOnlySpan<string>,CancellationToken):ValueTask<bool[]>",
+        "ExistsAsync(params ReadOnlySpan<string>):ValueTask<bool[]>",
+        "FlushAsync(ScriptFlushMode,CancellationToken):ValueTask",
+        "LoadAsync(RespireScript,CancellationToken):ValueTask<string>"
+      ],
+      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": [
+    {
+      "Member": "Respire.RespireScript.Create(string):RespireScript",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireScript.Create(string,bool):RespireScript",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    }
+  ]
+}

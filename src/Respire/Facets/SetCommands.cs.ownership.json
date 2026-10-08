@@ -1,0 +1,45 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.ISetCommands",
+      "OwnerType": "Respire.SetCommands",
+      "Members": [
+        "AddAsync(RespireKey,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<long>",
+        "AddAsync(RespireKey,params ReadOnlySpan<RespireValue>):ValueTask<long>",
+        "ContainsAsync(RespireKey,RespireValue,CancellationToken):ValueTask<bool>",
+        "ContainsAsync`1(RespireKey,T,CancellationToken):ValueTask<bool>",
+        "ContainsManyAsync(RespireKey,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<bool[]>",
+        "ContainsManyAsync(RespireKey,params ReadOnlySpan<RespireValue>):ValueTask<bool[]>",
+        "CountAsync(RespireKey,CancellationToken):ValueTask<long>",
+        "DifferenceAsync(ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<string[]>",
+        "DifferenceAsync(params ReadOnlySpan<RespireKey>):ValueTask<string[]>",
+        "DifferenceStoreAsync(RespireKey,ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<long>",
+        "DifferenceStoreAsync(RespireKey,params ReadOnlySpan<RespireKey>):ValueTask<long>",
+        "IntersectAsync(ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<string[]>",
+        "IntersectAsync(params ReadOnlySpan<RespireKey>):ValueTask<string[]>",
+        "IntersectCountAsync(ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<long>",
+        "IntersectCountAsync(long,ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<long>",
+        "IntersectCountAsync(long,params ReadOnlySpan<RespireKey>):ValueTask<long>",
+        "IntersectCountAsync(params ReadOnlySpan<RespireKey>):ValueTask<long>",
+        "IntersectStoreAsync(RespireKey,ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<long>",
+        "IntersectStoreAsync(RespireKey,params ReadOnlySpan<RespireKey>):ValueTask<long>",
+        "MembersAsync(RespireKey,CancellationToken):ValueTask<string[]>",
+        "MembersAsync`1(RespireKey,CancellationToken):ValueTask<T[]>",
+        "MoveAsync(RespireKey,RespireKey,RespireValue,CancellationToken):ValueTask<bool>",
+        "PopAsync(RespireKey,CancellationToken):ValueTask<string?>",
+        "PopManyAsync(RespireKey,long,CancellationToken):ValueTask<string[]>",
+        "RandomMembersAsync(RespireKey,long,CancellationToken):ValueTask<string[]>",
+        "RemoveAsync(RespireKey,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<long>",
+        "RemoveAsync(RespireKey,params ReadOnlySpan<RespireValue>):ValueTask<long>",
+        "ScanAsync(RespireKey,string?,int,CancellationToken):IAsyncEnumerable<string>",
+        "UnionAsync(ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<string[]>",
+        "UnionAsync(params ReadOnlySpan<RespireKey>):ValueTask<string[]>",
+        "UnionStoreAsync(RespireKey,ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<long>",
+        "UnionStoreAsync(RespireKey,params ReadOnlySpan<RespireKey>):ValueTask<long>"
+      ],
+      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

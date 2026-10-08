@@ -1,0 +1,20 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IBatchStringCommands",
+      "OwnerType": "Respire.BatchStringCommands",
+      "Members": [
+        "DeleteConditional(RespireKey,RespireValueCondition):RespirePending<bool>",
+        "DeleteIfEqual(RespireKey,RespireValue):RespirePending<bool>",
+        "Digest(RespireKey):RespirePending<string?>",
+        "GetAndSetConditional(RespireKey,RespireValue,RespireValueCondition,RespireExpiry):RespirePending<string?>",
+        "GetAndSetConditional`1(RespireKey,T,RespireValueCondition,RespireExpiry):RespirePending<T?>",
+        "SetConditional(RespireKey,RespireValue,RespireValueCondition,RespireExpiry):RespirePending<bool>",
+        "SetConditional`1(RespireKey,T,RespireValueCondition,RespireExpiry):RespirePending<bool>"
+      ],
+      "Contract": "Queue methods own synchronous validation and serialization. Execute/commit owns transport and cleanup; each pending result owns its later caller inspection and conversion. Never consume a pending result to observe errors."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

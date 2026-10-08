@@ -1,0 +1,37 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IBatchListCommands",
+      "OwnerType": "Respire.BatchListCommands",
+      "Members": [
+        "Count(RespireKey):RespirePending<long>",
+        "Index(RespireKey,long):RespirePending<string?>",
+        "InsertAfter(RespireKey,RespireValue,RespireValue):RespirePending<long>",
+        "InsertBefore(RespireKey,RespireValue,RespireValue):RespirePending<long>",
+        "LeftPop(RespireKey):RespirePending<string?>",
+        "LeftPopMany(RespireKey,long):RespirePending<string[]>",
+        "LeftPopMany`1(RespireKey,long):RespirePending<T[]>",
+        "LeftPop`1(RespireKey):RespirePending<T?>",
+        "LeftPush(RespireKey,params ReadOnlySpan<RespireValue>):RespirePending<long>",
+        "LeftPushIfExists(RespireKey,params ReadOnlySpan<RespireValue>):RespirePending<long>",
+        "Move(RespireKey,RespireKey,ListSide,ListSide):RespirePending<string?>",
+        "Position(RespireKey,RespireValue,long,long):RespirePending<long?>",
+        "Positions(RespireKey,RespireValue,long,long,long):RespirePending<long[]>",
+        "Range(RespireKey,long,long):RespirePending<string[]>",
+        "Range`1(RespireKey,long,long):RespirePending<T[]>",
+        "Remove(RespireKey,RespireValue,long):RespirePending<long>",
+        "RightPop(RespireKey):RespirePending<string?>",
+        "RightPopMany(RespireKey,long):RespirePending<string[]>",
+        "RightPopMany`1(RespireKey,long):RespirePending<T[]>",
+        "RightPop`1(RespireKey):RespirePending<T?>",
+        "RightPush(RespireKey,params ReadOnlySpan<RespireValue>):RespirePending<long>",
+        "RightPushIfExists(RespireKey,params ReadOnlySpan<RespireValue>):RespirePending<long>",
+        "Set(RespireKey,long,RespireValue):RespirePending<bool>",
+        "Trim(RespireKey,long,long):RespirePending<bool>"
+      ],
+      "Contract": "Queue methods own synchronous validation and serialization. Execute/commit owns transport and cleanup; each pending result owns its later caller inspection and conversion. Never consume a pending result to observe errors."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

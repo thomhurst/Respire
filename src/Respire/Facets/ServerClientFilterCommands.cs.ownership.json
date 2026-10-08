@@ -1,0 +1,25 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IServerCommands",
+      "OwnerType": "Respire.ServerCommands",
+      "Members": [
+        "ClientsAsync(RespireClientFilterOptions,CancellationToken):ValueTask<RespireServerClientInfo[]>",
+        "ClientsOnAllNodesAsync(RespireClientFilterOptions,CancellationToken):ValueTask<RespireServerResult<RespireServerClientInfo[]>[]>",
+        "KillClientsAsync(RespireClientFilterOptions,CancellationToken):ValueTask<long>"
+      ],
+      "Contract": "Start before admin preflight or validation. Keep ownership through each node, conversion and cleanup. Returned per-node failures are caller observations; transparent retries borrow ownership."
+    },
+    {
+      "Type": "Respire.RespireServerClientConnection",
+      "OwnerType": "Respire.RespireServerClientConnection",
+      "Members": [
+        "ClientsAsync(RespireClientFilterOptions,CancellationToken):ValueTask<RespireServerClientInfo[]>",
+        "KillClientsAsync(RespireClientFilterOptions,CancellationToken):ValueTask<long>"
+      ],
+      "Contract": "Start before admin preflight or validation. Keep ownership through each node, conversion and cleanup. Returned per-node failures are caller observations; transparent retries borrow ownership."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

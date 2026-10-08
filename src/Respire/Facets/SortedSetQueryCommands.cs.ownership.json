@@ -1,0 +1,25 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.ISortedSetCommands",
+      "OwnerType": "Respire.SortedSetCommands",
+      "Members": [
+        "CountByLexAsync(RespireKey,RespireLexRange,CancellationToken):ValueTask<long>",
+        "IntersectCountAsync(ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<long>",
+        "IntersectCountAsync(long,ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<long>",
+        "IntersectCountAsync(long,params ReadOnlySpan<RespireKey>):ValueTask<long>",
+        "IntersectCountAsync(params ReadOnlySpan<RespireKey>):ValueTask<long>",
+        "RandomMemberAsync(RespireKey,CancellationToken):ValueTask<string?>",
+        "RandomMemberAsync`1(RespireKey,CancellationToken):ValueTask<T?>",
+        "RandomMembersAsync(RespireKey,long,CancellationToken):ValueTask<string[]>",
+        "RandomMembersAsync`1(RespireKey,long,CancellationToken):ValueTask<T[]>",
+        "RandomMembersWithScoresAsync(RespireKey,long,CancellationToken):ValueTask<SortedSetEntry[]>",
+        "RandomMembersWithScoresAsync`1(RespireKey,long,CancellationToken):ValueTask<SortedSetEntry<T>[]>",
+        "RemoveRangeByLexAsync(RespireKey,RespireLexRange,CancellationToken):ValueTask<long>"
+      ],
+      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

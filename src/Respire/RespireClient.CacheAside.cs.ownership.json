@@ -1,0 +1,22 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.RespireClient",
+      "OwnerType": "Respire.RespireClient",
+      "Members": [
+        "GetOrSetAsync`1(RespireKey,Func<CancellationToken,ValueTask<T?>>,TimeSpan,CancellationToken):ValueTask<T?>"
+      ],
+      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+    }
+  ],
+  "Boundaries": [
+    {
+      "Name": "cache-aside-producer",
+      "Role": "borrower",
+      "Member": "Respire.RespireClient.ProduceCacheAsideAsync`1(RespireKey,Func<CancellationToken,ValueTask<T?>>,long,CancellationToken,bool):ValueTask<RespValue>",
+      "Owner": "Respire.RespireClient.GetOrSetAsync`1(RespireKey,Func<CancellationToken,ValueTask<T?>>,TimeSpan,CancellationToken):ValueTask<T?>",
+      "Contract": "Factory, GET and SET borrow the GetOrSet caller owner. Shared producer failures retain separate waiter ownership."
+    }
+  ],
+  "NonRoutes": []
+}

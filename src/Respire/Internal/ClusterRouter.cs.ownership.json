@@ -1,0 +1,13 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "internal-topology-query",
+      "Role": "internal",
+      "Member": "Respire.Internal.ClusterRouter.SendTopologyQueryAsync(RespireConnection,RespireConnectionMultiplexer?,CancellationToken):ValueTask<(RespireConnectionResponder,Protocol.RespValueReply)>",
+      "Owner": null,
+      "Contract": "Background topology discovery records internal failures and never manufactures a caller final owner."
+    }
+  ],
+  "NonRoutes": []
+}

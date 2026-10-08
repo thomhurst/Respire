@@ -1,0 +1,19 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IRespireHealthProbe",
+      "OwnerType": "Respire.RespireClient",
+      "Members": [
+        "ProbeHealthAsync(RespireHealthProbeOptions?,CancellationToken):ValueTask<RespireHealthProbeResult[]>"
+      ],
+      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": [
+    {
+      "Member": "Respire.RespireHealthProbeOptions.Validate():void",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.RespirePendingAwaiter`1",
+      "OwnerType": "Respire.RespirePendingAwaiter`1",
+      "Members": [
+        "GetResult():T",
+        "OnCompleted(Action):void",
+        "UnsafeOnCompleted(Action):void"
+      ],
+      "Contract": "Final inspection of this pending result belongs to its logical caller, including typed conversion. Repeated inspection publishes once; independent callers retain separate ownership."
+    },
+    {
+      "Type": "Respire.RespirePending`1",
+      "OwnerType": "Respire.RespirePending`1",
+      "Members": [
+        "GetAwaiter():RespirePendingAwaiter<T>",
+        "TryGetResult(out T):bool"
+      ],
+      "Contract": "Final inspection of this pending result belongs to its logical caller, including typed conversion. Repeated inspection publishes once; independent callers retain separate ownership."
+    }
+  ],
+  "Boundaries": [
+    {
+      "Name": "deferred-inspection",
+      "Role": "final",
+      "Member": "Respire.RespirePending`1.Result:T",
+      "Owner": "Respire.RespirePending`1.Result:T",
+      "Contract": "Pending.Result owns caller final inspection. Repeated final inspection of one owner generation is harmless; independent callers remain distinct."
+    },
+    {
+      "Name": "deferred-awaiter",
+      "Role": "helper",
+      "Member": "Respire.RespirePendingAwaiter`1.GetResult():T",
+      "Owner": "Respire.RespirePending`1.Result:T",
+      "Contract": "Delegate final inspection to pending Result without consuming or replacing the deferred result contract."
+    }
+  ],
+  "NonRoutes": []
+}

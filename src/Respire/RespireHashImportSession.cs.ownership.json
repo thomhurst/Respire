@@ -1,0 +1,29 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.RespireHashImportSession",
+      "OwnerType": "Respire.RespireHashImportSession",
+      "Members": [
+        "DiscardAllAsync(CancellationToken):ValueTask<long>",
+        "DiscardAsync(RespireValue,CancellationToken):ValueTask<bool>",
+        "DisposeAsync():ValueTask",
+        "PrepareAsync(RespireValue,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<bool>",
+        "PrepareAsync(RespireValue,params ReadOnlySpan<RespireValue>):ValueTask<bool>",
+        "SetAsync(RespireKey,RespireValue,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,RespireValue,params ReadOnlySpan<RespireValue>):ValueTask<bool>"
+      ],
+      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": [
+    {
+      "Member": "Respire.RespireHashImportSession.CreateBatch():RespireBatch",
+      "Reason": "Creates a local queue; queue validation, execution and pending inspection have their own declared owners."
+    },
+    {
+      "Member": "Respire.RespireHashImportSession.CreateTransaction():RespireTransaction",
+      "Reason": "Creates a local queue; queue validation, execution and pending inspection have their own declared owners."
+    }
+  ]
+}

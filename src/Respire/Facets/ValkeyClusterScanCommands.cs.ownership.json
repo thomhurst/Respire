@@ -1,0 +1,14 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IKeyCommands",
+      "OwnerType": "Respire.KeyCommands",
+      "Members": [
+        "ScanValkeyClusterPageAsync(string,string?,RespireKeyType?,int,int?,CancellationToken):ValueTask<RespireValkeyClusterScanPage>"
+      ],
+      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

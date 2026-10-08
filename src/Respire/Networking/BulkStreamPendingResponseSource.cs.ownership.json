@@ -1,0 +1,13 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "download-payload-read",
+      "Role": "final",
+      "Member": "Respire.Networking.RespBulkPayloadPipe.ProgressTrackingStream.ReadAsync(Memory<byte>,CancellationToken):ValueTask<int>",
+      "Owner": "Respire.Networking.RespBulkPayloadPipe.ProgressTrackingStream.ReadAsync(Memory<byte>,CancellationToken):ValueTask<int>",
+      "Contract": "Once GET returns a stream, each public payload read is a separate logical caller. Preserve stream cancellation, pipe drain and receive ordering; do not hold GET ownership forever."
+    }
+  ],
+  "NonRoutes": []
+}

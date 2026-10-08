@@ -1,0 +1,20 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IBatchGeoCommands",
+      "OwnerType": "Respire.BatchGeoCommands",
+      "Members": [
+        "Add(RespireKey,GeoAddOptions,params ReadOnlySpan<GeoEntry>):RespirePending<long>",
+        "Add(RespireKey,params ReadOnlySpan<GeoEntry>):RespirePending<long>",
+        "Distance(RespireKey,RespireValue,RespireValue,GeoUnit):RespirePending<double?>",
+        "Hash(RespireKey,params ReadOnlySpan<RespireValue>):RespirePending<string?[]>",
+        "Position(RespireKey,params ReadOnlySpan<RespireValue>):RespirePending<GeoPosition?[]>",
+        "Search(RespireKey,GeoSearchOrigin,GeoSearchShape,GeoSearchOptions):RespirePending<GeoSearchResult[]>",
+        "SearchStore(RespireKey,RespireKey,GeoSearchOrigin,GeoSearchShape,GeoSearchOptions,bool):RespirePending<long>"
+      ],
+      "Contract": "Queue methods own synchronous validation and serialization. Execute/commit owns transport and cleanup; each pending result owns its later caller inspection and conversion. Never consume a pending result to observe errors."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

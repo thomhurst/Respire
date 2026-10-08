@@ -1,0 +1,14 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IBatchListCommands",
+      "OwnerType": "Respire.BatchListCommands",
+      "Members": [
+        "PopMany(ReadOnlySpan<RespireKey>,long,ListSide):RespirePending<RespireListPopManyResult?>"
+      ],
+      "Contract": "Queue methods own synchronous validation and serialization. Execute/commit owns transport and cleanup; each pending result owns its later caller inspection and conversion. Never consume a pending result to observe errors."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

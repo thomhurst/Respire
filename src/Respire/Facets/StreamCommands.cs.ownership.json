@@ -1,0 +1,86 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IStreamCommands",
+      "OwnerType": "Respire.StreamCommands",
+      "Members": [
+        "AcknowledgeAsync(RespireKey,string,ReadOnlySpan<RespireStreamId>,CancellationToken):ValueTask<long>",
+        "AcknowledgeAsync(RespireKey,string,params ReadOnlySpan<RespireStreamId>):ValueTask<long>",
+        "AddAsync(RespireKey,ReadOnlySpan<(stringField,RespireValueValue)>,CancellationToken):ValueTask<RespireStreamId>",
+        "AddAsync(RespireKey,StreamAddOptions,ReadOnlySpan<(stringField,RespireValueValue)>,CancellationToken):ValueTask<RespireStreamId?>",
+        "AddAsync(RespireKey,StreamAddOptions,params ReadOnlySpan<(stringField,RespireValueValue)>):ValueTask<RespireStreamId?>",
+        "AddAsync(RespireKey,params ReadOnlySpan<(stringField,RespireValueValue)>):ValueTask<RespireStreamId>",
+        "ClaimAsync(RespireKey,string,string,TimeSpan,ReadOnlySpan<RespireStreamId>,CancellationToken):ValueTask<RespireStreamEntry[]>",
+        "ClaimAsync(RespireKey,string,string,TimeSpan,params ReadOnlySpan<RespireStreamId>):ValueTask<RespireStreamEntry[]>",
+        "ClaimPendingAsync(RespireKey,string,string,TimeSpan,RespireStreamId?,int,CancellationToken):ValueTask<RespireStreamClaimResult>",
+        "ConsumerInfoAsync(RespireKey,string,CancellationToken):ValueTask<RespireStreamConsumerInfo[]>",
+        "CountAsync(RespireKey,CancellationToken):ValueTask<long>",
+        "CreateConsumerAsync(RespireKey,string,string,CancellationToken):ValueTask<bool>",
+        "CreateGroupAsync(RespireKey,string,RespireStreamId?,bool,CancellationToken):ValueTask<bool>",
+        "DeleteConsumerAsync(RespireKey,string,string,CancellationToken):ValueTask<long>",
+        "DeleteGroupAsync(RespireKey,string,CancellationToken):ValueTask<bool>",
+        "GroupInfoAsync(RespireKey,CancellationToken):ValueTask<RespireStreamGroupInfo[]>",
+        "InfoAsync(RespireKey,CancellationToken):ValueTask<RespireStreamInfo>",
+        "PendingAsync(RespireKey,string,RespireStreamId?,RespireStreamId?,int,string?,CancellationToken):ValueTask<RespireStreamPendingEntry[]>",
+        "PendingSummaryAsync(RespireKey,string,CancellationToken):ValueTask<RespireStreamPendingSummary>",
+        "RangeAsync(RespireKey,RespireStreamId?,RespireStreamId?,int?,bool,CancellationToken):ValueTask<RespireStreamEntry[]>",
+        "ReadGroupAsync(RespireKey,string,string,RespireStreamId?,int,CancellationToken):IAsyncEnumerable<RespireStreamEntry>",
+        "ReadGroupAsync(RespireKey,string,string,int,CancellationToken):IAsyncEnumerable<RespireStreamEntry>",
+        "RemoveAsync(RespireKey,ReadOnlySpan<RespireStreamId>,CancellationToken):ValueTask<long>",
+        "RemoveAsync(RespireKey,params ReadOnlySpan<RespireStreamId>):ValueTask<long>",
+        "SetGroupPositionAsync(RespireKey,string,RespireStreamId,long?,CancellationToken):ValueTask",
+        "SetLastIdAsync(RespireKey,RespireStreamId,long?,RespireStreamId?,CancellationToken):ValueTask",
+        "TrimAsync(RespireKey,StreamTrimOptions,CancellationToken):ValueTask<long>",
+        "TrimByMaxLengthAsync(RespireKey,long,bool,CancellationToken):ValueTask<long>"
+      ],
+      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+    },
+    {
+      "Type": "Respire.RespireStreamEntry",
+      "OwnerType": "Respire.RespireStreamEntry",
+      "Members": [
+        "AckAsync(CancellationToken):ValueTask<bool>"
+      ],
+      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": [
+    {
+      "Member": "Respire.RespireStreamEntry.GetString(string):string?",
+      "Reason": "Local stream payload conversion or processing timestamp recording; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireStreamEntry.RecordProcessingStart():void",
+      "Reason": "Local stream payload conversion or processing timestamp recording; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireStreamId.CompareTo(RespireStreamId):int",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireStreamId.Equals(RespireStreamId):bool",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireStreamId.Equals(object?):bool",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireStreamId.GetHashCode():int",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireStreamId.ToString():string",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.StreamAddOptions.Equals(StreamAddOptions):bool",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.StreamAddOptions.GetHashCode():int",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    }
+  ]
+}

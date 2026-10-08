@@ -485,8 +485,12 @@ Command-family integration is tracked in
 [#1023](https://github.com/thomhurst/Respire/issues/1023); the leases and the test-only
 route-owner guard do not enable error metrics for every command path.
 
-When adding a core command path, update
-`tests/Respire.Tests/CommandRouteOwners.json` in the same change. The inventory pins
+When adding a core public method, update its source-adjacent
+`<source-file>.cs.ownership.json` declaration in the same change. There is no shared
+inventory file to update. The guard treats every public method on a public core
+type as a route, including synchronous methods on new types. Explicit `NonRoutes`
+entries exclude local value operations and helpers, with a reason for each source
+signature. A new method fails until it is classified. The declarations pin
 public source signatures, not the number or location of telemetry recorder calls.
 `Surfaces` maps each declared signature to an executable final owner: `OwnerType`
 uses the same signature on that implementation type, and `Overrides` names a
@@ -495,7 +499,11 @@ different complete source member when delegation changes the signature.
 transaction implementations of the same queue interface. Generic
 arity uses a backtick followed by the parameter count. Parameter names and defaults
 are omitted; parameter types, modifiers and return types are retained. Interface
-declarations alone cannot be final owners.
+declarations alone cannot be final owners, except executable default interface
+methods. Same-signature implementation owners must have a public executable method
+and list the contract in their source base types (including inherited and partial
+declarations). Explicit interface implementations retain their interface-qualified
+source signature; they cannot masquerade as implicit public implementations.
 
 Declare the owner before argument validation, disposal checks, cancellation checks,
 command construction or setup parsing can fail. Explain the complete lifetime in
@@ -527,9 +535,9 @@ Returned per-node failures must not also become duplicate parent failures.
 Run `CommandRouteOwnershipTests` on net8.0 and net10.0. The guard scans the core
 library source, including catalog dispatch and framework
 branches. New signatures, missing declarations and removed executable owners fail;
-negative controls exercise those failures. The inventory is a reviewed declaration
-of required ownership, not proof that runtime instrumentation is present or that a
-delegate passes its lease correctly. Route-family integration must also test final
+negative controls exercise those failures. The source-local declarations specify
+required ownership. They do not prove that runtime instrumentation is present or
+that a delegate passes its lease correctly. Route-family integration must also test final
 publication, retries and original exception/cancellation behavior. Extension package
 integration requires its own route declarations when its scope is added.
 

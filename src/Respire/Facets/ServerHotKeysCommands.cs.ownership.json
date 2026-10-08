@@ -1,0 +1,29 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IServerCommands",
+      "OwnerType": "Respire.ServerCommands",
+      "Members": [
+        "GetHotKeysOnAllNodesAsync(CancellationToken):ValueTask<RespireServerResult<RespireHotKeysSnapshot[]?>[]>",
+        "GetHotKeysTrackerAsync(CancellationToken):ValueTask<RespireHotKeysTracker>",
+        "ResetHotKeysOnAllNodesAsync(CancellationToken):ValueTask<RespireServerResult<bool>[]>",
+        "StartHotKeysOnAllNodesAsync(RespireHotKeysOptions,CancellationToken):ValueTask<RespireServerResult<bool>[]>",
+        "StopHotKeysOnAllNodesAsync(CancellationToken):ValueTask<RespireServerResult<bool>[]>"
+      ],
+      "Contract": "Start before admin preflight or validation. Keep ownership through each node, conversion and cleanup. Returned per-node failures are caller observations; transparent retries borrow ownership."
+    },
+    {
+      "Type": "Respire.RespireHotKeysTracker",
+      "OwnerType": "Respire.RespireHotKeysTracker",
+      "Members": [
+        "GetAsync(CancellationToken):ValueTask<RespireHotKeysSnapshot[]?>",
+        "ResetAsync(CancellationToken):ValueTask",
+        "StartAsync(RespireHotKeysOptions,CancellationToken):ValueTask",
+        "StopAsync(CancellationToken):ValueTask<bool>"
+      ],
+      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

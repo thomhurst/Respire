@@ -1,0 +1,26 @@
+{
+  "Surfaces": [],
+  "Boundaries": [],
+  "NonRoutes": [
+    {
+      "Member": "Respire.Serialization.SystemTextJsonSerializer.Deserialize(Type,ReadOnlySpan<byte>):object?",
+      "Reason": "Serialization or codec helper; the enclosing command construction or result inspection owns caller failures."
+    },
+    {
+      "Member": "Respire.Serialization.SystemTextJsonSerializer.Deserialize`1(ReadOnlySpan<byte>):T?",
+      "Reason": "Serialization or codec helper; the enclosing command construction or result inspection owns caller failures."
+    },
+    {
+      "Member": "Respire.Serialization.SystemTextJsonSerializer.FromContext(JsonSerializerContext):SystemTextJsonSerializer",
+      "Reason": "Serialization or codec helper; the enclosing command construction or result inspection owns caller failures."
+    },
+    {
+      "Member": "Respire.Serialization.SystemTextJsonSerializer.Serialize(IBufferWriter<byte>,Type,object?):void",
+      "Reason": "Serialization or codec helper; the enclosing command construction or result inspection owns caller failures."
+    },
+    {
+      "Member": "Respire.Serialization.SystemTextJsonSerializer.Serialize`1(IBufferWriter<byte>,T):void",
+      "Reason": "Serialization or codec helper; the enclosing command construction or result inspection owns caller failures."
+    }
+  ]
+}

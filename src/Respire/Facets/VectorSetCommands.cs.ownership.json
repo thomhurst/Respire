@@ -1,0 +1,30 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IVectorSetCommands",
+      "OwnerType": "Respire.VectorSetCommands",
+      "Members": [
+        "AddAsync(RespireKey,ReadOnlyMemory<float>,RespireValue,RespireVectorAddOptions,RespireVectorEncoding,CancellationToken):ValueTask<bool>",
+        "ContainsAsync(RespireKey,RespireValue,CancellationToken):ValueTask<bool>",
+        "CountAsync(RespireKey,CancellationToken):ValueTask<long>",
+        "DimensionsAsync(RespireKey,CancellationToken):ValueTask<long>",
+        "EmbeddingAsync(RespireKey,RespireValue,CancellationToken):ValueTask<float[]?>",
+        "GetAttributesAsync`1(RespireKey,RespireValue,CancellationToken):ValueTask<T?>",
+        "GetAttributesJsonAsync(RespireKey,RespireValue,CancellationToken):ValueTask<byte[]?>",
+        "InfoAsync(RespireKey,CancellationToken):ValueTask<RespireVectorSetInfo?>",
+        "LinksAsync(RespireKey,RespireValue,bool,CancellationToken):ValueTask<RespireVectorMatch[][]?>",
+        "RandomMemberAsync(RespireKey,CancellationToken):ValueTask<byte[]?>",
+        "RandomMembersAsync(RespireKey,long,CancellationToken):ValueTask<byte[][]>",
+        "RangeAsync(RespireKey,RespireValue,RespireValue,long?,CancellationToken):ValueTask<byte[][]>",
+        "RemoveAsync(RespireKey,RespireValue,CancellationToken):ValueTask<bool>",
+        "SearchAsync(RespireKey,ReadOnlyMemory<float>,RespireVectorSearchOptions,RespireVectorEncoding,CancellationToken):ValueTask<RespireVectorMatch[]>",
+        "SearchByMemberAsync(RespireKey,RespireValue,RespireVectorSearchOptions,CancellationToken):ValueTask<RespireVectorMatch[]>",
+        "SetAttributesAsync`1(RespireKey,RespireValue,T,CancellationToken):ValueTask<bool>",
+        "SetAttributesJsonAsync(RespireKey,RespireValue,RespireValue,CancellationToken):ValueTask<bool>"
+      ],
+      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

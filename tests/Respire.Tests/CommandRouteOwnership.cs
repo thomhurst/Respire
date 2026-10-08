@@ -8,11 +8,13 @@ namespace Respire.Tests;
 internal static class CommandRouteOwnership
 {
     internal sealed record Member(string Id, string Type, string Signature, string Name,
-        bool PublicRoute, bool HasBody, string File);
+        bool PublicRoute, bool HasBody, string File, bool IsInterface = false,
+        bool PublicImplementation = false, string[]? Contracts = null);
     internal sealed record Surface(string Type, string OwnerType, string[] Members,
         Dictionary<string, string>? Overrides = null, string Contract = "", string[]? AdditionalOwnerTypes = null);
     internal sealed record Boundary(string Name, string Role, string Member, string? Owner, string Contract);
-    internal sealed record Inventory(Surface[] Surfaces, Boundary[] Boundaries);
+    internal sealed record NonRoute(string Member, string Reason);
+    internal sealed record Inventory(Surface[] Surfaces, Boundary[] Boundaries, NonRoute[]? NonRoutes = null);
 
     internal static Member[] Discover(IEnumerable<(string File, string Source)> files)
     {
@@ -26,6 +28,28 @@ internal static class CommandRouteOwnership
         var publicTypes = roots.SelectMany(file => file.Root.DescendantNodes().OfType<TypeDeclarationSyntax>())
             .Where(type => type.Modifiers.Any(SyntaxKind.PublicKeyword))
             .Select(TypeId).ToHashSet(StringComparer.Ordinal);
+        var typesById = roots.SelectMany(file => file.Root.DescendantNodes().OfType<TypeDeclarationSyntax>())
+            .GroupBy(TypeId).ToDictionary(g => g.Key, g => g.ToArray(), StringComparer.Ordinal);
+        var contractCache = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        string[] Contracts(string type)
+        {
+            if (contractCache.TryGetValue(type, out var cached)) return cached;
+            var result = new HashSet<string>(StringComparer.Ordinal);
+            void Visit(string current)
+            {
+                if (!typesById.TryGetValue(current, out var declarations)) return;
+                foreach (var declaration in declarations)
+                    foreach (var parent in declaration.BaseList?.Types ?? [])
+                    {
+                        var name = Compact(parent.Type).Replace("global::", "", StringComparison.Ordinal);
+                        var space = Namespace(declaration);
+                        var qualified = name.Contains('.') || space.Length == 0 ? name : space + "." + name;
+                        if (result.Add(qualified)) Visit(qualified);
+                    }
+            }
+            Visit(type);
+            return contractCache[type] = result.ToArray();
+        }
         foreach (var (file, root) in roots)
         {
             // Union framework branches and public partial declarations independently of telemetry.
@@ -34,15 +58,20 @@ internal static class CommandRouteOwnership
                 var types = method.Ancestors().OfType<TypeDeclarationSyntax>().Reverse().ToArray();
                 if (types.Length == 0) continue;
                 var type = TypeId(types[^1]);
-                var signature = method.Identifier.ValueText + Arity(method.TypeParameterList) + "(" +
+                var explicitContract = method.ExplicitInterfaceSpecifier?.Name.ToString();
+                var signature = (explicitContract is null ? "" : explicitContract + ".") + method.Identifier.ValueText + Arity(method.TypeParameterList) + "(" +
                     string.Join(",", method.ParameterList.Parameters.Select(Parameter)) + "):" + Compact(method.ReturnType);
                 var visible = types.All(t => publicTypes.Contains(TypeId(t)));
                 var publicMethod = method.Modifiers.Any(SyntaxKind.PublicKeyword) ||
                     (types[^1] is InterfaceDeclarationSyntax && !method.Modifiers.Any(SyntaxKind.PrivateKeyword)
                         && !method.Modifiers.Any(SyntaxKind.InternalKeyword));
-                var route = visible && publicMethod && IsOperation(type, method);
+                var route = visible && publicMethod;
+                var contracts = Contracts(type);
+                var implements = publicMethod || (explicitContract is not null && contracts.Any(c =>
+                    c == explicitContract || c.EndsWith("." + explicitContract, StringComparison.Ordinal)));
                 members.Add(new(type + "." + signature, type, signature, method.Identifier.ValueText,
-                    route, method.Body is not null || method.ExpressionBody is not null, file));
+                    route, method.Body is not null || method.ExpressionBody is not null, file,
+                    types[^1] is InterfaceDeclarationSyntax, implements, contracts));
             }
             // Deferred inspection and borrowed payload state also have property boundaries.
             foreach (var property in root.DescendantNodes().OfType<PropertyDeclarationSyntax>())
@@ -56,30 +85,21 @@ internal static class CommandRouteOwnership
                         a.Body is not null || a.ExpressionBody is not null) == true, file));
             }
         }
-        return members.DistinctBy(m => m.Id).OrderBy(m => m.Id, StringComparer.Ordinal).ToArray();
-    }
-
-    private static bool IsOperation(string type, MethodDeclarationSyntax method)
-    {
-        var result = method.ReturnType.DescendantNodesAndSelf().OfType<SimpleNameSyntax>().FirstOrDefault(n =>
-            n.Identifier.ValueText is "ValueTask" or "Task" or "IAsyncEnumerable" or "RespirePending" or "RespireResult" or "RespireLease");
-        return result is not null || method.Modifiers.Any(SyntaxKind.AsyncKeyword)
-            || method.Identifier.ValueText.EndsWith("Async", StringComparison.Ordinal)
-            || type.Contains("Commands", StringComparison.Ordinal)
-            || type is "Respire.RespireClient" or "Respire.IRespireClient" or "Respire.IRespireCommandQueue" or "Respire.RespireResult"
-            || type.StartsWith("Respire.RespireBatch", StringComparison.Ordinal)
-            || type.StartsWith("Respire.RespireTransaction", StringComparison.Ordinal)
-            || type.StartsWith("Respire.RespirePending", StringComparison.Ordinal)
-            || (type == "Respire.RespireOptions" && method.Identifier.ValueText == "Parse");
+        return members.GroupBy(m => m.Id).Select(g => g.First() with {
+            PublicRoute = g.Any(m => m.PublicRoute), HasBody = g.Any(m => m.HasBody),
+            PublicImplementation = g.Any(m => m.HasBody && m.PublicImplementation),
+            Contracts = g.SelectMany(m => m.Contracts ?? []).Distinct(StringComparer.Ordinal).ToArray()
+        }).OrderBy(m => m.Id, StringComparer.Ordinal).ToArray();
     }
 
     private static string TypeName(TypeDeclarationSyntax type) => type.Identifier.ValueText + Arity(type.TypeParameterList);
     private static string TypeId(TypeDeclarationSyntax type)
     {
-        var space = string.Join(".", type.Ancestors().OfType<BaseNamespaceDeclarationSyntax>()
-            .Reverse().Select(n => n.Name.ToString()));
-        return space + "." + string.Join(".", type.AncestorsAndSelf().OfType<TypeDeclarationSyntax>().Reverse().Select(TypeName));
+        var space = Namespace(type);
+        return (space.Length == 0 ? "" : space + ".") + string.Join(".", type.AncestorsAndSelf().OfType<TypeDeclarationSyntax>().Reverse().Select(TypeName));
     }
+    private static string Namespace(TypeDeclarationSyntax type) => string.Join(".", type.Ancestors()
+        .OfType<BaseNamespaceDeclarationSyntax>().Reverse().Select(n => n.Name.ToString()));
     private static string Arity(TypeParameterListSyntax? list) => list is null ? "" : "`" + list.Parameters.Count;
     private static string Compact(SyntaxNode node) => string.Concat(node.DescendantTokens().Select(t => t.Text));
     private static string Parameter(ParameterSyntax parameter) => string.Concat(parameter.Modifiers.Select(t => t.Text + " "))
@@ -102,16 +122,29 @@ internal static class CommandRouteOwnership
                 var owner = surface.Overrides?.GetValueOrDefault(signature) ?? surface.OwnerType + "." + signature;
                 if (!members.TryGetValue(owner, out var final) || !final.HasBody)
                     errors.Add("Missing final owner: " + route + " => " + owner);
+                else if (entry?.IsInterface == true && entry.Id != final.Id && final.Signature == entry.Signature
+                    && (!final.PublicImplementation || !(final.Contracts ?? []).Contains(entry.Type, StringComparer.Ordinal)))
+                    errors.Add("Owner does not implement public contract: " + route + " => " + owner);
                 foreach (var additionalType in surface.AdditionalOwnerTypes ?? [])
                 {
                     var additionalOwner = additionalType + "." + signature;
                     if (!members.TryGetValue(additionalOwner, out var additional) || !additional.HasBody)
                         errors.Add("Missing alternative final owner: " + route + " => " + additionalOwner);
+                    else if (entry?.IsInterface == true && (!additional.PublicImplementation
+                        || !(additional.Contracts ?? []).Contains(entry.Type, StringComparer.Ordinal)))
+                        errors.Add("Alternative owner does not implement public contract: " + route + " => " + additionalOwner);
                 }
             }
             if (surface.Overrides is not null)
                 foreach (var signature in surface.Overrides.Keys.Except(surface.Members))
                     errors.Add("Orphan owner override: " + surface.Type + "." + signature);
+        }
+        foreach (var exclusion in inventory.NonRoutes ?? [])
+        {
+            if (!declared.Add(exclusion.Member)) errors.Add("Duplicate route classification: " + exclusion.Member);
+            if (!members.TryGetValue(exclusion.Member, out var member) || !member.PublicRoute)
+                errors.Add("Removed or non-public exclusion: " + exclusion.Member);
+            if (string.IsNullOrWhiteSpace(exclusion.Reason)) errors.Add("Missing non-route reason: " + exclusion.Member);
         }
         foreach (var route in source.Where(m => m.PublicRoute && !declared.Contains(m.Id)))
             errors.Add("Undeclared public route: " + route.Id);

@@ -1,0 +1,13 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "upload-payload-read",
+      "Role": "borrower",
+      "Member": "Respire.Networking.RespireConnection.StreamPayloadReader.ReadChunkAsync(byte[],CancellationToken):Task<ReadOnlyMemory<byte>>",
+      "Owner": "Respire.RespireClient.SendStreamedUploadAsync`1(string,TCommand,CancellationToken,bool):ValueTask<RespValue>",
+      "Contract": "Source stream reads and deferred short reads borrow upload ownership. Keep ownership through active fill completion and cleanup before final failure."
+    }
+  ],
+  "NonRoutes": []
+}

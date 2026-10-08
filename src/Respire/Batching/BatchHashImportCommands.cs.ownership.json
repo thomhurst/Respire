@@ -1,0 +1,17 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IBatchHashCommands",
+      "OwnerType": "Respire.BatchHashCommands",
+      "Members": [
+        "DiscardAllImports():RespirePending<long>",
+        "DiscardImport(RespireValue):RespirePending<bool>",
+        "Import(RespireKey,RespireValue,params ReadOnlySpan<RespireValue>):RespirePending<bool>",
+        "PrepareImport(RespireValue,params ReadOnlySpan<RespireValue>):RespirePending<bool>"
+      ],
+      "Contract": "Queue methods own synchronous validation and serialization. Execute/commit owns transport and cleanup; each pending result owns its later caller inspection and conversion. Never consume a pending result to observe errors."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

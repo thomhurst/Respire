@@ -1,0 +1,25 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "fan-out",
+      "Role": "final",
+      "Member": "Respire.ServerCommands.FanOutAsync`2(string,TCommand,CancellationToken,ResponseConverter<ServerCommands,T>):ValueTask<RespireServerResult<T>[]>",
+      "Owner": "Respire.ServerCommands.FanOutAsync`2(string,TCommand,CancellationToken,ResponseConverter<ServerCommands,T>):ValueTask<RespireServerResult<T>[]>",
+      "Contract": "Keep public fan-out ownership through endpoint discovery, all target outcomes and cleanup. Public facet validation remains in its enclosing declared owner."
+    },
+    {
+      "Name": "fan-out-target",
+      "Role": "borrower",
+      "Member": "Respire.ServerCommands.ExecuteOnNodeAsync`2(RespireEndpoint,string,TCommand,ResponseConverter<ServerCommands,T>,SemaphoreSlim,CancellationToken):Task<RespireServerResult<T>>",
+      "Owner": "Respire.ServerCommands.FanOutAsync`2(string,TCommand,CancellationToken,ResponseConverter<ServerCommands,T>):ValueTask<RespireServerResult<T>[]>",
+      "Contract": "Each target keeps its per-node returned failure through converter and pool cleanup. Parent aggregates outcomes; do not publish the same node failure as both target and parent."
+    }
+  ],
+  "NonRoutes": [
+    {
+      "Member": "Respire.RespireServerResult`1.TryGetValue(out T):bool",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    }
+  ]
+}

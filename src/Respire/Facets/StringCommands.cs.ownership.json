@@ -1,0 +1,50 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IStringCommands",
+      "OwnerType": "Respire.StringCommands",
+      "Members": [
+        "AppendAsync(RespireKey,RespireValue,CancellationToken):ValueTask<long>",
+        "DecrementAsync(RespireKey,long,CancellationToken):ValueTask<long>",
+        "GetAndDeleteAsync(RespireKey,CancellationToken):ValueTask<string?>",
+        "GetAndDeleteAsync`1(RespireKey,CancellationToken):ValueTask<T?>",
+        "GetAndExpireAsync(RespireKey,RespireExpiry,CancellationToken):ValueTask<string?>",
+        "GetAndExpireAsync`1(RespireKey,RespireExpiry,CancellationToken):ValueTask<T?>",
+        "GetAndSetAsync(RespireKey,RespireValue,RespireExpiry,SetWhen,CancellationToken):ValueTask<string?>",
+        "GetAndSetAsync`1(RespireKey,T,RespireExpiry,SetWhen,CancellationToken):ValueTask<T?>",
+        "GetAsync`1(RespireKey,CancellationToken):ValueTask<T?>",
+        "GetBytesAsync(RespireKey,CancellationToken):ValueTask<byte[]?>",
+        "GetLeaseAsync(RespireKey,CancellationToken):ValueTask<RespireLease>",
+        "GetManyAsync(ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<string?[]>",
+        "GetManyAsync(params ReadOnlySpan<RespireKey>):ValueTask<string?[]>",
+        "GetManyAsync`1(ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<T?[]>",
+        "GetManyAsync`1(params ReadOnlySpan<RespireKey>):ValueTask<T?[]>",
+        "GetRangeAsync(RespireKey,long,long,CancellationToken):ValueTask<string>",
+        "GetStreamAsync(RespireKey,CancellationToken):ValueTask<Stream?>",
+        "GetStringAsync(RespireKey,CancellationToken):ValueTask<string?>",
+        "IncrementAsync(RespireKey,double,CancellationToken):ValueTask<double>",
+        "IncrementAsync(RespireKey,long,CancellationToken):ValueTask<long>",
+        "LcsAsync(RespireKey,RespireKey,CancellationToken):ValueTask<string>",
+        "LcsLengthAsync(RespireKey,RespireKey,CancellationToken):ValueTask<long>",
+        "LengthAsync(RespireKey,CancellationToken):ValueTask<long>",
+        "SetAsync(RespireKey,ReadOnlySequence<byte>,RespireExpiry,SetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,RespireValue,RespireExpiry,SetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync(RespireKey,Stream,long,RespireExpiry,SetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync`1(RespireKey,T,RespireExpiry,SetWhen,CancellationToken):ValueTask<bool>",
+        "SetManyAsync(ReadOnlySpan<(RespireKeyKey,RespireValueValue)>,CancellationToken):ValueTask<bool>",
+        "SetManyAsync(params ReadOnlySpan<(RespireKeyKey,RespireValueValue)>):ValueTask<bool>",
+        "SetManyExpireAsync(RespireExpiry,ReadOnlySpan<(RespireKeyKey,RespireValueValue)>,CancellationToken):ValueTask<bool>",
+        "SetManyExpireAsync(RespireExpiry,SetWhen,ReadOnlySpan<(RespireKeyKey,RespireValueValue)>,CancellationToken):ValueTask<bool>",
+        "SetManyExpireAsync(RespireExpiry,SetWhen,params ReadOnlySpan<(RespireKeyKey,RespireValueValue)>):ValueTask<bool>",
+        "SetManyExpireAsync(RespireExpiry,params ReadOnlySpan<(RespireKeyKey,RespireValueValue)>):ValueTask<bool>",
+        "SetManyIfNotExistsAsync(ReadOnlySpan<(RespireKeyKey,RespireValueValue)>,CancellationToken):ValueTask<bool>",
+        "SetManyIfNotExistsAsync(params ReadOnlySpan<(RespireKeyKey,RespireValueValue)>):ValueTask<bool>",
+        "SetRangeAsync(RespireKey,long,RespireValue,CancellationToken):ValueTask<long>",
+        "TryGetAsync`1(RespireKey,CancellationToken):ValueTask<RespireGet<T>>"
+      ],
+      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

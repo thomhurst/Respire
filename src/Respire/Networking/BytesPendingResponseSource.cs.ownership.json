@@ -1,0 +1,13 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "byte-result-inspection",
+      "Role": "final",
+      "Member": "Respire.Networking.BytesPendingResponseSource.IValueTaskSource<byte[]?>.GetResult(short):byte[]?",
+      "Owner": "Respire.Networking.BytesPendingResponseSource.IValueTaskSource<byte[]?>.GetResult(short):byte[]?",
+      "Contract": "Byte result inspection owns final failure and native pool lifetime."
+    }
+  ],
+  "NonRoutes": []
+}

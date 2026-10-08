@@ -1,0 +1,51 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IBatchSortedSetCommands",
+      "OwnerType": "Respire.BatchSortedSetCommands",
+      "Members": [
+        "Add(RespireKey,RespireValue,double):RespirePending<bool>",
+        "Add(RespireKey,params ReadOnlySpan<(RespireValueMember,doubleScore)>):RespirePending<long>",
+        "Add`1(RespireKey,T,double):RespirePending<bool>",
+        "Count(RespireKey):RespirePending<long>",
+        "CountByScore(RespireKey,RespireScoreRange):RespirePending<long>",
+        "CountByScore(RespireKey,double,double):RespirePending<long>",
+        "Difference(params ReadOnlySpan<RespireKey>):RespirePending<string[]>",
+        "DifferenceStore(RespireKey,params ReadOnlySpan<RespireKey>):RespirePending<long>",
+        "Increment(RespireKey,RespireValue,double):RespirePending<double>",
+        "Intersect(params ReadOnlySpan<RespireKey>):RespirePending<string[]>",
+        "IntersectStore(RespireKey,params ReadOnlySpan<RespireKey>):RespirePending<long>",
+        "Pop(RespireKey,bool):RespirePending<SortedSetEntry?>",
+        "PopMany(RespireKey,long,bool):RespirePending<SortedSetEntry[]>",
+        "PopMany`1(RespireKey,long,bool):RespirePending<SortedSetEntry<T>[]>",
+        "Pop`1(RespireKey,bool):RespirePending<SortedSetEntry<T>?>",
+        "Range(RespireKey,long,long,bool):RespirePending<string[]>",
+        "RangeByLex(RespireKey,RespireLexRange,long,long?,bool):RespirePending<string[]>",
+        "RangeByScore(RespireKey,RespireScoreRange,long,long?,bool):RespirePending<string[]>",
+        "RangeByScore(RespireKey,double,double,bool):RespirePending<string[]>",
+        "RangeByScoreWithScores(RespireKey,RespireScoreRange,long,long?,bool):RespirePending<SortedSetEntry[]>",
+        "RangeByScoreWithScores`1(RespireKey,RespireScoreRange,long,long?,bool):RespirePending<SortedSetEntry<T>[]>",
+        "RangeByScore`1(RespireKey,RespireScoreRange,long,long?,bool):RespirePending<T[]>",
+        "RangeByScore`1(RespireKey,double,double,bool):RespirePending<T[]>",
+        "RangeWithScores(RespireKey,long,long,bool):RespirePending<SortedSetEntry[]>",
+        "RangeWithScores`1(RespireKey,long,long,bool):RespirePending<SortedSetEntry<T>[]>",
+        "Range`1(RespireKey,long,long,bool):RespirePending<T[]>",
+        "Rank(RespireKey,RespireValue,bool):RespirePending<long?>",
+        "Remove(RespireKey,params ReadOnlySpan<RespireValue>):RespirePending<long>",
+        "RemoveRangeByRank(RespireKey,long,long):RespirePending<long>",
+        "RemoveRangeByScore(RespireKey,RespireScoreRange):RespirePending<long>",
+        "RemoveRangeByScore(RespireKey,double,double):RespirePending<long>",
+        "Score(RespireKey,RespireValue):RespirePending<double?>",
+        "ScoresMany(RespireKey,params ReadOnlySpan<RespireValue>):RespirePending<double?[]>",
+        "StoreRange(RespireKey,RespireKey,long,long,bool):RespirePending<long>",
+        "StoreRangeByLex(RespireKey,RespireKey,RespireLexRange,long,long?,bool):RespirePending<long>",
+        "StoreRangeByScore(RespireKey,RespireKey,RespireScoreRange,long,long?,bool):RespirePending<long>",
+        "Union(params ReadOnlySpan<RespireKey>):RespirePending<string[]>",
+        "UnionStore(RespireKey,params ReadOnlySpan<RespireKey>):RespirePending<long>"
+      ],
+      "Contract": "Queue methods own synchronous validation and serialization. Execute/commit owns transport and cleanup; each pending result owns its later caller inspection and conversion. Never consume a pending result to observe errors."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

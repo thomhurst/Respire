@@ -1,0 +1,20 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IStringCommands",
+      "OwnerType": "Respire.StringCommands",
+      "Members": [
+        "DeleteConditionalAsync(RespireKey,RespireValueCondition,CancellationToken):ValueTask<bool>",
+        "DeleteIfEqualAsync(RespireKey,RespireValue,CancellationToken):ValueTask<bool>",
+        "DigestAsync(RespireKey,CancellationToken):ValueTask<string?>",
+        "GetAndSetConditionalAsync(RespireKey,RespireValue,RespireValueCondition,RespireExpiry,CancellationToken):ValueTask<string?>",
+        "GetAndSetConditionalAsync`1(RespireKey,T,RespireValueCondition,RespireExpiry,CancellationToken):ValueTask<T?>",
+        "SetConditionalAsync(RespireKey,RespireValue,RespireValueCondition,RespireExpiry,CancellationToken):ValueTask<bool>",
+        "SetConditionalAsync`1(RespireKey,T,RespireValueCondition,RespireExpiry,CancellationToken):ValueTask<bool>"
+      ],
+      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

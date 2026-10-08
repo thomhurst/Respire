@@ -1,0 +1,35 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.RespireOptions",
+      "OwnerType": "Respire.RespireOptions",
+      "Members": [
+        "Parse(string):RespireOptions"
+      ],
+      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+    }
+  ],
+  "Boundaries": [
+    {
+      "Name": "connection-string-parsing",
+      "Role": "helper",
+      "Member": "Respire.RespireOptions.Parse(string):RespireOptions",
+      "Owner": "Respire.RespireClient.ConnectAsync(string,CancellationToken):ValueTask<RespireClient>",
+      "Contract": "Connect(string) starts ownership before Parse; direct Parse remains configuration validation, not a Redis command observation."
+    }
+  ],
+  "NonRoutes": [
+    {
+      "Member": "Respire.RespireEndpoint.Parse(string):RespireEndpoint",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireEndpoint.ToString():string",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireEndpoint.UnixSocket(string):RespireEndpoint",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    }
+  ]
+}

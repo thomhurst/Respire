@@ -1,0 +1,28 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IRespireCommandQueue",
+      "OwnerType": "Respire.RespireBatch",
+      "Members": [
+        "Decrement(RespireKey,long):RespirePending<long>",
+        "Delete(params ReadOnlySpan<RespireKey>):RespirePending<long>",
+        "Execute(RespireCommand,params RespireValue[]):RespirePending<RespireResult>",
+        "Exists(RespireKey):RespirePending<bool>",
+        "Expire(RespireKey,RespireExpiry,ExpireWhen):RespirePending<bool>",
+        "GetBytes(RespireKey):RespirePending<byte[]?>",
+        "GetString(RespireKey):RespirePending<string?>",
+        "Get`1(RespireKey):RespirePending<T?>",
+        "Increment(RespireKey,long):RespirePending<long>",
+        "Set(RespireKey,RespireValue,RespireExpiry,SetWhen):RespirePending<bool>",
+        "Set`1(RespireKey,T,RespireExpiry,SetWhen):RespirePending<bool>",
+        "TryGet`1(RespireKey):RespirePending<RespireGet<T>>"
+      ],
+      "Contract": "Queue methods own synchronous validation and serialization. Execute/commit owns transport and cleanup; each pending result owns its later caller inspection and conversion. Never consume a pending result to observe errors.",
+      "AdditionalOwnerTypes": [
+        "Respire.RespireTransactionBase"
+      ]
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

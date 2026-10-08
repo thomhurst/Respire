@@ -1,0 +1,17 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.RespireTransactionRetryExtensions",
+      "OwnerType": "Respire.RespireTransactionRetryExtensions",
+      "Members": [
+        "RunTransactionAsync(this IRespireClient,RespireKey[],Func<RespireWatchedTransaction,CancellationToken,ValueTask>,RespireTransactionRetryOptions?,CancellationToken):ValueTask",
+        "RunTransactionAsync`1(this IRespireClient,RespireKey[],Func<RespireWatchedTransaction,CancellationToken,ValueTask<T>>,RespireTransactionRetryOptions?,CancellationToken):ValueTask<T>",
+        "RunTransactionWithReadsAsync(this IRespireClient,RespireKey[],Func<IRespireClient,RespireWatchedTransaction,CancellationToken,ValueTask>,RespireTransactionRetryOptions?,CancellationToken):ValueTask",
+        "RunTransactionWithReadsAsync`1(this IRespireClient,RespireKey[],Func<IRespireClient,RespireWatchedTransaction,CancellationToken,ValueTask<T>>,RespireTransactionRetryOptions?,CancellationToken):ValueTask<T>"
+      ],
+      "Contract": "Keep the caller owner through watch validation, commit, reply conversion, unwatch and dedicated-connection cleanup; deferred pending inspections are separate logical callers."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}
