@@ -378,6 +378,17 @@ jobs:
           dotnet run --project tests/Respire.Tests -c Release -f net8.0 --no-build -- \
             --treenode-filter '/*/*/(MetricSelectionTests)|(TelemetryTests)|(RedisMetricSchemaTests)|(ClusterReadyReplyTests)/*'
 
+      - name: Verify aggregate progress and ownership (net8.0)
+        env:
+          TUNIT_DISABLE_HTML_REPORTER: 'true'
+        run: |
+          dotnet build tests/Respire.Tests -c Debug -f net8.0
+          dotnet tests/Respire.Tests/bin/Debug/net8.0/Respire.Tests.dll \
+            --treenode-filter '/*/*/(AggregateProgressTransferTests)|(AggregateProgressWireTests)/*' \
+            --minimum-expected-tests 42
+          dotnet tests/Respire.Tests/bin/Debug/net8.0/Respire.Tests.dll \
+            --treenode-filter '/*/*/(AggregatePayloadTests)|(AggregateStorageTests)|(RespParseStateTests)|(RespParserTests)|(ParserContextTests)/*'
+
       - name: Run samples
         uses: ./.github/actions/run-samples
         with:

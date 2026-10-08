@@ -1,0 +1,48 @@
+name: Aggregate progress correctness
+
+on:
+  pull_request:
+    paths:
+      - 'src/Respire/Protocol/**'
+      - 'tests/Respire.Tests/Protocol/**'
+      - 'src/Respire/Networking/RespireConnection.cs'
+      - 'src/Respire/Networking/RespireConnection.TestInspection.cs'
+      - 'tests/Respire.Tests/Networking/AggregateProgressWireTests.cs'
+      - '.github/workflows/aggregate-progress.yml'
+      - 'Directory.Build.props'
+      - 'Directory.Packages.props'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  progress:
+    name: Aggregate progress (net10.0)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TUNIT_DISABLE_HTML_REPORTER: 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+      # Scalar progress counters and connection inspection fields exist only in Debug.
+      # Release correctness and benchmark jobs retain the production layout and hot path.
+      - name: Build with causal progress instrumentation
+        run: dotnet build tests/Respire.Tests -c Debug -f net10.0
+      - name: Verify parser and production receive progress controls
+        run: >-
+          dotnet tests/Respire.Tests/bin/Debug/net10.0/Respire.Tests.dll
+          --treenode-filter '/*/*/(AggregateProgressTransferTests)|(AggregateProgressWireTests)/*'
+          --minimum-expected-tests 42
+      - name: Verify transfer, framing, storage and payload ownership
+        run: >-
+          dotnet tests/Respire.Tests/bin/Debug/net10.0/Respire.Tests.dll
+          --treenode-filter '/*/*/(AggregatePayloadTests)|(AggregateStorageTests)|(RespParseStateTests)|(RespParserTests)|(ParserContextTests)/*'

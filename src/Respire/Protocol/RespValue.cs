@@ -157,14 +157,22 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
         {
             // Avoid unpooled frames and large copies dominated by discarded attributes,
             // integer tokens or framing. Small replies retain the single-copy path.
-            CopyDeferredChildren(buffer);
-            return this;
+            return CopyDeferredPayloadsIndividually(buffer);
         }
         var array = RespirePools.ResponsePayloads.Rent(length);
         buffer.Slice(start, length).CopyTo(array);
         var frame = new ReadOnlyMemory<byte>(array, 0, length);
         BindDeferredPayloads(frame, start);
         return new(_type, _flags | ValueFlags.PooledPayload, _integerValue, frame, _elements, _elementCount);
+    }
+
+    /// <summary>Materializes retained partial children before receive-buffer reuse.</summary>
+    internal RespValue CopyDeferredPayloadsIndividually(ReadOnlySpan<byte> buffer)
+    {
+        if ((_flags & ValueFlags.DeferredPayload) != 0)
+            return RespParser.CopyToPooled(_type, buffer.Slice((int)_integerValue, _elementCount));
+        CopyDeferredChildren(buffer);
+        return this;
     }
 
     private void CopyDeferredChildren(ReadOnlySpan<byte> buffer)

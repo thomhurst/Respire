@@ -62,6 +62,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private readonly CancellationTokenSource _closedCancellation = new();
     private readonly TaskCompletionSource _retiredSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly InflightRing _inflight;
+#if DEBUG
+    // Primitive progress evidence for friend tests; no field or writes in Release.
+    private int _resumedScalarCountForTests;
+#endif
     private readonly PendingResponsePool _sourcePool;
     private readonly ArrayPool<byte> _streamPayloadPool;
     private readonly int _receiveBufferSize;
@@ -2455,7 +2459,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                             status = hasBulkHeader
                                 ? RespParser.TryParseBulkValue(
                                     bufferedData, ref pos, bulkType, bulkLength, headerEnd, out value)
-                                : RespParser.TryParseValue(bufferedData, ref pos, out value);
+                                : RespParser.TryParseValue(bufferedData, ref pos, out value, parser);
                             if (status == RespParseStatus.Done)
                             {
                                 start = pos;
@@ -2467,6 +2471,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                             }
                             else if (status == RespParseStatus.NeedMoreData)
                             {
+                                // Adoption commits completed children and their private cursor.
+                                // Without adoption, resumable parsing still starts at the header.
+                                if (!parser.IsIdle)
+                                    start = pos;
                                 status = parser.TryParseResumable(
                                     bufferedData, ref start, out value, out directFill);
                             }
@@ -2478,6 +2486,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                             bufferedData, ref start, out value, out directFill);
                     }
 
+#if DEBUG
+                    _resumedScalarCountForTests = parser.ResumedScalarCountForTests;
+#endif
                     responseBytes += start - previousStart;
                     if (responseBytes > MaxResponseSize)
                     {
