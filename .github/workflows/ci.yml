@@ -389,7 +389,7 @@ jobs:
         run: >-
           dotnet run --project tests/Respire.Tests -c Release -f net8.0 --no-build --
           --treenode-filter '/*/*/(CommandCatalogTests)|(RetryCategoryMetadataTests)|(ClientCacheCommandMetadataTests)/*'
-          --minimum-expected-tests 107
+          --minimum-expected-tests "$(cat .github/command-retry-metadata-minimum-tests.txt)"
 
       - name: Upload standalone replica regression report (net8.0)
         if: always()
