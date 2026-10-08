@@ -177,6 +177,31 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     // degrades to the plain command path and keeps only its weaker ordering.
     private readonly RespireClient? _wireClient;
 
+    // HybridCache observes physical L2 keys on a separate tracking connection. The Lua
+    // connection retains its existing cache, codec, and atomic expiration behavior.
+    internal RespireKey ResolveCoherenceKey(string key) => _client.ResolveKey(key);
+
+    internal RespireClient CreateCoherenceTrackingClient(RespireClientSideCacheOptions trackingOptions)
+    {
+        if (_wireClient is null)
+            throw new InvalidOperationException("HybridCache coherence requires a RespireClient-backed distributed cache.");
+        return RespireClient.Create(_wireClient.Core.Options with
+        {
+            KeyPrefix = default,
+            Connections = 1,
+            ReadFrom = RespireReadFrom.Primary,
+            ClientSideCache = trackingOptions,
+        });
+    }
+
+    internal IRespireClientSideCache? CoherenceSourceCache => _client.ClientSideCache;
+
+    internal static bool CanTrackCoherenceKey(RespireClient client, in RespireKey key)
+        => client.Core.ClientCache?.CanTrack(in key) == true;
+
+    internal bool CanObserveCoherenceSourceKey(in RespireKey key)
+        => _wireClient is not null && CanTrackCoherenceKey(_wireClient, in key);
+
     /// <summary>Wraps an existing client; the caller keeps ownership of it.</summary>
     public RespireDistributedCache(IRespireClient client, RespireCacheOptions? options = null)
     {
