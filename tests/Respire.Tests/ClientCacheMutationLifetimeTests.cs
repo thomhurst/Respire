@@ -111,20 +111,30 @@ public class ClientCacheMutationLifetimeTests
     }
 
     [Test]
-    public async Task BlockingGroupWaitDoesNotRetainIdleMutationWriterCapacity()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task BlockingWaitDoesNotRetainExcessMutationWriterCapacity(bool knownKey)
     {
         var cache = new ClientSideCacheCoordinator(new());
         var group = new CatalogCommand(RespireCommands.Stream.XREADGROUP,
             ["GROUP", "group", "consumer", "BLOCK", 0, "STREAMS", "events", ">"]);
-        var waiting = cache.BeforeCommand("XREADGROUP", in group, blocking: true);
+        var pop = new CatalogCommand(RespireCommands.List.BLPOP, ["waiting", 0]);
+        var waiting = knownKey
+            ? cache.BeforeCommand("BLPOP", in pop, blocking: true)
+            : cache.BeforeCommand("XREADGROUP", in group, blocking: true);
         try
         {
             var arguments = Enumerable.Range(0, 5000).Select(index => (RespireValue)("key:" + index)).ToArray();
             var command = new CatalogCommand(RespireCommands.Key.DEL, arguments);
             var mutation = cache.BeforeCommand("DEL", in command);
             cache.CompleteMutation(in mutation);
-            await Assert.That(cache.InspectForTests().MutationWriterStorage.Keys).IsEqualTo(0);
+            await Assert.That(cache.InspectForTests().MutationWriterStorage.Keys).IsEqualTo(knownKey ? 1 : 0);
             await Assert.That(cache.InspectForTests().MutationWriterStorage.Capacity).IsLessThanOrEqualTo(4096);
+            var key = new RespireKey("waiting");
+            var read = cache.BeginRead(in key);
+            using var value = RespValue.BulkString("value"u8.ToArray());
+            cache.CompleteRead(in read, in value, allowInsert: true);
+            await Assert.That(cache.Count).IsEqualTo(knownKey ? 0 : 1);
         }
         finally { cache.CompleteMutation(in waiting); }
     }
@@ -387,7 +397,7 @@ public class ClientCacheMutationLifetimeTests
     }
 
     [Test]
-    public async Task RedirectRebasesSuppressedQueryAgainstCurrentWriterLifetime()
+    public async Task RedirectKeepsSuppressedQueryUncachedAfterWriterRetires()
     {
         var cache = new ClientSideCacheCoordinator(new());
         var command = new CatalogCommand(RespireCommands.String.SET, ["key", "new"]);
@@ -398,11 +408,29 @@ public class ClientCacheMutationLifetimeTests
         await Assert.That(stillDuring.CanCache).IsFalse();
         cache.CompleteMutation(in fence);
         var redirected = cache.RebaseRead(in stillDuring);
+        await Assert.That(redirected.CanCache).IsFalse();
         using var fresh = RespValue.Integer(3);
         cache.CompleteRead(in redirected, in fresh, allowInsert: true);
-        await Assert.That(cache.TryGet(in request, out var cached)).IsTrue();
-        cached.Dispose();
+        await Assert.That(cache.TryGet(in request, out _)).IsFalse();
         await Assert.That(cache.InspectForTests().PendingQueryDependencyCount).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RedirectPreservesGetTrackingAdmission(bool suppressed)
+    {
+        var cache = new ClientSideCacheCoordinator(new());
+        var key = new RespireKey("key");
+        var command = new CatalogCommand(RespireCommands.String.SET, ["key", "new"]);
+        var fence = suppressed ? cache.BeforeCommand("SET", in command) : default;
+        var original = cache.BeginRead(in key);
+        cache.CompleteMutation(in fence);
+        var redirected = cache.RebaseRead(in original);
+        await Assert.That(redirected.CanCache).IsEqualTo(!suppressed);
+        using var value = RespValue.BulkString("new"u8.ToArray());
+        cache.CompleteRead(in redirected, in value, allowInsert: true);
+        await Assert.That(cache.Count).IsEqualTo(suppressed ? 0 : 1);
     }
 
     [Test, NotInParallel]

@@ -138,8 +138,10 @@ internal sealed partial class ClientSideCacheCoordinator
                     foreach (var key in fence.Keys!) RemoveMutationWriter(in key);
                 Volatile.Write(ref _activeMutations, _activeMutations - 1);
                 // Large multi-key calls may grow the live map. Do not retain that peak
-                // capacity once known-key writers retire, even during a blocking group wait.
-                if (_mutationWriters.Count == 0 && _mutationWriters.EnsureCapacity(0) > MaxIdleMutationKeyCapacity)
+                // capacity after most writers retire, even while a known-key blocking call
+                // remains. The quarter-full threshold amortizes rebuilds during large drains.
+                var capacity = _mutationWriters.EnsureCapacity(0);
+                if (capacity > MaxIdleMutationKeyCapacity && _mutationWriters.Count <= capacity / 4)
                     _mutationWriters.TrimExcess();
             }
         }

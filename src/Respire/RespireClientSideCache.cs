@@ -429,7 +429,10 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                 return token with { CanCache = false, Lease = null, LeaseGeneration = 0 };
             ReleaseQueryRead(lease, token.LeaseGeneration);
             var query = token.Query;
-            return RegisterQueryRead(in query, token.Dependencies, RentQueryRead(token.Dependencies.Length));
+            var rebased = RegisterQueryRead(in query, token.Dependencies, RentQueryRead(token.Dependencies.Length));
+            // Redirects keep the original tracking decision on the wire. Suppressed reads
+            // cannot acquire publication permission merely because their writer retired.
+            return rebased with { CanCache = token.CanCache && rebased.CanCache };
         }
     }
 
@@ -625,7 +628,8 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         var empty = default(RespValue);
         var key = token.State.Key;
         CompleteRead(in token, in empty, allowInsert: false);
-        return BeginRead(in key);
+        var rebased = BeginRead(in key);
+        return rebased with { CanCache = token.CanCache && rebased.CanCache };
     }
 
     internal bool CanTrack(in RespireKey key)
