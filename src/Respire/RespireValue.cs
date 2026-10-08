@@ -509,6 +509,8 @@ public readonly struct RespireValue : IEquatable<RespireValue>
             return HashPayload(_bytes.Span);
         }
 
+        if (_kind == Kind.String && (_string!.Length == 0 || _string[0] <= 0x7f)) return HashText(_string);
+
         var length = GetWireLength();
         byte[]? rented = null;
         var payload = length <= StackallocThreshold
@@ -639,12 +641,38 @@ public readonly struct RespireValue : IEquatable<RespireValue>
     private static int HashPayload(ReadOnlySpan<byte> payload)
     {
         var hash = new HashCode();
-        foreach (var value in payload)
-        {
-            hash.Add(value);
-        }
-
+        hash.AddBytes(payload);
         return hash.ToHashCode();
+    }
+
+    private static int HashText(string text)
+    {
+        byte[]? rented = null;
+        Span<byte> payload = text.Length <= StackallocThreshold ? stackalloc byte[StackallocThreshold]
+            : (rented = ArrayPool<byte>.Shared.Rent(text.Length));
+        try
+        {
+            if (Ascii.FromUtf16(text, payload, out var written) != OperationStatus.Done)
+            {
+                // Preserve the ASCII prefix and scan only the remaining UTF-8 suffix.
+                var suffix = text.AsSpan(written);
+                var length = checked(written + Encoding.UTF8.GetByteCount(suffix));
+                if (length > payload.Length)
+                {
+                    var larger = ArrayPool<byte>.Shared.Rent(length);
+                    payload[..written].CopyTo(larger);
+                    if (rented is not null) ArrayPool<byte>.Shared.Return(rented, clearArray: true);
+                    rented = larger;
+                    payload = larger;
+                }
+                written += Encoding.UTF8.GetBytes(suffix, payload[written..]);
+            }
+            return HashPayload(payload[..written]);
+        }
+        finally
+        {
+            if (rented is not null) ArrayPool<byte>.Shared.Return(rented, clearArray: true);
+        }
     }
 
     internal int GetWireLength()
