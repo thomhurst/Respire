@@ -19,6 +19,7 @@ internal sealed partial class ClientSideCacheCoordinator
     // count there. A publisher is observed by invalidation or sees the barrier and cannot join.
     private int _sharedReadInvalidations;
     private int _sharedReadAdmissions;
+    // Mirrors _sharedReads.Count. Every dictionary mutation must publish it under the gate.
     private int _joinableSharedReadCount;
 
     internal int ActiveSharedReadCount
@@ -74,10 +75,7 @@ internal sealed partial class ClientSideCacheCoordinator
                     // Reads starting during invalidation cannot become joinable: their producer
                     // may still observe the store before its entries have been removed.
                     if (Volatile.Read(ref _sharedReadInvalidations) == 0)
-                    {
-                        _sharedReads.Add(shared.Identity, shared);
-                        Volatile.Write(ref _joinableSharedReadCount, _sharedReads.Count);
-                    }
+                        AddSharedRead(shared);
                     _activeSharedReads.Add(shared);
                     owner = true;
                 }
@@ -208,6 +206,13 @@ internal sealed partial class ClientSideCacheCoordinator
         if (dispose) shared.Cancellation.Dispose();
     }
 
+    // Call only under _sharedReadLock: the dictionary and its published count move together.
+    private void AddSharedRead(SharedRead shared)
+    {
+        _sharedReads.Add(shared.Identity, shared);
+        Volatile.Write(ref _joinableSharedReadCount, _sharedReads.Count);
+    }
+
     private void RemoveSharedRead(SharedRead shared)
     {
         if (_sharedReads.TryGetValue(shared.Identity, out var current) && ReferenceEquals(current, shared))
@@ -215,6 +220,12 @@ internal sealed partial class ClientSideCacheCoordinator
             _sharedReads.Remove(shared.Identity);
             Volatile.Write(ref _joinableSharedReadCount, _sharedReads.Count);
         }
+    }
+
+    private void ClearSharedReads()
+    {
+        _sharedReads.Clear();
+        Volatile.Write(ref _joinableSharedReadCount, 0);
     }
 
     private static bool BeginCancellation(SharedRead shared)
@@ -263,8 +274,7 @@ internal sealed partial class ClientSideCacheCoordinator
         {
             // Observable measurement keeps user meter callbacks outside cache gates.
             if (_sharedReads.Count != 0) Interlocked.Add(ref _sharedReadRetirements, _sharedReads.Count);
-            _sharedReads.Clear();
-            Volatile.Write(ref _joinableSharedReadCount, 0);
+            ClearSharedReads();
         }
     }
 
@@ -281,8 +291,7 @@ internal sealed partial class ClientSideCacheCoordinator
         lock (_sharedReadLock)
         {
             _sharedReadsStopped = true;
-            _sharedReads.Clear();
-            Volatile.Write(ref _joinableSharedReadCount, 0);
+            ClearSharedReads();
             cancel = _activeSharedReads.Where(BeginCancellation).ToArray();
         }
         foreach (var shared in cancel) CancelSharedRead(shared);
