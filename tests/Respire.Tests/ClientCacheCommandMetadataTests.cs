@@ -121,6 +121,7 @@ public class ClientCacheCommandMetadataTests
     [Arguments("layout")]
     [Arguments("policy")]
     [Arguments("catalog")]
+    [Arguments("retry")]
     public async Task ColdInitializationWorksFromEveryMetadataEntryPoint(string first)
     {
         var context = new AssemblyLoadContext($"cache-metadata-{Guid.NewGuid()}", isCollectible: true);
@@ -128,14 +129,29 @@ public class ClientCacheCommandMetadataTests
         {
             var assembly = context.LoadFromAssemblyPath(typeof(RespireClient).Assembly.Location);
             if (first == "verb")
-                assembly.GetType("Respire.Commands.Verb")!.GetConstructor([typeof(string), typeof(bool)])!
-                    .Invoke(["SET", true]);
+            {
+                // The optional retry category belongs to the collectible assembly's type identity.
+                var retryCategory = assembly.GetType("Respire.RespireCommandRetryCategory")!;
+                var nullableCategory = typeof(Nullable<>).MakeGenericType(retryCategory);
+                var constructor = assembly.GetType("Respire.Commands.Verb")!
+                    .GetConstructor([typeof(string), typeof(bool), nullableCategory])
+                    ?? throw new InvalidOperationException("Verb metadata constructor not found.");
+                var verb = constructor.Invoke(["SET", true, null]);
+                await Assert.That(verb.GetType().GetField("RetryCategory")!.GetValue(verb)!.ToString())
+                    .IsEqualTo(nameof(RespireCommandRetryCategory.WriteAccumulating));
+            }
             else if (first == "layout")
                 assembly.GetType("Respire.Commands.RawCommandKeyLayouts")!
                     .GetMethod("GetMutationKind", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, ["SET"]);
             else if (first == "policy")
                 assembly.GetType("Respire.CommandCacheMutationMetadata")!
                     .GetMethod("Get", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, ["SET"]);
+            else if (first == "retry")
+            {
+                var category = assembly.GetType("Respire.CommandRetryCategoryMetadata")!
+                    .GetMethod("Get", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, ["SET"]);
+                await Assert.That(category!.ToString()).IsEqualTo(nameof(RespireCommandRetryCategory.WriteAccumulating));
+            }
             var root = assembly.GetType("Respire.RespireCommands")!;
             var count = 0;
             foreach (var group in root.GetNestedTypes(BindingFlags.Public))
@@ -149,6 +165,8 @@ public class ClientCacheCommandMetadataTests
                 var metadata = verb.GetType().GetProperty("CacheMetadata")!.GetValue(verb)!;
                 var policy = metadata.GetType().GetProperty("Policy", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(metadata)!;
                 await Assert.That(policy.ToString()).IsEqualTo(type.GetProperty("CacheMutation")!.GetValue(descriptor)!.ToString()).Because(name);
+                await Assert.That(verb.GetType().GetField("RetryCategory")!.GetValue(verb)!.ToString())
+                    .IsEqualTo(type.GetProperty("RetryCategory")!.GetValue(descriptor)!.ToString()).Because(name);
                 count++;
             }
             await Assert.That(count).IsEqualTo(RespireCommands.All.Length);

@@ -388,8 +388,8 @@ jobs:
           TUNIT_DISABLE_HTML_REPORTER: 'true'
         run: >-
           dotnet run --project tests/Respire.Tests -c Release -f net8.0 --no-build --
-          --treenode-filter '/*/*/(CommandCatalogTests)|(RetryCategoryMetadataTests)/*'
-          --minimum-expected-tests 77
+          --treenode-filter '/*/*/(CommandCatalogTests)|(RetryCategoryMetadataTests)|(ClientCacheCommandMetadataTests)/*'
+          --minimum-expected-tests 107
 
       - name: Upload standalone replica regression report (net8.0)
         if: always()

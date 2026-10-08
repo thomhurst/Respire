@@ -6,6 +6,8 @@ namespace Respire;
 /// and does not provide exactly-once execution. Except for <see cref="Never"/>, categories are
 /// ordered by increasing retry risk. Option-sensitive commands use their most conservative
 /// audited category until an execution policy can inspect the complete invocation.
+/// Numeric ordering is descriptive, not a retry policy contract. A policy must inspect the
+/// named category, complete invocation and transport outcome rather than compare numeric thresholds.
 /// </remarks>
 public enum RespireCommandRetryCategory : byte
 {
