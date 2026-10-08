@@ -171,10 +171,24 @@ foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
         var documents = await json.MultiGetAsync(["doc", "missing"], SmokeJsonContext.Default.SmokeDocument);
         if (documents[0]?[0].Value?.Count != 2 || documents[1] is not null)
             throw new InvalidOperationException("Respire.Json MGET failed.");
+
+        var mapped = new SmokeMappedDocument("mapped", "姓名😀", null);
+        var mappedKey = SmokeMappedDocumentJsonMapper.GetKey(mapped);
+        if (!await SmokeMappedDocumentJsonMapper.SetAsync(json, mapped)
+            || (await SmokeMappedDocumentJsonMapper.GetAsync(json, mappedKey)).Value != mapped)
+            throw new InvalidOperationException("Generated JSON mapper round trip failed.");
+        await SmokeMappedDocumentJsonMapper.SetNameAsync(json, mappedKey, null);
+        var nullName = await SmokeMappedDocumentJsonMapper.GetNameAsync(json, mappedKey);
+        if (!nullName.Found || nullName.Value is not null)
+            throw new InvalidOperationException("Generated JSON mapper null path failed.");
+        await json.DeleteAsync(mappedKey, SmokeMappedDocumentJsonMapper.AgePath);
+        if ((await SmokeMappedDocumentJsonMapper.GetAgeAsync(json, mappedKey)).Found)
+            throw new InvalidOperationException("Generated JSON mapper missing path failed.");
     }
     finally
     {
         await json.DeleteAsync("doc");
+        await json.DeleteAsync("mapper:mapped");
     }
 }
 Console.WriteLine("Generated commands and Json, Search, TimeSeries, and Probabilistic packages passed with RESP2 and RESP3.");
@@ -221,6 +235,10 @@ static async Task RunProbabilisticSmokeAsync(RespireClient client)
 }
 
 public sealed record SmokeDocument(string Name, int Count);
+
+[RespireJson("mapper:{Id}")]
+public partial record SmokeMappedDocument(string Id,
+    [property: JsonPropertyName("姓名.\"'\\")] string? Name, int? Age);
 
 [JsonSerializable(typeof(SmokeDocument))]
 internal sealed partial class SmokeJsonContext : JsonSerializerContext;
