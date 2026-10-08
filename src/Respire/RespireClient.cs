@@ -3681,7 +3681,9 @@ public sealed partial class RespireClient : IRespireClient
         where TCommand : struct, IRespCommand
     {
         var cache = _core.ClientCache;
-        var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
+        // Audited physical-connection inspections do not mutate application data.
+        var mutationFence = cache is null || CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in command)
+            ? default : cache.BeforeCommand(operation, in command);
         if (!mutationFence.IsRequired)
             return SendOnPinnedConnectionAsync(operation, connection, command, cancellationToken);
         try

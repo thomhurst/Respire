@@ -116,7 +116,11 @@ public class ServerClientIntegrationTests
     }
 
     [Test]
-    public async Task TrackingInspectionPreservesClientSideCaching()
+    [Arguments("ID")]
+    [Arguments("INFO")]
+    [Arguments("GETNAME")]
+    [Arguments("TRACKINGINFO")]
+    public async Task PinnedInspectionPreservesPopulatedClientSideCache(string inspection)
     {
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(Redis8.ConnectionString) with
         {
@@ -128,10 +132,22 @@ public class ServerClientIntegrationTests
         before.Flags.Should().Contain(["on", "optin"]);
         await client.Strings.SetAsync(key, "value");
         (await client.Strings.GetAsync<string>(key)).Should().Be("value");
+        client.ClientSideCache!.Count.Should().Be(1);
+        var statistics = client.ClientSideCache.GetStatistics();
+        switch (inspection)
+        {
+            case "ID": (await client.Server.GetClientConnectionAsync()).Id.Should().Be(connection.Id); break;
+            case "INFO": (await connection.InfoAsync()).Id.Should().Be(connection.Id); break;
+            case "GETNAME": (await connection.GetNameAsync()).Should().BeNull(); break;
+            case "TRACKINGINFO": (await connection.TrackingInfoAsync()).Flags.Should().BeEquivalentTo(before.Flags); break;
+        }
+        client.ClientSideCache.Count.Should().Be(1);
+        client.ClientSideCache.GetStatistics().Invalidations.Should().Be(statistics.Invalidations);
         var after = await connection.TrackingInfoAsync();
         after.Flags.Should().BeEquivalentTo(before.Flags);
         after.RedirectClientId.Should().Be(before.RedirectClientId);
         (await client.Strings.GetAsync<string>(key)).Should().Be("value");
+        client.ClientSideCache.GetStatistics().Hits.Should().Be(statistics.Hits + 1);
     }
 }
 
