@@ -419,38 +419,46 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
             if (Volatile.Read(ref _disposed) != 0) return false;
             // A cleanup cannot join its own call stack. Reject before closing admission,
             // allowing the outer caller to dispose after that cleanup has unwound.
-            if (_retirementDrains.IsDrainingCurrentThread)
+            if (_retirementDrains.IsDrainingCurrentContext)
                 throw new InvalidOperationException("Cannot dispose the cache from its active retirement cleanup.");
             return Interlocked.Exchange(ref _disposed, 1) == 0;
         }
     }
 
     // Every member runs under the owner's gate. External cleanup and completion signalling
-    // remain outside it. Per-thread depth also handles cleanup nested through another cache.
+    // remain outside it. Logical scopes flow into callbacks' Task.Run work and remain
+    // active across nested cleanup through another cache. Captured scopes expire on completion.
     private sealed class DrainTracker
     {
-        private readonly Dictionary<int, int> _threads = new();
+        private readonly AsyncLocal<CleanupScope?> _scope = new();
         private int _count;
         private TaskCompletionSource<Exception?>? _completion;
         private Exception? _failure;
 
-        internal bool IsDrainingCurrentThread => _threads.ContainsKey(Environment.CurrentManagedThreadId);
+        internal bool IsDrainingCurrentContext
+        {
+            get
+            {
+                for (var scope = _scope.Value; scope is not null; scope = scope.Parent)
+                    if (Volatile.Read(ref scope.Active) != 0) return true;
+                return false;
+            }
+        }
 
         internal void Claim()
         {
-            var thread = Environment.CurrentManagedThreadId;
-            _threads.TryGetValue(thread, out var depth);
-            _threads[thread] = depth + 1;
+            // Scope allocation belongs to physical retirement, never healthy cache reads.
+            // Do not pool scopes: a child execution context may retain one after completion.
+            _scope.Value = new CleanupScope(_scope.Value);
             _count++;
         }
 
         internal (TaskCompletionSource<Exception?>? Completion, Exception? Failure) Complete(
             Exception? failure, bool disposing, bool queueEmpty)
         {
-            var thread = Environment.CurrentManagedThreadId;
-            var depth = _threads[thread] - 1;
-            if (depth == 0) _threads.Remove(thread);
-            else _threads[thread] = depth;
+            var scope = _scope.Value!;
+            Volatile.Write(ref scope.Active, 0);
+            _scope.Value = scope.Parent;
             if (disposing) _failure = CombineFailures(_failure, failure);
             _count--;
             if (_count != 0 || !queueEmpty) return default;
@@ -470,6 +478,12 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
                 return new(failure);
             }
             return new((_completion ??= new(TaskCreationOptions.RunContinuationsAsynchronously)).Task);
+        }
+
+        private sealed class CleanupScope(CleanupScope? parent)
+        {
+            internal CleanupScope? Parent { get; } = parent;
+            internal int Active = 1;
         }
     }
 
