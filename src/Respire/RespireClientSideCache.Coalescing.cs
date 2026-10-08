@@ -58,6 +58,8 @@ internal sealed partial class ClientSideCacheCoordinator
                 shared.Waiters++;
             }
         }
+        // Release only after publishing the joinable count under the gate. The invalidator
+        // reads admissions before that count; reversing this order could hide a publisher.
         finally { Interlocked.Decrement(ref _sharedReadAdmissions); }
 
         // Start outside the gate: transport callbacks and metrics may reenter the cache.

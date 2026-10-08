@@ -209,6 +209,13 @@ bursts. Its allocation and latency measurements include task scheduling and resu
 The threading diagnostic reports total monitor contention; it does not identify the cache's
 shared-read gate. Use workload-specific results before drawing throughput conclusions.
 
+In the [pinned net10.0 comparison](https://github.com/thomhurst/Respire/actions/runs/37712936222),
+empty-sharing cached `SET` measured 5.44 microseconds per normalized operation versus 5.53/5.54
+for the bracketing controls, with 37 bytes allocated in all three phases. Confidence intervals
+overlap, so this run does not establish a throughput gain. Cache-off, disabled-sharing,
+concurrent read/write, and shared-miss controls also have overlapping intervals. The specific
+benefit is eliminating empty shared-gate acquisitions; no general latency improvement is claimed.
+
 ## Partial hash reads
 
 Set `ClientSideCache = new() { ReuseHashFields = true }` to enable partial hash reads.
