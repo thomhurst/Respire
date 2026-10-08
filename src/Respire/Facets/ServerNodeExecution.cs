@@ -76,6 +76,7 @@ internal sealed partial class ServerCommands
         using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
         DedicatedConnectionPool? pool = null;
         var entered = false;
+        Exception failure;
         try
         {
             await capacity.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -89,9 +90,7 @@ internal sealed partial class ServerCommands
         }
         catch (Exception error)
         {
-            // Preserve successes from other nodes, including when cancellation occurs after discovery.
-            observation.Final(error);
-            return RespireServerResult<T>.Failure(endpoint, error);
+            failure = error;
         }
         finally
         {
@@ -104,6 +103,10 @@ internal sealed partial class ServerCommands
                 if (entered) capacity.Release();
             }
         }
+        // Report only after the node's dedicated connections are cleaned up. Preserve successes
+        // from other nodes, including when cancellation occurs after discovery.
+        observation.Final(failure);
+        return RespireServerResult<T>.Failure(endpoint, failure);
     }
 
     private async ValueTask<RespireEndpoint[]> DiscoverServerEndpointsAsync(CancellationToken cancellationToken,

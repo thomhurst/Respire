@@ -8,19 +8,43 @@ public sealed partial class RespireServerNode
 
     /// <summary>Assigns unassigned slots to this node. Requires AllowAdmin.</summary>
     public ValueTask ClusterAddSlotsAsync(ReadOnlySpan<int> slots, CancellationToken cancellationToken = default)
-        => MutationAsync("CLUSTER ADDSLOTS", SlotArguments(slots), cancellationToken);
+    {
+        try
+        {
+            return MutationAsync("CLUSTER ADDSLOTS", SlotArguments(slots), cancellationToken);
+        }
+        catch (Exception error) { RecordPreflightFailure(error); throw; }
+    }
 
     /// <summary>Assigns inclusive slot ranges to this node. Requires AllowAdmin and Redis 7.0 or later.</summary>
     public ValueTask ClusterAddSlotsRangeAsync(ReadOnlySpan<RespireClusterSlotRange> ranges, CancellationToken cancellationToken = default)
-        => MutationAsync("CLUSTER ADDSLOTSRANGE", RangeArguments(ranges), cancellationToken);
+    {
+        try
+        {
+            return MutationAsync("CLUSTER ADDSLOTSRANGE", RangeArguments(ranges), cancellationToken);
+        }
+        catch (Exception error) { RecordPreflightFailure(error); throw; }
+    }
 
     /// <summary>Removes this node's slot assignments. Requires AllowAdmin.</summary>
     public ValueTask ClusterDeleteSlotsAsync(ReadOnlySpan<int> slots, CancellationToken cancellationToken = default)
-        => MutationAsync("CLUSTER DELSLOTS", SlotArguments(slots), cancellationToken);
+    {
+        try
+        {
+            return MutationAsync("CLUSTER DELSLOTS", SlotArguments(slots), cancellationToken);
+        }
+        catch (Exception error) { RecordPreflightFailure(error); throw; }
+    }
 
     /// <summary>Removes inclusive slot ranges. Requires AllowAdmin and Redis 7.0 or later.</summary>
     public ValueTask ClusterDeleteSlotsRangeAsync(ReadOnlySpan<RespireClusterSlotRange> ranges, CancellationToken cancellationToken = default)
-        => MutationAsync("CLUSTER DELSLOTSRANGE", RangeArguments(ranges), cancellationToken);
+    {
+        try
+        {
+            return MutationAsync("CLUSTER DELSLOTSRANGE", RangeArguments(ranges), cancellationToken);
+        }
+        catch (Exception error) { RecordPreflightFailure(error); throw; }
+    }
 
     /// <summary>Attempts to advance this node's configuration epoch without consensus. Requires AllowAdmin.</summary>
     public ValueTask<RespireClusterEpochResult> ClusterBumpEpochAsync(CancellationToken cancellationToken = default)
@@ -28,57 +52,101 @@ public sealed partial class RespireServerNode
 
     /// <summary>Counts this node's failure reports about the specified node.</summary>
     public ValueTask<long> ClusterCountFailureReportsAsync(string nodeId, CancellationToken cancellationToken = default)
-        => ExecuteAsync("CLUSTER COUNT-FAILURE-REPORTS", [ClusterNodeId(nodeId)], AclParser.NonnegativeInteger, cancellationToken);
+    {
+        try
+        {
+            return ExecuteAsync("CLUSTER COUNT-FAILURE-REPORTS", [ClusterNodeId(nodeId)], AclParser.NonnegativeInteger, cancellationToken);
+        }
+        catch (Exception error) { RecordPreflightFailure(error); throw; }
+    }
 
     /// <summary>Requests replica promotion. Completion acknowledges the request, not convergence. Requires AllowAdmin.</summary>
     public ValueTask ClusterFailoverAsync(RespireClusterFailoverMode mode = RespireClusterFailoverMode.Normal,
         CancellationToken cancellationToken = default)
-        => MutationAsync("CLUSTER FAILOVER", mode switch
+    {
+        try
         {
-            RespireClusterFailoverMode.Normal => [],
-            RespireClusterFailoverMode.Force => ["FORCE"],
-            RespireClusterFailoverMode.Takeover => ["TAKEOVER"],
-            _ => throw InvalidClusterOption(nameof(mode)),
-        }, cancellationToken);
+            return MutationAsync("CLUSTER FAILOVER", mode switch
+            {
+                RespireClusterFailoverMode.Normal => [],
+                RespireClusterFailoverMode.Force => ["FORCE"],
+                RespireClusterFailoverMode.Takeover => ["TAKEOVER"],
+                _ => throw InvalidClusterOption(nameof(mode)),
+            }, cancellationToken);
+        }
+        catch (Exception error) { RecordPreflightFailure(error); throw; }
+    }
 
     /// <summary>Forgets a node in this node's topology. Requires AllowAdmin.</summary>
     public ValueTask ClusterForgetAsync(string nodeId, CancellationToken cancellationToken = default)
-        => MutationAsync("CLUSTER FORGET", [ClusterNodeId(nodeId)], cancellationToken);
+    {
+        try
+        {
+            return MutationAsync("CLUSTER FORGET", [ClusterNodeId(nodeId)], cancellationToken);
+        }
+        catch (Exception error) { RecordPreflightFailure(error); throw; }
+    }
 
     /// <summary>Returns up to count owned binary physical keys held locally in a slot. View prefixes are not removed.</summary>
     public ValueTask<byte[][]> ClusterGetKeysInSlotAsync(int slot, int count, CancellationToken cancellationToken = default)
     {
-        ValidateClusterSlot(slot);
-        ArgumentOutOfRangeException.ThrowIfNegative(count);
-        return ExecuteAsync("CLUSTER GETKEYSINSLOT", [slot, count], AclParser.ByteStrings, cancellationToken);
+        try
+        {
+            ValidateClusterSlot(slot);
+            ArgumentOutOfRangeException.ThrowIfNegative(count);
+            return ExecuteAsync("CLUSTER GETKEYSINSLOT", [slot, count], AclParser.ByteStrings, cancellationToken);
+        }
+        catch (Exception error) { RecordPreflightFailure(error); throw; }
     }
 
     /// <summary>Introduces a TCP node to this node. Requires AllowAdmin. The optional bus port requires Redis 4.0 or later.</summary>
     public ValueTask ClusterMeetAsync(RespireEndpoint endpoint, int? busPort = null, CancellationToken cancellationToken = default)
     {
-        ValidateEndpoint(endpoint, allowUnixSocket: false);
-        if (busPort is < 1 or > 65535) throw new ArgumentOutOfRangeException(nameof(busPort));
-        return MutationAsync("CLUSTER MEET", busPort.HasValue
-            ? [endpoint.Host, endpoint.Port, busPort.Value] : [endpoint.Host, endpoint.Port], cancellationToken);
+        try
+        {
+            ValidateEndpoint(endpoint, allowUnixSocket: false);
+            if (busPort is < 1 or > 65535) throw new ArgumentOutOfRangeException(nameof(busPort));
+            return MutationAsync("CLUSTER MEET", busPort.HasValue
+                ? [endpoint.Host, endpoint.Port, busPort.Value] : [endpoint.Host, endpoint.Port], cancellationToken);
+        }
+        catch (Exception error) { RecordPreflightFailure(error); throw; }
     }
 
     /// <summary>Returns owned CLUSTER NODES rows for a primary's replicas, as seen by this node. Requires Redis 5.0 or later.</summary>
     public ValueTask<RespireClusterNode[]> ClusterReplicasAsync(string nodeId, CancellationToken cancellationToken = default)
-        => ExecuteAsync("CLUSTER REPLICAS", [ClusterNodeId(nodeId)], ClusterAdministrationParser.Replicas, cancellationToken);
+    {
+        try
+        {
+            return ExecuteAsync("CLUSTER REPLICAS", [ClusterNodeId(nodeId)], ClusterAdministrationParser.Replicas, cancellationToken);
+        }
+        catch (Exception error) { RecordPreflightFailure(error); throw; }
+    }
 
     /// <summary>Configures this node to replicate the specified primary. Requires AllowAdmin.</summary>
     public ValueTask ClusterReplicateAsync(string nodeId, CancellationToken cancellationToken = default)
-        => MutationAsync("CLUSTER REPLICATE", [ClusterNodeId(nodeId)], cancellationToken);
+    {
+        try
+        {
+            return MutationAsync("CLUSTER REPLICATE", [ClusterNodeId(nodeId)], cancellationToken);
+        }
+        catch (Exception error) { RecordPreflightFailure(error); throw; }
+    }
 
     /// <summary>Resets this node's Cluster state. Hard reset also replaces its identity and epochs. Requires AllowAdmin.</summary>
     public ValueTask ClusterResetAsync(RespireClusterResetMode mode = RespireClusterResetMode.Soft,
         CancellationToken cancellationToken = default)
-        => MutationAsync("CLUSTER RESET", mode switch
+    {
+        try
         {
-            RespireClusterResetMode.Soft => ["SOFT"],
-            RespireClusterResetMode.Hard => ["HARD"],
-            _ => throw InvalidClusterOption(nameof(mode)),
-        }, cancellationToken);
+            return MutationAsync("CLUSTER RESET", mode switch
+            {
+                RespireClusterResetMode.Soft => ["SOFT"],
+                RespireClusterResetMode.Hard => ["HARD"],
+                _ => throw InvalidClusterOption(nameof(mode)),
+            }, cancellationToken);
+        }
+        catch (Exception error) { RecordPreflightFailure(error); throw; }
+    }
 
     /// <summary>Persists this node's Cluster configuration. Requires AllowAdmin.</summary>
     public ValueTask ClusterSaveConfigAsync(CancellationToken cancellationToken = default)
@@ -87,27 +155,35 @@ public sealed partial class RespireServerNode
     /// <summary>Sets a fresh node's configuration epoch. Requires AllowAdmin.</summary>
     public ValueTask ClusterSetConfigEpochAsync(long epoch, CancellationToken cancellationToken = default)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(epoch);
-        return MutationAsync("CLUSTER SET-CONFIG-EPOCH", [epoch], cancellationToken);
+        try
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(epoch);
+            return MutationAsync("CLUSTER SET-CONFIG-EPOCH", [epoch], cancellationToken);
+        }
+        catch (Exception error) { RecordPreflightFailure(error); throw; }
     }
 
     /// <summary>Changes local slot ownership or migration state. Stable requires no node ID; other states require one. Requires AllowAdmin.</summary>
     public ValueTask ClusterSetSlotAsync(int slot, RespireClusterSlotState state, string? nodeId = null,
         CancellationToken cancellationToken = default)
     {
-        ValidateClusterSlot(slot);
-        var token = state switch
+        try
         {
-            RespireClusterSlotState.Importing => "IMPORTING",
-            RespireClusterSlotState.Migrating => "MIGRATING",
-            RespireClusterSlotState.Node => "NODE",
-            RespireClusterSlotState.Stable => "STABLE",
-            _ => throw InvalidClusterOption(nameof(state)),
-        };
-        if (state != RespireClusterSlotState.Stable)
-            return MutationAsync("CLUSTER SETSLOT", [slot, token, ClusterNodeId(nodeId)], cancellationToken);
-        if (nodeId is not null) throw new ArgumentException("Stable does not accept a node ID.", nameof(nodeId));
-        return MutationAsync("CLUSTER SETSLOT", [slot, token], cancellationToken);
+            ValidateClusterSlot(slot);
+            var token = state switch
+            {
+                RespireClusterSlotState.Importing => "IMPORTING",
+                RespireClusterSlotState.Migrating => "MIGRATING",
+                RespireClusterSlotState.Node => "NODE",
+                RespireClusterSlotState.Stable => "STABLE",
+                _ => throw InvalidClusterOption(nameof(state)),
+            };
+            if (state != RespireClusterSlotState.Stable)
+                return MutationAsync("CLUSTER SETSLOT", [slot, token, ClusterNodeId(nodeId)], cancellationToken);
+            if (nodeId is not null) throw new ArgumentException("Stable does not accept a node ID.", nameof(nodeId));
+            return MutationAsync("CLUSTER SETSLOT", [slot, token], cancellationToken);
+        }
+        catch (Exception error) { RecordPreflightFailure(error); throw; }
     }
 
     /// <summary>Removes all local slot assignments; the server requires an empty database. Requires AllowAdmin.</summary>
