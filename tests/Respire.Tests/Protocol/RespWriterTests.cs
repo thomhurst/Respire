@@ -20,6 +20,7 @@ public class RespWriterTests
         var writer = new RespWriter(buffer);
 
         writer.WriteBulkString(value);
+        writer.Complete();
 
         var payload = Encoding.UTF8.GetBytes(value);
         var expected = Encoding.UTF8.GetBytes($"${payload.Length}\r\n{Encoding.UTF8.GetString(payload)}\r\n");

@@ -191,6 +191,7 @@ public class PrefixedKeyTests
             {
                 var writer = new RespWriter(buffer);
                 value.WriteTo(ref writer);
+                writer.Complete();
                 var frame = Encoding.ASCII.GetBytes($"${expected.Length}\r\n").Concat(expected).Concat("\r\n"u8.ToArray());
                 await Assert.That(buffer.WrittenMemory.ToArray().SequenceEqual(frame)).IsTrue();
                 await Assert.That(resolved.ToBytes().SequenceEqual(expected)).IsTrue();
@@ -285,6 +286,7 @@ public class PrefixedKeyTests
             var writer = new RespWriter(buffer);
             var command = new Cmd1(RespireCommands.String.GET.Verb, client.Key(in key));
             command.Write(ref writer);
+            writer.Complete();
             if (control) GC.KeepAlive(new byte[37]);
         }
         return GC.GetAllocatedBytesForCurrentThread() - before;
@@ -416,6 +418,7 @@ public class PrefixedKeyTests
             writer.WriteBulkString("before");
             key.WriteTo(ref writer);
             writer.WriteBulkString("after");
+            writer.Complete();
             var payload = Encoding.UTF8.GetBytes("tenant:ascii-£-𐍈");
             var expected = "$6\r\nbefore\r\n"u8.ToArray()
                 .Concat(Encoding.ASCII.GetBytes($"${payload.Length}\r\n"))

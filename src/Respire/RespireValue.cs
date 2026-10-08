@@ -664,6 +664,27 @@ public readonly struct RespireValue : IEquatable<RespireValue>
         return WriteWirePayload(buffer);
     }
 
+    /// <summary>A full bulk-frame upper bound, or -1 when sizing would need an extra text scan.</summary>
+    internal int GetWriteSizeHint()
+    {
+        if (_kind == Kind.PreEncoded) return _bytes.Length;
+        // Avoid over-reserving large ASCII values or scanning their text twice. Such
+        // commands use the cached writer's growth fallback instead of a guessed bound.
+        if (_string is { Length: > 1024 }) return -1;
+        var payloadLength = _kind switch
+        {
+            Kind.String => checked(_string!.Length * 3),
+            Kind.Prefixed => checked(_prefix!.Bytes.Length + (_string is null ? _bytes.Length : _string.Length * 3)),
+            Kind.Bytes => _bytes.Length,
+            Kind.Integer or Kind.UnsignedInteger => 20,
+            Kind.Single => 16,
+            Kind.Double => 32,
+            Kind.Boolean => 1,
+            _ => -1,
+        };
+        return payloadLength < 0 ? -1 : Commands.CommandWriteSizeHint.Bulk(payloadLength);
+    }
+
     internal RespireKey AsKey()
     {
         if (_kind == Kind.Prefixed) return new RespireKey(_prefix!, _string, _bytes);

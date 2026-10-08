@@ -276,8 +276,15 @@ public class ProtocolBenchmarks
         where TCommand : struct, IRespCommand
     {
         _commandBuffer.Reset();
+#if RESERVED_RESP_WRITER
+        var writer = new RespWriter(_commandBuffer, command.GetWriteSizeHint());
+#else
         var writer = new RespWriter(_commandBuffer);
+#endif
         command.Write(ref writer);
+#if RESERVED_RESP_WRITER
+        writer.Complete();
+#endif
         return _commandBuffer.Count;
     }
 

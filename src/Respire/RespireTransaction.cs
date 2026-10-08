@@ -691,8 +691,9 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                 ValidateClusterSlot(slot);
             }
 
-            var writer = new RespWriter(_buffer);
+            var writer = new RespWriter(_buffer, command.GetWriteSizeHint());
             command.Write(ref writer);
+            writer.Complete();
         }
         catch
         {

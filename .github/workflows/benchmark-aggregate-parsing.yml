@@ -21,9 +21,9 @@ jobs:
       expected-head-sha: ${{ github.event.pull_request.head.sha }}
       fixture: benchmarks/Respire.Benchmarks/AggregateParsingBenchmarks.cs
       filter: '*AggregateParsingBenchmarks*'
-      expected-case-count: 8
-      expected-methods: Complete,Nested,ScalarBatch,Fragmented
-      zero-allocation-methods: Complete,Nested,ScalarBatch,Fragmented
+      expected-case-count: 10
+      expected-methods: Complete,Nested,ScalarBatch,Fragmented,FragmentedNested
+      zero-allocation-methods: Complete,Nested,ScalarBatch,Fragmented,FragmentedNested
       artifact-prefix: aggregate-parsing
   payload:
     if: github.event.label.name == 'run-aggregate-benchmarks'

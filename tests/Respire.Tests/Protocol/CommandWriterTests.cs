@@ -21,6 +21,7 @@ public class CommandWriterTests
         var writer = new RespWriter(buffer);
 
         command.Write(ref writer);
+        writer.Complete();
 
         var expected = Encoding.UTF8.GetBytes(
             $"*3\r\n$3\r\nSET\r\n${Encoding.UTF8.GetByteCount(key)}\r\n{key}\r\n" +

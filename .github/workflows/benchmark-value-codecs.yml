@@ -22,7 +22,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 50
     concurrency:
-      group: value-codecs-${{ github.event.pull_request.number || github.ref }}-${{ matrix.framework }}-${{ matrix.direction }}
+      # Manual runs keep their branch/matrix scope with an empty label segment.
+      group: value-codecs-${{ github.event.pull_request.number || github.ref }}-${{ matrix.framework }}-${{ matrix.direction }}-${{ github.event.label.name }}
       cancel-in-progress: true
     strategy:
       fail-fast: false

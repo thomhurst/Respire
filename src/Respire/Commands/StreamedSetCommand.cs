@@ -141,6 +141,11 @@ internal readonly struct StreamedSetCommand : IReplayableStreamingRespCommand
     public void Write(ref RespWriter writer)
         => throw new InvalidOperationException("Streamed SET commands must use the streaming connection path.");
 
+    internal int GetStartWriteSizeHint() => CommandWriteSizeHint.For(Verbs.Set,
+        _key.GetWriteSizeHint(), CommandWriteSizeHint.HeaderLength);
+
+    internal static int GetEndWriteSizeHint() => 2 + CommandWriteSizeHint.SetOptions;
+
     internal void WriteStart(ref RespWriter writer)
     {
         // Validate before writing so an argument count can never promise a token WriteEnd omits.

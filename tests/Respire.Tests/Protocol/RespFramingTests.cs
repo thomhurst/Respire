@@ -36,6 +36,7 @@ public class RespFramingTests
         {
             var writer = new RespWriter(buffer);
             writer.WriteArrayHeader(count);
+            writer.Complete();
         });
         await Assert.That(actual.SequenceEqual(Encoding.ASCII.GetBytes("*" + count.ToString(CultureInfo.InvariantCulture) + "\r\n")))
             .IsTrue();
@@ -64,6 +65,7 @@ public class RespFramingTests
             {
                 var writer = new RespWriter(buffer);
                 writer.WriteBulkInteger(value);
+                writer.Complete();
             });
             var text = value.ToString(CultureInfo.InvariantCulture);
             var expected = Encoding.ASCII.GetBytes($"${text.Length}\r\n{text}\r\n");
@@ -90,6 +92,7 @@ public class RespFramingTests
         {
             var writer = new RespWriter(buffer);
             option.WriteTo(ref writer);
+            writer.Complete();
         });
         await Assert.That(actual.SequenceEqual(Encoding.ASCII.GetBytes($"${text.Length}\r\n{text}\r\n"))).IsTrue();
         RespireValue ordinary = text;
@@ -135,10 +138,13 @@ public class RespFramingTests
     {
         var writer = new RespWriter(buffer);
         writer.WriteRaw("*1\r\n$4\r\nPING\r\n"u8);
+        writer.Complete();
         var mark = buffer.Count;
         writer.WriteBulkInteger(long.MinValue);
         writer.WriteRaw(CommandOptionFrames.WITHSCORES);
+        writer.Complete();
         buffer.TruncateTo(mark);
+        writer = new RespWriter(buffer);
         try
         {
             new SetCommand("key", "value", RespireExpiry.Persist, SetWhen.Always, false).Write(ref writer);
@@ -182,6 +188,7 @@ public class RespFramingTests
             writer.WriteRaw(CommandOptionFrames.PX);
             CommandOptionFrames.REVValue.WriteTo(ref writer);
             CommandOptionFrames.WITHSCORESValue.WriteTo(ref writer);
+            writer.Complete();
             if (allocate) GC.KeepAlive(new byte[37]);
         }
         return GC.GetAllocatedBytesForCurrentThread() - before;

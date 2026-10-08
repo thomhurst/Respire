@@ -62,6 +62,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private readonly CancellationTokenSource _closedCancellation = new();
     private readonly TaskCompletionSource _retiredSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly InflightRing _inflight;
+#if DEBUG
+    // Primitive progress evidence for friend tests; no field or writes in Release.
+    private int _resumedScalarCountForTests;
+#endif
     private readonly PendingResponsePool _sourcePool;
     private readonly ArrayPool<byte> _streamPayloadPool;
     private readonly int _receiveBufferSize;
@@ -1697,8 +1701,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         try
         {
             scratch.Reset();
-            var writer = new RespWriter(scratch);
+            var writer = new RespWriter(scratch, command.GetWriteSizeHint());
             command.Write(ref writer);
+            writer.Complete();
             var frame = scratch.WrittenMemory.Span;
 
             lock (_writeGate)
@@ -1798,9 +1803,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             startedBatch = mark == 0 && _inflight.Count == 0;
             try
             {
-                var writer = new RespWriter(_activeBuffer);
+                var writer = new RespWriter(_activeBuffer, command.GetWriteSizeHint());
                 command.Write(ref writer);
                 command.ValidateAdmission();
+                writer.Complete();
             }
             catch
             {
@@ -2453,7 +2459,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                             status = hasBulkHeader
                                 ? RespParser.TryParseBulkValue(
                                     bufferedData, ref pos, bulkType, bulkLength, headerEnd, out value)
-                                : RespParser.TryParseValue(bufferedData, ref pos, out value);
+                                : RespParser.TryParseValue(bufferedData, ref pos, out value, parser);
                             if (status == RespParseStatus.Done)
                             {
                                 start = pos;
@@ -2465,6 +2471,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                             }
                             else if (status == RespParseStatus.NeedMoreData)
                             {
+                                // Adoption commits completed children and their private cursor.
+                                // Without adoption, resumable parsing still starts at the header.
+                                if (!parser.IsIdle)
+                                    start = pos;
                                 status = parser.TryParseResumable(
                                     bufferedData, ref start, out value, out directFill);
                             }
@@ -2476,6 +2486,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                             bufferedData, ref start, out value, out directFill);
                     }
 
+#if DEBUG
+                    _resumedScalarCountForTests = parser.ResumedScalarCountForTests;
+#endif
                     responseBytes += start - previousStart;
                     if (responseBytes > MaxResponseSize)
                     {
@@ -3247,6 +3260,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private readonly struct TransactionCommand(ReadOnlyMemory<byte> serializedCommands, bool includeMulti,
         RespireTransactionBase? transaction) : IRespCommand
     {
+        public int GetWriteSizeHint() => checked(serializedCommands.Length + RespCommands.Exec.Length
+            + (includeMulti ? RespCommands.Multi.Length : 0));
         internal void RecordConnection(RespireConnection connection)
         {
             if (transaction is not null) transaction.ExecutingConnection = connection;
@@ -3275,6 +3290,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             _prefix = prefix;
             _command = command;
         }
+
+        public int GetWriteSizeHint() => CommandWriteSizeHint.Combine(
+            _prefix.GetWriteSizeHint(), _command.GetWriteSizeHint());
 
         public void Write(ref RespWriter writer)
         {

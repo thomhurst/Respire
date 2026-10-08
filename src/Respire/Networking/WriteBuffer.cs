@@ -59,8 +59,14 @@ internal sealed class WriteBuffer
         // Growth copies only committed bytes. Include the unpublished suffix before
         // reserving, then reacquire the span after the old array can return to the pool.
         Advance(uncommittedLength);
-        GetSpan(checked(position + frameLength - _count));
-        TruncateTo(position);
+        try
+        {
+            GetSpan(checked(position + frameLength - _count));
+        }
+        finally
+        {
+            TruncateTo(position);
+        }
         return GetSpan(frameLength);
     }
 

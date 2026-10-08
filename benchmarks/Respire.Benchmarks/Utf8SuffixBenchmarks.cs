@@ -69,6 +69,9 @@ public class Utf8SuffixBenchmarks
         _buffer.Reset();
         var writer = new RespWriter(_buffer);
         writer.WriteBulkString(_text);
+#if RESERVED_RESP_WRITER
+        writer.Complete();
+#endif
         return _buffer.WrittenMemory;
     }
 
@@ -78,6 +81,9 @@ public class Utf8SuffixBenchmarks
         _buffer.Reset();
         var writer = new RespWriter(_buffer);
         writer.WritePrefixedKey(_prefix, _text, default);
+#if RESERVED_RESP_WRITER
+        writer.Complete();
+#endif
         return _buffer.WrittenMemory;
     }
 

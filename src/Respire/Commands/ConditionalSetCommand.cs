@@ -6,6 +6,9 @@ namespace Respire.Commands;
 internal readonly struct ConditionalSetCommand(RespireValue key, RespireValue value,
     RespireValueCondition condition, RespireExpiry expiry, bool returnOld) : IRespCommand
 {
+    public int GetWriteSizeHint() => CommandWriteSizeHint.For(Verbs.Set,
+        key.GetWriteSizeHint(), value.GetWriteSizeHint(), condition.Operand.GetWriteSizeHint(),
+        CommandWriteSizeHint.Bulk(condition.Token.Length), CommandWriteSizeHint.SetOptions);
     public ReadCommandKind ReadKind => ReadCommandKind.None;
 
     public bool TryGetPrimaryKey(out RespireValue primaryKey)

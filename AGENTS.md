@@ -24,6 +24,8 @@ Benchmark workflows (`.github/workflows/benchmark-*.yml`) run on net10.0 only, t
 
 Pull request benchmark workflows start only when someone adds their label. They have no path triggers, so ordinary PR pushes do not run them. Run a benchmark only when you change a hot path and want to check its performance. To start one, add the workflow's label to the pull request, for example `gh pr edit <number> --add-label run-transport-benchmarks`. The run measures the pull request as it is when you add the label. To measure a later push, remove the label and add it again. Choose the benchmark that covers the code you changed, and report the result in the PR description. Do not add `paths`, `push`, `opened` or `synchronize` triggers to a benchmark workflow. A new benchmark workflow gets its own `run-<name>-benchmarks` label and a `pull_request: types: [labeled]` trigger. Create the label with `gh label create` if it does not exist.
 
+Benchmark concurrency groups must include `github.event.label.name` alongside their existing workflow, PR and optional head/matrix scope. Every label event starts each label-triggered workflow before its jobs evaluate their conditions; an unrelated label must not cancel an active comparison whose jobs were selected. Reapplying the same label still supersedes an older run within the same group. For workflows that also support manual dispatch, the empty label segment retains their existing branch/matrix cancellation scope.
+
 | Workflow | Label |
 | --- | --- |
 | `benchmark-aggregate-parsing.yml` | `run-aggregate-benchmarks` |
