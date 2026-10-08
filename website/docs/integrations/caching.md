@@ -200,12 +200,19 @@ fills are retired conservatively because Microsoft's public API keeps stored tag
 already in progress can still receive their earlier result, but later requests cannot join that fill
 or use its late L1 publication. Concurrent L2 factory writes retain ordinary HybridCache behavior.
 
-The first local admission waits for the subscriber acknowledgment. Startup failure or terminal
+The first local admission waits for the subscriber acknowledgment and honors the request's
+cancellation token. The owned subscriber inherits the client's `ConnectTimeout` and
+`CommandTimeout` settings, each 10 seconds by default; disabling `CommandTimeout` also removes
+the acknowledgment deadline, so provide request cancellation when using that configuration.
+Startup failure or terminal
 subscriber failure disables L1 for that provider; recreate it to retry startup. During detected
 subscriber reconnects, reads bypass L1. A reconnect, buffer discard, or oversized-message gap retires
 all local generations and clears remembered timestamps so new contexts refetch authoritative L2
 tag metadata. Fallback requests use fresh metadata contexts, including after observation or tag
 history exhaustion. Malformed frames and foreign namespaces are ignored safely.
+Replay or cleanup failure also ends the consumer and disables L1 rather than automatically
+retrying partially applied local state. Dispose the provider asynchronously when possible;
+synchronous disposal waits for its owned subscriber and retirement cleanup to finish.
 
 Redis pub/sub is eventual and does not replay lost messages. A successful removal waits for its
 shared-marker write and publication, not for every receiver to process the message. Publication
