@@ -16,6 +16,7 @@ public sealed class RespireHashChangeTracker<T> where T : class
     private readonly HashSet<string> _retryFields = new(StringComparer.Ordinal);
     private Dictionary<string, string>? _baseline;
     private int _updating;
+    private bool _writeTimedOut;
 
     /// <summary>Infrastructure constructor used by generated mappers.</summary>
     [EditorBrowsable(EditorBrowsableState.Never)]
@@ -40,7 +41,8 @@ public sealed class RespireHashChangeTracker<T> where T : class
 
     /// <summary>Writes changed fields and removes fields changed to null. An unchanged model sends no commands.</summary>
     /// <remarks>No server comparison or rollback occurs. On failure the entire previous baseline remains available for retry.
-    /// Cancellation after encoding waits for the write group to finish before releasing the tracker.</remarks>
+    /// Cancellation after encoding waits for the write group to finish before releasing the tracker.
+    /// A timeout of a possibly submitted command invalidates the tracker: later updates throw.</remarks>
     public async ValueTask UpdateAsync(T value, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(value);
@@ -49,6 +51,8 @@ public sealed class RespireHashChangeTracker<T> where T : class
             throw new InvalidOperationException("A hash tracker cannot run overlapping updates.");
         try
         {
+            if (_writeTimedOut)
+                throw new InvalidOperationException("A timed-out hash write may still execute. Wait for prior commands to settle and recreate the tracker from persisted values.");
             var next = new Dictionary<string, string>(_encode(value), StringComparer.Ordinal);
             var changed = new List<string>();
             var writes = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -71,8 +75,11 @@ public sealed class RespireHashChangeTracker<T> where T : class
                         _fieldTtls, _expiryMode, CancellationToken.None).ConfigureAwait(false);
                     cancellationToken.ThrowIfCancellationRequested();
                 }
-                catch
+                catch (Exception error)
                 {
+                    // A command timeout abandons only the response wait. No retry through this
+                    // client can prove that an accepted write on another connection has settled.
+                    if (error is RespireTimeoutException { IsCommandNotSubmitted: false }) _writeTimedOut = true;
                     // Some commands may have applied. Resend these fields even if the caller
                     // reverts to the old baseline, so partially applied values can be corrected.
                     foreach (var field in changed) _retryFields.Add(field);

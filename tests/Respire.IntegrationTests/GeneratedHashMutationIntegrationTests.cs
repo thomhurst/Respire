@@ -110,7 +110,7 @@ public class GeneratedHashMutationUnsupportedTests(HashExpiryRedis70Container fi
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
         var key = "unsupported:" + Guid.NewGuid().ToString("N");
-        await Assert.That(async () => await ExpiringHashModelHashMapper.SetAsync(client, key, mode,
+        await Assert.That(async () => await ExpiringHashModelHashMapper.SetWithExpiryAsync(client, key, mode,
             new ExpiringHashModel("id", "name", "token", null))).Throws<NotSupportedException>();
         await Assert.That(await client.Keys.ExistsAsync(key)).IsFalse();
     }

@@ -140,11 +140,15 @@ public class RespireHashGeneratorTests
             await existing.UpdateAsync(user with { Name = "Grace" });
             var expiring = new ExpiringUser("42", "Ada", "session");
             await ExpiringUserHashMapper.SetAsync(client, expiring);
-            await ExpiringUserHashMapper.SetAsync(client, RespireHashExpiryMode.HSetThenExpire, expiring);
+            await ExpiringUserHashMapper.SetWithExpiryAsync(client, RespireHashExpiryMode.HSetThenExpire, expiring);
+            await ExpiringUserHashMapper.SetWithExpiryAsync(client, binaryKey, RespireHashExpiryMode.HSetThenExpire, expiring);
             await UserHashMapper.SetAsync(client, user, default);
             await UserHashMapper.SetAsync(client, user, default(System.Threading.CancellationToken));
             await UserHashMapper.SetAsync(client, binaryKey, user, default);
             await UserHashMapper.SetAsync(client, binaryKey, user, default(System.Threading.CancellationToken));
+            await UserHashMapper.SetAsync(client, default, user);
+            await UserHashMapper.SetAsync(client, default, user, default);
+            await UserHashMapper.SetAsync(client, default(RespireKey), user);
             System.Func<IRespireClient, User, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask> save = UserHashMapper.SetAsync;
             System.Func<IRespireClient, RespireKey, User, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask> saveAtKey = UserHashMapper.SetAsync;
             await save(client, user, default);

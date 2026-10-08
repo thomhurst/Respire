@@ -94,8 +94,15 @@ public static class RespireHashModelIO
                 if (expiry.Type != RespDataType.Array || expiry.Count != group.Fields.Length)
                     throw new RespireProtocolException("HPEXPIRE must return one status per field.");
                 for (var field = 0; field < expiry.Count; field++)
-                    if (expiry[field].Type != RespDataType.Integer || expiry[field].AsInteger() != 1)
-                        throw new RespireProtocolException("HPEXPIRE did not apply the requested field expiry.");
+                {
+                    if (expiry[field].Type != RespDataType.Integer)
+                        throw new RespireProtocolException("HPEXPIRE must return integer field statuses.");
+                    var status = expiry[field].AsInteger();
+                    if (status is not (-2 or 0 or 1 or 2))
+                        throw new RespireProtocolException($"HPEXPIRE returned unknown field status {status}.");
+                    if (status != 1)
+                        throw new InvalidOperationException($"HPEXPIRE did not apply expiry to field '{group.Fields[field].Key}' (status {status}). The field may have been removed concurrently.");
+                }
             }
         }
 

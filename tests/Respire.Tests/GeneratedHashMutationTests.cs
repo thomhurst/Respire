@@ -122,7 +122,58 @@ public class GeneratedHashMutationTests
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         await Assert.That(async () => await tracker.UpdateAsync(value, cancellation.Token)).Throws<OperationCanceledException>();
-        await Assert.That(async () => await NullableHashModelHashMapper.SetAsync(client, (RespireHashExpiryMode)99, value)).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await NullableHashModelHashMapper.SetWithExpiryAsync(client, (RespireHashExpiryMode)99, value)).Throws<ArgumentOutOfRangeException>();
+    }
+
+    [Test]
+    public async Task MissingExpiryFieldReportsStatusAndRetainsRetryState()
+    {
+        var commandInfo = "*1\r\n*6\r\n$8\r\nhpexpire\r\n:-6\r\n*0\r\n:1\r\n:1\r\n:1\r\n"u8.ToArray();
+        var expiryWrites = 0;
+        await using var server = new FakeRespServer(3, ":0\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "COMMAND INFO HPEXPIRE" => commandInfo,
+                _ when command.StartsWith("HPEXPIRE", StringComparison.Ordinal) =>
+                    Interlocked.Increment(ref expiryWrites) == 1 ? "*1\r\n:-2\r\n"u8.ToArray() : "*1\r\n:1\r\n"u8.ToArray(),
+                _ => null,
+            },
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var first = new ExpiringHashModel("x", "name", "old", null);
+        var tracker = ExpiringHashModelHashMapper.Track(client, first, RespireHashExpiryMode.HSetThenExpire);
+        var next = first with { Token = "new" };
+        var error = await Assert.That(async () => await tracker.UpdateAsync(next)).Throws<InvalidOperationException>();
+        await Assert.That(error!.Message).Contains("field 'Token' (status -2)");
+        await tracker.UpdateAsync(first);
+        await tracker.UpdateAsync(first);
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
+        {
+            "COMMAND INFO HPEXPIRE", "HSET expiring:x Token new", "HPEXPIRE expiring:x 10000 FIELDS 1 Token",
+            "COMMAND INFO HPEXPIRE", "HSET expiring:x Token old", "HPEXPIRE expiring:x 10000 FIELDS 1 Token",
+        });
+    }
+
+    [Test]
+    [Arguments("*0\r\n")]
+    [Arguments("*1\r\n+OK\r\n")]
+    [Arguments("*1\r\n:42\r\n")]
+    public async Task MalformedExpiryStatusStillReportsProtocolFailure(string reply)
+    {
+        await using var server = new FakeRespServer(2, ":0\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "COMMAND INFO HPEXPIRE" => "*1\r\n*6\r\n$8\r\nhpexpire\r\n:-6\r\n*0\r\n:1\r\n:1\r\n:1\r\n"u8.ToArray(),
+                _ when command.StartsWith("HPEXPIRE", StringComparison.Ordinal) => System.Text.Encoding.UTF8.GetBytes(reply),
+                _ => null,
+            },
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await Assert.That(async () => await ExpiringHashModelHashMapper.SetWithExpiryAsync(client,
+            RespireHashExpiryMode.HSetThenExpire, new ExpiringHashModel("x", "name", "token", null)))
+            .Throws<RespireProtocolException>();
     }
 
     [Test]
@@ -174,6 +225,38 @@ public class GeneratedHashMutationTests
         await tracker.UpdateAsync(value);
         await Assert.That(server.ReceivedArguments.Single()[1]).IsEquivalentTo(new byte[] { 0xff, 0, 0x80 });
         await Assert.That(server.ReceivedArguments.Single()[3]).IsEquivalentTo("new"u8.ToArray());
+    }
+
+    [Test]
+    [Arguments(1)]
+    [Arguments(2)]
+    public async Task CommandTimeoutRejectsRetryWhileAcceptedWriteRemainsUnsettled(int connections)
+    {
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(connections, ":0\r\n"u8.ToArray())
+        {
+            SuppressReply = _ => { received.TrySetResult(); return true; },
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = connections,
+            CommandTimeout = TimeSpan.FromMilliseconds(200),
+        });
+        var first = new StoredHashModel("x", "name", 0, null, null);
+        var tracker = StoredHashModelHashMapper.Track(client, first);
+        var pending = tracker.UpdateAsync(first with { Count = 1 }).AsTask();
+        await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(async () => await pending).Throws<RespireTimeoutException>();
+        await Assert.That(async () => await tracker.UpdateAsync(first)).Throws<InvalidOperationException>();
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { "HSET model:{x} Count 1" });
+
+        server.SuppressReply = null;
+        await server.SendRawAsync(":0\r\n"u8.ToArray(), server.ReceivedConnectionIds.Single());
+        // A late reply cannot make the old snapshot trustworthy again.
+        await Assert.That(async () => await tracker.UpdateAsync(first)).Throws<InvalidOperationException>();
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(1);
     }
 }
 
