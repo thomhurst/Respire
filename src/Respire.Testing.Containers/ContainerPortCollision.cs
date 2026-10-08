@@ -22,6 +22,11 @@ internal static class ContainerPortCollision
         foreach (var port in selectedPorts)
         {
             var address = "127.0.0.1:" + port.ToString(CultureInfo.InvariantCulture);
+            // Some engines report the selected host endpoint directly, without "for"
+            // or the container destination. Keep the full networking prefix and bind suffix.
+            if (message.StartsWith("failed to set up container networking: driver failed programming external connectivity on endpoint ", StringComparison.Ordinal)
+                && message.EndsWith($"): failed to bind host port {address}/tcp: address already in use", StringComparison.Ordinal))
+                return true;
             // Moby's port allocator and Linux bindTCPOrUDP error formats.
             if (message.EndsWith($"Bind for {address} failed: port is already allocated", StringComparison.Ordinal))
                 return true;
