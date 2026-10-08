@@ -1,0 +1,28 @@
+name: Client cache query dependency benchmarks
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}-${{ github.event.label.name }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    if: github.event.label.name == 'run-cache-query-benchmarks'
+    uses: ./.github/workflows/benchmark-compare.yml
+    with:
+      event-base-sha: ${{ github.event.pull_request.base.sha }}
+      candidate-sha: ${{ github.sha }}
+      expected-head-sha: ${{ github.event.pull_request.head.sha }}
+      fixture: benchmarks/Respire.Benchmarks/ClientCacheQueryBenchmarks.cs
+      filter: '*ClientCacheQueryBenchmarks*'
+      expected-case-count: 6
+      expected-methods: SetConcurrent50,SetConcurrent50CacheOff,UnrelatedQueriesWithWrites,UnrelatedQueriesWithoutCoalescing,AffectedQueriesWithWrites,QueryMissesWithoutWrites
+      retained-memory: true
+      retained-memory-stages: before-connect,connected-idle,after-churn,after-dispose
+      artifact-prefix: cache-query-comparison

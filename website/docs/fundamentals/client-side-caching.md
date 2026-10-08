@@ -592,6 +592,18 @@ or none. Local writes, `Clear()`, and continuity flushes do not increment
 
 ## Consistency boundary
 
+Pending deterministic queries fence publication against every physical dependency key.
+An invalidation of a hash rejects all pending projections of that hash; a multi-key query
+is rejected if any dependency changes. A write to an unrelated key does not prevent a
+valid query reply from entering the cache. Local mutations still invalidate before dispatch
+and after completion, including failed or cancelled writes.
+
+Dependency generations exist only while queries are pending. Completion, cancellation,
+failed replies, and redirect rebasing release those registrations. This state scales with
+concurrent dependencies, rather than every key invalidated over the client's lifetime.
+Whole-cache clears, continuity loss, and conservative flushes retain their global barrier
+and reject every older query. Queries outside the configured key prefixes remain uncached.
+
 Respire rejects a stale read response when an invalidation races cache insertion. It also flushes
 after awaited local mutations and on detected connection loss, reconnect, redirect, and cluster
 topology retirement. In `OptIn` mode an `ASK` retry sends `ASKING`, `CLIENT CACHING YES`, and the

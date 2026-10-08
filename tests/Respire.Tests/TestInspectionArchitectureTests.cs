@@ -16,6 +16,7 @@ public class TestInspectionArchitectureTests
     [Arguments(typeof(RespireConnection), typeof(RespireConnection.TestInspection), nameof(RespireConnection.TestInspection.Inflight))]
     [Arguments(typeof(PendingResponse), typeof(PendingResponse.TestInspection), nameof(PendingResponse.TestInspection.RegisteredCancellationToken))]
     [Arguments(typeof(ClientSideCacheCoordinator), typeof(ClientSideCacheCoordinator.TestInspection), nameof(ClientSideCacheCoordinator.TestInspection.SharedReadGate))]
+    [Arguments(typeof(ClientSideCacheCoordinator), typeof(ClientSideCacheCoordinator.TestInspection), nameof(ClientSideCacheCoordinator.TestInspection.PendingQueryDependencyCount))]
     [Arguments(typeof(RespireTransactionBase), typeof(RespireTransactionBase.TestInspection), nameof(RespireTransactionBase.TestInspection.WatchConnection))]
     public async Task InspectionStateRemainsBehindInternalBorrowedViews(Type owner, Type view, string member)
     {

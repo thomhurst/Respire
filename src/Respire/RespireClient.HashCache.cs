@@ -110,28 +110,30 @@ public sealed partial class RespireClient
     {
         // Each field uses the existing HGET identity and hash-key dependency. A single hash
         // invalidation therefore removes every projection, regardless of the requested list.
-        // QueryReadToken is an owned snapshot of keys, epochs and the store. BeginRead
-        // registers no pending reader state, so failed/cancelled reads need no abandonment.
+        // Each pending field owns a dependency lease. Always abandon remaining leases,
+        // including partial registration, send failures, cancellation, and malformed replies.
         var tokens = new ClientSideCacheCoordinator.QueryReadToken[fields.Length];
-        for (var index = 0; index < fields.Length; index++)
-        {
-            var request = new ClientSideCacheCoordinator.QueryRequest(
-                new ClientCacheCommandKey("HGET", key.AsValue(), fields[index]), key);
-            tokens[index] = cache.BeginRead("HGET", in request);
-        }
-        Action? onRedirect = null;
-        if (_core.Cluster is not null)
-        {
-            onRedirect = () =>
-            {
-                for (var index = 0; index < tokens.Length; index++)
-                    tokens[index] = cache.RebaseRead(in tokens[index]);
-            };
-        }
-        var response = await SendTrackedAsync("HMGET", new Cmd1N(Verbs.HMGet, key.AsValue(), fields),
-            cancellationToken, onRedirect).ConfigureAwait(false);
+        var registered = 0;
+        var response = default(RespValue);
         try
         {
+            for (; registered < fields.Length; registered++)
+            {
+                var request = new ClientSideCacheCoordinator.QueryRequest(
+                    new ClientCacheCommandKey("HGET", key.AsValue(), fields[registered]), key);
+                tokens[registered] = cache.BeginRead("HGET", in request);
+            }
+            Action? onRedirect = null;
+            if (_core.Cluster is not null)
+            {
+                onRedirect = () =>
+                {
+                    for (var index = 0; index < tokens.Length; index++)
+                        tokens[index] = cache.RebaseRead(in tokens[index]);
+                };
+            }
+            response = await SendTrackedAsync("HMGET", new Cmd1N(Verbs.HMGet, key.AsValue(), fields),
+                cancellationToken, onRedirect).ConfigureAwait(false);
             if (response.Type != RespDataType.Array || response.AsArray().Length != fields.Length)
                 throw new RespireProtocolException($"HMGET must return an array with {fields.Length} field values.");
             // Validate the entire reply before publishing any field from an untrusted frame.
@@ -152,6 +154,12 @@ public sealed partial class RespireClient
         {
             response.Dispose();
             throw;
+        }
+        finally
+        {
+            var unused = default(RespValue);
+            for (var index = 0; index < registered; index++)
+                cache.CompleteRead(in tokens[index], in unused, allowInsert: false);
         }
     }
 }
