@@ -65,6 +65,23 @@ public class WriterInvariantTests
         }
         finally { buffer.Release(); }
     }
+
+    [Test]
+    public async Task CombinedBoundCannotBeReusedAfterCompletion()
+    {
+        var buffer = new WriteBuffer(128);
+        try
+        {
+            buffer.Append("+before\r\n"u8);
+            var mark = buffer.Count;
+            await Assert.That(() => WriteTwoPongs(buffer, 7)).ThrowsExactly<InvalidOperationException>();
+            await Assert.That(buffer.Count).IsEqualTo(mark + 7);
+            await Assert.That(() => buffer.WrittenMemory).ThrowsExactly<InvalidOperationException>();
+            buffer.TruncateTo(mark + 7);
+            await Assert.That(buffer.WrittenMemory.Span.SequenceEqual("+before\r\n+PONG\r\n"u8)).IsTrue();
+        }
+        finally { buffer.Release(); }
+    }
 #endif
 
     [Test]

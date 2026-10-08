@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   writer:
-    name: Writer invariants (${{ matrix.os }}, ${{ matrix.framework }})
+    name: Writer invariants (${{ matrix.os }}, net10.0)
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     env:
@@ -29,20 +29,21 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        framework: [net8.0, net10.0]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: ./.github/actions/setup-dotnet
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '10.0.x'
       - name: Verify debug publication guards and complete frame bounds
         shell: pwsh
         run: >-
-          dotnet run --project tests/Respire.Tests -c Debug -f ${{ matrix.framework }} --
+          dotnet run --project tests/Respire.Tests -c Debug -f net10.0 --
           --treenode-filter '/*/*/(WriterInvariantTests)|(ReservedWriterTests)|(CommandCatalogTests)|(RespWriterTests)|(CommandWriterTests)|(Utf8SuffixWriterTests)|(RespFramingTests)/*'
-          --minimum-expected-tests 483 --report-trx --results-directory writer-invariants
+          --minimum-expected-tests 484 --report-trx --results-directory writer-invariants
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
-          name: writer-invariants-${{ matrix.os }}-${{ matrix.framework }}
+          name: writer-invariants-${{ matrix.os }}-net10.0
           path: writer-invariants/
