@@ -1,0 +1,84 @@
+name: Generated mapper parity benchmarks
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}-${{ github.event.label.name }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    if: github.event.label.name == 'run-mapper-benchmarks'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+    steps:
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Record immutable sources and runner provenance
+        shell: python
+        run: |
+          import hashlib, json, os, platform, re, subprocess
+          from pathlib import Path
+          head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          assert re.fullmatch(r'[0-9a-f]{40}', os.environ['HEAD_SHA']) and head == os.environ['HEAD_SHA']
+          paths = subprocess.check_output(['git', 'ls-files', 'src', 'benchmarks/Respire.Benchmarks', 'scripts/benchmarks/MapperParity.py', 'Directory.*', 'global.json'], text=True).splitlines()
+          manifest = {
+              'head_sha': head, 'event_base_sha': os.environ['EVENT_BASE_SHA'],
+              'source_sha256': {path: hashlib.sha256(Path(path).read_bytes()).hexdigest() for path in paths},
+              'runner': {name: os.environ.get(name, '') for name in ('RUNNER_NAME', 'RUNNER_OS', 'RUNNER_ARCH', 'ImageOS', 'ImageVersion', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT')},
+              'platform': platform.platform(),
+              'cpu': subprocess.check_output(['lscpu'], text=True),
+              'sdk': subprocess.check_output(['dotnet', '--info'], text=True),
+              'phases': ['handwritten-validation', 'generated-validation', 'handwritten-a', 'generated', 'handwritten-b'],
+              'measurement': {'framework': 'net10.0', 'job': 'Default', 'warmup_count': 3, 'iteration_count': 15, 'outliers': 'DontRemove'},
+          }
+          Path('mapper-provenance.json').write_text(json.dumps(manifest, indent=2) + '\n')
+      - name: Test parity evidence guards
+        run: python3 -m unittest discover -s scripts/benchmarks -p MapperParityTests.py
+      - name: Validate fixtures and bracket generated operations with handwritten controls
+        shell: python
+        run: |
+          import json, subprocess
+          from pathlib import Path
+          manifest = json.loads(Path('mapper-provenance.json').read_text())
+          project = 'benchmarks/Respire.Benchmarks/Respire.Benchmarks.csproj'
+          with Path('build.log').open('w') as log:
+              subprocess.run(['dotnet', 'build', project, '-c', 'Release', '-f', 'net10.0'], stdout=log, stderr=subprocess.STDOUT, check=True)
+          for phase in manifest['phases']:
+              assert subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip() == manifest['head_sha']
+              implementation = 'Generated' if phase.startswith('generated') else 'Handwritten'
+              validation = phase.endswith('validation')
+              command = ['dotnet', 'run', '--no-build', '--project', project, '-c', 'Release', '-f', 'net10.0', '--',
+                         '--filter', f'*{implementation}MapperBenchmarks*', '--job', 'Dry' if validation else 'Default',
+                         '--exporters', 'json', 'markdown', '--artifacts', str(Path('results', phase).resolve())]
+              if not validation:
+                  command += ['--warmupCount', '3', '--iterationCount', '15', '--outliers', 'DontRemove']
+              with Path(f'{phase}.log').open('w') as log:
+                  print(manifest['head_sha'], file=log, flush=True)
+                  subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=True)
+      - name: Evaluate every row and publish parity evidence
+        if: always()
+        run: python3 scripts/benchmarks/MapperParity.py results --manifest mapper-provenance.json --summary "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: mapper-parity-net10.0
+          path: |
+            results/
+            *.log
+            mapper-provenance.json
+            mapper-parity.md
+          retention-days: 30
