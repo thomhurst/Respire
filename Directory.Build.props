@@ -38,6 +38,7 @@
       Respire.OutputCaching;
       Respire.Probabilistic;
       Respire.Search;
+      Respire.SignalR;
       Respire.TimeSeries;
       Respire.Testing;
       Respire.Testing.Containers;

@@ -63,7 +63,7 @@ const sidebars = {
     {
       type: 'category',
       label: 'Integrations',
-      items: ['integrations/dependency-injection', 'integrations/caching', 'integrations/fusioncache', 'integrations/observability'],
+      items: ['integrations/dependency-injection', 'integrations/caching', 'integrations/fusioncache', 'integrations/signalr', 'integrations/observability'],
     },
     'performance',
     'benchmarks',

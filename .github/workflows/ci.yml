@@ -164,6 +164,7 @@ jobs:
             tests/Respire.Caching.Tests \
             tests/Respire.Caching.Hybrid.Tests \
             tests/Respire.FusionCache.Tests \
+            tests/Respire.SignalR.Tests \
             samples/Respire.Samples.Testing \
             samples/Respire.Samples.Cluster \
             samples/Respire.Samples.Sentinel \
@@ -236,6 +237,11 @@ jobs:
           dotnet run --project tests/Respire.Caching.Tests -c Release -f net10.0 --no-build
           dotnet run --project tests/Respire.Caching.Hybrid.Tests -c Release -f net10.0 --no-build
           dotnet run --project tests/Respire.FusionCache.Tests -c Release -f net10.0 --no-build
+
+      - name: Run SignalR backplane tests
+        env:
+          TUNIT_DISABLE_HTML_REPORTER: 'true'
+        run: dotnet run --project tests/Respire.SignalR.Tests -c Release -f net10.0 --no-build -- --minimum-expected-tests 42
 
       - name: Run Caching Tests on Redis 7.4
         env:
@@ -354,6 +360,7 @@ jobs:
             tests/Aspire.Respire.Tests \
             tests/Respire.Tests \
             tests/Respire.FusionCache.Tests \
+            tests/Respire.SignalR.Tests \
             samples/Respire.Samples.Testing \
             samples/Respire.Samples.Cluster \
             samples/Respire.Samples.Sentinel \
@@ -390,6 +397,11 @@ jobs:
           name: standalone-replica-dispatch-net8.0
           path: standalone-replica-net8/
           retention-days: 14
+
+      - name: Run SignalR backplane tests
+        env:
+          TUNIT_DISABLE_HTML_REPORTER: 'true'
+        run: dotnet run --project tests/Respire.SignalR.Tests -c Release -f net8.0 --no-build -- --minimum-expected-tests 42
 
       - name: Run FusionCache lease lifetime regressions
         env:

@@ -36,6 +36,7 @@
     <Project Path="src/Respire.Json/Respire.Json.csproj" />
     <Project Path="src/Respire.OutputCaching/Respire.OutputCaching.csproj" />
     <Project Path="src/Respire.Search/Respire.Search.csproj" />
+    <Project Path="src/Respire.SignalR/Respire.SignalR.csproj" />
     <Project Path="src/Respire.TimeSeries/Respire.TimeSeries.csproj" />
     <Project Path="src/Respire.Testing.Containers/Respire.Testing.Containers.csproj" />
     <Project Path="src/Respire.Coordination/Respire.Coordination.csproj" />
@@ -58,6 +59,7 @@
     <Project Path="tests/Respire.Pipeline.Tests/Respire.Pipeline.Tests.csproj" />
     <Project Path="tests/Respire.Coordination.Tests/Respire.Coordination.Tests.csproj" />
     <Project Path="tests/Respire.Tests/Respire.Tests.csproj" />
+    <Project Path="tests/Respire.SignalR.Tests/Respire.SignalR.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/Respire.StressTests/Respire.StressTests.csproj" />

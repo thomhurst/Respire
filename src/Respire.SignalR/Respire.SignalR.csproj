@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>SignalR scale-out using Respire pub/sub, with Microsoft Redis backplane interoperability.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="../Respire/Respire.csproj" />
+    <PackageReference Include="MessagePack" />
+    <InternalsVisibleTo Include="Respire.SignalR.Tests" />
+    <None Include="LICENSE-Microsoft.txt" Pack="true" PackagePath="licenses/" />
+  </ItemGroup>
+</Project>
