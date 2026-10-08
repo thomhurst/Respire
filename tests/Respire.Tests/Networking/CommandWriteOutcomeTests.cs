@@ -22,19 +22,25 @@ public class CommandWriteOutcomeTests
         => await Assert.That(default(CommandAttemptResult).WriteOutcome).IsEqualTo(CommandWriteOutcome.Unknown);
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task ServerErrorsKeepCheckedAndRawReplyContracts(bool throwOnError)
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task ServerErrorsKeepCheckedAndRawReplyContracts(bool throwOnError, bool streaming)
     {
         await using var server = new FakeRespServer("-ERR injected rejection\r\n"u8.ToArray());
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
-        var attempt = await connection.SendAttemptAsync(new RawCommand(FakeRespServer.PingFrame),
-            commandName: "PING", throwOnError: throwOnError);
+        await using var payload = new MemoryStream("value"u8.ToArray());
+        var attempt = streaming
+            ? await connection.SendAttemptAsync(new StreamedSetCommand("key", payload, 5, default, SetWhen.Always),
+                commandName: "SET", throwOnError: throwOnError)
+            : await connection.SendAttemptAsync(new RawCommand(FakeRespServer.PingFrame),
+                commandName: "PING", throwOnError: throwOnError);
         await Assert.That(attempt.WriteOutcome).IsEqualTo(CommandWriteOutcome.EffectMayHaveReachedServer);
         if (throwOnError)
         {
             var error = await Assert.That(() => attempt.GetResult()).ThrowsExactly<RespireServerException>();
-            await Assert.That(error!.CommandName).IsEqualTo("PING");
+            await Assert.That(error!.CommandName).IsEqualTo(streaming ? "SET" : "PING");
             await Assert.That(error.Code).IsEqualTo("ERR");
         }
         else
@@ -43,6 +49,12 @@ public class CommandWriteOutcomeTests
             await Assert.That(response.IsError).IsTrue();
             await Assert.That(response.AsSpan().SequenceEqual("ERR injected rejection"u8)).IsTrue();
         }
+        // The rejected attempt must release its slot without changing the next reply owner.
+        server.ReplyOverride = (_, _) => FakeRespServer.PongReply;
+        var next = await connection.SendAttemptAsync(new RawCommand(FakeRespServer.PingFrame), commandName: "PING");
+        using var nextReply = next.GetResult();
+        await Assert.That(nextReply.AsString()).IsEqualTo("PONG");
+        await Assert.That(connection.InspectForTests().Inflight.Count).IsEqualTo(0);
     }
 
     [Test]

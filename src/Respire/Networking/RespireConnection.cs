@@ -1526,7 +1526,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         if (command is IStreamingRespCommand)
         {
             return SendStreamingCoreAsync(command, cancellationToken, commandDeadline, pinToConnection,
-                allowStreamingConnectionReroute, streamingRoute, writeObservation);
+                allowStreamingConnectionReroute, streamingRoute, throwOnError, writeObservation);
         }
 
         var source = _sourcePool.Rent(throwOnError, commandName);
@@ -1565,23 +1565,26 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
     private async ValueTask<RespValue> SendStreamingCoreAsync<TCommand>(
         TCommand command, CancellationToken cancellationToken, CommandDeadline commandDeadline, bool pinToConnection,
-        bool allowConnectionReroute, DedicatedStreamRoute streamingRoute, CommandWriteObservation? writeObservation = null)
+        bool allowConnectionReroute, DedicatedStreamRoute streamingRoute, bool throwOnError,
+        CommandWriteObservation? writeObservation = null)
         where TCommand : struct, IRespCommand
     {
         if (!allowConnectionReroute)
-            return await SendStreamingAsync(in command, cancellationToken, commandDeadline, streamingRoute, writeObservation)
+            return await SendStreamingAsync(in command, cancellationToken, commandDeadline, streamingRoute,
+                throwOnError, writeObservation)
                 .ConfigureAwait(false);
 
         try
         {
-            return await SendStreamingAsync(in command, cancellationToken, commandDeadline, streamingRoute, writeObservation)
+            return await SendStreamingAsync(in command, cancellationToken, commandDeadline, streamingRoute,
+                throwOnError, writeObservation)
                 .ConfigureAwait(false);
         }
         catch (RespireConnectionRetiredException) when (TryReroute(
             pinToConnection, commandDeadline, out var target, out var reroutedDeadline, preferredZone: null))
         {
             return await target.SendStreamingCoreAsync(command, cancellationToken, reroutedDeadline, pinToConnection,
-                    allowConnectionReroute, streamingRoute, writeObservation)
+                    allowConnectionReroute, streamingRoute, throwOnError, writeObservation)
                 .ConfigureAwait(false);
         }
     }

@@ -66,11 +66,11 @@ internal sealed partial class RespireConnection
 
     private ValueTask<RespValue> SendStreamingAsync<TCommand>(
         in TCommand command, CancellationToken cancellationToken, CommandDeadline commandDeadline,
-        DedicatedStreamRoute streamingRoute, CommandWriteObservation? writeObservation = null)
+        DedicatedStreamRoute streamingRoute, bool throwOnError, CommandWriteObservation? writeObservation = null)
         where TCommand : struct, IRespCommand
         => command is StreamedSetCommand streamedSet
             ? SendStreamedSetAsync(streamedSet, cancellationToken, commandDeadline,
-                streamingRoute: streamingRoute, writeObservation: writeObservation)
+                streamingRoute: streamingRoute, writeObservation: writeObservation, throwOnError: throwOnError)
             : throw new NotSupportedException(
                 $"Streaming command {typeof(TCommand).Name} has no connection write path.");
 
@@ -82,7 +82,7 @@ internal sealed partial class RespireConnection
     private async ValueTask<RespValue> SendStreamedSetAsync(
         StreamedSetCommand command, CancellationToken cancellationToken, CommandDeadline deadline,
         DedicatedStreamRoute streamingRoute, RawCommand? prelude = null,
-        CommandWriteObservation? writeObservation = null)
+        CommandWriteObservation? writeObservation = null, bool throwOnError = true)
     {
         using var timeoutCancellation = deadline.IsSet
             ? new StreamDeadlineCancellation(this, deadline)
@@ -110,7 +110,7 @@ internal sealed partial class RespireConnection
         PendingResponseSource source;
         try
         {
-            source = _sourcePool.Rent(throwOnError: true, commandName: "SET");
+            source = _sourcePool.Rent(throwOnError, commandName: "SET");
         }
         catch
         {

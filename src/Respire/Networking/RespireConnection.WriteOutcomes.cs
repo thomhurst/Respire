@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
+using System.Diagnostics;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Protocol;
@@ -41,12 +42,11 @@ internal sealed partial class RespireConnection
                     cancellationToken, commandName ?? "(command)", commandDeadline: commandDeadline,
                     pinToConnection: pinToConnection, writeObservation: observation);
             var response = await pending.ConfigureAwait(false);
-            return new CommandAttemptResult(response, observation.CaptureCompletedOutcome());
+            return CaptureAttemptResult(observation, response);
         }
         catch (Exception error)
         {
-            return new CommandAttemptResult(default, observation.CaptureCompletedOutcome(),
-                ExceptionDispatchInfo.Capture(error));
+            return CaptureAttemptResult(observation, failure: error);
         }
     }
 
@@ -63,14 +63,18 @@ internal sealed partial class RespireConnection
         {
             var response = await SendStreamedSetAsync(command, cancellationToken, commandDeadline,
                 streamingRoute, asking, observation).ConfigureAwait(false);
-            return new CommandAttemptResult(response, observation.CaptureCompletedOutcome());
+            return CaptureAttemptResult(observation, response);
         }
         catch (Exception error)
         {
-            return new CommandAttemptResult(default, observation.CaptureCompletedOutcome(),
-                ExceptionDispatchInfo.Capture(error));
+            return CaptureAttemptResult(observation, failure: error);
         }
     }
+
+    private static CommandAttemptResult CaptureAttemptResult(CommandWriteObservation observation,
+        RespValue response = default, Exception? failure = null)
+        => new(response, observation.CaptureCompletedOutcome(),
+            failure is null ? null : ExceptionDispatchInfo.Capture(failure));
 
     // One observation belongs to exactly one logical attempt and is never pooled or reset. It
     // stores immutable frame coordinates, not a borrowed PendingResponse or its short task token.
@@ -87,6 +91,7 @@ internal sealed partial class RespireConnection
         {
             if (_connection is not null)
             {
+                Debug.Assert(ReferenceEquals(_connection, connection), "A logical attempt is bound to one connection.");
                 _multipleFrames = true;
                 return;
             }
