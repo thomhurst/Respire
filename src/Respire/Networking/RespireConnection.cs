@@ -118,6 +118,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         // Protected by _writeGate. Includes every byte in a selected send buffer, even before
         // an ambiguous socket/TLS write has reported any successful progress.
         [FieldOffset(80)] internal long ClaimedWriteEnd;
+        [FieldOffset(88)] internal long GatheredWriteDeadlineTimestamp;
+        [FieldOffset(96)] internal int GatheredWriteBufferCount;
     }
 
     [StructLayout(LayoutKind.Explicit, Size = 128)]
@@ -1731,6 +1733,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         var writeSizeHint = command.GetWriteSizeHint();
+        if (_stream is null && writeSizeHint > 0 && typeof(TCommand) == typeof(GatheredSetCommand))
+        {
+            var gathered = Unsafe.As<TCommand, GatheredSetCommand>(ref Unsafe.AsRef(in command));
+            return TryEnqueueGathered(in gathered, source, commandDeadline, out startedBatch,
+                out writeTask, trackWrite, discardRepliesBefore, retainRepliesBefore, discardedOperation, writeObservation);
+        }
         if (writeSizeHint > ScratchRetainLimit)
         {
             return TryEnqueueDirect(
@@ -1913,6 +1921,16 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         // Only the persistent FlushLoopAsync sender calls this method, including TLS writes.
         Volatile.Write(ref _flushProgress.SentBytes, _flushProgress.SentBytes + bytes);
         Volatile.Write(ref _flushProgress.LastWriteTimestamp, Environment.TickCount64);
+        if (Volatile.Read(ref _flushProgress.GatheredWriteDeadlineTimestamp) != 0)
+        {
+            // Copied sends ahead of queued borrowed memory also advance the ownership watchdog.
+            // Serialize progress and its terminal decision with producer admission.
+            lock (_writeGate)
+            {
+                if (_flushProgress.GatheredWriteBufferCount != 0)
+                    Volatile.Write(ref _flushProgress.GatheredWriteDeadlineTimestamp, Stopwatch.GetTimestamp());
+            }
+        }
     }
 
     /// <summary>Captures the sole outstanding frame on an exclusively rented connection.</summary>
@@ -2344,8 +2362,14 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     }
 
                     // Never cancelled: a partial RESP frame on the wire is unrecoverable.
-                    var memory = sending.WrittenMemory;
-                    if (_stream is null)
+                    var memory = sending.HasBorrowedPayloads ? ReadOnlyMemory<byte>.Empty : sending.WrittenMemory;
+                    if (sending.HasBorrowedPayloads)
+                    {
+                        var pending = SendGatheredBufferAsync(sending);
+                        if (!pending.IsCompletedSuccessfully) synchronousBatches = -1;
+                        await pending.ConfigureAwait(false);
+                    }
+                    else if (_stream is null)
                     {
                         while (memory.Length > 0)
                         {
@@ -2386,6 +2410,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     // because the bytes are already on the socket and this thread still completes
                     // the buffer's waiters.
                     Volatile.Write(ref _sending, false);
+                    if (_responseTimeout is not null && sending.HasBorrowedPayloads)
+                        CompleteGatheredWriteWatch();
                     sending.CompleteWrite();
                     sending.Reset();
                     sending = null;
@@ -3398,6 +3424,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             while (true)
             {
+                // Consumer backpressure and blocking replies suppress only receive liveness checks.
+                if (TryAbortStalledGatheredWrite(timeout)) return;
+
                 if (Volatile.Read(ref _responseTimeoutSuppressions) != 0)
                 {
                     await DelayWatchdogAsync(timeout, cancellationToken).ConfigureAwait(false);

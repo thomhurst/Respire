@@ -268,6 +268,14 @@ internal sealed class FakeRespServer : IAsyncDisposable
                 try
                 {
                     if (ReadGate is { } gate) await gate.WaitAsync(_cts.Token);
+                    // Large binary wire tests retain one complete frame for exact argument checks.
+                    // Keep this fixture bounded rather than treating a full parse buffer as EOF.
+                    if (end == buffer.Length)
+                    {
+                        if (buffer.Length == 8 * 1024 * 1024)
+                            throw new InvalidDataException("Fake RESP frame exceeds the 8 MiB fixture limit.");
+                        Array.Resize(ref buffer, buffer.Length * 2);
+                    }
                     read = await socket.ReceiveAsync(buffer.AsMemory(end), SocketFlags.None, _cts.Token);
                 }
                 catch (SocketException error) when (!_cts.IsCancellationRequested

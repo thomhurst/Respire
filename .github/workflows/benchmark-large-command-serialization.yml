@@ -21,6 +21,9 @@ jobs:
       expected-head-sha: ${{ github.event.pull_request.head.sha }}
       fixture: benchmarks/Respire.Benchmarks/LargeCommandSerializationBenchmarks.cs
       filter: '*LargeCommandSerializationBenchmarks*'
-      expected-case-count: 5
-      expected-methods: Set10KiB,Set1MiB,Set5MiB,LargeThenSmallPipeline,ConcurrentSmallSetPipelines
+      expected-case-count: 6
+      expected-methods: Set10KiB,Set1MiB,Set5MiB,LargeThenSmallPipeline,ConcurrentSmallSetPipelines,SustainedSet5MiB
+      retained-memory: true
+      retained-memory-stages: before-connect,connected-idle,after-sustained,after-dispose
+      large-set-stress: true
       artifact-prefix: large-command-serialization-comparison

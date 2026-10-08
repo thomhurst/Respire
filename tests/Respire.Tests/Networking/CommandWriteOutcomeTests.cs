@@ -18,6 +18,35 @@ public class CommandWriteOutcomeTests
     private static readonly TimeSpan Guard = TimeSpan.FromSeconds(10);
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task GatheredSetAttemptsKeepWriteEvidenceOnSocketAndCopyingPaths(bool copiedTransport)
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+            new() { TestingStreamFactory = copiedTransport ? async (host, port, token) =>
+                {
+                    var transport = await GatedTransport.ConnectAsync(host, port, 0, token);
+                    transport.ReleaseWrite.TrySetResult();
+                    return transport;
+                } : null });
+        var bytes = new byte[8192];
+        bytes.AsSpan().Fill((byte)'a');
+        var lease = GatheredSetWriteLease.Rent();
+        var command = new GatheredSetCommand(
+            new SetCommand("key", new RespireValue(bytes.AsMemory()), default, SetWhen.Always, returnOld: false),
+            new ArraySegment<byte>(bytes), lease);
+        CommandAttemptResult attempt;
+        try { attempt = await connection.SendAttemptAsync(command, commandName: "SET"); }
+        finally { await lease.FinishOperation().AsTask().WaitAsync(Guard); }
+        using var response = attempt.GetResult();
+        await Assert.That(response.AsString()).IsEqualTo("OK");
+        await Assert.That(server.ReceivedArguments[0][2].AsSpan().SequenceEqual(bytes)).IsTrue();
+        await Assert.That(attempt.WriteOutcome).IsEqualTo(CommandWriteOutcome.EffectMayHaveReachedServer);
+        await Assert.That(connection.InspectForTests().Inflight.Count).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task DefaultEvidenceFailsClosed()
         => await Assert.That(default(CommandAttemptResult).WriteOutcome).IsEqualTo(CommandWriteOutcome.Unknown);
 

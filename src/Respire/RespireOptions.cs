@@ -335,6 +335,10 @@ public sealed record RespireOptions
     /// <summary>
     /// Aborts a connection when commands are awaiting replies and no bytes arrive within this
     /// period. Null (default) disables the receive watchdog.
+    /// For large array-backed SET values sent from caller memory, this also aborts a stalled
+    /// socket write with no completed send progress during the period, allowing safe caller reuse.
+    /// This includes borrowed memory queued behind a preceding copied write.
+    /// Receive suppression for a paused stream consumer does not suppress this write watchdog.
     /// </summary>
     public TimeSpan? ConnectionIdleReadTimeout
     {

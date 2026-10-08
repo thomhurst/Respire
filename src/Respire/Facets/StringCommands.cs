@@ -71,6 +71,14 @@ public partial interface IStringCommands
     /// <summary>
     /// Sets a key. Returns false when a <paramref name="when"/> condition was not met. Redis: SET.
     /// </summary>
+    /// <remarks>
+    /// Keep binary input unchanged until the returned operation completes, including exceptional
+    /// completion. Large array-backed values can be sent directly from caller memory. Cancellation
+    /// and command deadlines may therefore wait for an accepted socket write to finish.
+    /// Configure <see cref="RespireOptions.ConnectionIdleReadTimeout"/> to abort a borrowed socket
+    /// write that makes no completed send progress. With that watchdog disabled, caller completion
+    /// can wait until the peer resumes reading, the socket fails, or the client is disposed.
+    /// </remarks>
     ValueTask<bool> SetAsync(
         RespireKey key,
         RespireValue value,
@@ -158,6 +166,11 @@ public partial interface IStringCommands
         CancellationToken cancellationToken = default);
 
     /// <summary>Sets a key to a serialized <typeparamref name="T"/>. Redis: SET.</summary>
+    /// <remarks>
+    /// Keep binary input unchanged until the returned operation completes, including exceptional
+    /// completion. Large array-backed values can be sent directly from caller memory. Cancellation
+    /// and command deadlines may therefore wait for an accepted socket write to finish.
+    /// </remarks>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     ValueTask<bool> SetAsync<T>(
@@ -335,8 +348,8 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
         RespireValue.ThrowIfNull(value, nameof(value));
         SetCommand.ValidateExpiry(expiry);
         SetCommand.ValidateWhen(when);
-        return client.OkOrNullAsync(
-            "SET", new SetCommand(client.Key(in key), value, expiry, when, returnOld: false), cancellationToken);
+        return GatheredSetCommand.SendAsync(client,
+            new SetCommand(client.Key(in key), value, expiry, when, returnOld: false), value, cancellationToken);
     }
 
     public ValueTask<bool> SetAsync(
@@ -392,8 +405,9 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
     {
         SetCommand.ValidateExpiry(expiry);
         SetCommand.ValidateWhen(when);
-        return client.OkOrNullAsync(
-            "SET", new SetCommand(client.Key(in key), client.Serialize(value), expiry, when, returnOld: false),
+        var serialized = client.Serialize(value);
+        return GatheredSetCommand.SendAsync(client,
+            new SetCommand(client.Key(in key), serialized, expiry, when, returnOld: false), serialized,
             cancellationToken);
     }
 
