@@ -2497,6 +2497,7 @@ public sealed partial class RespireClient : IRespireClient
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
+    // Callers consume the pooled result once by awaiting or forwarding it.
     private async ValueTask<RespValue> SendReadFromAsync<TCommand>(
         string operation, TCommand command, ReadCommandKind readKind, ReadAffinity? affinity,
         CancellationToken cancellationToken)
@@ -3399,6 +3400,7 @@ public sealed partial class RespireClient : IRespireClient
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
+    // Callers consume the pooled result once by awaiting or forwarding it.
     private async ValueTask<Stream?> SendBulkStreamViaReadRouterAsync<TCommand>(
         string operation, TCommand command, CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand

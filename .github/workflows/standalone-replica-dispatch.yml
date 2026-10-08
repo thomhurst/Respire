@@ -7,6 +7,8 @@ on:
       - 'src/Respire/Internal/ReadEndpointRouter*.cs'
       - 'src/Respire/Internal/ReplicaHealth.cs'
       - 'tests/Respire.Tests/Networking/StandaloneReplicaReadyTests.cs'
+      - '.github/standalone-replica-filter.txt'
+      - '.github/standalone-replica-minimum-tests.txt'
       - '.github/workflows/standalone-replica-dispatch.yml'
 
 permissions:
@@ -17,6 +19,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The main pipeline covers net8.0 on Linux. This pair covers net10.0 and
+  # Windows scheduling/tiered compilation with the same Linux control cases.
   routing:
     name: Standalone replica dispatch (${{ matrix.os }}, net10.0)
     runs-on: ${{ matrix.os }}
@@ -38,8 +42,9 @@ jobs:
         shell: pwsh
         run: >-
           dotnet run --project tests/Respire.Tests -c Release -f net10.0 --
-          --treenode-filter '/*/*/(StandaloneReplicaReadyTests)|(ReadEndpointRoutingTests)|(NearestReadRoutingTests)|(HedgedReadTests)|(ReplicaHealthTests)|(ReadFallbackPolicyTests)|(AsyncAllocationPolicyTests)/*'
-          --minimum-expected-tests 197 --report-trx --results-directory standalone-replica
+          --treenode-filter (Get-Content .github/standalone-replica-filter.txt -Raw).Trim()
+          --minimum-expected-tests (Get-Content .github/standalone-replica-minimum-tests.txt -Raw).Trim()
+          --report-trx --results-directory standalone-replica
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:

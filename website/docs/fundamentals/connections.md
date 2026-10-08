@@ -772,6 +772,17 @@ The prepared-read comparison isolates fresh validation and dispatch. Its results
 the counter cost, measure periodic `ROLE` checks or establish performance for every routing policy.
 It exercises string `GET` calls and prepared route selection, with matching primary controls.
 
+The [pinned net10.0 comparison](https://github.com/thomhurst/Respire/actions/runs/37724435231)
+brackets the candidate with two baseline runs on the same runner and Redis primary/replica pair.
+Prepared replica selection uses 41.8–42.0% less client process CPU per operation. Public replica
+string `GET` uses 3.6–4.8% less CPU for serial calls and 32.7–40.3% less at concurrency 50;
+both candidate launches are below every baseline launch. Public allocation falls from 432 to
+88 bytes per serial GET and from 540 to 196 bytes at concurrency 50. A separate warmed caller
+dispatch control falls from 344 to zero bytes; it excludes receive-side reply allocation.
+The internal prepared-primary router control costs about 5 ns more, with unchanged allocation.
+Public primary allocation is unchanged and latency does not improve consistently across both
+baselines. These figures describe this prepared route, not every read policy or server CPU.
+
 A replica removed from the topology stops receiving new reads at once. Its connections stay open
 for up to one second, then drain the commands they already accepted before closing. The drain
 waits for every accepted command, including a `GetStreamAsync` reply that is still being consumed;

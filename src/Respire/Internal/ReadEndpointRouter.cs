@@ -169,6 +169,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
     }
 
     /// <summary>Selects a connection for a read under <paramref name="readFrom"/>.</summary>
+    /// <remarks>The pooled ValueTask must be consumed exactly once, including asynchronous fallback.</remarks>
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
@@ -196,6 +197,8 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
     {
         ThrowIfDisposed();
         ObjectDisposedException.ThrowIf(core.Disposed, core);
+        // GetConnectionAsync and direct callers also enter here. Check before
+        // an ineligible snapshot can return null and bypass caller cancellation.
         cancellationToken.ThrowIfCancellationRequested();
         // Multi-endpoint/socket rotation, zone ranking and Nearest keep their existing selectors.
         // Sentinel discovery must still run on schedule, even when this connection is healthy.

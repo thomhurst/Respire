@@ -284,9 +284,18 @@ public class StandaloneReplicaReadyTests
             "bytes" => () => MeasureReplies(replica, connection, () => view.GetBytesAsync("parked"), true),
             _ => (Func<long>)(() => MeasureReplies(replica, connection, () => view.Strings.LengthAsync("parked"), true)),
         };
-        // Warm generic dispatch and both completion ownership transitions. Tier-0
-        // interface tests can box a command before optimized code is ready.
-        for (var i = 0; i < 8; i++) _ = send();
+        // Warm generic dispatch and both completion ownership transitions. Call
+        // counts alone can finish before background tiered compilation removes
+        // the two default-interface command boxes. Warm for a fixed duration,
+        // without using allocation results to decide when measurement starts.
+        var warmStart = Stopwatch.GetTimestamp();
+        var warmPasses = 0;
+        do
+        {
+            _ = send();
+            warmPasses++;
+        }
+        while (warmPasses < 8 || Stopwatch.GetElapsedTime(warmStart) < TimeSpan.FromSeconds(2));
         _ = control();
         var measured = AllocationMeasurement.WithoutConcurrentGc(() => (send(), control()));
         Console.WriteLine($"REPLICA_DISPATCH {shape}: {measured.Item1} B; allocation control {measured.Item2} B for 32 calls.");
@@ -313,7 +322,8 @@ public class StandaloneReplicaReadyTests
             server.SendRawAsync(response).GetAwaiter().GetResult();
             // Complete both ownership transitions before the next measured rental.
             if (!SpinWait.SpinUntil(() => pending.IsCompleted && Volatile.Read(ref OwnerReferences(source!)) <= 1,
-                TimeSpan.FromSeconds(10))) throw new TimeoutException("Replica completion did not release receive ownership.");
+                TimeSpan.FromSeconds(10)))
+                throw new TimeoutException("Replica completion did not release receive ownership.");
             GC.KeepAlive(pending.GetAwaiter().GetResult());
         }
         return total;

@@ -379,8 +379,9 @@ jobs:
           TUNIT_DISABLE_HTML_REPORTER: 'true'
         run: >-
           dotnet run --project tests/Respire.Tests -c Release -f net8.0 --no-build --
-          --treenode-filter '/*/*/(StandaloneReplicaReadyTests)|(ReadEndpointRoutingTests)|(NearestReadRoutingTests)|(HedgedReadTests)|(ReplicaHealthTests)|(ReadFallbackPolicyTests)|(AsyncAllocationPolicyTests)/*'
-          --minimum-expected-tests 197 --report-trx --results-directory standalone-replica-net8
+          --treenode-filter "$(cat .github/standalone-replica-filter.txt)"
+          --minimum-expected-tests "$(cat .github/standalone-replica-minimum-tests.txt)"
+          --report-trx --results-directory standalone-replica-net8
 
       - name: Upload standalone replica regression report (net8.0)
         if: always()
