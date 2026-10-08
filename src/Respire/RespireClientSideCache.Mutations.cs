@@ -206,7 +206,18 @@ internal sealed partial class ClientSideCacheCoordinator
             }
         }
 
-        internal void Release(long epoch, bool logical, bool succeeded, ClientSideCacheCoordinator? owner = null)
+        internal void CompleteLogical(long epoch, ClientSideCacheCoordinator owner, bool succeeded)
+            => ReleaseReference(epoch, logical: true, succeeded, owner);
+
+        internal void ReleaseNative(long epoch)
+            => ReleaseReference(epoch, logical: false, succeeded: true);
+
+        internal void AbortBeforeDispatch(long epoch)
+            => ReleaseReference(epoch, logical: false, succeeded: false);
+
+        // Keep epoch, reference count and completion flags in one CAS. A stale rental must
+        // not pass an epoch check separately and then decrement a new rental's references.
+        private void ReleaseReference(long epoch, bool logical, bool succeeded, ClientSideCacheCoordinator? owner = null)
         {
             while (true)
             {
@@ -224,7 +235,7 @@ internal sealed partial class ClientSideCacheCoordinator
                     // Keep the logical reference while callbacks run: a simultaneous native
                     // release cannot recycle the owner or payload under this observation.
                     try { _owner!.ObserveMutationCompletion(in _fence); }
-                    finally { Release(epoch, logical: false, succeeded: true); }
+                    finally { ReleaseNative(epoch); }
                     return;
                 }
                 if ((next & ReferenceMask) != 0) return;

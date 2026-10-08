@@ -12,6 +12,104 @@ namespace Respire.Tests;
 
 public class ClientCacheMutationLifetimeTests
 {
+    [Test, NotInParallel]
+    public async Task LogicalObserverRetainsLeaseAcrossNativeReleaseAndReattachment()
+    {
+        using var metrics = new MetricConfigurationScope();
+        var invalidations = RespireTelemetry.ClientCacheInvalidations;
+        var cache = new ClientSideCacheCoordinator(new());
+        ClientSideCacheCoordinator.MutationFence fence = default;
+        ClientSideCacheCoordinator.MutationReference first = default;
+        var observed = 0;
+        var retained = false;
+        var activeDuringObserver = -1;
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, publishedListener) =>
+        {
+            if (ReferenceEquals(instrument, invalidations))
+                publishedListener.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, _, _) =>
+        {
+            if (++observed != 2) return;
+            first.Release();
+            var attached = fence.BindNative();
+            retained = attached.IsRequired;
+            attached.Release();
+            cache.CompleteMutation(in fence, succeeded: false);
+            activeDuringObserver = cache.InspectForTests().ActiveMutationCount;
+        });
+        listener.Start();
+        var command = new CatalogCommand(RespireCommands.String.SET, ["key", "new"]);
+        fence = cache.BeforeCommand("SET", in command);
+        first = fence.BindNative();
+        cache.CompleteMutation(in fence, succeeded: true);
+        await Assert.That(observed).IsEqualTo(2);
+        await Assert.That(retained).IsTrue();
+        await Assert.That(activeDuringObserver).IsEqualTo(1);
+        await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task EveryLogicalAndNativeOwnershipOrderPreservesPublication(bool unknown, bool succeeded)
+    {
+        var orders = Permutations([], Enumerable.Range(0, 5).ToArray())
+            .Where(order => Array.IndexOf(order, 1) < Array.IndexOf(order, 3)
+                && Array.IndexOf(order, 2) < Array.IndexOf(order, 4)).ToArray();
+        await Assert.That(orders.Length).IsEqualTo(30);
+        foreach (var order in orders)
+        {
+            var cache = new ClientSideCacheCoordinator(new());
+            var key = new RespireKey("key");
+            var command = new CatalogCommand(RespireCommands.String.SET, ["key", "new"]);
+            var fence = unknown ? cache.BeginUnknownMutation() : cache.BeforeCommand("SET", in command);
+            var references = new ClientSideCacheCoordinator.MutationReference[2];
+            var logicalCompleted = false;
+            var nativeOwners = 0;
+            foreach (var step in order)
+            {
+                if (step == 0)
+                {
+                    cache.CompleteMutation(in fence, succeeded);
+                    logicalCompleted = true;
+                    // Copies cannot complete twice or change the first completion's outcome.
+                    cache.CompleteMutation(in fence, !succeeded);
+                }
+                else if (step <= 2)
+                {
+                    var live = !logicalCompleted || nativeOwners != 0;
+                    references[step - 1] = fence.BindNative();
+                    await Assert.That(references[step - 1].IsRequired).IsEqualTo(live);
+                    if (live) nativeOwners++;
+                }
+                else
+                {
+                    var reference = references[step - 3];
+                    reference.Release();
+                    if (reference.IsRequired) nativeOwners--;
+                }
+                var active = !logicalCompleted || nativeOwners != 0;
+                await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(active ? 1 : 0);
+                using var value = RespValue.BulkString("new"u8.ToArray());
+                var read = cache.BeginRead(in key);
+                cache.CompleteRead(in read, in value, allowInsert: true);
+                await Assert.That(cache.Count).IsEqualTo(active ? 0 : 1);
+            }
+        }
+    }
+
+    private static IEnumerable<int[]> Permutations(int[] prefix, int[] remaining)
+    {
+        if (remaining.Length == 0) yield return prefix;
+        foreach (var next in remaining)
+            foreach (var order in Permutations([.. prefix, next], remaining.Where(value => value != next).ToArray()))
+                yield return order;
+    }
+
     [Test]
     public async Task BlockingGroupWaitDoesNotRetainIdleMutationWriterCapacity()
     {

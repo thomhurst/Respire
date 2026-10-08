@@ -1765,16 +1765,16 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
 
         // The fence has not escaped BeginMutation, so its initial reference has no caller
         // or native observer. Cleanup must preserve the original pre-dispatch exception.
-        internal void AbortBeforeDispatch() => _lease?.Release(_epoch, logical: false, succeeded: false);
+        internal void AbortBeforeDispatch() => _lease?.AbortBeforeDispatch(_epoch);
 
         internal void CompleteLogical(ClientSideCacheCoordinator owner, bool succeeded)
-            => _lease?.Release(_epoch, logical: true, succeeded, owner);
+            => _lease?.CompleteLogical(_epoch, owner, succeeded);
 
     }
 
     internal readonly struct MutationReference(MutationLease? lease, long epoch)
     {
         internal bool IsRequired => lease is not null;
-        internal void Release() => lease?.Release(epoch, logical: false, succeeded: true);
+        internal void Release() => lease?.ReleaseNative(epoch);
     }
 }

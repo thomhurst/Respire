@@ -1,4 +1,4 @@
-# Reviewed source-declared member signatures: 368 total; per-type counts include owner, derived and accessible nested declarations.
+# Reviewed source-declared member signatures: 370 total; per-type counts include owner, derived and accessible nested declarations.
 # Count: Respire.ClientSideCacheCoordinator | 59
 Respire.ClientSideCacheCoordinator | class CacheEntry(byte[]?, long, long, string?)
 Respire.ClientSideCacheCoordinator | class CacheStore()
@@ -388,8 +388,10 @@ Respire.RespireWatchedTransaction | constructor RespireWatchedTransaction(Respir
 Respire.RespireWatchedTransaction | method CommitAsync(CancellationToken) : ValueTask<bool>
 Respire.RespireWatchedTransaction | method CommitWithWatchValidationAsync(CancellationToken) : ValueTask<bool>
 Respire.RespireWatchedTransaction | property WatchPool [private protected; get] : DedicatedConnectionPool?
-# Count: Respire.ClientSideCacheCoordinator.MutationLease | 3
-Respire.ClientSideCacheCoordinator.MutationLease | method Release(long, bool, bool, ClientSideCacheCoordinator?) : void
+# Count: Respire.ClientSideCacheCoordinator.MutationLease | 5
+Respire.ClientSideCacheCoordinator.MutationLease | method AbortBeforeDispatch(long) : void
+Respire.ClientSideCacheCoordinator.MutationLease | method CompleteLogical(long, ClientSideCacheCoordinator, bool) : void
+Respire.ClientSideCacheCoordinator.MutationLease | method ReleaseNative(long) : void
 Respire.ClientSideCacheCoordinator.MutationLease | method Rent(ClientSideCacheCoordinator, MutationFenceKind, RespireKey, RespireKey[]?) : MutationFence
 Respire.ClientSideCacheCoordinator.MutationLease | method RetainNative(long) : bool
 # Count: Respire.ClientSideCacheCoordinator.MutationReference | 2

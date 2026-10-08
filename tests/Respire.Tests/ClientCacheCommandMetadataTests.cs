@@ -174,6 +174,7 @@ public class ClientCacheCommandMetadataTests
     [Test]
     public async Task EveryCatalogAndRegisteredLayoutRetainsItsCacheClassification()
     {
+        var cache = new ClientSideCacheCoordinator(new());
         foreach (var descriptor in RespireCommands.All.ToArray())
         {
             var metadata = descriptor.Verb.CacheMetadata;
@@ -183,6 +184,8 @@ public class ClientCacheCommandMetadataTests
             await Assert.That(metadata.MutationKind).IsEqualTo(RawCommandKeyLayouts.GetMutationKind(descriptor.Name)).Because(descriptor.Name);
             var typed = new CmdN(descriptor.Verb, []);
             await Assert.That(typed.GetCacheMutation(descriptor.Name)).IsEqualTo(metadata.Policy).Because(descriptor.Name);
+            await VerifyMutationAdmissionAsync(cache, descriptor.Name, typed, metadata);
+            await VerifyMutationAdmissionAsync(cache, descriptor.Name, new CatalogCommand(descriptor, []), metadata);
         }
         foreach (var entry in RawCommandKeyLayouts.MutationClassifications)
         {
@@ -190,6 +193,23 @@ public class ClientCacheCommandMetadataTests
             await Assert.That(metadata.MutationKind).IsEqualTo(entry.Mutation).Because(entry.Operation);
         }
         await Assert.That(Unsafe.SizeOf<ClientCacheCommandMetadata>()).IsEqualTo(4);
+    }
+
+    private static async Task VerifyMutationAdmissionAsync<TCommand>(ClientSideCacheCoordinator cache,
+        string operation, TCommand command, ClientCacheCommandMetadata metadata) where TCommand : struct, IRespCommand
+    {
+        if (metadata.DisruptsTracking)
+        {
+            await Assert.That(() => cache.BeforeCommand(operation, in command)).Throws<NotSupportedException>();
+            return;
+        }
+        var fence = cache.BeforeCommand(operation, in command);
+        try
+        {
+            await Assert.That(fence.IsRequired).IsEqualTo(metadata.Policy != RespireCacheMutation.ReadOnly)
+                .Because(operation);
+        }
+        finally { cache.CompleteMutation(in fence); }
     }
 
     [Test]
