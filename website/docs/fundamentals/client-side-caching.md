@@ -108,6 +108,16 @@ For contributors adding command paths, retain the mutation fence and immutable c
 classification through `IRespCommandWrapper`. Serialized snapshots preserve classification,
 but do not replace caller/native ownership or acceptance callbacks. Protocol setup must declare
 its connection-owned role explicitly; application data mutations still require logical admission.
+The source architecture tests inventory native publication helpers and restrict read-only
+declarations to the audited script and explicit-node factories. Bypass views retain command
+classification even though they do not serve or publish local cache entries. An empty watched
+transaction still sends `MULTI`/`EXEC` to validate `WATCH`; any queued command requires its fence.
+
+For correctness changes that should preserve local read performance, the
+`run-cache-read-parity-benchmarks` label compares hot hits, concurrent hits, and tracked misses
+against two baseline controls on .NET 10. Review latency intervals, baseline drift, and allocations
+before accepting the comparison. The `run-cache-read-benchmarks` label retains its stricter
+required improvement for concurrent hits and remains the gate for cache-read optimizations.
 
 ## Options
 

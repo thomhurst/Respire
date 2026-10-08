@@ -791,7 +791,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 cancellationToken, armCommandDeadline).ConfigureAwait(false);
             if (options.ReadOnly)
             {
-                await CompleteHandshakeStepAsync("READONLY", new Commands.Cmd(Commands.Verbs.ReadOnly),
+                await CompleteHandshakeStepAsync("READONLY", new ProtocolCommand<Cmd>(new Cmd(Verbs.ReadOnly)),
                     cancellationToken, armCommandDeadline).ConfigureAwait(false);
             }
             if (options.EnableClientTracking)
@@ -3368,6 +3368,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         public ClientSideCacheCoordinator.MutationFence GetMutationFence() => mutationFence;
 
+        // Empty MULTI/EXEC validates WATCH without changing data. Any queued command still
+        // requires the logical transaction's owning mutation fence, including queued reads.
+        public RespireCacheMutation GetCacheMutation(string operation)
+            => serializedCommands.IsEmpty ? RespireCacheMutation.ReadOnly : RespireCacheMutation.Unknown;
+
         public void Write(ref RespWriter writer)
         {
             if (includeMulti) writer.WriteRaw(RespCommands.Multi);
@@ -3394,6 +3399,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     throw new InvalidOperationException("A command prelude cannot own an independent cache mutation.");
                 cacheMutationAdmission.ValidateDispatchAdmission(in prefix);
             }
+            // The constructor checks the prelude independently. TryEnqueue checks the final
+            // command through this wrapper again so its fence is live when bytes are published.
             _prefix = prefix;
             _command = command;
         }

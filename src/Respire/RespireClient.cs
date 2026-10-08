@@ -841,7 +841,7 @@ public sealed partial class RespireClient : IRespireClient
             tokens, routingKeyIndex, firstArgumentIndex,
             readKind: RawCommandDescriptorLookup.GetReadKind(operation, arguments),
             cursorArgumentIndex: Verb.GetCursorArgumentIndex(operation),
-            cacheMetadata: ReadCache is null ? default : ClientCacheCommandMetadata.Get(operation));
+            cacheMetadata: _core.ClientCache is null ? default : ClientCacheCommandMetadata.Get(operation));
         var isBlocking = RespireCommand.IsBlocking(
             operation, RespireCommand.Classify(operation), arguments);
         RespValue response;
@@ -899,7 +899,7 @@ public sealed partial class RespireClient : IRespireClient
             tokens, routingKeyIndex, firstArgumentIndex,
             readKind: RawCommandDescriptorLookup.GetReadKind(operation, arguments),
             cursorArgumentIndex: Verb.GetCursorArgumentIndex(operation),
-            cacheMetadata: ReadCache is null ? default : ClientCacheCommandMetadata.Get(operation));
+            cacheMetadata: _core.ClientCache is null ? default : ClientCacheCommandMetadata.Get(operation));
         if (_core.Cluster is { } cluster
             && DynamicCommandRouting.IsClusterWideMutation(operation, arguments))
         {
@@ -1069,7 +1069,7 @@ public sealed partial class RespireClient : IRespireClient
         return (storedProcedureName,
             new DynamicCommand(tokens, routingKeyIndex, firstArgumentIndex, cacheMutation, readKind,
                 Verb.GetCursorArgumentIndex(operation), hasExplicitCacheMutation,
-                ReadCache is null ? default : ClientCacheCommandMetadata.Get(operation)));
+                _core.ClientCache is null ? default : ClientCacheCommandMetadata.Get(operation)));
     }
 
     private RawCommandKeyLayouts.KeyRouting ValidateClusterRawKeys(string operation, ReadOnlySpan<RespireValue> arguments)
@@ -4378,7 +4378,7 @@ public sealed partial class RespireClient : IRespireClient
                 {
                     clusterReply = await SendClusterAsync(
                         script.EvalShaOperation, cluster,
-                        new MutationCommand<ReadOnlyCommand<Cmd2N>>(new(new Cmd2N(script.EvalShaVerb, script.Sha1, tail[0], arguments),
+                        new MutationCommand<ReadOnlyCommand<Cmd2N>>(ReadOnlyCommand<Cmd2N>.ForAuditedScript(new Cmd2N(script.EvalShaVerb, script.Sha1, tail[0], arguments),
                             script.IsCacheReadOnly), mutationFence),
                         cancellationToken, script.Sha1, allowReadFrom: true,
                         suppressTelemetry: true, scriptTelemetry: scriptTelemetry).ConfigureAwait(false);
@@ -4387,7 +4387,7 @@ public sealed partial class RespireClient : IRespireClient
                 {
                     clusterReply = await SendClusterAsync(
                         script.EvalOperation, cluster,
-                        new MutationCommand<ReadOnlyCommand<Cmd2N>>(new(new Cmd2N(script.EvalVerb, script.Source, tail[0], arguments),
+                        new MutationCommand<ReadOnlyCommand<Cmd2N>>(ReadOnlyCommand<Cmd2N>.ForAuditedScript(new Cmd2N(script.EvalVerb, script.Source, tail[0], arguments),
                             script.IsCacheReadOnly), mutationFence),
                         cancellationToken, script.Sha1, allowReadFrom: true,
                         suppressTelemetry: true, scriptTelemetry: scriptTelemetry).ConfigureAwait(false);
@@ -4817,7 +4817,7 @@ public sealed partial class RespireClient : IRespireClient
     {
         if (!mutationFence.IsRequired)
         {
-            var readOnly = new ReadOnlyCommand<Cmd2N>(command, cacheReadOnly);
+            var readOnly = ReadOnlyCommand<Cmd2N>.ForAuditedScript(command, cacheReadOnly);
             return execution is null
                 ? SendOnConnectionCoreAsync(operation, connection, readOnly, cancellationToken)
                 : SendOnConnectionCoreAsync(operation, connection,

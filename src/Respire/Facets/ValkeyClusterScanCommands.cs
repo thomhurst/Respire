@@ -68,6 +68,8 @@ internal sealed partial class KeyCommands
         private static readonly Verb ScanVerb = new("CLUSTERSCAN", allowReadRouting: false);
         // Replica rotation could repeatedly restart the server's fingerprinted cursor.
         public ReadCommandKind ReadKind => ReadCommandKind.None;
+        public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => ScanVerb.CacheMetadata;
+        public RespireCacheMutation GetCacheMutation(string operation) => ScanVerb.CacheMetadata.Policy;
         public bool TryGetClusterSlot(out int slot) { slot = routingSlot; return true; }
         public void Write(ref RespWriter writer) => new CmdN(ScanVerb, arguments).Write(ref writer);
     }

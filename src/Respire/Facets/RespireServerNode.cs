@@ -249,7 +249,7 @@ public sealed partial class RespireServerNode
             (Client: _client, Operation: operation, Arguments: arguments, Parser: parser, ReadOnly: callKind == NodeCallKind.Read),
             static async (connection, state, token, fence) =>
             {
-                var command = new ReadOnlyCommand<CmdN>(new CmdN(new Verb(-1, state.Operation), state.Arguments), state.ReadOnly);
+                var command = ReadOnlyCommand<CmdN>.ForNodeRead(new CmdN(new Verb(-1, state.Operation), state.Arguments), state.ReadOnly);
                 using var reply = await state.Client.SendOnPinnedConnectionAsync(state.Operation, connection,
                     new MutationCommand<ReadOnlyCommand<CmdN>>(command, fence), token).ConfigureAwait(false);
                 return state.Parser(in reply);
