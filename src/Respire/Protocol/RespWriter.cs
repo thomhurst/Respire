@@ -40,9 +40,7 @@ internal ref struct RespWriter
     {
         ArgumentOutOfRangeException.ThrowIfNegative(sizeHint);
 #if DEBUG
-        if (buffer.HasUnpublishedWriterBytes)
-            throw new InvalidOperationException("Complete or roll back the RESP writer before creating another writer.");
-        _writerSequence = unchecked(++buffer.NextWriterSequence);
+        _writerSequence = buffer.BeginWriter();
 #endif
         _buffer = buffer;
         _allowGrowth = sizeHint == 0;
@@ -60,10 +58,7 @@ internal ref struct RespWriter
     internal void Complete()
     {
 #if DEBUG
-        if (_bufferVersion != _buffer.WriterMutationVersion)
-            throw new InvalidOperationException("The RESP writer's cached span was invalidated by buffer mutation.");
-        if (_buffer.HasUnpublishedWriterBytes && _buffer.UnpublishedWriterSequence != _writerSequence)
-            throw new InvalidOperationException("Only the owning RESP writer can publish its unfinished bytes.");
+        _buffer.ValidateWriter(_writerSequence, _bufferVersion, publishing: true);
         if (!_allowGrowth)
         {
             if (_position > _remainingReservation)
@@ -76,7 +71,7 @@ internal ref struct RespWriter
         _destination = _destination[_position..];
         _position = 0;
 #if DEBUG
-        _buffer.HasUnpublishedWriterBytes = false;
+        _buffer.MarkWriterPublished();
         _bufferVersion = _buffer.WriterMutationVersion;
 #endif
     }
@@ -85,10 +80,7 @@ internal ref struct RespWriter
     private Span<byte> GetSpan(int sizeHint)
     {
 #if DEBUG
-        if (_bufferVersion != _buffer.WriterMutationVersion)
-            throw new InvalidOperationException("The RESP writer's cached span was invalidated by buffer mutation.");
-        if (_buffer.HasUnpublishedWriterBytes && _buffer.UnpublishedWriterSequence != _writerSequence)
-            throw new InvalidOperationException("Only the owning RESP writer can change its unfinished bytes.");
+        _buffer.ValidateWriter(_writerSequence, _bufferVersion, publishing: false);
 #endif
         // Known commands reserve their complete upper bound once. Unknown commands
         // preserve all unpublished bytes before replacing the backing array.
@@ -96,8 +88,7 @@ internal ref struct RespWriter
 #if DEBUG
         if (sizeHint > 0)
         {
-            _buffer.UnpublishedWriterSequence = _writerSequence;
-            _buffer.HasUnpublishedWriterBytes = true;
+            _buffer.MarkWriterUnpublished(_writerSequence);
         }
 #endif
         return _destination[_position..];

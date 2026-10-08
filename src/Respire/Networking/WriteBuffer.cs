@@ -13,15 +13,17 @@ internal sealed class WriteBuffer
     private int _count;
     private TaskCompletionSource? _writeCompletion;
 #if DEBUG
-    // The writer owns unpublished bytes until Complete; rollback explicitly discards them.
-    internal bool HasUnpublishedWriterBytes;
-    internal long NextWriterSequence;
-    internal long UnpublishedWriterSequence;
-    // Publishing, discarding, or replacing storage invalidates other writers' cached spans.
-    internal long WriterMutationVersion;
+    private WriterGuard _writerGuard;
+
+    internal long BeginWriter() => _writerGuard.Begin();
+    internal long WriterMutationVersion => _writerGuard.Version;
+    internal void ValidateWriter(long sequence, long version, bool publishing)
+        => _writerGuard.Validate(sequence, version, publishing);
+    internal void MarkWriterUnpublished(long sequence) => _writerGuard.MarkUnpublished(sequence);
+    internal void MarkWriterPublished() => _writerGuard.MarkPublished();
 
     // Keep the helper itself out of Release metadata as well as removing its callers.
-    private void InvalidateWriters() => WriterMutationVersion++;
+    private void InvalidateWriters() => _writerGuard.Invalidate();
 #endif
 
     public WriteBuffer(int initialCapacity)
@@ -38,7 +40,7 @@ internal sealed class WriteBuffer
         get
         {
 #if DEBUG
-            if (HasUnpublishedWriterBytes)
+            if (_writerGuard.HasUnpublishedBytes)
                 throw new InvalidOperationException("Complete or roll back the RESP writer before consuming its buffer.");
 #endif
             return _array.AsMemory(0, _count);
@@ -87,7 +89,7 @@ internal sealed class WriteBuffer
     public Span<byte> GetSpanForRewrite(int position, int uncommittedLength, int frameLength)
     {
 #if DEBUG
-        var unpublished = HasUnpublishedWriterBytes;
+        var unpublished = _writerGuard.HasUnpublishedBytes;
 #endif
         // Growth copies only committed bytes. Include the unpublished suffix before
         // reserving, then reacquire the span after the old array can return to the pool.
@@ -101,7 +103,7 @@ internal sealed class WriteBuffer
             TruncateTo(position);
 #if DEBUG
             // Internal growth preserves unpublished bytes rather than abandoning the writer.
-            HasUnpublishedWriterBytes = unpublished;
+            _writerGuard.RestoreUnpublished(unpublished);
 #endif
         }
         return GetSpan(frameLength);
@@ -111,7 +113,7 @@ internal sealed class WriteBuffer
     {
         _count = 0;
 #if DEBUG
-        HasUnpublishedWriterBytes = false;
+        _writerGuard.MarkPublished();
         InvalidateWriters();
 #endif
     }
@@ -126,7 +128,7 @@ internal sealed class WriteBuffer
     {
         _count = position;
 #if DEBUG
-        HasUnpublishedWriterBytes = false;
+        _writerGuard.MarkPublished();
         InvalidateWriters();
 #endif
     }
@@ -156,7 +158,7 @@ internal sealed class WriteBuffer
         _array = [];
         _count = 0;
 #if DEBUG
-        HasUnpublishedWriterBytes = false;
+        _writerGuard.MarkPublished();
         InvalidateWriters();
 #endif
         if (array.Length > 0)
@@ -164,4 +166,46 @@ internal sealed class WriteBuffer
             RespirePools.WriteBuffers.Return(array);
         }
     }
+
+#if DEBUG
+    // The connection's write gate serializes this state. A writer may publish only its
+    // unfinished bytes; publishing, discarding, or replacing storage invalidates aliases.
+    private struct WriterGuard
+    {
+        private bool _hasUnpublishedBytes;
+        private long _nextSequence;
+        private long _unpublishedSequence;
+        private long _version;
+
+        internal readonly bool HasUnpublishedBytes => _hasUnpublishedBytes;
+        internal readonly long Version => _version;
+
+        internal long Begin()
+        {
+            if (_hasUnpublishedBytes)
+                throw new InvalidOperationException("Complete or roll back the RESP writer before creating another writer.");
+            return _nextSequence = unchecked(_nextSequence + 1);
+        }
+
+        internal readonly void Validate(long sequence, long version, bool publishing)
+        {
+            if (version != _version)
+                throw new InvalidOperationException("The RESP writer's cached span was invalidated by buffer mutation.");
+            if (_hasUnpublishedBytes && _unpublishedSequence != sequence)
+                throw new InvalidOperationException(publishing
+                    ? "Only the owning RESP writer can publish its unfinished bytes."
+                    : "Only the owning RESP writer can change its unfinished bytes.");
+        }
+
+        internal void MarkUnpublished(long sequence)
+        {
+            _unpublishedSequence = sequence;
+            _hasUnpublishedBytes = true;
+        }
+
+        internal void MarkPublished() => _hasUnpublishedBytes = false;
+        internal void RestoreUnpublished(bool unpublished) => _hasUnpublishedBytes = unpublished;
+        internal void Invalidate() => _version++;
+    }
+#endif
 }
