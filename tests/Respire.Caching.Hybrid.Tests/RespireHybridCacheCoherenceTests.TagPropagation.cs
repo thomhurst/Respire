@@ -11,6 +11,62 @@ namespace Respire.Caching.Hybrid.Tests;
 public partial class RespireHybridCacheCoherenceTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RepeatedTagsPreserveWarmEntriesAndActiveFills(bool parked)
+    {
+        // Other concurrent controls write the shared wildcard marker. Isolate this L2 namespace.
+        await using var reader = BuildProvider(true, clientPrefix: "duplicate:" + NewKey() + ":", configure: options =>
+        {
+            TagOptions("tags:" + NewKey())(options);
+            options.MaxTagsPerEntry = 2;
+        });
+        var cache = reader.GetRequiredService<HybridCache>();
+        var key = NewKey();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var localOnly = new HybridCacheEntryOptions
+        {
+            LocalCacheExpiration = TimeSpan.FromHours(1),
+            Flags = HybridCacheEntryFlags.DisableDistributedCacheRead | HybridCacheEntryFlags.DisableDistributedCacheWrite,
+        };
+        var firstTag = NewKey();
+        var secondTag = NewKey();
+        // Public tag replay seeds this generation's metadata before its fill. HybridCache
+        // conservatively misses L1 while an independently fetched tag timestamp is pending.
+        await cache.RemoveByTagAsync(firstTag);
+        var calls = 0;
+        var first = cache.GetOrCreateAsync(key, async _ =>
+        {
+            Interlocked.Increment(ref calls);
+            entered.TrySetResult();
+            if (parked) await release.Task;
+            return "original";
+        }, localOnly, [firstTag]).AsTask();
+        Task<string>? second = null;
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            if (!parked) await first.WaitAsync(TimeSpan.FromSeconds(10));
+            await Assert.That(Coherent(reader).ObservationCount).IsEqualTo(1);
+            second = cache.GetOrCreateAsync(key, _ =>
+            {
+                Interlocked.Increment(ref calls);
+                return ValueTask.FromResult("replacement");
+            }, localOnly, [secondTag, secondTag]).AsTask();
+            release.TrySetResult();
+            await Assert.That(await second.WaitAsync(TimeSpan.FromSeconds(10))).IsEqualTo("original");
+            await Assert.That(calls).IsEqualTo(1);
+        }
+        finally
+        {
+            release.TrySetResult();
+            await first.WaitAsync(TimeSpan.FromSeconds(10));
+            if (second is not null) await second.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+    }
+
+    [Test]
     public async Task RegistrationSnapshotsTheValidatedChannelAndBounds()
     {
         var channel = "tags:" + NewKey();

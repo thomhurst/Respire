@@ -182,7 +182,7 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
                 if (_observations.TryGetValue(key, out var current))
                 {
                     if (_tagMessage is not null && tags is not null
-                        && current.RequestTags!.Count + tags.Count(tag => !current.RequestTags.Contains(tag)) > _maxTagsPerEntry)
+                        && current.RequestTags!.Count + tags.Distinct(StringComparer.Ordinal).Count(tag => !current.RequestTags.Contains(tag)) > _maxTagsPerEntry)
                         Retire(current);
                     else
                     {

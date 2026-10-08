@@ -59,7 +59,8 @@ Server and protocol requirements vary by feature; each linked guide describes it
   with OPTIN or BCAST/prefix tracking for eligible reads.
 - Typed serialization and custom serializers, with optional [value compression codecs](guides/value-codecs.md).
 - [Dependency injection](integrations/dependency-injection.md),
-  [Microsoft distributed caching and `HybridCache`](integrations/caching.md), including opt-in L1 invalidation, and
+  [Microsoft distributed caching and `HybridCache`](integrations/caching.md), including opt-in L1 key tracking
+  and cross-instance tag invalidation, and
   [OpenTelemetry traces and metrics](integrations/observability.md).
 - An [in-memory testing server](guides/in-memory-testing.md) with controlled expiry and faults,
   [Redis/Valkey container fixtures](guides/testing-containers.md), and a
@@ -77,7 +78,7 @@ acceptance criteria, dependencies, and current status:
 - [Ecosystem integrations](https://github.com/thomhurst/Respire/issues/859): Aspire, ASP.NET Core,
   messaging, caching, and other libraries that currently depend on StackExchange.Redis.
 - [Higher-level capabilities](https://github.com/thomhurst/Respire/issues/860): stream workers,
-  source-generated object mapping, distributed `HybridCache` tag propagation, and field-level caching research.
+  source-generated object mapping and field-level caching research.
   [Generated hash codecs](./guides/generated-hash-codecs) provide scalar model conversion, key templates,
   Redis hash writes/full reads and explicit partial reads. The remaining
   [object mapper work](https://github.com/thomhurst/Respire/issues/895) includes
