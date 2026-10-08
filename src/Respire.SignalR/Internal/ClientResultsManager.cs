@@ -88,10 +88,23 @@ internal sealed class ClientResultsManager : IInvocationBinder
 
     internal async Task CompleteAllAsync()
     {
+        List<Task>? completions = null;
         foreach (var id in _pendingInvocations.Keys)
-            if (RemoveInvocation(id) is { } pending)
-                await pending.Completion(pending.Tcs, CompletionMessage.WithError(id, "SignalR backplane disposed."))
-                    .ConfigureAwait(false);
+        {
+            if (RemoveInvocation(id) is not { } pending) continue;
+            completions ??= [];
+            try
+            {
+                completions.Add(pending.Completion(pending.Tcs,
+                    CompletionMessage.WithError(id, "SignalR backplane disposed.")));
+            }
+            catch (Exception error)
+            {
+                completions.Add(Task.FromException(error));
+            }
+        }
+        // Every owner is retired before joining callbacks; one fault must not strand the others.
+        if (completions is not null) await Task.WhenAll(completions).ConfigureAwait(false);
     }
 
     public bool TryGetType(string invocationId, [NotNullWhen(true)] out Type? type)

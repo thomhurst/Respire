@@ -14,6 +14,56 @@ public class SubscriptionLifetimeTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
+    public async Task DisposalSettlesEveryOwnerDespiteCompletionFailure(bool asynchronousFailure)
+    {
+        var results = new ClientResultsManager();
+        var calls = 0;
+        Task Fail(object _, CompletionMessage message)
+        {
+            Interlocked.Increment(ref calls);
+            if (asynchronousFailure) return Task.FromException(new IOException("forward failed"));
+            throw new IOException("forward failed");
+        }
+        results.AddInvocation("first", (typeof(int), "connection", new object(), Fail));
+        results.AddInvocation("second", (typeof(int), "connection", new object(), Fail));
+        var pending = results.AddInvocation<int>("connection", "typed", CancellationToken.None);
+        await Assert.That(async () => await results.CompleteAllAsync()).ThrowsExactly<IOException>();
+        await Assert.That(calls).IsEqualTo(2);
+        await Assert.That(pending.IsCompleted).IsTrue();
+        await Assert.That(async () => await pending).ThrowsExactly<HubException>();
+        foreach (var id in new[] { "first", "second", "typed" })
+            await Assert.That(results.TryGetType(id, out _)).IsFalse();
+    }
+
+    [Test]
+    public async Task DisposalStartsEveryCompletionBeforeJoining()
+    {
+        var results = new ClientResultsManager();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        Task Forward(object _, CompletionMessage message)
+        {
+            Interlocked.Increment(ref calls);
+            return release.Task;
+        }
+        results.AddInvocation("first", (typeof(int), "connection", new object(), Forward));
+        results.AddInvocation("second", (typeof(int), "connection", new object(), Forward));
+        var pending = results.AddInvocation<int>("connection", "typed", CancellationToken.None);
+        var disposing = results.CompleteAllAsync();
+        try
+        {
+            await Assert.That(calls).IsEqualTo(2);
+            await Assert.That(pending.IsCompleted).IsTrue();
+            await Assert.That(disposing.IsCompleted).IsFalse();
+            await Assert.That(async () => await pending).ThrowsExactly<HubException>();
+        }
+        finally { release.TrySetResult(); }
+        await disposing;
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
     public async Task CancelledInvocationRetainsTokenAndRejectsLateCompletion(bool alreadyCancelled)
     {
         var results = new ClientResultsManager();
