@@ -758,7 +758,11 @@ topology can be:
 Uninstrumented typed reads can dispatch directly on a prepared standalone replica when the
 view uses `Replica` or `ReplicaPreferred`, the current topology has exactly one replica,
 one physical connection is configured, and that connection has a fresh successful `ROLE` check with a connected
-replication link. Selection rechecks the current endpoint publication, entry identity and
+replication link. A cached single-replica entry is tied to the exact endpoint publication.
+Topology publication, entry removal and router disposal invalidate that identity under the
+router lifecycle gate. Warm selection checks the publication identity instead of repeating
+endpoint dictionary lookups; connection health is still checked on every read.
+Selection rechecks the current endpoint publication, entry identity and
 connection admission state. String, binary and scalar replies use their specialized pooled
 sources. Cache coordination, telemetry listeners, hedging, cursor affinity, multiple replicas,
 multiple sockets, zone policies, and `Nearest` retain their existing routing paths. Sentinel
@@ -772,16 +776,17 @@ The prepared-read comparison isolates fresh validation and dispatch. Its results
 the counter cost, measure periodic `ROLE` checks or establish performance for every routing policy.
 It exercises string `GET` calls and prepared route selection, with matching primary controls.
 
-The [pinned net10.0 comparison](https://github.com/thomhurst/Respire/actions/runs/37724435231)
+The [selected pinned net10.0 comparison](https://github.com/thomhurst/Respire/actions/runs/37728047447)
 brackets the candidate with two baseline runs on the same runner and Redis primary/replica pair.
-Prepared replica selection uses 41.8–42.0% less client process CPU per operation. Public replica
-string `GET` uses 3.6–4.8% less CPU for serial calls and 32.7–40.3% less at concurrency 50;
-both candidate launches are below every baseline launch. Public allocation falls from 432 to
-88 bytes per serial GET and from 540 to 196 bytes at concurrency 50. A separate warmed caller
-dispatch control falls from 344 to zero bytes; it excludes receive-side reply allocation.
-The internal prepared-primary router control costs about 5 ns more, with unchanged allocation.
-Public primary allocation is unchanged and latency does not improve consistently across both
-baselines. These figures describe this prepared route, not every read policy or server CPU.
+Prepared routing and concurrent replica reads improve, and public allocations fall, but serial
+replica `GET` costs 160,445.36 ns of client process CPU per operation against 160,052.63 and
+161,553.49 ns in the bracketing baselines. The serial row fails the required improvement against
+both baselines; overlapping launch ranges do not establish that improvement.
+[Issue #1186](https://github.com/thomhurst/Respire/issues/1186) remains open for CPU acceptance.
+The publication cache needs its own unchanged six-row comparison, including primary controls,
+allocation, latency dispersion and CPU per operation. No improvement is claimed for that cache
+before the comparison passes and its distributions are reviewed. The comparison covers prepared
+string reads and route selection, not every routing policy or server CPU.
 
 A replica removed from the topology stops receiving new reads at once. Its connections stay open
 for up to one second, then drain the commands they already accepted before closing. The drain

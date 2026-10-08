@@ -51,6 +51,71 @@ public class StandaloneReplicaReadyTests
     [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_nextReplica")]
     private static extern ref int ReplicaCursor(ReadEndpointRouter router);
 
+    [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_readyReplica")]
+    private static extern ref ReadEndpointRouter.ReadyReplica? ReadyPublication(ReadEndpointRouter router);
+
+    [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "SetEndpoints")]
+    private static extern void SetEndpoints(ReadEndpointRouter router, IEnumerable<RespireEndpoint> endpoints);
+
+    [Test]
+    public async Task RepeatedReadyReadsReuseOnePublication()
+    {
+        await using var primary = Server();
+        await using var replica = Server();
+        await using var client = await RespireClient.ConnectAsync(Options(primary, replica));
+        var router = client.Core.ReadRouter;
+        var connection = await router.GetConnectionAsync(RespireReadFrom.Replica, default);
+        await Assert.That(router.TryAcquireReadyConnection(RespireReadFrom.Replica, default)).IsSameReferenceAs(connection);
+        var publication = Volatile.Read(ref ReadyPublication(router));
+        await Assert.That(publication).IsNotNull();
+        for (var i = 0; i < 32; i++)
+        {
+            await Assert.That(router.TryAcquireReadyConnection(RespireReadFrom.Replica, default)).IsSameReferenceAs(connection);
+            await Assert.That(Volatile.Read(ref ReadyPublication(router))).IsSameReferenceAs(publication);
+        }
+    }
+
+    [Test]
+    public async Task RepublishingSameEndpointRejectsOldReadyPublication()
+    {
+        await using var primary = Server();
+        await using var replica = Server();
+        await using var client = await RespireClient.ConnectAsync(Options(primary, replica));
+        var router = client.Core.ReadRouter;
+        var connection = await router.GetConnectionAsync(RespireReadFrom.Replica, default);
+        await Assert.That(router.TryAcquireReadyConnection(RespireReadFrom.Replica, default)).IsSameReferenceAs(connection);
+        var old = Volatile.Read(ref ReadyPublication(router))!;
+        SetEndpoints(router, [old.Entry.Endpoint]);
+        await Assert.That(Volatile.Read(ref ReadyPublication(router))).IsNull();
+        await Assert.That(old.Entry.TryGetReadyConnection(old)).IsNull();
+        await Assert.That(router.TryAcquireReadyConnection(RespireReadFrom.Replica, default)).IsSameReferenceAs(connection);
+        var current = Volatile.Read(ref ReadyPublication(router))!;
+        await Assert.That(current.Entry).IsSameReferenceAs(old.Entry);
+        await Assert.That(current.Entry.TryGetReadyConnection(current)).IsSameReferenceAs(connection);
+        await Assert.That(old.Entry.TryGetReadyConnection(old)).IsNull();
+    }
+
+    [Test]
+    public async Task RemovingAndReaddingEndpointCannotReuseRetiredEntry()
+    {
+        await using var primary = Server();
+        await using var replica = Server();
+        await using var client = await RespireClient.ConnectAsync(Options(primary, replica));
+        var router = client.Core.ReadRouter;
+        var oldConnection = await router.GetConnectionAsync(RespireReadFrom.Replica, default);
+        await Assert.That(router.TryAcquireReadyConnection(RespireReadFrom.Replica, default)).IsSameReferenceAs(oldConnection);
+        var old = Volatile.Read(ref ReadyPublication(router))!;
+        SetEndpoints(router, []);
+        await Assert.That(old.Entry.TryGetReadyConnection(old)).IsNull();
+        SetEndpoints(router, [old.Entry.Endpoint]);
+        await Assert.That(router.TryAcquireReadyConnection(RespireReadFrom.Replica, default)).IsNull();
+        var connection = await router.GetConnectionAsync(RespireReadFrom.Replica, default);
+        await Assert.That(connection).IsNotSameReferenceAs(oldConnection);
+        await Assert.That(router.TryAcquireReadyConnection(RespireReadFrom.Replica, default)).IsSameReferenceAs(connection);
+        await Assert.That(Volatile.Read(ref ReadyPublication(router))!.Entry).IsNotSameReferenceAs(old.Entry);
+        await Assert.That(old.Entry.TryGetReadyConnection(old)).IsNull();
+    }
+
     [Test]
     public async Task ReadyReadsKeepTheCursorWhenTopologyGrows()
     {
