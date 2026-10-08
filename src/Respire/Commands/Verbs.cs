@@ -13,26 +13,29 @@ internal readonly struct Verb
     public readonly int Tokens;
     public readonly int RoutingKeyIndex;
     public readonly ReadCommandKind ReadKind;
+    public readonly RespireCommandRetryCategory RetryCategory;
     public readonly int CursorArgumentIndex;
     private readonly ClientCacheCommandMetadata.Cache? _cacheMetadata;
     public ClientCacheCommandMetadata CacheMetadata => _cacheMetadata?.Value ?? default;
 
-    public Verb(string command, bool allowReadRouting = true) : this(0, command, allowReadRouting)
+    public Verb(string command, bool allowReadRouting = true, RespireCommandRetryCategory? retryCategory = null)
+        : this(0, command, allowReadRouting, retryCategory)
     {
     }
 
     public Verb(int routingKeyIndex, params string[] words)
-        : this(routingKeyIndex, string.Join(' ', words), allowReadRouting: true)
+        : this(routingKeyIndex, string.Join(' ', words), allowReadRouting: true, retryCategory: null)
     {
     }
 
-    private Verb(int routingKeyIndex, string command, bool allowReadRouting)
+    private Verb(int routingKeyIndex, string command, bool allowReadRouting, RespireCommandRetryCategory? retryCategory)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(command);
 
         RoutingKeyIndex = routingKeyIndex;
         var metadata = CommandReadMetadata.Get(command);
         ReadKind = allowReadRouting ? metadata.Kind : ReadCommandKind.None;
+        RetryCategory = retryCategory ?? CommandRetryCategoryMetadata.Get(command);
         CursorArgumentIndex = metadata.CursorArgumentIndex;
         _cacheMetadata = new(command);
         Tokens = 0;

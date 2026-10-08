@@ -19,13 +19,14 @@ public readonly struct RespireCommand
 
     internal RespireCommand(string name, RespireCommandSource sources,
         RespireCacheMutation cacheMutation = RespireCacheMutation.Unknown, bool isReadOnly = false,
-        bool hasExplicitCacheMutation = false)
+        bool hasExplicitCacheMutation = false, RespireCommandRetryCategory retryCategory = RespireCommandRetryCategory.Never)
     {
         Name = name;
         _sourceAndMutationMetadata = (int)sources | ((int)cacheMutation << CacheMutationShift)
             | (isReadOnly ? ReadOnlyMetadataFlag : 0)
             | (hasExplicitCacheMutation ? ExplicitCacheMutationFlag : 0);
-        _verb = new Verb(name, allowReadRouting: isReadOnly && sources != RespireCommandSource.None);
+        _verb = new Verb(name, allowReadRouting: isReadOnly && sources != RespireCommandSource.None,
+            retryCategory: sources == RespireCommandSource.None ? RespireCommandRetryCategory.Never : retryCategory);
         Behavior = Classify(name);
     }
 
@@ -52,6 +53,13 @@ public readonly struct RespireCommand
     /// </summary>
     public bool IsReadOnly => (_sourceAndMutationMetadata & ReadOnlyMetadataFlag) != 0;
 
+    /// <summary>
+    /// Conservative retry-risk metadata. This does not enable retries or recover the original reply.
+    /// Caller-supplied commands, including recognized names, always return
+    /// <see cref="RespireCommandRetryCategory.Never"/>.
+    /// </summary>
+    public RespireCommandRetryCategory RetryCategory => _verb.RetryCategory;
+
     /// <summary>How this command affects keys tracked by client-side caching.</summary>
     public RespireCacheMutation CacheMutation
         => (RespireCacheMutation)((_sourceAndMutationMetadata & CacheMutationMask) >> CacheMutationShift);
@@ -77,6 +85,7 @@ public readonly struct RespireCommand
     /// Key-prefixed views rewrite keys for recognized module commands with explicitly registered
     /// prefixable layouts. Other caller-supplied commands keep physical keys and do not infer layouts.
     /// This does not declare the command read-only or associate it with an official command source.
+    /// Its retry category is always <see cref="RespireCommandRetryCategory.Never"/>.
     /// </remarks>
     /// <exception cref="ArgumentException">The name is empty or contains spaces, control characters, or non-ASCII characters.</exception>
     public static RespireCommand Create(string name)

@@ -47,6 +47,48 @@ $cacheUnknownOverrides = @('PFCOUNT')
 $primaryOnlyReadOverrides = @('TOUCH')
 $cursorArgumentIndices = @{ SCAN = 0; HSCAN = 1; SSCAN = 1; ZSCAN = 1; ARSCAN = -1 }
 
+# Retry risk is a separate audit. Cache ReadOnly means no tracked keyspace mutation,
+# which does not make scripts, consuming cursors, or connection state replayable.
+# Unlisted writes and module operations remain Never. Do not infer permission from names.
+$retryOverrides = @{}
+foreach ($entry in @(
+    @{ Category = 'Always'; Commands = 'PING,ECHO' },
+    @{ Category = 'Connection'; Commands = 'CONFIG GET,CLIENT GETNAME,CLIENT GETREDIR,CLIENT ID,CLIENT INFO,CLIENT LIST,CLIENT SETNAME,CLIENT SETINFO,INFO,TIME,ROLE,LASTSAVE,COMMAND,COMMAND COUNT,COMMAND DOCS,COMMAND GETKEYS,COMMAND GETKEYSANDFLAGS,COMMAND INFO,COMMAND LIST' },
+    @{ Category = 'WriteChecked'; Commands = 'SETNX,MSETNX,HSETNX' },
+    @{ Category = 'WriteLastWins'; Commands = 'MSET,HSET,HMSET,LSET,SETRANGE,SETBIT,VSETATTR' },
+    # SET GET and ZADD INCR can lose a result or accumulate effects. A future
+    # execution policy may refine plain SET or non-INCR ZADD after inspecting options.
+    # Relative expiry, destructive reads and set membership changes can affect
+    # intervening data or return different counts even when their final values match.
+    @{ Category = 'WriteAccumulating'; Commands = 'SET,SETEX,PSETEX,APPEND,INCR,INCRBY,INCRBYFLOAT,DECR,DECRBY,HINCRBY,HINCRBYFLOAT,HDEL,HGETDEL,HGETEX,HSETEX,GETDEL,GETEX,GETSET,DEL,UNLINK,DELEX,DELIFEQ,EXPIRE,PEXPIRE,EXPIREAT,PEXPIREAT,PERSIST,RENAME,RENAMENX,COPY,MOVE,RESTORE,MIGRATE,LPUSH,LPUSHX,RPUSH,RPUSHX,LPOP,RPOP,BLPOP,BRPOP,LMPOP,BLMPOP,LMOVE,BLMOVE,RPOPLPUSH,BRPOPLPUSH,LREM,LTRIM,LINSERT,SADD,SREM,SMOVE,SPOP,SDIFFSTORE,SINTERSTORE,SUNIONSTORE,ZADD,ZINCRBY,ZREM,ZPOPMAX,ZPOPMIN,BZPOPMAX,BZPOPMIN,ZMPOP,BZMPOP,ZREMRANGEBYLEX,ZREMRANGEBYRANK,ZREMRANGEBYSCORE,ZDIFFSTORE,ZINTERSTORE,ZUNIONSTORE,ZRANGESTORE,GEOADD,GEORADIUS,GEORADIUSBYMEMBER,GEOSEARCHSTORE,BITFIELD,BITOP,PFADD,PFCOUNT,PFMERGE,XADD,XDEL,XACK,XACKDEL,XDELEX,XTRIM,XREADGROUP,XCLAIM,XAUTOCLAIM,XGROUP CREATE,XGROUP CREATECONSUMER,XGROUP DELCONSUMER,XGROUP DESTROY,XGROUP SETID,XSETID,PUBLISH,SPUBLISH,JSON.ARRAPPEND,JSON.ARRINSERT,JSON.ARRPOP,JSON.NUMINCRBY,JSON.NUMMULTBY,JSON.NUMPOWBY,JSON.STRAPPEND,JSON.TOGGLE,BF.ADD,BF.MADD,BF.INSERT,CF.ADD,CF.ADDNX,CF.INSERT,CF.INSERTNX,CF.DEL,CMS.INCRBY,TOPK.ADD,TOPK.INCRBY,TDIGEST.ADD,TS.ADD,TS.MADD,TS.INCRBY,TS.DECRBY,FT.SUGADD' },
+    @{ Category = 'ServerAdmin'; Commands = 'CONFIG SET,CONFIG RESETSTAT,CONFIG REWRITE,FLUSHDB,FLUSHALL,ACL SETUSER,ACL DELUSER,ACL LOAD,ACL SAVE,FUNCTION DELETE,FUNCTION FLUSH,FUNCTION LOAD,FUNCTION RESTORE,SCRIPT FLUSH,SCRIPT LOAD,SCRIPT KILL,FUNCTION KILL,MODULE LOAD,MODULE LOADEX,MODULE UNLOAD,SAVE,BGSAVE,BGREWRITEAOF,SLOWLOG RESET,LATENCY RESET,MEMORY PURGE,REPLICAOF,SLAVEOF,FAILOVER,SWAPDB,CLIENT KILL,CLIENT PAUSE,CLIENT UNPAUSE,FT.CONFIG SET' },
+    # These exclusions take precedence over READONLY provider flags. Script code
+    # and cursor/transaction/connection lifecycle require execution-specific proof.
+    @{ Category = 'Never'; Commands = 'EVAL,EVALSHA,EVAL_RO,EVALSHA_RO,FCALL,FCALL_RO,FT.CURSOR READ,FT.CURSOR DEL,FT.AGGREGATE,FT.PROFILE,FT.HYBRID,AUTH,HELLO,SELECT,ASKING,READONLY,READWRITE,CLIENT CACHING,CLIENT TRACKING,CLIENT TRACKINGINFO,CLIENT REPLY,CLIENT CAPA,CLIENT MAINT_NOTIFICATIONS,CLIENT IMPORT-SOURCE,CLIENT NO-EVICT,CLIENT NO-TOUCH,MULTI,EXEC,DISCARD,WATCH,UNWATCH,SUBSCRIBE,PSUBSCRIBE,SSUBSCRIBE,UNSUBSCRIBE,PUNSUBSCRIBE,SUNSUBSCRIBE,MONITOR,QUIT,RESET,SYNC,PSYNC,REPLCONF,WAIT,WAITAOF,SHUTDOWN,TOUCH,DEBUG,SORT' }
+)) {
+    foreach ($name in $entry.Commands.Split(',')) {
+        if ($retryOverrides.ContainsKey($name)) { throw "Duplicate retry audit: $name" }
+        $retryOverrides[$name] = $entry.Category
+    }
+}
+
+# Pure module reads have an explicit semantic audit because the pinned manual
+# module references do not supply provider flags. Never override a WRITE flag.
+$retryReadOnlyOverrides = @(
+    'BF.CARD', 'BF.EXISTS', 'BF.INFO', 'BF.MEXISTS', 'BF.SCANDUMP',
+    'CF.COUNT', 'CF.EXISTS', 'CF.INFO', 'CF.MEXISTS', 'CF.SCANDUMP',
+    'CMS.INFO', 'CMS.QUERY', 'TOPK.COUNT', 'TOPK.INFO', 'TOPK.LIST', 'TOPK.QUERY',
+    'TDIGEST.BYRANK', 'TDIGEST.BYREVRANK', 'TDIGEST.CDF', 'TDIGEST.INFO', 'TDIGEST.MAX',
+    'TDIGEST.MIN', 'TDIGEST.QUANTILE', 'TDIGEST.RANK', 'TDIGEST.REVRANK', 'TDIGEST.TRIMMED_MEAN',
+    'JSON.ARRINDEX', 'JSON.ARRLEN', 'JSON.DEBUG MEMORY', 'JSON.GET', 'JSON.MGET',
+    'JSON.OBJKEYS', 'JSON.OBJLEN', 'JSON.RESP', 'JSON.STRLEN', 'JSON.TYPE',
+    'FT._LIST', 'FT.ALIASLIST', 'FT.CONFIG GET', 'FT.DICTDUMP', 'FT.EXPLAIN', 'FT.EXPLAINCLI',
+    'FT.INFO', 'FT.SEARCH', 'FT.SPELLCHECK', 'FT.SUGGET', 'FT.SUGLEN', 'FT.SYNDUMP', 'FT.TAGVALS',
+    'TS.GET', 'TS.INFO', 'TS.MGET', 'TS.MRANGE', 'TS.MREVRANGE', 'TS.NRANGE', 'TS.NREVRANGE',
+    'TS.QUERYINDEX', 'TS.QUERYLABELS', 'TS.RANGE', 'TS.READ', 'TS.REVRANGE',
+    'VCARD', 'VDIM', 'VEMB', 'VGETATTR', 'VINFO', 'VISMEMBER', 'VLINKS', 'VRANDMEMBER', 'VRANGE', 'VSIM'
+)
+
 function Read-CoreCommands([string] $Path, [string] $Provider) {
     Get-ChildItem -LiteralPath $Path -Filter '*.json' | ForEach-Object {
         $json = Get-Content -Raw -LiteralPath $_.FullName | ConvertFrom-Json
@@ -64,6 +106,7 @@ function Read-CoreCommands([string] $Path, [string] $Provider) {
             Provider = $Provider
             IsReadOnly = $definition.command_flags -contains 'READONLY' -and
                 $definition.command_flags -notcontains 'WRITE'
+            HasWriteFlag = $definition.command_flags -contains 'WRITE'
         }
     }
 }
@@ -79,6 +122,7 @@ function Add-Commands(
             Group = $Group
             Provider = $Provider
             IsReadOnly = $null
+            HasWriteFlag = $false
         })
     }
 }
@@ -176,6 +220,11 @@ $merged = $commands |
             Group = [string] ($_.Group | Select-Object -First 1).Group
             Providers = $providers
             IsReadOnly = $isReadOnly
+            RetryCategory = if ($retryOverrides.ContainsKey($_.Name)) { $retryOverrides[$_.Name] }
+                elseif ($isReadOnly) { 'ReadOnly' }
+                elseif ($retryReadOnlyOverrides -contains $_.Name -and
+                    -not ($_.Group | Where-Object HasWriteFlag)) { 'ReadOnly' }
+                else { 'Never' }
             CacheMutation = if ($cacheUnknownOverrides -contains $_.Name) { 'Unknown' }
                 elseif ($isReadOnly -or $cacheReadOnlyOverrides -contains $_.Name) { 'ReadOnly' }
                 else { 'Mutation' }
@@ -207,7 +256,7 @@ foreach ($group in ($merged | Group-Object Group | Sort-Object { Get-ClassName $
         if ($command.Name.Contains(' ')) {
             [void] $builder.AppendLine("        [RespireCommandCatalogName(`"$($command.Name)`")]")
         }
-        [void] $builder.AppendLine("        public static readonly RespireCommand $identifier = new(`"$($command.Name)`", $sources, RespireCacheMutation.$($command.CacheMutation)$readOnlyArgument);")
+        [void] $builder.AppendLine("        public static readonly RespireCommand $identifier = new(`"$($command.Name)`", $sources, RespireCacheMutation.$($command.CacheMutation)$readOnlyArgument, retryCategory: RespireCommandRetryCategory.$($command.RetryCategory));")
         [void] $builder.AppendLine()
         $allReferences.Add("$className.$identifier")
     }
@@ -286,6 +335,24 @@ foreach ($command in ($merged | Sort-Object Name)) {
 [void] $builder.AppendLine()
 [void] $builder.AppendLine('    internal static (ReadCommandKind Kind, int CursorArgumentIndex) Get(string command)')
 [void] $builder.AppendLine('        => s_commands.TryGetValue(command, out var metadata) ? metadata : (ReadCommandKind.None, -1);')
+[void] $builder.AppendLine('}')
+
+# Retry metadata has no descriptor references or per-dispatch lookup. Default values
+# and unknown names fail closed; Never is not part of the ordered permission range.
+[void] $builder.AppendLine()
+[void] $builder.AppendLine('/// <summary>Audited retry risk cached when typed verbs and descriptors initialize.</summary>')
+[void] $builder.AppendLine('internal static class CommandRetryCategoryMetadata')
+[void] $builder.AppendLine('{')
+[void] $builder.AppendLine('    private static readonly FrozenDictionary<string, RespireCommandRetryCategory> s_commands =')
+[void] $builder.AppendLine('        new Dictionary<string, RespireCommandRetryCategory>(StringComparer.OrdinalIgnoreCase)')
+[void] $builder.AppendLine('        {')
+foreach ($command in ($merged | Sort-Object Name)) {
+    [void] $builder.AppendLine(('            ["{0}"] = RespireCommandRetryCategory.{1},' -f $command.Name, $command.RetryCategory))
+}
+[void] $builder.AppendLine('        }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);')
+[void] $builder.AppendLine()
+[void] $builder.AppendLine('    internal static RespireCommandRetryCategory Get(string command)')
+[void] $builder.AppendLine('        => s_commands.TryGetValue(command, out var category) ? category : RespireCommandRetryCategory.Never;')
 [void] $builder.AppendLine('}')
 
 # Fixed options are complete bulk frames. Keep their logical argument identity separate

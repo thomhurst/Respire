@@ -34,6 +34,12 @@ try {
     Write-CommandFixture $redisPath 'json-get' 'JSON.GET' @('READONLY')
     Write-CommandFixture $redisPath 'slot-stats' 'SLOT-STATS' @('WRITE') 'CLUSTER'
     Write-CommandFixture $redisPath 'touch' 'TOUCH' @('READONLY')
+    Write-CommandFixture $redisPath 'incr' 'INCR' @('WRITE')
+    Write-CommandFixture $redisPath 'script-ro' 'EVAL_RO' @('READONLY')
+    Write-CommandFixture $redisPath 'consuming-cursor' 'READ' @('READONLY') 'FT.CURSOR'
+    Write-CommandFixture $redisPath 'setnx' 'SETNX' @('WRITE')
+    Write-CommandFixture $redisPath 'hset' 'HSET' @('WRITE')
+    Write-CommandFixture $redisPath 'zadd' 'ZADD' @('WRITE')
     foreach ($name in @('SCAN', 'HSCAN', 'SSCAN', 'ZSCAN', 'ARSCAN')) {
         Write-CommandFixture $redisPath $name $name @('READONLY')
     }
@@ -64,6 +70,38 @@ try {
             throw "Incorrect shared read classification for $($entry.Key)."
         }
     }
+    $retryExpectations = @{
+        GET = 'ReadOnly'; SET = 'WriteAccumulating'; INCR = 'WriteAccumulating'
+        SETNX = 'WriteChecked'; HSET = 'WriteLastWins'; ZADD = 'WriteAccumulating'
+        CONFLICT = 'Never'; MISSING = 'Never'; EMPTY = 'Never'; CONTRADICTION = 'Never'
+        DUPLICATE = 'Never'; INVENTED_RO = 'Never'; 'CUSTOM GET' = 'ReadOnly'
+        'EVAL_RO' = 'Never'; 'FT.CURSOR READ' = 'Never'; 'JSON.GET' = 'ReadOnly'
+    }
+    foreach ($entry in $retryExpectations.GetEnumerator()) {
+        $pattern = '(?m)^\s*public static readonly RespireCommand \w+ = new\("' +
+            [regex]::Escape($entry.Key) + '", (?<arguments>[^;]+)\);\r?$'
+        $declarations = [regex]::Matches($first, $pattern)
+        if ($declarations.Count -ne 1) { throw "Expected one descriptor for $($entry.Key)." }
+        if (-not $declarations[0].Groups['arguments'].Value.Contains("retryCategory: RespireCommandRetryCategory.$($entry.Value)")) {
+            throw "Incorrect retry category for $($entry.Key)."
+        }
+        $independentEntry = '["' + $entry.Key + '"] = RespireCommandRetryCategory.' + $entry.Value + ','
+        if (-not $first.Contains($independentEntry)) {
+            throw "Independent retry category table differs for $($entry.Key)."
+        }
+    }
+    $retryTable = [regex]::Match($first,
+        '(?s)internal static class CommandRetryCategoryMetadata\s*\{(?<body>.*?)\n\}')
+    if (-not $retryTable.Success) { throw 'Missing independent retry category table.' }
+    foreach ($forbidden in @('s_all', 'RespireCommands.', 'new RespireCommand', 'CommandCacheMutationMetadata')) {
+        if ($retryTable.Groups['body'].Value.Contains($forbidden)) {
+            throw "Retry category table depends on another classification or descriptor initialization: $forbidden."
+        }
+    }
+    $descriptorCount = [regex]::Matches($first, 'public static readonly RespireCommand ').Count
+    $categoryCount = [regex]::Matches($retryTable.Groups['body'].Value,
+        '\["[^"]+"\] = RespireCommandRetryCategory\.').Count
+    if ($descriptorCount -ne $categoryCount) { throw 'Every descriptor must have an explicit retry category.' }
     if ($first.Contains('["TOUCH"] = (ReadCommandKind.')) { throw 'TOUCH must remain primary-only.' }
     $cacheTable = [regex]::Match($first, '(?s)internal static class CommandCacheMutationMetadata\s*\{(?<body>.*?)\n\}\s*/// <summary>Audited replica-read')
     if (-not $cacheTable.Success) { throw 'Missing independent cache mutation table.' }
@@ -109,7 +147,14 @@ try {
             throw "Missing pre-encoded option frame: $requiredOption."
         }
     }
-    Write-Host 'Command catalog generation and fixed-frame checks passed.'
+    # A manual module read audit must not override contradictory authoritative WRITE metadata.
+    Write-CommandFixture $valkeyPath 'json-get-write' 'JSON.GET' @('READONLY', 'WRITE')
+    & $generator -RedisCommandPath $redisPath -ValkeyCommandPath $valkeyPath -OutputPath $outputPath
+    $conflictingModule = [System.IO.File]::ReadAllText($outputPath)
+    if (-not $conflictingModule.Contains('["JSON.GET"] = RespireCommandRetryCategory.Never,')) {
+        throw 'Manual retry read audit overrides authoritative WRITE metadata.'
+    }
+    Write-Host 'Command catalog generation, retry audit and fixed-frame checks passed.'
 }
 finally {
     $resolvedRoot = [System.IO.Path]::GetFullPath($fixtureRoot)

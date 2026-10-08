@@ -50,6 +50,34 @@ Descriptors that require or alter connection state—such as `MULTI`, `WAIT`, `S
 safely preserve their connection affinity. Use transactions, subscription APIs, or
 `RespireOptions` instead.
 
+## Retry-risk metadata
+
+Descriptors expose `RetryCategory`, an audited command-level risk classification. This property
+does not enable automatic retries, prove whether a socket write reached the server, or provide
+exactly-once execution. Repeating even a conditional or replacement write can return a different
+reply and interact with another client's changes.
+
+```csharp
+Console.WriteLine(RespireCommands.String.GET.RetryCategory);   // ReadOnly
+Console.WriteLine(RespireCommands.String.SETNX.RetryCategory); // WriteChecked
+Console.WriteLine(RespireCommands.String.SET.RetryCategory);   // WriteAccumulating
+Console.WriteLine(RespireCommand.Create("GET").RetryCategory); // Never
+```
+
+The categories are `Always`, `Connection`, `ReadOnly`, `WriteChecked`, `WriteLastWins`,
+`WriteAccumulating`, `ServerAdmin`, and `Never`. The non-`Never` values increase in risk.
+`Never` is zero so default values fail closed; a numeric threshold alone is not retry permission.
+Unknown commands, default descriptors, implicit string conversions, and caller-created
+descriptors always use `Never`, including known names and explicit cache mutation policies.
+
+Read-only scripts/functions and consuming Search cursors remain `Never`. Cache effects and
+replica-read eligibility are independent: `EVAL_RO` can retain its existing read routing while
+having no automatic retry permission. Option-sensitive `SET`, `ZADD`, and `BITFIELD` use the
+conservative `WriteAccumulating` category. Search aggregation/profile commands remain `Never`
+because their invocations can involve server-side cursors. Categories do not inspect invocation
+options or change existing execution behavior. Unlisted writes and extensions remain `Never`
+until audited.
+
 ## Cluster key validation
 
 With `UseCluster`, immediate catalog, string, interpolated, and fire-and-forget execution
