@@ -110,8 +110,8 @@ internal static class ErrorObservation
         {
             lock (observation.Gate)
             {
-                RequireGeneration();
                 if (_completed) return;
+                RequireGeneration();
                 _completed = true;
                 if (--observation.References == 0) Pool.Return(observation);
             }

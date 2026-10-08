@@ -99,11 +99,49 @@ public class ErrorObservationTests
             Exception? ownerError = null;
             Exception? borrowerError = null;
             try { old.PublishFinal(error); } catch (Exception caught) { ownerError = caught; }
-            try { borrower.Complete(); } catch (Exception caught) { borrowerError = caught; }
+            try { borrower.RecordHandled(error); } catch (Exception caught) { borrowerError = caught; }
             await Assert.That(ownerError?.Message).IsEqualTo("The error observation lease belongs to a reused generation.");
             await Assert.That(borrowerError?.Message).IsEqualTo("The error observation lease belongs to a reused generation.");
+            old.Complete();
+            borrower.Complete();
             rentals[0].PublishFinal(error);
             await Assert.That(capture.Items.Last().RetryAttempts).IsEqualTo(0);
+        }
+        finally { foreach (var rental in rentals) rental.Complete(); }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RepeatedCompletionAfterReusePreservesOriginalException(bool cancelled)
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        Exception expected = cancelled ? new OperationCanceledException(cancellation.Token) : new IOException();
+        Exception? actual = null;
+        try { CompleteBeforeFinally(expected); } catch (Exception error) { actual = error; }
+        await Assert.That(ReferenceEquals(actual, expected)).IsTrue();
+        if (cancelled) await Assert.That(((OperationCanceledException)actual!).CancellationToken).IsEqualTo(cancellation.Token);
+    }
+
+    private static void CompleteBeforeFinally(Exception error)
+    {
+        var owner = ErrorObservation.StartFailure();
+        var ownerCopy = owner;
+        var borrower = owner.Borrow();
+        var borrowerCopy = borrower;
+        borrower.Complete();
+        owner.Complete();
+        var rentals = new List<ErrorObservation.FinalOwner>();
+        try
+        {
+            for (var i = 0; i < 33; i++) rentals.Add(ErrorObservation.StartFailure());
+            try { throw error; }
+            finally
+            {
+                ownerCopy.Complete();
+                borrowerCopy.Complete();
+            }
         }
         finally { foreach (var rental in rentals) rental.Complete(); }
     }
@@ -217,16 +255,16 @@ public class ErrorObservationTests
         cancellation.Cancel();
         Exception expected = cancelled ? new OperationCanceledException(cancellation.Token) : new IOException();
         Exception? actual = null;
-        try { await FailAsync(expected); } catch (Exception error) { actual = error; }
+        try { await ObserveWithOwnerAsync(ValueTask.FromException<int>(expected)); } catch (Exception error) { actual = error; }
         await Assert.That(ReferenceEquals(actual, expected)).IsTrue();
         if (cancelled) await Assert.That(((OperationCanceledException)actual!).CancellationToken).IsEqualTo(cancellation.Token);
         await Assert.That(capture.Items.Count).IsEqualTo(1);
     }
 
-    private static async Task FailAsync(Exception error)
+    private static async ValueTask<int> ObserveWithOwnerAsync(ValueTask<int> operation)
     {
         var owner = default(ErrorObservation.FinalOwner);
-        try { await ValueTask.FromException(error); }
+        try { return await operation.ConfigureAwait(false); }
         catch (Exception failure)
         {
             owner = ErrorObservation.StartFailure();
@@ -258,9 +296,7 @@ public class ErrorObservationTests
         var before = GC.GetAllocatedBytesForCurrentThread();
         for (var i = 0; i < 1_000; i++)
         {
-            var owner = default(ErrorObservation.FinalOwner);
-            var result = RespireTelemetry.ObserveFinalError(new ValueTask<int>(42)).GetAwaiter().GetResult();
-            owner.Complete();
+            var result = ObserveWithOwnerAsync(new ValueTask<int>(42)).GetAwaiter().GetResult();
             if (result != 42) throw new InvalidOperationException();
             if (allocate) Volatile.Write(ref _allocationAnchor, new byte[37]);
         }

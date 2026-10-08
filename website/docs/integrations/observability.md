@@ -501,12 +501,14 @@ the final failure captures the total count. Exporters run outside the ownership 
 so concurrent retry events may arrive out of order while retaining their exact counts.
 
 Copying an owner or borrower value shares its existing completion right; it does not
-create another reference. Repeated completion is harmless within the same generation.
+create another reference. Repeated completion is harmless, including after the pooled
+storage has been reused, so cleanup in `finally` cannot replace the original failure.
 Storage returns to the bounded pool only after the owner and every distinct borrower
 complete. Owner completion does not complete a still-live borrower. Final publication
-closes retry reporting and new borrowing. Using a lease after storage has been reused
-throws a stale-generation diagnostic, which differs from intentional repeated final
-inspection. Do not retain completed leases for later asynchronous work.
+closes retry reporting and new borrowing. Recording retries, borrowing, or publishing
+with a lease after storage has been reused throws a stale-generation diagnostic, which
+differs from intentional repeated final inspection. Do not retain completed leases for
+later asynchronous work.
 
 When adding a command path, declare its public boundary and delegated final owner in
 the independent route inventory. Helper, borrower, transport, and cleanup observations
