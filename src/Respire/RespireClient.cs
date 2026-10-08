@@ -2486,6 +2486,10 @@ public sealed partial class RespireClient : IRespireClient
             : response;
     }
 
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    // Callers consume the pooled result once by awaiting or forwarding it.
     private async ValueTask<RespValue> SendReadFromAsync<TCommand>(
         string operation, TCommand command, ReadCommandKind readKind, ReadAffinity? affinity,
         CancellationToken cancellationToken)
@@ -3385,6 +3389,10 @@ public sealed partial class RespireClient : IRespireClient
             operation, core.Multiplexer.GetConnection(), command, cancellationToken);
     }
 
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    // Callers consume the pooled result once by awaiting or forwarding it.
     private async ValueTask<Stream?> SendBulkStreamViaReadRouterAsync<TCommand>(
         string operation, TCommand command, CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
@@ -5128,6 +5136,9 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
+        if (TryDispatchReplica<TCommand, TResult, ConvertedReadySend<TState, TResult>>(
+            operation, in command, ct, new(state, converter, transferOwnership), out var replicaResponse))
+            return replicaResponse;
         if (CanUseDirectReplySource(operation, in command)
             && command is not IStreamingRespCommand)
         {
@@ -5229,6 +5240,9 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
+        if (TryDispatchReplica<TCommand, string?, StringReadySend>(
+            operation, in command, ct, default, out var replicaResponse))
+            return replicaResponse;
         if (CanUseDirectReplySource(operation, in command))
         {
             if (core.Cluster is null && core.TryGetReadyPrimaryMultiplexer(out var readyMultiplexer))
@@ -5258,6 +5272,9 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
+        if (TryDispatchReplica<TCommand, byte[]?, BytesReadySend>(
+            operation, in command, ct, default, out var replicaResponse))
+            return replicaResponse;
         if (CanUseDirectReplySource(operation, in command)
             && command is not IStreamingRespCommand)
         {

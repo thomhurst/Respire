@@ -755,6 +755,34 @@ topology can be:
 
 `TimeSpan.Zero` revalidates on every read and disables the cooldown.
 
+Uninstrumented typed reads can dispatch directly on a prepared standalone replica when the
+view uses `Replica` or `ReplicaPreferred`, the current topology has exactly one replica,
+one physical connection is configured, and that connection has a fresh successful `ROLE` check with a connected
+replication link. Selection rechecks the current endpoint publication, entry identity and
+connection admission state. String, binary and scalar replies use their specialized pooled
+sources. Cache coordination, telemetry listeners, hedging, cursor affinity, multiple replicas,
+multiple sockets, zone policies, and `Nearest` retain their existing routing paths. Sentinel
+discovery still runs when its refresh interval expires. Readiness does not lease a socket;
+connection retirement and command admission continue to enforce their normal lifetime rules.
+
+Prepared single-replica reads still advance the shared atomic rotation counter. A topology-growth
+regression checks that selection across multiple replicas resumes from that cursor. The counter
+is retained to preserve this behavior; no counter-only performance improvement is claimed.
+The prepared-read comparison isolates fresh validation and dispatch. Its results do not isolate
+the counter cost, measure periodic `ROLE` checks or establish performance for every routing policy.
+It exercises string `GET` calls and prepared route selection, with matching primary controls.
+
+The [pinned net10.0 comparison](https://github.com/thomhurst/Respire/actions/runs/37724435231)
+brackets the candidate with two baseline runs on the same runner and Redis primary/replica pair.
+Prepared replica selection uses 41.8–42.0% less client process CPU per operation. Public replica
+string `GET` uses 3.6–4.8% less CPU for serial calls and 32.7–40.3% less at concurrency 50;
+both candidate launches are below every baseline launch. Public allocation falls from 432 to
+88 bytes per serial GET and from 540 to 196 bytes at concurrency 50. A separate warmed caller
+dispatch control falls from 344 to zero bytes; it excludes receive-side reply allocation.
+The internal prepared-primary router control costs about 5 ns more, with unchanged allocation.
+Public primary allocation is unchanged and latency does not improve consistently across both
+baselines. These figures describe this prepared route, not every read policy or server CPU.
+
 A replica removed from the topology stops receiving new reads at once. Its connections stay open
 for up to one second, then drain the commands they already accepted before closing. The drain
 waits for every accepted command, including a `GetStreamAsync` reply that is still being consumed;

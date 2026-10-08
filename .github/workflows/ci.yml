@@ -173,6 +173,9 @@ jobs:
           done
 
       - name: Run Unit Tests
+        env:
+          # Core tests own their listeners; the HTML reporter installs a process-wide listener.
+          TUNIT_DISABLE_HTML_REPORTER: 'true'
         run: |
           dotnet run --project tests/Respire.Tests -c Release -f net10.0 --no-build -- \
             --treenode-filter '/*/*/(!MetricSelectionTests)/*' \
@@ -370,6 +373,23 @@ jobs:
         run: |
           dotnet run --project tests/Respire.Tests -c Release -f net8.0 --no-build -- \
             --treenode-filter '/*/*/(Utf8StringTests)|(TlsTests)|(FakeServerTests)|(ConnectionStringParsingTests)/*'
+
+      - name: Verify standalone replica dispatch (net8.0)
+        env:
+          TUNIT_DISABLE_HTML_REPORTER: 'true'
+        run: >-
+          dotnet run --project tests/Respire.Tests -c Release -f net8.0 --no-build --
+          --treenode-filter "$(cat .github/standalone-replica-filter.txt)"
+          --minimum-expected-tests "$(cat .github/standalone-replica-minimum-tests.txt)"
+          --report-trx --results-directory standalone-replica-net8
+
+      - name: Upload standalone replica regression report (net8.0)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: standalone-replica-dispatch-net8.0
+          path: standalone-replica-net8/
+          retention-days: 14
 
       - name: Run FusionCache lease lifetime regressions
         env:

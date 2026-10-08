@@ -1,0 +1,1 @@
+/*/*/(StandaloneReplicaReadyTests)|(ReadEndpointRoutingTests)|(NearestReadRoutingTests)|(HedgedReadTests)|(ReplicaHealthTests)|(ReadFallbackPolicyTests)|(AsyncAllocationPolicyTests)/*

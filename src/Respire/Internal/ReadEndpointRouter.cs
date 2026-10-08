@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net.Sockets;
+using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
 using Respire.Commands;
 using Respire.Infrastructure;
@@ -168,12 +169,18 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
     }
 
     /// <summary>Selects a connection for a read under <paramref name="readFrom"/>.</summary>
+    /// <remarks>The pooled ValueTask must be consumed exactly once, including asynchronous fallback.</remarks>
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
     internal async ValueTask<RespireConnection> GetConnectionAsync(
         RespireReadFrom readFrom, CancellationToken cancellationToken)
     {
         ThrowIfDisposed();
         try
         {
+            if (readFrom is RespireReadFrom.Replica or RespireReadFrom.ReplicaPreferred
+                && TryAcquireReadyConnection(readFrom, cancellationToken) is { } ready) return ready;
             var selection = await SelectAsync(readFrom, cancellationToken).ConfigureAwait(false);
             return selection.Connection;
         }
@@ -183,6 +190,32 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             // identity at the acquisition boundary instead of leaking that internal token.
             throw new OperationCanceledException(cancellationToken);
         }
+    }
+
+    /// <summary>Observes a fresh, published single-replica route without starting asynchronous selection.</summary>
+    internal RespireConnection? TryAcquireReadyConnection(RespireReadFrom readFrom, CancellationToken cancellationToken)
+    {
+        ThrowIfDisposed();
+        ObjectDisposedException.ThrowIf(core.Disposed, core);
+        // GetConnectionAsync and direct callers also enter here. Check before
+        // an ineligible snapshot can return null and bypass caller cancellation.
+        cancellationToken.ThrowIfCancellationRequested();
+        // Multi-endpoint/socket rotation, zone ranking and Nearest keep their existing selectors.
+        // Sentinel discovery must still run on schedule, even when this connection is healthy.
+        if (readFrom is not (RespireReadFrom.Replica or RespireReadFrom.ReplicaPreferred)
+            || core.Options.Connections != 1 || core.Sentinel is not null && IsSentinelRefreshDue()) return null;
+        var endpoints = Volatile.Read(ref _replicas);
+        if (endpoints.Length != 1 || !_entries.TryGetValue(endpoints[0], out var entry)
+            || entry.IsCoolingDown || entry.IsReplicationLinkDown) return null;
+        var connection = entry.TryGetReadyConnection();
+        // An optimistic snapshot miss always falls back to the full asynchronous selector.
+        if (connection is null || !ReferenceEquals(endpoints, Volatile.Read(ref _replicas))) return null;
+        ThrowIfDisposed();
+        ObjectDisposedException.ThrowIf(core.Disposed, core);
+        cancellationToken.ThrowIfCancellationRequested();
+        // Preserve the selector's shared cursor when a later publication adds replicas.
+        Interlocked.Increment(ref _nextReplica);
+        return connection;
     }
 
     /// <summary>Selects a read endpoint, then rents a separate connection for a blocking read.</summary>
@@ -604,6 +637,18 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
 
         /// <summary>True when the last ROLE check found the replica's link to its primary down.</summary>
         internal bool IsReplicationLinkDown => _health.IsReplicationLinkDown;
+
+        internal RespireConnection? TryGetReadyConnection()
+        {
+            if (_closed || Volatile.Read(ref _multiplexer) is not { IsInitialized: true, IsRetired: false } current) return null;
+            // Observation must not start recovery or throw before the normal selector can fall back.
+            var connection = current.GetExistingHealthConnection();
+            return connection is not null && !_closed && ReferenceEquals(current, Volatile.Read(ref _multiplexer))
+                && router.IsCurrent(this) && ContainsEndpoint(Volatile.Read(ref router._replicas), endpoint)
+                && connection.IsAcceptingCommands
+                && _health.Check(connection, router.RoleRevalidationInterval) == ReplicaValidation.Fresh
+                ? connection : null;
+        }
 
         internal void MarkFailed() => _health.MarkFailed();
 
