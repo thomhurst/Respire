@@ -8,6 +8,11 @@ public partial record StoredHashModel(string Id, string Name, int Count, string?
 [RespireHash("nullable-model")]
 public partial record NullableHashModel(string? Text, int? Number);
 
+[RespireHash("expiring:{Id}")]
+public partial record ExpiringHashModel(string Id, string Name,
+    [property: RespireFieldTtl(10000)] string? Token,
+    [property: RespireFieldTtl(20000)] int? Counter);
+
 internal static class GeneratedHashModelScenarios
 {
     public static async Task RoundTripAsync(IRespireClient root)
