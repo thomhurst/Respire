@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using BenchmarkDotNet.Attributes;
 using DotNet.Testcontainers.Containers;
 using Respire.Commands;
@@ -106,6 +107,9 @@ public class ClientCacheClassificationBenchmarks
     public int ClassifyRawCatalogSet() => Classify(in _classificationRaw, "SET");
 
     // Use the existing constrained interface API, so the identical fixture builds on both versions.
+    // Preserve the measured call boundary when classification becomes cheaper than BDN's empty
+    // method overhead. Both revisions include this same boundary; it is not a production attribute.
+    [MethodImpl(MethodImplOptions.NoInlining)]
     private static int Classify<TCommand>(in TCommand command, string operation) where TCommand : struct, IRespCommand
         => (int)command.GetCacheMutation(operation);
 

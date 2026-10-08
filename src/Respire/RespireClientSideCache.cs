@@ -758,8 +758,8 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         return metadata.CheckClientSubcommand
                && command.TryGetClientCacheKey(operation, out var query)
                && query.ArgumentCount > 0
-               && (query.GetArgument(0).EqualsAsciiIgnoreCase("CACHING")
-                   || query.GetArgument(0).EqualsAsciiIgnoreCase("TRACKING"));
+               && (query.GetArgument(0).EqualsAsciiIgnoreCase(ClientCacheCommandMetadata.CachingSubcommand)
+                   || query.GetArgument(0).EqualsAsciiIgnoreCase(ClientCacheCommandMetadata.TrackingSubcommand));
     }
 
     // Mirrors Redis client-side-cache eligibility: keyed, read-only, deterministic, non-blocking,

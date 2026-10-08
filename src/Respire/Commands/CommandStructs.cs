@@ -730,7 +730,7 @@ internal readonly struct CatalogCommand(RespireCommand command, RespireValue[] a
         if (!operation.Equals(command.Name, StringComparison.OrdinalIgnoreCase)
             || command.CacheMutation == RespireCacheMutation.Unknown)
         {
-            return GetClientCacheMetadata(operation).Policy;
+            return CommandCacheMutationMetadata.Get(operation);
         }
 
         return command.CacheMutation;

@@ -3,6 +3,12 @@ namespace Respire.Commands;
 /// <summary>Immutable cache classification; argument-dependent layouts are parsed per invocation.</summary>
 internal readonly struct ClientCacheCommandMetadata
 {
+    // Raw normalization and per-invocation CLIENT checks use the same audited tokens.
+    internal const string CachingSubcommand = "CACHING";
+    internal const string TrackingSubcommand = "TRACKING";
+    internal const string CachingOperation = "CLIENT " + CachingSubcommand;
+    internal const string TrackingOperation = "CLIENT " + TrackingSubcommand;
+
     [Flags]
     private enum Classification : byte
     {
@@ -20,7 +26,7 @@ internal readonly struct ClientCacheCommandMetadata
         (ArgumentLayout, MutationKind) = RawCommandKeyLayouts.GetMutationMetadata(operation);
         _classification = Classification.Initialized;
         if (ClientSideCacheCoordinator.CanCacheOperation(operation)) _classification |= Classification.CacheableRead;
-        if (operation is "CLIENT CACHING" or "CLIENT TRACKING" or "HELLO" or "RESET" or "SELECT")
+        if (operation is CachingOperation or TrackingOperation or "HELLO" or "RESET" or "SELECT")
             _classification |= Classification.DisruptsTracking;
         if (operation == "CLIENT") _classification |= Classification.ClientSubcommand;
     }

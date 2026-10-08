@@ -1145,8 +1145,10 @@ public sealed partial class RespireClient : IRespireClient
             "CONFIG" when candidate.EqualsAsciiIgnoreCase("SET") => "CONFIG SET",
             "FT.CONFIG" when candidate.EqualsAsciiIgnoreCase("GET") => "FT.CONFIG GET",
             "FT.CONFIG" when candidate.EqualsAsciiIgnoreCase("SET") => "FT.CONFIG SET",
-            "CLIENT" when candidate.EqualsAsciiIgnoreCase("CACHING") => "CLIENT CACHING",
-            "CLIENT" when candidate.EqualsAsciiIgnoreCase("TRACKING") => "CLIENT TRACKING",
+            "CLIENT" when candidate.EqualsAsciiIgnoreCase(ClientCacheCommandMetadata.CachingSubcommand)
+                => ClientCacheCommandMetadata.CachingOperation,
+            "CLIENT" when candidate.EqualsAsciiIgnoreCase(ClientCacheCommandMetadata.TrackingSubcommand)
+                => ClientCacheCommandMetadata.TrackingOperation,
             "MEMORY" when candidate.EqualsAsciiIgnoreCase("USAGE") => "MEMORY USAGE",
             "OBJECT" when candidate.EqualsAsciiIgnoreCase("ENCODING") => "OBJECT ENCODING",
             "OBJECT" when candidate.EqualsAsciiIgnoreCase("FREQ") => "OBJECT FREQ",

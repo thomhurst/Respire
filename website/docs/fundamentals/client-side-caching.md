@@ -207,7 +207,9 @@ The cache-classification comparison measures typed and raw cached `SET` with 50 
 cache-off controls, two-key `MSET`/`DEL` pairs, and an independent `GET` miss. Separate
 classification cases isolate the existing command metadata API. Public write measurements
 include task scheduling, response validation, and cache fencing; classification timings alone
-do not establish an equivalent improvement in Redis throughput.
+do not establish an equivalent improvement in Redis throughput. Classification cases retain
+the same call boundary in both versions so cheaper metadata loads remain measurable. These
+cases do not quantify production inlining.
 
 ## Partial hash reads
 
