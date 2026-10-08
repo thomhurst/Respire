@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks.Sources;
 using Reservoir;
+using Respire.Internal;
 using Respire.Networking;
 using Respire.Protocol;
 
@@ -22,6 +23,7 @@ internal readonly struct GatheredSetCommand(SetCommand command, ArraySegment<byt
     public void ValidateAdmission() { }
     public CancellationToken GetResponseCancellationToken(CancellationToken admissionToken) => admissionToken;
     public void OnAccepted() { }
+    public ClientSideCacheCoordinator.MutationFence GetMutationFence() => default;
     public void Write(ref RespWriter writer) => command.Write(ref writer);
 
     internal int WriteEnvelope(WriteBuffer buffer)
