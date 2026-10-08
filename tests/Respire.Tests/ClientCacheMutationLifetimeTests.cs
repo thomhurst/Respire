@@ -13,6 +13,25 @@ namespace Respire.Tests;
 public class ClientCacheMutationLifetimeTests
 {
     [Test]
+    public async Task BlockingGroupWaitDoesNotRetainIdleMutationWriterCapacity()
+    {
+        var cache = new ClientSideCacheCoordinator(new());
+        var group = new CatalogCommand(RespireCommands.Stream.XREADGROUP,
+            ["GROUP", "group", "consumer", "BLOCK", 0, "STREAMS", "events", ">"]);
+        var waiting = cache.BeforeCommand("XREADGROUP", in group, blocking: true);
+        try
+        {
+            var arguments = Enumerable.Range(0, 5000).Select(index => (RespireValue)("key:" + index)).ToArray();
+            var command = new CatalogCommand(RespireCommands.Key.DEL, arguments);
+            var mutation = cache.BeforeCommand("DEL", in command);
+            cache.CompleteMutation(in mutation);
+            await Assert.That(cache.InspectForTests().MutationWriterStorage.Keys).IsEqualTo(0);
+            await Assert.That(cache.InspectForTests().MutationWriterStorage.Capacity).IsLessThanOrEqualTo(4096);
+        }
+        finally { cache.CompleteMutation(in waiting); }
+    }
+
+    [Test]
     [Arguments(false, false)]
     [Arguments(false, true)]
     [Arguments(true, false)]
