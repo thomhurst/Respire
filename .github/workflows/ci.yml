@@ -383,6 +383,14 @@ jobs:
           --minimum-expected-tests "$(cat .github/standalone-replica-minimum-tests.txt)"
           --report-trx --results-directory standalone-replica-net8
 
+      - name: Verify command retry metadata (net8.0)
+        env:
+          TUNIT_DISABLE_HTML_REPORTER: 'true'
+        run: >-
+          dotnet run --project tests/Respire.Tests -c Release -f net8.0 --no-build --
+          --treenode-filter '/*/*/(CommandCatalogTests)|(RetryCategoryMetadataTests)|(ClientCacheCommandMetadataTests)/*'
+          --minimum-expected-tests "$(cat .github/command-retry-metadata-minimum-tests.txt)"
+
       - name: Upload standalone replica regression report (net8.0)
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

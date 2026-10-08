@@ -50,6 +50,47 @@ The table contains no descriptor references, so initializing typed verbs cannot 
 initialize the catalog. Each verb caches its classification without adding fields; healthy
 typed dispatch performs no table lookup. Raw lookup reuses the table directly.
 
+`RespireCommand.RetryCategory` describes the risk of repeating an invocation after an uncertain
+outcome. It is metadata only: Respire does not use this property to enable automatic retries.
+It does not prove whether socket bytes reached the server, provide exactly-once execution, or
+recover the original reply. Even a repeated conditional or replacement write can return a
+different result and can interact with another client's intervening changes.
+
+| Category | Meaning | Examples |
+| --- | --- | --- |
+| `Always` | Audited stateless operation | `PING`, `ECHO` |
+| `Connection` | Audited connection or server-information operation | `CLIENT SETNAME`, `CONFIG GET` |
+| `ReadOnly` | Reads without consuming server-side state | `GET`, `JSON.GET` |
+| `WriteChecked` | A condition can prevent repeating the write effect | `SETNX`, `HSETNX` |
+| `WriteLastWins` | Replaces a value and can overwrite intervening changes | `MSET`, `HSET` |
+| `WriteAccumulating` | Can accumulate effects, consume data, or lose the original result | `INCR`, `LPOP`, `GETDEL` |
+| `ServerAdmin` | Administrative mutation with server-wide consequences | `CONFIG SET`, `FLUSHALL` |
+| `Never` | No automatic retry permission | Scripts, functions, consuming Search cursors, unknown operations |
+
+The non-`Never` categories are ordered by increasing risk. `Never` is zero so default values
+fail closed; a future permission check must exclude it explicitly rather than treating a
+numeric threshold as permission. Categories describe command-level risk, not an execution
+policy. Option-sensitive `SET` (including `GET`), `ZADD` (including `INCR`) and `BITFIELD`
+remain `WriteAccumulating`. Search aggregation/profile commands remain `Never` because their
+invocations can create or consume cursors. Ordinary `SCAN` cursors are client-supplied positions
+and remain read-only; `FT.CURSOR READ` consumes server-side cursor state and remains `Never`.
+All script/function variants remain `Never`, including those with official read-only flags.
+
+This audit is independent of cache effects and replica routing. A cache `ReadOnly` classification
+does not establish retry permission. The generator uses unanimous authoritative read flags,
+separate explicit command-risk overrides, and a conservative default of `Never`. Pure module
+reads have a separate explicit audit; an authoritative `WRITE` flag prevents that read override.
+Unlisted writes and extensions remain `Never` until audited. Every generated descriptor has an
+explicit category. Typed verbs cache the same independent table during initialization, with no
+lookup during healthy dispatch. The added byte uses existing struct padding: on the supported
+64-bit runtime, `Verb` remains 32 bytes and `RespireCommand` remains 48 bytes. The independent
+frozen table retains one entry per catalog command after initialization.
+
+Default descriptors, implicit string conversions, and `RespireCommand.Create`, even for a known
+name or with an explicit cache mutation policy, always have retry category `Never`. Caller-supplied
+names cannot acquire retry permission by matching the catalog. This metadata does not add a raw
+retry opt-in API or change existing routing, cache invalidation, blocking, or wire behavior.
+
 The compatible-server audit uses [KeyDB's 6.3.4 command table](https://github.com/Snapchat/KeyDB/blob/v6.3.4/src/server.cpp),
 the [KeyDB command reference](https://docs.keydb.dev/docs/commands/),
 [Dragonfly documentation at 31881bce](https://github.com/dragonflydb/documentation/tree/31881bce033d4cec47cb2e85865d46745760e499/docs/command-reference),
@@ -102,3 +143,7 @@ shape introduced with the catalog.
 Run `pwsh ./scripts/Test-CommandCatalog.ps1` to exercise the generator with offline fixtures,
 including conflicting flags, missing metadata, duplicate providers, and reproducible output.
 CI runs this generator check once. Catalog behavior tests run on both supported frameworks.
+`RetryCategoryMetadataTests` verifies dangerous and option-sensitive commands, catalog/typed-verb
+agreement, fail-closed caller descriptors, unchanged struct sizes, and allocation-free warmed
+category access with a positive allocation control. Generator fixtures also prove that consuming
+cursors and read-only scripts remain `Never`, and that module read overrides reject `WRITE` flags.

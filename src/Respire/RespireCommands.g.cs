@@ -10,58 +10,58 @@ public static class RespireCommands
     public static class Array
     {
         /// <summary><c>ARCOUNT</c>.</summary>
-        public static readonly RespireCommand ARCOUNT = new("ARCOUNT", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand ARCOUNT = new("ARCOUNT", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>ARDEL</c>.</summary>
-        public static readonly RespireCommand ARDEL = new("ARDEL", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand ARDEL = new("ARDEL", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>ARDELRANGE</c>.</summary>
-        public static readonly RespireCommand ARDELRANGE = new("ARDELRANGE", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand ARDELRANGE = new("ARDELRANGE", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>ARGET</c>.</summary>
-        public static readonly RespireCommand ARGET = new("ARGET", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand ARGET = new("ARGET", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>ARGETRANGE</c>.</summary>
-        public static readonly RespireCommand ARGETRANGE = new("ARGETRANGE", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand ARGETRANGE = new("ARGETRANGE", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>ARGREP</c>.</summary>
-        public static readonly RespireCommand ARGREP = new("ARGREP", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand ARGREP = new("ARGREP", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>ARINFO</c>.</summary>
-        public static readonly RespireCommand ARINFO = new("ARINFO", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand ARINFO = new("ARINFO", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>ARINSERT</c>.</summary>
-        public static readonly RespireCommand ARINSERT = new("ARINSERT", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand ARINSERT = new("ARINSERT", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>ARLASTITEMS</c>.</summary>
-        public static readonly RespireCommand ARLASTITEMS = new("ARLASTITEMS", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand ARLASTITEMS = new("ARLASTITEMS", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>ARLEN</c>.</summary>
-        public static readonly RespireCommand ARLEN = new("ARLEN", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand ARLEN = new("ARLEN", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>ARMGET</c>.</summary>
-        public static readonly RespireCommand ARMGET = new("ARMGET", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand ARMGET = new("ARMGET", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>ARMSET</c>.</summary>
-        public static readonly RespireCommand ARMSET = new("ARMSET", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand ARMSET = new("ARMSET", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>ARNEXT</c>.</summary>
-        public static readonly RespireCommand ARNEXT = new("ARNEXT", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand ARNEXT = new("ARNEXT", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>AROP</c>.</summary>
-        public static readonly RespireCommand AROP = new("AROP", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand AROP = new("AROP", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>ARRING</c>.</summary>
-        public static readonly RespireCommand ARRING = new("ARRING", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand ARRING = new("ARRING", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>ARSCAN</c>.</summary>
-        public static readonly RespireCommand ARSCAN = new("ARSCAN", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand ARSCAN = new("ARSCAN", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>ARSEEK</c>.</summary>
-        public static readonly RespireCommand ARSEEK = new("ARSEEK", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand ARSEEK = new("ARSEEK", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>ARSET</c>.</summary>
-        public static readonly RespireCommand ARSET = new("ARSET", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand ARSET = new("ARSET", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
     }
 
@@ -69,25 +69,25 @@ public static class RespireCommands
     public static class Bitmap
     {
         /// <summary><c>BITCOUNT</c>.</summary>
-        public static readonly RespireCommand BITCOUNT = new("BITCOUNT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand BITCOUNT = new("BITCOUNT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>BITFIELD</c>.</summary>
-        public static readonly RespireCommand BITFIELD = new("BITFIELD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand BITFIELD = new("BITFIELD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>BITFIELD_RO</c>.</summary>
-        public static readonly RespireCommand BITFIELD_RO = new("BITFIELD_RO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand BITFIELD_RO = new("BITFIELD_RO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>BITOP</c>.</summary>
-        public static readonly RespireCommand BITOP = new("BITOP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand BITOP = new("BITOP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>BITPOS</c>.</summary>
-        public static readonly RespireCommand BITPOS = new("BITPOS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand BITPOS = new("BITPOS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>GETBIT</c>.</summary>
-        public static readonly RespireCommand GETBIT = new("GETBIT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand GETBIT = new("GETBIT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>SETBIT</c>.</summary>
-        public static readonly RespireCommand SETBIT = new("SETBIT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SETBIT = new("SETBIT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteLastWins);
 
     }
 
@@ -95,37 +95,37 @@ public static class RespireCommands
     public static class Bloom
     {
         /// <summary><c>BF.ADD</c>.</summary>
-        public static readonly RespireCommand BF_ADD = new("BF.ADD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand BF_ADD = new("BF.ADD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>BF.CARD</c>.</summary>
-        public static readonly RespireCommand BF_CARD = new("BF.CARD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand BF_CARD = new("BF.CARD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>BF.EXISTS</c>.</summary>
-        public static readonly RespireCommand BF_EXISTS = new("BF.EXISTS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand BF_EXISTS = new("BF.EXISTS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>BF.INFO</c>.</summary>
-        public static readonly RespireCommand BF_INFO = new("BF.INFO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand BF_INFO = new("BF.INFO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>BF.INSERT</c>.</summary>
-        public static readonly RespireCommand BF_INSERT = new("BF.INSERT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand BF_INSERT = new("BF.INSERT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>BF.LOAD</c>.</summary>
-        public static readonly RespireCommand BF_LOAD = new("BF.LOAD", RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand BF_LOAD = new("BF.LOAD", RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>BF.LOADCHUNK</c>.</summary>
-        public static readonly RespireCommand BF_LOADCHUNK = new("BF.LOADCHUNK", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand BF_LOADCHUNK = new("BF.LOADCHUNK", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>BF.MADD</c>.</summary>
-        public static readonly RespireCommand BF_MADD = new("BF.MADD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand BF_MADD = new("BF.MADD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>BF.MEXISTS</c>.</summary>
-        public static readonly RespireCommand BF_MEXISTS = new("BF.MEXISTS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand BF_MEXISTS = new("BF.MEXISTS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>BF.RESERVE</c>.</summary>
-        public static readonly RespireCommand BF_RESERVE = new("BF.RESERVE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand BF_RESERVE = new("BF.RESERVE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>BF.SCANDUMP</c>.</summary>
-        public static readonly RespireCommand BF_SCANDUMP = new("BF.SCANDUMP", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand BF_SCANDUMP = new("BF.SCANDUMP", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
     }
 
@@ -133,159 +133,159 @@ public static class RespireCommands
     public static class Cluster
     {
         /// <summary><c>ASKING</c>.</summary>
-        public static readonly RespireCommand ASKING = new("ASKING", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand ASKING = new("ASKING", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER</c>.</summary>
-        public static readonly RespireCommand CLUSTER = new("CLUSTER", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLUSTER = new("CLUSTER", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER ADDSLOTS</c>.</summary>
         [RespireCommandCatalogName("CLUSTER ADDSLOTS")]
-        public static readonly RespireCommand CLUSTER_ADDSLOTS = new("CLUSTER ADDSLOTS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLUSTER_ADDSLOTS = new("CLUSTER ADDSLOTS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER ADDSLOTSRANGE</c>.</summary>
         [RespireCommandCatalogName("CLUSTER ADDSLOTSRANGE")]
-        public static readonly RespireCommand CLUSTER_ADDSLOTSRANGE = new("CLUSTER ADDSLOTSRANGE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLUSTER_ADDSLOTSRANGE = new("CLUSTER ADDSLOTSRANGE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER BUMPEPOCH</c>.</summary>
         [RespireCommandCatalogName("CLUSTER BUMPEPOCH")]
-        public static readonly RespireCommand CLUSTER_BUMPEPOCH = new("CLUSTER BUMPEPOCH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLUSTER_BUMPEPOCH = new("CLUSTER BUMPEPOCH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER CANCELSLOTMIGRATIONS</c>.</summary>
         [RespireCommandCatalogName("CLUSTER CANCELSLOTMIGRATIONS")]
-        public static readonly RespireCommand CLUSTER_CANCELSLOTMIGRATIONS = new("CLUSTER CANCELSLOTMIGRATIONS", RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLUSTER_CANCELSLOTMIGRATIONS = new("CLUSTER CANCELSLOTMIGRATIONS", RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER COUNT-FAILURE-REPORTS</c>.</summary>
         [RespireCommandCatalogName("CLUSTER COUNT-FAILURE-REPORTS")]
-        public static readonly RespireCommand CLUSTER_COUNT_FAILURE_REPORTS = new("CLUSTER COUNT-FAILURE-REPORTS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLUSTER_COUNT_FAILURE_REPORTS = new("CLUSTER COUNT-FAILURE-REPORTS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER COUNTKEYSINSLOT</c>.</summary>
         [RespireCommandCatalogName("CLUSTER COUNTKEYSINSLOT")]
-        public static readonly RespireCommand CLUSTER_COUNTKEYSINSLOT = new("CLUSTER COUNTKEYSINSLOT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand CLUSTER_COUNTKEYSINSLOT = new("CLUSTER COUNTKEYSINSLOT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER DELSLOTS</c>.</summary>
         [RespireCommandCatalogName("CLUSTER DELSLOTS")]
-        public static readonly RespireCommand CLUSTER_DELSLOTS = new("CLUSTER DELSLOTS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLUSTER_DELSLOTS = new("CLUSTER DELSLOTS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER DELSLOTSRANGE</c>.</summary>
         [RespireCommandCatalogName("CLUSTER DELSLOTSRANGE")]
-        public static readonly RespireCommand CLUSTER_DELSLOTSRANGE = new("CLUSTER DELSLOTSRANGE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLUSTER_DELSLOTSRANGE = new("CLUSTER DELSLOTSRANGE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER FAILOVER</c>.</summary>
         [RespireCommandCatalogName("CLUSTER FAILOVER")]
-        public static readonly RespireCommand CLUSTER_FAILOVER = new("CLUSTER FAILOVER", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLUSTER_FAILOVER = new("CLUSTER FAILOVER", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER FLUSHSLOT</c>.</summary>
         [RespireCommandCatalogName("CLUSTER FLUSHSLOT")]
-        public static readonly RespireCommand CLUSTER_FLUSHSLOT = new("CLUSTER FLUSHSLOT", RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLUSTER_FLUSHSLOT = new("CLUSTER FLUSHSLOT", RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER FLUSHSLOTS</c>.</summary>
         [RespireCommandCatalogName("CLUSTER FLUSHSLOTS")]
-        public static readonly RespireCommand CLUSTER_FLUSHSLOTS = new("CLUSTER FLUSHSLOTS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLUSTER_FLUSHSLOTS = new("CLUSTER FLUSHSLOTS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER FORGET</c>.</summary>
         [RespireCommandCatalogName("CLUSTER FORGET")]
-        public static readonly RespireCommand CLUSTER_FORGET = new("CLUSTER FORGET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLUSTER_FORGET = new("CLUSTER FORGET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER GETKEYSINSLOT</c>.</summary>
         [RespireCommandCatalogName("CLUSTER GETKEYSINSLOT")]
-        public static readonly RespireCommand CLUSTER_GETKEYSINSLOT = new("CLUSTER GETKEYSINSLOT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLUSTER_GETKEYSINSLOT = new("CLUSTER GETKEYSINSLOT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER GETSLOTMIGRATIONS</c>.</summary>
         [RespireCommandCatalogName("CLUSTER GETSLOTMIGRATIONS")]
-        public static readonly RespireCommand CLUSTER_GETSLOTMIGRATIONS = new("CLUSTER GETSLOTMIGRATIONS", RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLUSTER_GETSLOTMIGRATIONS = new("CLUSTER GETSLOTMIGRATIONS", RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER HELP</c>.</summary>
         [RespireCommandCatalogName("CLUSTER HELP")]
-        public static readonly RespireCommand CLUSTER_HELP = new("CLUSTER HELP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLUSTER_HELP = new("CLUSTER HELP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER INFO</c>.</summary>
         [RespireCommandCatalogName("CLUSTER INFO")]
-        public static readonly RespireCommand CLUSTER_INFO = new("CLUSTER INFO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand CLUSTER_INFO = new("CLUSTER INFO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER KEYSLOT</c>.</summary>
         [RespireCommandCatalogName("CLUSTER KEYSLOT")]
-        public static readonly RespireCommand CLUSTER_KEYSLOT = new("CLUSTER KEYSLOT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand CLUSTER_KEYSLOT = new("CLUSTER KEYSLOT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER LINKS</c>.</summary>
         [RespireCommandCatalogName("CLUSTER LINKS")]
-        public static readonly RespireCommand CLUSTER_LINKS = new("CLUSTER LINKS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand CLUSTER_LINKS = new("CLUSTER LINKS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER MEET</c>.</summary>
         [RespireCommandCatalogName("CLUSTER MEET")]
-        public static readonly RespireCommand CLUSTER_MEET = new("CLUSTER MEET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLUSTER_MEET = new("CLUSTER MEET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER MIGRATESLOTS</c>.</summary>
         [RespireCommandCatalogName("CLUSTER MIGRATESLOTS")]
-        public static readonly RespireCommand CLUSTER_MIGRATESLOTS = new("CLUSTER MIGRATESLOTS", RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLUSTER_MIGRATESLOTS = new("CLUSTER MIGRATESLOTS", RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER MIGRATION</c>.</summary>
         [RespireCommandCatalogName("CLUSTER MIGRATION")]
-        public static readonly RespireCommand CLUSTER_MIGRATION = new("CLUSTER MIGRATION", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLUSTER_MIGRATION = new("CLUSTER MIGRATION", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER MYID</c>.</summary>
         [RespireCommandCatalogName("CLUSTER MYID")]
-        public static readonly RespireCommand CLUSTER_MYID = new("CLUSTER MYID", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand CLUSTER_MYID = new("CLUSTER MYID", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER MYSHARDID</c>.</summary>
         [RespireCommandCatalogName("CLUSTER MYSHARDID")]
-        public static readonly RespireCommand CLUSTER_MYSHARDID = new("CLUSTER MYSHARDID", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand CLUSTER_MYSHARDID = new("CLUSTER MYSHARDID", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER NODES</c>.</summary>
         [RespireCommandCatalogName("CLUSTER NODES")]
-        public static readonly RespireCommand CLUSTER_NODES = new("CLUSTER NODES", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand CLUSTER_NODES = new("CLUSTER NODES", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER REPLICAS</c>.</summary>
         [RespireCommandCatalogName("CLUSTER REPLICAS")]
-        public static readonly RespireCommand CLUSTER_REPLICAS = new("CLUSTER REPLICAS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLUSTER_REPLICAS = new("CLUSTER REPLICAS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER REPLICATE</c>.</summary>
         [RespireCommandCatalogName("CLUSTER REPLICATE")]
-        public static readonly RespireCommand CLUSTER_REPLICATE = new("CLUSTER REPLICATE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLUSTER_REPLICATE = new("CLUSTER REPLICATE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER RESET</c>.</summary>
         [RespireCommandCatalogName("CLUSTER RESET")]
-        public static readonly RespireCommand CLUSTER_RESET = new("CLUSTER RESET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLUSTER_RESET = new("CLUSTER RESET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER SAVECONFIG</c>.</summary>
         [RespireCommandCatalogName("CLUSTER SAVECONFIG")]
-        public static readonly RespireCommand CLUSTER_SAVECONFIG = new("CLUSTER SAVECONFIG", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLUSTER_SAVECONFIG = new("CLUSTER SAVECONFIG", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER SET-CONFIG-EPOCH</c>.</summary>
         [RespireCommandCatalogName("CLUSTER SET-CONFIG-EPOCH")]
-        public static readonly RespireCommand CLUSTER_SET_CONFIG_EPOCH = new("CLUSTER SET-CONFIG-EPOCH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLUSTER_SET_CONFIG_EPOCH = new("CLUSTER SET-CONFIG-EPOCH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER SETSLOT</c>.</summary>
         [RespireCommandCatalogName("CLUSTER SETSLOT")]
-        public static readonly RespireCommand CLUSTER_SETSLOT = new("CLUSTER SETSLOT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLUSTER_SETSLOT = new("CLUSTER SETSLOT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER SHARDS</c>.</summary>
         [RespireCommandCatalogName("CLUSTER SHARDS")]
-        public static readonly RespireCommand CLUSTER_SHARDS = new("CLUSTER SHARDS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand CLUSTER_SHARDS = new("CLUSTER SHARDS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER SLAVES</c>.</summary>
         [RespireCommandCatalogName("CLUSTER SLAVES")]
-        public static readonly RespireCommand CLUSTER_SLAVES = new("CLUSTER SLAVES", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLUSTER_SLAVES = new("CLUSTER SLAVES", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER SLOT-STATS</c>.</summary>
         [RespireCommandCatalogName("CLUSTER SLOT-STATS")]
-        public static readonly RespireCommand CLUSTER_SLOT_STATS = new("CLUSTER SLOT-STATS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand CLUSTER_SLOT_STATS = new("CLUSTER SLOT-STATS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER SLOTS</c>.</summary>
         [RespireCommandCatalogName("CLUSTER SLOTS")]
-        public static readonly RespireCommand CLUSTER_SLOTS = new("CLUSTER SLOTS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLUSTER_SLOTS = new("CLUSTER SLOTS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTER SYNCSLOTS</c>.</summary>
         [RespireCommandCatalogName("CLUSTER SYNCSLOTS")]
-        public static readonly RespireCommand CLUSTER_SYNCSLOTS = new("CLUSTER SYNCSLOTS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLUSTER_SYNCSLOTS = new("CLUSTER SYNCSLOTS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLUSTERSCAN</c>.</summary>
-        public static readonly RespireCommand CLUSTERSCAN = new("CLUSTERSCAN", RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand CLUSTERSCAN = new("CLUSTERSCAN", RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>READONLY</c>.</summary>
-        public static readonly RespireCommand READONLY = new("READONLY", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand READONLY = new("READONLY", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>READWRITE</c>.</summary>
-        public static readonly RespireCommand READWRITE = new("READWRITE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand READWRITE = new("READWRITE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
     }
 
@@ -293,112 +293,112 @@ public static class RespireCommands
     public static class Connection
     {
         /// <summary><c>AUTH</c>.</summary>
-        public static readonly RespireCommand AUTH = new("AUTH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand AUTH = new("AUTH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLIENT</c>.</summary>
-        public static readonly RespireCommand CLIENT = new("CLIENT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLIENT = new("CLIENT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLIENT CACHING</c>.</summary>
         [RespireCommandCatalogName("CLIENT CACHING")]
-        public static readonly RespireCommand CLIENT_CACHING = new("CLIENT CACHING", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand CLIENT_CACHING = new("CLIENT CACHING", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLIENT CAPA</c>.</summary>
         [RespireCommandCatalogName("CLIENT CAPA")]
-        public static readonly RespireCommand CLIENT_CAPA = new("CLIENT CAPA", RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLIENT_CAPA = new("CLIENT CAPA", RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLIENT GETNAME</c>.</summary>
         [RespireCommandCatalogName("CLIENT GETNAME")]
-        public static readonly RespireCommand CLIENT_GETNAME = new("CLIENT GETNAME", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLIENT_GETNAME = new("CLIENT GETNAME", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Connection);
 
         /// <summary><c>CLIENT GETREDIR</c>.</summary>
         [RespireCommandCatalogName("CLIENT GETREDIR")]
-        public static readonly RespireCommand CLIENT_GETREDIR = new("CLIENT GETREDIR", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLIENT_GETREDIR = new("CLIENT GETREDIR", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Connection);
 
         /// <summary><c>CLIENT HELP</c>.</summary>
         [RespireCommandCatalogName("CLIENT HELP")]
-        public static readonly RespireCommand CLIENT_HELP = new("CLIENT HELP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLIENT_HELP = new("CLIENT HELP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLIENT ID</c>.</summary>
         [RespireCommandCatalogName("CLIENT ID")]
-        public static readonly RespireCommand CLIENT_ID = new("CLIENT ID", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLIENT_ID = new("CLIENT ID", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Connection);
 
         /// <summary><c>CLIENT IMPORT-SOURCE</c>.</summary>
         [RespireCommandCatalogName("CLIENT IMPORT-SOURCE")]
-        public static readonly RespireCommand CLIENT_IMPORT_SOURCE = new("CLIENT IMPORT-SOURCE", RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLIENT_IMPORT_SOURCE = new("CLIENT IMPORT-SOURCE", RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLIENT INFO</c>.</summary>
         [RespireCommandCatalogName("CLIENT INFO")]
-        public static readonly RespireCommand CLIENT_INFO = new("CLIENT INFO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLIENT_INFO = new("CLIENT INFO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Connection);
 
         /// <summary><c>CLIENT KILL</c>.</summary>
         [RespireCommandCatalogName("CLIENT KILL")]
-        public static readonly RespireCommand CLIENT_KILL = new("CLIENT KILL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLIENT_KILL = new("CLIENT KILL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.ServerAdmin);
 
         /// <summary><c>CLIENT LIST</c>.</summary>
         [RespireCommandCatalogName("CLIENT LIST")]
-        public static readonly RespireCommand CLIENT_LIST = new("CLIENT LIST", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand CLIENT_LIST = new("CLIENT LIST", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Connection);
 
         /// <summary><c>CLIENT MAINT_NOTIFICATIONS</c>.</summary>
         [RespireCommandCatalogName("CLIENT MAINT_NOTIFICATIONS")]
-        public static readonly RespireCommand CLIENT_MAINT_NOTIFICATIONS = new("CLIENT MAINT_NOTIFICATIONS", RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLIENT_MAINT_NOTIFICATIONS = new("CLIENT MAINT_NOTIFICATIONS", RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLIENT NO-EVICT</c>.</summary>
         [RespireCommandCatalogName("CLIENT NO-EVICT")]
-        public static readonly RespireCommand CLIENT_NO_EVICT = new("CLIENT NO-EVICT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLIENT_NO_EVICT = new("CLIENT NO-EVICT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLIENT NO-TOUCH</c>.</summary>
         [RespireCommandCatalogName("CLIENT NO-TOUCH")]
-        public static readonly RespireCommand CLIENT_NO_TOUCH = new("CLIENT NO-TOUCH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLIENT_NO_TOUCH = new("CLIENT NO-TOUCH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLIENT PAUSE</c>.</summary>
         [RespireCommandCatalogName("CLIENT PAUSE")]
-        public static readonly RespireCommand CLIENT_PAUSE = new("CLIENT PAUSE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLIENT_PAUSE = new("CLIENT PAUSE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.ServerAdmin);
 
         /// <summary><c>CLIENT REPLY</c>.</summary>
         [RespireCommandCatalogName("CLIENT REPLY")]
-        public static readonly RespireCommand CLIENT_REPLY = new("CLIENT REPLY", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLIENT_REPLY = new("CLIENT REPLY", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLIENT SETINFO</c>.</summary>
         [RespireCommandCatalogName("CLIENT SETINFO")]
-        public static readonly RespireCommand CLIENT_SETINFO = new("CLIENT SETINFO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLIENT_SETINFO = new("CLIENT SETINFO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Connection);
 
         /// <summary><c>CLIENT SETNAME</c>.</summary>
         [RespireCommandCatalogName("CLIENT SETNAME")]
-        public static readonly RespireCommand CLIENT_SETNAME = new("CLIENT SETNAME", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLIENT_SETNAME = new("CLIENT SETNAME", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Connection);
 
         /// <summary><c>CLIENT TRACKING</c>.</summary>
         [RespireCommandCatalogName("CLIENT TRACKING")]
-        public static readonly RespireCommand CLIENT_TRACKING = new("CLIENT TRACKING", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand CLIENT_TRACKING = new("CLIENT TRACKING", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLIENT TRACKINGINFO</c>.</summary>
         [RespireCommandCatalogName("CLIENT TRACKINGINFO")]
-        public static readonly RespireCommand CLIENT_TRACKINGINFO = new("CLIENT TRACKINGINFO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLIENT_TRACKINGINFO = new("CLIENT TRACKINGINFO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLIENT UNBLOCK</c>.</summary>
         [RespireCommandCatalogName("CLIENT UNBLOCK")]
-        public static readonly RespireCommand CLIENT_UNBLOCK = new("CLIENT UNBLOCK", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLIENT_UNBLOCK = new("CLIENT UNBLOCK", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CLIENT UNPAUSE</c>.</summary>
         [RespireCommandCatalogName("CLIENT UNPAUSE")]
-        public static readonly RespireCommand CLIENT_UNPAUSE = new("CLIENT UNPAUSE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CLIENT_UNPAUSE = new("CLIENT UNPAUSE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.ServerAdmin);
 
         /// <summary><c>ECHO</c>.</summary>
-        public static readonly RespireCommand ECHO = new("ECHO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand ECHO = new("ECHO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Always);
 
         /// <summary><c>HELLO</c>.</summary>
-        public static readonly RespireCommand HELLO = new("HELLO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand HELLO = new("HELLO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>PING</c>.</summary>
-        public static readonly RespireCommand PING = new("PING", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand PING = new("PING", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Always);
 
         /// <summary><c>QUIT</c>.</summary>
-        public static readonly RespireCommand QUIT = new("QUIT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand QUIT = new("QUIT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>RESET</c>.</summary>
-        public static readonly RespireCommand RESET = new("RESET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand RESET = new("RESET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SELECT</c>.</summary>
-        public static readonly RespireCommand SELECT = new("SELECT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SELECT = new("SELECT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
     }
 
@@ -406,22 +406,22 @@ public static class RespireCommands
     public static class CountMinSketch
     {
         /// <summary><c>CMS.INCRBY</c>.</summary>
-        public static readonly RespireCommand CMS_INCRBY = new("CMS.INCRBY", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CMS_INCRBY = new("CMS.INCRBY", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>CMS.INFO</c>.</summary>
-        public static readonly RespireCommand CMS_INFO = new("CMS.INFO", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand CMS_INFO = new("CMS.INFO", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>CMS.INITBYDIM</c>.</summary>
-        public static readonly RespireCommand CMS_INITBYDIM = new("CMS.INITBYDIM", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CMS_INITBYDIM = new("CMS.INITBYDIM", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CMS.INITBYPROB</c>.</summary>
-        public static readonly RespireCommand CMS_INITBYPROB = new("CMS.INITBYPROB", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CMS_INITBYPROB = new("CMS.INITBYPROB", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CMS.MERGE</c>.</summary>
-        public static readonly RespireCommand CMS_MERGE = new("CMS.MERGE", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CMS_MERGE = new("CMS.MERGE", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CMS.QUERY</c>.</summary>
-        public static readonly RespireCommand CMS_QUERY = new("CMS.QUERY", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand CMS_QUERY = new("CMS.QUERY", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
     }
 
@@ -429,40 +429,40 @@ public static class RespireCommands
     public static class Cuckoo
     {
         /// <summary><c>CF.ADD</c>.</summary>
-        public static readonly RespireCommand CF_ADD = new("CF.ADD", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CF_ADD = new("CF.ADD", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>CF.ADDNX</c>.</summary>
-        public static readonly RespireCommand CF_ADDNX = new("CF.ADDNX", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CF_ADDNX = new("CF.ADDNX", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>CF.COUNT</c>.</summary>
-        public static readonly RespireCommand CF_COUNT = new("CF.COUNT", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand CF_COUNT = new("CF.COUNT", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>CF.DEL</c>.</summary>
-        public static readonly RespireCommand CF_DEL = new("CF.DEL", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CF_DEL = new("CF.DEL", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>CF.EXISTS</c>.</summary>
-        public static readonly RespireCommand CF_EXISTS = new("CF.EXISTS", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand CF_EXISTS = new("CF.EXISTS", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>CF.INFO</c>.</summary>
-        public static readonly RespireCommand CF_INFO = new("CF.INFO", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand CF_INFO = new("CF.INFO", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>CF.INSERT</c>.</summary>
-        public static readonly RespireCommand CF_INSERT = new("CF.INSERT", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CF_INSERT = new("CF.INSERT", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>CF.INSERTNX</c>.</summary>
-        public static readonly RespireCommand CF_INSERTNX = new("CF.INSERTNX", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CF_INSERTNX = new("CF.INSERTNX", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>CF.LOADCHUNK</c>.</summary>
-        public static readonly RespireCommand CF_LOADCHUNK = new("CF.LOADCHUNK", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CF_LOADCHUNK = new("CF.LOADCHUNK", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CF.MEXISTS</c>.</summary>
-        public static readonly RespireCommand CF_MEXISTS = new("CF.MEXISTS", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand CF_MEXISTS = new("CF.MEXISTS", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>CF.RESERVE</c>.</summary>
-        public static readonly RespireCommand CF_RESERVE = new("CF.RESERVE", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CF_RESERVE = new("CF.RESERVE", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CF.SCANDUMP</c>.</summary>
-        public static readonly RespireCommand CF_SCANDUMP = new("CF.SCANDUMP", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand CF_SCANDUMP = new("CF.SCANDUMP", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
     }
 
@@ -470,69 +470,69 @@ public static class RespireCommands
     public static class Dragonfly
     {
         /// <summary><c>CF.COMPACT</c>.</summary>
-        public static readonly RespireCommand CF_COMPACT = new("CF.COMPACT", RespireCommandSource.Dragonfly, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CF_COMPACT = new("CF.COMPACT", RespireCommandSource.Dragonfly, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CL.THROTTLE</c>.</summary>
-        public static readonly RespireCommand CL_THROTTLE = new("CL.THROTTLE", RespireCommandSource.Dragonfly, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CL_THROTTLE = new("CL.THROTTLE", RespireCommandSource.Dragonfly, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>DFLYCLUSTER CONFIG</c>.</summary>
         [RespireCommandCatalogName("DFLYCLUSTER CONFIG")]
-        public static readonly RespireCommand DFLYCLUSTER_CONFIG = new("DFLYCLUSTER CONFIG", RespireCommandSource.Dragonfly, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand DFLYCLUSTER_CONFIG = new("DFLYCLUSTER CONFIG", RespireCommandSource.Dragonfly, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>DFLYCLUSTER FLUSHSLOTS</c>.</summary>
         [RespireCommandCatalogName("DFLYCLUSTER FLUSHSLOTS")]
-        public static readonly RespireCommand DFLYCLUSTER_FLUSHSLOTS = new("DFLYCLUSTER FLUSHSLOTS", RespireCommandSource.Dragonfly, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand DFLYCLUSTER_FLUSHSLOTS = new("DFLYCLUSTER FLUSHSLOTS", RespireCommandSource.Dragonfly, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>DFLYCLUSTER GETSLOTINFO</c>.</summary>
         [RespireCommandCatalogName("DFLYCLUSTER GETSLOTINFO")]
-        public static readonly RespireCommand DFLYCLUSTER_GETSLOTINFO = new("DFLYCLUSTER GETSLOTINFO", RespireCommandSource.Dragonfly, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand DFLYCLUSTER_GETSLOTINFO = new("DFLYCLUSTER GETSLOTINFO", RespireCommandSource.Dragonfly, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>DFLYCLUSTER SLOT-MIGRATION-STATUS</c>.</summary>
         [RespireCommandCatalogName("DFLYCLUSTER SLOT-MIGRATION-STATUS")]
-        public static readonly RespireCommand DFLYCLUSTER_SLOT_MIGRATION_STATUS = new("DFLYCLUSTER SLOT-MIGRATION-STATUS", RespireCommandSource.Dragonfly, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand DFLYCLUSTER_SLOT_MIGRATION_STATUS = new("DFLYCLUSTER SLOT-MIGRATION-STATUS", RespireCommandSource.Dragonfly, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>FIELDEXPIRE</c>.</summary>
-        public static readonly RespireCommand FIELDEXPIRE = new("FIELDEXPIRE", RespireCommandSource.Dragonfly, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand FIELDEXPIRE = new("FIELDEXPIRE", RespireCommandSource.Dragonfly, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>FIELDTTL</c>.</summary>
-        public static readonly RespireCommand FIELDTTL = new("FIELDTTL", RespireCommandSource.Dragonfly, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand FIELDTTL = new("FIELDTTL", RespireCommandSource.Dragonfly, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>JSON.DEBUG FIELDS</c>.</summary>
         [RespireCommandCatalogName("JSON.DEBUG FIELDS")]
-        public static readonly RespireCommand JSON_DEBUG_FIELDS = new("JSON.DEBUG FIELDS", RespireCommandSource.Dragonfly, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand JSON_DEBUG_FIELDS = new("JSON.DEBUG FIELDS", RespireCommandSource.Dragonfly, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>JSON.DEBUG HELP</c>.</summary>
         [RespireCommandCatalogName("JSON.DEBUG HELP")]
-        public static readonly RespireCommand JSON_DEBUG_HELP = new("JSON.DEBUG HELP", RespireCommandSource.Dragonfly, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand JSON_DEBUG_HELP = new("JSON.DEBUG HELP", RespireCommandSource.Dragonfly, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>MEMORY ARENA</c>.</summary>
         [RespireCommandCatalogName("MEMORY ARENA")]
-        public static readonly RespireCommand MEMORY_ARENA = new("MEMORY ARENA", RespireCommandSource.Dragonfly, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand MEMORY_ARENA = new("MEMORY ARENA", RespireCommandSource.Dragonfly, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>MEMORY DECOMMIT</c>.</summary>
         [RespireCommandCatalogName("MEMORY DECOMMIT")]
-        public static readonly RespireCommand MEMORY_DECOMMIT = new("MEMORY DECOMMIT", RespireCommandSource.Dragonfly, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand MEMORY_DECOMMIT = new("MEMORY DECOMMIT", RespireCommandSource.Dragonfly, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>MEMORY DEFRAGMENT</c>.</summary>
         [RespireCommandCatalogName("MEMORY DEFRAGMENT")]
-        public static readonly RespireCommand MEMORY_DEFRAGMENT = new("MEMORY DEFRAGMENT", RespireCommandSource.Dragonfly, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand MEMORY_DEFRAGMENT = new("MEMORY DEFRAGMENT", RespireCommandSource.Dragonfly, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>RM</c>.</summary>
-        public static readonly RespireCommand RM = new("RM", RespireCommandSource.Dragonfly, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand RM = new("RM", RespireCommandSource.Dragonfly, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SADDEX</c>.</summary>
-        public static readonly RespireCommand SADDEX = new("SADDEX", RespireCommandSource.Dragonfly, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SADDEX = new("SADDEX", RespireCommandSource.Dragonfly, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SCRIPT LATENCY</c>.</summary>
         [RespireCommandCatalogName("SCRIPT LATENCY")]
-        public static readonly RespireCommand SCRIPT_LATENCY = new("SCRIPT LATENCY", RespireCommandSource.Dragonfly, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SCRIPT_LATENCY = new("SCRIPT LATENCY", RespireCommandSource.Dragonfly, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SCRIPT LIST</c>.</summary>
         [RespireCommandCatalogName("SCRIPT LIST")]
-        public static readonly RespireCommand SCRIPT_LIST = new("SCRIPT LIST", RespireCommandSource.Dragonfly, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SCRIPT_LIST = new("SCRIPT LIST", RespireCommandSource.Dragonfly, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>STICK</c>.</summary>
-        public static readonly RespireCommand STICK = new("STICK", RespireCommandSource.Dragonfly, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand STICK = new("STICK", RespireCommandSource.Dragonfly, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
     }
 
@@ -540,34 +540,34 @@ public static class RespireCommands
     public static class Geo
     {
         /// <summary><c>GEOADD</c>.</summary>
-        public static readonly RespireCommand GEOADD = new("GEOADD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand GEOADD = new("GEOADD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>GEODIST</c>.</summary>
-        public static readonly RespireCommand GEODIST = new("GEODIST", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand GEODIST = new("GEODIST", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>GEOHASH</c>.</summary>
-        public static readonly RespireCommand GEOHASH = new("GEOHASH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand GEOHASH = new("GEOHASH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>GEOPOS</c>.</summary>
-        public static readonly RespireCommand GEOPOS = new("GEOPOS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand GEOPOS = new("GEOPOS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>GEORADIUS</c>.</summary>
-        public static readonly RespireCommand GEORADIUS = new("GEORADIUS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand GEORADIUS = new("GEORADIUS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>GEORADIUS_RO</c>.</summary>
-        public static readonly RespireCommand GEORADIUS_RO = new("GEORADIUS_RO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand GEORADIUS_RO = new("GEORADIUS_RO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>GEORADIUSBYMEMBER</c>.</summary>
-        public static readonly RespireCommand GEORADIUSBYMEMBER = new("GEORADIUSBYMEMBER", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand GEORADIUSBYMEMBER = new("GEORADIUSBYMEMBER", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>GEORADIUSBYMEMBER_RO</c>.</summary>
-        public static readonly RespireCommand GEORADIUSBYMEMBER_RO = new("GEORADIUSBYMEMBER_RO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand GEORADIUSBYMEMBER_RO = new("GEORADIUSBYMEMBER_RO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>GEOSEARCH</c>.</summary>
-        public static readonly RespireCommand GEOSEARCH = new("GEOSEARCH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand GEOSEARCH = new("GEOSEARCH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>GEOSEARCHSTORE</c>.</summary>
-        public static readonly RespireCommand GEOSEARCHSTORE = new("GEOSEARCHSTORE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand GEOSEARCHSTORE = new("GEOSEARCHSTORE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
     }
 
@@ -575,107 +575,107 @@ public static class RespireCommands
     public static class Hash
     {
         /// <summary><c>HDEL</c>.</summary>
-        public static readonly RespireCommand HDEL = new("HDEL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand HDEL = new("HDEL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>HEXISTS</c>.</summary>
-        public static readonly RespireCommand HEXISTS = new("HEXISTS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand HEXISTS = new("HEXISTS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>HEXPIRE</c>.</summary>
-        public static readonly RespireCommand HEXPIRE = new("HEXPIRE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand HEXPIRE = new("HEXPIRE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>HEXPIREAT</c>.</summary>
-        public static readonly RespireCommand HEXPIREAT = new("HEXPIREAT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand HEXPIREAT = new("HEXPIREAT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>HEXPIRETIME</c>.</summary>
-        public static readonly RespireCommand HEXPIRETIME = new("HEXPIRETIME", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand HEXPIRETIME = new("HEXPIRETIME", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>HGET</c>.</summary>
-        public static readonly RespireCommand HGET = new("HGET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand HGET = new("HGET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>HGETALL</c>.</summary>
-        public static readonly RespireCommand HGETALL = new("HGETALL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand HGETALL = new("HGETALL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>HGETDEL</c>.</summary>
-        public static readonly RespireCommand HGETDEL = new("HGETDEL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand HGETDEL = new("HGETDEL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>HGETEX</c>.</summary>
-        public static readonly RespireCommand HGETEX = new("HGETEX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand HGETEX = new("HGETEX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>HIMPORT</c>.</summary>
-        public static readonly RespireCommand HIMPORT = new("HIMPORT", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand HIMPORT = new("HIMPORT", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>HIMPORT DISCARD</c>.</summary>
         [RespireCommandCatalogName("HIMPORT DISCARD")]
-        public static readonly RespireCommand HIMPORT_DISCARD = new("HIMPORT DISCARD", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand HIMPORT_DISCARD = new("HIMPORT DISCARD", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>HIMPORT DISCARDALL</c>.</summary>
         [RespireCommandCatalogName("HIMPORT DISCARDALL")]
-        public static readonly RespireCommand HIMPORT_DISCARDALL = new("HIMPORT DISCARDALL", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand HIMPORT_DISCARDALL = new("HIMPORT DISCARDALL", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>HIMPORT PREPARE</c>.</summary>
         [RespireCommandCatalogName("HIMPORT PREPARE")]
-        public static readonly RespireCommand HIMPORT_PREPARE = new("HIMPORT PREPARE", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand HIMPORT_PREPARE = new("HIMPORT PREPARE", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>HIMPORT SET</c>.</summary>
         [RespireCommandCatalogName("HIMPORT SET")]
-        public static readonly RespireCommand HIMPORT_SET = new("HIMPORT SET", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand HIMPORT_SET = new("HIMPORT SET", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>HINCRBY</c>.</summary>
-        public static readonly RespireCommand HINCRBY = new("HINCRBY", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand HINCRBY = new("HINCRBY", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>HINCRBYFLOAT</c>.</summary>
-        public static readonly RespireCommand HINCRBYFLOAT = new("HINCRBYFLOAT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand HINCRBYFLOAT = new("HINCRBYFLOAT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>HKEYS</c>.</summary>
-        public static readonly RespireCommand HKEYS = new("HKEYS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand HKEYS = new("HKEYS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>HLEN</c>.</summary>
-        public static readonly RespireCommand HLEN = new("HLEN", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand HLEN = new("HLEN", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>HMGET</c>.</summary>
-        public static readonly RespireCommand HMGET = new("HMGET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand HMGET = new("HMGET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>HMSET</c>.</summary>
-        public static readonly RespireCommand HMSET = new("HMSET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand HMSET = new("HMSET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteLastWins);
 
         /// <summary><c>HPERSIST</c>.</summary>
-        public static readonly RespireCommand HPERSIST = new("HPERSIST", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand HPERSIST = new("HPERSIST", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>HPEXPIRE</c>.</summary>
-        public static readonly RespireCommand HPEXPIRE = new("HPEXPIRE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand HPEXPIRE = new("HPEXPIRE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>HPEXPIREAT</c>.</summary>
-        public static readonly RespireCommand HPEXPIREAT = new("HPEXPIREAT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand HPEXPIREAT = new("HPEXPIREAT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>HPEXPIRETIME</c>.</summary>
-        public static readonly RespireCommand HPEXPIRETIME = new("HPEXPIRETIME", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand HPEXPIRETIME = new("HPEXPIRETIME", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>HPTTL</c>.</summary>
-        public static readonly RespireCommand HPTTL = new("HPTTL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand HPTTL = new("HPTTL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>HRANDFIELD</c>.</summary>
-        public static readonly RespireCommand HRANDFIELD = new("HRANDFIELD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand HRANDFIELD = new("HRANDFIELD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>HSCAN</c>.</summary>
-        public static readonly RespireCommand HSCAN = new("HSCAN", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand HSCAN = new("HSCAN", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>HSET</c>.</summary>
-        public static readonly RespireCommand HSET = new("HSET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand HSET = new("HSET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteLastWins);
 
         /// <summary><c>HSETEX</c>.</summary>
-        public static readonly RespireCommand HSETEX = new("HSETEX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand HSETEX = new("HSETEX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>HSETNX</c>.</summary>
-        public static readonly RespireCommand HSETNX = new("HSETNX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand HSETNX = new("HSETNX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteChecked);
 
         /// <summary><c>HSTRLEN</c>.</summary>
-        public static readonly RespireCommand HSTRLEN = new("HSTRLEN", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand HSTRLEN = new("HSTRLEN", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>HTTL</c>.</summary>
-        public static readonly RespireCommand HTTL = new("HTTL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand HTTL = new("HTTL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>HVALS</c>.</summary>
-        public static readonly RespireCommand HVALS = new("HVALS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand HVALS = new("HVALS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
     }
 
@@ -683,19 +683,19 @@ public static class RespireCommands
     public static class HyperLogLog
     {
         /// <summary><c>PFADD</c>.</summary>
-        public static readonly RespireCommand PFADD = new("PFADD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand PFADD = new("PFADD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>PFCOUNT</c>.</summary>
-        public static readonly RespireCommand PFCOUNT = new("PFCOUNT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Unknown, isReadOnly: true);
+        public static readonly RespireCommand PFCOUNT = new("PFCOUNT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Unknown, isReadOnly: true, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>PFDEBUG</c>.</summary>
-        public static readonly RespireCommand PFDEBUG = new("PFDEBUG", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand PFDEBUG = new("PFDEBUG", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>PFMERGE</c>.</summary>
-        public static readonly RespireCommand PFMERGE = new("PFMERGE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand PFMERGE = new("PFMERGE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>PFSELFTEST</c>.</summary>
-        public static readonly RespireCommand PFSELFTEST = new("PFSELFTEST", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand PFSELFTEST = new("PFSELFTEST", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
     }
 
@@ -703,83 +703,83 @@ public static class RespireCommands
     public static class Json
     {
         /// <summary><c>JSON.ARRAPPEND</c>.</summary>
-        public static readonly RespireCommand JSON_ARRAPPEND = new("JSON.ARRAPPEND", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand JSON_ARRAPPEND = new("JSON.ARRAPPEND", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>JSON.ARRINDEX</c>.</summary>
-        public static readonly RespireCommand JSON_ARRINDEX = new("JSON.ARRINDEX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand JSON_ARRINDEX = new("JSON.ARRINDEX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>JSON.ARRINSERT</c>.</summary>
-        public static readonly RespireCommand JSON_ARRINSERT = new("JSON.ARRINSERT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand JSON_ARRINSERT = new("JSON.ARRINSERT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>JSON.ARRLEN</c>.</summary>
-        public static readonly RespireCommand JSON_ARRLEN = new("JSON.ARRLEN", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand JSON_ARRLEN = new("JSON.ARRLEN", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>JSON.ARRPOP</c>.</summary>
-        public static readonly RespireCommand JSON_ARRPOP = new("JSON.ARRPOP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand JSON_ARRPOP = new("JSON.ARRPOP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>JSON.ARRTRIM</c>.</summary>
-        public static readonly RespireCommand JSON_ARRTRIM = new("JSON.ARRTRIM", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand JSON_ARRTRIM = new("JSON.ARRTRIM", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>JSON.CLEAR</c>.</summary>
-        public static readonly RespireCommand JSON_CLEAR = new("JSON.CLEAR", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand JSON_CLEAR = new("JSON.CLEAR", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>JSON.DEBUG</c>.</summary>
-        public static readonly RespireCommand JSON_DEBUG = new("JSON.DEBUG", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand JSON_DEBUG = new("JSON.DEBUG", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>JSON.DEBUG MEMORY</c>.</summary>
         [RespireCommandCatalogName("JSON.DEBUG MEMORY")]
-        public static readonly RespireCommand JSON_DEBUG_MEMORY = new("JSON.DEBUG MEMORY", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand JSON_DEBUG_MEMORY = new("JSON.DEBUG MEMORY", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>JSON.DEL</c>.</summary>
-        public static readonly RespireCommand JSON_DEL = new("JSON.DEL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand JSON_DEL = new("JSON.DEL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>JSON.FORGET</c>.</summary>
-        public static readonly RespireCommand JSON_FORGET = new("JSON.FORGET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand JSON_FORGET = new("JSON.FORGET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>JSON.GET</c>.</summary>
-        public static readonly RespireCommand JSON_GET = new("JSON.GET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand JSON_GET = new("JSON.GET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>JSON.MERGE</c>.</summary>
-        public static readonly RespireCommand JSON_MERGE = new("JSON.MERGE", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand JSON_MERGE = new("JSON.MERGE", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>JSON.MGET</c>.</summary>
-        public static readonly RespireCommand JSON_MGET = new("JSON.MGET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand JSON_MGET = new("JSON.MGET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>JSON.MSET</c>.</summary>
-        public static readonly RespireCommand JSON_MSET = new("JSON.MSET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand JSON_MSET = new("JSON.MSET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>JSON.NUMINCRBY</c>.</summary>
-        public static readonly RespireCommand JSON_NUMINCRBY = new("JSON.NUMINCRBY", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand JSON_NUMINCRBY = new("JSON.NUMINCRBY", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>JSON.NUMMULTBY</c>.</summary>
-        public static readonly RespireCommand JSON_NUMMULTBY = new("JSON.NUMMULTBY", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand JSON_NUMMULTBY = new("JSON.NUMMULTBY", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>JSON.NUMPOWBY</c>.</summary>
-        public static readonly RespireCommand JSON_NUMPOWBY = new("JSON.NUMPOWBY", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand JSON_NUMPOWBY = new("JSON.NUMPOWBY", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>JSON.OBJKEYS</c>.</summary>
-        public static readonly RespireCommand JSON_OBJKEYS = new("JSON.OBJKEYS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand JSON_OBJKEYS = new("JSON.OBJKEYS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>JSON.OBJLEN</c>.</summary>
-        public static readonly RespireCommand JSON_OBJLEN = new("JSON.OBJLEN", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand JSON_OBJLEN = new("JSON.OBJLEN", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>JSON.RESP</c>.</summary>
-        public static readonly RespireCommand JSON_RESP = new("JSON.RESP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand JSON_RESP = new("JSON.RESP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>JSON.SET</c>.</summary>
-        public static readonly RespireCommand JSON_SET = new("JSON.SET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand JSON_SET = new("JSON.SET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>JSON.STRAPPEND</c>.</summary>
-        public static readonly RespireCommand JSON_STRAPPEND = new("JSON.STRAPPEND", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand JSON_STRAPPEND = new("JSON.STRAPPEND", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>JSON.STRLEN</c>.</summary>
-        public static readonly RespireCommand JSON_STRLEN = new("JSON.STRLEN", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand JSON_STRLEN = new("JSON.STRLEN", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>JSON.TOGGLE</c>.</summary>
-        public static readonly RespireCommand JSON_TOGGLE = new("JSON.TOGGLE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand JSON_TOGGLE = new("JSON.TOGGLE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>JSON.TYPE</c>.</summary>
-        public static readonly RespireCommand JSON_TYPE = new("JSON.TYPE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand JSON_TYPE = new("JSON.TYPE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
     }
 
@@ -787,111 +787,111 @@ public static class RespireCommands
     public static class Key
     {
         /// <summary><c>COPY</c>.</summary>
-        public static readonly RespireCommand COPY = new("COPY", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand COPY = new("COPY", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>DEL</c>.</summary>
-        public static readonly RespireCommand DEL = new("DEL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand DEL = new("DEL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>DUMP</c>.</summary>
-        public static readonly RespireCommand DUMP = new("DUMP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand DUMP = new("DUMP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>EXISTS</c>.</summary>
-        public static readonly RespireCommand EXISTS = new("EXISTS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand EXISTS = new("EXISTS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>EXPIRE</c>.</summary>
-        public static readonly RespireCommand EXPIRE = new("EXPIRE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand EXPIRE = new("EXPIRE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>EXPIREAT</c>.</summary>
-        public static readonly RespireCommand EXPIREAT = new("EXPIREAT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand EXPIREAT = new("EXPIREAT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>EXPIRETIME</c>.</summary>
-        public static readonly RespireCommand EXPIRETIME = new("EXPIRETIME", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand EXPIRETIME = new("EXPIRETIME", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>KEYS</c>.</summary>
-        public static readonly RespireCommand KEYS = new("KEYS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand KEYS = new("KEYS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>MIGRATE</c>.</summary>
-        public static readonly RespireCommand MIGRATE = new("MIGRATE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand MIGRATE = new("MIGRATE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>MOVE</c>.</summary>
-        public static readonly RespireCommand MOVE = new("MOVE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand MOVE = new("MOVE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>OBJECT</c>.</summary>
-        public static readonly RespireCommand OBJECT = new("OBJECT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand OBJECT = new("OBJECT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>OBJECT ENCODING</c>.</summary>
         [RespireCommandCatalogName("OBJECT ENCODING")]
-        public static readonly RespireCommand OBJECT_ENCODING = new("OBJECT ENCODING", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand OBJECT_ENCODING = new("OBJECT ENCODING", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>OBJECT FREQ</c>.</summary>
         [RespireCommandCatalogName("OBJECT FREQ")]
-        public static readonly RespireCommand OBJECT_FREQ = new("OBJECT FREQ", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand OBJECT_FREQ = new("OBJECT FREQ", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>OBJECT HELP</c>.</summary>
         [RespireCommandCatalogName("OBJECT HELP")]
-        public static readonly RespireCommand OBJECT_HELP = new("OBJECT HELP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand OBJECT_HELP = new("OBJECT HELP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>OBJECT IDLETIME</c>.</summary>
         [RespireCommandCatalogName("OBJECT IDLETIME")]
-        public static readonly RespireCommand OBJECT_IDLETIME = new("OBJECT IDLETIME", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand OBJECT_IDLETIME = new("OBJECT IDLETIME", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>OBJECT REFCOUNT</c>.</summary>
         [RespireCommandCatalogName("OBJECT REFCOUNT")]
-        public static readonly RespireCommand OBJECT_REFCOUNT = new("OBJECT REFCOUNT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand OBJECT_REFCOUNT = new("OBJECT REFCOUNT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>PERSIST</c>.</summary>
-        public static readonly RespireCommand PERSIST = new("PERSIST", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand PERSIST = new("PERSIST", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>PEXPIRE</c>.</summary>
-        public static readonly RespireCommand PEXPIRE = new("PEXPIRE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand PEXPIRE = new("PEXPIRE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>PEXPIREAT</c>.</summary>
-        public static readonly RespireCommand PEXPIREAT = new("PEXPIREAT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand PEXPIREAT = new("PEXPIREAT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>PEXPIRETIME</c>.</summary>
-        public static readonly RespireCommand PEXPIRETIME = new("PEXPIRETIME", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand PEXPIRETIME = new("PEXPIRETIME", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>PTTL</c>.</summary>
-        public static readonly RespireCommand PTTL = new("PTTL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand PTTL = new("PTTL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>RANDOMKEY</c>.</summary>
-        public static readonly RespireCommand RANDOMKEY = new("RANDOMKEY", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand RANDOMKEY = new("RANDOMKEY", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>RENAME</c>.</summary>
-        public static readonly RespireCommand RENAME = new("RENAME", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand RENAME = new("RENAME", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>RENAMENX</c>.</summary>
-        public static readonly RespireCommand RENAMENX = new("RENAMENX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand RENAMENX = new("RENAMENX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>RESTORE</c>.</summary>
-        public static readonly RespireCommand RESTORE = new("RESTORE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand RESTORE = new("RESTORE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>SCAN</c>.</summary>
-        public static readonly RespireCommand SCAN = new("SCAN", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand SCAN = new("SCAN", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>SORT</c>.</summary>
-        public static readonly RespireCommand SORT = new("SORT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SORT = new("SORT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SORT_RO</c>.</summary>
-        public static readonly RespireCommand SORT_RO = new("SORT_RO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand SORT_RO = new("SORT_RO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>TOUCH</c>.</summary>
-        public static readonly RespireCommand TOUCH = new("TOUCH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand TOUCH = new("TOUCH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>TTL</c>.</summary>
-        public static readonly RespireCommand TTL = new("TTL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand TTL = new("TTL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>TYPE</c>.</summary>
-        public static readonly RespireCommand TYPE = new("TYPE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand TYPE = new("TYPE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>UNLINK</c>.</summary>
-        public static readonly RespireCommand UNLINK = new("UNLINK", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand UNLINK = new("UNLINK", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>WAIT</c>.</summary>
-        public static readonly RespireCommand WAIT = new("WAIT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand WAIT = new("WAIT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>WAITAOF</c>.</summary>
-        public static readonly RespireCommand WAITAOF = new("WAITAOF", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand WAITAOF = new("WAITAOF", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
     }
 
@@ -899,31 +899,31 @@ public static class RespireCommands
     public static class KeyDb
     {
         /// <summary><c>EXPIREMEMBER</c>.</summary>
-        public static readonly RespireCommand EXPIREMEMBER = new("EXPIREMEMBER", RespireCommandSource.KeyDb, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand EXPIREMEMBER = new("EXPIREMEMBER", RespireCommandSource.KeyDb, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>EXPIREMEMBERAT</c>.</summary>
-        public static readonly RespireCommand EXPIREMEMBERAT = new("EXPIREMEMBERAT", RespireCommandSource.KeyDb, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand EXPIREMEMBERAT = new("EXPIREMEMBERAT", RespireCommandSource.KeyDb, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>KEYDB.CRON</c>.</summary>
-        public static readonly RespireCommand KEYDB_CRON = new("KEYDB.CRON", RespireCommandSource.KeyDb, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand KEYDB_CRON = new("KEYDB.CRON", RespireCommandSource.KeyDb, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>KEYDB.HRENAME</c>.</summary>
-        public static readonly RespireCommand KEYDB_HRENAME = new("KEYDB.HRENAME", RespireCommandSource.KeyDb, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand KEYDB_HRENAME = new("KEYDB.HRENAME", RespireCommandSource.KeyDb, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>KEYDB.MEXISTS</c>.</summary>
-        public static readonly RespireCommand KEYDB_MEXISTS = new("KEYDB.MEXISTS", RespireCommandSource.KeyDb, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand KEYDB_MEXISTS = new("KEYDB.MEXISTS", RespireCommandSource.KeyDb, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>KEYDB.NHGET</c>.</summary>
-        public static readonly RespireCommand KEYDB_NHGET = new("KEYDB.NHGET", RespireCommandSource.KeyDb, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand KEYDB_NHGET = new("KEYDB.NHGET", RespireCommandSource.KeyDb, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>KEYDB.NHSET</c>.</summary>
-        public static readonly RespireCommand KEYDB_NHSET = new("KEYDB.NHSET", RespireCommandSource.KeyDb, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand KEYDB_NHSET = new("KEYDB.NHSET", RespireCommandSource.KeyDb, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>PEXPIREMEMBERAT</c>.</summary>
-        public static readonly RespireCommand PEXPIREMEMBERAT = new("PEXPIREMEMBERAT", RespireCommandSource.KeyDb, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand PEXPIREMEMBERAT = new("PEXPIREMEMBERAT", RespireCommandSource.KeyDb, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>REPLPING</c>.</summary>
-        public static readonly RespireCommand REPLPING = new("REPLPING", RespireCommandSource.KeyDb, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand REPLPING = new("REPLPING", RespireCommandSource.KeyDb, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
     }
 
@@ -931,76 +931,76 @@ public static class RespireCommands
     public static class List
     {
         /// <summary><c>BLMOVE</c>.</summary>
-        public static readonly RespireCommand BLMOVE = new("BLMOVE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand BLMOVE = new("BLMOVE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>BLMOVEM</c>.</summary>
-        public static readonly RespireCommand BLMOVEM = new("BLMOVEM", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand BLMOVEM = new("BLMOVEM", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>BLMPOP</c>.</summary>
-        public static readonly RespireCommand BLMPOP = new("BLMPOP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand BLMPOP = new("BLMPOP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>BLPOP</c>.</summary>
-        public static readonly RespireCommand BLPOP = new("BLPOP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand BLPOP = new("BLPOP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>BRPOP</c>.</summary>
-        public static readonly RespireCommand BRPOP = new("BRPOP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand BRPOP = new("BRPOP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>BRPOPLPUSH</c>.</summary>
-        public static readonly RespireCommand BRPOPLPUSH = new("BRPOPLPUSH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand BRPOPLPUSH = new("BRPOPLPUSH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>LINDEX</c>.</summary>
-        public static readonly RespireCommand LINDEX = new("LINDEX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand LINDEX = new("LINDEX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>LINSERT</c>.</summary>
-        public static readonly RespireCommand LINSERT = new("LINSERT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand LINSERT = new("LINSERT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>LLEN</c>.</summary>
-        public static readonly RespireCommand LLEN = new("LLEN", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand LLEN = new("LLEN", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>LMOVE</c>.</summary>
-        public static readonly RespireCommand LMOVE = new("LMOVE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand LMOVE = new("LMOVE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>LMOVEM</c>.</summary>
-        public static readonly RespireCommand LMOVEM = new("LMOVEM", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand LMOVEM = new("LMOVEM", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>LMPOP</c>.</summary>
-        public static readonly RespireCommand LMPOP = new("LMPOP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand LMPOP = new("LMPOP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>LPOP</c>.</summary>
-        public static readonly RespireCommand LPOP = new("LPOP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand LPOP = new("LPOP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>LPOS</c>.</summary>
-        public static readonly RespireCommand LPOS = new("LPOS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand LPOS = new("LPOS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>LPUSH</c>.</summary>
-        public static readonly RespireCommand LPUSH = new("LPUSH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand LPUSH = new("LPUSH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>LPUSHX</c>.</summary>
-        public static readonly RespireCommand LPUSHX = new("LPUSHX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand LPUSHX = new("LPUSHX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>LRANGE</c>.</summary>
-        public static readonly RespireCommand LRANGE = new("LRANGE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand LRANGE = new("LRANGE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>LREM</c>.</summary>
-        public static readonly RespireCommand LREM = new("LREM", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand LREM = new("LREM", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>LSET</c>.</summary>
-        public static readonly RespireCommand LSET = new("LSET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand LSET = new("LSET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteLastWins);
 
         /// <summary><c>LTRIM</c>.</summary>
-        public static readonly RespireCommand LTRIM = new("LTRIM", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand LTRIM = new("LTRIM", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>RPOP</c>.</summary>
-        public static readonly RespireCommand RPOP = new("RPOP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand RPOP = new("RPOP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>RPOPLPUSH</c>.</summary>
-        public static readonly RespireCommand RPOPLPUSH = new("RPOPLPUSH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand RPOPLPUSH = new("RPOPLPUSH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>RPUSH</c>.</summary>
-        public static readonly RespireCommand RPUSH = new("RPUSH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand RPUSH = new("RPUSH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>RPUSHX</c>.</summary>
-        public static readonly RespireCommand RPUSHX = new("RPUSHX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand RPUSHX = new("RPUSHX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
     }
 
@@ -1008,55 +1008,55 @@ public static class RespireCommands
     public static class PubSub
     {
         /// <summary><c>PSUBSCRIBE</c>.</summary>
-        public static readonly RespireCommand PSUBSCRIBE = new("PSUBSCRIBE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand PSUBSCRIBE = new("PSUBSCRIBE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>PUBLISH</c>.</summary>
-        public static readonly RespireCommand PUBLISH = new("PUBLISH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand PUBLISH = new("PUBLISH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>PUBSUB</c>.</summary>
-        public static readonly RespireCommand PUBSUB = new("PUBSUB", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand PUBSUB = new("PUBSUB", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>PUBSUB CHANNELS</c>.</summary>
         [RespireCommandCatalogName("PUBSUB CHANNELS")]
-        public static readonly RespireCommand PUBSUB_CHANNELS = new("PUBSUB CHANNELS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand PUBSUB_CHANNELS = new("PUBSUB CHANNELS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>PUBSUB HELP</c>.</summary>
         [RespireCommandCatalogName("PUBSUB HELP")]
-        public static readonly RespireCommand PUBSUB_HELP = new("PUBSUB HELP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand PUBSUB_HELP = new("PUBSUB HELP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>PUBSUB NUMPAT</c>.</summary>
         [RespireCommandCatalogName("PUBSUB NUMPAT")]
-        public static readonly RespireCommand PUBSUB_NUMPAT = new("PUBSUB NUMPAT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand PUBSUB_NUMPAT = new("PUBSUB NUMPAT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>PUBSUB NUMSUB</c>.</summary>
         [RespireCommandCatalogName("PUBSUB NUMSUB")]
-        public static readonly RespireCommand PUBSUB_NUMSUB = new("PUBSUB NUMSUB", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand PUBSUB_NUMSUB = new("PUBSUB NUMSUB", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>PUBSUB SHARDCHANNELS</c>.</summary>
         [RespireCommandCatalogName("PUBSUB SHARDCHANNELS")]
-        public static readonly RespireCommand PUBSUB_SHARDCHANNELS = new("PUBSUB SHARDCHANNELS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand PUBSUB_SHARDCHANNELS = new("PUBSUB SHARDCHANNELS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>PUBSUB SHARDNUMSUB</c>.</summary>
         [RespireCommandCatalogName("PUBSUB SHARDNUMSUB")]
-        public static readonly RespireCommand PUBSUB_SHARDNUMSUB = new("PUBSUB SHARDNUMSUB", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand PUBSUB_SHARDNUMSUB = new("PUBSUB SHARDNUMSUB", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>PUNSUBSCRIBE</c>.</summary>
-        public static readonly RespireCommand PUNSUBSCRIBE = new("PUNSUBSCRIBE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand PUNSUBSCRIBE = new("PUNSUBSCRIBE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SPUBLISH</c>.</summary>
-        public static readonly RespireCommand SPUBLISH = new("SPUBLISH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SPUBLISH = new("SPUBLISH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>SSUBSCRIBE</c>.</summary>
-        public static readonly RespireCommand SSUBSCRIBE = new("SSUBSCRIBE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SSUBSCRIBE = new("SSUBSCRIBE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SUBSCRIBE</c>.</summary>
-        public static readonly RespireCommand SUBSCRIBE = new("SUBSCRIBE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SUBSCRIBE = new("SUBSCRIBE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SUNSUBSCRIBE</c>.</summary>
-        public static readonly RespireCommand SUNSUBSCRIBE = new("SUNSUBSCRIBE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SUNSUBSCRIBE = new("SUNSUBSCRIBE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>UNSUBSCRIBE</c>.</summary>
-        public static readonly RespireCommand UNSUBSCRIBE = new("UNSUBSCRIBE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand UNSUBSCRIBE = new("UNSUBSCRIBE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
     }
 
@@ -1064,92 +1064,92 @@ public static class RespireCommands
     public static class Scripting
     {
         /// <summary><c>EVAL</c>.</summary>
-        public static readonly RespireCommand EVAL = new("EVAL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand EVAL = new("EVAL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>EVAL_RO</c>.</summary>
-        public static readonly RespireCommand EVAL_RO = new("EVAL_RO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand EVAL_RO = new("EVAL_RO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>EVALSHA</c>.</summary>
-        public static readonly RespireCommand EVALSHA = new("EVALSHA", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand EVALSHA = new("EVALSHA", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>EVALSHA_RO</c>.</summary>
-        public static readonly RespireCommand EVALSHA_RO = new("EVALSHA_RO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand EVALSHA_RO = new("EVALSHA_RO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>FCALL</c>.</summary>
-        public static readonly RespireCommand FCALL = new("FCALL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand FCALL = new("FCALL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>FCALL_RO</c>.</summary>
-        public static readonly RespireCommand FCALL_RO = new("FCALL_RO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand FCALL_RO = new("FCALL_RO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>FUNCTION</c>.</summary>
-        public static readonly RespireCommand FUNCTION = new("FUNCTION", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand FUNCTION = new("FUNCTION", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>FUNCTION DELETE</c>.</summary>
         [RespireCommandCatalogName("FUNCTION DELETE")]
-        public static readonly RespireCommand FUNCTION_DELETE = new("FUNCTION DELETE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand FUNCTION_DELETE = new("FUNCTION DELETE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ServerAdmin);
 
         /// <summary><c>FUNCTION DUMP</c>.</summary>
         [RespireCommandCatalogName("FUNCTION DUMP")]
-        public static readonly RespireCommand FUNCTION_DUMP = new("FUNCTION DUMP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand FUNCTION_DUMP = new("FUNCTION DUMP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>FUNCTION FLUSH</c>.</summary>
         [RespireCommandCatalogName("FUNCTION FLUSH")]
-        public static readonly RespireCommand FUNCTION_FLUSH = new("FUNCTION FLUSH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand FUNCTION_FLUSH = new("FUNCTION FLUSH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ServerAdmin);
 
         /// <summary><c>FUNCTION HELP</c>.</summary>
         [RespireCommandCatalogName("FUNCTION HELP")]
-        public static readonly RespireCommand FUNCTION_HELP = new("FUNCTION HELP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand FUNCTION_HELP = new("FUNCTION HELP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>FUNCTION KILL</c>.</summary>
         [RespireCommandCatalogName("FUNCTION KILL")]
-        public static readonly RespireCommand FUNCTION_KILL = new("FUNCTION KILL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand FUNCTION_KILL = new("FUNCTION KILL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.ServerAdmin);
 
         /// <summary><c>FUNCTION LIST</c>.</summary>
         [RespireCommandCatalogName("FUNCTION LIST")]
-        public static readonly RespireCommand FUNCTION_LIST = new("FUNCTION LIST", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand FUNCTION_LIST = new("FUNCTION LIST", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>FUNCTION LOAD</c>.</summary>
         [RespireCommandCatalogName("FUNCTION LOAD")]
-        public static readonly RespireCommand FUNCTION_LOAD = new("FUNCTION LOAD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand FUNCTION_LOAD = new("FUNCTION LOAD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ServerAdmin);
 
         /// <summary><c>FUNCTION RESTORE</c>.</summary>
         [RespireCommandCatalogName("FUNCTION RESTORE")]
-        public static readonly RespireCommand FUNCTION_RESTORE = new("FUNCTION RESTORE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand FUNCTION_RESTORE = new("FUNCTION RESTORE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ServerAdmin);
 
         /// <summary><c>FUNCTION STATS</c>.</summary>
         [RespireCommandCatalogName("FUNCTION STATS")]
-        public static readonly RespireCommand FUNCTION_STATS = new("FUNCTION STATS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand FUNCTION_STATS = new("FUNCTION STATS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SCRIPT</c>.</summary>
-        public static readonly RespireCommand SCRIPT = new("SCRIPT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SCRIPT = new("SCRIPT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SCRIPT DEBUG</c>.</summary>
         [RespireCommandCatalogName("SCRIPT DEBUG")]
-        public static readonly RespireCommand SCRIPT_DEBUG = new("SCRIPT DEBUG", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SCRIPT_DEBUG = new("SCRIPT DEBUG", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SCRIPT EXISTS</c>.</summary>
         [RespireCommandCatalogName("SCRIPT EXISTS")]
-        public static readonly RespireCommand SCRIPT_EXISTS = new("SCRIPT EXISTS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand SCRIPT_EXISTS = new("SCRIPT EXISTS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SCRIPT FLUSH</c>.</summary>
         [RespireCommandCatalogName("SCRIPT FLUSH")]
-        public static readonly RespireCommand SCRIPT_FLUSH = new("SCRIPT FLUSH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand SCRIPT_FLUSH = new("SCRIPT FLUSH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ServerAdmin);
 
         /// <summary><c>SCRIPT HELP</c>.</summary>
         [RespireCommandCatalogName("SCRIPT HELP")]
-        public static readonly RespireCommand SCRIPT_HELP = new("SCRIPT HELP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SCRIPT_HELP = new("SCRIPT HELP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SCRIPT KILL</c>.</summary>
         [RespireCommandCatalogName("SCRIPT KILL")]
-        public static readonly RespireCommand SCRIPT_KILL = new("SCRIPT KILL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SCRIPT_KILL = new("SCRIPT KILL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.ServerAdmin);
 
         /// <summary><c>SCRIPT LOAD</c>.</summary>
         [RespireCommandCatalogName("SCRIPT LOAD")]
-        public static readonly RespireCommand SCRIPT_LOAD = new("SCRIPT LOAD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand SCRIPT_LOAD = new("SCRIPT LOAD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ServerAdmin);
 
         /// <summary><c>SCRIPT SHOW</c>.</summary>
         [RespireCommandCatalogName("SCRIPT SHOW")]
-        public static readonly RespireCommand SCRIPT_SHOW = new("SCRIPT SHOW", RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SCRIPT_SHOW = new("SCRIPT SHOW", RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
     }
 
@@ -1157,98 +1157,98 @@ public static class RespireCommands
     public static class Search
     {
         /// <summary><c>FT._LIST</c>.</summary>
-        public static readonly RespireCommand FT_LIST = new("FT._LIST", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand FT_LIST = new("FT._LIST", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>FT.AGGREGATE</c>.</summary>
-        public static readonly RespireCommand FT_AGGREGATE = new("FT.AGGREGATE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand FT_AGGREGATE = new("FT.AGGREGATE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>FT.ALIASADD</c>.</summary>
-        public static readonly RespireCommand FT_ALIASADD = new("FT.ALIASADD", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand FT_ALIASADD = new("FT.ALIASADD", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>FT.ALIASDEL</c>.</summary>
-        public static readonly RespireCommand FT_ALIASDEL = new("FT.ALIASDEL", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand FT_ALIASDEL = new("FT.ALIASDEL", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>FT.ALIASLIST</c>.</summary>
-        public static readonly RespireCommand FT_ALIASLIST = new("FT.ALIASLIST", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand FT_ALIASLIST = new("FT.ALIASLIST", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>FT.ALIASUPDATE</c>.</summary>
-        public static readonly RespireCommand FT_ALIASUPDATE = new("FT.ALIASUPDATE", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand FT_ALIASUPDATE = new("FT.ALIASUPDATE", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>FT.ALTER</c>.</summary>
-        public static readonly RespireCommand FT_ALTER = new("FT.ALTER", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand FT_ALTER = new("FT.ALTER", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>FT.CONFIG GET</c>.</summary>
         [RespireCommandCatalogName("FT.CONFIG GET")]
-        public static readonly RespireCommand FT_CONFIG_GET = new("FT.CONFIG GET", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand FT_CONFIG_GET = new("FT.CONFIG GET", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>FT.CONFIG SET</c>.</summary>
         [RespireCommandCatalogName("FT.CONFIG SET")]
-        public static readonly RespireCommand FT_CONFIG_SET = new("FT.CONFIG SET", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand FT_CONFIG_SET = new("FT.CONFIG SET", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.ServerAdmin);
 
         /// <summary><c>FT.CREATE</c>.</summary>
-        public static readonly RespireCommand FT_CREATE = new("FT.CREATE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand FT_CREATE = new("FT.CREATE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>FT.CURSOR DEL</c>.</summary>
         [RespireCommandCatalogName("FT.CURSOR DEL")]
-        public static readonly RespireCommand FT_CURSOR_DEL = new("FT.CURSOR DEL", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand FT_CURSOR_DEL = new("FT.CURSOR DEL", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>FT.CURSOR READ</c>.</summary>
         [RespireCommandCatalogName("FT.CURSOR READ")]
-        public static readonly RespireCommand FT_CURSOR_READ = new("FT.CURSOR READ", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand FT_CURSOR_READ = new("FT.CURSOR READ", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>FT.DICTADD</c>.</summary>
-        public static readonly RespireCommand FT_DICTADD = new("FT.DICTADD", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand FT_DICTADD = new("FT.DICTADD", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>FT.DICTDEL</c>.</summary>
-        public static readonly RespireCommand FT_DICTDEL = new("FT.DICTDEL", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand FT_DICTDEL = new("FT.DICTDEL", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>FT.DICTDUMP</c>.</summary>
-        public static readonly RespireCommand FT_DICTDUMP = new("FT.DICTDUMP", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand FT_DICTDUMP = new("FT.DICTDUMP", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>FT.DROPINDEX</c>.</summary>
-        public static readonly RespireCommand FT_DROPINDEX = new("FT.DROPINDEX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand FT_DROPINDEX = new("FT.DROPINDEX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>FT.EXPLAIN</c>.</summary>
-        public static readonly RespireCommand FT_EXPLAIN = new("FT.EXPLAIN", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand FT_EXPLAIN = new("FT.EXPLAIN", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>FT.EXPLAINCLI</c>.</summary>
-        public static readonly RespireCommand FT_EXPLAINCLI = new("FT.EXPLAINCLI", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand FT_EXPLAINCLI = new("FT.EXPLAINCLI", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>FT.HYBRID</c>.</summary>
-        public static readonly RespireCommand FT_HYBRID = new("FT.HYBRID", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand FT_HYBRID = new("FT.HYBRID", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>FT.INFO</c>.</summary>
-        public static readonly RespireCommand FT_INFO = new("FT.INFO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand FT_INFO = new("FT.INFO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>FT.PROFILE</c>.</summary>
-        public static readonly RespireCommand FT_PROFILE = new("FT.PROFILE", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand FT_PROFILE = new("FT.PROFILE", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>FT.SEARCH</c>.</summary>
-        public static readonly RespireCommand FT_SEARCH = new("FT.SEARCH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand FT_SEARCH = new("FT.SEARCH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>FT.SPELLCHECK</c>.</summary>
-        public static readonly RespireCommand FT_SPELLCHECK = new("FT.SPELLCHECK", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand FT_SPELLCHECK = new("FT.SPELLCHECK", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>FT.SUGADD</c>.</summary>
-        public static readonly RespireCommand FT_SUGADD = new("FT.SUGADD", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand FT_SUGADD = new("FT.SUGADD", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>FT.SUGDEL</c>.</summary>
-        public static readonly RespireCommand FT_SUGDEL = new("FT.SUGDEL", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand FT_SUGDEL = new("FT.SUGDEL", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>FT.SUGGET</c>.</summary>
-        public static readonly RespireCommand FT_SUGGET = new("FT.SUGGET", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand FT_SUGGET = new("FT.SUGGET", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>FT.SUGLEN</c>.</summary>
-        public static readonly RespireCommand FT_SUGLEN = new("FT.SUGLEN", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand FT_SUGLEN = new("FT.SUGLEN", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>FT.SYNDUMP</c>.</summary>
-        public static readonly RespireCommand FT_SYNDUMP = new("FT.SYNDUMP", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand FT_SYNDUMP = new("FT.SYNDUMP", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>FT.SYNUPDATE</c>.</summary>
-        public static readonly RespireCommand FT_SYNUPDATE = new("FT.SYNUPDATE", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand FT_SYNUPDATE = new("FT.SYNUPDATE", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>FT.TAGVALS</c>.</summary>
-        public static readonly RespireCommand FT_TAGVALS = new("FT.TAGVALS", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand FT_TAGVALS = new("FT.TAGVALS", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
     }
 
@@ -1256,107 +1256,107 @@ public static class RespireCommands
     public static class Sentinel
     {
         /// <summary><c>SENTINEL</c>.</summary>
-        public static readonly RespireCommand SENTINEL = new("SENTINEL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SENTINEL = new("SENTINEL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SENTINEL CKQUORUM</c>.</summary>
         [RespireCommandCatalogName("SENTINEL CKQUORUM")]
-        public static readonly RespireCommand SENTINEL_CKQUORUM = new("SENTINEL CKQUORUM", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SENTINEL_CKQUORUM = new("SENTINEL CKQUORUM", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SENTINEL CONFIG</c>.</summary>
         [RespireCommandCatalogName("SENTINEL CONFIG")]
-        public static readonly RespireCommand SENTINEL_CONFIG = new("SENTINEL CONFIG", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SENTINEL_CONFIG = new("SENTINEL CONFIG", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SENTINEL DEBUG</c>.</summary>
         [RespireCommandCatalogName("SENTINEL DEBUG")]
-        public static readonly RespireCommand SENTINEL_DEBUG = new("SENTINEL DEBUG", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SENTINEL_DEBUG = new("SENTINEL DEBUG", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SENTINEL FAILOVER</c>.</summary>
         [RespireCommandCatalogName("SENTINEL FAILOVER")]
-        public static readonly RespireCommand SENTINEL_FAILOVER = new("SENTINEL FAILOVER", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SENTINEL_FAILOVER = new("SENTINEL FAILOVER", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SENTINEL FLUSHCONFIG</c>.</summary>
         [RespireCommandCatalogName("SENTINEL FLUSHCONFIG")]
-        public static readonly RespireCommand SENTINEL_FLUSHCONFIG = new("SENTINEL FLUSHCONFIG", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SENTINEL_FLUSHCONFIG = new("SENTINEL FLUSHCONFIG", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SENTINEL GET-MASTER-ADDR-BY-NAME</c>.</summary>
         [RespireCommandCatalogName("SENTINEL GET-MASTER-ADDR-BY-NAME")]
-        public static readonly RespireCommand SENTINEL_GET_MASTER_ADDR_BY_NAME = new("SENTINEL GET-MASTER-ADDR-BY-NAME", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SENTINEL_GET_MASTER_ADDR_BY_NAME = new("SENTINEL GET-MASTER-ADDR-BY-NAME", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SENTINEL GET-PRIMARY-ADDR-BY-NAME</c>.</summary>
         [RespireCommandCatalogName("SENTINEL GET-PRIMARY-ADDR-BY-NAME")]
-        public static readonly RespireCommand SENTINEL_GET_PRIMARY_ADDR_BY_NAME = new("SENTINEL GET-PRIMARY-ADDR-BY-NAME", RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SENTINEL_GET_PRIMARY_ADDR_BY_NAME = new("SENTINEL GET-PRIMARY-ADDR-BY-NAME", RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SENTINEL HELP</c>.</summary>
         [RespireCommandCatalogName("SENTINEL HELP")]
-        public static readonly RespireCommand SENTINEL_HELP = new("SENTINEL HELP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SENTINEL_HELP = new("SENTINEL HELP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SENTINEL INFO-CACHE</c>.</summary>
         [RespireCommandCatalogName("SENTINEL INFO-CACHE")]
-        public static readonly RespireCommand SENTINEL_INFO_CACHE = new("SENTINEL INFO-CACHE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SENTINEL_INFO_CACHE = new("SENTINEL INFO-CACHE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SENTINEL IS-MASTER-DOWN-BY-ADDR</c>.</summary>
         [RespireCommandCatalogName("SENTINEL IS-MASTER-DOWN-BY-ADDR")]
-        public static readonly RespireCommand SENTINEL_IS_MASTER_DOWN_BY_ADDR = new("SENTINEL IS-MASTER-DOWN-BY-ADDR", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SENTINEL_IS_MASTER_DOWN_BY_ADDR = new("SENTINEL IS-MASTER-DOWN-BY-ADDR", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SENTINEL IS-PRIMARY-DOWN-BY-ADDR</c>.</summary>
         [RespireCommandCatalogName("SENTINEL IS-PRIMARY-DOWN-BY-ADDR")]
-        public static readonly RespireCommand SENTINEL_IS_PRIMARY_DOWN_BY_ADDR = new("SENTINEL IS-PRIMARY-DOWN-BY-ADDR", RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SENTINEL_IS_PRIMARY_DOWN_BY_ADDR = new("SENTINEL IS-PRIMARY-DOWN-BY-ADDR", RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SENTINEL MASTER</c>.</summary>
         [RespireCommandCatalogName("SENTINEL MASTER")]
-        public static readonly RespireCommand SENTINEL_MASTER = new("SENTINEL MASTER", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SENTINEL_MASTER = new("SENTINEL MASTER", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SENTINEL MASTERS</c>.</summary>
         [RespireCommandCatalogName("SENTINEL MASTERS")]
-        public static readonly RespireCommand SENTINEL_MASTERS = new("SENTINEL MASTERS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SENTINEL_MASTERS = new("SENTINEL MASTERS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SENTINEL MONITOR</c>.</summary>
         [RespireCommandCatalogName("SENTINEL MONITOR")]
-        public static readonly RespireCommand SENTINEL_MONITOR = new("SENTINEL MONITOR", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SENTINEL_MONITOR = new("SENTINEL MONITOR", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SENTINEL MYID</c>.</summary>
         [RespireCommandCatalogName("SENTINEL MYID")]
-        public static readonly RespireCommand SENTINEL_MYID = new("SENTINEL MYID", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SENTINEL_MYID = new("SENTINEL MYID", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SENTINEL PENDING-SCRIPTS</c>.</summary>
         [RespireCommandCatalogName("SENTINEL PENDING-SCRIPTS")]
-        public static readonly RespireCommand SENTINEL_PENDING_SCRIPTS = new("SENTINEL PENDING-SCRIPTS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SENTINEL_PENDING_SCRIPTS = new("SENTINEL PENDING-SCRIPTS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SENTINEL PRIMARIES</c>.</summary>
         [RespireCommandCatalogName("SENTINEL PRIMARIES")]
-        public static readonly RespireCommand SENTINEL_PRIMARIES = new("SENTINEL PRIMARIES", RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SENTINEL_PRIMARIES = new("SENTINEL PRIMARIES", RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SENTINEL PRIMARY</c>.</summary>
         [RespireCommandCatalogName("SENTINEL PRIMARY")]
-        public static readonly RespireCommand SENTINEL_PRIMARY = new("SENTINEL PRIMARY", RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SENTINEL_PRIMARY = new("SENTINEL PRIMARY", RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SENTINEL REMOVE</c>.</summary>
         [RespireCommandCatalogName("SENTINEL REMOVE")]
-        public static readonly RespireCommand SENTINEL_REMOVE = new("SENTINEL REMOVE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SENTINEL_REMOVE = new("SENTINEL REMOVE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SENTINEL REPLICAS</c>.</summary>
         [RespireCommandCatalogName("SENTINEL REPLICAS")]
-        public static readonly RespireCommand SENTINEL_REPLICAS = new("SENTINEL REPLICAS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SENTINEL_REPLICAS = new("SENTINEL REPLICAS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SENTINEL RESET</c>.</summary>
         [RespireCommandCatalogName("SENTINEL RESET")]
-        public static readonly RespireCommand SENTINEL_RESET = new("SENTINEL RESET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SENTINEL_RESET = new("SENTINEL RESET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SENTINEL SENTINELS</c>.</summary>
         [RespireCommandCatalogName("SENTINEL SENTINELS")]
-        public static readonly RespireCommand SENTINEL_SENTINELS = new("SENTINEL SENTINELS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SENTINEL_SENTINELS = new("SENTINEL SENTINELS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SENTINEL SET</c>.</summary>
         [RespireCommandCatalogName("SENTINEL SET")]
-        public static readonly RespireCommand SENTINEL_SET = new("SENTINEL SET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SENTINEL_SET = new("SENTINEL SET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SENTINEL SIMULATE-FAILURE</c>.</summary>
         [RespireCommandCatalogName("SENTINEL SIMULATE-FAILURE")]
-        public static readonly RespireCommand SENTINEL_SIMULATE_FAILURE = new("SENTINEL SIMULATE-FAILURE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SENTINEL_SIMULATE_FAILURE = new("SENTINEL SIMULATE-FAILURE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SENTINEL SLAVES</c>.</summary>
         [RespireCommandCatalogName("SENTINEL SLAVES")]
-        public static readonly RespireCommand SENTINEL_SLAVES = new("SENTINEL SLAVES", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SENTINEL_SLAVES = new("SENTINEL SLAVES", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
     }
 
@@ -1364,358 +1364,358 @@ public static class RespireCommands
     public static class Server
     {
         /// <summary><c>ACL</c>.</summary>
-        public static readonly RespireCommand ACL = new("ACL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand ACL = new("ACL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>ACL CAT</c>.</summary>
         [RespireCommandCatalogName("ACL CAT")]
-        public static readonly RespireCommand ACL_CAT = new("ACL CAT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand ACL_CAT = new("ACL CAT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>ACL DELUSER</c>.</summary>
         [RespireCommandCatalogName("ACL DELUSER")]
-        public static readonly RespireCommand ACL_DELUSER = new("ACL DELUSER", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand ACL_DELUSER = new("ACL DELUSER", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.ServerAdmin);
 
         /// <summary><c>ACL DRYRUN</c>.</summary>
         [RespireCommandCatalogName("ACL DRYRUN")]
-        public static readonly RespireCommand ACL_DRYRUN = new("ACL DRYRUN", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand ACL_DRYRUN = new("ACL DRYRUN", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>ACL GENPASS</c>.</summary>
         [RespireCommandCatalogName("ACL GENPASS")]
-        public static readonly RespireCommand ACL_GENPASS = new("ACL GENPASS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand ACL_GENPASS = new("ACL GENPASS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>ACL GETUSER</c>.</summary>
         [RespireCommandCatalogName("ACL GETUSER")]
-        public static readonly RespireCommand ACL_GETUSER = new("ACL GETUSER", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand ACL_GETUSER = new("ACL GETUSER", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>ACL HELP</c>.</summary>
         [RespireCommandCatalogName("ACL HELP")]
-        public static readonly RespireCommand ACL_HELP = new("ACL HELP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand ACL_HELP = new("ACL HELP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>ACL LIST</c>.</summary>
         [RespireCommandCatalogName("ACL LIST")]
-        public static readonly RespireCommand ACL_LIST = new("ACL LIST", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand ACL_LIST = new("ACL LIST", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>ACL LOAD</c>.</summary>
         [RespireCommandCatalogName("ACL LOAD")]
-        public static readonly RespireCommand ACL_LOAD = new("ACL LOAD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand ACL_LOAD = new("ACL LOAD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.ServerAdmin);
 
         /// <summary><c>ACL LOG</c>.</summary>
         [RespireCommandCatalogName("ACL LOG")]
-        public static readonly RespireCommand ACL_LOG = new("ACL LOG", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand ACL_LOG = new("ACL LOG", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>ACL SAVE</c>.</summary>
         [RespireCommandCatalogName("ACL SAVE")]
-        public static readonly RespireCommand ACL_SAVE = new("ACL SAVE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand ACL_SAVE = new("ACL SAVE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.ServerAdmin);
 
         /// <summary><c>ACL SETUSER</c>.</summary>
         [RespireCommandCatalogName("ACL SETUSER")]
-        public static readonly RespireCommand ACL_SETUSER = new("ACL SETUSER", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand ACL_SETUSER = new("ACL SETUSER", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.ServerAdmin);
 
         /// <summary><c>ACL USERS</c>.</summary>
         [RespireCommandCatalogName("ACL USERS")]
-        public static readonly RespireCommand ACL_USERS = new("ACL USERS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand ACL_USERS = new("ACL USERS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>ACL WHOAMI</c>.</summary>
         [RespireCommandCatalogName("ACL WHOAMI")]
-        public static readonly RespireCommand ACL_WHOAMI = new("ACL WHOAMI", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand ACL_WHOAMI = new("ACL WHOAMI", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>BACKUP</c>.</summary>
-        public static readonly RespireCommand BACKUP = new("BACKUP", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand BACKUP = new("BACKUP", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>BACKUP ABORT</c>.</summary>
         [RespireCommandCatalogName("BACKUP ABORT")]
-        public static readonly RespireCommand BACKUP_ABORT = new("BACKUP ABORT", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand BACKUP_ABORT = new("BACKUP ABORT", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>BACKUP CLEANUP</c>.</summary>
         [RespireCommandCatalogName("BACKUP CLEANUP")]
-        public static readonly RespireCommand BACKUP_CLEANUP = new("BACKUP CLEANUP", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand BACKUP_CLEANUP = new("BACKUP CLEANUP", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>BACKUP HELP</c>.</summary>
         [RespireCommandCatalogName("BACKUP HELP")]
-        public static readonly RespireCommand BACKUP_HELP = new("BACKUP HELP", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand BACKUP_HELP = new("BACKUP HELP", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>BACKUP LIST</c>.</summary>
         [RespireCommandCatalogName("BACKUP LIST")]
-        public static readonly RespireCommand BACKUP_LIST = new("BACKUP LIST", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand BACKUP_LIST = new("BACKUP LIST", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>BACKUP SEAL</c>.</summary>
         [RespireCommandCatalogName("BACKUP SEAL")]
-        public static readonly RespireCommand BACKUP_SEAL = new("BACKUP SEAL", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand BACKUP_SEAL = new("BACKUP SEAL", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>BACKUP START</c>.</summary>
         [RespireCommandCatalogName("BACKUP START")]
-        public static readonly RespireCommand BACKUP_START = new("BACKUP START", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand BACKUP_START = new("BACKUP START", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>BACKUP STATUS</c>.</summary>
         [RespireCommandCatalogName("BACKUP STATUS")]
-        public static readonly RespireCommand BACKUP_STATUS = new("BACKUP STATUS", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand BACKUP_STATUS = new("BACKUP STATUS", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>BGREWRITEAOF</c>.</summary>
-        public static readonly RespireCommand BGREWRITEAOF = new("BGREWRITEAOF", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand BGREWRITEAOF = new("BGREWRITEAOF", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.ServerAdmin);
 
         /// <summary><c>BGSAVE</c>.</summary>
-        public static readonly RespireCommand BGSAVE = new("BGSAVE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand BGSAVE = new("BGSAVE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.ServerAdmin);
 
         /// <summary><c>COMMAND</c>.</summary>
-        public static readonly RespireCommand COMMAND = new("COMMAND", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand COMMAND = new("COMMAND", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Connection);
 
         /// <summary><c>COMMAND COUNT</c>.</summary>
         [RespireCommandCatalogName("COMMAND COUNT")]
-        public static readonly RespireCommand COMMAND_COUNT = new("COMMAND COUNT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand COMMAND_COUNT = new("COMMAND COUNT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Connection);
 
         /// <summary><c>COMMAND DOCS</c>.</summary>
         [RespireCommandCatalogName("COMMAND DOCS")]
-        public static readonly RespireCommand COMMAND_DOCS = new("COMMAND DOCS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand COMMAND_DOCS = new("COMMAND DOCS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Connection);
 
         /// <summary><c>COMMAND GETKEYS</c>.</summary>
         [RespireCommandCatalogName("COMMAND GETKEYS")]
-        public static readonly RespireCommand COMMAND_GETKEYS = new("COMMAND GETKEYS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand COMMAND_GETKEYS = new("COMMAND GETKEYS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Connection);
 
         /// <summary><c>COMMAND GETKEYSANDFLAGS</c>.</summary>
         [RespireCommandCatalogName("COMMAND GETKEYSANDFLAGS")]
-        public static readonly RespireCommand COMMAND_GETKEYSANDFLAGS = new("COMMAND GETKEYSANDFLAGS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand COMMAND_GETKEYSANDFLAGS = new("COMMAND GETKEYSANDFLAGS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Connection);
 
         /// <summary><c>COMMAND HELP</c>.</summary>
         [RespireCommandCatalogName("COMMAND HELP")]
-        public static readonly RespireCommand COMMAND_HELP = new("COMMAND HELP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand COMMAND_HELP = new("COMMAND HELP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>COMMAND INFO</c>.</summary>
         [RespireCommandCatalogName("COMMAND INFO")]
-        public static readonly RespireCommand COMMAND_INFO = new("COMMAND INFO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand COMMAND_INFO = new("COMMAND INFO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Connection);
 
         /// <summary><c>COMMAND LIST</c>.</summary>
         [RespireCommandCatalogName("COMMAND LIST")]
-        public static readonly RespireCommand COMMAND_LIST = new("COMMAND LIST", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand COMMAND_LIST = new("COMMAND LIST", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Connection);
 
         /// <summary><c>COMMANDLOG</c>.</summary>
-        public static readonly RespireCommand COMMANDLOG = new("COMMANDLOG", RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand COMMANDLOG = new("COMMANDLOG", RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>COMMANDLOG GET</c>.</summary>
         [RespireCommandCatalogName("COMMANDLOG GET")]
-        public static readonly RespireCommand COMMANDLOG_GET = new("COMMANDLOG GET", RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand COMMANDLOG_GET = new("COMMANDLOG GET", RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>COMMANDLOG HELP</c>.</summary>
         [RespireCommandCatalogName("COMMANDLOG HELP")]
-        public static readonly RespireCommand COMMANDLOG_HELP = new("COMMANDLOG HELP", RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand COMMANDLOG_HELP = new("COMMANDLOG HELP", RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>COMMANDLOG LEN</c>.</summary>
         [RespireCommandCatalogName("COMMANDLOG LEN")]
-        public static readonly RespireCommand COMMANDLOG_LEN = new("COMMANDLOG LEN", RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand COMMANDLOG_LEN = new("COMMANDLOG LEN", RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>COMMANDLOG RESET</c>.</summary>
         [RespireCommandCatalogName("COMMANDLOG RESET")]
-        public static readonly RespireCommand COMMANDLOG_RESET = new("COMMANDLOG RESET", RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand COMMANDLOG_RESET = new("COMMANDLOG RESET", RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CONFIG</c>.</summary>
-        public static readonly RespireCommand CONFIG = new("CONFIG", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CONFIG = new("CONFIG", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CONFIG GET</c>.</summary>
         [RespireCommandCatalogName("CONFIG GET")]
-        public static readonly RespireCommand CONFIG_GET = new("CONFIG GET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand CONFIG_GET = new("CONFIG GET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Connection);
 
         /// <summary><c>CONFIG HELP</c>.</summary>
         [RespireCommandCatalogName("CONFIG HELP")]
-        public static readonly RespireCommand CONFIG_HELP = new("CONFIG HELP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CONFIG_HELP = new("CONFIG HELP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>CONFIG RESETSTAT</c>.</summary>
         [RespireCommandCatalogName("CONFIG RESETSTAT")]
-        public static readonly RespireCommand CONFIG_RESETSTAT = new("CONFIG RESETSTAT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CONFIG_RESETSTAT = new("CONFIG RESETSTAT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.ServerAdmin);
 
         /// <summary><c>CONFIG REWRITE</c>.</summary>
         [RespireCommandCatalogName("CONFIG REWRITE")]
-        public static readonly RespireCommand CONFIG_REWRITE = new("CONFIG REWRITE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CONFIG_REWRITE = new("CONFIG REWRITE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.ServerAdmin);
 
         /// <summary><c>CONFIG SET</c>.</summary>
         [RespireCommandCatalogName("CONFIG SET")]
-        public static readonly RespireCommand CONFIG_SET = new("CONFIG SET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand CONFIG_SET = new("CONFIG SET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.ServerAdmin);
 
         /// <summary><c>DBSIZE</c>.</summary>
-        public static readonly RespireCommand DBSIZE = new("DBSIZE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand DBSIZE = new("DBSIZE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>DEBUG</c>.</summary>
-        public static readonly RespireCommand DEBUG = new("DEBUG", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand DEBUG = new("DEBUG", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>FAILOVER</c>.</summary>
-        public static readonly RespireCommand FAILOVER = new("FAILOVER", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand FAILOVER = new("FAILOVER", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.ServerAdmin);
 
         /// <summary><c>FLUSHALL</c>.</summary>
-        public static readonly RespireCommand FLUSHALL = new("FLUSHALL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand FLUSHALL = new("FLUSHALL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.ServerAdmin);
 
         /// <summary><c>FLUSHDB</c>.</summary>
-        public static readonly RespireCommand FLUSHDB = new("FLUSHDB", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand FLUSHDB = new("FLUSHDB", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.ServerAdmin);
 
         /// <summary><c>HOTKEYS</c>.</summary>
-        public static readonly RespireCommand HOTKEYS = new("HOTKEYS", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand HOTKEYS = new("HOTKEYS", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>HOTKEYS GET</c>.</summary>
         [RespireCommandCatalogName("HOTKEYS GET")]
-        public static readonly RespireCommand HOTKEYS_GET = new("HOTKEYS GET", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand HOTKEYS_GET = new("HOTKEYS GET", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>HOTKEYS HELP</c>.</summary>
         [RespireCommandCatalogName("HOTKEYS HELP")]
-        public static readonly RespireCommand HOTKEYS_HELP = new("HOTKEYS HELP", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand HOTKEYS_HELP = new("HOTKEYS HELP", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>HOTKEYS RESET</c>.</summary>
         [RespireCommandCatalogName("HOTKEYS RESET")]
-        public static readonly RespireCommand HOTKEYS_RESET = new("HOTKEYS RESET", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand HOTKEYS_RESET = new("HOTKEYS RESET", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>HOTKEYS START</c>.</summary>
         [RespireCommandCatalogName("HOTKEYS START")]
-        public static readonly RespireCommand HOTKEYS_START = new("HOTKEYS START", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand HOTKEYS_START = new("HOTKEYS START", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>HOTKEYS STOP</c>.</summary>
         [RespireCommandCatalogName("HOTKEYS STOP")]
-        public static readonly RespireCommand HOTKEYS_STOP = new("HOTKEYS STOP", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand HOTKEYS_STOP = new("HOTKEYS STOP", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>INFO</c>.</summary>
-        public static readonly RespireCommand INFO = new("INFO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand INFO = new("INFO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Connection);
 
         /// <summary><c>LASTSAVE</c>.</summary>
-        public static readonly RespireCommand LASTSAVE = new("LASTSAVE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand LASTSAVE = new("LASTSAVE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Connection);
 
         /// <summary><c>LATENCY</c>.</summary>
-        public static readonly RespireCommand LATENCY = new("LATENCY", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand LATENCY = new("LATENCY", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>LATENCY DOCTOR</c>.</summary>
         [RespireCommandCatalogName("LATENCY DOCTOR")]
-        public static readonly RespireCommand LATENCY_DOCTOR = new("LATENCY DOCTOR", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand LATENCY_DOCTOR = new("LATENCY DOCTOR", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>LATENCY GRAPH</c>.</summary>
         [RespireCommandCatalogName("LATENCY GRAPH")]
-        public static readonly RespireCommand LATENCY_GRAPH = new("LATENCY GRAPH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand LATENCY_GRAPH = new("LATENCY GRAPH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>LATENCY HELP</c>.</summary>
         [RespireCommandCatalogName("LATENCY HELP")]
-        public static readonly RespireCommand LATENCY_HELP = new("LATENCY HELP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand LATENCY_HELP = new("LATENCY HELP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>LATENCY HISTOGRAM</c>.</summary>
         [RespireCommandCatalogName("LATENCY HISTOGRAM")]
-        public static readonly RespireCommand LATENCY_HISTOGRAM = new("LATENCY HISTOGRAM", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand LATENCY_HISTOGRAM = new("LATENCY HISTOGRAM", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>LATENCY HISTORY</c>.</summary>
         [RespireCommandCatalogName("LATENCY HISTORY")]
-        public static readonly RespireCommand LATENCY_HISTORY = new("LATENCY HISTORY", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand LATENCY_HISTORY = new("LATENCY HISTORY", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>LATENCY LATEST</c>.</summary>
         [RespireCommandCatalogName("LATENCY LATEST")]
-        public static readonly RespireCommand LATENCY_LATEST = new("LATENCY LATEST", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand LATENCY_LATEST = new("LATENCY LATEST", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>LATENCY RESET</c>.</summary>
         [RespireCommandCatalogName("LATENCY RESET")]
-        public static readonly RespireCommand LATENCY_RESET = new("LATENCY RESET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand LATENCY_RESET = new("LATENCY RESET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.ServerAdmin);
 
         /// <summary><c>LOLWUT</c>.</summary>
-        public static readonly RespireCommand LOLWUT = new("LOLWUT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand LOLWUT = new("LOLWUT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>MEMORY</c>.</summary>
-        public static readonly RespireCommand MEMORY = new("MEMORY", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand MEMORY = new("MEMORY", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>MEMORY DOCTOR</c>.</summary>
         [RespireCommandCatalogName("MEMORY DOCTOR")]
-        public static readonly RespireCommand MEMORY_DOCTOR = new("MEMORY DOCTOR", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand MEMORY_DOCTOR = new("MEMORY DOCTOR", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>MEMORY HELP</c>.</summary>
         [RespireCommandCatalogName("MEMORY HELP")]
-        public static readonly RespireCommand MEMORY_HELP = new("MEMORY HELP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand MEMORY_HELP = new("MEMORY HELP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>MEMORY MALLOC-STATS</c>.</summary>
         [RespireCommandCatalogName("MEMORY MALLOC-STATS")]
-        public static readonly RespireCommand MEMORY_MALLOC_STATS = new("MEMORY MALLOC-STATS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand MEMORY_MALLOC_STATS = new("MEMORY MALLOC-STATS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>MEMORY PURGE</c>.</summary>
         [RespireCommandCatalogName("MEMORY PURGE")]
-        public static readonly RespireCommand MEMORY_PURGE = new("MEMORY PURGE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand MEMORY_PURGE = new("MEMORY PURGE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ServerAdmin);
 
         /// <summary><c>MEMORY STATS</c>.</summary>
         [RespireCommandCatalogName("MEMORY STATS")]
-        public static readonly RespireCommand MEMORY_STATS = new("MEMORY STATS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand MEMORY_STATS = new("MEMORY STATS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>MEMORY USAGE</c>.</summary>
         [RespireCommandCatalogName("MEMORY USAGE")]
-        public static readonly RespireCommand MEMORY_USAGE = new("MEMORY USAGE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand MEMORY_USAGE = new("MEMORY USAGE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>MODULE</c>.</summary>
-        public static readonly RespireCommand MODULE = new("MODULE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand MODULE = new("MODULE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>MODULE HELP</c>.</summary>
         [RespireCommandCatalogName("MODULE HELP")]
-        public static readonly RespireCommand MODULE_HELP = new("MODULE HELP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand MODULE_HELP = new("MODULE HELP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>MODULE LIST</c>.</summary>
         [RespireCommandCatalogName("MODULE LIST")]
-        public static readonly RespireCommand MODULE_LIST = new("MODULE LIST", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand MODULE_LIST = new("MODULE LIST", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>MODULE LOAD</c>.</summary>
         [RespireCommandCatalogName("MODULE LOAD")]
-        public static readonly RespireCommand MODULE_LOAD = new("MODULE LOAD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand MODULE_LOAD = new("MODULE LOAD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.ServerAdmin);
 
         /// <summary><c>MODULE LOADEX</c>.</summary>
         [RespireCommandCatalogName("MODULE LOADEX")]
-        public static readonly RespireCommand MODULE_LOADEX = new("MODULE LOADEX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand MODULE_LOADEX = new("MODULE LOADEX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.ServerAdmin);
 
         /// <summary><c>MODULE UNLOAD</c>.</summary>
         [RespireCommandCatalogName("MODULE UNLOAD")]
-        public static readonly RespireCommand MODULE_UNLOAD = new("MODULE UNLOAD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand MODULE_UNLOAD = new("MODULE UNLOAD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.ServerAdmin);
 
         /// <summary><c>MONITOR</c>.</summary>
-        public static readonly RespireCommand MONITOR = new("MONITOR", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand MONITOR = new("MONITOR", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>PSYNC</c>.</summary>
-        public static readonly RespireCommand PSYNC = new("PSYNC", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand PSYNC = new("PSYNC", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>REPLCONF</c>.</summary>
-        public static readonly RespireCommand REPLCONF = new("REPLCONF", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand REPLCONF = new("REPLCONF", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>REPLICAOF</c>.</summary>
-        public static readonly RespireCommand REPLICAOF = new("REPLICAOF", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand REPLICAOF = new("REPLICAOF", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.ServerAdmin);
 
         /// <summary><c>RESTORE-ASKING</c>.</summary>
-        public static readonly RespireCommand RESTORE_ASKING = new("RESTORE-ASKING", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand RESTORE_ASKING = new("RESTORE-ASKING", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>ROLE</c>.</summary>
-        public static readonly RespireCommand ROLE = new("ROLE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand ROLE = new("ROLE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Connection);
 
         /// <summary><c>SAVE</c>.</summary>
-        public static readonly RespireCommand SAVE = new("SAVE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SAVE = new("SAVE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.ServerAdmin);
 
         /// <summary><c>SFLUSH</c>.</summary>
-        public static readonly RespireCommand SFLUSH = new("SFLUSH", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SFLUSH = new("SFLUSH", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SHUTDOWN</c>.</summary>
-        public static readonly RespireCommand SHUTDOWN = new("SHUTDOWN", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SHUTDOWN = new("SHUTDOWN", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SLAVEOF</c>.</summary>
-        public static readonly RespireCommand SLAVEOF = new("SLAVEOF", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SLAVEOF = new("SLAVEOF", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.ServerAdmin);
 
         /// <summary><c>SLOWLOG</c>.</summary>
-        public static readonly RespireCommand SLOWLOG = new("SLOWLOG", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SLOWLOG = new("SLOWLOG", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SLOWLOG GET</c>.</summary>
         [RespireCommandCatalogName("SLOWLOG GET")]
-        public static readonly RespireCommand SLOWLOG_GET = new("SLOWLOG GET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand SLOWLOG_GET = new("SLOWLOG GET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SLOWLOG HELP</c>.</summary>
         [RespireCommandCatalogName("SLOWLOG HELP")]
-        public static readonly RespireCommand SLOWLOG_HELP = new("SLOWLOG HELP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SLOWLOG_HELP = new("SLOWLOG HELP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SLOWLOG LEN</c>.</summary>
         [RespireCommandCatalogName("SLOWLOG LEN")]
-        public static readonly RespireCommand SLOWLOG_LEN = new("SLOWLOG LEN", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand SLOWLOG_LEN = new("SLOWLOG LEN", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>SLOWLOG RESET</c>.</summary>
         [RespireCommandCatalogName("SLOWLOG RESET")]
-        public static readonly RespireCommand SLOWLOG_RESET = new("SLOWLOG RESET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SLOWLOG_RESET = new("SLOWLOG RESET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.ServerAdmin);
 
         /// <summary><c>SWAPDB</c>.</summary>
-        public static readonly RespireCommand SWAPDB = new("SWAPDB", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SWAPDB = new("SWAPDB", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.ServerAdmin);
 
         /// <summary><c>SYNC</c>.</summary>
-        public static readonly RespireCommand SYNC = new("SYNC", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SYNC = new("SYNC", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>TIME</c>.</summary>
-        public static readonly RespireCommand TIME = new("TIME", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand TIME = new("TIME", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.Connection);
 
         /// <summary><c>TRIMSLOTS</c>.</summary>
-        public static readonly RespireCommand TRIMSLOTS = new("TRIMSLOTS", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand TRIMSLOTS = new("TRIMSLOTS", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
     }
 
@@ -1723,61 +1723,61 @@ public static class RespireCommands
     public static class Set
     {
         /// <summary><c>SADD</c>.</summary>
-        public static readonly RespireCommand SADD = new("SADD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SADD = new("SADD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>SCARD</c>.</summary>
-        public static readonly RespireCommand SCARD = new("SCARD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand SCARD = new("SCARD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>SDIFF</c>.</summary>
-        public static readonly RespireCommand SDIFF = new("SDIFF", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand SDIFF = new("SDIFF", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>SDIFFCARD</c>.</summary>
-        public static readonly RespireCommand SDIFFCARD = new("SDIFFCARD", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand SDIFFCARD = new("SDIFFCARD", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>SDIFFSTORE</c>.</summary>
-        public static readonly RespireCommand SDIFFSTORE = new("SDIFFSTORE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SDIFFSTORE = new("SDIFFSTORE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>SINTER</c>.</summary>
-        public static readonly RespireCommand SINTER = new("SINTER", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand SINTER = new("SINTER", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>SINTERCARD</c>.</summary>
-        public static readonly RespireCommand SINTERCARD = new("SINTERCARD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand SINTERCARD = new("SINTERCARD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>SINTERSTORE</c>.</summary>
-        public static readonly RespireCommand SINTERSTORE = new("SINTERSTORE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SINTERSTORE = new("SINTERSTORE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>SISMEMBER</c>.</summary>
-        public static readonly RespireCommand SISMEMBER = new("SISMEMBER", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand SISMEMBER = new("SISMEMBER", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>SMEMBERS</c>.</summary>
-        public static readonly RespireCommand SMEMBERS = new("SMEMBERS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand SMEMBERS = new("SMEMBERS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>SMISMEMBER</c>.</summary>
-        public static readonly RespireCommand SMISMEMBER = new("SMISMEMBER", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand SMISMEMBER = new("SMISMEMBER", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>SMOVE</c>.</summary>
-        public static readonly RespireCommand SMOVE = new("SMOVE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SMOVE = new("SMOVE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>SPOP</c>.</summary>
-        public static readonly RespireCommand SPOP = new("SPOP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SPOP = new("SPOP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>SRANDMEMBER</c>.</summary>
-        public static readonly RespireCommand SRANDMEMBER = new("SRANDMEMBER", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand SRANDMEMBER = new("SRANDMEMBER", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>SREM</c>.</summary>
-        public static readonly RespireCommand SREM = new("SREM", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SREM = new("SREM", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>SSCAN</c>.</summary>
-        public static readonly RespireCommand SSCAN = new("SSCAN", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand SSCAN = new("SSCAN", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>SUNION</c>.</summary>
-        public static readonly RespireCommand SUNION = new("SUNION", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand SUNION = new("SUNION", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>SUNIONCARD</c>.</summary>
-        public static readonly RespireCommand SUNIONCARD = new("SUNIONCARD", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand SUNIONCARD = new("SUNIONCARD", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>SUNIONSTORE</c>.</summary>
-        public static readonly RespireCommand SUNIONSTORE = new("SUNIONSTORE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SUNIONSTORE = new("SUNIONSTORE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
     }
 
@@ -1785,109 +1785,109 @@ public static class RespireCommands
     public static class SortedSet
     {
         /// <summary><c>BZMPOP</c>.</summary>
-        public static readonly RespireCommand BZMPOP = new("BZMPOP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand BZMPOP = new("BZMPOP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>BZPOPMAX</c>.</summary>
-        public static readonly RespireCommand BZPOPMAX = new("BZPOPMAX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand BZPOPMAX = new("BZPOPMAX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>BZPOPMIN</c>.</summary>
-        public static readonly RespireCommand BZPOPMIN = new("BZPOPMIN", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand BZPOPMIN = new("BZPOPMIN", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>ZADD</c>.</summary>
-        public static readonly RespireCommand ZADD = new("ZADD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand ZADD = new("ZADD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>ZCARD</c>.</summary>
-        public static readonly RespireCommand ZCARD = new("ZCARD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand ZCARD = new("ZCARD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>ZCOUNT</c>.</summary>
-        public static readonly RespireCommand ZCOUNT = new("ZCOUNT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand ZCOUNT = new("ZCOUNT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>ZDIFF</c>.</summary>
-        public static readonly RespireCommand ZDIFF = new("ZDIFF", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand ZDIFF = new("ZDIFF", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>ZDIFFSTORE</c>.</summary>
-        public static readonly RespireCommand ZDIFFSTORE = new("ZDIFFSTORE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand ZDIFFSTORE = new("ZDIFFSTORE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>ZINCRBY</c>.</summary>
-        public static readonly RespireCommand ZINCRBY = new("ZINCRBY", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand ZINCRBY = new("ZINCRBY", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>ZINTER</c>.</summary>
-        public static readonly RespireCommand ZINTER = new("ZINTER", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand ZINTER = new("ZINTER", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>ZINTERCARD</c>.</summary>
-        public static readonly RespireCommand ZINTERCARD = new("ZINTERCARD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand ZINTERCARD = new("ZINTERCARD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>ZINTERSTORE</c>.</summary>
-        public static readonly RespireCommand ZINTERSTORE = new("ZINTERSTORE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand ZINTERSTORE = new("ZINTERSTORE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>ZLEXCOUNT</c>.</summary>
-        public static readonly RespireCommand ZLEXCOUNT = new("ZLEXCOUNT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand ZLEXCOUNT = new("ZLEXCOUNT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>ZMPOP</c>.</summary>
-        public static readonly RespireCommand ZMPOP = new("ZMPOP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand ZMPOP = new("ZMPOP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>ZMSCORE</c>.</summary>
-        public static readonly RespireCommand ZMSCORE = new("ZMSCORE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand ZMSCORE = new("ZMSCORE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>ZPOPMAX</c>.</summary>
-        public static readonly RespireCommand ZPOPMAX = new("ZPOPMAX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand ZPOPMAX = new("ZPOPMAX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>ZPOPMIN</c>.</summary>
-        public static readonly RespireCommand ZPOPMIN = new("ZPOPMIN", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand ZPOPMIN = new("ZPOPMIN", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>ZRANDMEMBER</c>.</summary>
-        public static readonly RespireCommand ZRANDMEMBER = new("ZRANDMEMBER", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand ZRANDMEMBER = new("ZRANDMEMBER", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>ZRANGE</c>.</summary>
-        public static readonly RespireCommand ZRANGE = new("ZRANGE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand ZRANGE = new("ZRANGE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>ZRANGEBYLEX</c>.</summary>
-        public static readonly RespireCommand ZRANGEBYLEX = new("ZRANGEBYLEX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand ZRANGEBYLEX = new("ZRANGEBYLEX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>ZRANGEBYSCORE</c>.</summary>
-        public static readonly RespireCommand ZRANGEBYSCORE = new("ZRANGEBYSCORE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand ZRANGEBYSCORE = new("ZRANGEBYSCORE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>ZRANGESTORE</c>.</summary>
-        public static readonly RespireCommand ZRANGESTORE = new("ZRANGESTORE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand ZRANGESTORE = new("ZRANGESTORE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>ZRANK</c>.</summary>
-        public static readonly RespireCommand ZRANK = new("ZRANK", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand ZRANK = new("ZRANK", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>ZREM</c>.</summary>
-        public static readonly RespireCommand ZREM = new("ZREM", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand ZREM = new("ZREM", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>ZREMRANGEBYLEX</c>.</summary>
-        public static readonly RespireCommand ZREMRANGEBYLEX = new("ZREMRANGEBYLEX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand ZREMRANGEBYLEX = new("ZREMRANGEBYLEX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>ZREMRANGEBYRANK</c>.</summary>
-        public static readonly RespireCommand ZREMRANGEBYRANK = new("ZREMRANGEBYRANK", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand ZREMRANGEBYRANK = new("ZREMRANGEBYRANK", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>ZREMRANGEBYSCORE</c>.</summary>
-        public static readonly RespireCommand ZREMRANGEBYSCORE = new("ZREMRANGEBYSCORE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand ZREMRANGEBYSCORE = new("ZREMRANGEBYSCORE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>ZREVRANGE</c>.</summary>
-        public static readonly RespireCommand ZREVRANGE = new("ZREVRANGE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand ZREVRANGE = new("ZREVRANGE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>ZREVRANGEBYLEX</c>.</summary>
-        public static readonly RespireCommand ZREVRANGEBYLEX = new("ZREVRANGEBYLEX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand ZREVRANGEBYLEX = new("ZREVRANGEBYLEX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>ZREVRANGEBYSCORE</c>.</summary>
-        public static readonly RespireCommand ZREVRANGEBYSCORE = new("ZREVRANGEBYSCORE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand ZREVRANGEBYSCORE = new("ZREVRANGEBYSCORE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>ZREVRANK</c>.</summary>
-        public static readonly RespireCommand ZREVRANK = new("ZREVRANK", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand ZREVRANK = new("ZREVRANK", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>ZSCAN</c>.</summary>
-        public static readonly RespireCommand ZSCAN = new("ZSCAN", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand ZSCAN = new("ZSCAN", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>ZSCORE</c>.</summary>
-        public static readonly RespireCommand ZSCORE = new("ZSCORE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand ZSCORE = new("ZSCORE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>ZUNION</c>.</summary>
-        public static readonly RespireCommand ZUNION = new("ZUNION", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand ZUNION = new("ZUNION", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>ZUNIONSTORE</c>.</summary>
-        public static readonly RespireCommand ZUNIONSTORE = new("ZUNIONSTORE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand ZUNIONSTORE = new("ZUNIONSTORE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
     }
 
@@ -1895,104 +1895,104 @@ public static class RespireCommands
     public static class Stream
     {
         /// <summary><c>XACK</c>.</summary>
-        public static readonly RespireCommand XACK = new("XACK", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand XACK = new("XACK", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>XACKDEL</c>.</summary>
-        public static readonly RespireCommand XACKDEL = new("XACKDEL", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand XACKDEL = new("XACKDEL", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>XADD</c>.</summary>
-        public static readonly RespireCommand XADD = new("XADD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand XADD = new("XADD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>XAUTOCLAIM</c>.</summary>
-        public static readonly RespireCommand XAUTOCLAIM = new("XAUTOCLAIM", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand XAUTOCLAIM = new("XAUTOCLAIM", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>XCFGSET</c>.</summary>
-        public static readonly RespireCommand XCFGSET = new("XCFGSET", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand XCFGSET = new("XCFGSET", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>XCLAIM</c>.</summary>
-        public static readonly RespireCommand XCLAIM = new("XCLAIM", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand XCLAIM = new("XCLAIM", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>XDEL</c>.</summary>
-        public static readonly RespireCommand XDEL = new("XDEL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand XDEL = new("XDEL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>XDELEX</c>.</summary>
-        public static readonly RespireCommand XDELEX = new("XDELEX", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand XDELEX = new("XDELEX", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>XGROUP</c>.</summary>
-        public static readonly RespireCommand XGROUP = new("XGROUP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand XGROUP = new("XGROUP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>XGROUP CREATE</c>.</summary>
         [RespireCommandCatalogName("XGROUP CREATE")]
-        public static readonly RespireCommand XGROUP_CREATE = new("XGROUP CREATE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand XGROUP_CREATE = new("XGROUP CREATE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>XGROUP CREATECONSUMER</c>.</summary>
         [RespireCommandCatalogName("XGROUP CREATECONSUMER")]
-        public static readonly RespireCommand XGROUP_CREATECONSUMER = new("XGROUP CREATECONSUMER", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand XGROUP_CREATECONSUMER = new("XGROUP CREATECONSUMER", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>XGROUP DELCONSUMER</c>.</summary>
         [RespireCommandCatalogName("XGROUP DELCONSUMER")]
-        public static readonly RespireCommand XGROUP_DELCONSUMER = new("XGROUP DELCONSUMER", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand XGROUP_DELCONSUMER = new("XGROUP DELCONSUMER", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>XGROUP DESTROY</c>.</summary>
         [RespireCommandCatalogName("XGROUP DESTROY")]
-        public static readonly RespireCommand XGROUP_DESTROY = new("XGROUP DESTROY", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand XGROUP_DESTROY = new("XGROUP DESTROY", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>XGROUP HELP</c>.</summary>
         [RespireCommandCatalogName("XGROUP HELP")]
-        public static readonly RespireCommand XGROUP_HELP = new("XGROUP HELP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand XGROUP_HELP = new("XGROUP HELP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>XGROUP SETID</c>.</summary>
         [RespireCommandCatalogName("XGROUP SETID")]
-        public static readonly RespireCommand XGROUP_SETID = new("XGROUP SETID", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand XGROUP_SETID = new("XGROUP SETID", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>XIDMPRECORD</c>.</summary>
-        public static readonly RespireCommand XIDMPRECORD = new("XIDMPRECORD", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand XIDMPRECORD = new("XIDMPRECORD", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>XINFO</c>.</summary>
-        public static readonly RespireCommand XINFO = new("XINFO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand XINFO = new("XINFO", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>XINFO CONSUMERS</c>.</summary>
         [RespireCommandCatalogName("XINFO CONSUMERS")]
-        public static readonly RespireCommand XINFO_CONSUMERS = new("XINFO CONSUMERS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand XINFO_CONSUMERS = new("XINFO CONSUMERS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>XINFO GROUPS</c>.</summary>
         [RespireCommandCatalogName("XINFO GROUPS")]
-        public static readonly RespireCommand XINFO_GROUPS = new("XINFO GROUPS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand XINFO_GROUPS = new("XINFO GROUPS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>XINFO HELP</c>.</summary>
         [RespireCommandCatalogName("XINFO HELP")]
-        public static readonly RespireCommand XINFO_HELP = new("XINFO HELP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand XINFO_HELP = new("XINFO HELP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>XINFO STREAM</c>.</summary>
         [RespireCommandCatalogName("XINFO STREAM")]
-        public static readonly RespireCommand XINFO_STREAM = new("XINFO STREAM", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand XINFO_STREAM = new("XINFO STREAM", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>XLEN</c>.</summary>
-        public static readonly RespireCommand XLEN = new("XLEN", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand XLEN = new("XLEN", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>XNACK</c>.</summary>
-        public static readonly RespireCommand XNACK = new("XNACK", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand XNACK = new("XNACK", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>XPENDING</c>.</summary>
-        public static readonly RespireCommand XPENDING = new("XPENDING", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand XPENDING = new("XPENDING", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>XRANGE</c>.</summary>
-        public static readonly RespireCommand XRANGE = new("XRANGE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand XRANGE = new("XRANGE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>XREAD</c>.</summary>
-        public static readonly RespireCommand XREAD = new("XREAD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand XREAD = new("XREAD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>XREADGROUP</c>.</summary>
-        public static readonly RespireCommand XREADGROUP = new("XREADGROUP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand XREADGROUP = new("XREADGROUP", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>XREVRANGE</c>.</summary>
-        public static readonly RespireCommand XREVRANGE = new("XREVRANGE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand XREVRANGE = new("XREVRANGE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>XSETID</c>.</summary>
-        public static readonly RespireCommand XSETID = new("XSETID", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand XSETID = new("XSETID", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>XTRIM</c>.</summary>
-        public static readonly RespireCommand XTRIM = new("XTRIM", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand XTRIM = new("XTRIM", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
     }
 
@@ -2000,85 +2000,85 @@ public static class RespireCommands
     public static class String
     {
         /// <summary><c>APPEND</c>.</summary>
-        public static readonly RespireCommand APPEND = new("APPEND", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand APPEND = new("APPEND", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>DECR</c>.</summary>
-        public static readonly RespireCommand DECR = new("DECR", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand DECR = new("DECR", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>DECRBY</c>.</summary>
-        public static readonly RespireCommand DECRBY = new("DECRBY", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand DECRBY = new("DECRBY", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>DELEX</c>.</summary>
-        public static readonly RespireCommand DELEX = new("DELEX", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand DELEX = new("DELEX", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>DELIFEQ</c>.</summary>
-        public static readonly RespireCommand DELIFEQ = new("DELIFEQ", RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand DELIFEQ = new("DELIFEQ", RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>DIGEST</c>.</summary>
-        public static readonly RespireCommand DIGEST = new("DIGEST", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand DIGEST = new("DIGEST", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>GET</c>.</summary>
-        public static readonly RespireCommand GET = new("GET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand GET = new("GET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>GETDEL</c>.</summary>
-        public static readonly RespireCommand GETDEL = new("GETDEL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand GETDEL = new("GETDEL", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>GETEX</c>.</summary>
-        public static readonly RespireCommand GETEX = new("GETEX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand GETEX = new("GETEX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>GETRANGE</c>.</summary>
-        public static readonly RespireCommand GETRANGE = new("GETRANGE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand GETRANGE = new("GETRANGE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>GETSET</c>.</summary>
-        public static readonly RespireCommand GETSET = new("GETSET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand GETSET = new("GETSET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>INCR</c>.</summary>
-        public static readonly RespireCommand INCR = new("INCR", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand INCR = new("INCR", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>INCRBY</c>.</summary>
-        public static readonly RespireCommand INCRBY = new("INCRBY", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand INCRBY = new("INCRBY", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>INCRBYFLOAT</c>.</summary>
-        public static readonly RespireCommand INCRBYFLOAT = new("INCRBYFLOAT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand INCRBYFLOAT = new("INCRBYFLOAT", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>INCREX</c>.</summary>
-        public static readonly RespireCommand INCREX = new("INCREX", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand INCREX = new("INCREX", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>LCS</c>.</summary>
-        public static readonly RespireCommand LCS = new("LCS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand LCS = new("LCS", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>MGET</c>.</summary>
-        public static readonly RespireCommand MGET = new("MGET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand MGET = new("MGET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>MSET</c>.</summary>
-        public static readonly RespireCommand MSET = new("MSET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand MSET = new("MSET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteLastWins);
 
         /// <summary><c>MSETEX</c>.</summary>
-        public static readonly RespireCommand MSETEX = new("MSETEX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand MSETEX = new("MSETEX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>MSETNX</c>.</summary>
-        public static readonly RespireCommand MSETNX = new("MSETNX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand MSETNX = new("MSETNX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteChecked);
 
         /// <summary><c>PSETEX</c>.</summary>
-        public static readonly RespireCommand PSETEX = new("PSETEX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand PSETEX = new("PSETEX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>SET</c>.</summary>
-        public static readonly RespireCommand SET = new("SET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SET = new("SET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>SETEX</c>.</summary>
-        public static readonly RespireCommand SETEX = new("SETEX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SETEX = new("SETEX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>SETNX</c>.</summary>
-        public static readonly RespireCommand SETNX = new("SETNX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SETNX = new("SETNX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteChecked);
 
         /// <summary><c>SETRANGE</c>.</summary>
-        public static readonly RespireCommand SETRANGE = new("SETRANGE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand SETRANGE = new("SETRANGE", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteLastWins);
 
         /// <summary><c>STRLEN</c>.</summary>
-        public static readonly RespireCommand STRLEN = new("STRLEN", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand STRLEN = new("STRLEN", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>SUBSTR</c>.</summary>
-        public static readonly RespireCommand SUBSTR = new("SUBSTR", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true);
+        public static readonly RespireCommand SUBSTR = new("SUBSTR", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
     }
 
@@ -2086,46 +2086,46 @@ public static class RespireCommands
     public static class TDigest
     {
         /// <summary><c>TDIGEST.ADD</c>.</summary>
-        public static readonly RespireCommand TDIGEST_ADD = new("TDIGEST.ADD", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand TDIGEST_ADD = new("TDIGEST.ADD", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>TDIGEST.BYRANK</c>.</summary>
-        public static readonly RespireCommand TDIGEST_BYRANK = new("TDIGEST.BYRANK", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand TDIGEST_BYRANK = new("TDIGEST.BYRANK", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>TDIGEST.BYREVRANK</c>.</summary>
-        public static readonly RespireCommand TDIGEST_BYREVRANK = new("TDIGEST.BYREVRANK", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand TDIGEST_BYREVRANK = new("TDIGEST.BYREVRANK", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>TDIGEST.CDF</c>.</summary>
-        public static readonly RespireCommand TDIGEST_CDF = new("TDIGEST.CDF", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand TDIGEST_CDF = new("TDIGEST.CDF", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>TDIGEST.CREATE</c>.</summary>
-        public static readonly RespireCommand TDIGEST_CREATE = new("TDIGEST.CREATE", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand TDIGEST_CREATE = new("TDIGEST.CREATE", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>TDIGEST.INFO</c>.</summary>
-        public static readonly RespireCommand TDIGEST_INFO = new("TDIGEST.INFO", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand TDIGEST_INFO = new("TDIGEST.INFO", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>TDIGEST.MAX</c>.</summary>
-        public static readonly RespireCommand TDIGEST_MAX = new("TDIGEST.MAX", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand TDIGEST_MAX = new("TDIGEST.MAX", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>TDIGEST.MERGE</c>.</summary>
-        public static readonly RespireCommand TDIGEST_MERGE = new("TDIGEST.MERGE", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand TDIGEST_MERGE = new("TDIGEST.MERGE", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>TDIGEST.MIN</c>.</summary>
-        public static readonly RespireCommand TDIGEST_MIN = new("TDIGEST.MIN", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand TDIGEST_MIN = new("TDIGEST.MIN", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>TDIGEST.QUANTILE</c>.</summary>
-        public static readonly RespireCommand TDIGEST_QUANTILE = new("TDIGEST.QUANTILE", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand TDIGEST_QUANTILE = new("TDIGEST.QUANTILE", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>TDIGEST.RANK</c>.</summary>
-        public static readonly RespireCommand TDIGEST_RANK = new("TDIGEST.RANK", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand TDIGEST_RANK = new("TDIGEST.RANK", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>TDIGEST.RESET</c>.</summary>
-        public static readonly RespireCommand TDIGEST_RESET = new("TDIGEST.RESET", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand TDIGEST_RESET = new("TDIGEST.RESET", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>TDIGEST.REVRANK</c>.</summary>
-        public static readonly RespireCommand TDIGEST_REVRANK = new("TDIGEST.REVRANK", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand TDIGEST_REVRANK = new("TDIGEST.REVRANK", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>TDIGEST.TRIMMED_MEAN</c>.</summary>
-        public static readonly RespireCommand TDIGEST_TRIMMED_MEAN = new("TDIGEST.TRIMMED_MEAN", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand TDIGEST_TRIMMED_MEAN = new("TDIGEST.TRIMMED_MEAN", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
     }
 
@@ -2133,67 +2133,67 @@ public static class RespireCommands
     public static class TimeSeries
     {
         /// <summary><c>TS.ADD</c>.</summary>
-        public static readonly RespireCommand TS_ADD = new("TS.ADD", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand TS_ADD = new("TS.ADD", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>TS.ALTER</c>.</summary>
-        public static readonly RespireCommand TS_ALTER = new("TS.ALTER", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand TS_ALTER = new("TS.ALTER", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>TS.CREATE</c>.</summary>
-        public static readonly RespireCommand TS_CREATE = new("TS.CREATE", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand TS_CREATE = new("TS.CREATE", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>TS.CREATERULE</c>.</summary>
-        public static readonly RespireCommand TS_CREATERULE = new("TS.CREATERULE", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand TS_CREATERULE = new("TS.CREATERULE", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>TS.DECRBY</c>.</summary>
-        public static readonly RespireCommand TS_DECRBY = new("TS.DECRBY", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand TS_DECRBY = new("TS.DECRBY", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>TS.DEL</c>.</summary>
-        public static readonly RespireCommand TS_DEL = new("TS.DEL", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand TS_DEL = new("TS.DEL", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>TS.DELETERULE</c>.</summary>
-        public static readonly RespireCommand TS_DELETERULE = new("TS.DELETERULE", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand TS_DELETERULE = new("TS.DELETERULE", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>TS.GET</c>.</summary>
-        public static readonly RespireCommand TS_GET = new("TS.GET", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand TS_GET = new("TS.GET", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>TS.INCRBY</c>.</summary>
-        public static readonly RespireCommand TS_INCRBY = new("TS.INCRBY", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand TS_INCRBY = new("TS.INCRBY", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>TS.INFO</c>.</summary>
-        public static readonly RespireCommand TS_INFO = new("TS.INFO", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand TS_INFO = new("TS.INFO", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>TS.MADD</c>.</summary>
-        public static readonly RespireCommand TS_MADD = new("TS.MADD", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand TS_MADD = new("TS.MADD", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>TS.MGET</c>.</summary>
-        public static readonly RespireCommand TS_MGET = new("TS.MGET", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand TS_MGET = new("TS.MGET", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>TS.MRANGE</c>.</summary>
-        public static readonly RespireCommand TS_MRANGE = new("TS.MRANGE", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand TS_MRANGE = new("TS.MRANGE", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>TS.MREVRANGE</c>.</summary>
-        public static readonly RespireCommand TS_MREVRANGE = new("TS.MREVRANGE", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand TS_MREVRANGE = new("TS.MREVRANGE", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>TS.NRANGE</c>.</summary>
-        public static readonly RespireCommand TS_NRANGE = new("TS.NRANGE", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand TS_NRANGE = new("TS.NRANGE", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>TS.NREVRANGE</c>.</summary>
-        public static readonly RespireCommand TS_NREVRANGE = new("TS.NREVRANGE", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand TS_NREVRANGE = new("TS.NREVRANGE", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>TS.QUERYINDEX</c>.</summary>
-        public static readonly RespireCommand TS_QUERYINDEX = new("TS.QUERYINDEX", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand TS_QUERYINDEX = new("TS.QUERYINDEX", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>TS.QUERYLABELS</c>.</summary>
-        public static readonly RespireCommand TS_QUERYLABELS = new("TS.QUERYLABELS", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand TS_QUERYLABELS = new("TS.QUERYLABELS", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>TS.RANGE</c>.</summary>
-        public static readonly RespireCommand TS_RANGE = new("TS.RANGE", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand TS_RANGE = new("TS.RANGE", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>TS.READ</c>.</summary>
-        public static readonly RespireCommand TS_READ = new("TS.READ", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand TS_READ = new("TS.READ", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>TS.REVRANGE</c>.</summary>
-        public static readonly RespireCommand TS_REVRANGE = new("TS.REVRANGE", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand TS_REVRANGE = new("TS.REVRANGE", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
     }
 
@@ -2201,25 +2201,25 @@ public static class RespireCommands
     public static class TopK
     {
         /// <summary><c>TOPK.ADD</c>.</summary>
-        public static readonly RespireCommand TOPK_ADD = new("TOPK.ADD", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand TOPK_ADD = new("TOPK.ADD", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>TOPK.COUNT</c>.</summary>
-        public static readonly RespireCommand TOPK_COUNT = new("TOPK.COUNT", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand TOPK_COUNT = new("TOPK.COUNT", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>TOPK.INCRBY</c>.</summary>
-        public static readonly RespireCommand TOPK_INCRBY = new("TOPK.INCRBY", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand TOPK_INCRBY = new("TOPK.INCRBY", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>TOPK.INFO</c>.</summary>
-        public static readonly RespireCommand TOPK_INFO = new("TOPK.INFO", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand TOPK_INFO = new("TOPK.INFO", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>TOPK.LIST</c>.</summary>
-        public static readonly RespireCommand TOPK_LIST = new("TOPK.LIST", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand TOPK_LIST = new("TOPK.LIST", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>TOPK.QUERY</c>.</summary>
-        public static readonly RespireCommand TOPK_QUERY = new("TOPK.QUERY", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand TOPK_QUERY = new("TOPK.QUERY", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>TOPK.RESERVE</c>.</summary>
-        public static readonly RespireCommand TOPK_RESERVE = new("TOPK.RESERVE", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand TOPK_RESERVE = new("TOPK.RESERVE", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
     }
 
@@ -2227,19 +2227,19 @@ public static class RespireCommands
     public static class Transaction
     {
         /// <summary><c>DISCARD</c>.</summary>
-        public static readonly RespireCommand DISCARD = new("DISCARD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand DISCARD = new("DISCARD", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>EXEC</c>.</summary>
-        public static readonly RespireCommand EXEC = new("EXEC", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand EXEC = new("EXEC", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>MULTI</c>.</summary>
-        public static readonly RespireCommand MULTI = new("MULTI", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand MULTI = new("MULTI", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>UNWATCH</c>.</summary>
-        public static readonly RespireCommand UNWATCH = new("UNWATCH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand UNWATCH = new("UNWATCH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>WATCH</c>.</summary>
-        public static readonly RespireCommand WATCH = new("WATCH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand WATCH = new("WATCH", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
     }
 
@@ -2247,43 +2247,43 @@ public static class RespireCommands
     public static class VectorSet
     {
         /// <summary><c>VADD</c>.</summary>
-        public static readonly RespireCommand VADD = new("VADD", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand VADD = new("VADD", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>VCARD</c>.</summary>
-        public static readonly RespireCommand VCARD = new("VCARD", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand VCARD = new("VCARD", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>VDIM</c>.</summary>
-        public static readonly RespireCommand VDIM = new("VDIM", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand VDIM = new("VDIM", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>VEMB</c>.</summary>
-        public static readonly RespireCommand VEMB = new("VEMB", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand VEMB = new("VEMB", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>VGETATTR</c>.</summary>
-        public static readonly RespireCommand VGETATTR = new("VGETATTR", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand VGETATTR = new("VGETATTR", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>VINFO</c>.</summary>
-        public static readonly RespireCommand VINFO = new("VINFO", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand VINFO = new("VINFO", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>VISMEMBER</c>.</summary>
-        public static readonly RespireCommand VISMEMBER = new("VISMEMBER", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand VISMEMBER = new("VISMEMBER", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>VLINKS</c>.</summary>
-        public static readonly RespireCommand VLINKS = new("VLINKS", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand VLINKS = new("VLINKS", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>VRANDMEMBER</c>.</summary>
-        public static readonly RespireCommand VRANDMEMBER = new("VRANDMEMBER", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand VRANDMEMBER = new("VRANDMEMBER", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>VRANGE</c>.</summary>
-        public static readonly RespireCommand VRANGE = new("VRANGE", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand VRANGE = new("VRANGE", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>VREM</c>.</summary>
-        public static readonly RespireCommand VREM = new("VREM", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand VREM = new("VREM", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>VSETATTR</c>.</summary>
-        public static readonly RespireCommand VSETATTR = new("VSETATTR", RespireCommandSource.Redis, RespireCacheMutation.Mutation);
+        public static readonly RespireCommand VSETATTR = new("VSETATTR", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteLastWins);
 
         /// <summary><c>VSIM</c>.</summary>
-        public static readonly RespireCommand VSIM = new("VSIM", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly);
+        public static readonly RespireCommand VSIM = new("VSIM", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
     }
 
@@ -3880,6 +3880,663 @@ internal static class CommandReadMetadata
 
     internal static (ReadCommandKind Kind, int CursorArgumentIndex) Get(string command)
         => s_commands.TryGetValue(command, out var metadata) ? metadata : (ReadCommandKind.None, -1);
+}
+
+/// <summary>Audited retry risk cached when typed verbs and descriptors initialize.</summary>
+internal static class CommandRetryCategoryMetadata
+{
+    private static readonly FrozenDictionary<string, RespireCommandRetryCategory> s_commands =
+        new Dictionary<string, RespireCommandRetryCategory>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["ACL"] = RespireCommandRetryCategory.Never,
+            ["ACL CAT"] = RespireCommandRetryCategory.Never,
+            ["ACL DELUSER"] = RespireCommandRetryCategory.ServerAdmin,
+            ["ACL DRYRUN"] = RespireCommandRetryCategory.Never,
+            ["ACL GENPASS"] = RespireCommandRetryCategory.Never,
+            ["ACL GETUSER"] = RespireCommandRetryCategory.Never,
+            ["ACL HELP"] = RespireCommandRetryCategory.Never,
+            ["ACL LIST"] = RespireCommandRetryCategory.Never,
+            ["ACL LOAD"] = RespireCommandRetryCategory.ServerAdmin,
+            ["ACL LOG"] = RespireCommandRetryCategory.Never,
+            ["ACL SAVE"] = RespireCommandRetryCategory.ServerAdmin,
+            ["ACL SETUSER"] = RespireCommandRetryCategory.ServerAdmin,
+            ["ACL USERS"] = RespireCommandRetryCategory.Never,
+            ["ACL WHOAMI"] = RespireCommandRetryCategory.Never,
+            ["APPEND"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["ARCOUNT"] = RespireCommandRetryCategory.ReadOnly,
+            ["ARDEL"] = RespireCommandRetryCategory.Never,
+            ["ARDELRANGE"] = RespireCommandRetryCategory.Never,
+            ["ARGET"] = RespireCommandRetryCategory.ReadOnly,
+            ["ARGETRANGE"] = RespireCommandRetryCategory.ReadOnly,
+            ["ARGREP"] = RespireCommandRetryCategory.ReadOnly,
+            ["ARINFO"] = RespireCommandRetryCategory.ReadOnly,
+            ["ARINSERT"] = RespireCommandRetryCategory.Never,
+            ["ARLASTITEMS"] = RespireCommandRetryCategory.ReadOnly,
+            ["ARLEN"] = RespireCommandRetryCategory.ReadOnly,
+            ["ARMGET"] = RespireCommandRetryCategory.ReadOnly,
+            ["ARMSET"] = RespireCommandRetryCategory.Never,
+            ["ARNEXT"] = RespireCommandRetryCategory.ReadOnly,
+            ["AROP"] = RespireCommandRetryCategory.ReadOnly,
+            ["ARRING"] = RespireCommandRetryCategory.Never,
+            ["ARSCAN"] = RespireCommandRetryCategory.ReadOnly,
+            ["ARSEEK"] = RespireCommandRetryCategory.Never,
+            ["ARSET"] = RespireCommandRetryCategory.Never,
+            ["ASKING"] = RespireCommandRetryCategory.Never,
+            ["AUTH"] = RespireCommandRetryCategory.Never,
+            ["BACKUP"] = RespireCommandRetryCategory.Never,
+            ["BACKUP ABORT"] = RespireCommandRetryCategory.Never,
+            ["BACKUP CLEANUP"] = RespireCommandRetryCategory.Never,
+            ["BACKUP HELP"] = RespireCommandRetryCategory.Never,
+            ["BACKUP LIST"] = RespireCommandRetryCategory.Never,
+            ["BACKUP SEAL"] = RespireCommandRetryCategory.Never,
+            ["BACKUP START"] = RespireCommandRetryCategory.Never,
+            ["BACKUP STATUS"] = RespireCommandRetryCategory.Never,
+            ["BF.ADD"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["BF.CARD"] = RespireCommandRetryCategory.ReadOnly,
+            ["BF.EXISTS"] = RespireCommandRetryCategory.ReadOnly,
+            ["BF.INFO"] = RespireCommandRetryCategory.ReadOnly,
+            ["BF.INSERT"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["BF.LOAD"] = RespireCommandRetryCategory.Never,
+            ["BF.LOADCHUNK"] = RespireCommandRetryCategory.Never,
+            ["BF.MADD"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["BF.MEXISTS"] = RespireCommandRetryCategory.ReadOnly,
+            ["BF.RESERVE"] = RespireCommandRetryCategory.Never,
+            ["BF.SCANDUMP"] = RespireCommandRetryCategory.ReadOnly,
+            ["BGREWRITEAOF"] = RespireCommandRetryCategory.ServerAdmin,
+            ["BGSAVE"] = RespireCommandRetryCategory.ServerAdmin,
+            ["BITCOUNT"] = RespireCommandRetryCategory.ReadOnly,
+            ["BITFIELD"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["BITFIELD_RO"] = RespireCommandRetryCategory.ReadOnly,
+            ["BITOP"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["BITPOS"] = RespireCommandRetryCategory.ReadOnly,
+            ["BLMOVE"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["BLMOVEM"] = RespireCommandRetryCategory.Never,
+            ["BLMPOP"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["BLPOP"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["BRPOP"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["BRPOPLPUSH"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["BZMPOP"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["BZPOPMAX"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["BZPOPMIN"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["CF.ADD"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["CF.ADDNX"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["CF.COMPACT"] = RespireCommandRetryCategory.Never,
+            ["CF.COUNT"] = RespireCommandRetryCategory.ReadOnly,
+            ["CF.DEL"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["CF.EXISTS"] = RespireCommandRetryCategory.ReadOnly,
+            ["CF.INFO"] = RespireCommandRetryCategory.ReadOnly,
+            ["CF.INSERT"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["CF.INSERTNX"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["CF.LOADCHUNK"] = RespireCommandRetryCategory.Never,
+            ["CF.MEXISTS"] = RespireCommandRetryCategory.ReadOnly,
+            ["CF.RESERVE"] = RespireCommandRetryCategory.Never,
+            ["CF.SCANDUMP"] = RespireCommandRetryCategory.ReadOnly,
+            ["CL.THROTTLE"] = RespireCommandRetryCategory.Never,
+            ["CLIENT"] = RespireCommandRetryCategory.Never,
+            ["CLIENT CACHING"] = RespireCommandRetryCategory.Never,
+            ["CLIENT CAPA"] = RespireCommandRetryCategory.Never,
+            ["CLIENT GETNAME"] = RespireCommandRetryCategory.Connection,
+            ["CLIENT GETREDIR"] = RespireCommandRetryCategory.Connection,
+            ["CLIENT HELP"] = RespireCommandRetryCategory.Never,
+            ["CLIENT ID"] = RespireCommandRetryCategory.Connection,
+            ["CLIENT IMPORT-SOURCE"] = RespireCommandRetryCategory.Never,
+            ["CLIENT INFO"] = RespireCommandRetryCategory.Connection,
+            ["CLIENT KILL"] = RespireCommandRetryCategory.ServerAdmin,
+            ["CLIENT LIST"] = RespireCommandRetryCategory.Connection,
+            ["CLIENT MAINT_NOTIFICATIONS"] = RespireCommandRetryCategory.Never,
+            ["CLIENT NO-EVICT"] = RespireCommandRetryCategory.Never,
+            ["CLIENT NO-TOUCH"] = RespireCommandRetryCategory.Never,
+            ["CLIENT PAUSE"] = RespireCommandRetryCategory.ServerAdmin,
+            ["CLIENT REPLY"] = RespireCommandRetryCategory.Never,
+            ["CLIENT SETINFO"] = RespireCommandRetryCategory.Connection,
+            ["CLIENT SETNAME"] = RespireCommandRetryCategory.Connection,
+            ["CLIENT TRACKING"] = RespireCommandRetryCategory.Never,
+            ["CLIENT TRACKINGINFO"] = RespireCommandRetryCategory.Never,
+            ["CLIENT UNBLOCK"] = RespireCommandRetryCategory.Never,
+            ["CLIENT UNPAUSE"] = RespireCommandRetryCategory.ServerAdmin,
+            ["CLUSTER"] = RespireCommandRetryCategory.Never,
+            ["CLUSTER ADDSLOTS"] = RespireCommandRetryCategory.Never,
+            ["CLUSTER ADDSLOTSRANGE"] = RespireCommandRetryCategory.Never,
+            ["CLUSTER BUMPEPOCH"] = RespireCommandRetryCategory.Never,
+            ["CLUSTER CANCELSLOTMIGRATIONS"] = RespireCommandRetryCategory.Never,
+            ["CLUSTER COUNT-FAILURE-REPORTS"] = RespireCommandRetryCategory.Never,
+            ["CLUSTER COUNTKEYSINSLOT"] = RespireCommandRetryCategory.Never,
+            ["CLUSTER DELSLOTS"] = RespireCommandRetryCategory.Never,
+            ["CLUSTER DELSLOTSRANGE"] = RespireCommandRetryCategory.Never,
+            ["CLUSTER FAILOVER"] = RespireCommandRetryCategory.Never,
+            ["CLUSTER FLUSHSLOT"] = RespireCommandRetryCategory.Never,
+            ["CLUSTER FLUSHSLOTS"] = RespireCommandRetryCategory.Never,
+            ["CLUSTER FORGET"] = RespireCommandRetryCategory.Never,
+            ["CLUSTER GETKEYSINSLOT"] = RespireCommandRetryCategory.Never,
+            ["CLUSTER GETSLOTMIGRATIONS"] = RespireCommandRetryCategory.Never,
+            ["CLUSTER HELP"] = RespireCommandRetryCategory.Never,
+            ["CLUSTER INFO"] = RespireCommandRetryCategory.Never,
+            ["CLUSTER KEYSLOT"] = RespireCommandRetryCategory.Never,
+            ["CLUSTER LINKS"] = RespireCommandRetryCategory.Never,
+            ["CLUSTER MEET"] = RespireCommandRetryCategory.Never,
+            ["CLUSTER MIGRATESLOTS"] = RespireCommandRetryCategory.Never,
+            ["CLUSTER MIGRATION"] = RespireCommandRetryCategory.Never,
+            ["CLUSTER MYID"] = RespireCommandRetryCategory.Never,
+            ["CLUSTER MYSHARDID"] = RespireCommandRetryCategory.Never,
+            ["CLUSTER NODES"] = RespireCommandRetryCategory.Never,
+            ["CLUSTER REPLICAS"] = RespireCommandRetryCategory.Never,
+            ["CLUSTER REPLICATE"] = RespireCommandRetryCategory.Never,
+            ["CLUSTER RESET"] = RespireCommandRetryCategory.Never,
+            ["CLUSTER SAVECONFIG"] = RespireCommandRetryCategory.Never,
+            ["CLUSTER SET-CONFIG-EPOCH"] = RespireCommandRetryCategory.Never,
+            ["CLUSTER SETSLOT"] = RespireCommandRetryCategory.Never,
+            ["CLUSTER SHARDS"] = RespireCommandRetryCategory.Never,
+            ["CLUSTER SLAVES"] = RespireCommandRetryCategory.Never,
+            ["CLUSTER SLOT-STATS"] = RespireCommandRetryCategory.Never,
+            ["CLUSTER SLOTS"] = RespireCommandRetryCategory.Never,
+            ["CLUSTER SYNCSLOTS"] = RespireCommandRetryCategory.Never,
+            ["CLUSTERSCAN"] = RespireCommandRetryCategory.ReadOnly,
+            ["CMS.INCRBY"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["CMS.INFO"] = RespireCommandRetryCategory.ReadOnly,
+            ["CMS.INITBYDIM"] = RespireCommandRetryCategory.Never,
+            ["CMS.INITBYPROB"] = RespireCommandRetryCategory.Never,
+            ["CMS.MERGE"] = RespireCommandRetryCategory.Never,
+            ["CMS.QUERY"] = RespireCommandRetryCategory.ReadOnly,
+            ["COMMAND"] = RespireCommandRetryCategory.Connection,
+            ["COMMAND COUNT"] = RespireCommandRetryCategory.Connection,
+            ["COMMAND DOCS"] = RespireCommandRetryCategory.Connection,
+            ["COMMAND GETKEYS"] = RespireCommandRetryCategory.Connection,
+            ["COMMAND GETKEYSANDFLAGS"] = RespireCommandRetryCategory.Connection,
+            ["COMMAND HELP"] = RespireCommandRetryCategory.Never,
+            ["COMMAND INFO"] = RespireCommandRetryCategory.Connection,
+            ["COMMAND LIST"] = RespireCommandRetryCategory.Connection,
+            ["COMMANDLOG"] = RespireCommandRetryCategory.Never,
+            ["COMMANDLOG GET"] = RespireCommandRetryCategory.Never,
+            ["COMMANDLOG HELP"] = RespireCommandRetryCategory.Never,
+            ["COMMANDLOG LEN"] = RespireCommandRetryCategory.Never,
+            ["COMMANDLOG RESET"] = RespireCommandRetryCategory.Never,
+            ["CONFIG"] = RespireCommandRetryCategory.Never,
+            ["CONFIG GET"] = RespireCommandRetryCategory.Connection,
+            ["CONFIG HELP"] = RespireCommandRetryCategory.Never,
+            ["CONFIG RESETSTAT"] = RespireCommandRetryCategory.ServerAdmin,
+            ["CONFIG REWRITE"] = RespireCommandRetryCategory.ServerAdmin,
+            ["CONFIG SET"] = RespireCommandRetryCategory.ServerAdmin,
+            ["COPY"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["DBSIZE"] = RespireCommandRetryCategory.ReadOnly,
+            ["DEBUG"] = RespireCommandRetryCategory.Never,
+            ["DECR"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["DECRBY"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["DEL"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["DELEX"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["DELIFEQ"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["DFLYCLUSTER CONFIG"] = RespireCommandRetryCategory.Never,
+            ["DFLYCLUSTER FLUSHSLOTS"] = RespireCommandRetryCategory.Never,
+            ["DFLYCLUSTER GETSLOTINFO"] = RespireCommandRetryCategory.Never,
+            ["DFLYCLUSTER SLOT-MIGRATION-STATUS"] = RespireCommandRetryCategory.Never,
+            ["DIGEST"] = RespireCommandRetryCategory.ReadOnly,
+            ["DISCARD"] = RespireCommandRetryCategory.Never,
+            ["DUMP"] = RespireCommandRetryCategory.ReadOnly,
+            ["ECHO"] = RespireCommandRetryCategory.Always,
+            ["EVAL"] = RespireCommandRetryCategory.Never,
+            ["EVAL_RO"] = RespireCommandRetryCategory.Never,
+            ["EVALSHA"] = RespireCommandRetryCategory.Never,
+            ["EVALSHA_RO"] = RespireCommandRetryCategory.Never,
+            ["EXEC"] = RespireCommandRetryCategory.Never,
+            ["EXISTS"] = RespireCommandRetryCategory.ReadOnly,
+            ["EXPIRE"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["EXPIREAT"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["EXPIREMEMBER"] = RespireCommandRetryCategory.Never,
+            ["EXPIREMEMBERAT"] = RespireCommandRetryCategory.Never,
+            ["EXPIRETIME"] = RespireCommandRetryCategory.ReadOnly,
+            ["FAILOVER"] = RespireCommandRetryCategory.ServerAdmin,
+            ["FCALL"] = RespireCommandRetryCategory.Never,
+            ["FCALL_RO"] = RespireCommandRetryCategory.Never,
+            ["FIELDEXPIRE"] = RespireCommandRetryCategory.Never,
+            ["FIELDTTL"] = RespireCommandRetryCategory.Never,
+            ["FLUSHALL"] = RespireCommandRetryCategory.ServerAdmin,
+            ["FLUSHDB"] = RespireCommandRetryCategory.ServerAdmin,
+            ["FT._LIST"] = RespireCommandRetryCategory.ReadOnly,
+            ["FT.AGGREGATE"] = RespireCommandRetryCategory.Never,
+            ["FT.ALIASADD"] = RespireCommandRetryCategory.Never,
+            ["FT.ALIASDEL"] = RespireCommandRetryCategory.Never,
+            ["FT.ALIASLIST"] = RespireCommandRetryCategory.ReadOnly,
+            ["FT.ALIASUPDATE"] = RespireCommandRetryCategory.Never,
+            ["FT.ALTER"] = RespireCommandRetryCategory.Never,
+            ["FT.CONFIG GET"] = RespireCommandRetryCategory.ReadOnly,
+            ["FT.CONFIG SET"] = RespireCommandRetryCategory.ServerAdmin,
+            ["FT.CREATE"] = RespireCommandRetryCategory.Never,
+            ["FT.CURSOR DEL"] = RespireCommandRetryCategory.Never,
+            ["FT.CURSOR READ"] = RespireCommandRetryCategory.Never,
+            ["FT.DICTADD"] = RespireCommandRetryCategory.Never,
+            ["FT.DICTDEL"] = RespireCommandRetryCategory.Never,
+            ["FT.DICTDUMP"] = RespireCommandRetryCategory.ReadOnly,
+            ["FT.DROPINDEX"] = RespireCommandRetryCategory.Never,
+            ["FT.EXPLAIN"] = RespireCommandRetryCategory.ReadOnly,
+            ["FT.EXPLAINCLI"] = RespireCommandRetryCategory.ReadOnly,
+            ["FT.HYBRID"] = RespireCommandRetryCategory.Never,
+            ["FT.INFO"] = RespireCommandRetryCategory.ReadOnly,
+            ["FT.PROFILE"] = RespireCommandRetryCategory.Never,
+            ["FT.SEARCH"] = RespireCommandRetryCategory.ReadOnly,
+            ["FT.SPELLCHECK"] = RespireCommandRetryCategory.ReadOnly,
+            ["FT.SUGADD"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["FT.SUGDEL"] = RespireCommandRetryCategory.Never,
+            ["FT.SUGGET"] = RespireCommandRetryCategory.ReadOnly,
+            ["FT.SUGLEN"] = RespireCommandRetryCategory.ReadOnly,
+            ["FT.SYNDUMP"] = RespireCommandRetryCategory.ReadOnly,
+            ["FT.SYNUPDATE"] = RespireCommandRetryCategory.Never,
+            ["FT.TAGVALS"] = RespireCommandRetryCategory.ReadOnly,
+            ["FUNCTION"] = RespireCommandRetryCategory.Never,
+            ["FUNCTION DELETE"] = RespireCommandRetryCategory.ServerAdmin,
+            ["FUNCTION DUMP"] = RespireCommandRetryCategory.Never,
+            ["FUNCTION FLUSH"] = RespireCommandRetryCategory.ServerAdmin,
+            ["FUNCTION HELP"] = RespireCommandRetryCategory.Never,
+            ["FUNCTION KILL"] = RespireCommandRetryCategory.ServerAdmin,
+            ["FUNCTION LIST"] = RespireCommandRetryCategory.Never,
+            ["FUNCTION LOAD"] = RespireCommandRetryCategory.ServerAdmin,
+            ["FUNCTION RESTORE"] = RespireCommandRetryCategory.ServerAdmin,
+            ["FUNCTION STATS"] = RespireCommandRetryCategory.Never,
+            ["GEOADD"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["GEODIST"] = RespireCommandRetryCategory.ReadOnly,
+            ["GEOHASH"] = RespireCommandRetryCategory.ReadOnly,
+            ["GEOPOS"] = RespireCommandRetryCategory.ReadOnly,
+            ["GEORADIUS"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["GEORADIUS_RO"] = RespireCommandRetryCategory.ReadOnly,
+            ["GEORADIUSBYMEMBER"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["GEORADIUSBYMEMBER_RO"] = RespireCommandRetryCategory.ReadOnly,
+            ["GEOSEARCH"] = RespireCommandRetryCategory.ReadOnly,
+            ["GEOSEARCHSTORE"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["GET"] = RespireCommandRetryCategory.ReadOnly,
+            ["GETBIT"] = RespireCommandRetryCategory.ReadOnly,
+            ["GETDEL"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["GETEX"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["GETRANGE"] = RespireCommandRetryCategory.ReadOnly,
+            ["GETSET"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["HDEL"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["HELLO"] = RespireCommandRetryCategory.Never,
+            ["HEXISTS"] = RespireCommandRetryCategory.ReadOnly,
+            ["HEXPIRE"] = RespireCommandRetryCategory.Never,
+            ["HEXPIREAT"] = RespireCommandRetryCategory.Never,
+            ["HEXPIRETIME"] = RespireCommandRetryCategory.ReadOnly,
+            ["HGET"] = RespireCommandRetryCategory.ReadOnly,
+            ["HGETALL"] = RespireCommandRetryCategory.ReadOnly,
+            ["HGETDEL"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["HGETEX"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["HIMPORT"] = RespireCommandRetryCategory.Never,
+            ["HIMPORT DISCARD"] = RespireCommandRetryCategory.Never,
+            ["HIMPORT DISCARDALL"] = RespireCommandRetryCategory.Never,
+            ["HIMPORT PREPARE"] = RespireCommandRetryCategory.Never,
+            ["HIMPORT SET"] = RespireCommandRetryCategory.Never,
+            ["HINCRBY"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["HINCRBYFLOAT"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["HKEYS"] = RespireCommandRetryCategory.ReadOnly,
+            ["HLEN"] = RespireCommandRetryCategory.ReadOnly,
+            ["HMGET"] = RespireCommandRetryCategory.ReadOnly,
+            ["HMSET"] = RespireCommandRetryCategory.WriteLastWins,
+            ["HOTKEYS"] = RespireCommandRetryCategory.Never,
+            ["HOTKEYS GET"] = RespireCommandRetryCategory.Never,
+            ["HOTKEYS HELP"] = RespireCommandRetryCategory.Never,
+            ["HOTKEYS RESET"] = RespireCommandRetryCategory.Never,
+            ["HOTKEYS START"] = RespireCommandRetryCategory.Never,
+            ["HOTKEYS STOP"] = RespireCommandRetryCategory.Never,
+            ["HPERSIST"] = RespireCommandRetryCategory.Never,
+            ["HPEXPIRE"] = RespireCommandRetryCategory.Never,
+            ["HPEXPIREAT"] = RespireCommandRetryCategory.Never,
+            ["HPEXPIRETIME"] = RespireCommandRetryCategory.ReadOnly,
+            ["HPTTL"] = RespireCommandRetryCategory.ReadOnly,
+            ["HRANDFIELD"] = RespireCommandRetryCategory.ReadOnly,
+            ["HSCAN"] = RespireCommandRetryCategory.ReadOnly,
+            ["HSET"] = RespireCommandRetryCategory.WriteLastWins,
+            ["HSETEX"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["HSETNX"] = RespireCommandRetryCategory.WriteChecked,
+            ["HSTRLEN"] = RespireCommandRetryCategory.ReadOnly,
+            ["HTTL"] = RespireCommandRetryCategory.ReadOnly,
+            ["HVALS"] = RespireCommandRetryCategory.ReadOnly,
+            ["INCR"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["INCRBY"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["INCRBYFLOAT"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["INCREX"] = RespireCommandRetryCategory.Never,
+            ["INFO"] = RespireCommandRetryCategory.Connection,
+            ["JSON.ARRAPPEND"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["JSON.ARRINDEX"] = RespireCommandRetryCategory.ReadOnly,
+            ["JSON.ARRINSERT"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["JSON.ARRLEN"] = RespireCommandRetryCategory.ReadOnly,
+            ["JSON.ARRPOP"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["JSON.ARRTRIM"] = RespireCommandRetryCategory.Never,
+            ["JSON.CLEAR"] = RespireCommandRetryCategory.Never,
+            ["JSON.DEBUG"] = RespireCommandRetryCategory.Never,
+            ["JSON.DEBUG FIELDS"] = RespireCommandRetryCategory.Never,
+            ["JSON.DEBUG HELP"] = RespireCommandRetryCategory.Never,
+            ["JSON.DEBUG MEMORY"] = RespireCommandRetryCategory.ReadOnly,
+            ["JSON.DEL"] = RespireCommandRetryCategory.Never,
+            ["JSON.FORGET"] = RespireCommandRetryCategory.Never,
+            ["JSON.GET"] = RespireCommandRetryCategory.ReadOnly,
+            ["JSON.MERGE"] = RespireCommandRetryCategory.Never,
+            ["JSON.MGET"] = RespireCommandRetryCategory.ReadOnly,
+            ["JSON.MSET"] = RespireCommandRetryCategory.Never,
+            ["JSON.NUMINCRBY"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["JSON.NUMMULTBY"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["JSON.NUMPOWBY"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["JSON.OBJKEYS"] = RespireCommandRetryCategory.ReadOnly,
+            ["JSON.OBJLEN"] = RespireCommandRetryCategory.ReadOnly,
+            ["JSON.RESP"] = RespireCommandRetryCategory.ReadOnly,
+            ["JSON.SET"] = RespireCommandRetryCategory.Never,
+            ["JSON.STRAPPEND"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["JSON.STRLEN"] = RespireCommandRetryCategory.ReadOnly,
+            ["JSON.TOGGLE"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["JSON.TYPE"] = RespireCommandRetryCategory.ReadOnly,
+            ["KEYDB.CRON"] = RespireCommandRetryCategory.Never,
+            ["KEYDB.HRENAME"] = RespireCommandRetryCategory.Never,
+            ["KEYDB.MEXISTS"] = RespireCommandRetryCategory.Never,
+            ["KEYDB.NHGET"] = RespireCommandRetryCategory.Never,
+            ["KEYDB.NHSET"] = RespireCommandRetryCategory.Never,
+            ["KEYS"] = RespireCommandRetryCategory.ReadOnly,
+            ["LASTSAVE"] = RespireCommandRetryCategory.Connection,
+            ["LATENCY"] = RespireCommandRetryCategory.Never,
+            ["LATENCY DOCTOR"] = RespireCommandRetryCategory.Never,
+            ["LATENCY GRAPH"] = RespireCommandRetryCategory.Never,
+            ["LATENCY HELP"] = RespireCommandRetryCategory.Never,
+            ["LATENCY HISTOGRAM"] = RespireCommandRetryCategory.Never,
+            ["LATENCY HISTORY"] = RespireCommandRetryCategory.Never,
+            ["LATENCY LATEST"] = RespireCommandRetryCategory.Never,
+            ["LATENCY RESET"] = RespireCommandRetryCategory.ServerAdmin,
+            ["LCS"] = RespireCommandRetryCategory.ReadOnly,
+            ["LINDEX"] = RespireCommandRetryCategory.ReadOnly,
+            ["LINSERT"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["LLEN"] = RespireCommandRetryCategory.ReadOnly,
+            ["LMOVE"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["LMOVEM"] = RespireCommandRetryCategory.Never,
+            ["LMPOP"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["LOLWUT"] = RespireCommandRetryCategory.ReadOnly,
+            ["LPOP"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["LPOS"] = RespireCommandRetryCategory.ReadOnly,
+            ["LPUSH"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["LPUSHX"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["LRANGE"] = RespireCommandRetryCategory.ReadOnly,
+            ["LREM"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["LSET"] = RespireCommandRetryCategory.WriteLastWins,
+            ["LTRIM"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["MEMORY"] = RespireCommandRetryCategory.Never,
+            ["MEMORY ARENA"] = RespireCommandRetryCategory.Never,
+            ["MEMORY DECOMMIT"] = RespireCommandRetryCategory.Never,
+            ["MEMORY DEFRAGMENT"] = RespireCommandRetryCategory.Never,
+            ["MEMORY DOCTOR"] = RespireCommandRetryCategory.Never,
+            ["MEMORY HELP"] = RespireCommandRetryCategory.Never,
+            ["MEMORY MALLOC-STATS"] = RespireCommandRetryCategory.Never,
+            ["MEMORY PURGE"] = RespireCommandRetryCategory.ServerAdmin,
+            ["MEMORY STATS"] = RespireCommandRetryCategory.Never,
+            ["MEMORY USAGE"] = RespireCommandRetryCategory.ReadOnly,
+            ["MGET"] = RespireCommandRetryCategory.ReadOnly,
+            ["MIGRATE"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["MODULE"] = RespireCommandRetryCategory.Never,
+            ["MODULE HELP"] = RespireCommandRetryCategory.Never,
+            ["MODULE LIST"] = RespireCommandRetryCategory.Never,
+            ["MODULE LOAD"] = RespireCommandRetryCategory.ServerAdmin,
+            ["MODULE LOADEX"] = RespireCommandRetryCategory.ServerAdmin,
+            ["MODULE UNLOAD"] = RespireCommandRetryCategory.ServerAdmin,
+            ["MONITOR"] = RespireCommandRetryCategory.Never,
+            ["MOVE"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["MSET"] = RespireCommandRetryCategory.WriteLastWins,
+            ["MSETEX"] = RespireCommandRetryCategory.Never,
+            ["MSETNX"] = RespireCommandRetryCategory.WriteChecked,
+            ["MULTI"] = RespireCommandRetryCategory.Never,
+            ["OBJECT"] = RespireCommandRetryCategory.Never,
+            ["OBJECT ENCODING"] = RespireCommandRetryCategory.ReadOnly,
+            ["OBJECT FREQ"] = RespireCommandRetryCategory.ReadOnly,
+            ["OBJECT HELP"] = RespireCommandRetryCategory.Never,
+            ["OBJECT IDLETIME"] = RespireCommandRetryCategory.ReadOnly,
+            ["OBJECT REFCOUNT"] = RespireCommandRetryCategory.ReadOnly,
+            ["PERSIST"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["PEXPIRE"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["PEXPIREAT"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["PEXPIREMEMBERAT"] = RespireCommandRetryCategory.Never,
+            ["PEXPIRETIME"] = RespireCommandRetryCategory.ReadOnly,
+            ["PFADD"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["PFCOUNT"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["PFDEBUG"] = RespireCommandRetryCategory.Never,
+            ["PFMERGE"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["PFSELFTEST"] = RespireCommandRetryCategory.Never,
+            ["PING"] = RespireCommandRetryCategory.Always,
+            ["PSETEX"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["PSUBSCRIBE"] = RespireCommandRetryCategory.Never,
+            ["PSYNC"] = RespireCommandRetryCategory.Never,
+            ["PTTL"] = RespireCommandRetryCategory.ReadOnly,
+            ["PUBLISH"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["PUBSUB"] = RespireCommandRetryCategory.Never,
+            ["PUBSUB CHANNELS"] = RespireCommandRetryCategory.Never,
+            ["PUBSUB HELP"] = RespireCommandRetryCategory.Never,
+            ["PUBSUB NUMPAT"] = RespireCommandRetryCategory.Never,
+            ["PUBSUB NUMSUB"] = RespireCommandRetryCategory.Never,
+            ["PUBSUB SHARDCHANNELS"] = RespireCommandRetryCategory.Never,
+            ["PUBSUB SHARDNUMSUB"] = RespireCommandRetryCategory.Never,
+            ["PUNSUBSCRIBE"] = RespireCommandRetryCategory.Never,
+            ["QUIT"] = RespireCommandRetryCategory.Never,
+            ["RANDOMKEY"] = RespireCommandRetryCategory.ReadOnly,
+            ["READONLY"] = RespireCommandRetryCategory.Never,
+            ["READWRITE"] = RespireCommandRetryCategory.Never,
+            ["RENAME"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["RENAMENX"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["REPLCONF"] = RespireCommandRetryCategory.Never,
+            ["REPLICAOF"] = RespireCommandRetryCategory.ServerAdmin,
+            ["REPLPING"] = RespireCommandRetryCategory.Never,
+            ["RESET"] = RespireCommandRetryCategory.Never,
+            ["RESTORE"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["RESTORE-ASKING"] = RespireCommandRetryCategory.Never,
+            ["RM"] = RespireCommandRetryCategory.Never,
+            ["ROLE"] = RespireCommandRetryCategory.Connection,
+            ["RPOP"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["RPOPLPUSH"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["RPUSH"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["RPUSHX"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["SADD"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["SADDEX"] = RespireCommandRetryCategory.Never,
+            ["SAVE"] = RespireCommandRetryCategory.ServerAdmin,
+            ["SCAN"] = RespireCommandRetryCategory.ReadOnly,
+            ["SCARD"] = RespireCommandRetryCategory.ReadOnly,
+            ["SCRIPT"] = RespireCommandRetryCategory.Never,
+            ["SCRIPT DEBUG"] = RespireCommandRetryCategory.Never,
+            ["SCRIPT EXISTS"] = RespireCommandRetryCategory.Never,
+            ["SCRIPT FLUSH"] = RespireCommandRetryCategory.ServerAdmin,
+            ["SCRIPT HELP"] = RespireCommandRetryCategory.Never,
+            ["SCRIPT KILL"] = RespireCommandRetryCategory.ServerAdmin,
+            ["SCRIPT LATENCY"] = RespireCommandRetryCategory.Never,
+            ["SCRIPT LIST"] = RespireCommandRetryCategory.Never,
+            ["SCRIPT LOAD"] = RespireCommandRetryCategory.ServerAdmin,
+            ["SCRIPT SHOW"] = RespireCommandRetryCategory.Never,
+            ["SDIFF"] = RespireCommandRetryCategory.ReadOnly,
+            ["SDIFFCARD"] = RespireCommandRetryCategory.ReadOnly,
+            ["SDIFFSTORE"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["SELECT"] = RespireCommandRetryCategory.Never,
+            ["SENTINEL"] = RespireCommandRetryCategory.Never,
+            ["SENTINEL CKQUORUM"] = RespireCommandRetryCategory.Never,
+            ["SENTINEL CONFIG"] = RespireCommandRetryCategory.Never,
+            ["SENTINEL DEBUG"] = RespireCommandRetryCategory.Never,
+            ["SENTINEL FAILOVER"] = RespireCommandRetryCategory.Never,
+            ["SENTINEL FLUSHCONFIG"] = RespireCommandRetryCategory.Never,
+            ["SENTINEL GET-MASTER-ADDR-BY-NAME"] = RespireCommandRetryCategory.Never,
+            ["SENTINEL GET-PRIMARY-ADDR-BY-NAME"] = RespireCommandRetryCategory.Never,
+            ["SENTINEL HELP"] = RespireCommandRetryCategory.Never,
+            ["SENTINEL INFO-CACHE"] = RespireCommandRetryCategory.Never,
+            ["SENTINEL IS-MASTER-DOWN-BY-ADDR"] = RespireCommandRetryCategory.Never,
+            ["SENTINEL IS-PRIMARY-DOWN-BY-ADDR"] = RespireCommandRetryCategory.Never,
+            ["SENTINEL MASTER"] = RespireCommandRetryCategory.Never,
+            ["SENTINEL MASTERS"] = RespireCommandRetryCategory.Never,
+            ["SENTINEL MONITOR"] = RespireCommandRetryCategory.Never,
+            ["SENTINEL MYID"] = RespireCommandRetryCategory.Never,
+            ["SENTINEL PENDING-SCRIPTS"] = RespireCommandRetryCategory.Never,
+            ["SENTINEL PRIMARIES"] = RespireCommandRetryCategory.Never,
+            ["SENTINEL PRIMARY"] = RespireCommandRetryCategory.Never,
+            ["SENTINEL REMOVE"] = RespireCommandRetryCategory.Never,
+            ["SENTINEL REPLICAS"] = RespireCommandRetryCategory.Never,
+            ["SENTINEL RESET"] = RespireCommandRetryCategory.Never,
+            ["SENTINEL SENTINELS"] = RespireCommandRetryCategory.Never,
+            ["SENTINEL SET"] = RespireCommandRetryCategory.Never,
+            ["SENTINEL SIMULATE-FAILURE"] = RespireCommandRetryCategory.Never,
+            ["SENTINEL SLAVES"] = RespireCommandRetryCategory.Never,
+            ["SET"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["SETBIT"] = RespireCommandRetryCategory.WriteLastWins,
+            ["SETEX"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["SETNX"] = RespireCommandRetryCategory.WriteChecked,
+            ["SETRANGE"] = RespireCommandRetryCategory.WriteLastWins,
+            ["SFLUSH"] = RespireCommandRetryCategory.Never,
+            ["SHUTDOWN"] = RespireCommandRetryCategory.Never,
+            ["SINTER"] = RespireCommandRetryCategory.ReadOnly,
+            ["SINTERCARD"] = RespireCommandRetryCategory.ReadOnly,
+            ["SINTERSTORE"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["SISMEMBER"] = RespireCommandRetryCategory.ReadOnly,
+            ["SLAVEOF"] = RespireCommandRetryCategory.ServerAdmin,
+            ["SLOWLOG"] = RespireCommandRetryCategory.Never,
+            ["SLOWLOG GET"] = RespireCommandRetryCategory.Never,
+            ["SLOWLOG HELP"] = RespireCommandRetryCategory.Never,
+            ["SLOWLOG LEN"] = RespireCommandRetryCategory.Never,
+            ["SLOWLOG RESET"] = RespireCommandRetryCategory.ServerAdmin,
+            ["SMEMBERS"] = RespireCommandRetryCategory.ReadOnly,
+            ["SMISMEMBER"] = RespireCommandRetryCategory.ReadOnly,
+            ["SMOVE"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["SORT"] = RespireCommandRetryCategory.Never,
+            ["SORT_RO"] = RespireCommandRetryCategory.ReadOnly,
+            ["SPOP"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["SPUBLISH"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["SRANDMEMBER"] = RespireCommandRetryCategory.ReadOnly,
+            ["SREM"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["SSCAN"] = RespireCommandRetryCategory.ReadOnly,
+            ["SSUBSCRIBE"] = RespireCommandRetryCategory.Never,
+            ["STICK"] = RespireCommandRetryCategory.Never,
+            ["STRLEN"] = RespireCommandRetryCategory.ReadOnly,
+            ["SUBSCRIBE"] = RespireCommandRetryCategory.Never,
+            ["SUBSTR"] = RespireCommandRetryCategory.ReadOnly,
+            ["SUNION"] = RespireCommandRetryCategory.ReadOnly,
+            ["SUNIONCARD"] = RespireCommandRetryCategory.ReadOnly,
+            ["SUNIONSTORE"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["SUNSUBSCRIBE"] = RespireCommandRetryCategory.Never,
+            ["SWAPDB"] = RespireCommandRetryCategory.ServerAdmin,
+            ["SYNC"] = RespireCommandRetryCategory.Never,
+            ["TDIGEST.ADD"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["TDIGEST.BYRANK"] = RespireCommandRetryCategory.ReadOnly,
+            ["TDIGEST.BYREVRANK"] = RespireCommandRetryCategory.ReadOnly,
+            ["TDIGEST.CDF"] = RespireCommandRetryCategory.ReadOnly,
+            ["TDIGEST.CREATE"] = RespireCommandRetryCategory.Never,
+            ["TDIGEST.INFO"] = RespireCommandRetryCategory.ReadOnly,
+            ["TDIGEST.MAX"] = RespireCommandRetryCategory.ReadOnly,
+            ["TDIGEST.MERGE"] = RespireCommandRetryCategory.Never,
+            ["TDIGEST.MIN"] = RespireCommandRetryCategory.ReadOnly,
+            ["TDIGEST.QUANTILE"] = RespireCommandRetryCategory.ReadOnly,
+            ["TDIGEST.RANK"] = RespireCommandRetryCategory.ReadOnly,
+            ["TDIGEST.RESET"] = RespireCommandRetryCategory.Never,
+            ["TDIGEST.REVRANK"] = RespireCommandRetryCategory.ReadOnly,
+            ["TDIGEST.TRIMMED_MEAN"] = RespireCommandRetryCategory.ReadOnly,
+            ["TIME"] = RespireCommandRetryCategory.Connection,
+            ["TOPK.ADD"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["TOPK.COUNT"] = RespireCommandRetryCategory.ReadOnly,
+            ["TOPK.INCRBY"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["TOPK.INFO"] = RespireCommandRetryCategory.ReadOnly,
+            ["TOPK.LIST"] = RespireCommandRetryCategory.ReadOnly,
+            ["TOPK.QUERY"] = RespireCommandRetryCategory.ReadOnly,
+            ["TOPK.RESERVE"] = RespireCommandRetryCategory.Never,
+            ["TOUCH"] = RespireCommandRetryCategory.Never,
+            ["TRIMSLOTS"] = RespireCommandRetryCategory.Never,
+            ["TS.ADD"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["TS.ALTER"] = RespireCommandRetryCategory.Never,
+            ["TS.CREATE"] = RespireCommandRetryCategory.Never,
+            ["TS.CREATERULE"] = RespireCommandRetryCategory.Never,
+            ["TS.DECRBY"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["TS.DEL"] = RespireCommandRetryCategory.Never,
+            ["TS.DELETERULE"] = RespireCommandRetryCategory.Never,
+            ["TS.GET"] = RespireCommandRetryCategory.ReadOnly,
+            ["TS.INCRBY"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["TS.INFO"] = RespireCommandRetryCategory.ReadOnly,
+            ["TS.MADD"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["TS.MGET"] = RespireCommandRetryCategory.ReadOnly,
+            ["TS.MRANGE"] = RespireCommandRetryCategory.ReadOnly,
+            ["TS.MREVRANGE"] = RespireCommandRetryCategory.ReadOnly,
+            ["TS.NRANGE"] = RespireCommandRetryCategory.ReadOnly,
+            ["TS.NREVRANGE"] = RespireCommandRetryCategory.ReadOnly,
+            ["TS.QUERYINDEX"] = RespireCommandRetryCategory.ReadOnly,
+            ["TS.QUERYLABELS"] = RespireCommandRetryCategory.ReadOnly,
+            ["TS.RANGE"] = RespireCommandRetryCategory.ReadOnly,
+            ["TS.READ"] = RespireCommandRetryCategory.ReadOnly,
+            ["TS.REVRANGE"] = RespireCommandRetryCategory.ReadOnly,
+            ["TTL"] = RespireCommandRetryCategory.ReadOnly,
+            ["TYPE"] = RespireCommandRetryCategory.ReadOnly,
+            ["UNLINK"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["UNSUBSCRIBE"] = RespireCommandRetryCategory.Never,
+            ["UNWATCH"] = RespireCommandRetryCategory.Never,
+            ["VADD"] = RespireCommandRetryCategory.Never,
+            ["VCARD"] = RespireCommandRetryCategory.ReadOnly,
+            ["VDIM"] = RespireCommandRetryCategory.ReadOnly,
+            ["VEMB"] = RespireCommandRetryCategory.ReadOnly,
+            ["VGETATTR"] = RespireCommandRetryCategory.ReadOnly,
+            ["VINFO"] = RespireCommandRetryCategory.ReadOnly,
+            ["VISMEMBER"] = RespireCommandRetryCategory.ReadOnly,
+            ["VLINKS"] = RespireCommandRetryCategory.ReadOnly,
+            ["VRANDMEMBER"] = RespireCommandRetryCategory.ReadOnly,
+            ["VRANGE"] = RespireCommandRetryCategory.ReadOnly,
+            ["VREM"] = RespireCommandRetryCategory.Never,
+            ["VSETATTR"] = RespireCommandRetryCategory.WriteLastWins,
+            ["VSIM"] = RespireCommandRetryCategory.ReadOnly,
+            ["WAIT"] = RespireCommandRetryCategory.Never,
+            ["WAITAOF"] = RespireCommandRetryCategory.Never,
+            ["WATCH"] = RespireCommandRetryCategory.Never,
+            ["XACK"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["XACKDEL"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["XADD"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["XAUTOCLAIM"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["XCFGSET"] = RespireCommandRetryCategory.Never,
+            ["XCLAIM"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["XDEL"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["XDELEX"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["XGROUP"] = RespireCommandRetryCategory.Never,
+            ["XGROUP CREATE"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["XGROUP CREATECONSUMER"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["XGROUP DELCONSUMER"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["XGROUP DESTROY"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["XGROUP HELP"] = RespireCommandRetryCategory.Never,
+            ["XGROUP SETID"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["XIDMPRECORD"] = RespireCommandRetryCategory.Never,
+            ["XINFO"] = RespireCommandRetryCategory.Never,
+            ["XINFO CONSUMERS"] = RespireCommandRetryCategory.ReadOnly,
+            ["XINFO GROUPS"] = RespireCommandRetryCategory.ReadOnly,
+            ["XINFO HELP"] = RespireCommandRetryCategory.Never,
+            ["XINFO STREAM"] = RespireCommandRetryCategory.ReadOnly,
+            ["XLEN"] = RespireCommandRetryCategory.ReadOnly,
+            ["XNACK"] = RespireCommandRetryCategory.Never,
+            ["XPENDING"] = RespireCommandRetryCategory.ReadOnly,
+            ["XRANGE"] = RespireCommandRetryCategory.ReadOnly,
+            ["XREAD"] = RespireCommandRetryCategory.ReadOnly,
+            ["XREADGROUP"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["XREVRANGE"] = RespireCommandRetryCategory.ReadOnly,
+            ["XSETID"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["XTRIM"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["ZADD"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["ZCARD"] = RespireCommandRetryCategory.ReadOnly,
+            ["ZCOUNT"] = RespireCommandRetryCategory.ReadOnly,
+            ["ZDIFF"] = RespireCommandRetryCategory.ReadOnly,
+            ["ZDIFFSTORE"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["ZINCRBY"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["ZINTER"] = RespireCommandRetryCategory.ReadOnly,
+            ["ZINTERCARD"] = RespireCommandRetryCategory.ReadOnly,
+            ["ZINTERSTORE"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["ZLEXCOUNT"] = RespireCommandRetryCategory.ReadOnly,
+            ["ZMPOP"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["ZMSCORE"] = RespireCommandRetryCategory.ReadOnly,
+            ["ZPOPMAX"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["ZPOPMIN"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["ZRANDMEMBER"] = RespireCommandRetryCategory.ReadOnly,
+            ["ZRANGE"] = RespireCommandRetryCategory.ReadOnly,
+            ["ZRANGEBYLEX"] = RespireCommandRetryCategory.ReadOnly,
+            ["ZRANGEBYSCORE"] = RespireCommandRetryCategory.ReadOnly,
+            ["ZRANGESTORE"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["ZRANK"] = RespireCommandRetryCategory.ReadOnly,
+            ["ZREM"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["ZREMRANGEBYLEX"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["ZREMRANGEBYRANK"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["ZREMRANGEBYSCORE"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["ZREVRANGE"] = RespireCommandRetryCategory.ReadOnly,
+            ["ZREVRANGEBYLEX"] = RespireCommandRetryCategory.ReadOnly,
+            ["ZREVRANGEBYSCORE"] = RespireCommandRetryCategory.ReadOnly,
+            ["ZREVRANK"] = RespireCommandRetryCategory.ReadOnly,
+            ["ZSCAN"] = RespireCommandRetryCategory.ReadOnly,
+            ["ZSCORE"] = RespireCommandRetryCategory.ReadOnly,
+            ["ZUNION"] = RespireCommandRetryCategory.ReadOnly,
+            ["ZUNIONSTORE"] = RespireCommandRetryCategory.WriteAccumulating,
+        }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
+
+    internal static RespireCommandRetryCategory Get(string command)
+        => s_commands.TryGetValue(command, out var category) ? category : RespireCommandRetryCategory.Never;
 }
 
 /// <summary>Immutable pre-encoded bulk frames for fixed command options.</summary>
