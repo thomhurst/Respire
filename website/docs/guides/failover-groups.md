@@ -2,6 +2,40 @@
 title: Failover groups
 ---
 
+:::note Endpoint circuit breaker foundation
+
+Standalone and per-node command circuit breaking is under development in
+[#863](https://github.com/thomhurst/Respire/issues/863).
+`RespireCircuitBreakerOptions` and `RespireCircuitOpenException` establish the
+configuration and rejection contract, but no `RespireOptions` property enables
+them yet. Existing failover-group configuration below remains the available
+health-checked switching API.
+
+The endpoint foundation retains the most recent `MaximumSampleCount` completed
+outcomes whose age is less than `SamplingWindow`: 1024 outcomes and 30 seconds by
+default. Both the failure-rate threshold and minimum failure count must be reached
+before opening. Recovery waits for the monotonic `OpenDuration` and admits at most
+`HalfOpenProbeCount` concurrent probes. All required probes must succeed; any
+failed probe reopens the circuit. Canceled or ignored probes release capacity
+without counting as successes or failures.
+
+Every admitted operation must complete its internal permit, including cancellation,
+exceptions, and operations that never dispatch. Permits have no lease or automatic
+expiry: abandoning a half-open permit retains its slot indefinitely and can prevent
+recovery. The dispatch integration in [#1255](https://github.com/thomhurst/Respire/issues/1255)
+must guard every admission with `finally` or a `using`-style completion guard, and
+complete canceled or undispatched operations with the ignored outcome. Operation
+timeouts and cancellation belong to that integration; `OpenDuration` only controls
+the delay before recovery starts, not the lifetime of an admitted probe.
+
+The rejection contract identifies the endpoint and remaining `RetryAfter` delay.
+`RetryAfter` is null when recovery probes fill the slots and their completion
+determines the next admission. This delay is informational; a retry must reacquire
+endpoint admission. Client dispatch, reuse by failover groups, telemetry, and safe
+retry composition remain pending in the native children of #863.
+
+:::
+
 `RespireFailoverGroup` monitors independent standalone Redis, Sentinel, or Redis Cluster deployments and selects a healthy
 deployment for new operations. Lower candidate priorities win. The group uses bounded health
 probes, opens a circuit after consecutive failures, and waits for a recovered higher-priority
