@@ -31,7 +31,7 @@ the delay before recovery starts, not the lifetime of an admitted probe.
 The rejection contract identifies the endpoint and remaining `RetryAfter` delay.
 `RetryAfter` is null when recovery probes fill the slots and their completion
 determines the next admission. This delay is informational; a retry must reacquire
-endpoint admission. Client dispatch, reuse by failover groups, telemetry, and safe
+endpoint admission. Client dispatch, telemetry, and safe
 retry composition remain pending in the native children of #863.
 
 :::
@@ -40,6 +40,22 @@ retry composition remain pending in the native children of #863.
 deployment for new operations. Lower candidate priorities win. The group uses bounded health
 probes, opens a circuit after consecutive failures, and waits for a recovered higher-priority
 endpoint to remain healthy before failback.
+
+Failover health probes use the shared endpoint circuit core for the open delay and
+a single recovery admission per candidate. `RespireFailoverGroupOptions` still
+controls consecutive failures, probe timeout, open duration, and failback grace;
+`RespireCircuitBreakerOptions` does not configure failover probes. Consecutive
+failure thresholds have no rolling-history count limit. Application commands are
+not gated or replayed by this probe circuit.
+
+Each admitted probe completes its permit with a `finally` fallback. Failed probes
+complete before metrics or logging callbacks, so observer delays do not extend the
+circuit's open period. Parent cancellation is
+ignored for health and releases recovery capacity, including cancellation before
+dispatch. A failed or timed-out recovery probe reopens the circuit for the
+configured duration. Ordinary probe timeouts count toward `FailureThreshold`.
+Open delays use monotonic time; the public UTC deadline is a
+status snapshot and saturates at `DateTimeOffset.MaxValue` for very long durations.
 
 Standalone health probes use `PING`. Cluster probes use `CLUSTER INFO`. Sentinel probes check
 the discovered primary with `ROLE` and then send `PING`. The group does not
