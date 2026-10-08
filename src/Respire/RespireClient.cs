@@ -1990,6 +1990,8 @@ public sealed partial class RespireClient : IRespireClient
     {
         internal TResult Result = default!;
         public void MoveNext() => Result = converter(state, in cached);
+        // Start invokes MoveNext synchronously. This converter has no suspension point,
+        // so it never needs a boxed state machine or a SetStateMachine callback.
         void IAsyncStateMachine.SetStateMachine(IAsyncStateMachine stateMachine)
             => throw new InvalidOperationException("Cached conversion cannot suspend.");
     }
