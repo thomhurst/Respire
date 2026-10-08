@@ -1,5 +1,7 @@
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Diagnostics.Tracing;
 using System.Reflection;
 using System.Text.Json;
 using BenchmarkDotNet.Attributes;
@@ -137,18 +139,175 @@ public class ClientCacheQueryBenchmarks
 
     private async Task ValidateQueries(string workload, RespireClient client, bool writes, bool affected)
     {
+        // Enable runtime contention events only for this untimed fixture validation.
+        // Match the actual query gate's native wait handle, not whole-process contention totals.
+        using var queryContentions = await QueryGateContentionProbe.CreateAsync(client.ClientSideCache!);
         var before = client.ClientSideCache!.GetStatistics();
         var beforeContentions = s_lockContentions!();
         if (await Run(client, queries: true, writes, affected) != Callers * Rounds * (2 * _value.Length + (writes ? 1 : 0)))
             throw new InvalidOperationException("Mixed fixture validation failed.");
         var lockContentions = s_lockContentions() - beforeContentions;
         var after = client.ClientSideCache.GetStatistics();
+        // Runtime delivery can lag joined producers. Report the bounded drain outcome;
+        // observed events remain samples, never a complete tracing claim.
+        var observationsDrained = await queryContentions.DrainAsync();
         Console.WriteLine("QUERY_VALIDATION " + JsonSerializer.Serialize(new
         {
             workload, queryCalls = 2 * Callers * Rounds, writes = writes ? Callers * Rounds : 0,
             hits = after.Hits - before.Hits, misses = after.Misses - before.Misses,
             residentEntries = after.Count, managedLockContentions = lockContentions,
+            queryGateContentionsObserved = queryContentions.Count,
+            queryGateCompletedWaitsObserved = queryContentions.CompletedWaits,
+            queryGateWaitMillisecondsObserved = queryContentions.WaitMilliseconds,
+            queryGateMaximumWaitMillisecondsObserved = queryContentions.MaximumWaitMilliseconds,
+            queryGateOutstandingWaitsObserved = queryContentions.OutstandingWaits,
+            queryGateObservationDrainTimedOut = !observationsDrained,
+            queryGatePositiveControl = true,
         }));
+    }
+
+    private sealed class QueryGateContentionProbe : EventListener
+    {
+        private readonly ConcurrentQueue<nint> _warmLockIds = new();
+        private readonly ConcurrentDictionary<long, byte> _waitingThreads = new();
+        private int _ready;
+        private nint _target;
+        private long _count;
+        private long _completedWaits;
+        private double _waitNanoseconds;
+        private double _maximumWaitNanoseconds;
+        internal long Count => Interlocked.Read(ref _count);
+        internal long CompletedWaits => Interlocked.Read(ref _completedWaits);
+        internal int OutstandingWaits => _waitingThreads.Count;
+        internal double WaitMilliseconds => Volatile.Read(ref _waitNanoseconds) / 1_000_000;
+        internal double MaximumWaitMilliseconds => Volatile.Read(ref _maximumWaitNanoseconds) / 1_000_000;
+
+        private QueryGateContentionProbe()
+        {
+            // EventListener discovers sources in its base constructor, before these fields exist.
+            Volatile.Write(ref _ready, 1);
+            foreach (var source in EventSource.GetSources()) OnEventSourceCreated(source);
+        }
+
+        protected override void OnEventSourceCreated(EventSource source)
+        {
+            if (Volatile.Read(ref _ready) != 0 && source.Name == "Microsoft-Windows-DotNETRuntime")
+                EnableEvents(source, EventLevel.Informational, (EventKeywords)0x4000);
+        }
+
+        protected override void OnEventWritten(EventWrittenEventArgs args)
+        {
+            if (args.EventSource.Name != "Microsoft-Windows-DotNETRuntime" || args.Payload is not { Count: >= 3 }) return;
+            if (args.EventId == 91 && _waitingThreads.TryRemove(args.OSThreadId, out _))
+            {
+                var duration = Convert.ToDouble(args.Payload[2], System.Globalization.CultureInfo.InvariantCulture);
+                AddWait(duration);
+                return;
+            }
+            if (args.EventId != 81) return;
+            var lockId = args.Payload[2] switch
+            {
+                nint pointer => pointer,
+                long value => (nint)value,
+                ulong value => (nint)unchecked((long)value),
+                _ => 0,
+            };
+            if (lockId == 0) return;
+            var target = Volatile.Read(ref _target);
+            if (target == 0) _warmLockIds.Enqueue(lockId);
+            else if (lockId == target)
+            {
+                _waitingThreads.TryAdd(args.OSThreadId, 0);
+                Interlocked.Increment(ref _count);
+            }
+        }
+
+        private void AddWait(double duration)
+        {
+            var total = Volatile.Read(ref _waitNanoseconds);
+            while (Interlocked.CompareExchange(ref _waitNanoseconds, total + duration, total) != total)
+                total = Volatile.Read(ref _waitNanoseconds);
+            var maximum = Volatile.Read(ref _maximumWaitNanoseconds);
+            while (duration > maximum && Interlocked.CompareExchange(ref _maximumWaitNanoseconds, duration, maximum) != maximum)
+                maximum = Volatile.Read(ref _maximumWaitNanoseconds);
+            Interlocked.Increment(ref _completedWaits);
+        }
+
+        internal async Task<bool> DrainAsync()
+        {
+            var started = Stopwatch.GetTimestamp();
+            var quietSince = started;
+            var observed = Count;
+            while (OutstandingWaits != 0 || Stopwatch.GetElapsedTime(quietSince) < TimeSpan.FromMilliseconds(100))
+            {
+                if (Stopwatch.GetElapsedTime(started) >= TimeSpan.FromSeconds(1)) return false;
+                await Task.Delay(10);
+                var current = Count;
+                if (current == observed) continue;
+                observed = current;
+                quietSince = Stopwatch.GetTimestamp();
+            }
+            return true;
+        }
+
+        internal static async Task<QueryGateContentionProbe> CreateAsync(object cache)
+        {
+            var gate = cache.GetType().GetField("_queryLock", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(cache)
+                ?? throw new InvalidOperationException("Query publication gate is missing.");
+            var enter = gate.GetType().GetMethod("Enter") ?? throw new NotSupportedException("Query diagnostics require net10 Lock.Enter.");
+            var exit = gate.GetType().GetMethod("Exit") ?? throw new NotSupportedException("Query diagnostics require net10 Lock.Exit.");
+            var lockId = gate.GetType().GetProperty("LockIdForEvents", BindingFlags.Instance | BindingFlags.NonPublic)
+                ?? throw new NotSupportedException("Pinned runtime lock identity is missing.");
+            var listener = new QueryGateContentionProbe();
+            try
+            {
+                await listener.CalibrateAsync(gate, enter, exit, lockId);
+                return listener;
+            }
+            catch { listener.Dispose(); throw; }
+        }
+
+        private async Task CalibrateAsync(object gate, MethodInfo enter, MethodInfo exit, PropertyInfo lockId)
+        {
+            using var held = new ManualResetEventSlim();
+            using var release = new ManualResetEventSlim();
+            var waiterStarted = new TaskCompletionSource<Thread>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var holding = Task.Factory.StartNew(() =>
+            {
+                enter.Invoke(gate, null);
+                try
+                {
+                    held.Set();
+                    if (!release.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("Query gate positive control was not released.");
+                }
+                finally { exit.Invoke(gate, null); }
+            }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+            Task? waiting = null;
+            try
+            {
+                if (!held.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("Query gate holder did not start.");
+                waiting = Task.Factory.StartNew(() =>
+                {
+                    waiterStarted.SetResult(Thread.CurrentThread);
+                    enter.Invoke(gate, null);
+                    exit.Invoke(gate, null);
+                }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+                var thread = await waiterStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                if (!SpinWait.SpinUntil(() => (thread.ThreadState & System.Threading.ThreadState.WaitSleepJoin) != 0,
+                        TimeSpan.FromSeconds(10)))
+                    throw new TimeoutException("Query gate positive control did not park.");
+                var identity = (nint)lockId.GetValue(gate)!;
+                if (!SpinWait.SpinUntil(() => _warmLockIds.Contains(identity), TimeSpan.FromSeconds(10)))
+                    throw new InvalidOperationException("Runtime contention events did not identify the controlled query gate.");
+                Volatile.Write(ref _target, identity);
+                while (_warmLockIds.TryDequeue(out _)) { }
+            }
+            finally
+            {
+                release.Set();
+                await Task.WhenAll(waiting is null ? [holding] : [holding, waiting]).WaitAsync(TimeSpan.FromSeconds(10));
+            }
+        }
     }
 
     private void ReportMemory(string stage)
@@ -157,16 +316,66 @@ public class ClientCacheQueryBenchmarks
         // The same copied fixture supports baselines without the new pending index.
         var pending = PendingDependencies(_sharing?.ClientSideCache) + PendingDependencies(_independent?.ClientSideCache);
         if (pending != 0) throw new InvalidOperationException("Completed workload retained pending dependency keys.");
+        var sharingIdle = IdleQueryStorage(_sharing?.ClientSideCache);
+        var independentIdle = IdleQueryStorage(_independent?.ClientSideCache);
         GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
         var info = GC.GetGCMemoryInfo();
         using var process = Process.GetCurrentProcess();
         Console.WriteLine("RECEIVE_MEMORY " + JsonSerializer.Serialize(new
         {
             stage, pendingDependencyKeys = pending, churnKeys = 1_500,
+            idleQueryLeases = sharingIdle.Leases + independentIdle.Leases,
+            idleQueryStates = sharingIdle.States + independentIdle.States,
+            retainedIdleDependencies = sharingIdle.RetainedDependencies + independentIdle.RetainedDependencies,
             cacheEntries = (_sharing?.ClientSideCache?.Count ?? 0) + (_independent?.ClientSideCache?.Count ?? 0),
             managedBytes = GC.GetTotalMemory(false), pohBytes = info.GenerationInfo[4].SizeAfterBytes,
             pohFragmentedBytes = info.GenerationInfo[4].FragmentationAfterBytes, workingSetBytes = process.WorkingSet64,
         }));
+    }
+
+    private static (int Leases, int States, int RetainedDependencies) IdleQueryStorage(object? cache)
+    {
+        if (cache is null) return default;
+        const BindingFlags members = BindingFlags.Instance | BindingFlags.NonPublic;
+        var type = cache.GetType();
+        // Support both the private storage value and earlier heads with coordinator-owned lists.
+        var storageField = type.GetField("_queryStorage", members);
+        var storage = storageField?.GetValue(cache) ?? cache;
+        var storageType = storage.GetType();
+        var leaseField = storageType.GetField(storageField is null ? "_idleQueryLeases" : "_leases", members);
+        var stateField = storageType.GetField(storageField is null ? "_idleQueryStates" : "_states", members);
+        if (leaseField is null && stateField is null)
+        {
+            // The same copied fixture runs against the pre-pooling baseline.
+            if (type.GetNestedType("TestInspection", BindingFlags.NonPublic)?.GetProperty("IdleQueryStorage", members) is not null)
+                throw new InvalidOperationException("Idle storage diagnostic exists but pooled storage is missing.");
+            return default;
+        }
+        if (leaseField is null || stateField is null) throw new InvalidOperationException("Incomplete query storage diagnostics.");
+        var leases = 0;
+        var states = 0;
+        var retained = 0;
+        for (var state = stateField.GetValue(storage); state is not null; state = state.GetType().GetField("Next", members)!.GetValue(state))
+        {
+            if (++states > 256) throw new InvalidOperationException("Query state pool exceeds its per-client bound.");
+            if (state.GetType().GetField("Key", members)!.GetValue(state) is not RespireKey key || !key.Equals(default(RespireKey))) retained++;
+        }
+        for (var lease = leaseField.GetValue(storage); lease is not null; lease = lease.GetType().GetField("Next", members)!.GetValue(lease))
+        {
+            if (++leases > 64) throw new InvalidOperationException("Query lease pool exceeds its per-client bound.");
+            var leaseType = lease.GetType();
+            var capacity = (int)leaseType.GetProperty("Capacity", members)!.GetValue(lease)!;
+            if (capacity > 16) throw new InvalidOperationException("Large stamp storage was retained.");
+            var dependency = leaseType.GetMethod("GetDependency", members)!;
+            for (var index = 0; index < capacity; index++)
+            {
+                var stamp = dependency.Invoke(lease, [index])!;
+                // The positional record exposes its State property publicly.
+                if (stamp.GetType().GetProperty("State")!.GetValue(stamp) is not null) retained++;
+            }
+        }
+        if (retained != 0) throw new InvalidOperationException("Idle query storage retained dependency keys or states.");
+        return (leases, states, retained);
     }
 
     private static int PendingDependencies(object? cache)

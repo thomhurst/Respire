@@ -601,6 +601,9 @@ and after completion, including failed or cancelled writes.
 Dependency generations exist only while queries are pending. Completion, cancellation,
 failed replies, and redirect rebasing release those registrations. This state scales with
 concurrent dependencies, rather than every key invalidated over the client's lifetime.
+The client can retain up to 64 cleared query leases and 256 cleared dependency states for
+reuse. Leases with more than 16 dependencies are not retained. This bounded idle storage
+holds no key or reply references and is separate from the resident-entry `SizeBytes` estimate.
 Whole-cache clears, continuity loss, and conservative flushes retain their global barrier
 and reject every older query. Queries outside the configured key prefixes remain uncached.
 

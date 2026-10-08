@@ -1,9 +1,10 @@
-# Reviewed source-declared member signatures: 341 total; per-type counts include owner, derived and accessible nested declarations.
-# Count: Respire.ClientSideCacheCoordinator | 56
+# Reviewed source-declared member signatures: 349 total; per-type counts include owner, derived and accessible nested declarations.
+# Count: Respire.ClientSideCacheCoordinator | 57
 Respire.ClientSideCacheCoordinator | class CacheEntry(byte[]?, long, long, string?)
 Respire.ClientSideCacheCoordinator | class CacheStore()
 Respire.ClientSideCacheCoordinator | class InflightRead(RespireKey, bool)
 Respire.ClientSideCacheCoordinator | class QueryCacheEntry(RespValue, RespireKey[], long, long)
+Respire.ClientSideCacheCoordinator | class QueryDependencyState()
 Respire.ClientSideCacheCoordinator | class QueryReadLease(int)
 Respire.ClientSideCacheCoordinator | constructor ClientSideCacheCoordinator(RespireClientSideCacheOptions)
 Respire.ClientSideCacheCoordinator | delegate GetReadConverter`2(TState, in GetReadResult) : TResult
@@ -50,8 +51,8 @@ Respire.ClientSideCacheCoordinator | property Count [public; get] : int
 Respire.ClientSideCacheCoordinator | property ReuseHashFields [internal; get] : bool
 Respire.ClientSideCacheCoordinator | property SharedReadRetirements [internal; get] : long
 Respire.ClientSideCacheCoordinator | property SizeBytes [public; get] : long
-Respire.ClientSideCacheCoordinator | readonly record struct QueryDependencyStamp(InflightRead, long)
-Respire.ClientSideCacheCoordinator | readonly record struct QueryReadToken(ClientCacheCommandKey, RespireKey[], long, long, CacheStore, bool, QueryReadLease?)
+Respire.ClientSideCacheCoordinator | readonly record struct QueryDependencyStamp(QueryDependencyState, long)
+Respire.ClientSideCacheCoordinator | readonly record struct QueryReadToken(ClientCacheCommandKey, RespireKey[], long, long, CacheStore, bool, QueryReadLease?, long)
 Respire.ClientSideCacheCoordinator | readonly record struct QueryRequest(ClientCacheCommandKey, RespireKey)
 Respire.ClientSideCacheCoordinator | readonly record struct ReadToken(InflightRead, long, long, CacheStore)
 # Designated borrowed view; source keys retain readonly/ref and compiled metadata checks stack-only visibility.
@@ -104,11 +105,19 @@ Respire.ClientSideCacheCoordinator.QueryCacheEntry | property Dependencies [publ
 Respire.ClientSideCacheCoordinator.QueryCacheEntry | property ExpiresAt [public; get] : long
 Respire.ClientSideCacheCoordinator.QueryCacheEntry | property Size [public; get] : long
 Respire.ClientSideCacheCoordinator.QueryCacheEntry | property Value [public; get] : RespValue
-# Count: Respire.ClientSideCacheCoordinator.QueryReadLease | 4
-Respire.ClientSideCacheCoordinator.QueryReadLease | field Completed : bool
+# Count: Respire.ClientSideCacheCoordinator.QueryDependencyState | 4
+Respire.ClientSideCacheCoordinator.QueryDependencyState | field Generation : long
+Respire.ClientSideCacheCoordinator.QueryDependencyState | field Key : RespireKey
+Respire.ClientSideCacheCoordinator.QueryDependencyState | field Next : QueryDependencyState?
+Respire.ClientSideCacheCoordinator.QueryDependencyState | field Readers : int
+# Count: Respire.ClientSideCacheCoordinator.QueryReadLease | 7
+Respire.ClientSideCacheCoordinator.QueryReadLease | field Generation : long
+Respire.ClientSideCacheCoordinator.QueryReadLease | field Next : QueryReadLease?
 Respire.ClientSideCacheCoordinator.QueryReadLease | field Registered : int
-Respire.ClientSideCacheCoordinator.QueryReadLease | method Capture(InflightRead) : void
+Respire.ClientSideCacheCoordinator.QueryReadLease | method Capture(QueryDependencyState) : void
+Respire.ClientSideCacheCoordinator.QueryReadLease | method ClearDependencies() : void
 Respire.ClientSideCacheCoordinator.QueryReadLease | method GetDependency(int) : QueryDependencyStamp
+Respire.ClientSideCacheCoordinator.QueryReadLease | property Capacity [internal; get] : int
 # Count: Respire.Networking.BulkStreamPendingResponseSource | 26
 Respire.Networking.BulkStreamPendingResponseSource | constructor BulkStreamPendingResponseSource(string?, bool, Action<Exception?>?, CancellationToken, Action?)
 Respire.Networking.BulkStreamPendingResponseSource | method AbortPayload(Exception) : void

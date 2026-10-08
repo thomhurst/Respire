@@ -19,5 +19,14 @@ internal sealed partial class ClientSideCacheCoordinator
                 lock (owner._queryLock) return owner._queryDependencies.Count;
             }
         }
+
+        /// <summary>Counts cleared idle storage under the query gate; the copy grants no rent or return ownership.</summary>
+        internal (int Leases, int States, int RetainedDependencies) IdleQueryStorage
+        {
+            get
+            {
+                lock (owner._queryLock) return owner._queryStorage.Inspect();
+            }
+        }
     }
 }

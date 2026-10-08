@@ -196,6 +196,9 @@ public interface IRespireClientSideCache
 internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCache
 {
     private const int EntryOverhead = 64;
+    private const int MaxIdleQueryLeases = 64;
+    private const int MaxPooledQueryDependencies = 16;
+    private const int MaxIdleQueryStates = 256;
 
     private readonly RespireClientSideCacheOptions _options;
     private readonly ClientCachePrefixSet _keyPrefixes;
@@ -203,7 +206,10 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     private readonly Lock _queryLock = new();
     // Only pending query dependencies live here. Last-reader removal drops the owned key
     // and its generation; unrelated invalidations never create historical key state.
-    private readonly Dictionary<RespireKey, InflightRead> _queryDependencies = new();
+    private readonly Dictionary<RespireKey, QueryDependencyState> _queryDependencies = new();
+    // These bounded lists contain only cleared storage, never historical keys or dependency generations.
+    // The publication gate also owns rent/return; no additional gate or dispatch lookup is needed.
+    private QueryRegistrationStorage _queryStorage;
     private CacheStore _store;
     private long _continuityEpoch;
     private long _queryEpoch;
@@ -344,10 +350,10 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         var query = request.Query.Snapshot();
         var primaryKey = request.PrimaryKey;
         var dependencies = CreateDependencies(operation, in query, in primaryKey);
-        var lease = CanTrackAll(dependencies) ? new QueryReadLease(dependencies.Length) : null;
+        var canCache = CanTrackAll(dependencies);
         lock (_queryLock)
         {
-            return RegisterQueryRead(in query, dependencies, lease);
+            return RegisterQueryRead(in query, dependencies, canCache ? RentQueryRead(dependencies.Length) : null);
         }
     }
 
@@ -363,7 +369,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                 {
                     if (!_queryDependencies.TryGetValue(key, out var state))
                     {
-                        state = new InflightRead(key);
+                        state = RentQueryDependency(in key);
                         _queryDependencies.Add(key, state);
                     }
                     lease.Capture(state);
@@ -372,19 +378,19 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             }
             catch
             {
-                ReleaseQueryRead(lease);
+                ReleaseQueryRead(lease, lease.Generation);
                 throw;
             }
         }
         return new(query, dependencies, Volatile.Read(ref _queryEpoch), Volatile.Read(ref _continuityEpoch),
-            Volatile.Read(ref _store), lease is not null, lease);
+            Volatile.Read(ref _store), lease is not null, lease, lease?.Generation ?? 0);
     }
 
     internal void CompleteRead(in QueryReadToken token, in RespValue response, bool allowInsert)
     {
         // Copies and the caller's abandonment finally may revisit a completed lease.
         // They own no remaining state and need not acquire the publication gate again.
-        if (token.Lease is not { } lease || Volatile.Read(ref lease.Completed)) return;
+        if (token.Lease is not { } lease || Volatile.Read(ref lease.Generation) != token.LeaseGeneration) return;
         var published = false;
         try
         {
@@ -399,16 +405,16 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             {
                 if (CanPublishQuery(in token)) published = token.Store.Set(in query, entry);
                 // Retire dependencies under the publication gate we already own.
-                ReleaseQueryRead(lease);
+                ReleaseQueryRead(lease, token.LeaseGeneration);
             }
         }
         finally
         {
             // Failed entry creation/publication still abandons the lease. A
             // successful publication or another copied token has released it.
-            if (!Volatile.Read(ref lease.Completed))
+            if (Volatile.Read(ref lease.Generation) == token.LeaseGeneration)
             {
-                lock (_queryLock) ReleaseQueryRead(lease);
+                lock (_queryLock) ReleaseQueryRead(lease, token.LeaseGeneration);
             }
         }
         if (published) token.Store.Trim();
@@ -416,18 +422,20 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
 
     internal QueryReadToken RebaseRead(in QueryReadToken token)
     {
-        var replacement = token.CanCache ? new QueryReadLease(token.Dependencies.Length) : null;
         lock (_queryLock)
         {
-            if (token.Lease is { } lease) ReleaseQueryRead(lease);
+            // Only a live redirect owner may move registrations. Completed copies cannot create a new owner.
+            if (!token.CanCache || token.Lease is not { } lease || lease.Generation != token.LeaseGeneration)
+                return token with { CanCache = false, Lease = null, LeaseGeneration = 0 };
+            ReleaseQueryRead(lease, token.LeaseGeneration);
             var query = token.Query;
-            return RegisterQueryRead(in query, token.Dependencies, replacement);
+            return RegisterQueryRead(in query, token.Dependencies, RentQueryRead(token.Dependencies.Length));
         }
     }
 
     private bool CanPublishQuery(in QueryReadToken token)
     {
-        if (!token.CanCache || token.Lease is not { Completed: false } lease
+        if (!token.CanCache || token.Lease is not { } lease || lease.Generation != token.LeaseGeneration
             || Volatile.Read(ref _queryEpoch) != token.QueryEpoch
             || Volatile.Read(ref _continuityEpoch) != token.ContinuityEpoch
             || !ReferenceEquals(Volatile.Read(ref _store), token.Store)) return false;
@@ -439,14 +447,111 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         return true;
     }
 
-    private void ReleaseQueryRead(QueryReadLease lease)
+    private QueryReadLease RentQueryRead(int dependencyCount)
     {
-        if (lease.Completed) return;
-        Volatile.Write(ref lease.Completed, true);
+        if (!_queryStorage.TryRent(dependencyCount, out var lease)) return new QueryReadLease(dependencyCount);
+        // Returned generations are negative. Publish a fresh identity before the lease escapes.
+        Volatile.Write(ref lease.Generation, -lease.Generation + 1);
+        return lease;
+    }
+
+    private QueryDependencyState RentQueryDependency(in RespireKey key)
+    {
+        if (!_queryStorage.TryRent(out var state)) return new QueryDependencyState { Key = key };
+        state.Key = key;
+        return state;
+    }
+
+    private void ReleaseQueryRead(QueryReadLease lease, long generation)
+    {
+        if (lease.Generation != generation) return;
+        // Invalidate copied tokens before clearing or reusing any captured registration.
+        Volatile.Write(ref lease.Generation, -generation);
         for (var index = 0; index < lease.Registered; index++)
         {
             var state = lease.GetDependency(index).State;
-            if (--state.Readers == 0) _queryDependencies.Remove(state.Key);
+            if (--state.Readers != 0) continue;
+            _queryDependencies.Remove(state.Key);
+            state.Key = default;
+            state.Generation = 0;
+            _queryStorage.TryReturn(state);
+        }
+        lease.ClearDependencies();
+        // Never wrap a reusable identity or retain a large, one-off stamp array.
+        if (generation != long.MaxValue) _queryStorage.TryReturn(lease);
+    }
+
+    // Storage bookkeeping stays separate from active registration ownership. Every operation
+    // still runs under _queryLock; callers clear references and retire identities before return.
+    private struct QueryRegistrationStorage
+    {
+        private QueryReadLease? _leases;
+        private int _leaseCount;
+        private QueryDependencyState? _states;
+        private int _stateCount;
+
+        internal bool TryRent(int dependencyCount, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out QueryReadLease? lease)
+        {
+            QueryReadLease? previous = null;
+            lease = _leases;
+            // Scalar reads take the first item. Mixed layouts search at most the bounded idle count.
+            while (lease is not null && lease.Capacity < dependencyCount)
+            {
+                previous = lease;
+                lease = lease.Next;
+            }
+            if (lease is null) return false;
+            if (previous is null) _leases = lease.Next;
+            else previous.Next = lease.Next;
+            _leaseCount--;
+            lease.Next = null;
+            return true;
+        }
+
+        internal bool TryRent([System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out QueryDependencyState? state)
+        {
+            state = _states;
+            if (state is null) return false;
+            _states = state.Next;
+            _stateCount--;
+            state.Next = null;
+            return true;
+        }
+
+        internal void TryReturn(QueryDependencyState state)
+        {
+            if (_stateCount == MaxIdleQueryStates) return;
+            state.Next = _states;
+            _states = state;
+            _stateCount++;
+        }
+
+        internal void TryReturn(QueryReadLease lease)
+        {
+            if (lease.Capacity > MaxPooledQueryDependencies) return;
+            if (_leaseCount == MaxIdleQueryLeases)
+            {
+                // A full scalar pool must not force every multi-key read to allocate forever.
+                if (_leases!.Capacity >= lease.Capacity) return;
+                var discarded = _leases;
+                _leases = discarded.Next;
+                discarded.Next = null;
+                _leaseCount--;
+            }
+            lease.Next = _leases;
+            _leases = lease;
+            _leaseCount++;
+        }
+
+        internal readonly (int Leases, int States, int RetainedDependencies) Inspect()
+        {
+            var retained = 0;
+            for (var state = _states; state is not null; state = state.Next)
+                if (!state.Key.Equals(default(RespireKey))) retained++;
+            for (var lease = _leases; lease is not null; lease = lease.Next)
+                for (var index = 0; index < lease.Capacity; index++)
+                    if (lease.GetDependency(index).State is not null) retained++;
+            return (_leaseCount, _stateCount, retained);
         }
     }
 
@@ -1062,7 +1167,8 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         long ContinuityEpoch,
         CacheStore Store,
         bool CanCache,
-        QueryReadLease? Lease);
+        QueryReadLease? Lease,
+        long LeaseGeneration);
 
     internal sealed class QueryReadLease(int dependencyCount)
     {
@@ -1070,10 +1176,13 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         private readonly QueryDependencyStamp[]? _additional = dependencyCount > 1
             ? new QueryDependencyStamp[dependencyCount - 1] : null;
         internal int Registered;
-        // After construction, access through Volatile or while holding the coordinator's _queryLock.
-        internal bool Completed;
+        // Positive identities are active; their negatives are retired. Access through
+        // Volatile or under _queryLock, and check the token's identity at every boundary.
+        internal long Generation = 1;
+        internal QueryReadLease? Next;
+        internal int Capacity => (_additional?.Length ?? 0) + 1;
 
-        internal void Capture(InflightRead state)
+        internal void Capture(QueryDependencyState state)
         {
             var stamp = new QueryDependencyStamp(state, state.Generation);
             if (Registered == 0) _first = stamp;
@@ -1082,9 +1191,24 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         }
 
         internal QueryDependencyStamp GetDependency(int index) => index == 0 ? _first : _additional![index - 1];
+
+        internal void ClearDependencies()
+        {
+            _first = default;
+            if (_additional is not null) Array.Clear(_additional, 0, Math.Max(0, Registered - 1));
+            Registered = 0;
+        }
     }
 
-    internal readonly record struct QueryDependencyStamp(InflightRead State, long Generation);
+    internal readonly record struct QueryDependencyStamp(QueryDependencyState State, long Generation);
+
+    internal sealed class QueryDependencyState
+    {
+        internal RespireKey Key;
+        internal long Generation;
+        internal int Readers;
+        internal QueryDependencyState? Next;
+    }
 
     internal sealed class InflightRead(RespireKey key, bool canCache = true)
     {
