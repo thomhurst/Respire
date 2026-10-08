@@ -1,5 +1,6 @@
 using System.Text;
 using Microsoft.Extensions.Logging;
+using Respire.Internal;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -549,6 +550,182 @@ public class FailoverGroupTests
         await WaitUntilAsync(() => group.ActiveClient.Endpoint == Endpoint(secondary));
         var primaryStatus = group.GetEndpointStatuses().Single(status => status.Endpoint == Endpoint(primary));
         await Assert.That(primaryStatus.CircuitOpenUntil).IsEqualTo(DateTimeOffset.MaxValue);
+    }
+
+    [Test]
+    public async Task SharedCircuitRejectsProbesUntilMonotonicDeadline()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        await using var group = await RespireFailoverGroup.ConnectAsync([Candidate(server, 0)],
+            FastOptions() with { ProbeInterval = TimeSpan.FromMinutes(1), CircuitOpenDuration = TimeSpan.FromSeconds(1) }, clock);
+        server.ReplyOverride = (_, _) => "-ERR unavailable\r\n"u8.ToArray();
+        await group.ForTests.ProbeAsync(0);
+        await Assert.That(group.ForTests.Circuit(0).State).IsEqualTo(EndpointCircuitState.Open);
+        var commands = server.CommandsSeen;
+        server.ReplyOverride = null;
+        await group.ForTests.ProbeAsync(0);
+        clock.AdvanceUtc(TimeSpan.FromDays(365));
+        await group.ForTests.ProbeAsync(0);
+        await Assert.That(server.CommandsSeen).IsEqualTo(commands);
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await group.ForTests.ProbeAsync(0);
+        await Assert.That(server.CommandsSeen).IsEqualTo(commands + 1);
+        await Assert.That(group.ForTests.Circuit(0).State).IsEqualTo(EndpointCircuitState.Closed);
+        await Assert.That(group.GetEndpointStatuses()[0].CircuitOpenUntil).IsNull();
+    }
+
+    [Test]
+    public async Task CanceledRecoveryProbeReleasesAdmissionForLaterRecovery()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        await using var group = await RespireFailoverGroup.ConnectAsync([Candidate(server, 0)],
+            FastOptions() with { ProbeInterval = TimeSpan.FromMinutes(1), CircuitOpenDuration = TimeSpan.FromSeconds(1) }, clock);
+        server.ReplyOverride = (_, _) => "-ERR unavailable\r\n"u8.ToArray();
+        await group.ForTests.ProbeAsync(0);
+        server.ReplyOverride = null;
+        server.SuppressReply = _ => true;
+        clock.Advance(TimeSpan.FromSeconds(1));
+
+        using var cancellation = new CancellationTokenSource();
+        var commands = server.CommandsSeen;
+        var probe = group.ForTests.ProbeAsync(0, cancellation.Token);
+        await WaitUntilAsync(() => server.CommandsSeen > commands);
+        await Assert.That(group.ForTests.Circuit(0).ActiveProbes).IsEqualTo(1);
+        // A second recovery caller cannot send while the first owns the single probe slot.
+        await group.ForTests.ProbeAsync(0);
+        await Assert.That(server.CommandsSeen).IsEqualTo(commands + 1);
+        cancellation.Cancel();
+        await Assert.That(async () => await probe).Throws<OperationCanceledException>();
+        await Assert.That(group.ForTests.Circuit(0).ActiveProbes).IsEqualTo(0);
+        await Assert.That(group.ForTests.Circuit(0).State).IsEqualTo(EndpointCircuitState.HalfOpen);
+        await Assert.That(group.GetEndpointStatuses()[0].ConsecutiveFailures).IsEqualTo(1);
+
+        // Settle the canceled wire reply before the later probe's reply, preserving FIFO.
+        server.SuppressReply = null;
+        await server.SendRawAsync(FakeRespServer.PongReply);
+        await group.ForTests.ProbeAsync(0);
+        await Assert.That(group.ForTests.Circuit(0).State).IsEqualTo(EndpointCircuitState.Closed);
+        await Assert.That(group.GetEndpointStatuses()[0].IsHealthy).IsTrue();
+    }
+
+    [Test]
+    public async Task CanceledUndispatchedRecoveryReleasesAdmission()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        await using var group = await RespireFailoverGroup.ConnectAsync([Candidate(server, 0)],
+            FastOptions() with { ProbeInterval = TimeSpan.FromMinutes(1), CircuitOpenDuration = TimeSpan.FromSeconds(1) }, clock);
+        server.ReplyOverride = (_, _) => "-ERR unavailable\r\n"u8.ToArray();
+        await group.ForTests.ProbeAsync(0);
+        server.ReplyOverride = null;
+        clock.Advance(TimeSpan.FromSeconds(1));
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var commands = server.CommandsSeen;
+        await Assert.That(async () => await group.ForTests.ProbeAsync(0, cancellation.Token)).Throws<OperationCanceledException>();
+        await Assert.That(server.CommandsSeen).IsEqualTo(commands);
+        await Assert.That(group.ForTests.Circuit(0).ActiveProbes).IsEqualTo(0);
+        await group.ForTests.ProbeAsync(0);
+        await Assert.That(group.ForTests.Circuit(0).State).IsEqualTo(EndpointCircuitState.Closed);
+    }
+
+    [Test]
+    public async Task FailedRecoveryReopensSharedCircuitAndCanRecoverAgain()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        await using var group = await RespireFailoverGroup.ConnectAsync([Candidate(server, 0)],
+            FastOptions() with { ProbeInterval = TimeSpan.FromMinutes(1), CircuitOpenDuration = TimeSpan.FromSeconds(1) }, clock);
+        server.ReplyOverride = (_, _) => "-ERR unavailable\r\n"u8.ToArray();
+        await group.ForTests.ProbeAsync(0);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        server.ReplyOverride = (_, _) => "-ERR recovery failed\r\n"u8.ToArray();
+        await group.ForTests.ProbeAsync(0);
+        await Assert.That(group.ForTests.Circuit(0).State).IsEqualTo(EndpointCircuitState.Open);
+        await Assert.That(group.ForTests.Circuit(0).ActiveProbes).IsEqualTo(0);
+        var commands = server.CommandsSeen;
+        server.ReplyOverride = null;
+        await group.ForTests.ProbeAsync(0);
+        await Assert.That(server.CommandsSeen).IsEqualTo(commands);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await group.ForTests.ProbeAsync(0);
+        await Assert.That(group.ForTests.Circuit(0).State).IsEqualTo(EndpointCircuitState.Closed);
+    }
+
+    [Test]
+    public async Task FailoverConsecutiveThresholdIsNotLimitedByRollingHistory()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        await using var group = await RespireFailoverGroup.ConnectAsync([Candidate(server, 0)],
+            FastOptions(int.MaxValue) with { ProbeInterval = TimeSpan.FromMinutes(1) });
+        server.ReplyOverride = (_, _) => "-ERR unavailable\r\n"u8.ToArray();
+        await group.ForTests.ProbeAsync(0);
+        await group.ForTests.ProbeAsync(0);
+        await Assert.That(group.GetEndpointStatuses()[0].ConsecutiveFailures).IsEqualTo(2);
+        await Assert.That(group.GetEndpointStatuses()[0].IsHealthy).IsTrue();
+        await Assert.That(group.ForTests.Circuit(0).State).IsEqualTo(EndpointCircuitState.Closed);
+        server.ReplyOverride = null;
+        await group.ForTests.ProbeAsync(0);
+        await Assert.That(group.GetEndpointStatuses()[0].ConsecutiveFailures).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task TimedOutRecoveryReleasesAdmissionAndReopens()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        await using var group = await RespireFailoverGroup.ConnectAsync([Candidate(server, 0)],
+            FastOptions() with
+            {
+                ProbeInterval = TimeSpan.FromMinutes(1),
+                ProbeTimeout = TimeSpan.FromMilliseconds(500),
+                CircuitOpenDuration = TimeSpan.FromSeconds(1),
+            }, clock);
+        server.ReplyOverride = (_, _) => "-ERR unavailable\r\n"u8.ToArray();
+        await group.ForTests.ProbeAsync(0);
+        server.ReplyOverride = null;
+        server.SuppressReply = _ => true;
+        clock.Advance(TimeSpan.FromSeconds(1));
+        var commands = server.CommandsSeen;
+        await group.ForTests.ProbeAsync(0);
+        await Assert.That(server.CommandsSeen).IsEqualTo(commands + 1);
+        await Assert.That(group.ForTests.Circuit(0).State).IsEqualTo(EndpointCircuitState.Open);
+        await Assert.That(group.ForTests.Circuit(0).ActiveProbes).IsEqualTo(0);
+        await Assert.That(group.GetEndpointStatuses()[0].ConsecutiveFailures).IsEqualTo(2);
+
+        server.SuppressReply = null;
+        await server.SendRawAsync(FakeRespServer.PongReply);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await group.ForTests.ProbeAsync(0);
+        await Assert.That(group.ForTests.Circuit(0).State).IsEqualTo(EndpointCircuitState.Closed);
+    }
+
+    [Test]
+    public async Task DisposedClientDispatchFailureDoesNotRetainRecoveryAdmission()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        await using var group = await RespireFailoverGroup.ConnectAsync([Candidate(server, 0)],
+            FastOptions() with { ProbeInterval = TimeSpan.FromMinutes(1), CircuitOpenDuration = TimeSpan.FromSeconds(1) }, clock);
+        var client = group.ActiveClient;
+        server.ReplyOverride = (_, _) => "-ERR unavailable\r\n"u8.ToArray();
+        await group.ForTests.ProbeAsync(0);
+        await client.DisposeAsync();
+        clock.Advance(TimeSpan.FromSeconds(1));
+        var commands = server.CommandsSeen;
+        await group.ForTests.ProbeAsync(0);
+        await Assert.That(server.CommandsSeen).IsEqualTo(commands);
+        await Assert.That(group.GetEndpointStatuses()[0].LastErrorType).IsEqualTo(nameof(ObjectDisposedException));
+        await Assert.That(group.ForTests.Circuit(0).ActiveProbes).IsEqualTo(0);
+        await Assert.That(group.ForTests.Circuit(0).State).IsEqualTo(EndpointCircuitState.Open);
+        // The permanently disposed client still fails, but a later recovery round can reacquire its slot.
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await group.ForTests.ProbeAsync(0);
+        await Assert.That(group.GetEndpointStatuses()[0].ConsecutiveFailures).IsEqualTo(3);
+        await Assert.That(group.ForTests.Circuit(0).ActiveProbes).IsEqualTo(0);
     }
 
     [Test]
