@@ -23,6 +23,7 @@
     <ItemGroup>
         <EmbeddedResource Include="LifecycleLogContract.json" />
         <Compile Include="../TestRespSession.cs" Link="TestRespSession.cs" />
+        <Compile Include="../GeneratedHashModelScenarios.cs" Link="GeneratedHashModelScenarios.cs" />
         <Compile Include="../ArrayFacetScenarios.cs" Link="ArrayFacetScenarios.cs" />
         <Compile Include="../CredentialTestClock.cs" Link="CredentialTestClock.cs" />
         <Compile Include="../ClientFilterTestOptions.cs" Link="ClientFilterTestOptions.cs" />
