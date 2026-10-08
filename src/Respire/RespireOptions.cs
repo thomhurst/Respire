@@ -433,6 +433,11 @@ public sealed record RespireOptions
     internal RespireEndpoint PrimaryEndpoint
         => Endpoints.Count > 0 ? Endpoints[0] : new RespireEndpoint("localhost");
 
+    /// <summary>Opt-in circuit admission for standalone commands. Null disables circuit breaking.</summary>
+    /// <remarks>Cluster, Sentinel, and replica routing are not supported. Batches and transactions
+    /// retain their existing admission semantics.</remarks>
+    public RespireCircuitBreakerOptions? CircuitBreaker { get; init; }
+
     internal RespireOptions ValidateAndSnapshot()
     {
         if (Endpoints is null || Endpoints.Count == 0)
@@ -451,6 +456,9 @@ public sealed record RespireOptions
         Require(ReadFrom is not (RespireReadFrom.AzAffinity or RespireReadFrom.AzAffinityReplicasAndPrimary)
             || ClientAvailabilityZone is not null, nameof(ClientAvailabilityZone), "is required for AZ-affinity reads");
         HedgedReads?.Validate();
+        CircuitBreaker?.Validate();
+        Require(CircuitBreaker is null || (!UseCluster && string.IsNullOrWhiteSpace(SentinelPrimaryName)
+            && ReplicaEndpoints.Count == 0), nameof(CircuitBreaker), "requires a standalone deployment without replica routing");
         Require(
             ReplicaRefreshInterval >= TimeSpan.Zero && ReplicaRefreshInterval <= TimeSpan.FromHours(1),
             nameof(ReplicaRefreshInterval),

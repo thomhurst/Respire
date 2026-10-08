@@ -113,10 +113,21 @@ public sealed partial class RespireClient
                     }
                     try
                     {
-                        response = await connection.SendCheckedAsync(in command, cancellationToken, commandName: operation,
-                            commandDeadline: commandDeadline, allowStreamingConnectionReroute: false,
-                            streamingRoute: new DedicatedStreamRoute(core, pool, connection),
-                            observation: observation).ConfigureAwait(false);
+                        var admission = core.Circuits is not null ? AcquireCircuit(connection, cancellationToken) : default;
+                        try
+                        {
+                            response = await connection.SendCheckedAsync(in command, cancellationToken, commandName: operation,
+                                commandDeadline: commandDeadline, allowStreamingConnectionReroute: false,
+                                streamingRoute: new DedicatedStreamRoute(core, pool, connection),
+                                observation: observation).ConfigureAwait(false);
+                            admission.Success();
+                        }
+                        catch (Exception error)
+                        {
+                            admission.Failed(error, cancellationToken);
+                            throw;
+                        }
+                        finally { admission.Dispose(); }
                         break;
                     }
                     catch (RespireConnectionRetiredException error) when (attempt < ClusterRouter.RedirectLimit

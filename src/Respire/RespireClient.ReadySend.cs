@@ -36,7 +36,7 @@ public sealed partial class RespireClient
     {
         var durationStarted = sender.ObserveDuration ? RespireTelemetry.CaptureOperationStart(operation) : default;
         RespireConnection connection;
-        try { connection = multiplexer.GetConnection(); }
+        try { connection = GetCircuitAwareConnection(multiplexer, cancellationToken); }
         catch (Exception error)
         {
             if (_core.Sentinel is not null)
@@ -47,6 +47,9 @@ public sealed partial class RespireClient
         }
         try
         {
+            if (sender.ObserveDuration && _core.Circuits is not null && !_snapshotPrefixedBinaryKeys)
+                return SendCircuitReadyAsync<TCommand, TResult, TSend>(operation, connection, command, cancellationToken, sender,
+                    durationStarted, cache, mutationFence);
             if (!mutationFence.IsRequired)
                 return sender.Send(connection, operation, in command, cancellationToken, durationStarted);
             var bound = new MutationCommand<TCommand>(command, mutationFence);

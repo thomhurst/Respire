@@ -1,0 +1,94 @@
+---
+title: Standalone circuit breakers
+description: Opt-in endpoint admission, bounded recovery probes, and command health outcomes.
+---
+
+# Standalone circuit breakers
+
+Set `RespireOptions.CircuitBreaker` to stop new standalone commands from entering an unhealthy
+endpoint. The default is `null`: the client creates no circuit registry or per-command permit,
+and retains its existing response sources and queue behavior.
+
+```csharp
+await using var redis = await RespireClient.ConnectAsync(new RespireOptions
+{
+    Endpoints = { new RespireEndpoint("localhost", 6379) },
+    CircuitBreaker = new RespireCircuitBreakerOptions
+    {
+        FailureRateThreshold = 0.5,
+        MinimumFailureCount = 5,
+        SamplingWindow = TimeSpan.FromSeconds(30),
+        MaximumSampleCount = 1024,
+        OpenDuration = TimeSpan.FromSeconds(5),
+        HalfOpenProbeCount = 2,
+    },
+});
+```
+
+The failure rate uses completed outcomes within both the sampling window and the bounded
+sample count. Once the minimum failure count and fraction are reached, the endpoint opens.
+After `OpenDuration`, it admits at most `HalfOpenProbeCount` concurrent probes. That many
+successful probes close the circuit; a failed probe starts a new open interval. Ignored
+probes release capacity and can be replaced immediately. Timing uses a monotonic clock.
+
+## Admission and queue behavior
+
+Admission occurs immediately before transport dispatch. An open circuit throws
+`RespireCircuitOpenException` with the data `Endpoint` and a `RetryAfter` snapshot. A null
+`RetryAfter` means recovery slots are occupied; completion determines when admission can
+resume. Rejection sends no application command, including no tracking prelude for a cache miss.
+
+Circuit state is shared by key-prefixed and cache-bypass views, across all command connections
+to the same endpoint. Client-side cache hits do not require admission. Different endpoints,
+including maintenance handoff destinations, keep separate histories. Socket setup, reconnect
+handshakes, and explicit health-check probes retain their existing lifecycle.
+
+An operation already accepted by the transport remains in its FIFO position when another
+operation opens the circuit. Circuit breaking does not remove queued frames, cancel accepted
+writes, retry a rejected command, or replay an ambiguous write. `RetryAfter` is not permission
+to resend: a later operation must acquire its own admission.
+
+Every admission is completed on success, exception, timeout, or cancellation. Application
+cancellation is ignored, including cancellation after enqueue; an accepted write may still
+execute on Redis. A timeout while waiting for transport capacity, a rejected connection
+generation, or a command writer failing before dispatch is ignored. These paths release
+half-open capacity even when the transport must retain a response placeholder to drain a
+later reply in FIFO order.
+
+For a streamed GET, admission remains active until the wire frame finishes. Canceling or
+disposing the returned stream releases admission as ignored immediately; the transport can
+continue discarding the payload to preserve FIFO. Blocking commands retain their existing
+response-timeout exemption. Supply a cancellation token to bound the blocking wait. Streamed
+uploads retain their existing command deadline and source cancellation behavior.
+
+## Health classification
+
+Submitted command failures represented by `RespireConnectionException` (except authentication),
+`RespireProtocolException`, or `RespireTimeoutException` count as endpoint failures. Socket and
+TLS errors reported by the transport retain their connection classification. Authentication,
+configuration, command validation, source/serializer exceptions, and application cancellation
+do not count as endpoint health failures.
+
+Ordinary Redis command errors, including WRONGTYPE, ACL, and missing scripting-engine replies,
+prove that a reply arrived and count as healthy outcomes. Raw error replies and typed command
+exceptions use the same health policy. Health sampling does not change the exception delivered
+to the caller.
+
+Fire-and-forget dispatch checks circuit admission, but successful queue acceptance is ignored
+because its reply is discarded. It therefore cannot close a half-open circuit on its own.
+Fire-and-forget operations that observe a transport failure still report that failure.
+Cache-fenced fire-and-forget commands that already await a reply retain their existing behavior
+and can contribute a completed reply outcome.
+
+## Current scope
+
+This option covers standalone immediate typed, raw, interpolated, fire-and-forget, cache-miss,
+blocking, and streamed command dispatch. Batches and transactions retain their existing
+admission semantics; their circuit boundaries are tracked separately by
+[the integration epic](https://github.com/thomhurst/Respire/issues/1255).
+
+Configuration with Redis Cluster, Sentinel, or standalone replica endpoints is rejected.
+Topology-specific circuit admission is separate work. This option does not change
+`RespireFailoverGroup` probe/failback behavior. The wider
+[resilience work](https://github.com/thomhurst/Respire/issues/863) remains open for retry and
+telemetry integration.

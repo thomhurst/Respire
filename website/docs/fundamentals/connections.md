@@ -7,6 +7,8 @@ description: Configure endpoints, timeouts, reconnects, and connection lifecycle
 
 Use a URI for the common case or `RespireOptions` when the connection needs explicit control.
 
+For opt-in standalone endpoint admission, configure [circuit breakers](../guides/circuit-breakers.md).
+
 ## Connect immediately
 
 ```csharp

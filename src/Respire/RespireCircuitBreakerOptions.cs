@@ -1,7 +1,7 @@
 namespace Respire;
 
 /// <summary>Settings for an opt-in endpoint circuit breaker.</summary>
-/// <remarks>These settings are a foundation for endpoint admission; they do not currently enable circuit breaking on a client.</remarks>
+/// <remarks>Set <see cref="RespireOptions.CircuitBreaker"/> to enable standalone endpoint admission.</remarks>
 public sealed record RespireCircuitBreakerOptions
 {
     /// <summary>Failure fraction required to open the circuit, from greater than zero through one. Defaults to 0.5.</summary>
