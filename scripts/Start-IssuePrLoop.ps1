@@ -58,8 +58,12 @@ $ownerVariable = Select-String -LiteralPath (Join-Path $repo 'scripts/AgentLocks
 if (-not $ownerVariable) { throw 'scripts/AgentLocks.ps1 does not name an *_AGENT_LOCK_OWNER_ID variable.' }
 
 # The skill lives under .claude or .agents depending on the repository; name it by path so either agent finds it.
-$skill = @('.claude/skills/issue-pr-loop/SKILL.md', '.agents/skills/issue-pr-loop/SKILL.md') |
-    Where-Object { Test-Path -LiteralPath (Join-Path $repo $_) } |
+# With core.symlinks=false a symlinked SKILL.md checks out as a one-line path stub, so require real content.
+$skill = @('.agents/skills/issue-pr-loop/SKILL.md', '.claude/skills/issue-pr-loop/SKILL.md') |
+    Where-Object {
+        $candidate = Join-Path $repo $_
+        (Test-Path -LiteralPath $candidate) -and (Select-String -LiteralPath $candidate -Pattern '^name:\s*issue-pr-loop' -Quiet)
+    } |
     Select-Object -First 1
 if (-not $skill) { throw 'issue-pr-loop SKILL.md not found under .claude/skills or .agents/skills.' }
 $prompt = "Read $skill and follow the issue-pr-loop skill in single-unit mode."
