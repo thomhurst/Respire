@@ -19,6 +19,7 @@ public class TestInspectionArchitectureTests
     [Arguments(typeof(ClientSideCacheCoordinator), typeof(ClientSideCacheCoordinator.TestInspection), nameof(ClientSideCacheCoordinator.TestInspection.PendingQueryDependencyCount))]
     [Arguments(typeof(ClientSideCacheCoordinator), typeof(ClientSideCacheCoordinator.TestInspection), nameof(ClientSideCacheCoordinator.TestInspection.IdleQueryStorage))]
     [Arguments(typeof(ClientSideCacheCoordinator), typeof(ClientSideCacheCoordinator.TestInspection), nameof(ClientSideCacheCoordinator.TestInspection.ActiveMutationCount))]
+    [Arguments(typeof(ClientSideCacheCoordinator), typeof(ClientSideCacheCoordinator.TestInspection), nameof(ClientSideCacheCoordinator.TestInspection.MutationWriterStorage))]
     [Arguments(typeof(RespireTransactionBase), typeof(RespireTransactionBase.TestInspection), nameof(RespireTransactionBase.TestInspection.WatchConnection))]
     public async Task InspectionStateRemainsBehindInternalBorrowedViews(Type owner, Type view, string member)
     {

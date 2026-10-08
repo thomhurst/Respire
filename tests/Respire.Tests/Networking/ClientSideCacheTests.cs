@@ -1374,6 +1374,7 @@ public class ClientSideCacheTests
             FakeRespServer.OkReply,
             "$5\r\nvalue\r\n"u8.ToArray(),
             FakeRespServer.OkReply);
+        var parked = new ParkedReply(target, "SCRIPT FLUSH");
         var topology = Encoding.ASCII.GetBytes(
             $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n");
         await using var seed = new FakeRespServer(
@@ -1390,10 +1391,17 @@ public class ClientSideCacheTests
 
         await client.GetStringAsync("key");
         await client.ExecuteFireAndForgetAsync(RespireCommands.Scripting.SCRIPT_FLUSH);
-        await WaitUntilAsync(() => target.CommandsSeen >= 5);
+        await parked.WaitAsync();
 
-        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
+        var cache = client.Core.ClientCache!;
+        await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(1);
+        InsertCachedValue(cache, "key", "stale");
+        await Assert.That(cache.Count).IsEqualTo(0);
         await Assert.That(target.ReceivedCommands[^1]).IsEqualTo("SCRIPT FLUSH");
+        await parked.ReleaseAsync(FakeRespServer.OkReply);
+        await WaitUntilAsync(() => cache.InspectForTests().ActiveMutationCount == 0);
+        InsertCachedValue(cache, "key", "fresh");
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("fresh");
     }
 
     [Test]

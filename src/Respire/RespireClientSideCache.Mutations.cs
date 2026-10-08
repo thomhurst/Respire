@@ -8,6 +8,7 @@ internal sealed partial class ClientSideCacheCoordinator
     // Active calls, not store generations, own these entries. Clear/continuity swaps must
     // not make a still-running mutation disappear from publication or sharing checks.
     private readonly Dictionary<RespireKey, int> _mutationWriters = new();
+    private const int MaxIdleMutationKeyCapacity = 4096;
     private int _activeMutations;
     private int _unknownMutations;
 
@@ -63,7 +64,7 @@ internal sealed partial class ClientSideCacheCoordinator
         }
         catch
         {
-            fence.CompleteLogical(this, succeeded: false);
+            fence.AbortBeforeDispatch();
             throw;
         }
     }
@@ -135,6 +136,10 @@ internal sealed partial class ClientSideCacheCoordinator
                 }
                 else foreach (var key in fence.Keys!) RemoveMutationWriter(in key);
                 Volatile.Write(ref _activeMutations, _activeMutations - 1);
+                // Large multi-key calls may grow the live map. Do not retain that peak
+                // capacity indefinitely once every mutation has retired.
+                if (_activeMutations == 0 && _mutationWriters.EnsureCapacity(0) > MaxIdleMutationKeyCapacity)
+                    _mutationWriters.TrimExcess();
             }
         }
     }

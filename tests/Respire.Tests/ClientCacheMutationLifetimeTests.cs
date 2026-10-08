@@ -13,12 +13,61 @@ namespace Respire.Tests;
 public class ClientCacheMutationLifetimeTests
 {
     [Test, NotInParallel]
-    public async Task CompletionMeterFailureSurfacesOnCallerWithoutBreakingNativeRetirement()
+    public async Task AdmissionMeterFailurePreservesOriginalErrorAndReleasesUnsubmittedFence()
     {
+        using var metrics = new MetricConfigurationScope();
+        var invalidations = RespireTelemetry.ClientCacheInvalidations;
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, publishedListener) =>
         {
-            if (ReferenceEquals(instrument, RespireTelemetry.ClientCacheInvalidations))
+            if (ReferenceEquals(instrument, invalidations))
+                publishedListener.EnableMeasurementEvents(instrument);
+        };
+        var original = new InvalidOperationException("admission observer failed");
+        var observed = 0;
+        listener.SetMeasurementEventCallback<long>((_, _, _, _) =>
+        {
+            if (++observed == 1) throw original;
+            throw new InvalidOperationException("cleanup must not replace the admission error");
+        });
+        listener.Start();
+        var cache = new ClientSideCacheCoordinator(new());
+        var command = new CatalogCommand(RespireCommands.String.SET, ["key", "new"]);
+        var error = await Assert.That(() => cache.BeforeCommand("SET", in command)).Throws<InvalidOperationException>();
+        await Assert.That(error).IsSameReferenceAs(original);
+        await Assert.That(observed).IsEqualTo(1);
+        await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task LargeMutationRetiresOwnedKeysAndBoundsIdleWriterStorage()
+    {
+        var cache = new ClientSideCacheCoordinator(new());
+        var arguments = Enumerable.Range(0, 5000).Select(index => (RespireValue)("key:" + index)).ToArray();
+        var command = new CatalogCommand(RespireCommands.Key.DEL, arguments);
+        var fence = cache.BeforeCommand("DEL", in command);
+        var active = cache.InspectForTests().MutationWriterStorage;
+        await Assert.That(active.Keys).IsEqualTo(arguments.Length);
+        await Assert.That(active.Capacity).IsGreaterThan(4096);
+        cache.CompleteMutation(in fence);
+        var idle = cache.InspectForTests().MutationWriterStorage;
+        await Assert.That(idle.Keys).IsEqualTo(0);
+        await Assert.That(idle.Capacity).IsLessThanOrEqualTo(4096);
+        var next = cache.BeforeCommand("DEL", in command);
+        cache.CompleteMutation(in next);
+        await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(0);
+        await Assert.That(cache.InspectForTests().MutationWriterStorage.Keys).IsEqualTo(0);
+    }
+
+    [Test, NotInParallel]
+    public async Task CompletionMeterFailureSurfacesOnCallerWithoutBreakingNativeRetirement()
+    {
+        using var metrics = new MetricConfigurationScope();
+        var invalidations = RespireTelemetry.ClientCacheInvalidations;
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, publishedListener) =>
+        {
+            if (ReferenceEquals(instrument, invalidations))
                 publishedListener.EnableMeasurementEvents(instrument);
         };
         var observed = 0;
