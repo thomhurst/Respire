@@ -717,6 +717,47 @@ to abandon an owed fence. The existing one-to-30-second fence retry backoff and 
 client-disposal behavior are unchanged. Any future policy that abandons ordering guarantees
 requires a separate explicit contract.
 
+## Error ownership for contributors
+
+The internal error metric foundation provides failure-only `ErrorObservation` leases.
+These leases do not consume responses, own transport references, or wrap deferred results.
+Command-family integration and the independent route-owner guard are tracked separately
+in [#1023](https://github.com/thomhurst/Respire/issues/1023) and
+[#1264](https://github.com/thomhurst/Respire/issues/1264); the leases alone do not enable
+error metrics for every command path.
+
+Keep a default `ErrorObservation.FinalOwner` on a successful path. Call `StartFailure`
+only after the first failure or handled retry, and complete the lease in `finally`.
+There is one final owner per logical caller, even when independent callers receive the
+same exception instance. `PublishFinal` records at most one final failure; repeated
+inspection of that generation returns `false`. It observes the exception without consuming
+or rethrowing it. Preserve the original exception with `throw;` and retain its
+cancellation token.
+
+Helpers borrow a separate lease with `Borrow`. Borrowers can create nested borrowers,
+record handled retries with `RecordHandled`, and complete their own lease. They cannot
+publish a final caller failure. Every handled retry increments the shared count once;
+the final failure captures the total count. Exporters run outside the ownership gate,
+so concurrent retry events may arrive out of order while retaining their exact counts.
+
+Copying an owner or borrower value shares its existing completion right; it does not
+create another reference. Repeated completion is harmless, including after the pooled
+storage has been reused, so cleanup in `finally` cannot replace the original failure.
+Storage returns to the bounded pool only after the owner and every distinct borrower
+complete. Owner completion does not complete a still-live borrower. Final publication
+closes retry reporting and new borrowing. `RecordHandled` and `PublishFinal` return
+`false` for default, completed, closed, or stale leases without emitting a metric.
+`Borrow` returns a default, inert borrower in those states. These checks apply in every
+build, so a final-inspection race or stale asynchronous callback cannot replace the
+original failure or affect a new caller's observation. Do not retain completed leases
+for later asynchronous work. Storage returns outside the ownership gate after the last
+completion. Retry counts saturate at `int.MaxValue`.
+
+When adding a command path, declare its public boundary and delegated final owner in
+the independent route inventory. Helper, borrower, transport, and cleanup observations
+must remain distinct from the caller's final publication. Preserve checked native
+response lifetimes and deferred-result inspection; do not introduce a universal wrapper.
+
 ## Sentinel primary changes
 
 Sentinel batch, durability-batch, and transaction acquisition failures still emit an error
