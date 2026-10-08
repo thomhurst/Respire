@@ -71,7 +71,7 @@ jobs:
                   subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=True)
       - name: Evaluate every row and publish parity evidence
         if: always()
-        run: python3 scripts/benchmarks/MapperParity.py results --manifest mapper-provenance.json --summary "$GITHUB_STEP_SUMMARY"
+        run: python3 scripts/benchmarks/MapperParity.py results --manifest mapper-provenance.json --logs . --report mapper-parity.md --summary "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:

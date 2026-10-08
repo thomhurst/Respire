@@ -19,6 +19,13 @@ PHASES = ('handwritten-validation', 'generated-validation', 'handwritten-a', 'ge
 LATENCY_MARGIN = 1.10
 MAX_DRIFT = 0.05
 MAX_CV = 0.10
+# Only these operations can approach timer/overhead resolution. Definition rows
+# allocate fresh objects and remain subject to the original relative criteria.
+SMALL_METHODS = {'HashKey', 'JsonKey', 'HashValidate', 'JsonValidate'}
+ABSOLUTE_FLOOR_NS = 1.0
+# BenchmarkDotNet 0.15.8 serializes LegacyConfidenceLevel.L999 as enum value 12.
+# See src/BenchmarkDotNet/Mathematics/LegacyConfidenceInterval.cs in that tag.
+CONFIDENCE_LEVEL_999 = 12
 
 
 def finite(value):
@@ -45,6 +52,8 @@ def index_cases(cases, phase):
         # A one-sample Dry run has undefined confidence bounds in BDN's JSON.
         # It proves execution only and cannot enter the measurement comparison.
         if not phase.endswith('validation'):
+            if finite(stats['ConfidenceInterval'].get('Level')) != CONFIDENCE_LEVEL_999:
+                raise ValueError(f'{phase}: require 99.9% confidence level {identity}')
             lower, upper = (finite(stats['ConfidenceInterval'][name]) for name in ('Lower', 'Upper'))
             if not lower <= mean <= upper:
                 raise ValueError(f'{phase}: invalid confidence interval {identity}')
@@ -57,21 +66,26 @@ def index_cases(cases, phase):
     return indexed
 
 
-def verdict(a, generated, b):
+def verdict(a, generated, b, method):
     controls = (a, b)
     stats = generated['Statistics']
+    floor = ABSOLUTE_FLOOR_NS if method in SMALL_METHODS else 0
+
+    def latency_limit(bound):
+        return max(LATENCY_MARGIN * bound, max(0, bound) + floor)
+
     allocation = generated['Memory']['BytesAllocatedPerOperation']
     if any(allocation > control['Memory']['BytesAllocatedPerOperation'] for control in controls):
         return 'FAIL: extra allocation'
-    if all(stats['ConfidenceInterval']['Lower'] > LATENCY_MARGIN * control['Statistics']['ConfidenceInterval']['Upper'] for control in controls):
+    if all(stats['ConfidenceInterval']['Lower'] > latency_limit(control['Statistics']['ConfidenceInterval']['Upper']) for control in controls):
         return 'FAIL: latency exceeds 10% margin'
-    drift = abs(b['Statistics']['Mean'] / a['Statistics']['Mean'] - 1)
-    if drift > MAX_DRIFT:
-        return 'INCONCLUSIVE: control drift exceeds 5%'
-    if any(case['Statistics']['StandardDeviation'] / case['Statistics']['Mean'] > MAX_CV for case in (a, generated, b)):
-        return 'INCONCLUSIVE: dispersion exceeds 10%'
-    if all(control['Statistics']['ConfidenceInterval']['Lower'] > 0 and
-           stats['ConfidenceInterval']['Upper'] <= LATENCY_MARGIN * control['Statistics']['ConfidenceInterval']['Lower'] for control in controls):
+    drift = abs(b['Statistics']['Mean'] - a['Statistics']['Mean'])
+    if drift > max(MAX_DRIFT * a['Statistics']['Mean'], floor):
+        return 'INCONCLUSIVE: control drift exceeds tolerance'
+    if any(case['Statistics']['StandardDeviation'] > max(MAX_CV * case['Statistics']['Mean'], floor) for case in (a, generated, b)):
+        return 'INCONCLUSIVE: dispersion exceeds tolerance'
+    if all((floor > 0 or control['Statistics']['ConfidenceInterval']['Lower'] > 0) and
+           stats['ConfidenceInterval']['Upper'] <= latency_limit(control['Statistics']['ConfidenceInterval']['Lower']) for control in controls):
         return 'PASS'
     return 'INCONCLUSIVE: confidence bounds do not establish parity'
 
@@ -87,6 +101,8 @@ def summarize(phases, manifest):
              'All phases use the same revision and runner. Order: handwritten A, generated, handwritten B.',
              'Parity requires generated upper 99.9% latency bound <= 1.10 times each control lower bound, '
              'no extra allocated bytes versus either control, <=5% control mean drift, and <=10% coefficient of variation in all phases.',
+             'For HashKey, JsonKey, HashValidate and JsonValidate only, each latency, absolute mean-drift and SD tolerance is the larger of its relative criterion and 1 ns. '
+             'Negative lower confidence bounds are clamped to zero for this absolute comparison. Finite positive means/medians and all other evidence guards remain required.',
              'Failure or inconclusive evidence blocks acceptance. Dry results validate execution only. Inspect every row and raw evidence; never rerun merely for green.', '',
              '| Operation / input | A: mean / median / SD ns [99.9% CI], N | Generated: mean / median / SD ns [99.9% CI], N | B: mean / median / SD ns [99.9% CI], N | Generated/A | Generated/B | B/A drift | Bytes A/generated/B | Result |',
              '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |']
@@ -100,7 +116,7 @@ def summarize(phases, manifest):
             interval = stats['ConfidenceInterval']
             times.append(f"{stats['Mean']:.3f} / {stats['Median']:.3f} / {stats['StandardDeviation']:.3f} [{interval['Lower']:.3f}, {interval['Upper']:.3f}], {stats['N']}")
         allocated = '/'.join(str(case['Memory']['BytesAllocatedPerOperation']) for case in cases)
-        result = verdict(*cases)
+        result = verdict(*cases, identity[0])
         accepted &= result == 'PASS'
         lines.append(f"| {' / '.join(identity)} | {' | '.join(times)} | {generated/a:.4f} | {generated/b:.4f} | {100*(b/a-1):+.2f}% | {allocated} | {result} |")
     lines.extend(['', 'Limitations: warmed, in-process conversion and metadata APIs on .NET 10; '
@@ -115,6 +131,8 @@ def main():
     parser.add_argument('results', type=Path)
     parser.add_argument('--manifest', required=True, type=Path)
     parser.add_argument('--summary', type=Path)
+    parser.add_argument('--logs', required=True, type=Path)
+    parser.add_argument('--report', required=True, type=Path)
     args = parser.parse_args()
     accepted = False
     try:
@@ -129,8 +147,10 @@ def main():
                 raise ValueError(f'Source changed after pinning: {path}')
         phases = {}
         for phase in PHASES:
-            if Path(f'{phase}.log').read_text().splitlines()[0] != manifest['head_sha']:
+            if (args.logs / f'{phase}.log').read_text().splitlines()[0] != manifest['head_sha']:
                 raise ValueError(f'Wrong source in phase {phase}')
+            # BDN's --exporters json currently emits this full compressed report;
+            # fail closed on exporter naming changes instead of selecting partial data.
             reports = list((args.results / phase / 'results').glob('*-report-full-compressed.json'))
             if len(reports) != 1:
                 raise ValueError(f'{phase}: require exactly one full JSON report')
@@ -138,7 +158,7 @@ def main():
         report, accepted = summarize(phases, manifest)
     except (ValueError, KeyError, TypeError, OSError, IndexError) as error:
         report = f'## Generated mapper parity\n\nEvidence unavailable or invalid: {error}\n\nParity is not established. Inspect uploaded logs; do not rerun merely for green.\n'
-    Path('mapper-parity.md').write_text(report)
+    args.report.write_text(report)
     if args.summary:
         with args.summary.open('a') as stream:
             stream.write(report)

@@ -78,6 +78,8 @@ internal static class HandwrittenMapper
         return new(Encoding.UTF8.GetString(id), vector);
     }
 
+    // RespireSearchGenerator emits Definition => new(), including fresh read-only
+    // prefix/field collections. Measure that construction contract on both sides.
     public static RespireSearchIndexDefinition HashDefinition() => new()
     {
         Source = RespireSearchSource.Hash,
@@ -138,14 +140,15 @@ internal static class HandwrittenMapper
                     case "Embedding":
                         if (reader.TokenType == JsonTokenType.Null) { vector = null; break; }
                         if (reader.TokenType != JsonTokenType.StartArray) throw new JsonException();
-                        var elements = new List<float>();
+                        vector = new float[VectorOptions.Dimensions];
+                        var elementCount = 0;
                         while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
                         {
-                            if (reader.TokenType != JsonTokenType.Number || elements.Count >= VectorOptions.Dimensions) throw new JsonException();
-                            elements.Add(reader.GetSingle());
+                            if (reader.TokenType != JsonTokenType.Number || elementCount >= vector.Length) throw new JsonException();
+                            vector[elementCount++] = reader.GetSingle();
                         }
                         if (reader.TokenType != JsonTokenType.EndArray) throw new JsonException();
-                        vector = elements.ToArray();
+                        if (elementCount != vector.Length) throw new ArgumentException("JSON float vector must match FLOAT32 schema dimensions.");
                         RespireSearchVectorValidation.ValidateJson(vector, VectorOptions);
                         break;
                     default: reader.Skip(); break;

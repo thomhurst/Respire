@@ -72,6 +72,10 @@ public abstract class MapperBenchmarkInputs
         Require(MapperJsonModelJsonMapper.GetKey(Json).Equals(HandwrittenMapper.JsonKey(Json)), "JSON key");
         CheckDefinition(MapperVectorHashModelSearchSchema.Definition, HandwrittenMapper.HashDefinition());
         CheckDefinition(MapperJsonModelSearchSchema.Definition, HandwrittenMapper.JsonDefinition());
+        CheckFreshDefinition(() => MapperVectorHashModelSearchSchema.Definition);
+        CheckFreshDefinition(() => MapperJsonModelSearchSchema.Definition);
+        CheckFreshDefinition(HandwrittenMapper.HashDefinition);
+        CheckFreshDefinition(HandwrittenMapper.JsonDefinition);
         MapperVectorHashModelSearchSchema.Validate(VectorHash);
         HandwrittenMapper.Validate(VectorHash);
         MapperJsonModelSearchSchema.Validate(Json);
@@ -84,6 +88,7 @@ public abstract class MapperBenchmarkInputs
         Reject(() => HandwrittenMapper.Validate(invalidJson));
         Reject(() => MapperJsonModelSearchSchema.Validate(Json with { Embedding = [1] }));
         Reject(() => HandwrittenMapper.Validate(Json with { Embedding = [1] }));
+        Reject(() => HandwrittenMapper.FromJson("{\"Id\":\"42\",\"Name\":\"Ada\",\"Count\":123,\"Enabled\":true,\"Embedding\":[1]}"u8));
     }
 
     private void CheckJson(MapperJsonModel copy)
@@ -103,6 +108,14 @@ public abstract class MapperBenchmarkInputs
     {
         Require(generated.Source == handwritten.Source && generated.Prefixes.SequenceEqual(handwritten.Prefixes) &&
             generated.Fields.SequenceEqual(handwritten.Fields), "Search schema metadata");
+    }
+
+    private static void CheckFreshDefinition(Func<RespireSearchIndexDefinition> create)
+    {
+        var first = create();
+        var second = create();
+        Require(!ReferenceEquals(first, second) && !ReferenceEquals(first.Prefixes, second.Prefixes) &&
+            !ReferenceEquals(first.Fields, second.Fields), "fresh Search definition contract");
     }
 
     private static void Require(bool condition, string operation)
