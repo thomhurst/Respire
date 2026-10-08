@@ -30,6 +30,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         ? Order(core.Options.ReplicaEndpoints)
         : [];
     private int _nextReplica;
+    private ReadyReplica? _readyReplica;
     private int _disposed;
     private int _backgroundRefresh;
     // Consecutive failed Sentinel discoveries; grows the retry delay during an outage.
@@ -98,6 +99,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         lock (_entriesGate)
         {
             if (_disposed != 0) return;
+            Volatile.Write(ref _readyReplica, null);
             Interlocked.Exchange(ref _replicas, endpoints);
         }
         var retained = endpoints.ToHashSet(RespireEndpointComparer.Instance);
@@ -112,6 +114,8 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         lock (_entriesGate)
         {
             // Removal and retirement ownership must be atomic with the disposal snapshot.
+            if (ReferenceEquals(Volatile.Read(ref _readyReplica)?.Entry, pair.Value))
+                Volatile.Write(ref _readyReplica, null);
             if (_disposed != 0 || !_entries.TryRemove(pair)) return;
             _retiring.TryAdd(pair.Value, 0);
         }
@@ -204,12 +208,13 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         // Sentinel discovery must still run on schedule, even when this connection is healthy.
         if (readFrom is not (RespireReadFrom.Replica or RespireReadFrom.ReplicaPreferred)
             || core.Options.Connections != 1 || core.Sentinel is not null && IsSentinelRefreshDue()) return null;
-        var endpoints = Volatile.Read(ref _replicas);
-        if (endpoints.Length != 1 || !_entries.TryGetValue(endpoints[0], out var entry)
-            || entry.IsCoolingDown || entry.IsReplicationLinkDown) return null;
-        var connection = entry.TryGetReadyConnection();
+        var publication = Volatile.Read(ref _readyReplica);
+        if (publication is null || !IsReadyReplicaCurrent(publication))
+            publication = CaptureReadyReplica();
+        if (publication is null || publication.Entry.IsCoolingDown || publication.Entry.IsReplicationLinkDown) return null;
+        var connection = publication.Entry.TryGetReadyConnection(publication);
         // An optimistic snapshot miss always falls back to the full asynchronous selector.
-        if (connection is null || !ReferenceEquals(endpoints, Volatile.Read(ref _replicas))) return null;
+        if (connection is null || !IsReadyReplicaCurrent(publication)) return null;
         ThrowIfDisposed();
         ObjectDisposedException.ThrowIf(core.Disposed, core);
         cancellationToken.ThrowIfCancellationRequested();
@@ -217,6 +222,36 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         Interlocked.Increment(ref _nextReplica);
         return connection;
     }
+
+    // The entry dictionary changes only under _entriesGate. Invalidate this identity before
+    // publication/removal, so a warm read can prove membership without hashing the endpoint twice.
+    internal sealed class ReadyReplica(RespireEndpoint[] endpoints, Entry entry)
+    {
+        internal RespireEndpoint[] Endpoints { get; } = endpoints;
+        internal Entry Entry { get; } = entry;
+    }
+
+    private ReadyReplica? CaptureReadyReplica()
+    {
+        // Ineligible multi-replica reads keep their lock-free miss before normal selection.
+        if (Volatile.Read(ref _replicas).Length != 1) return null;
+        lock (_entriesGate)
+        {
+            if (_disposed != 0) return null;
+            var endpoints = Volatile.Read(ref _replicas);
+            if (endpoints.Length != 1 || !_entries.TryGetValue(endpoints[0], out var entry)) return null;
+            var current = Volatile.Read(ref _readyReplica);
+            if (current is not null && ReferenceEquals(current.Endpoints, endpoints) && ReferenceEquals(current.Entry, entry))
+                return current;
+            var publication = new ReadyReplica(endpoints, entry);
+            Volatile.Write(ref _readyReplica, publication);
+            return publication;
+        }
+    }
+
+    private bool IsReadyReplicaCurrent(ReadyReplica publication)
+        => ReferenceEquals(publication, Volatile.Read(ref _readyReplica))
+            && ReferenceEquals(publication.Endpoints, Volatile.Read(ref _replicas));
 
     /// <summary>Selects a read endpoint, then rents a separate connection for a blocking read.</summary>
     internal async ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection, bool IsReplica)> RentDedicatedConnectionAsync(
@@ -586,6 +621,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         List<Exception>? failures;
         lock (_entriesGate)
         {
+            Volatile.Write(ref _readyReplica, null);
             entries = _entries.Values.Concat(_retiring.Keys).Distinct().ToArray();
             failures = _retirementFailures?.Snapshot();
             _retirementFailures = null;
@@ -638,13 +674,15 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         /// <summary>True when the last ROLE check found the replica's link to its primary down.</summary>
         internal bool IsReplicationLinkDown => _health.IsReplicationLinkDown;
 
-        internal RespireConnection? TryGetReadyConnection()
+        internal RespireConnection? TryGetReadyConnection(ReadyReplica? publication = null)
         {
             if (_closed || Volatile.Read(ref _multiplexer) is not { IsInitialized: true, IsRetired: false } current) return null;
             // Observation must not start recovery or throw before the normal selector can fall back.
             var connection = current.GetExistingHealthConnection();
             return connection is not null && !_closed && ReferenceEquals(current, Volatile.Read(ref _multiplexer))
-                && router.IsCurrent(this) && ContainsEndpoint(Volatile.Read(ref router._replicas), endpoint)
+                && (publication is null
+                    ? router.IsCurrent(this) && ContainsEndpoint(Volatile.Read(ref router._replicas), endpoint)
+                    : ReferenceEquals(publication.Entry, this) && router.IsReadyReplicaCurrent(publication))
                 && connection.IsAcceptingCommands
                 && _health.Check(connection, router.RoleRevalidationInterval) == ReplicaValidation.Fresh
                 ? connection : null;
