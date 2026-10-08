@@ -100,8 +100,11 @@ public sealed class RespireJsonGenerator : IIncrementalGenerator
             .Append("                switch (name)\n                {\n");
         for (var index = 0; index < properties.Length; index++)
         {
-            source.Append("                    case ").Append(Literal(JsonName(properties[index]))).Append(":\n")
-                .Append("                        field").Append(index).Append(" = global::System.Text.Json.JsonSerializer.Deserialize(ref reader, PropertyInfo").Append(index).Append(")!;\n");
+            source.Append("                    case ").Append(Literal(JsonName(properties[index]))).Append(":\n");
+            if (!IsNullable(properties[index].Type))
+                source.Append("                        if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null) throw new global::System.Text.Json.JsonException(")
+                    .Append(Literal("Null required JSON property: " + JsonName(properties[index]))).Append(");\n");
+            source.Append("                        field").Append(index).Append(" = global::System.Text.Json.JsonSerializer.Deserialize(ref reader, PropertyInfo").Append(index).Append(")!;\n");
             if (!IsNullable(properties[index].Type)) source.Append("                        found").Append(index).Append(" = true;\n");
             source.Append("                        break;\n");
         }
@@ -167,9 +170,9 @@ public sealed class RespireJsonGenerator : IIncrementalGenerator
         source.Append("    private sealed class PropertyConverter").Append(index).Append(" : global::System.Text.Json.Serialization.JsonConverter<").Append(type).Append(">\n    {\n")
             .Append("        public override bool HandleNull => true;\n")
             .Append("        public override ").Append(type).Append(" Read(ref global::System.Text.Json.Utf8JsonReader reader, global::System.Type typeToConvert, global::System.Text.Json.JsonSerializerOptions options)\n        {\n")
-            .Append("            if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null) ");
-        if (IsNullable(property.Type)) source.Append("return null;\n");
-        else source.Append("throw new global::System.Text.Json.JsonException(").Append(Literal("Null required JSON property: " + JsonName(property))).Append(");\n");
+            // Standalone property reads retain Found=true/default(T) for stored JSON null.
+            // ModelConverter checks required members before invoking this scalar converter.
+            .Append("            if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null) return default!;\n");
         var expectedToken = kind switch
         {
             "String" or "Guid" or "DateTimeOffset" => "reader.TokenType != global::System.Text.Json.JsonTokenType.String",

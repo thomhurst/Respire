@@ -144,6 +144,28 @@ public class GeneratedJsonMapperTests
     }
 
     [Test]
+    public async Task NonNullablePropertyReadsReturnFoundDefaultsForJsonNull()
+    {
+        await using var server = new FakeRespServer("$6\r\n[null]\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var json = new RespireJsonClient(client);
+        await AssertFoundDefault(await JsonMapperModelJsonMapper.GetIdAsync(json, "document"));
+        await AssertFoundDefault(await JsonMapperMutableJsonMapper.GetValueAsync(json, "document"));
+        await AssertFoundDefault(await JsonMapperModelJsonMapper.GetPriceAsync(json, "document"));
+        await AssertFoundDefault(await JsonMapperModelJsonMapper.GetEnabledAsync(json, "document"));
+        await AssertFoundDefault(await JsonMapperModelJsonMapper.GetCountAsync(json, "document"));
+        await AssertFoundDefault(await JsonMapperModelJsonMapper.GetScoreAsync(json, "document"));
+        await AssertFoundDefault(await JsonMapperModelJsonMapper.GetTokenAsync(json, "document"));
+        await AssertFoundDefault(await JsonMapperModelJsonMapper.GetCreatedAsync(json, "document"));
+
+        static async Task AssertFoundDefault<T>(RespireJsonValue<T> result)
+        {
+            await Assert.That(result.Found).IsTrue();
+            await Assert.That(result.Value).IsEqualTo(default(T));
+        }
+    }
+
+    [Test]
     public async Task MultipleMatchesAndMalformedRepliesFail()
     {
         await using var server = new FakeRespServer("$5\r\n[1,2]\r\n"u8.ToArray(), "$6\r\n[\"no\"]\r\n"u8.ToArray());
