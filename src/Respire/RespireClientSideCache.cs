@@ -953,12 +953,38 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         private readonly CacheStore? _store = store;
         private readonly CacheEntry? _entry = entry;
         private readonly string? _text = text;
+        private readonly SharedText? _sharedText;
+
+        private GetReadResult(RespValue response, RespireKey key, CacheStore? store,
+            CacheEntry? entry, string? text, SharedText? sharedText)
+            : this(response, key, store, entry, text) => _sharedText = sharedText;
 
         internal string? GetString()
+            => _text ?? (_sharedText is not null ? _sharedText.GetString(in this) : GetPublicationString());
+
+        private string? GetPublicationString()
             => _text ?? (_entry is not null ? _store!.GetString(in _key, _entry)
                 : Internal.ResponseReader.StringOrNull(in Response));
 
-        internal GetReadResult ToOwned() => new(Response.ToOwned(), _key, _store, _entry, _text);
+        internal GetReadResult ToOwned(bool shareText = false)
+            => new(Response.ToOwned(), _key, _store, _entry, _text,
+                _sharedText ?? (shareText && _text is null ? new SharedText() : null));
+
+        // A byte/custom producer may have no resident entry, or its entry may be
+        // invalidated before a string waiter runs. Share text independently of
+        // admission, without retaining response bytes or changing cache accounting.
+        private sealed class SharedText
+        {
+            private string? _value;
+
+            internal string? GetString(in GetReadResult result)
+            {
+                var value = Volatile.Read(ref _value);
+                if (value is not null) return value;
+                value = result.GetPublicationString();
+                return value is null ? null : Interlocked.CompareExchange(ref _value, value, null) ?? value;
+            }
+        }
     }
 
     internal bool TryPeekRead(in RespireKey key, out GetReadResult result)

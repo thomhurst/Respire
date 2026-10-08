@@ -131,7 +131,7 @@ internal sealed partial class ClientSideCacheCoordinator
             {
                 var result = await read(state, shared.Cancellation.Token).ConfigureAwait(false);
                 using var response = result.Response;
-                owned = result.ToOwned();
+                owned = result.ToOwned(shareText: true);
             }
             finally { FinishSharedRead(shared); }
             shared.Completion.TrySetResult(owned);

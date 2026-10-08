@@ -81,7 +81,7 @@ Respire.ClientSideCacheCoordinator.CacheStore | property SizeBytes [public; get]
 # Count: Respire.ClientSideCacheCoordinator.GetReadResult | 3
 Respire.ClientSideCacheCoordinator.GetReadResult | field Response : RespValue
 Respire.ClientSideCacheCoordinator.GetReadResult | method GetString() : string?
-Respire.ClientSideCacheCoordinator.GetReadResult | method ToOwned() : GetReadResult
+Respire.ClientSideCacheCoordinator.GetReadResult | method ToOwned(bool) : GetReadResult
 # Count: Respire.ClientSideCacheCoordinator.InflightRead | 5
 Respire.ClientSideCacheCoordinator.InflightRead | field Generation : long
 Respire.ClientSideCacheCoordinator.InflightRead | field Readers : int

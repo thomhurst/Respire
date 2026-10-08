@@ -25,4 +25,5 @@ jobs:
       expected-methods: ColdStringMiss,ColdMissAndFirstReuse,WarmStringHit
       zero-allocation-methods: WarmStringHit
       retained-memory: true
+      retained-memory-stages: before-connect,connected-idle,after-first-reuse,after-dispose
       artifact-prefix: cache-publication-comparison
