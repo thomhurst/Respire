@@ -397,13 +397,17 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             lock (_queryLock)
             {
                 if (CanPublishQuery(in token)) published = token.Store.Set(in query, entry);
+                // Retire dependencies under the publication gate we already own.
+                ReleaseQueryRead(lease);
             }
         }
         finally
         {
-            lock (_queryLock)
+            // Failed entry creation/publication still abandons the lease. A
+            // successful publication or another copied token has released it.
+            if (!Volatile.Read(ref lease.Completed))
             {
-                ReleaseQueryRead(lease);
+                lock (_queryLock) ReleaseQueryRead(lease);
             }
         }
         if (published) token.Store.Trim();
