@@ -3377,13 +3377,14 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             while (true)
             {
+                // Consumer backpressure and blocking replies suppress only receive liveness checks.
+                if (TryAbortStalledGatheredWrite(timeout)) return;
+
                 if (Volatile.Read(ref _responseTimeoutSuppressions) != 0)
                 {
                     await DelayWatchdogAsync(timeout, cancellationToken).ConfigureAwait(false);
                     continue;
                 }
-
-                if (TryAbortStalledGatheredWrite(timeout)) return;
 
                 var deadlineStart = Volatile.Read(ref _receiveProgress.DeadlineTimestamp);
                 if (deadlineStart == 0)

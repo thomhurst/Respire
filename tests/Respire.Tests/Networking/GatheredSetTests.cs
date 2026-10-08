@@ -126,14 +126,17 @@ public sealed class GatheredSetTests
     }
 
     [Test]
-    [Arguments("cancel")]
-    [Arguments("deadline")]
-    [Arguments("watchdog")]
+    [Arguments("cancel", false)]
+    [Arguments("deadline", false)]
+    [Arguments("watchdog", false)]
+    [Arguments("cancel", true)]
+    [Arguments("deadline", true)]
+    [Arguments("watchdog", true)]
     [NotInParallel]
-    public async Task ConfiguredWatchdogReleasesBorrowedMemoryWhenPeerNeverResumes(string boundary)
+    public async Task ConfiguredWatchdogReleasesBorrowedMemoryWhenPeerNeverResumes(string boundary, bool pausedConsumer)
     {
         var reads = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var server = new FakeRespServer(FakeRespServer.OkReply) { ReadGate = reads.Task };
+        await using var server = new FakeRespServer(FakeRespServer.OkReply) { ReadGate = pausedConsumer ? null : reads.Task };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
@@ -147,7 +150,31 @@ public sealed class GatheredSetTests
         socket.SendBufferSize = 0;
         var payload = Enumerable.Repeat((byte)'a', 5 * 1024 * 1024).ToArray();
         using var cancellation = new CancellationTokenSource();
-        using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        if (pausedConsumer)
+        {
+            var reply = new byte[1024 * 1024 + 12];
+            "$1048576\r\n"u8.CopyTo(reply);
+            reply.AsSpan(10, 1024 * 1024).Fill((byte)'g');
+            "\r\n"u8.CopyTo(reply.AsSpan(reply.Length - 2));
+            server.ReplyOverride = (_, command) =>
+            {
+                if (command != "GET paused") return null;
+                server.ReadGate = reads.Task;
+                return reply;
+            };
+        }
+        await using var paused = pausedConsumer ? await client.Strings.GetStreamAsync("paused", guard.Token) : null;
+        if (pausedConsumer)
+        {
+            await Assert.That(paused is not null).IsTrue();
+            var suppressions = typeof(RespireConnection).GetField("_responseTimeoutSuppressions",
+                BindingFlags.Instance | BindingFlags.NonPublic)!;
+            while ((int)suppressions.GetValue(connection)! == 0) await Task.Delay(1, guard.Token);
+            // A consumer pause alone must survive a real watchdog interval. Do not fake the suppression count.
+            await Task.Delay(TimeSpan.FromMilliseconds(1200), guard.Token);
+            await Assert.That(connection.IsConnected).IsTrue();
+        }
         var pending = client.SetAsync("never-resumed", (RespireValue)payload,
             cancellationToken: cancellation.Token).AsTask();
         while (connection.CaptureTimeoutDiagnostics().InflightBytes == 0 || socket.Poll(0, SelectMode.SelectWrite))
@@ -163,13 +190,13 @@ public sealed class GatheredSetTests
             await Assert.That(pending.IsCompleted).IsFalse();
         }
         if (boundary == "cancel")
-            await Assert.That(async () => await pending.WaitAsync(guard.Token)).Throws<OperationCanceledException>();
+            await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(3), guard.Token)).Throws<OperationCanceledException>();
         else if (boundary == "deadline")
-            await Assert.That(async () => await pending.WaitAsync(guard.Token)).Throws<RespireTimeoutException>();
+            await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(3), guard.Token)).Throws<RespireTimeoutException>();
         else
-            await Assert.That(async () => await pending.WaitAsync(guard.Token)).Throws<RespireConnectionException>();
+            await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(3), guard.Token)).Throws<RespireConnectionException>();
         await Assert.That(connection.IsConnected).IsFalse();
-        await Assert.That(server.CommandsSeen).IsEqualTo(0);
+        await Assert.That(server.CommandsSeen).IsEqualTo(pausedConsumer ? 1 : 0);
         // Completion is observable while the peer remains parked: every kernel send reference
         // has ended before this caller reuses its array. A partial frame cannot be reused.
         payload.AsSpan().Fill((byte)'b');

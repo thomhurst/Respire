@@ -93,7 +93,6 @@ internal sealed partial class RespireConnection
         {
             var effectiveTimeout = MaintenanceTimeout(timeout, Environment.TickCount64, out _, out _);
             if (timestamp != _flushProgress.GatheredWriteDeadlineTimestamp
-                || Volatile.Read(ref _responseTimeoutSuppressions) != 0
                 || Stopwatch.GetElapsedTime(timestamp) < effectiveTimeout) return false;
             closed = Abort(new RespireConnectionException(
                 $"Connection to {Host}:{Port} gathered SET write made no progress for {effectiveTimeout}."),

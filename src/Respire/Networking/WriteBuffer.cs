@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Net.Sockets;
+using System.Diagnostics;
 using Respire.Commands;
 
 namespace Respire.Networking;
@@ -42,6 +43,7 @@ internal sealed class WriteBuffer
     /// <summary>Builds at most sixteen ordered buffers; the sender alone advances this cursor.</summary>
     internal List<ArraySegment<byte>> GetSendSegments(ref int part)
     {
+        Debug.Assert(HasBorrowedPayloads, "Gathered segments require accepted borrowed payloads.");
 #if DEBUG
         if (_writerGuard.HasUnpublishedBytes)
             throw new InvalidOperationException("Complete or roll back the RESP writer before consuming its buffer.");
@@ -76,6 +78,7 @@ internal sealed class WriteBuffer
         }
         if (sent != 0)
         {
+            Debug.Assert(segments.Count != 0, "Socket progress cannot exceed the offered segment bytes.");
             var first = segments[0];
             segments[0] = new(first.Array!, first.Offset + sent, first.Count - sent);
         }

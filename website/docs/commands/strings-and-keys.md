@@ -81,7 +81,8 @@ Set `ConnectionIdleReadTimeout` to bound a stalled borrowed write: when no compl
 makes progress for that period, the connection watchdog closes the socket and waits for the
 kernel send to release caller memory before completing the operation. The connection is then
 discarded; other pending commands on it can fail, and Redis may have received part or all of
-the SET. Cancellation alone does not abort an accepted frame. With this watchdog disabled
+the SET. A paused `GetStreamAsync` consumer suppresses receive checks but does not suspend this
+write watchdog. Cancellation alone does not abort an accepted frame. With this watchdog disabled
 (the default), a peer that never resumes reading can retain the operation until the socket
 fails or the client is disposed, even after response cancellation or a command deadline.
 

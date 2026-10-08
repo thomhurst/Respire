@@ -337,6 +337,7 @@ public sealed record RespireOptions
     /// period. Null (default) disables the receive watchdog.
     /// For large array-backed SET values sent from caller memory, this also aborts a stalled
     /// socket write with no completed send progress during the period, allowing safe caller reuse.
+    /// Receive suppression for a paused stream consumer does not suppress this write watchdog.
     /// </summary>
     public TimeSpan? ConnectionIdleReadTimeout
     {
