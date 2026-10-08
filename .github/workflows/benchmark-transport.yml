@@ -17,7 +17,8 @@ jobs:
     if: github.event.label.name == 'run-transport-benchmarks'
     name: Compare transport acceptance (informational)
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # Sixteen cases, two launches and both bracket controls, including disassembly.
+    timeout-minutes: 45
     services:
       redis:
         image: redis:8.10@sha256:2c2dff791878316e3b083188be0d578423b24813cdda5de0e80ea4f7b3e6bfd6
@@ -52,12 +53,17 @@ jobs:
           # step; the always() upload below retains its phase log without masking that failure.
           cp candidate/benchmarks/Respire.Benchmarks/TransportAcceptanceBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
           cp candidate/benchmarks/Respire.Benchmarks/Program.cs baseline/benchmarks/Respire.Benchmarks/
-          for phase in validation baseline-a candidate baseline-b; do
+          git -C baseline rev-parse HEAD > baseline.commit
+          git -C candidate rev-parse HEAD > candidate.commit
+          dotnet --info > runtime-info.log
+          uname -a > host-info.log
+          lscpu >> host-info.log
+          for phase in validation-baseline validation-candidate baseline-a candidate baseline-b; do
             source=baseline
             job=Medium
             filter='*TransportAcceptanceBenchmarks*'
-            if [ "$phase" = candidate ] || [ "$phase" = validation ]; then source=candidate; fi
-            if [ "$phase" = validation ]; then job=Dry; fi
+            if [ "$phase" = candidate ] || [ "$phase" = validation-candidate ]; then source=candidate; fi
+            if [[ "$phase" = validation-* ]]; then job=Dry; fi
             (
               cd "$source"
               git rev-parse HEAD
@@ -74,7 +80,7 @@ jobs:
         run: |
           import json
           from pathlib import Path
-          for phase in ("validation", "baseline-a", "candidate", "baseline-b"):
+          for phase in ("validation-baseline", "validation-candidate", "baseline-a", "candidate", "baseline-b"):
               expected = int(Path(f"{phase}.case-count").read_text())
               assert expected > 0, f"No benchmark cases discovered: {phase}"
               reports = list(Path("results", phase, "results").glob("*-report*.json"))
@@ -85,6 +91,15 @@ jobs:
                   for benchmark in benchmarks:
                       statistics = benchmark.get("Statistics")
                       assert statistics and statistics["Mean"] > 0, f"Failed benchmark: {report}"
+              samples = [json.loads(line.split("TRANSPORT_MEMORY ", 1)[1])
+                         for line in Path(f"{phase}.log").read_text().splitlines()
+                         if line.startswith("TRANSPORT_MEMORY ")]
+              stages = ("before-connect", "connected", "after-churn", "after-dispose")
+              counts = [sum(sample["stage"] == stage for sample in samples) for stage in stages]
+              assert min(counts) >= expected and len(set(counts)) == 1, f"Incomplete retention samples: {phase}, {counts}"
+              assert {sample["connections"] for sample in samples} == {1, 2}, f"Missing connection profile: {phase}"
+              assert all(sample["callerPayloadBytes"] == 5 * 1024 * 1024 + 2 * 256 * 1024
+                         for sample in samples), f"Mismatched caller payload: {phase}"
       - name: Summarize candidate deltas against both controls
         shell: python
         run: |
@@ -110,6 +125,16 @@ jobs:
                            f"{1e9 / a:.2f} | {1e9 / candidate:.2f} | {1e9 / b:.2f} | "
                            f"{100 * (candidate / a - 1):+.2f}% | {100 * (candidate / b - 1):+.2f}% | "
                            f"{100 * (b / a - 1):+.2f}% | {allocations} |")
+          lines.extend(["", "## Latency intervals and sample variation", "",
+                        "| Phase | Case | N | Mean ns | Standard deviation ns | CV | 99.9% interval ns |",
+                        "| --- | --- | ---: | ---: | ---: | ---: | --- |"])
+          for phase, cases in phases.items():
+              for key, case in sorted(cases.items()):
+                  stats = case["Statistics"]
+                  interval = stats["ConfidenceInterval"]
+                  lines.append(f"| {phase} | {key[0]} ({key[1]}) | {stats['N']} | {stats['Mean']:.3f} | "
+                               f"{stats['StandardDeviation']:.3f} | {100 * stats['StandardDeviation'] / stats['Mean']:.2f}% | "
+                               f"{interval['Lower']:.3f}/{interval['Upper']:.3f} |")
           lines.extend(["", "## Process CPU by phase", "",
                         "CPU time includes the benchmark driver and its child processes. The dry validation phase is omitted.", "",
                         "| Phase | User CPU s | System CPU s | CPU use |",
@@ -117,6 +142,20 @@ jobs:
           for phase in ("baseline-a", "candidate", "baseline-b"):
               user, system, percent = Path(f"{phase}.cpu").read_text().split()
               lines.append(f"| {phase} | {float(user):.2f} | {float(system):.2f} | {percent} |")
+          lines.extend(["", "## Retained memory outside timed methods", "",
+                        "Full-GC samples cover the whole benchmark process. Caller payloads remain referenced in every stage; these are not isolated transport allocations or proof that every byte was reclaimed.", "",
+                        "| Phase | Connections | Stage | Samples | Managed bytes min/max | POH bytes min/max | POH fragmentation min/max | Working set min/max | Private memory min/max |",
+                        "| --- | ---: | --- | ---: | --- | --- | --- | --- | --- |"])
+          for phase in ("baseline-a", "candidate", "baseline-b"):
+              samples = [json.loads(line.split("TRANSPORT_MEMORY ", 1)[1])
+                         for line in Path(f"{phase}.log").read_text().splitlines()
+                         if line.startswith("TRANSPORT_MEMORY ")]
+              for connections in (1, 2):
+                  for stage in ("before-connect", "connected", "after-churn", "after-dispose"):
+                      selected = [sample for sample in samples if sample["connections"] == connections and sample["stage"] == stage]
+                      ranges = [f"{min(sample[field] for sample in selected)}/{max(sample[field] for sample in selected)}"
+                                for field in ("managedBytes", "pohBytes", "pohFragmentedBytes", "workingSetBytes", "privateMemoryBytes")]
+                      lines.append(f"| {phase} | {connections} | {stage} | {len(selected)} | " + " | ".join(ranges) + " |")
           # Aggregating launches can hide distinct JIT/code-layout regimes. Keep each
           # process visible alongside the aggregate, and retain disassembly for diagnosis.
           lines.extend(["", "## Individual process launches", "",
@@ -156,3 +195,5 @@ jobs:
             results/
             *.log
             *.case-count
+            *.cpu
+            *.commit

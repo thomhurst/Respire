@@ -115,6 +115,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         [FieldOffset(0)] internal readonly AsyncFlushSignal Signal = new();
         [FieldOffset(64)] internal long SentBytes;
         [FieldOffset(72)] internal long LastWriteTimestamp = -1;
+        // Protected by _writeGate. Includes every byte in a selected send buffer, even before
+        // an ambiguous socket/TLS write has reported any successful progress.
+        [FieldOffset(80)] internal long ClaimedWriteEnd;
     }
 
     [StructLayout(LayoutKind.Explicit, Size = 128)]
@@ -1453,7 +1456,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         TimeSpan? cancellationTimeout = null, CancellationToken callerCancellationToken = default,
         CommandDeadline commandDeadline = default,
         string? preferredZone = null,
-        bool pinToConnection = false)
+        bool pinToConnection = false,
+        CommandWriteObservation? writeObservation = null)
         where TCommand : struct, IRespCommand
     {
         if (!commandDeadline.IsSet) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
@@ -1466,14 +1470,15 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         try
         {
             enqueued = TryEnqueue(
-                in command, source, commandDeadline, out startedBatch, repliesBeforeFinal, retainRepliesBefore: true);
+                in command, source, commandDeadline, out startedBatch, repliesBeforeFinal, retainRepliesBefore: true,
+                writeObservation: writeObservation);
         }
         catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone))
         {
             ReclaimUnpublished(source, replyCount + 1);
             return target.SendMultiReplyCoreAsync(in command, repliesBeforeFinal,
                 firstQueueReply, cancellationToken, commandName, cancellationTimeout, callerCancellationToken,
-                rerouted, preferredZone);
+                rerouted, preferredZone, writeObservation: writeObservation);
         }
         catch
         {
@@ -1485,7 +1490,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             return SendMultiReplySlowAsync(
                 command, source, repliesBeforeFinal, firstQueueReply, replyCount, cancellationToken,
-                commandName, cancellationTimeout, callerCancellationToken, commandDeadline, preferredZone, pinToConnection);
+                commandName, cancellationTimeout, callerCancellationToken, commandDeadline, preferredZone, pinToConnection,
+                writeObservation);
         }
 
         source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
@@ -1510,7 +1516,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         bool pinToConnection = false,
         bool allowStreamingConnectionReroute = true,
         DedicatedStreamRoute streamingRoute = default,
-        string? preferredZone = null)
+        string? preferredZone = null,
+        CommandWriteObservation? writeObservation = null)
         where TCommand : struct, IRespCommand
     {
         if (!commandDeadline.IsSet && armCommandDeadline) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
@@ -1519,7 +1526,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         if (command is IStreamingRespCommand)
         {
             return SendStreamingCoreAsync(command, cancellationToken, commandDeadline, pinToConnection,
-                allowStreamingConnectionReroute, streamingRoute);
+                allowStreamingConnectionReroute, streamingRoute, writeObservation);
         }
 
         var source = _sourcePool.Rent(throwOnError, commandName);
@@ -1529,14 +1536,15 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             enqueued = TryEnqueue(
                 in command, source, commandDeadline, out startedBatch, discardRepliesBefore,
-                retainRepliesBefore: false);
+                retainRepliesBefore: false, writeObservation: writeObservation);
         }
         catch (RespireConnectionRetiredException) when (!IsMaintenanceDrainBarrier<TCommand>()
             && TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone))
         {
             ReclaimUnpublished(source);
             return target.SendCoreAsync(in command, discardRepliesBefore, throwOnError,
-                cancellationToken, commandName, armCommandDeadline, rerouted, preferredZone: preferredZone);
+                cancellationToken, commandName, armCommandDeadline, rerouted, preferredZone: preferredZone,
+                writeObservation: writeObservation);
         }
         catch
         {
@@ -1552,28 +1560,28 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         return SendSlowAsync(command, source, discardRepliesBefore, cancellationToken, throwOnError,
-            commandName, armCommandDeadline, commandDeadline, pinToConnection, preferredZone);
+            commandName, armCommandDeadline, commandDeadline, pinToConnection, preferredZone, writeObservation);
     }
 
     private async ValueTask<RespValue> SendStreamingCoreAsync<TCommand>(
         TCommand command, CancellationToken cancellationToken, CommandDeadline commandDeadline, bool pinToConnection,
-        bool allowConnectionReroute, DedicatedStreamRoute streamingRoute)
+        bool allowConnectionReroute, DedicatedStreamRoute streamingRoute, CommandWriteObservation? writeObservation = null)
         where TCommand : struct, IRespCommand
     {
         if (!allowConnectionReroute)
-            return await SendStreamingAsync(in command, cancellationToken, commandDeadline, streamingRoute)
+            return await SendStreamingAsync(in command, cancellationToken, commandDeadline, streamingRoute, writeObservation)
                 .ConfigureAwait(false);
 
         try
         {
-            return await SendStreamingAsync(in command, cancellationToken, commandDeadline, streamingRoute)
+            return await SendStreamingAsync(in command, cancellationToken, commandDeadline, streamingRoute, writeObservation)
                 .ConfigureAwait(false);
         }
         catch (RespireConnectionRetiredException) when (TryReroute(
             pinToConnection, commandDeadline, out var target, out var reroutedDeadline, preferredZone: null))
         {
             return await target.SendStreamingCoreAsync(command, cancellationToken, reroutedDeadline, pinToConnection,
-                    allowConnectionReroute, streamingRoute)
+                    allowConnectionReroute, streamingRoute, writeObservation)
                 .ConfigureAwait(false);
         }
     }
@@ -1636,7 +1644,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         CommandDeadline commandDeadline,
         out bool startedBatch,
         int discardRepliesBefore = 0,
-        bool retainRepliesBefore = false)
+        bool retainRepliesBefore = false,
+        CommandWriteObservation? writeObservation = null)
         where TCommand : struct, IRespCommand
         => TryEnqueue(
             in command,
@@ -1646,7 +1655,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             out _,
             trackWrite: false,
             discardRepliesBefore,
-            retainRepliesBefore);
+            retainRepliesBefore, writeObservation: writeObservation);
 
     private bool TryEnqueueForWrite<TCommand>(
         in TCommand command,
@@ -1676,7 +1685,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         bool trackWrite,
         int discardRepliesBefore = 0,
         bool retainRepliesBefore = false,
-        string? discardedOperation = null)
+        string? discardedOperation = null,
+        CommandWriteObservation? writeObservation = null)
         where TCommand : struct, IRespCommand
     {
         startedBatch = false;
@@ -1703,7 +1713,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 trackWrite,
                 discardRepliesBefore,
                 retainRepliesBefore,
-                discardedOperation);
+                discardedOperation, writeObservation);
         }
 
         var scratch = _serializeScratch ??= new WriteBuffer(ScratchInitialSize);
@@ -1743,6 +1753,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 }
 
                 var writeStart = StampWritePosition(source, frame.Length);
+                writeObservation?.RecordQueued(this, writeStart, _producerProgress.EnqueuedBytes);
                 StampDeadline(source, commandDeadline);
                 for (var i = 0; i < discardRepliesBefore; i++)
                 {
@@ -1788,7 +1799,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         bool trackWrite,
         int discardRepliesBefore,
         bool retainRepliesBefore,
-        string? discardedOperation)
+        string? discardedOperation,
+        CommandWriteObservation? writeObservation = null)
         where TCommand : struct, IRespCommand
     {
         startedBatch = false;
@@ -1829,6 +1841,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             }
 
             var writeStart = StampWritePosition(source, _activeBuffer.Count - mark);
+            writeObservation?.RecordQueued(this, writeStart, _producerProgress.EnqueuedBytes);
             StampDeadline(source, commandDeadline);
             for (var i = 0; i < discardRepliesBefore; i++)
             {
@@ -1939,7 +1952,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         string? commandName,
         bool armCommandDeadline,
         CommandDeadline commandDeadline,
-        bool pinToConnection, string? preferredZone)
+        bool pinToConnection, string? preferredZone, CommandWriteObservation? writeObservation = null)
         where TCommand : struct, IRespCommand
     {
         bool startedBatch;
@@ -1947,14 +1960,15 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             startedBatch = await WaitForInflightCapacityAsync(
                     command, source, discardRepliesBefore, cancellationToken,
-                    commandDeadline: commandDeadline)
+                    commandDeadline: commandDeadline, writeObservation: writeObservation)
                 .ConfigureAwait(false);
         }
         catch (RespireConnectionRetiredException) when (!IsMaintenanceDrainBarrier<TCommand>()
             && TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone))
         {
             return await target.SendCoreAsync(in command, discardRepliesBefore, throwOnError,
-                cancellationToken, commandName, armCommandDeadline, rerouted, preferredZone: preferredZone).ConfigureAwait(false);
+                cancellationToken, commandName, armCommandDeadline, rerouted, preferredZone: preferredZone,
+                writeObservation: writeObservation).ConfigureAwait(false);
         }
 
         source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
@@ -1974,7 +1988,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         CancellationToken cancellationToken,
         string commandName,
         TimeSpan? cancellationTimeout, CancellationToken callerCancellationToken,
-        CommandDeadline commandDeadline, string? preferredZone, bool pinToConnection)
+        CommandDeadline commandDeadline, string? preferredZone, bool pinToConnection,
+        CommandWriteObservation? writeObservation = null)
         where TCommand : struct, IRespCommand
     {
         bool startedBatch;
@@ -1986,7 +2001,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 cancellationToken.ThrowIfCancellationRequested();
                 var capacityAvailable = _capacitySignal.WaitAsync(cancellationToken);
                 if (TryEnqueue(
-                    in command, source, deadline, out startedBatch, repliesBeforeFinal, retainRepliesBefore: true))
+                    in command, source, deadline, out startedBatch, repliesBeforeFinal, retainRepliesBefore: true,
+                    writeObservation: writeObservation))
                 {
                     break;
                 }
@@ -2008,7 +2024,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             ReclaimUnpublished(source, replyCount + 1);
             return await target.SendMultiReplyCoreAsync(in command, repliesBeforeFinal,
                 firstQueueReply, cancellationToken, commandName, cancellationTimeout, callerCancellationToken,
-                rerouted, preferredZone).ConfigureAwait(false);
+                rerouted, preferredZone, writeObservation: writeObservation).ConfigureAwait(false);
         }
         catch
         {
@@ -2109,7 +2125,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         int discardRepliesBefore,
         CancellationToken cancellationToken,
         CommandDeadline commandDeadline,
-        bool retainRepliesBefore = false)
+        bool retainRepliesBefore = false,
+        CommandWriteObservation? writeObservation = null)
         where TCommand : struct, IRespCommand
     {
         try
@@ -2123,7 +2140,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 // failed enqueue and waiter registration.
                 if (TryEnqueue(
                     in command, source, commandDeadline, out var startedBatch, discardRepliesBefore,
-                    retainRepliesBefore))
+                    retainRepliesBefore, writeObservation))
                 {
                     return startedBatch;
                 }
@@ -2274,6 +2291,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
                         Volatile.Write(ref _sending, true);
                         sending = _activeBuffer;
+                        var claimedEnd = _producerProgress.EnqueuedBytes;
+                        // A byte-position wrap permanently closes the unwritten proof. Earlier
+                        // commands in this same buffer may still have valid positive ranges.
+                        _flushProgress.ClaimedWriteEnd = claimedEnd >= _flushProgress.ClaimedWriteEnd
+                            ? claimedEnd : long.MaxValue;
                         _activeBuffer = _spareBuffer;
                         _spareBuffer = sending;
                         sendingReplyCount = _activeReplyCount;
