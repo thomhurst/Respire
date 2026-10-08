@@ -171,6 +171,27 @@ Disposing the provider stops the bridge's timer, subscriptions, and owned tracke
 disposes an externally registered client; the distributed cache retains its existing ownership
 rules. The default L2-only registration creates no bridge or tracking client.
 
+### Disposal during local cleanup
+
+The coherence bridge waits for active local-memory cleanup before completing disposal. A custom
+`IMemoryCache.Remove` implementation or its synchronous cleanup callback must not dispose the
+same coherent cache instance while that cleanup is active: `Dispose` and `DisposeAsync` reject
+the call with `InvalidOperationException` before closing admission or stopping the tracker.
+Dispose the cache after the cleanup has returned; rejection does not schedule disposal automatically.
+
+The cleanup identity flows with `ExecutionContext`, including into `Task.Run` and cleanup nested
+through another cache. Disposal from that context is rejected while the original cleanup is
+active, even when the callback starts a fire-and-forget task without waiting for disposal.
+Observe the task's exception and arrange disposal after cleanup finishes. A task that retained
+the cleanup context can dispose normally once the cleanup has completed. Disposal from an
+unrelated context still waits for active cleanup and reports any cleanup failure.
+
+Suppressing `ExecutionContext` flow, or dispatching with `UnsafeQueueUserWorkItem`, removes the
+cleanup identity. Such work is indistinguishable from unrelated disposal and can wait for the
+active cleanup. Never wait from a cleanup callback for disposal dispatched without its context:
+that creates a circular wait. Keep disposal under application shutdown control, outside the
+cleanup callback, rather than suppressing context flow to bypass the reentrancy check.
+
 ## Opt-in payload compression
 
 Set `RespireCacheOptions.ValueCodec` to encode the hash's `data` field. The default is
