@@ -14,6 +14,8 @@ public class RespireHashGeneratorTests
     [Arguments("[RespireHash(\"constant\")] internal partial record User(bool Value, Guid? Id, DateTimeOffset? Created);")]
     [Arguments("namespace @event { [RespireHash(\"{event}\")] internal partial record @class(string @event); }")]
     [Arguments("[RespireHash(\"{Id}\")] public partial class User { public int Id { get; set; } public User(int id) { Id = id; } }")]
+    [Arguments("[RespireHash(\"{Id}\")] public partial class User { public int Id { get; set; } protected internal User() { } }")]
+    [Arguments("[RespireHash(\"{Id}\")] public partial class User { public int Id { get; set; } protected internal User(int id) { Id = id; } }")]
     [Arguments("[RespireHash(\"{Id}\")] public partial class User { public required int Id { get; set; } public User(int id) { Id = id; } }")]
     [Arguments("[RespireHash(\"{Id}\")] public partial class User { public required int Id { get; set; } [System.Diagnostics.CodeAnalysis.SetsRequiredMembers] public User(int id) { Id = id; } }")]
     public async Task SupportedModelsCompileWithoutWarnings(string declaration)
@@ -46,6 +48,8 @@ public class RespireHashGeneratorTests
     [Arguments("[RespireHash(\"{Id}\")] public partial class User { public string Id { get; private set; } = \"a\"; }")]
     [Arguments("[RespireHash(\"{Id}\")] public partial class User { public string Id = \"a\"; }")]
     [Arguments("[RespireHash(\"{Id}\")] public partial class User { public string Id { get; set; } = \"a\"; private User() { } }")]
+    [Arguments("[RespireHash(\"{Id}\")] public partial class User { public string Id { get; set; } = \"a\"; protected User() { } }")]
+    [Arguments("[RespireHash(\"{Id}\")] public partial class User { public string Id { get; set; } = \"a\"; private protected User() { } }")]
     [Arguments("[RespireHash(\"{Id}\")] public partial class User { public string Id { get; set; } = \"a\"; public User(object unknown) { } }")]
     [Arguments("[RespireHash(\"constant\")] public partial class User { }")]
     [Arguments("[RespireHash(\"constant\")] public partial record User(string Id, string id);")]
@@ -87,6 +91,29 @@ public class RespireHashGeneratorTests
             .All(output => output.Reason is IncrementalStepRunReason.Cached or IncrementalStepRunReason.Unchanged)).IsTrue();
         await Assert.That(result.TrackedOutputSteps.SelectMany(step => step.Value).SelectMany(step => step.Outputs)
             .All(output => output.Reason == IncrementalStepRunReason.Cached)).IsTrue();
+    }
+
+    [Test]
+    public async Task DocumentationExampleCompilesWithTopLevelModel()
+    {
+        const string source = """
+            using System.Collections.Generic;
+            var user = new User("42", "Ada", null);
+            RespireKey key = UserHashMapper.GetKey(user); // user:{42}
+            Dictionary<string, string> fields = UserHashMapper.ToFields(user);
+            User copy = UserHashMapper.FromFields(fields);
+
+            [RespireHash("user:{{{Id}}}")]
+            public partial record User(string Id, string Name, string? SessionToken);
+            """;
+        GeneratorDriver driver = CSharpGeneratorDriver.Create([new RespireHashGenerator().AsSourceGenerator()],
+            parseOptions: ParseOptions);
+        driver.RunGeneratorsAndUpdateCompilation(
+            CreateCompilation(source).WithOptions(new CSharpCompilationOptions(OutputKind.ConsoleApplication,
+                nullableContextOptions: NullableContextOptions.Enable)), out var output, out var diagnostics);
+
+        await Assert.That(diagnostics.Concat(output.GetDiagnostics())
+            .Where(item => item.Severity >= DiagnosticSeverity.Warning).ToArray()).IsEmpty();
     }
 
     private static readonly CSharpParseOptions ParseOptions = new(LanguageVersion.CSharp12);

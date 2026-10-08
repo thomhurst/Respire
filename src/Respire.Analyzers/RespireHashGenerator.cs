@@ -63,7 +63,7 @@ public sealed class RespireHashGenerator : IIncrementalGenerator
         }
 
         var constructor = type.InstanceConstructors.Where(candidate =>
-                candidate.DeclaredAccessibility is Accessibility.Public or Accessibility.Internal
+                candidate.DeclaredAccessibility is Accessibility.Public or Accessibility.Internal or Accessibility.ProtectedOrInternal
                 && candidate.Parameters.All(parameter => parameter.RefKind == RefKind.None
                     && properties.Any(property => property.Name.Equals(parameter.Name, StringComparison.OrdinalIgnoreCase)
                         && SymbolEqualityComparer.IncludeNullability.Equals(property.Type, parameter.Type))))

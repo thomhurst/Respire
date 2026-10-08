@@ -3,6 +3,8 @@ Compiles C# fences in README, website/docs, and docs against the packed packages
 Place doc-test directives immediately before their C# fence. Use
 <!-- doc-test-declaration: split-before=FIRST_STATEMENT --> for leading declarations,
 or <!-- doc-test-tail-declaration: split-before=FIRST_DECLARATION --> for trailing types.
+Use <!-- doc-test-top-level-tail-declaration: split-before=FIRST_DECLARATION -->
+when trailing types must live at namespace scope, such as source-generator models.
 The split text must occur literally in the fence; missing markers fail with the snippet ID.
 -UseAgentGuard retains the repository's standard time and memory limits for local runs.
 #>
@@ -135,6 +137,11 @@ foreach ($documentPath in $documentPaths)
             elseif ($directive -match '^<!--\s*doc-test-tail-declaration:\s*split-before=(.+?)\s*-->$')
             {
                 $mode = 'tail-declaration'
+                $splitBefore = $Matches[1]
+            }
+            elseif ($directive -match '^<!--\s*doc-test-top-level-tail-declaration:\s*split-before=(.+?)\s*-->$')
+            {
+                $mode = 'top-level-tail-declaration'
                 $splitBefore = $Matches[1]
             }
             elseif ($directive -match '^<!--\s*doc-test-declaration\s*-->$')
@@ -297,11 +304,22 @@ for ($snippetIndex = 0; $snippetIndex -lt $snippets.Count; $snippetIndex++)
         }
     }
 
-    [void]$builder.AppendLine('namespace Respire.DocTests')
+    # Give namespace-scope models their own namespace to avoid names from other snippets.
+    $snippetNamespace = if ($snippet.Mode -eq 'top-level-tail-declaration')
+        { "Respire.DocTests.TopLevelSnippet$snippetIndex" } else { 'Respire.DocTests' }
+    [void]$builder.AppendLine("namespace $snippetNamespace")
     [void]$builder.AppendLine('{')
     foreach ($usingDirective in $usingDirectives)
     {
         [void]$builder.AppendLine($usingDirective)
+    }
+    if ($snippet.Mode -eq 'top-level-tail-declaration')
+    {
+        $declarationSource = $source.Substring($sourceSplitIndex).TrimEnd()
+        $source = $source.Substring(0, $sourceSplitIndex).TrimEnd()
+        [void]$builder.AppendLine("#line $declarationLine `"$($snippet.SourcePath)`"")
+        [void]$builder.AppendLine($declarationSource)
+        [void]$builder.AppendLine('#line default')
     }
     [void]$builder.AppendLine("internal sealed partial class Snippet$snippetIndex : SnippetContext")
     [void]$builder.AppendLine('{')
