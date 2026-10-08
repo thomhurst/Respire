@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Respire.Internal;
 using Respire.Protocol;
 
@@ -5,6 +6,8 @@ namespace Respire;
 
 internal sealed partial class ClientSideCacheCoordinator
 {
+    internal delegate TResult GetReadConverter<in TState, out TResult>(TState state, in GetReadResult result);
+
     internal bool CoalesceConcurrentMisses => _options.CoalesceConcurrentMisses;
 
     private static long _sharedReadRetirements;
@@ -44,16 +47,27 @@ internal sealed partial class ClientSideCacheCoordinator
         return WaitForSharedReadAsync(shared, cancellationToken);
     }
 
-    internal ValueTask<GetReadResult> CoalesceGetReadAsync<TState>(
-        ClientCacheCommandKey identity, TState state,
-        Func<TState, CancellationToken, ValueTask<GetReadResult>> read,
+    internal ValueTask<TResult> CoalesceGetReadAsync<TReadState, TState, TResult>(
+        ClientCacheCommandKey identity, TReadState readState,
+        Func<TReadState, CancellationToken, ValueTask<GetReadResult>> read,
+        TState state, GetReadConverter<TState, TResult> converter,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (!_options.CoalesceConcurrentMisses) return read(state, cancellationToken);
+        if (!_options.CoalesceConcurrentMisses)
+            return ConvertGetReadAsync(read(readState, cancellationToken), state, converter);
         var shared = JoinSharedRead<GetReadResult>(identity, out var owner);
-        if (owner) _ = ProduceSharedGetReadAsync(shared, state, read);
-        return WaitForSharedGetReadAsync(shared, cancellationToken);
+        if (owner) _ = ProduceSharedGetReadAsync(shared, readState, read);
+        return WaitForSharedGetReadAsync(shared, cancellationToken, state, converter);
+    }
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private static async ValueTask<TResult> ConvertGetReadAsync<TState, TResult>(
+        ValueTask<GetReadResult> read, TState state, GetReadConverter<TState, TResult> converter)
+    {
+        var result = await read.ConfigureAwait(false);
+        using var response = result.Response;
+        return converter(state, in result);
     }
 
     private SharedRead<T> JoinSharedRead<T>(ClientCacheCommandKey identity, out bool owner)
@@ -159,19 +173,23 @@ internal sealed partial class ClientSideCacheCoordinator
         }
     }
 
-    private async ValueTask<GetReadResult> WaitForSharedGetReadAsync(
-        SharedRead<GetReadResult> shared, CancellationToken cancellationToken)
+    // Consume and convert each waiter's owned bytes here. Only TResult crosses the
+    // caller's async boundary; the larger publication result stays with its producer.
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private async ValueTask<TResult> WaitForSharedGetReadAsync<TState, TResult>(
+        SharedRead<GetReadResult> shared, CancellationToken cancellationToken,
+        TState state, GetReadConverter<TState, TResult> converter)
     {
         try
         {
             var result = await shared.Completion.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
             // As with ordinary replies, copy mutable response storage before releasing
             // the waiter. Only canonical immutable text and the publication handle are shared.
-            lock (_sharedReadLock)
-            {
-                if (shared.Waiters == 1) return result;
-            }
-            return result.ToOwned();
+            bool soleWaiter;
+            lock (_sharedReadLock) soleWaiter = shared.Waiters == 1;
+            if (!soleWaiter) result = result.ToOwned();
+            using var response = result.Response;
+            return converter(state, in result);
         }
         finally { ReleaseSharedRead(shared); }
     }
