@@ -45,6 +45,19 @@ public class RetryCategoryMetadataTests
     }
 
     [Test]
+    public async Task ExplicitVerbCategoryDoesNotFallBackToAuditedLookup()
+    {
+        await Assert.That(new Verb("GET", allowReadRouting: true,
+            retryCategory: RespireCommandRetryCategory.Never).RetryCategory)
+            .IsEqualTo(RespireCommandRetryCategory.Never);
+        await Assert.That(new Verb("CUSTOM.GET", allowReadRouting: false,
+            retryCategory: RespireCommandRetryCategory.Connection).RetryCategory)
+            .IsEqualTo(RespireCommandRetryCategory.Connection);
+        await Assert.That(new Verb(-1, "CONFIG", "GET").RetryCategory)
+            .IsEqualTo(RespireCommandRetryCategory.Connection);
+    }
+
+    [Test]
     public async Task EveryDescriptorAndBuiltInVerbHasAnIndependentDefinedCategory()
     {
         var catalog = RespireCommands.All.ToArray().ToDictionary(command => command.Name);

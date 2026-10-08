@@ -18,24 +18,34 @@ internal readonly struct Verb
     private readonly ClientCacheCommandMetadata.Cache? _cacheMetadata;
     public ClientCacheCommandMetadata CacheMetadata => _cacheMetadata?.Value ?? default;
 
-    public Verb(string command, bool allowReadRouting = true, RespireCommandRetryCategory? retryCategory = null)
+    public Verb(string command, bool allowReadRouting = true)
+        : this(0, command, allowReadRouting, GetAuditedRetryCategory(command))
+    {
+    }
+
+    public Verb(string command, bool allowReadRouting, RespireCommandRetryCategory retryCategory)
         : this(0, command, allowReadRouting, retryCategory)
     {
     }
 
     public Verb(int routingKeyIndex, params string[] words)
-        : this(routingKeyIndex, string.Join(' ', words), allowReadRouting: true, retryCategory: null)
+        : this(routingKeyIndex, string.Join(' ', words))
     {
     }
 
-    private Verb(int routingKeyIndex, string command, bool allowReadRouting, RespireCommandRetryCategory? retryCategory)
+    private Verb(int routingKeyIndex, string command)
+        : this(routingKeyIndex, command, allowReadRouting: true, GetAuditedRetryCategory(command))
+    {
+    }
+
+    private Verb(int routingKeyIndex, string command, bool allowReadRouting, RespireCommandRetryCategory retryCategory)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(command);
 
         RoutingKeyIndex = routingKeyIndex;
         var metadata = CommandReadMetadata.Get(command);
         ReadKind = allowReadRouting ? metadata.Kind : ReadCommandKind.None;
-        RetryCategory = retryCategory ?? CommandRetryCategoryMetadata.Get(command);
+        RetryCategory = retryCategory;
         CursorArgumentIndex = metadata.CursorArgumentIndex;
         _cacheMetadata = new(command);
         Tokens = 0;
@@ -64,6 +74,12 @@ internal readonly struct Verb
             destination[offset++] = (byte)'\r';
             destination[offset++] = (byte)'\n';
         }
+    }
+
+    private static RespireCommandRetryCategory GetAuditedRetryCategory(string command)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(command);
+        return CommandRetryCategoryMetadata.Get(command);
     }
 
     private ref struct TokenEnumerator(ReadOnlySpan<char> remaining)

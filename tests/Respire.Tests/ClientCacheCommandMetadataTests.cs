@@ -130,13 +130,10 @@ public class ClientCacheCommandMetadataTests
             var assembly = context.LoadFromAssemblyPath(typeof(RespireClient).Assembly.Location);
             if (first == "verb")
             {
-                // The optional retry category belongs to the collectible assembly's type identity.
-                var retryCategory = assembly.GetType("Respire.RespireCommandRetryCategory")!;
-                var nullableCategory = typeof(Nullable<>).MakeGenericType(retryCategory);
                 var constructor = assembly.GetType("Respire.Commands.Verb")!
-                    .GetConstructor([typeof(string), typeof(bool), nullableCategory])
+                    .GetConstructor([typeof(string), typeof(bool)])
                     ?? throw new InvalidOperationException("Verb metadata constructor not found.");
-                var verb = constructor.Invoke(["SET", true, null]);
+                var verb = constructor.Invoke(["SET", true]);
                 await Assert.That(verb.GetType().GetField("RetryCategory")!.GetValue(verb)!.ToString())
                     .IsEqualTo(nameof(RespireCommandRetryCategory.WriteAccumulating));
             }
