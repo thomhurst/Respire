@@ -162,6 +162,9 @@ public sealed class RespireHashGenerator : IIncrementalGenerator
             .Append("        => value ?? throw new global::System.ArgumentException(\"Null required hash property: \" + name, \"value\");\n")
             .Append("    private static bool ParseBoolean(string value)\n")
             .Append("        => value switch { \"1\" => true, \"0\" => false, _ => throw new global::System.FormatException(\"Boolean hash fields must be 1 or 0.\") };\n")
+            .Append("    // Double.Parse trims special values even when whitespace styles are disabled.\n")
+            .Append("    private static string UnpaddedDoubleText(string value)\n")
+            .Append("        => value.Length != 0 && (global::System.Char.IsWhiteSpace(value[0]) || global::System.Char.IsWhiteSpace(value[value.Length - 1])) ? throw new global::System.FormatException(\"Numeric hash fields must not contain surrounding whitespace.\") : value;\n")
             .Append("}\n");
         if (!type.ContainingNamespace.IsGlobalNamespace) source.Append("}\n");
         return source.ToString();
@@ -205,14 +208,23 @@ public sealed class RespireHashGenerator : IIncrementalGenerator
         _ => value + ".ToString(global::System.Globalization.CultureInfo.InvariantCulture)",
     };
 
-    private static string Decode(ITypeSymbol type, string value) => ScalarKind(type) switch
+    private static string Decode(ITypeSymbol type, string value)
     {
-        "String" => value,
-        "Boolean" => "ParseBoolean(" + value + ")",
-        "Guid" => "global::System.Guid.ParseExact(" + value + ", \"D\")",
-        "DateTimeOffset" => "global::System.DateTimeOffset.ParseExact(" + value + ", \"O\", global::System.Globalization.CultureInfo.InvariantCulture, global::System.Globalization.DateTimeStyles.None)",
-        var scalar => "global::System." + scalar + ".Parse(" + value + ", global::System.Globalization.CultureInfo.InvariantCulture)",
-    };
+        var scalar = ScalarKind(type);
+        if (scalar == "Double")
+            value = "UnpaddedDoubleText(" + value + ")";
+        var styles = "global::System.Globalization.NumberStyles.AllowLeadingSign";
+        if (scalar is "Double" or "Decimal")
+            styles += " | global::System.Globalization.NumberStyles.AllowDecimalPoint | global::System.Globalization.NumberStyles.AllowExponent";
+        return scalar switch
+        {
+            "String" => value,
+            "Boolean" => "ParseBoolean(" + value + ")",
+            "Guid" => "global::System.Guid.ParseExact(" + value + ", \"D\")",
+            "DateTimeOffset" => "global::System.DateTimeOffset.ParseExact(" + value + ", \"O\", global::System.Globalization.CultureInfo.InvariantCulture, global::System.Globalization.DateTimeStyles.None)",
+            _ => "global::System." + scalar + ".Parse(" + value + ", " + styles + ", global::System.Globalization.CultureInfo.InvariantCulture)",
+        };
+    }
 
     private static string? ScalarKind(ITypeSymbol type)
     {

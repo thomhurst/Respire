@@ -99,6 +99,77 @@ public class GeneratedHashCodecTests
     }
 
     [Test]
+    [Arguments("Age")]
+    [Arguments("Count")]
+    [Arguments("Score")]
+    [Arguments("Balance")]
+    public async Task NumericFieldsRejectWhitespaceAndThousandsSeparators(string field)
+    {
+        foreach (var text in new[] { "1,5", "1,000", " 5", "5 ", "\t5", "5\r\n" })
+        {
+            var fields = HashCodecUserHashMapper.ToFields(Create(age: 5));
+            fields[field] = text;
+            await Assert.That(() => HashCodecUserHashMapper.FromFields(fields)).Throws<FormatException>();
+        }
+    }
+
+    [Test]
+    [Arguments("Id")]
+    [Arguments("Price")]
+    [Arguments("Count")]
+    [Arguments("Score")]
+    [Arguments("Amount")]
+    public async Task NullableModelNumericFieldsUseTheSameStrictParsing(string field)
+    {
+        foreach (var text in new[] { "1,5", "1,000", " 5", "5 " })
+        {
+            var fields = new Dictionary<string, string> { ["Id"] = "1", ["Price"] = "2" };
+            fields[field] = text;
+            await Assert.That(() => HashCodecNullableHashMapper.FromFields(fields)).Throws<FormatException>();
+        }
+    }
+
+    [Test]
+    [Arguments(double.MinValue)]
+    [Arguments(double.MaxValue)]
+    [Arguments(double.Epsilon)]
+    [Arguments(double.NaN)]
+    [Arguments(double.PositiveInfinity)]
+    [Arguments(double.NegativeInfinity)]
+    public async Task DoubleRoundTripFormatsRemainReadable(double score)
+    {
+        var model = Create(age: int.MinValue) with { Count = long.MinValue, Score = score, Balance = decimal.MinValue };
+        await Assert.That(HashCodecUserHashMapper.FromFields(HashCodecUserHashMapper.ToFields(model))).IsEqualTo(model);
+    }
+
+    [Test]
+    [Arguments(" NaN")]
+    [Arguments("NaN ")]
+    [Arguments(" Infinity")]
+    [Arguments("-Infinity\t")]
+    public async Task SpecialDoubleValuesRejectSurroundingWhitespace(string text)
+    {
+        var fields = HashCodecUserHashMapper.ToFields(Create());
+        fields["Score"] = text;
+        await Assert.That(() => HashCodecUserHashMapper.FromFields(fields)).Throws<FormatException>();
+    }
+
+    [Test]
+    public async Task SignedNumbersAndFloatingPointExponentsAreReadable()
+    {
+        var fields = HashCodecUserHashMapper.ToFields(Create());
+        fields["Age"] = "+5";
+        fields["Count"] = "-5";
+        fields["Score"] = "-1.5E+2";
+        fields["Balance"] = "+1.5E-2";
+        var model = HashCodecUserHashMapper.FromFields(fields);
+        await Assert.That(model.Age).IsEqualTo(5);
+        await Assert.That(model.Count).IsEqualTo(-5);
+        await Assert.That(model.Score).IsEqualTo(-150d);
+        await Assert.That(model.Balance).IsEqualTo(0.015M);
+    }
+
+    [Test]
     public async Task RuntimeNullForRequiredStringCannotBeWrittenOrUsedAsKey()
     {
         var invalid = Create() with { Id = null! };
