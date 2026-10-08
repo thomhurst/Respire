@@ -48,7 +48,8 @@ public sealed partial class RespireClient
         where TCommand : struct, IRespCommand
         where TSend : struct, IReadySend<TResult>
     {
-        try { return sender.Send(connection, operation, in command, cancellationToken); }
+        // The ready replica gate excludes telemetry; the ordinary route owns its duration.
+        try { return sender.Send(connection, operation, in command, cancellationToken, default); }
         catch (Exception error)
         {
             // Readiness is an observation, not a lease. Preserve the former async failure shape.

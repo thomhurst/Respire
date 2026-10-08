@@ -59,6 +59,10 @@ on:
         description: BenchmarkDotNet measurement preset (Short, Default, or Medium)
         default: Medium
         type: string
+      redis-server:
+        description: Start a pinned Redis service for fixtures that use a real server
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -72,6 +76,15 @@ jobs:
       fail-fast: false
       matrix:
         framework: [net10.0]
+    services:
+      redis:
+        image: ${{ inputs.redis-server && 'redis:8.10@sha256:2c2dff791878316e3b083188be0d578423b24813cdda5de0e80ea4f7b3e6bfd6' || '' }}
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     env:
       EVENT_BASE_SHA: ${{ inputs.event-base-sha }}
       HEAD_SHA: ${{ inputs.candidate-sha }}

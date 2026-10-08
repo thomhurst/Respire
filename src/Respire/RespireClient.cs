@@ -2360,7 +2360,7 @@ public sealed partial class RespireClient : IRespireClient
         where TCommand : struct, IRespCommand
     {
         var telemetry = RespireTelemetry.StartOperation(
-            operation, connection.Host, connection.Port, _core.Options.Database);
+            operation, connection, _core.Options.Database);
         try
         {
             var response = await SendTrackedOnConnectionCoreAsync(
@@ -3142,8 +3142,7 @@ public sealed partial class RespireClient : IRespireClient
         var core = _core;
         var telemetry = RespireTelemetry.StartOperation(
             operation,
-            connection.Host,
-            connection.Port,
+            connection,
             core.Options.Database,
             storedProcedureName: storedProcedureName);
         try
@@ -3526,7 +3525,7 @@ public sealed partial class RespireClient : IRespireClient
         var core = _core;
         var previousActivity = Activity.Current;
         var telemetry = RespireTelemetry.StartOperation(
-            operation, connection.Host, connection.Port, core.Options.Database);
+            operation, connection, core.Options.Database);
         var telemetryCompleted = 0;
         void CompleteTelemetry(Exception? error)
         {
@@ -3649,8 +3648,7 @@ public sealed partial class RespireClient : IRespireClient
         var core = _core;
         var telemetry = RespireTelemetry.StartOperation(
             operation,
-            connection.Host,
-            connection.Port,
+            connection,
             core.Options.Database,
             storedProcedureName: storedProcedureName);
         try
@@ -3743,7 +3741,7 @@ public sealed partial class RespireClient : IRespireClient
                     }
                     if (!telemetryStarted)
                     {
-                        telemetry = RespireTelemetry.StartOperation(operation, connection.Host, connection.Port,
+                        telemetry = RespireTelemetry.StartOperation(operation, connection,
                             core.Options.Database, storedProcedureName: storedProcedureName, started: started);
                         telemetryStarted = true;
                     }
@@ -3866,8 +3864,7 @@ public sealed partial class RespireClient : IRespireClient
                     {
                         telemetry = RespireTelemetry.StartOperation(
                             operation,
-                            connection.Host,
-                            connection.Port,
+                            connection,
                             core.Options.Database,
                             storedProcedureName: storedProcedureName, started: started);
                         telemetryStarted = true;
@@ -4322,7 +4319,7 @@ public sealed partial class RespireClient : IRespireClient
                 await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
                 connection = core.Multiplexer.GetConnection();
             }
-            telemetry = RespireTelemetry.StartOperation(script.EvalShaOperation, connection.Host, connection.Port,
+            telemetry = RespireTelemetry.StartOperation(script.EvalShaOperation, connection,
                 core.Options.Database, storedProcedureName: script.Sha1, started: started);
             var result = await ExecuteScriptOnConnectionCoreAsync(connection, script, tail, cancellationToken)
                 .ConfigureAwait(false);
@@ -4667,8 +4664,7 @@ public sealed partial class RespireClient : IRespireClient
         var core = _core;
         var telemetry = RespireTelemetry.StartOperation(
             script.EvalShaOperation,
-            connection.Host,
-            connection.Port,
+            connection,
             core.Options.Database,
             storedProcedureName: script.Sha1, started: started);
         try

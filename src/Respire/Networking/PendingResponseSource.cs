@@ -487,6 +487,7 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
     private bool _hasResponse;
     private bool _transferOwnership;
     private string? _commandName;
+    private RespireTelemetry.DurationObservation _duration;
 
     private ConvertedPendingResponseSource()
     {
@@ -500,7 +501,8 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
         TState state,
         ResponseConverter<TState, TResult> converter,
         bool transferOwnership,
-        string? commandName)
+        string? commandName,
+        RespireTelemetry.DurationObservation duration = default)
     {
         var source = Pool.Rent();
 
@@ -508,6 +510,7 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
         source._converter = converter;
         source._transferOwnership = transferOwnership;
         source._commandName = commandName;
+        source._duration = duration;
         source.PrepareForUse();
         return source;
     }
@@ -516,20 +519,28 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
     {
         _response = result;
         _hasResponse = true;
+        _duration.MarkCompleted();
         _core.SetResult(true);
     }
 
-    protected override void SetExceptionCore(Exception exception) => _core.SetException(exception);
+    protected override void SetExceptionCore(Exception exception)
+    {
+        _duration.MarkCompleted();
+        _core.SetException(exception);
+    }
 
     TResult IValueTaskSource<TResult>.GetResult(short token)
     {
         try
         {
-            _core.GetResult(token);
-            if (_response.IsError)
+            try
             {
-                throw ResponseReader.ServerError(in _response, _commandName);
+                _core.GetResult(token);
+                if (_response.IsError) throw ResponseReader.ServerError(in _response, _commandName);
             }
+            catch (Exception error) { _duration.Complete(_commandName, error); throw; }
+            // Telemetry ends at the response, before user conversion and its failures.
+            _duration.Complete(_commandName);
 
             var result = _converter!(_state, in _response);
             if (_transferOwnership)
@@ -569,6 +580,7 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
         _converter = null;
         _hasResponse = false;
         _transferOwnership = false;
+        _duration = default;
         // The receive loop still needs the operation when a canceled caller finishes first.
         // Clear it only after both references are released and the source returns to its pool.
     }
@@ -607,6 +619,7 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
     private bool _hasResponse;
     private bool _hasDirectResult;
     private string? _commandName;
+    private RespireTelemetry.DurationObservation _duration;
 
     private StringPendingResponseSource()
     {
@@ -616,11 +629,12 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
 
     internal override string? CommandName => _commandName;
 
-    public static StringPendingResponseSource Rent(string? commandName)
+    public static StringPendingResponseSource Rent(string? commandName, RespireTelemetry.DurationObservation duration = default)
     {
         var source = Pool.Rent();
 
         source._commandName = commandName;
+        source._duration = duration;
         source.PrepareForUse();
         return source;
     }
@@ -638,6 +652,7 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
 
     protected override void SetResultCore(in RespValue result)
     {
+        _duration.MarkCompleted();
         if (_hasDirectResult)
         {
             // Direct completions carry a default RespValue; nothing to retain.
@@ -650,21 +665,27 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
         _core.SetResult(true);
     }
 
-    protected override void SetExceptionCore(Exception exception) => _core.SetException(exception);
+    protected override void SetExceptionCore(Exception exception)
+    {
+        _duration.MarkCompleted();
+        _core.SetException(exception);
+    }
 
     string? IValueTaskSource<string?>.GetResult(short token)
     {
         try
         {
-            _core.GetResult(token);
+            try
+            {
+                _core.GetResult(token);
+                if (!_hasDirectResult && _response.IsError)
+                    throw ResponseReader.ServerError(in _response, _commandName);
+            }
+            catch (Exception error) { _duration.Complete(_commandName, error); throw; }
+            _duration.Complete(_commandName);
             if (_hasDirectResult)
             {
                 return _directResult;
-            }
-
-            if (_response.IsError)
-            {
-                throw ResponseReader.ServerError(in _response, _commandName);
             }
 
             return ResponseReader.StringOrNull(in _response);
@@ -708,6 +729,7 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
         public bool TryReset(StringPendingResponseSource source)
         {
             source.Clear();
+            source._duration = default;
             source._core.Reset();
             return true;
         }

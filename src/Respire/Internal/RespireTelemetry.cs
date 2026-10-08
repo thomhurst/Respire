@@ -448,6 +448,61 @@ internal static class RespireTelemetry
     /// <summary>Retains metric eligibility and timing before connection acquisition can await.</summary>
     internal readonly record struct OperationStart(long Timestamp, bool MetricEnabled);
 
+    /// <summary>Retains one command's duration until its pooled response is consumed.</summary>
+    /// <remarks>
+    /// One caller owns completion. Unpublished sources discard their copy; admission
+    /// failures and reroutes retain the original start in the sending method instead.
+    /// </remarks>
+    internal struct DurationObservation(RespireConnection? connection, OperationStart started)
+    {
+        private RespireConnection? _connection = started.MetricEnabled ? connection : null;
+        private long _timestamp = started.MetricEnabled ? started.Timestamp : 0;
+        private long _completedTimestamp;
+
+        /// <summary>Freezes duration before publishing completion, independently of delayed consumption.</summary>
+        internal void MarkCompleted()
+        {
+            if (_timestamp != 0) _completedTimestamp = Stopwatch.GetTimestamp();
+        }
+
+        /// <summary>Consumes the observation once and isolates listener failures from the command outcome.</summary>
+        internal void Complete(string? operation, Exception? error = null)
+        {
+            var connection = _connection;
+            var timestamp = _timestamp;
+            var completed = _completedTimestamp;
+            this = default;
+            if (connection is null || timestamp == 0 || !OperationDuration.Enabled) return;
+            try
+            {
+                var seconds = completed == 0 ? Stopwatch.GetElapsedTime(timestamp).TotalSeconds
+                    : Stopwatch.GetElapsedTime(timestamp, completed).TotalSeconds;
+                RecordOperationDuration(seconds, operation!,
+                    connection.Host, connection.Port, connection.OperationMetricDatabase, error, connection, null);
+            }
+            catch { /* A metrics listener must not replace the command outcome. */ }
+        }
+    }
+
+    /// <summary>Creates the connection's reusable database and endpoint metric tags.</summary>
+    internal static TagList CreateOperationMetricTags(string host, int port, string databaseNamespace,
+        string? peerAddress, int? peerPort)
+    {
+        var tags = new TagList
+        {
+            { "db.system.name", DatabaseSystem },
+            { "db.namespace", databaseNamespace },
+            { "server.address", host },
+        };
+        if (port != DefaultRedisPort) tags.Add("server.port", port);
+        if (peerAddress is not null)
+        {
+            tags.Add("network.peer.address", peerAddress);
+            tags.Add("network.peer.port", peerPort);
+        }
+        return tags;
+    }
+
     internal static OperationStart CaptureOperationStart(string operation)
         => CaptureOperationStart(IsCommandMetricEnabled(operation));
 
@@ -515,6 +570,13 @@ internal static class RespireTelemetry
         int? batchSize = null, string? storedProcedureName = null)
         => StartOperation(operation, endpoint.Host, endpoint.Port, database, batchSize, storedProcedureName);
 
+    /// <summary>Starts an operation using the executing connection's cached namespace when applicable.</summary>
+    internal static OperationScope StartOperation(string operation, RespireConnection connection, int database,
+        int? batchSize = null, string? storedProcedureName = null, OperationStart? started = null)
+        => StartOperationCore(operation, connection.Host, connection.Port, database, batchSize, storedProcedureName,
+            started?.Timestamp ?? 0, started?.MetricEnabled ?? IsCommandMetricEnabled(operation),
+            connection.OperationMetricDatabase == database ? connection.OperationMetricNamespace : null);
+
     public static OperationScope StartOperation(
         string operation,
         string? host,
@@ -527,7 +589,7 @@ internal static class RespireTelemetry
             started?.Timestamp ?? 0, started?.MetricEnabled ?? IsCommandMetricEnabled(operation));
 
     private static OperationScope StartOperationCore(string operation, string? host, int port, int database,
-        int? batchSize, string? storedProcedureName, long started, bool metricEnabled)
+        int? batchSize, string? storedProcedureName, long started, bool metricEnabled, string? databaseNamespace = null)
     {
         var traceEnabled = Source.HasListeners();
         if (!traceEnabled && !metricEnabled)
@@ -541,7 +603,7 @@ internal static class RespireTelemetry
             var tags = new ActivityTagsCollection
             {
                 { "db.system.name", DatabaseSystem },
-                { "db.namespace", database.ToString(CultureInfo.InvariantCulture) },
+                { "db.namespace", databaseNamespace ?? database.ToString(CultureInfo.InvariantCulture) },
                 { "db.operation.name", operation },
             };
             if (host is not null)
@@ -720,44 +782,11 @@ internal static class RespireTelemetry
                 return;
             }
 
-            var tags = new TagList
-            {
-                { "db.system.name", DatabaseSystem },
-                { "db.namespace", database.ToString(CultureInfo.InvariantCulture) },
-                { "db.operation.name", MetricNames.GetName(operation) },
-            };
-            if (host is not null)
-            {
-                tags.Add("server.address", host);
-                if (port != DefaultRedisPort) tags.Add("server.port", port);
-            }
-
-            if (batchSize is not null)
-            {
-                tags.Add("db.operation.batch.size", batchSize.Value);
-            }
-
-            if (peerAddress is not null)
-            {
-                tags.Add("network.peer.address", peerAddress);
-                tags.Add("network.peer.port", peerPort);
-            }
-
-            if (error is not null)
-            {
-                tags.Add("error.type", errorType);
-                if (responseStatusCode is not null)
-                {
-                    tags.Add("db.response.status_code", responseStatusCode);
-                }
-            }
-
-            OperationDuration.Record(
-                activityDurationSeconds ?? Stopwatch.GetElapsedTime(startTimestamp).TotalSeconds,
-                tags);
+            RecordOperationDuration(activityDurationSeconds ?? Stopwatch.GetElapsedTime(startTimestamp).TotalSeconds,
+                operation, host, port, database, error, connection, batchSize);
         }
 
-        private static string? ErrorType(Exception? error)
+        internal static string? ErrorType(Exception? error)
         {
             if (error is null)
             {
@@ -774,5 +803,52 @@ internal static class RespireTelemetry
                 : error;
             return relevantError.GetType().FullName ?? relevantError.GetType().Name;
         }
+    }
+
+    /// <summary>Records duration and outcome tags without mutating cached connection tags.</summary>
+    private static void RecordOperationDuration(double seconds, string operation, string? host, int port,
+        int database, Exception? error, RespireConnection? connection, int? batchSize)
+    {
+        TagList tags;
+        if (connection is not null && connection.OperationMetricDatabase == database
+            && connection.Host == host && connection.Port == port)
+        {
+            // Copy inline tags, including the pre-boxed ports. Never mutate connection storage.
+            tags = connection.OperationMetricTags;
+        }
+        else
+        {
+            tags = new TagList
+            {
+                { "db.system.name", DatabaseSystem },
+                { "db.namespace", database.ToString(CultureInfo.InvariantCulture) },
+            };
+            if (host is not null)
+            {
+                tags.Add("server.address", host);
+                if (port != DefaultRedisPort) tags.Add("server.port", port);
+            }
+
+            var peerAddress = connection?.NetworkPeerAddress;
+            var peerPort = connection?.NetworkPeerPort;
+            if (peerAddress is not null)
+            {
+                tags.Add("network.peer.address", peerAddress);
+                tags.Add("network.peer.port", peerPort);
+            }
+        }
+
+        tags.Add("db.operation.name", MetricNames.GetName(operation));
+        if (batchSize is not null) tags.Add("db.operation.batch.size", batchSize.Value);
+
+        if (error is not null)
+        {
+            tags.Add("error.type", OperationScope.ErrorType(error));
+            var responseStatusCode = RespireException.GetDefinitiveServerError(error) is { Code.Length: > 0 } serverError
+                ? serverError.Code : null;
+            if (responseStatusCode is not null) tags.Add("db.response.status_code", responseStatusCode);
+        }
+
+        OperationDuration.Record(seconds, tags);
     }
 }

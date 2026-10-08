@@ -248,6 +248,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     internal (string Host, int Port) PeerKey => (NetworkPeerAddress ?? Host, NetworkPeerPort ?? Port);
     internal string? NetworkPeerAddress => _networkPeerAddress;
     internal int? NetworkPeerPort => _networkPeerPort;
+    internal int OperationMetricDatabase { get; }
+    internal string OperationMetricNamespace { get; }
+    internal TagList OperationMetricTags { get; }
 
     /// <summary>
     /// Completes when the connection dies for any reason (fault, remote close, disposal). Never
@@ -286,6 +289,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         Host = host;
         Port = port;
+        OperationMetricDatabase = options.Database;
+        OperationMetricNamespace = options.Database.ToString(CultureInfo.InvariantCulture);
+        OperationMetricTags = RespireTelemetry.CreateOperationMetricTags(
+            host, port, OperationMetricNamespace, _networkPeerAddress, _networkPeerPort);
         _logger = logger;
         _generation = options.Generation;
         _pushHandler = options.PushHandler;
@@ -1052,7 +1059,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         bool transferOwnership,
         CancellationToken cancellationToken = default,
         string? commandName = null,
-        CommandDeadline commandDeadline = default)
+        CommandDeadline commandDeadline = default,
+        RespireTelemetry.OperationStart durationStarted = default)
         where TCommand : struct, IRespCommand
     {
         if (ScriptingEngineInfo.IsScriptingCommand(commandName))
@@ -1060,8 +1068,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 SendCheckedAsync(in command, cancellationToken, commandName, commandDeadline),
                 state, converter, transferOwnership);
         if (!commandDeadline.IsSet) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
+        var duration = new RespireTelemetry.DurationObservation(this, durationStarted);
         var source = ConvertedPendingResponseSource<TState, TResult>.Rent(
-            state, converter, transferOwnership, commandName);
+            state, converter, transferOwnership, commandName, duration);
         bool enqueued;
         bool startedBatch;
         try
@@ -1072,10 +1081,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             ReclaimUnpublished(source);
             return target.SendConvertedAsync(in command, state, converter,
-                transferOwnership, cancellationToken, commandName, rerouted);
+                transferOwnership, cancellationToken, commandName, rerouted, durationStarted);
         }
-        catch
+        catch (Exception error)
         {
+            duration.Complete(commandName, error);
             ReclaimUnpublished(source);
             throw;
         }
@@ -1088,7 +1098,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         return SendConvertedSlowAsync(command, source, state, converter, transferOwnership,
-            cancellationToken, commandName, commandDeadline);
+            cancellationToken, commandName, commandDeadline, durationStarted);
     }
 
     /// <summary>
@@ -1101,11 +1111,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         in TCommand command,
         CancellationToken cancellationToken = default,
         string? commandName = null,
-        CommandDeadline commandDeadline = default)
+        CommandDeadline commandDeadline = default,
+        RespireTelemetry.OperationStart durationStarted = default)
         where TCommand : struct, IRespCommand
     {
         if (!commandDeadline.IsSet) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
-        var source = StringPendingResponseSource.Rent(commandName);
+        var duration = new RespireTelemetry.DurationObservation(this, durationStarted);
+        var source = StringPendingResponseSource.Rent(commandName, duration);
         bool enqueued;
         bool startedBatch;
         try
@@ -1116,10 +1128,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             ReclaimUnpublished(source);
             return target.SendStringAsync(in command, cancellationToken, commandName,
-                rerouted);
+                rerouted, durationStarted);
         }
-        catch
+        catch (Exception error)
         {
+            duration.Complete(commandName, error);
             ReclaimUnpublished(source);
             throw;
         }
@@ -1131,7 +1144,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             return source.Task;
         }
 
-        return SendStringSlowAsync(command, source, cancellationToken, commandName, commandDeadline);
+        return SendStringSlowAsync(command, source, cancellationToken, commandName, commandDeadline, durationStarted);
     }
 
     /// <summary>Sends a command whose reply must be a bulk string or null without retaining its payload.</summary>
@@ -1261,7 +1274,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 #endif
     private async ValueTask<string?> SendStringSlowAsync<TCommand>(
         TCommand command, StringPendingResponseSource source, CancellationToken cancellationToken,
-        string? commandName, CommandDeadline commandDeadline)
+        string? commandName, CommandDeadline commandDeadline, RespireTelemetry.OperationStart durationStarted)
         where TCommand : struct, IRespCommand
     {
         bool startedBatch;
@@ -1272,7 +1285,14 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
         catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, commandDeadline, out var target, out var rerouted, preferredZone: null))
         {
-            return await target.SendStringAsync(in command, cancellationToken, commandName, rerouted).ConfigureAwait(false);
+            return await target.SendStringAsync(in command, cancellationToken, commandName, rerouted, durationStarted).ConfigureAwait(false);
+        }
+        catch (Exception error)
+        {
+            // Capacity admission already reclaimed its unpublished source. Do not touch it.
+            var duration = new RespireTelemetry.DurationObservation(this, durationStarted);
+            duration.Complete(commandName, error);
+            throw;
         }
 
         source.RegisterCancellation(cancellationToken);
@@ -2013,7 +2033,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         bool transferOwnership,
         CancellationToken cancellationToken,
         string? commandName,
-        CommandDeadline commandDeadline)
+        CommandDeadline commandDeadline, RespireTelemetry.OperationStart durationStarted)
         where TCommand : struct, IRespCommand
     {
         bool startedBatch;
@@ -2025,7 +2045,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         catch (RespireConnectionRetiredException) when (TryReroute(pinToConnection: false, commandDeadline, out var target, out var rerouted, preferredZone: null))
         {
             return await target.SendConvertedAsync(in command, state, converter,
-                transferOwnership, cancellationToken, commandName, rerouted).ConfigureAwait(false);
+                transferOwnership, cancellationToken, commandName, rerouted, durationStarted).ConfigureAwait(false);
+        }
+        catch (Exception error)
+        {
+            var duration = new RespireTelemetry.DurationObservation(this, durationStarted);
+            duration.Complete(commandName, error);
+            throw;
         }
 
         source.RegisterCancellation(cancellationToken);

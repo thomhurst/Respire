@@ -41,6 +41,7 @@ Benchmark concurrency groups must include `github.event.label.name` alongside th
 | `benchmark-cluster-routing.yml` | `run-cluster-ready-benchmarks` |
 | `benchmark-cluster-replica.yml` | `run-cluster-replica-benchmarks` |
 | `benchmark-command-conversion.yml` | `run-command-conversion-benchmarks` |
+| `benchmark-command-duration.yml` | `run-command-duration-benchmarks` |
 | `benchmark-connection-contention.yml` | `run-connection-contention-benchmarks` |
 | `benchmark-dedicated-pool.yml` | `run-dedicated-pool-benchmarks` |
 | `benchmark-fenced-locks.yml` | `run-fenced-locks-benchmarks` |

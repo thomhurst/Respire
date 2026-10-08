@@ -1,4 +1,4 @@
-# Reviewed source-declared member signatures: 332 total; per-type counts include owner, derived and accessible nested declarations.
+# Reviewed source-declared member signatures: 335 total; per-type counts include owner, derived and accessible nested declarations.
 # Count: Respire.ClientSideCacheCoordinator | 54
 Respire.ClientSideCacheCoordinator | class CacheEntry(byte[]?, long, long, string?)
 Respire.ClientSideCacheCoordinator | class CacheStore()
@@ -133,7 +133,7 @@ Respire.Networking.BulkStreamPendingResponseSource | property Task [internal; ge
 Respire.Networking.BytesPendingResponseSource | method IValueTaskSource<byte[]?>.GetResult(short) : byte[]?
 Respire.Networking.BytesPendingResponseSource | method IValueTaskSource<byte[]?>.GetStatus(short) : ValueTaskSourceStatus
 Respire.Networking.BytesPendingResponseSource | method IValueTaskSource<byte[]?>.OnCompleted(Action<object?>, object?, short, ValueTaskSourceOnCompletedFlags) : void
-Respire.Networking.BytesPendingResponseSource | method Rent(string?) : BytesPendingResponseSource
+Respire.Networking.BytesPendingResponseSource | method Rent(string?, RespireTelemetry.DurationObservation) : BytesPendingResponseSource
 Respire.Networking.BytesPendingResponseSource | method ResetAndReturn() : void
 Respire.Networking.BytesPendingResponseSource | method SetDirectResult(byte[]?) : void
 Respire.Networking.BytesPendingResponseSource | method SetExceptionCore(Exception) : void
@@ -144,7 +144,7 @@ Respire.Networking.BytesPendingResponseSource | property Task [public; get] : Va
 Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | method IValueTaskSource<TResult>.GetResult(short) : TResult
 Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | method IValueTaskSource<TResult>.GetStatus(short) : ValueTaskSourceStatus
 Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | method IValueTaskSource<TResult>.OnCompleted(Action<object?>, object?, short, ValueTaskSourceOnCompletedFlags) : void
-Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | method Rent(TState, ResponseConverter<TState, TResult>, bool, string?) : ConvertedPendingResponseSource<TState, TResult>
+Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | method Rent(TState, ResponseConverter<TState, TResult>, bool, string?, RespireTelemetry.DurationObservation) : ConvertedPendingResponseSource<TState, TResult>
 Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | method ResetAndReturn() : void
 Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | method SetExceptionCore(Exception) : void
 Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | method SetResultCore(in RespValue) : void
@@ -207,7 +207,7 @@ Respire.Networking.PendingResponseSource | readonly struct PoolPolicy(PendingRes
 # Count: Respire.Networking.PendingResponseSource.PoolPolicy | 2
 Respire.Networking.PendingResponseSource.PoolPolicy | method Create() : PendingResponseSource
 Respire.Networking.PendingResponseSource.PoolPolicy | method TryReset(PendingResponseSource) : bool
-# Count: Respire.Networking.RespireConnection | 80
+# Count: Respire.Networking.RespireConnection | 83
 Respire.Networking.RespireConnection | event MovingNotification : Action<Respire.Infrastructure.MovingAnnouncement>?
 Respire.Networking.RespireConnection | event PendingCommandsFailing : Action?
 Respire.Networking.RespireConnection | field LastQueuedMovingSequence : long
@@ -240,15 +240,15 @@ Respire.Networking.RespireConnection | method RetireAsync() : Task
 Respire.Networking.RespireConnection | method SendAskingStreamedSetAsync(in RawCommand, StreamedSetCommand, CancellationToken, CommandDeadline, DedicatedStreamRoute) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendAsync`1(in TCommand, CancellationToken, bool, string?, bool, string?) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendBulkStreamAsync`1(in TCommand, CancellationToken, string?, Action<Exception?>?, string?) : ValueTask<Stream?>
-Respire.Networking.RespireConnection | method SendBytesAsync`1(in TCommand, CancellationToken, string?, CommandDeadline) : ValueTask<byte[]?>
+Respire.Networking.RespireConnection | method SendBytesAsync`1(in TCommand, CancellationToken, string?, CommandDeadline, RespireTelemetry.OperationStart) : ValueTask<byte[]?>
 Respire.Networking.RespireConnection | method SendCheckedAsync`1(in TCommand, CancellationToken, string?, CommandDeadline, bool, DedicatedStreamRoute, string?, bool) : ValueTask<RespValue>
-Respire.Networking.RespireConnection | method SendConvertedAsync`3(in TCommand, TState, ResponseConverter<TState, TResult>, bool, CancellationToken, string?, CommandDeadline) : ValueTask<TResult>
+Respire.Networking.RespireConnection | method SendConvertedAsync`3(in TCommand, TState, ResponseConverter<TState, TResult>, bool, CancellationToken, string?, CommandDeadline, RespireTelemetry.OperationStart) : ValueTask<TResult>
 Respire.Networking.RespireConnection | method SendFireAndForgetAsync`1(in TCommand, CancellationToken, string?, CommandDeadline, string?) : ValueTask
 Respire.Networking.RespireConnection | method SendPrefixedAsync`2(in TPrefix, in TCommand, bool, CancellationToken, string?, bool, bool, CommandDeadline, bool, string?) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendPrefixedBulkStreamAsync`2(in TPrefix, in TCommand, CancellationToken, string?, Action<Exception?>?, string?) : ValueTask<Stream?>
 Respire.Networking.RespireConnection | method SendPrefixedCheckedAsync`2(in TPrefix, in TCommand, CancellationToken, string?, CommandDeadline, bool, string?) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendPrefixedWithoutResponseTimeoutAsync`2(TPrefix, TCommand, bool, CancellationToken) : ValueTask<RespValue>
-Respire.Networking.RespireConnection | method SendStringAsync`1(in TCommand, CancellationToken, string?, CommandDeadline) : ValueTask<string?>
+Respire.Networking.RespireConnection | method SendStringAsync`1(in TCommand, CancellationToken, string?, CommandDeadline, RespireTelemetry.OperationStart) : ValueTask<string?>
 Respire.Networking.RespireConnection | method SendTransactionAsync(ReadOnlyMemory<byte>, int, CancellationToken, TimeSpan?, CancellationToken, bool, CommandDeadline, RespireTransactionBase?) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendValidatedPrefixedAsync`2(in TPrefix, in TCommand, CancellationToken, string, string?, bool, CommandDeadline) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendValidatedPrefixedAsync`3(in TFirstPrefix, in TSecondPrefix, in TCommand, CancellationToken, string, string?) : ValueTask<RespValue>
@@ -282,6 +282,9 @@ Respire.Networking.RespireConnection | property Multiplexer [internal; get, set]
 Respire.Networking.RespireConnection | property MultiplexerSlot [internal; get, set] : int
 Respire.Networking.RespireConnection | property NetworkPeerAddress [internal; get] : string?
 Respire.Networking.RespireConnection | property NetworkPeerPort [internal; get] : int?
+Respire.Networking.RespireConnection | property OperationMetricDatabase [internal; get] : int
+Respire.Networking.RespireConnection | property OperationMetricNamespace [internal; get] : string
+Respire.Networking.RespireConnection | property OperationMetricTags [internal; get] : TagList
 Respire.Networking.RespireConnection | property PeerKey [internal; get] : (string Host, int Port)
 Respire.Networking.RespireConnection | property PendingResponseCount [internal; get] : int
 Respire.Networking.RespireConnection | property Port [public; get] : int
@@ -297,7 +300,7 @@ Respire.Networking.RespireConnection.CredentialSequenceLease | method Dispose() 
 Respire.Networking.StringPendingResponseSource | method IValueTaskSource<string?>.GetResult(short) : string?
 Respire.Networking.StringPendingResponseSource | method IValueTaskSource<string?>.GetStatus(short) : ValueTaskSourceStatus
 Respire.Networking.StringPendingResponseSource | method IValueTaskSource<string?>.OnCompleted(Action<object?>, object?, short, ValueTaskSourceOnCompletedFlags) : void
-Respire.Networking.StringPendingResponseSource | method Rent(string?) : StringPendingResponseSource
+Respire.Networking.StringPendingResponseSource | method Rent(string?, RespireTelemetry.DurationObservation) : StringPendingResponseSource
 Respire.Networking.StringPendingResponseSource | method ResetAndReturn() : void
 Respire.Networking.StringPendingResponseSource | method SetDirectResult(string?) : void
 Respire.Networking.StringPendingResponseSource | method SetExceptionCore(Exception) : void

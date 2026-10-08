@@ -15,7 +15,7 @@ public sealed partial class RespireClient
         internal void UseConnection(RespireConnection connection)
         {
             if (_connection is null)
-                _scope = RespireTelemetry.StartOperation(script.EvalShaOperation, connection.Host, connection.Port,
+                _scope = RespireTelemetry.StartOperation(script.EvalShaOperation, connection,
                     core.Options.Database, storedProcedureName: script.Sha1, started: started);
             else
                 _scope.UpdateServerEndpoint(connection.Host, connection.Port);

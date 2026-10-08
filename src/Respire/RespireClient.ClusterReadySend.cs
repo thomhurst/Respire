@@ -39,7 +39,8 @@ public sealed partial class RespireClient
         {
             try
             {
-                return await sender.Send(connection, operation, in command, cancellationToken).ConfigureAwait(false);
+                return await sender.Send(connection, operation, in command, cancellationToken,
+                    RespireTelemetry.CaptureOperationStart(operation)).ConfigureAwait(false);
             }
             catch (ClusterConverterException error)
             {
@@ -83,17 +84,20 @@ public sealed partial class RespireClient
     private readonly struct ClusterConvertedReadySend<TState, TResult>(
         TState state, ResponseConverter<TState, TResult> converter, bool transferOwnership) : IClusterReadySend<TResult>
     {
+        public bool ObserveDuration => true;
         public bool TransferOwnership => transferOwnership;
         public TResult Convert(in RespValue response) => converter(state, in response);
 
         public ValueTask<TResult> Send<TCommand>(RespireConnection connection, string operation,
-            in TCommand command, CancellationToken cancellationToken) where TCommand : struct, IRespCommand
+            in TCommand command, CancellationToken cancellationToken,
+            RespireTelemetry.OperationStart durationStarted) where TCommand : struct, IRespCommand
             => connection.SendConvertedAsync(in command, this,
                 static (ClusterConvertedReadySend<TState, TResult> sender, in RespValue response) =>
                 {
                     try { return sender.Convert(in response); }
                     catch (Exception error) { throw new ClusterConverterException(error); }
-                }, transferOwnership, cancellationToken, operation);
+                }, transferOwnership, cancellationToken, operation,
+                durationStarted: durationStarted);
     }
 
     private sealed class ClusterConverterException(Exception error)
