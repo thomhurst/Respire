@@ -148,6 +148,9 @@ public class ClientCacheQueryBenchmarks
             throw new InvalidOperationException("Mixed fixture validation failed.");
         var lockContentions = s_lockContentions() - beforeContentions;
         var after = client.ClientSideCache.GetStatistics();
+        // Runtime delivery can lag joined producers. Report the bounded drain outcome;
+        // observed events remain samples, never a complete tracing claim.
+        var observationsDrained = await queryContentions.DrainAsync();
         Console.WriteLine("QUERY_VALIDATION " + JsonSerializer.Serialize(new
         {
             workload, queryCalls = 2 * Callers * Rounds, writes = writes ? Callers * Rounds : 0,
@@ -158,6 +161,7 @@ public class ClientCacheQueryBenchmarks
             queryGateWaitMillisecondsObserved = queryContentions.WaitMilliseconds,
             queryGateMaximumWaitMillisecondsObserved = queryContentions.MaximumWaitMilliseconds,
             queryGateOutstandingWaitsObserved = queryContentions.OutstandingWaits,
+            queryGateObservationDrainTimedOut = !observationsDrained,
             queryGatePositiveControl = true,
         }));
     }
@@ -227,6 +231,23 @@ public class ClientCacheQueryBenchmarks
             while (duration > maximum && Interlocked.CompareExchange(ref _maximumWaitNanoseconds, duration, maximum) != maximum)
                 maximum = Volatile.Read(ref _maximumWaitNanoseconds);
             Interlocked.Increment(ref _completedWaits);
+        }
+
+        internal async Task<bool> DrainAsync()
+        {
+            var started = Stopwatch.GetTimestamp();
+            var quietSince = started;
+            var observed = Count;
+            while (OutstandingWaits != 0 || Stopwatch.GetElapsedTime(quietSince) < TimeSpan.FromMilliseconds(100))
+            {
+                if (Stopwatch.GetElapsedTime(started) >= TimeSpan.FromSeconds(1)) return false;
+                await Task.Delay(10);
+                var current = Count;
+                if (current == observed) continue;
+                observed = current;
+                quietSince = Stopwatch.GetTimestamp();
+            }
+            return true;
         }
 
         internal static async Task<QueryGateContentionProbe> CreateAsync(object cache)
@@ -317,8 +338,12 @@ public class ClientCacheQueryBenchmarks
         if (cache is null) return default;
         const BindingFlags members = BindingFlags.Instance | BindingFlags.NonPublic;
         var type = cache.GetType();
-        var leaseField = type.GetField("_idleQueryLeases", members);
-        var stateField = type.GetField("_idleQueryStates", members);
+        // Support both the private storage value and earlier heads with coordinator-owned lists.
+        var storageField = type.GetField("_queryStorage", members);
+        var storage = storageField?.GetValue(cache) ?? cache;
+        var storageType = storage.GetType();
+        var leaseField = storageType.GetField(storageField is null ? "_idleQueryLeases" : "_leases", members);
+        var stateField = storageType.GetField(storageField is null ? "_idleQueryStates" : "_states", members);
         if (leaseField is null && stateField is null)
         {
             // The same copied fixture runs against the pre-pooling baseline.
@@ -330,12 +355,12 @@ public class ClientCacheQueryBenchmarks
         var leases = 0;
         var states = 0;
         var retained = 0;
-        for (var state = stateField.GetValue(cache); state is not null; state = state.GetType().GetField("Next", members)!.GetValue(state))
+        for (var state = stateField.GetValue(storage); state is not null; state = state.GetType().GetField("Next", members)!.GetValue(state))
         {
             if (++states > 256) throw new InvalidOperationException("Query state pool exceeds its per-client bound.");
             if (state.GetType().GetField("Key", members)!.GetValue(state) is not RespireKey key || !key.Equals(default(RespireKey))) retained++;
         }
-        for (var lease = leaseField.GetValue(cache); lease is not null; lease = lease.GetType().GetField("Next", members)!.GetValue(lease))
+        for (var lease = leaseField.GetValue(storage); lease is not null; lease = lease.GetType().GetField("Next", members)!.GetValue(lease))
         {
             if (++leases > 64) throw new InvalidOperationException("Query lease pool exceeds its per-client bound.");
             var leaseType = lease.GetType();

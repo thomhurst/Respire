@@ -209,10 +209,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     private readonly Dictionary<RespireKey, QueryDependencyState> _queryDependencies = new();
     // These bounded lists contain only cleared storage, never historical keys or dependency generations.
     // The publication gate also owns rent/return; no additional gate or dispatch lookup is needed.
-    private QueryReadLease? _idleQueryLeases;
-    private int _idleQueryLeaseCount;
-    private QueryDependencyState? _idleQueryStates;
-    private int _idleQueryStateCount;
+    private QueryRegistrationStorage _queryStorage;
     private CacheStore _store;
     private long _continuityEpoch;
     private long _queryEpoch;
@@ -452,19 +449,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
 
     private QueryReadLease RentQueryRead(int dependencyCount)
     {
-        QueryReadLease? previous = null;
-        var lease = _idleQueryLeases;
-        // Scalar reads take the first item. Mixed layouts search at most the bounded idle count.
-        while (lease is not null && lease.Capacity < dependencyCount)
-        {
-            previous = lease;
-            lease = lease.Next;
-        }
-        if (lease is null) return new QueryReadLease(dependencyCount);
-        if (previous is null) _idleQueryLeases = lease.Next;
-        else previous.Next = lease.Next;
-        _idleQueryLeaseCount--;
-        lease.Next = null;
+        if (!_queryStorage.TryRent(dependencyCount, out var lease)) return new QueryReadLease(dependencyCount);
         // Returned generations are negative. Publish a fresh identity before the lease escapes.
         Volatile.Write(ref lease.Generation, -lease.Generation + 1);
         return lease;
@@ -472,10 +457,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
 
     private QueryDependencyState RentQueryDependency(in RespireKey key)
     {
-        if (_idleQueryStates is not { } state) return new QueryDependencyState { Key = key };
-        _idleQueryStates = state.Next;
-        _idleQueryStateCount--;
-        state.Next = null;
+        if (!_queryStorage.TryRent(out var state)) return new QueryDependencyState { Key = key };
         state.Key = key;
         return state;
     }
@@ -492,28 +474,85 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             _queryDependencies.Remove(state.Key);
             state.Key = default;
             state.Generation = 0;
-            if (_idleQueryStateCount < MaxIdleQueryStates)
-            {
-                state.Next = _idleQueryStates;
-                _idleQueryStates = state;
-                _idleQueryStateCount++;
-            }
+            _queryStorage.TryReturn(state);
         }
         lease.ClearDependencies();
         // Never wrap a reusable identity or retain a large, one-off stamp array.
-        if (generation == long.MaxValue || lease.Capacity > MaxPooledQueryDependencies) return;
-        if (_idleQueryLeaseCount == MaxIdleQueryLeases)
+        if (generation != long.MaxValue) _queryStorage.TryReturn(lease);
+    }
+
+    // Storage bookkeeping stays separate from active registration ownership. Every operation
+    // still runs under _queryLock; callers clear references and retire identities before return.
+    private struct QueryRegistrationStorage
+    {
+        private QueryReadLease? _leases;
+        private int _leaseCount;
+        private QueryDependencyState? _states;
+        private int _stateCount;
+
+        internal bool TryRent(int dependencyCount, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out QueryReadLease? lease)
         {
-            // A full scalar pool must not force every multi-key read to allocate forever.
-            if (_idleQueryLeases!.Capacity >= lease.Capacity) return;
-            var discarded = _idleQueryLeases;
-            _idleQueryLeases = discarded.Next;
-            discarded.Next = null;
-            _idleQueryLeaseCount--;
+            QueryReadLease? previous = null;
+            lease = _leases;
+            // Scalar reads take the first item. Mixed layouts search at most the bounded idle count.
+            while (lease is not null && lease.Capacity < dependencyCount)
+            {
+                previous = lease;
+                lease = lease.Next;
+            }
+            if (lease is null) return false;
+            if (previous is null) _leases = lease.Next;
+            else previous.Next = lease.Next;
+            _leaseCount--;
+            lease.Next = null;
+            return true;
         }
-        lease.Next = _idleQueryLeases;
-        _idleQueryLeases = lease;
-        _idleQueryLeaseCount++;
+
+        internal bool TryRent([System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out QueryDependencyState? state)
+        {
+            state = _states;
+            if (state is null) return false;
+            _states = state.Next;
+            _stateCount--;
+            state.Next = null;
+            return true;
+        }
+
+        internal void TryReturn(QueryDependencyState state)
+        {
+            if (_stateCount == MaxIdleQueryStates) return;
+            state.Next = _states;
+            _states = state;
+            _stateCount++;
+        }
+
+        internal void TryReturn(QueryReadLease lease)
+        {
+            if (lease.Capacity > MaxPooledQueryDependencies) return;
+            if (_leaseCount == MaxIdleQueryLeases)
+            {
+                // A full scalar pool must not force every multi-key read to allocate forever.
+                if (_leases!.Capacity >= lease.Capacity) return;
+                var discarded = _leases;
+                _leases = discarded.Next;
+                discarded.Next = null;
+                _leaseCount--;
+            }
+            lease.Next = _leases;
+            _leases = lease;
+            _leaseCount++;
+        }
+
+        internal readonly (int Leases, int States, int RetainedDependencies) Inspect()
+        {
+            var retained = 0;
+            for (var state = _states; state is not null; state = state.Next)
+                if (!state.Key.Equals(default(RespireKey))) retained++;
+            for (var lease = _leases; lease is not null; lease = lease.Next)
+                for (var index = 0; index < lease.Capacity; index++)
+                    if (lease.GetDependency(index).State is not null) retained++;
+            return (_leaseCount, _stateCount, retained);
+        }
     }
 
     internal ReadToken BeginRead(in RespireKey key)

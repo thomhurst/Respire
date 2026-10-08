@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using Microsoft.Extensions.Caching.Distributed;
 using Respire.Infrastructure;
+using Respire.Tests.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -621,14 +622,23 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     }
 
     [Test]
-    [NotInParallel(ClientPause), Category(ClientPause)]
     public async Task FirstCommand_ClientIdSetupHonorsCommandTimeout()
     {
+        // Park only CLIENT ID. RESP2/database 0 needs no wire handshake, so the 50ms
+        // command deadline cannot expire during unrelated HELLO/SELECT setup on a busy runner.
+        await using var server = new FakeRespServer(FakeRespServer.PongReply)
+        {
+            SuppressReply = command => command == "CLIENT ID",
+        };
         await using var timeoutClient = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(Server.ConnectionString) with { CommandTimeout = TimeSpan.FromMilliseconds(50) });
+            new RespireOptions
+            {
+                Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespProtocol.Resp2,
+                MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
+                CommandTimeout = TimeSpan.FromMilliseconds(50),
+            });
         await using var timeoutCache = new RespireDistributedCache(timeoutClient);
-
-        var stallObserved = await StartServerPauseAsync(500);
+        await Assert.That(server.CommandsSeen).IsEqualTo(0);
 
         var started = Stopwatch.GetTimestamp();
         RespireTimeoutException? failure = null;
@@ -643,10 +653,13 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
 
         await Assert.That(failure).IsNotNull();
         await Assert.That(failure!.CommandName).IsEqualTo("CLIENT ID / CLIENT KILL");
+        await Assert.That(failure.Timeout).IsEqualTo(TimeSpan.FromMilliseconds(50));
         await Assert.That(Stopwatch.GetElapsedTime(started)).IsLessThan(TimeSpan.FromSeconds(1));
-
-        await stallObserved;
-        await Assert.That(await Cache.GetAsync("identity-timeout")).IsNull();
+        await Assert.That(server.ReceivedCommands.SequenceEqual(["CLIENT ID"])).IsTrue();
+        // A late identity reply still drains through FIFO; no cache mutation reached this peer.
+        await server.SendRawAsync(":123\r\n"u8.ToArray());
+        await timeoutClient.PingAsync();
+        await Assert.That(server.ReceivedCommands.SequenceEqual(["CLIENT ID", "PING"])).IsTrue();
     }
 
     [Test]

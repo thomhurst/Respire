@@ -1,3 +1,5 @@
+using System.Buffers;
+using System.Reflection;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Protocol;
@@ -9,6 +11,44 @@ namespace Respire.Tests;
 
 public class ClientCacheQueryDependencyTests
 {
+    [Test]
+    [Arguments(1)]
+    [Arguments(2)]
+    public async Task PartialRegistrationFailureReturnsClearedStorage(int failureAt)
+    {
+        var cache = new ClientSideCacheCoordinator(new());
+        var request = Request("LCS");
+        var lease = new ClientSideCacheCoordinator.QueryReadLease(2);
+        using var faulty = new FaultingDependencyMemory();
+        RespireKey[] dependencies = ["registered", new(faulty.Memory)];
+        faulty.Arm(failureAt);
+        const BindingFlags members = BindingFlags.Instance | BindingFlags.NonPublic;
+        var gate = typeof(ClientSideCacheCoordinator).GetField("_queryLock", members)!.GetValue(cache)!;
+        var register = typeof(ClientSideCacheCoordinator).GetMethod("RegisterQueryRead", members)!;
+        Exception? failure = null;
+        // Inject at the private registration boundary, after owned snapshots normally exist.
+        // The second key fails during lookup or Add, after the first real registration is captured.
+        // This exercises allocation/hash failure cleanup without a production hook or corrupting a pool.
+        gate.GetType().GetMethod("Enter")!.Invoke(gate, null);
+        try { register.Invoke(cache, [request.Query, dependencies, lease]); }
+        catch (TargetInvocationException error) { failure = error.InnerException; }
+        finally { gate.GetType().GetMethod("Exit")!.Invoke(gate, null); }
+        await Assert.That(failure is InvalidOperationException { Message: "Injected query dependency failure." }).IsTrue();
+        await Assert.That(lease.Registered).IsEqualTo(0);
+        await Assert.That(lease.Generation).IsLessThan(0);
+        await Assert.That(PendingDependencies(cache)).IsEqualTo(0);
+        var idle = cache.InspectForTests().IdleQueryStorage;
+        await Assert.That(idle.Leases).IsEqualTo(1);
+        await Assert.That(idle.States).IsEqualTo(1);
+        await Assert.That(idle.RetainedDependencies).IsEqualTo(0);
+        var healthy = cache.BeginRead("LCS", in request);
+        await Assert.That(ReferenceEquals(lease, healthy.Lease)).IsTrue();
+        using var response = RespValue.Integer(33);
+        cache.CompleteRead(in healthy, in response, allowInsert: true);
+        await Assert.That(cache.Count).IsEqualTo(1);
+        await Assert.That(PendingDependencies(cache)).IsEqualTo(0);
+    }
+
     [Test]
     [Arguments("publish", false)]
     [Arguments("abandon", false)]
@@ -419,6 +459,22 @@ public class ClientCacheQueryDependencyTests
                 throw new InvalidOperationException("An older query escaped the completed invalidation.");
         }
         await Assert.That(cache.Count).IsEqualTo(0);
+    }
+
+    private sealed class FaultingDependencyMemory : MemoryManager<byte>
+    {
+        private readonly byte[] _bytes = [1];
+        private int _accesses;
+        private int _failureAt;
+        internal void Arm(int failureAt) { _accesses = 0; _failureAt = failureAt; }
+        public override Span<byte> GetSpan()
+        {
+            if (++_accesses == _failureAt) throw new InvalidOperationException("Injected query dependency failure.");
+            return _bytes;
+        }
+        public override MemoryHandle Pin(int elementIndex = 0) => throw new NotSupportedException();
+        public override void Unpin() { }
+        protected override void Dispose(bool disposing) { }
     }
 
     internal static int PendingDependencies(ClientSideCacheCoordinator cache) => cache.InspectForTests().PendingQueryDependencyCount;
