@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Text.Json;
 using BenchmarkDotNet.Attributes;
 using Respire;
 using Respire.Commands;
@@ -14,6 +16,8 @@ public class TransportAcceptanceBenchmarks
     private const int BatchSize = 32;
     private const int StreamPayloadLength = 256 * 1024;
     private readonly ValueTask<RespValue>[] _replies = new ValueTask<RespValue>[BatchSize];
+    private readonly ValueTask<TimeSpan>[] _publicReplies = new ValueTask<TimeSpan>[BatchSize];
+    private readonly byte[] _largePayload = new byte[5 * 1024 * 1024];
     private readonly DelayedReadStream _stream = new(new byte[StreamPayloadLength]);
     private readonly MemoryStream _instantStream = new(new byte[StreamPayloadLength]);
     private static readonly RawCommand Ping = new("*1\r\n$4\r\nPING\r\n"u8.ToArray());
@@ -26,6 +30,7 @@ public class TransportAcceptanceBenchmarks
     [GlobalSetup]
     public async Task Setup()
     {
+        ReportMemory("before-connect");
         var host = Environment.GetEnvironmentVariable("REDIS_HOST") ?? "127.0.0.1";
         var port = int.TryParse(Environment.GetEnvironmentVariable("REDIS_PORT"), out var configured) ? configured : 6379;
         _multiplexer = await RespireConnectionMultiplexer.CreateAsync(host, port, Connections);
@@ -38,6 +43,13 @@ public class TransportAcceptanceBenchmarks
         });
         await Pipeline();
         await _client.PingAsync();
+        ReportMemory("connected");
+        // Exercise bounded source reuse and both ordinary write layouts outside the timed region.
+        for (var i = 0; i < 64; i++) await PublicPipeline();
+        await SmallSet();
+        for (var i = 0; i < Connections * 2; i++) await LargeSet();
+        await StreamedSetWithInstantSource();
+        ReportMemory("after-churn");
     }
 
     [GlobalCleanup]
@@ -45,8 +57,11 @@ public class TransportAcceptanceBenchmarks
     {
         await _client.DisposeAsync();
         await _multiplexer.DisposeAsync();
+        _client = null!;
+        _multiplexer = null!;
         _stream.Dispose();
         _instantStream.Dispose();
+        ReportMemory("after-dispose");
     }
 
     [Benchmark]
@@ -62,6 +77,43 @@ public class TransportAcceptanceBenchmarks
             if (!reply.AsSpan().SequenceEqual("PONG"u8))
                 throw new InvalidOperationException("Unexpected pipelined PING response.");
         }
+    }
+
+    [Benchmark(OperationsPerInvoke = BatchSize)]
+    public async Task PublicPipeline()
+    {
+        for (var i = 0; i < BatchSize; i++) _publicReplies[i] = _client.PingAsync();
+        for (var i = 0; i < BatchSize; i++) await _publicReplies[i];
+    }
+
+    [Benchmark]
+    public async Task SmallSet()
+    {
+        if (!await _client.Strings.SetAsync("transport-acceptance:small", "value"))
+            throw new InvalidOperationException("Unexpected SET response.");
+    }
+
+    [Benchmark]
+    public async Task LargeSet()
+    {
+        if (!await _client.Strings.SetAsync("transport-acceptance:large", (RespireValue)_largePayload))
+            throw new InvalidOperationException("Unexpected large SET response.");
+    }
+
+    private void ReportMemory(string stage)
+    {
+        GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
+        var info = GC.GetGCMemoryInfo();
+        using var process = Process.GetCurrentProcess();
+        Console.WriteLine("TRANSPORT_MEMORY " + JsonSerializer.Serialize(new
+        {
+            stage, connections = Connections, pipelineCommands = BatchSize * 64,
+            callerPayloadBytes = _largePayload.Length + 2 * StreamPayloadLength,
+            managedBytes = GC.GetTotalMemory(false), heapBytes = info.HeapSizeBytes,
+            fragmentedBytes = info.FragmentedBytes, pohBytes = info.GenerationInfo[4].SizeAfterBytes,
+            pohFragmentedBytes = info.GenerationInfo[4].FragmentationAfterBytes,
+            workingSetBytes = process.WorkingSet64, privateMemoryBytes = process.PrivateMemorySize64,
+        }));
     }
 
     [Benchmark]

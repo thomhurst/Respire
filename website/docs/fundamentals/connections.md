@@ -957,6 +957,10 @@ has not completed. A successful socket write does not prove server execution. Tr
 report their complete MULTI/EXEC frame: its full byte count remains outstanding until EXEC
 replies, while intermediate replies reduce the outstanding slot count. Other multi-command
 frames use the same accounting.
+`Buffered` is an observation, not a safe retry guarantee: a queued frame can still be sent
+after caller cancellation or a timeout. A socket or TLS write can also transfer bytes before
+the successful-write counter advances. Command retry metadata does not enable automatic
+transport retries; an unknown or partial write remains ambiguous for a non-idempotent command.
 Snapshots also accompany batch failures and dedicated connection operations. Relabeled
 internal timeout exceptions preserve the original snapshot. Exceptions constructed by application code
 have an unavailable snapshot unless wrapping another timeout exception; they do not sample unrelated

@@ -1,4 +1,4 @@
-# Reviewed source-declared member signatures: 349 total; per-type counts include owner, derived and accessible nested declarations.
+# Reviewed source-declared member signatures: 351 total; per-type counts include owner, derived and accessible nested declarations.
 # Count: Respire.ClientSideCacheCoordinator | 57
 Respire.ClientSideCacheCoordinator | class CacheEntry(byte[]?, long, long, string?)
 Respire.ClientSideCacheCoordinator | class CacheStore()
@@ -223,7 +223,7 @@ Respire.Networking.PendingResponseSource | readonly struct PoolPolicy(PendingRes
 # Count: Respire.Networking.PendingResponseSource.PoolPolicy | 2
 Respire.Networking.PendingResponseSource.PoolPolicy | method Create() : PendingResponseSource
 Respire.Networking.PendingResponseSource.PoolPolicy | method TryReset(PendingResponseSource) : bool
-# Count: Respire.Networking.RespireConnection | 83
+# Count: Respire.Networking.RespireConnection | 85
 Respire.Networking.RespireConnection | event MovingNotification : Action<Respire.Infrastructure.MovingAnnouncement>?
 Respire.Networking.RespireConnection | event PendingCommandsFailing : Action?
 Respire.Networking.RespireConnection | field LastQueuedMovingSequence : long
@@ -254,6 +254,8 @@ Respire.Networking.RespireConnection | method ReplayUnpublishedMigrations() : vo
 Respire.Networking.RespireConnection | method RequestMetricCloseReason(string) : void
 Respire.Networking.RespireConnection | method RetireAsync() : Task
 Respire.Networking.RespireConnection | method SendAskingStreamedSetAsync(in RawCommand, StreamedSetCommand, CancellationToken, CommandDeadline, DedicatedStreamRoute) : ValueTask<RespValue>
+Respire.Networking.RespireConnection | method SendAskingStreamAttemptAsync(RawCommand, StreamedSetCommand, CancellationToken, CommandDeadline, DedicatedStreamRoute) : ValueTask<CommandAttemptResult>
+Respire.Networking.RespireConnection | method SendAttemptAsync`1(TCommand, CancellationToken, string?, CommandDeadline, int, int, bool, DedicatedStreamRoute, bool) : ValueTask<CommandAttemptResult>
 Respire.Networking.RespireConnection | method SendAsync`1(in TCommand, CancellationToken, bool, string?, bool, string?) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendBulkStreamAsync`1(in TCommand, CancellationToken, string?, Action<Exception?>?, string?) : ValueTask<Stream?>
 Respire.Networking.RespireConnection | method SendBytesAsync`1(in TCommand, CancellationToken, string?, CommandDeadline, RespireTelemetry.OperationStart) : ValueTask<byte[]?>

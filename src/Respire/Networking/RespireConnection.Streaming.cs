@@ -66,11 +66,11 @@ internal sealed partial class RespireConnection
 
     private ValueTask<RespValue> SendStreamingAsync<TCommand>(
         in TCommand command, CancellationToken cancellationToken, CommandDeadline commandDeadline,
-        DedicatedStreamRoute streamingRoute)
+        DedicatedStreamRoute streamingRoute, bool throwOnError, CommandWriteObservation? writeObservation = null)
         where TCommand : struct, IRespCommand
         => command is StreamedSetCommand streamedSet
             ? SendStreamedSetAsync(streamedSet, cancellationToken, commandDeadline,
-                streamingRoute: streamingRoute)
+                streamingRoute: streamingRoute, writeObservation: writeObservation, throwOnError: throwOnError)
             : throw new NotSupportedException(
                 $"Streaming command {typeof(TCommand).Name} has no connection write path.");
 
@@ -81,7 +81,8 @@ internal sealed partial class RespireConnection
 
     private async ValueTask<RespValue> SendStreamedSetAsync(
         StreamedSetCommand command, CancellationToken cancellationToken, CommandDeadline deadline,
-        DedicatedStreamRoute streamingRoute, RawCommand? prelude = null)
+        DedicatedStreamRoute streamingRoute, RawCommand? prelude = null,
+        CommandWriteObservation? writeObservation = null, bool throwOnError = true)
     {
         using var timeoutCancellation = deadline.IsSet
             ? new StreamDeadlineCancellation(this, deadline)
@@ -109,7 +110,7 @@ internal sealed partial class RespireConnection
         PendingResponseSource source;
         try
         {
-            source = _sourcePool.Rent(throwOnError: true, commandName: "SET");
+            source = _sourcePool.Rent(throwOnError, commandName: "SET");
         }
         catch
         {
@@ -174,7 +175,7 @@ internal sealed partial class RespireConnection
                 try
                 {
                     using var askingResponse = await AppendStreamingPreludeAsync(
-                        prefix, effectiveCancellation, deadline).ConfigureAwait(false);
+                        prefix, effectiveCancellation, deadline, writeObservation).ConfigureAwait(false);
                 }
                 catch (RespireServerException)
                 {
@@ -196,7 +197,7 @@ internal sealed partial class RespireConnection
             // queued, exactly like an ordinary command that was not yet enqueued. The catch below
             // restores a consumed first chunk so the router's retry sends the whole value to the
             // replacement connection instead of the retiring (possibly demoted) node.
-            var write = AppendStreamingStart(command, out var startedBatch, out var requestWriteStart);
+            var write = AppendStreamingStart(command, out var startedBatch, out var requestWriteStart, writeObservation);
             phase = StreamedSetPhase.HeaderQueued;
             ScheduleFlush(startedBatch);
             // A peer that stops reading stalls the socket write; bound every wait by the caller,
@@ -301,7 +302,8 @@ internal sealed partial class RespireConnection
     }
 
     private async ValueTask<RespValue> AppendStreamingPreludeAsync<TCommand>(
-        TCommand command, CancellationToken cancellationToken, CommandDeadline deadline)
+        TCommand command, CancellationToken cancellationToken, CommandDeadline deadline,
+        CommandWriteObservation? writeObservation = null)
         where TCommand : struct, IRespCommand
     {
         var source = _sourcePool.Rent(throwOnError: true, commandName: "ASKING");
@@ -327,6 +329,7 @@ internal sealed partial class RespireConnection
                 }
 
                 var writeStart = StampWritePosition(source, _activeBuffer.Count - start);
+                writeObservation?.RecordQueued(this, writeStart, _producerProgress.EnqueuedBytes);
                 StampDeadline(source, deadline);
                 // Streaming admission reserved a slot and blocks competing writers; keep the
                 // checked enqueue as the single runtime guard for invariant violations.
@@ -622,7 +625,8 @@ internal sealed partial class RespireConnection
     }
 
     private Task AppendStreamingStart(
-        StreamedSetCommand command, out bool startedBatch, out long requestWriteStart)
+        StreamedSetCommand command, out bool startedBatch, out long requestWriteStart,
+        CommandWriteObservation? writeObservation = null)
     {
         lock (_writeGate)
         {
@@ -646,6 +650,9 @@ internal sealed partial class RespireConnection
                 throw;
             }
             Volatile.Write(ref _producerProgress.EnqueuedBytes, _producerProgress.EnqueuedBytes + _activeBuffer.Count - start);
+            // Record the beginning before any header write. Later payload chunks cannot turn
+            // an already ambiguous header into an unwritten attempt.
+            writeObservation?.RecordQueued(this, requestWriteStart, _producerProgress.EnqueuedBytes);
             return _activeBuffer.WriteCompletion;
         }
     }
