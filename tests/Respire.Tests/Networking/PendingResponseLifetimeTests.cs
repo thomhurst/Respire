@@ -13,6 +13,7 @@ public class PendingResponseLifetimeTests
     [Arguments(1)]
     [Arguments(2)]
     [Arguments(3)]
+    [Arguments(4)]
     public async Task CallerCleanupCannotCancelTheNextRental(int tokenState)
     {
         using var cancellation = new CancellationTokenSource();
@@ -24,9 +25,10 @@ public class PendingResponseLifetimeTests
         pending.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(() => ready.TrySetResult());
         source.RegisterCancellation(tokenState == 0 ? CancellationToken.None : cancellation.Token);
         if (tokenState == 2) cancellation.Dispose();
+        if (tokenState == 4) cancellation.Cancel();
         source.TrySetResult(RespValue.Integer(42));
         await ready.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await ConsumeAsync(pending, tokenState == 3 ? 2 : 0);
+        await ConsumeAsync(pending, tokenState is 3 or 4 ? 2 : 0);
 
         // The receiver still owns the source, so inspection cannot race with recycling.
         await Assert.That(source.InspectForTests().RegisteredCancellationToken.CanBeCanceled).IsFalse();

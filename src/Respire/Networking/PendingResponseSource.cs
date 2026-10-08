@@ -19,6 +19,7 @@ namespace Respire.Networking;
 internal abstract partial class PendingResponse
 {
     private CancellationTokenRegistration _cancellationRegistration;
+    private bool _hasCancellationRegistration;
 
     // Low bit: completed. Upper bits: reuse epoch, bumped every time the source goes back to
     // its pool. Completion is a CAS on the whole word so the deadline sweep — which peeks
@@ -152,16 +153,20 @@ internal abstract partial class PendingResponse
         _cancellationRegistration = cancellationToken.UnsafeRegister(
             static (state, token) => ((PendingResponse)state!).TrySetCanceled(token),
             this);
+        // A token cancelled before registration invokes the callback inline and returns
+        // an empty registration. Record the actual registration once, before publication.
+        _hasCancellationRegistration = _cancellationRegistration.Token.CanBeCanceled;
     }
 
     protected void ReleaseCallerRef()
     {
-        // The common non-cancellable command never installs a registration. Preserve its
-        // empty slot rather than writing it again on every successful completion.
-        if (_cancellationRegistration.Token.CanBeCanceled)
+        // Ordinary commands leave an empty slot. A real registration must synchronously
+        // drain its callback and clear the slot before caller ownership can end.
+        if (_hasCancellationRegistration)
         {
             _cancellationRegistration.Dispose();
             _cancellationRegistration = default;
+            _hasCancellationRegistration = false;
         }
         ReleaseRef();
     }
@@ -446,8 +451,6 @@ internal sealed class PendingResponseSource : PendingResponse, IValueTaskSource<
         ValueTaskSourceOnCompletedFlags flags)
         => _core.OnCompleted(continuation, state, token, flags);
 
-    // Keep pool storage out of the devirtualized single-reply release checks.
-    [MethodImpl(MethodImplOptions.NoInlining)]
     protected override void ResetAndReturn()
     {
         if (_pool is { } pool)
@@ -562,7 +565,6 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
         ValueTaskSourceOnCompletedFlags flags)
         => _core.OnCompleted(continuation, state, token, flags);
 
-    [MethodImpl(MethodImplOptions.NoInlining)]
     protected override void ResetAndReturn() => Pool.Return(this);
 
     private void ClearResponse()
@@ -693,7 +695,6 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
         ValueTaskSourceOnCompletedFlags flags)
         => _core.OnCompleted(continuation, state, token, flags);
 
-    [MethodImpl(MethodImplOptions.NoInlining)]
     protected override void ResetAndReturn() => Pool.Return(this);
 
     private void Clear()
