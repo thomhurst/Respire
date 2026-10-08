@@ -15,6 +15,8 @@ internal sealed class WriteBuffer
 #if DEBUG
     // The writer owns unpublished bytes until Complete; rollback explicitly discards them.
     internal bool HasUnpublishedWriterBytes;
+    internal long NextWriterSequence;
+    internal long UnpublishedWriterSequence;
 #endif
 
     public WriteBuffer(int initialCapacity)

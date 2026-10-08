@@ -32,11 +32,17 @@ internal ref struct RespWriter
     private int _position;
 #if DEBUG
     private int _remainingReservation;
+    private readonly long _writerSequence;
 #endif
 
     internal RespWriter(WriteBuffer buffer, int sizeHint = 0)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(sizeHint);
+#if DEBUG
+        if (buffer.HasUnpublishedWriterBytes)
+            throw new InvalidOperationException("Complete or roll back the RESP writer before creating another writer.");
+        _writerSequence = unchecked(++buffer.NextWriterSequence);
+#endif
         _buffer = buffer;
         _allowGrowth = sizeHint == 0;
         _start = buffer.Count;
@@ -52,6 +58,8 @@ internal ref struct RespWriter
     internal void Complete()
     {
 #if DEBUG
+        if (_buffer.HasUnpublishedWriterBytes && _buffer.UnpublishedWriterSequence != _writerSequence)
+            throw new InvalidOperationException("Only the owning RESP writer can publish its unfinished bytes.");
         if (!_allowGrowth)
         {
             if (_position > _remainingReservation)
@@ -71,11 +79,19 @@ internal ref struct RespWriter
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private Span<byte> GetSpan(int sizeHint)
     {
+#if DEBUG
+        if (_buffer.HasUnpublishedWriterBytes && _buffer.UnpublishedWriterSequence != _writerSequence)
+            throw new InvalidOperationException("Only the owning RESP writer can change its unfinished bytes.");
+#endif
         // Known commands reserve their complete upper bound once. Unknown commands
         // preserve all unpublished bytes before replacing the backing array.
         if (_allowGrowth) EnsureCapacity(checked(_position + sizeHint));
 #if DEBUG
-        if (sizeHint > 0) _buffer.HasUnpublishedWriterBytes = true;
+        if (sizeHint > 0)
+        {
+            _buffer.UnpublishedWriterSequence = _writerSequence;
+            _buffer.HasUnpublishedWriterBytes = true;
+        }
 #endif
         return _destination[_position..];
     }

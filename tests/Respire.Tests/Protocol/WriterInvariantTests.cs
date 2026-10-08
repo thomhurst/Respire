@@ -12,6 +12,57 @@ public class WriterInvariantTests
     [Test]
     [Arguments(16)]
     [Arguments(65_536)]
+    public async Task SecondWriterCannotDiscardUnpublishedBytes(int payloadLength)
+    {
+        var buffer = new WriteBuffer(128);
+        try
+        {
+            buffer.Append("+before\r\n"u8);
+            var mark = buffer.Count;
+            WritePayload(buffer, payloadLength, complete: false);
+            await Assert.That(() => { _ = new RespWriter(buffer, 7); })
+                .ThrowsExactly<InvalidOperationException>();
+            await Assert.That(buffer.Count).IsEqualTo(mark);
+            await Assert.That(() => buffer.WrittenMemory).ThrowsExactly<InvalidOperationException>();
+            buffer.TruncateTo(mark);
+            WritePong(buffer, 7);
+            await Assert.That(buffer.WrittenMemory.Span.SequenceEqual("+before\r\n+PONG\r\n"u8)).IsTrue();
+        }
+        finally { buffer.Release(); }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task PreviouslyCreatedWriterCannotChangeAnotherWritersUnpublishedBytes(bool complete)
+    {
+        var buffer = new WriteBuffer(128);
+        try
+        {
+            buffer.Append("+before\r\n"u8);
+            await Assert.That(() => UseCompetingWriter(buffer, complete))
+                .ThrowsExactly<InvalidOperationException>();
+            await Assert.That(buffer.WrittenMemory.Span.SequenceEqual("+before\r\n+PONG\r\n"u8)).IsTrue();
+        }
+        finally { buffer.Release(); }
+    }
+
+    private static void UseCompetingWriter(WriteBuffer buffer, bool complete)
+    {
+        var owner = new RespWriter(buffer, 7);
+        var competing = new RespWriter(buffer, 7);
+        owner.WriteRaw("+PONG\r\n"u8);
+        try
+        {
+            if (complete) competing.Complete();
+            else competing.WriteRaw("+FAIL\r\n"u8);
+        }
+        finally { owner.Complete(); }
+    }
+
+    [Test]
+    [Arguments(16)]
+    [Arguments(65_536)]
     public async Task UncompletedWriterCannotBeConsumedEvenAfterGrowth(int payloadLength)
     {
         var buffer = new WriteBuffer(128);

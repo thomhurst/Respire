@@ -41,7 +41,7 @@ jobs:
         run: >-
           dotnet run --project tests/Respire.Tests -c Debug -f net10.0 --
           --treenode-filter '/*/*/(WriterInvariantTests)|(ReservedWriterTests)|(CommandCatalogTests)|(RespWriterTests)|(CommandWriterTests)|(Utf8SuffixWriterTests)|(RespFramingTests)/*'
-          --minimum-expected-tests 484 --report-trx --results-directory writer-invariants
+          --minimum-expected-tests 488 --report-trx --results-directory writer-invariants
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
