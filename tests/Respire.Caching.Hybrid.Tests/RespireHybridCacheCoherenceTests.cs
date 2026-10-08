@@ -13,7 +13,7 @@ using TUnit.Core;
 namespace Respire.Caching.Hybrid.Tests;
 
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.Keyed, Key = "HybridCacheCoherence")]
-public class RespireHybridCacheCoherenceTests(RedisTestContainer fixture)
+public partial class RespireHybridCacheCoherenceTests(RedisTestContainer fixture)
 {
     private const string InstanceName = "coherent:";
     private static readonly HybridCacheEntryOptions LongLived = new()
@@ -623,7 +623,7 @@ public class RespireHybridCacheCoherenceTests(RedisTestContainer fixture)
 
     private ServiceProvider BuildProvider(bool coherent, RespireClient? client = null, string? clientPrefix = null,
         bool codec = false, Action<RespireHybridCacheCoherenceOptions>? configure = null, ParkedSerializer? serializer = null,
-        IRespireValueCodec? valueCodec = null)
+        IRespireValueCodec? valueCodec = null, IMemoryCache? memory = null)
     {
         var services = new ServiceCollection();
         if (client is not null) services.AddSingleton<IRespireClient>(client);
@@ -636,6 +636,7 @@ public class RespireHybridCacheCoherenceTests(RedisTestContainer fixture)
         });
         if (serializer is not null) builder.AddSerializer<TestValue>(serializer);
         if (coherent) builder.WithRespireClientSideCoherence(configure);
+        if (memory is not null) services.AddSingleton(memory);
         return services.BuildServiceProvider();
     }
 
