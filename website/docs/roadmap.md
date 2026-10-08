@@ -37,6 +37,9 @@ Server and protocol requirements vary by feature; each linked guide describes it
   [source-generated custom commands](guides/generated-commands.md).
 - [Blocking queues](guides/blocking-queues.md) and [streamed string transfers](commands/strings-and-keys.md)
   use dedicated connections where needed to keep multiplexed traffic moving.
+- [Hosted stream consumers](guides/stream-workers.md) support bounded concurrency, scoped typed handlers,
+  explicit acknowledgement and graceful draining. Automatic idle recovery, delivery limits,
+  dead-letter handling and worker telemetry remain tracked by [#891](https://github.com/thomhurst/Respire/issues/891).
 - [Batches, transactions, and `WATCH`](guides/batches-and-transactions.md), plus
   [durability acknowledgements](guides/durability-acknowledgements.md).
 - [Pub/sub](guides/pub-sub.md), pattern and sharded subscriptions, and delivery-gap reporting.

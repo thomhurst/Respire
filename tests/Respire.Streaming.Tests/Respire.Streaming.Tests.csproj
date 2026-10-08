@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsTestProject>true</IsTestProject>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Respire.Streaming/Respire.Streaming.csproj" />
+    <ProjectReference Include="../../src/Respire.Testing/Respire.Testing.csproj" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="Testcontainers.Redis" />
+    <Compile Include="../RedisTestContainer.cs" Link="RedisTestContainer.cs" />
+  </ItemGroup>
+</Project>

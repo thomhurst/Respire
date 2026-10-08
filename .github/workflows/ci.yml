@@ -166,6 +166,7 @@ jobs:
             tests/Respire.Caching.Hybrid.Tests \
             tests/Respire.FusionCache.Tests \
             tests/Respire.SignalR.Tests \
+            tests/Respire.Streaming.Tests \
             samples/Respire.Samples.Testing \
             samples/Respire.Samples.Cluster \
             samples/Respire.Samples.Sentinel \
@@ -243,6 +244,11 @@ jobs:
         env:
           TUNIT_DISABLE_HTML_REPORTER: 'true'
         run: dotnet run --project tests/Respire.SignalR.Tests -c Release -f net10.0 --no-build -- --minimum-expected-tests "$(cat .github/signalr-minimum-tests.txt)"
+
+      - name: Run stream worker tests
+        env:
+          TUNIT_DISABLE_HTML_REPORTER: 'true'
+        run: dotnet run --project tests/Respire.Streaming.Tests -c Release -f net10.0 --no-build -- --minimum-expected-tests 42
 
       - name: Run Caching Tests on Redis 7.4
         env:
@@ -362,6 +368,7 @@ jobs:
             tests/Respire.Tests \
             tests/Respire.FusionCache.Tests \
             tests/Respire.SignalR.Tests \
+            tests/Respire.Streaming.Tests \
             samples/Respire.Samples.Testing \
             samples/Respire.Samples.Cluster \
             samples/Respire.Samples.Sentinel \
@@ -436,6 +443,11 @@ jobs:
         env:
           TUNIT_DISABLE_HTML_REPORTER: 'true'
         run: dotnet run --project tests/Respire.SignalR.Tests -c Release -f net8.0 --no-build -- --minimum-expected-tests "$(cat .github/signalr-minimum-tests.txt)"
+
+      - name: Run stream worker tests
+        env:
+          TUNIT_DISABLE_HTML_REPORTER: 'true'
+        run: dotnet run --project tests/Respire.Streaming.Tests -c Release -f net8.0 --no-build -- --minimum-expected-tests 42
 
       - name: Run FusionCache lease lifetime regressions
         env:

@@ -31,6 +31,8 @@ public sealed partial class RespireFakeServer
         ["XREAD"] = new(4, int.MaxValue, static (server, connection, args) => server.StreamRead(connection, args)),
         ["XREADGROUP"] = new(7, int.MaxValue, static (server, connection, args) => server.StreamRead(connection, args)),
         ["XACK"] = new(4, int.MaxValue, static (server, _, args) => server.StreamAcknowledge(args)),
+        ["XPENDING"] = new(3, 9, static (server, _, args) => server.StreamPending(args)),
+        ["XINFO"] = new(3, 3, static (server, connection, args) => server.StreamGroupInfo(connection, args)),
         ["HELLO"] = new(1, int.MaxValue, static (_, connection, args) => Hello(connection, args)),
         ["PING"] = new(1, 2, static (_, connection, args) => Ping(connection, args)),
         ["SUBSCRIBE"] = new(2, int.MaxValue, static (server, connection, args) => server.Subscribe(connection, args)),
