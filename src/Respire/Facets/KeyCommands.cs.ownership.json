@@ -1,0 +1,35 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IKeyCommands",
+      "OwnerType": "Respire.KeyCommands",
+      "Members": [
+        "CopyAsync(RespireKey,RespireKey,bool,CancellationToken):ValueTask<bool>",
+        "CopyAsync(RespireKey,RespireKey,int,bool,CancellationToken):ValueTask<bool>",
+        "DeleteAsync(ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<long>",
+        "DeleteAsync(params ReadOnlySpan<RespireKey>):ValueTask<long>",
+        "EncodingAsync(RespireKey,CancellationToken):ValueTask<string?>",
+        "ExistsAsync(RespireKey,CancellationToken):ValueTask<bool>",
+        "ExpireAsync(RespireKey,RespireExpiry,ExpireWhen,CancellationToken):ValueTask<bool>",
+        "ExpiryAsync(RespireKey,CancellationToken):ValueTask<RespireTtl>",
+        "ExpiryTimeAsync(RespireKey,CancellationToken):ValueTask<RespireExpiryTime>",
+        "ExpiryTimeAsync(RespireKey,ExpiryTimePrecision,CancellationToken):ValueTask<RespireExpiryTime>",
+        "FrequencyAsync(RespireKey,CancellationToken):ValueTask<long?>",
+        "IdleTimeAsync(RespireKey,CancellationToken):ValueTask<TimeSpan?>",
+        "ReferenceCountAsync(RespireKey,CancellationToken):ValueTask<long?>",
+        "RenameAsync(RespireKey,RespireKey,CancellationToken):ValueTask<bool>",
+        "ScanAsync(string?,RespireKeyType?,int,CancellationToken):IAsyncEnumerable<string>",
+        "ScanClusterPageAsync(RespireClusterScanCursor,string?,RespireKeyType?,int,CancellationToken):ValueTask<RespireClusterScanPage>",
+        "TouchAsync(ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<long>",
+        "TouchAsync(params ReadOnlySpan<RespireKey>):ValueTask<long>",
+        "TryRenameAsync(RespireKey,RespireKey,CancellationToken):ValueTask<bool>",
+        "TypeAsync(RespireKey,CancellationToken):ValueTask<RespireKeyType>",
+        "UnlinkAsync(ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<long>",
+        "UnlinkAsync(params ReadOnlySpan<RespireKey>):ValueTask<long>"
+      ],
+      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

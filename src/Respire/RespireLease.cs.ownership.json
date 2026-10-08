@@ -1,0 +1,22 @@
+{
+  "Surfaces": [],
+  "Boundaries": [],
+  "NonRoutes": [
+    {
+      "Member": "Respire.RespireLease.Dispose():void",
+      "Reason": "Borrowed payload copying, formatting or disposal; the declaring inspection and cleanup boundaries own caller failures."
+    },
+    {
+      "Member": "Respire.RespireLease.ToArray():byte[]",
+      "Reason": "Borrowed payload copying, formatting or disposal; the declaring inspection and cleanup boundaries own caller failures."
+    },
+    {
+      "Member": "Respire.RespireLease.ToString():string",
+      "Reason": "Borrowed payload copying, formatting or disposal; the declaring inspection and cleanup boundaries own caller failures."
+    },
+    {
+      "Member": "Respire.RespireLease.TryCopyTo(Span<byte>):bool",
+      "Reason": "Borrowed payload copying, formatting or disposal; the declaring inspection and cleanup boundaries own caller failures."
+    }
+  ]
+}

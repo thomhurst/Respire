@@ -1,0 +1,16 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IBatchHyperLogLogCommands",
+      "OwnerType": "Respire.BatchHyperLogLogCommands",
+      "Members": [
+        "Add(RespireKey,params ReadOnlySpan<RespireValue>):RespirePending<bool>",
+        "Count(params ReadOnlySpan<RespireKey>):RespirePending<long>",
+        "Merge(RespireKey,params ReadOnlySpan<RespireKey>):RespirePending<bool>"
+      ],
+      "Contract": "Queue methods own synchronous validation and serialization. Execute/commit owns transport and cleanup; each pending result owns its later caller inspection and conversion. Never consume a pending result to observe errors."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

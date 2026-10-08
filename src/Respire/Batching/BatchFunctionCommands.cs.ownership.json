@@ -1,0 +1,29 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IBatchFunctionCommands",
+      "OwnerType": "Respire.BatchFunctionCommands",
+      "Members": [
+        "Delete(string):RespirePending<bool>",
+        "Dump():RespirePending<byte[]>",
+        "Execute(RespireFunction,RespireKey[]?,RespireValue[]?):RespirePending<RespireResult>",
+        "ExecuteInteger(RespireFunction,RespireKey[]?,RespireValue[]?):RespirePending<long>",
+        "ExecuteSpan(RespireFunction,ReadOnlySpan<RespireKey>,ReadOnlySpan<RespireValue>):RespirePending<RespireResult>",
+        "ExecuteString(RespireFunction,RespireKey[]?,RespireValue[]?):RespirePending<string?>",
+        "Execute`1(RespireFunction,RespireKey[]?,RespireValue[]?):RespirePending<T?>",
+        "Flush(FunctionFlushMode):RespirePending<bool>",
+        "List(string?,bool):RespirePending<RespireFunctionLibraryInfo[]>",
+        "Load(RespireFunctionLibrary):RespirePending<string>",
+        "Load(string,bool):RespirePending<string>",
+        "Restore(ReadOnlyMemory<byte>,FunctionRestorePolicy):RespirePending<bool>",
+        "Stats():RespirePending<RespireFunctionStats>"
+      ],
+      "Contract": "Queue methods own synchronous validation and serialization. Execute/commit owns transport and cleanup; each pending result owns its later caller inspection and conversion. Never consume a pending result to observe errors.",
+      "Overrides": {
+        "Load(RespireFunctionLibrary):RespirePending<string>": "Respire.IBatchFunctionCommands.Load(RespireFunctionLibrary):RespirePending<string>"
+      }
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

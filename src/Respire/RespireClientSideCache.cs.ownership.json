@@ -1,0 +1,18 @@
+{
+  "Surfaces": [],
+  "Boundaries": [],
+  "NonRoutes": [
+    {
+      "Member": "Respire.IRespireClientSideCache.Clear():void",
+      "Reason": "Local cache administration, statistics or invalidation subscription; no Redis command dispatch."
+    },
+    {
+      "Member": "Respire.IRespireClientSideCache.GetStatistics():RespireClientSideCacheStatistics",
+      "Reason": "Local cache administration, statistics or invalidation subscription; no Redis command dispatch."
+    },
+    {
+      "Member": "Respire.IRespireClientSideCache.SubscribeInvalidations(RespireKey,Action<RespireClientCacheInvalidation>,CancellationToken):IRespireClientCacheInvalidationSubscription",
+      "Reason": "Local cache administration, statistics or invalidation subscription; no Redis command dispatch."
+    }
+  ]
+}

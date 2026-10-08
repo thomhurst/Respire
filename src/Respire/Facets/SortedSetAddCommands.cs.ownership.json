@@ -1,0 +1,18 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.ISortedSetCommands",
+      "OwnerType": "Respire.SortedSetCommands",
+      "Members": [
+        "AddAsync(RespireKey,RespireSortedSetAddOptions,ReadOnlySpan<(RespireValueMember,doubleScore)>,CancellationToken):ValueTask<long>",
+        "AddAsync(RespireKey,RespireSortedSetAddOptions,RespireValue,double,CancellationToken):ValueTask<bool>",
+        "AddAsync(RespireKey,RespireSortedSetAddOptions,params ReadOnlySpan<(RespireValueMember,doubleScore)>):ValueTask<long>",
+        "AddAsync`1(RespireKey,RespireSortedSetAddOptions,T,double,CancellationToken):ValueTask<bool>",
+        "IncrementAsync(RespireKey,RespireSortedSetAddOptions,RespireValue,double,CancellationToken):ValueTask<double?>"
+      ],
+      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

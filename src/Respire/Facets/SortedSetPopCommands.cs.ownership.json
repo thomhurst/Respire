@@ -1,0 +1,17 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.ISortedSetCommands",
+      "OwnerType": "Respire.SortedSetCommands",
+      "Members": [
+        "PopAsync(ReadOnlySpan<RespireKey>,TimeSpan,bool,CancellationToken):ValueTask<RespireSortedSetPopResult?>",
+        "PopAsync`1(ReadOnlySpan<RespireKey>,TimeSpan,bool,CancellationToken):ValueTask<RespireSortedSetPopResult<T>?>",
+        "PopManyAsync(ReadOnlySpan<RespireKey>,long,bool,TimeSpan?,CancellationToken):ValueTask<RespireSortedSetPopManyResult?>",
+        "PopManyAsync`1(ReadOnlySpan<RespireKey>,long,bool,TimeSpan?,CancellationToken):ValueTask<RespireSortedSetPopManyResult<T>?>"
+      ],
+      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

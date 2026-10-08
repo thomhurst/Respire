@@ -1,0 +1,44 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IBatchArrayCommands",
+      "OwnerType": "Respire.BatchArrayCommands",
+      "Members": [
+        "Aggregate(RespireKey,ulong,ulong,RespireArrayOperation,RespireValue?):RespirePending<RespireArrayAggregate>",
+        "Count(RespireKey):RespirePending<ulong>",
+        "Delete(RespireKey,params ReadOnlySpan<ulong>):RespirePending<ulong>",
+        "DeleteRange(RespireKey,params ReadOnlySpan<RespireArrayRange>):RespirePending<ulong>",
+        "GetMany(RespireKey,params ReadOnlySpan<ulong>):RespirePending<string?[]>",
+        "GetMany`1(RespireKey,params ReadOnlySpan<ulong>):RespirePending<T?[]>",
+        "GetString(RespireKey,ulong):RespirePending<string?>",
+        "Get`1(RespireKey,ulong):RespirePending<T?>",
+        "Grep(RespireKey,RespireArrayBound,RespireArrayBound,ReadOnlySpan<RespireArrayPredicate>,RespireArrayGrepOptions):RespirePending<ulong[]>",
+        "Grep(RespireKey,RespireArrayBound,RespireArrayBound,params ReadOnlySpan<RespireArrayPredicate>):RespirePending<ulong[]>",
+        "GrepEntries(RespireKey,RespireArrayBound,RespireArrayBound,ReadOnlySpan<RespireArrayPredicate>,RespireArrayGrepOptions):RespirePending<RespireArrayEntry<string>[]>",
+        "GrepEntries(RespireKey,RespireArrayBound,RespireArrayBound,params ReadOnlySpan<RespireArrayPredicate>):RespirePending<RespireArrayEntry<string>[]>",
+        "GrepEntries`1(RespireKey,RespireArrayBound,RespireArrayBound,ReadOnlySpan<RespireArrayPredicate>,RespireArrayGrepOptions):RespirePending<RespireArrayEntry<T>[]>",
+        "GrepEntries`1(RespireKey,RespireArrayBound,RespireArrayBound,params ReadOnlySpan<RespireArrayPredicate>):RespirePending<RespireArrayEntry<T>[]>",
+        "Info(RespireKey,bool):RespirePending<RespireArrayInfo>",
+        "Insert(RespireKey,params ReadOnlySpan<RespireValue>):RespirePending<ulong>",
+        "LastItems(RespireKey,long,bool):RespirePending<string?[]>",
+        "LastItems`1(RespireKey,long,bool):RespirePending<T?[]>",
+        "Length(RespireKey):RespirePending<ulong>",
+        "NextIndex(RespireKey):RespirePending<ulong?>",
+        "Range(RespireKey,ulong,ulong):RespirePending<string?[]>",
+        "Range`1(RespireKey,ulong,ulong):RespirePending<T?[]>",
+        "Ring(RespireKey,long,params ReadOnlySpan<RespireValue>):RespirePending<ulong>",
+        "ScanPage(RespireKey,ulong,ulong,long?):RespirePending<RespireArrayEntry<string>[]>",
+        "ScanPage`1(RespireKey,ulong,ulong,long?):RespirePending<RespireArrayEntry<T>[]>",
+        "Seek(RespireKey,ulong):RespirePending<bool>",
+        "Set(RespireKey,ulong,RespireValue[]):RespirePending<ulong>",
+        "Set(RespireKey,ulong,params ReadOnlySpan<RespireValue>):RespirePending<ulong>",
+        "SetMany(RespireKey,params ReadOnlySpan<RespireArrayItem>):RespirePending<ulong>",
+        "Set`1(RespireKey,ulong,T):RespirePending<ulong>",
+        "TryGet`1(RespireKey,ulong):RespirePending<RespireGet<T>>"
+      ],
+      "Contract": "Queue methods own synchronous validation and serialization. Execute/commit owns transport and cleanup; each pending result owns its later caller inspection and conversion. Never consume a pending result to observe errors."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

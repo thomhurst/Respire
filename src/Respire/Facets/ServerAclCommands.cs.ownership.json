@@ -1,0 +1,31 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IServerCommands",
+      "OwnerType": "Respire.ServerCommands",
+      "Members": [
+        "AclCategoriesAsync(RespireValue?,CancellationToken):ValueTask<string[]>",
+        "AclCategoriesOnAllNodesAsync(RespireValue?,CancellationToken):ValueTask<RespireServerResult<string[]>[]>",
+        "AclDeleteUsersAsync(ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<long>",
+        "AclDeleteUsersOnAllNodesAsync(ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<RespireServerResult<long>[]>",
+        "AclDryRunAsync(RespireValue,RespireCommand,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<RespireAclDryRunResult>",
+        "AclDryRunOnAllNodesAsync(RespireValue,RespireCommand,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<RespireServerResult<RespireAclDryRunResult>[]>",
+        "AclGetUserAsync(RespireValue,CancellationToken):ValueTask<RespireAclUser?>",
+        "AclGetUserOnAllNodesAsync(RespireValue,CancellationToken):ValueTask<RespireServerResult<RespireAclUser?>[]>",
+        "AclListAsync(CancellationToken):ValueTask<byte[][]>",
+        "AclListOnAllNodesAsync(CancellationToken):ValueTask<RespireServerResult<byte[][]>[]>",
+        "AclLogAsync(int?,CancellationToken):ValueTask<RespireAclLogEntry[]>",
+        "AclLogOnAllNodesAsync(int?,CancellationToken):ValueTask<RespireServerResult<RespireAclLogEntry[]>[]>",
+        "AclLogResetAsync(CancellationToken):ValueTask",
+        "AclLogResetOnAllNodesAsync(CancellationToken):ValueTask<RespireServerResult<bool>[]>",
+        "AclSetUserAsync(RespireValue,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask",
+        "AclSetUserOnAllNodesAsync(RespireValue,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<RespireServerResult<bool>[]>",
+        "AclWhoAmIAsync(CancellationToken):ValueTask<byte[]>",
+        "AclWhoAmIOnAllNodesAsync(CancellationToken):ValueTask<RespireServerResult<byte[]>[]>"
+      ],
+      "Contract": "Start before admin preflight or validation. Keep ownership through each node, conversion and cleanup. Returned per-node failures are caller observations; transparent retries borrow ownership."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

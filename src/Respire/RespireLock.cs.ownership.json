@@ -1,0 +1,34 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.RespireLock",
+      "OwnerType": "Respire.RespireLock",
+      "Members": [
+        "DisposeAsync():ValueTask",
+        "KeepAliveAsync(CancellationToken):ValueTask<RespireLockKeepAlive>",
+        "ReleaseAsync(CancellationToken):ValueTask<LockReleaseOutcome>",
+        "ResetExpiryAsync(TimeSpan,CancellationToken):ValueTask<bool>",
+        "VerifyStillHeldAsync(CancellationToken):ValueTask<bool>"
+      ],
+      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+    },
+    {
+      "Type": "Respire.RespireLockAttempt",
+      "OwnerType": "Respire.RespireLockAttempt",
+      "Members": [
+        "DisposeAsync():ValueTask"
+      ],
+      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+    },
+    {
+      "Type": "Respire.RespireLockKeepAlive",
+      "OwnerType": "Respire.RespireLockKeepAlive",
+      "Members": [
+        "DisposeAsync():ValueTask"
+      ],
+      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

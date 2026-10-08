@@ -1,0 +1,18 @@
+{
+  "Surfaces": [],
+  "Boundaries": [],
+  "NonRoutes": [
+    {
+      "Member": "Respire.RespireKeyNotification.GetSubKeys():RespireSubKeyEnumerable",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireKeyNotification.KeyStartsWith(ReadOnlySpan<byte>):bool",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireKeyNotification.TryCopyKey(Span<byte>,out int):bool",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    }
+  ]
+}

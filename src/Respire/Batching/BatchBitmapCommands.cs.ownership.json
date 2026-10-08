@@ -1,0 +1,21 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IBatchBitmapCommands",
+      "OwnerType": "Respire.BatchBitmapCommands",
+      "Members": [
+        "Field(RespireKey,params ReadOnlySpan<BitFieldOperation>):RespirePending<long?[]>",
+        "FieldReadOnly(RespireKey,params ReadOnlySpan<BitFieldOperation>):RespirePending<long?[]>",
+        "Get(RespireKey,long):RespirePending<bool>",
+        "Operate(BitOperation,RespireKey,params ReadOnlySpan<RespireKey>):RespirePending<long>",
+        "Position(RespireKey,bool,long?,long?,BitIndexUnit):RespirePending<long?>",
+        "Set(RespireKey,long,bool):RespirePending<bool>",
+        "SetBitCount(RespireKey):RespirePending<long>",
+        "SetBitCount(RespireKey,long,long,BitIndexUnit):RespirePending<long>"
+      ],
+      "Contract": "Queue methods own synchronous validation and serialization. Execute/commit owns transport and cleanup; each pending result owns its later caller inspection and conversion. Never consume a pending result to observe errors."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

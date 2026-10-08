@@ -1,0 +1,22 @@
+{
+  "Surfaces": [],
+  "Boundaries": [],
+  "NonRoutes": [
+    {
+      "Member": "Respire.RespireKey.Equals(RespireKey):bool",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireKey.Equals(object?):bool",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireKey.GetHashCode():int",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireKey.ToString():string",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    }
+  ]
+}

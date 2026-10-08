@@ -1,0 +1,33 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IBatchSetCommands",
+      "OwnerType": "Respire.BatchSetCommands",
+      "Members": [
+        "Add(RespireKey,params ReadOnlySpan<RespireValue>):RespirePending<long>",
+        "Contains(RespireKey,RespireValue):RespirePending<bool>",
+        "ContainsMany(RespireKey,params ReadOnlySpan<RespireValue>):RespirePending<bool[]>",
+        "Contains`1(RespireKey,T):RespirePending<bool>",
+        "Count(RespireKey):RespirePending<long>",
+        "Difference(params ReadOnlySpan<RespireKey>):RespirePending<string[]>",
+        "DifferenceStore(RespireKey,params ReadOnlySpan<RespireKey>):RespirePending<long>",
+        "Intersect(params ReadOnlySpan<RespireKey>):RespirePending<string[]>",
+        "IntersectCount(long,params ReadOnlySpan<RespireKey>):RespirePending<long>",
+        "IntersectCount(params ReadOnlySpan<RespireKey>):RespirePending<long>",
+        "IntersectStore(RespireKey,params ReadOnlySpan<RespireKey>):RespirePending<long>",
+        "Members(RespireKey):RespirePending<string[]>",
+        "Members`1(RespireKey):RespirePending<T[]>",
+        "Move(RespireKey,RespireKey,RespireValue):RespirePending<bool>",
+        "Pop(RespireKey):RespirePending<string?>",
+        "PopMany(RespireKey,long):RespirePending<string[]>",
+        "RandomMembers(RespireKey,long):RespirePending<string[]>",
+        "Remove(RespireKey,params ReadOnlySpan<RespireValue>):RespirePending<long>",
+        "Union(params ReadOnlySpan<RespireKey>):RespirePending<string[]>",
+        "UnionStore(RespireKey,params ReadOnlySpan<RespireKey>):RespirePending<long>"
+      ],
+      "Contract": "Queue methods own synchronous validation and serialization. Execute/commit owns transport and cleanup; each pending result owns its later caller inspection and conversion. Never consume a pending result to observe errors."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

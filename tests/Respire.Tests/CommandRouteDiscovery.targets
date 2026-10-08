@@ -1,0 +1,8 @@
+<Project>
+    <!-- Imported only by the test project's metadata query, never by a normal core build. -->
+    <Target Name="GetCommandRouteSymbols" DependsOnTargets="AddImplicitDefineConstants" Returns="@(_CommandRouteSymbols)">
+        <ItemGroup>
+            <_CommandRouteSymbols Include="$(TargetFramework)|$(Configuration)|$([System.String]::Copy('$(DefineConstants)').Replace(';', ','))" />
+        </ItemGroup>
+    </Target>
+</Project>

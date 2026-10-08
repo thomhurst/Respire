@@ -1,0 +1,31 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IBatchKeyCommands",
+      "OwnerType": "Respire.BatchKeyCommands",
+      "Members": [
+        "Copy(RespireKey,RespireKey,bool):RespirePending<bool>",
+        "Copy(RespireKey,RespireKey,int,bool):RespirePending<bool>",
+        "Delete(params ReadOnlySpan<RespireKey>):RespirePending<long>",
+        "Encoding(RespireKey):RespirePending<string?>",
+        "Exists(RespireKey):RespirePending<bool>",
+        "Expire(RespireKey,RespireExpiry,ExpireWhen):RespirePending<bool>",
+        "Expiry(RespireKey):RespirePending<RespireTtl>",
+        "ExpiryTime(RespireKey):RespirePending<RespireExpiryTime>",
+        "ExpiryTime(RespireKey,ExpiryTimePrecision):RespirePending<RespireExpiryTime>",
+        "Frequency(RespireKey):RespirePending<long?>",
+        "IdleTime(RespireKey):RespirePending<TimeSpan?>",
+        "ReferenceCount(RespireKey):RespirePending<long?>",
+        "Rename(RespireKey,RespireKey):RespirePending<bool>",
+        "ScanValkeyClusterPage(string,string?,RespireKeyType?,int,int?):RespirePending<RespireValkeyClusterScanPage>",
+        "Touch(params ReadOnlySpan<RespireKey>):RespirePending<long>",
+        "TryRename(RespireKey,RespireKey):RespirePending<bool>",
+        "Type(RespireKey):RespirePending<RespireKeyType>",
+        "Unlink(params ReadOnlySpan<RespireKey>):RespirePending<long>"
+      ],
+      "Contract": "Queue methods own synchronous validation and serialization. Execute/commit owns transport and cleanup; each pending result owns its later caller inspection and conversion. Never consume a pending result to observe errors."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

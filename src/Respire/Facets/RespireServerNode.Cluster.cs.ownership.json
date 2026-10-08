@@ -1,0 +1,31 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.RespireServerNode",
+      "OwnerType": "Respire.RespireServerNode",
+      "Members": [
+        "ClusterAddSlotsAsync(ReadOnlySpan<int>,CancellationToken):ValueTask",
+        "ClusterAddSlotsRangeAsync(ReadOnlySpan<RespireClusterSlotRange>,CancellationToken):ValueTask",
+        "ClusterBumpEpochAsync(CancellationToken):ValueTask<RespireClusterEpochResult>",
+        "ClusterCountFailureReportsAsync(string,CancellationToken):ValueTask<long>",
+        "ClusterDeleteSlotsAsync(ReadOnlySpan<int>,CancellationToken):ValueTask",
+        "ClusterDeleteSlotsRangeAsync(ReadOnlySpan<RespireClusterSlotRange>,CancellationToken):ValueTask",
+        "ClusterFailoverAsync(RespireClusterFailoverMode,CancellationToken):ValueTask",
+        "ClusterFlushSlotsAsync(CancellationToken):ValueTask",
+        "ClusterForgetAsync(string,CancellationToken):ValueTask",
+        "ClusterGetKeysInSlotAsync(int,int,CancellationToken):ValueTask<byte[][]>",
+        "ClusterMeetAsync(RespireEndpoint,int?,CancellationToken):ValueTask",
+        "ClusterReplicasAsync(string,CancellationToken):ValueTask<RespireClusterNode[]>",
+        "ClusterReplicateAsync(string,CancellationToken):ValueTask",
+        "ClusterResetAsync(RespireClusterResetMode,CancellationToken):ValueTask",
+        "ClusterSaveConfigAsync(CancellationToken):ValueTask",
+        "ClusterSetConfigEpochAsync(long,CancellationToken):ValueTask",
+        "ClusterSetSlotAsync(int,RespireClusterSlotState,string?,CancellationToken):ValueTask",
+        "ClusterSlotsAsync(CancellationToken):ValueTask<RespireClusterSlotMapping[]>"
+      ],
+      "Contract": "Start before admin preflight or validation. Keep ownership through each node, conversion and cleanup. Returned per-node failures are caller observations; transparent retries borrow ownership."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

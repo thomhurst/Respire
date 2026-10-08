@@ -1,0 +1,21 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.ISetCommands",
+      "OwnerType": "Respire.SetCommands",
+      "Members": [
+        "DifferenceCountAsync(ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<long>",
+        "DifferenceCountAsync(long,ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<long>",
+        "DifferenceCountAsync(long,params ReadOnlySpan<RespireKey>):ValueTask<long>",
+        "DifferenceCountAsync(params ReadOnlySpan<RespireKey>):ValueTask<long>",
+        "UnionCountAsync(ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<long>",
+        "UnionCountAsync(RespireSetUnionCountOptions,ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<long>",
+        "UnionCountAsync(RespireSetUnionCountOptions,params ReadOnlySpan<RespireKey>):ValueTask<long>",
+        "UnionCountAsync(params ReadOnlySpan<RespireKey>):ValueTask<long>"
+      ],
+      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

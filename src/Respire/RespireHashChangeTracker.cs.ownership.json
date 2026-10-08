@@ -1,0 +1,19 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.RespireHashChangeTracker`1",
+      "OwnerType": "Respire.RespireHashChangeTracker`1",
+      "Members": [
+        "UpdateAsync(T,CancellationToken):ValueTask"
+      ],
+      "Contract": "Own caller validation, encoding, capability checks, dispatched writes, baseline advancement and overlap-guard cleanup. Delegated hash writes borrow this lifetime; unchanged models still complete the caller owner."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": [
+    {
+      "Member": "Respire.RespireHashChangeTracker`1.CreateBinary(IRespireClient,RespireKey,Func<T,Dictionary<string,byte[]>>,string[],IReadOnlyDictionary<string,long>,T?,RespireHashExpiryMode):RespireHashChangeTracker<T>",
+      "Reason": "Constructs a local tracker and snapshots its baseline without command dispatch; UpdateAsync owns later validation, writes and baseline advancement."
+    }
+  ]
+}

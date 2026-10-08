@@ -1,0 +1,33 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IServerCommands",
+      "OwnerType": "Respire.ServerCommands",
+      "Members": [
+        "ClusterCountKeysInSlotAsync(int,CancellationToken):ValueTask<long>",
+        "ClusterCountKeysInSlotOnAllNodesAsync(int,CancellationToken):ValueTask<RespireServerResult<long>[]>",
+        "ClusterInfoAsync(CancellationToken):ValueTask<RespireClusterInfo>",
+        "ClusterInfoOnAllNodesAsync(CancellationToken):ValueTask<RespireServerResult<RespireClusterInfo>[]>",
+        "ClusterKeySlotAsync(RespireKey,CancellationToken):ValueTask<int>",
+        "ClusterKeySlotOnAllNodesAsync(RespireKey,CancellationToken):ValueTask<RespireServerResult<int>[]>",
+        "ClusterLinksAsync(CancellationToken):ValueTask<RespireClusterLink[]>",
+        "ClusterLinksOnAllNodesAsync(CancellationToken):ValueTask<RespireServerResult<RespireClusterLink[]>[]>",
+        "ClusterMyIdAsync(CancellationToken):ValueTask<string>",
+        "ClusterMyIdOnAllNodesAsync(CancellationToken):ValueTask<RespireServerResult<string>[]>",
+        "ClusterMyShardIdAsync(CancellationToken):ValueTask<string>",
+        "ClusterMyShardIdOnAllNodesAsync(CancellationToken):ValueTask<RespireServerResult<string>[]>",
+        "ClusterNodesAsync(CancellationToken):ValueTask<RespireClusterNode[]>",
+        "ClusterNodesOnAllNodesAsync(CancellationToken):ValueTask<RespireServerResult<RespireClusterNode[]>[]>",
+        "ClusterShardsAsync(CancellationToken):ValueTask<RespireClusterShard[]>",
+        "ClusterShardsOnAllNodesAsync(CancellationToken):ValueTask<RespireServerResult<RespireClusterShard[]>[]>",
+        "ClusterSlotStatsAsync(int,int,CancellationToken):ValueTask<RespireClusterSlotStats[]>",
+        "ClusterSlotStatsByMetricAsync(RespireClusterSlotMetric,int?,bool,CancellationToken):ValueTask<RespireClusterSlotStats[]>",
+        "ClusterSlotStatsByMetricOnAllNodesAsync(RespireClusterSlotMetric,int?,bool,CancellationToken):ValueTask<RespireServerResult<RespireClusterSlotStats[]>[]>",
+        "ClusterSlotStatsOnAllNodesAsync(int,int,CancellationToken):ValueTask<RespireServerResult<RespireClusterSlotStats[]>[]>"
+      ],
+      "Contract": "Start before admin preflight or validation. Keep ownership through each node, conversion and cleanup. Returned per-node failures are caller observations; transparent retries borrow ownership."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

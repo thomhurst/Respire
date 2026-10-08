@@ -1,0 +1,34 @@
+{
+  "Surfaces": [],
+  "Boundaries": [],
+  "NonRoutes": [
+    {
+      "Member": "Respire.RespireChannel.Equals(RespireChannel):bool",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireChannel.Equals(object?):bool",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireChannel.GetHashCode():int",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireChannel.Literal(RespireChannel):RespireChannel",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireChannel.Pattern(RespireChannel):RespireChannel",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireChannel.Sharded(RespireChannel):RespireChannel",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireChannel.ToString():string",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IBatchScriptCommands",
+      "OwnerType": "Respire.BatchScriptCommands",
+      "Members": [
+        "Evaluate(RespireScript,RespireKey[]?,RespireValue[]?):RespirePending<RespireResult>",
+        "Exists(params ReadOnlySpan<string>):RespirePending<bool[]>",
+        "Flush(ScriptFlushMode):RespirePending<bool>",
+        "Load(RespireScript):RespirePending<string>"
+      ],
+      "Contract": "Queue methods own synchronous validation and serialization. Execute/commit owns transport and cleanup; each pending result owns its later caller inspection and conversion. Never consume a pending result to observe errors."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

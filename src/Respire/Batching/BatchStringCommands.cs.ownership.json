@@ -1,0 +1,40 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IBatchStringCommands",
+      "OwnerType": "Respire.BatchStringCommands",
+      "Members": [
+        "Append(RespireKey,RespireValue):RespirePending<long>",
+        "Decrement(RespireKey,long):RespirePending<long>",
+        "GetAndDelete(RespireKey):RespirePending<string?>",
+        "GetAndDelete`1(RespireKey):RespirePending<T?>",
+        "GetAndExpire(RespireKey,RespireExpiry):RespirePending<string?>",
+        "GetAndExpire`1(RespireKey,RespireExpiry):RespirePending<T?>",
+        "GetAndSet(RespireKey,RespireValue,RespireExpiry,SetWhen):RespirePending<string?>",
+        "GetAndSet`1(RespireKey,T,RespireExpiry,SetWhen):RespirePending<T?>",
+        "GetBytes(RespireKey):RespirePending<byte[]?>",
+        "GetMany(params ReadOnlySpan<RespireKey>):RespirePending<string?[]>",
+        "GetMany`1(params ReadOnlySpan<RespireKey>):RespirePending<T?[]>",
+        "GetRange(RespireKey,long,long):RespirePending<string>",
+        "GetString(RespireKey):RespirePending<string?>",
+        "Get`1(RespireKey):RespirePending<T?>",
+        "Increment(RespireKey,double):RespirePending<double>",
+        "Increment(RespireKey,long):RespirePending<long>",
+        "Lcs(RespireKey,RespireKey):RespirePending<string>",
+        "LcsLength(RespireKey,RespireKey):RespirePending<long>",
+        "Length(RespireKey):RespirePending<long>",
+        "Set(RespireKey,RespireValue,RespireExpiry,SetWhen):RespirePending<bool>",
+        "SetMany(params ReadOnlySpan<(RespireKeyKey,RespireValueValue)>):RespirePending<bool>",
+        "SetManyExpire(RespireExpiry,SetWhen,params ReadOnlySpan<(RespireKeyKey,RespireValueValue)>):RespirePending<bool>",
+        "SetManyExpire(RespireExpiry,params ReadOnlySpan<(RespireKeyKey,RespireValueValue)>):RespirePending<bool>",
+        "SetManyIfNotExists(params ReadOnlySpan<(RespireKeyKey,RespireValueValue)>):RespirePending<bool>",
+        "SetRange(RespireKey,long,RespireValue):RespirePending<long>",
+        "Set`1(RespireKey,T,RespireExpiry,SetWhen):RespirePending<bool>",
+        "TryGet`1(RespireKey):RespirePending<RespireGet<T>>"
+      ],
+      "Contract": "Queue methods own synchronous validation and serialization. Execute/commit owns transport and cleanup; each pending result owns its later caller inspection and conversion. Never consume a pending result to observe errors."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

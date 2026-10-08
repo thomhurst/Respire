@@ -1,0 +1,78 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.ISortedSetCommands",
+      "OwnerType": "Respire.SortedSetCommands",
+      "Members": [
+        "AddAsync(RespireKey,ReadOnlySpan<(RespireValueMember,doubleScore)>,CancellationToken):ValueTask<long>",
+        "AddAsync(RespireKey,RespireValue,double,CancellationToken):ValueTask<bool>",
+        "AddAsync(RespireKey,params ReadOnlySpan<(RespireValueMember,doubleScore)>):ValueTask<long>",
+        "AddAsync`1(RespireKey,T,double,CancellationToken):ValueTask<bool>",
+        "CountAsync(RespireKey,CancellationToken):ValueTask<long>",
+        "CountByScoreAsync(RespireKey,RespireScoreRange,CancellationToken):ValueTask<long>",
+        "CountByScoreAsync(RespireKey,double,double,CancellationToken):ValueTask<long>",
+        "DifferenceAsync(ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<string[]>",
+        "DifferenceAsync(params ReadOnlySpan<RespireKey>):ValueTask<string[]>",
+        "DifferenceStoreAsync(RespireKey,ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<long>",
+        "DifferenceStoreAsync(RespireKey,params ReadOnlySpan<RespireKey>):ValueTask<long>",
+        "IncrementAsync(RespireKey,RespireValue,double,CancellationToken):ValueTask<double>",
+        "IntersectAsync(ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<string[]>",
+        "IntersectAsync(params ReadOnlySpan<RespireKey>):ValueTask<string[]>",
+        "IntersectStoreAsync(RespireKey,ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<long>",
+        "IntersectStoreAsync(RespireKey,params ReadOnlySpan<RespireKey>):ValueTask<long>",
+        "PopAsync(RespireKey,bool,CancellationToken):ValueTask<SortedSetEntry?>",
+        "PopAsync`1(RespireKey,bool,CancellationToken):ValueTask<SortedSetEntry<T>?>",
+        "PopManyAsync(RespireKey,long,bool,CancellationToken):ValueTask<SortedSetEntry[]>",
+        "PopManyAsync`1(RespireKey,long,bool,CancellationToken):ValueTask<SortedSetEntry<T>[]>",
+        "RangeAsync(RespireKey,long,long,bool,CancellationToken):ValueTask<string[]>",
+        "RangeAsync`1(RespireKey,long,long,bool,CancellationToken):ValueTask<T[]>",
+        "RangeByLexAsync(RespireKey,RespireLexRange,long,long?,bool,CancellationToken):ValueTask<string[]>",
+        "RangeByScoreAsync(RespireKey,RespireScoreRange,long,long?,bool,CancellationToken):ValueTask<string[]>",
+        "RangeByScoreAsync(RespireKey,double,double,bool,CancellationToken):ValueTask<string[]>",
+        "RangeByScoreAsync`1(RespireKey,RespireScoreRange,long,long?,bool,CancellationToken):ValueTask<T[]>",
+        "RangeByScoreAsync`1(RespireKey,double,double,bool,CancellationToken):ValueTask<T[]>",
+        "RangeByScoreWithScoresAsync(RespireKey,RespireScoreRange,long,long?,bool,CancellationToken):ValueTask<SortedSetEntry[]>",
+        "RangeByScoreWithScoresAsync`1(RespireKey,RespireScoreRange,long,long?,bool,CancellationToken):ValueTask<SortedSetEntry<T>[]>",
+        "RangeWithScoresAsync(RespireKey,long,long,bool,CancellationToken):ValueTask<SortedSetEntry[]>",
+        "RangeWithScoresAsync`1(RespireKey,long,long,bool,CancellationToken):ValueTask<SortedSetEntry<T>[]>",
+        "RankAsync(RespireKey,RespireValue,bool,CancellationToken):ValueTask<long?>",
+        "RemoveAsync(RespireKey,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<long>",
+        "RemoveAsync(RespireKey,params ReadOnlySpan<RespireValue>):ValueTask<long>",
+        "RemoveRangeByRankAsync(RespireKey,long,long,CancellationToken):ValueTask<long>",
+        "RemoveRangeByScoreAsync(RespireKey,RespireScoreRange,CancellationToken):ValueTask<long>",
+        "RemoveRangeByScoreAsync(RespireKey,double,double,CancellationToken):ValueTask<long>",
+        "ScanAsync(RespireKey,string?,int,CancellationToken):IAsyncEnumerable<SortedSetEntry>",
+        "ScoreAsync(RespireKey,RespireValue,CancellationToken):ValueTask<double?>",
+        "ScoresManyAsync(RespireKey,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<double?[]>",
+        "ScoresManyAsync(RespireKey,params ReadOnlySpan<RespireValue>):ValueTask<double?[]>",
+        "StoreRangeAsync(RespireKey,RespireKey,long,long,bool,CancellationToken):ValueTask<long>",
+        "StoreRangeByLexAsync(RespireKey,RespireKey,RespireLexRange,long,long?,bool,CancellationToken):ValueTask<long>",
+        "StoreRangeByScoreAsync(RespireKey,RespireKey,RespireScoreRange,long,long?,bool,CancellationToken):ValueTask<long>",
+        "UnionAsync(ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<string[]>",
+        "UnionAsync(params ReadOnlySpan<RespireKey>):ValueTask<string[]>",
+        "UnionStoreAsync(RespireKey,ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<long>",
+        "UnionStoreAsync(RespireKey,params ReadOnlySpan<RespireKey>):ValueTask<long>"
+      ],
+      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": [
+    {
+      "Member": "Respire.RespireLexBound.Exclusive(string):RespireLexBound",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireLexBound.Inclusive(string):RespireLexBound",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireScoreBound.Exclusive(double):RespireScoreBound",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireScoreBound.Inclusive(double):RespireScoreBound",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    }
+  ]
+}

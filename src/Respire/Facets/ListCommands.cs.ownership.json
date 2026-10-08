@@ -1,0 +1,41 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IListCommands",
+      "OwnerType": "Respire.ListCommands",
+      "Members": [
+        "CountAsync(RespireKey,CancellationToken):ValueTask<long>",
+        "IndexAsync(RespireKey,long,CancellationToken):ValueTask<string?>",
+        "InsertAfterAsync(RespireKey,RespireValue,RespireValue,CancellationToken):ValueTask<long>",
+        "InsertBeforeAsync(RespireKey,RespireValue,RespireValue,CancellationToken):ValueTask<long>",
+        "LeftPopAsync(RespireKey,TimeSpan?,CancellationToken):ValueTask<string?>",
+        "LeftPopAsync`1(RespireKey,TimeSpan?,CancellationToken):ValueTask<T?>",
+        "LeftPopManyAsync(RespireKey,long,CancellationToken):ValueTask<string[]>",
+        "LeftPopManyAsync`1(RespireKey,long,CancellationToken):ValueTask<T[]>",
+        "LeftPushAsync(RespireKey,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<long>",
+        "LeftPushAsync(RespireKey,params ReadOnlySpan<RespireValue>):ValueTask<long>",
+        "LeftPushIfExistsAsync(RespireKey,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<long>",
+        "LeftPushIfExistsAsync(RespireKey,params ReadOnlySpan<RespireValue>):ValueTask<long>",
+        "MoveAsync(RespireKey,RespireKey,ListSide,ListSide,TimeSpan?,CancellationToken):ValueTask<string?>",
+        "PositionAsync(RespireKey,RespireValue,long,long,CancellationToken):ValueTask<long?>",
+        "PositionsAsync(RespireKey,RespireValue,long,long,long,CancellationToken):ValueTask<long[]>",
+        "RangeAsync(RespireKey,long,long,CancellationToken):ValueTask<string[]>",
+        "RangeAsync`1(RespireKey,long,long,CancellationToken):ValueTask<T[]>",
+        "RemoveAsync(RespireKey,RespireValue,long,CancellationToken):ValueTask<long>",
+        "RightPopAsync(RespireKey,TimeSpan?,CancellationToken):ValueTask<string?>",
+        "RightPopAsync`1(RespireKey,TimeSpan?,CancellationToken):ValueTask<T?>",
+        "RightPopManyAsync(RespireKey,long,CancellationToken):ValueTask<string[]>",
+        "RightPopManyAsync`1(RespireKey,long,CancellationToken):ValueTask<T[]>",
+        "RightPushAsync(RespireKey,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<long>",
+        "RightPushAsync(RespireKey,params ReadOnlySpan<RespireValue>):ValueTask<long>",
+        "RightPushIfExistsAsync(RespireKey,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<long>",
+        "RightPushIfExistsAsync(RespireKey,params ReadOnlySpan<RespireValue>):ValueTask<long>",
+        "SetAsync(RespireKey,long,RespireValue,CancellationToken):ValueTask<bool>",
+        "TrimAsync(RespireKey,long,long,CancellationToken):ValueTask<bool>"
+      ],
+      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

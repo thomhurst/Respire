@@ -1,0 +1,30 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IBatchVectorSetCommands",
+      "OwnerType": "Respire.BatchVectorSetCommands",
+      "Members": [
+        "Add(RespireKey,ReadOnlyMemory<float>,RespireValue,RespireVectorAddOptions,RespireVectorEncoding):RespirePending<bool>",
+        "Contains(RespireKey,RespireValue):RespirePending<bool>",
+        "Count(RespireKey):RespirePending<long>",
+        "Dimensions(RespireKey):RespirePending<long>",
+        "Embedding(RespireKey,RespireValue):RespirePending<float[]?>",
+        "GetAttributesJson(RespireKey,RespireValue):RespirePending<byte[]?>",
+        "GetAttributes`1(RespireKey,RespireValue):RespirePending<T?>",
+        "Info(RespireKey):RespirePending<RespireVectorSetInfo?>",
+        "Links(RespireKey,RespireValue,bool):RespirePending<RespireVectorMatch[][]?>",
+        "RandomMember(RespireKey):RespirePending<byte[]?>",
+        "RandomMembers(RespireKey,long):RespirePending<byte[][]>",
+        "Range(RespireKey,RespireValue,RespireValue,long?):RespirePending<byte[][]>",
+        "Remove(RespireKey,RespireValue):RespirePending<bool>",
+        "Search(RespireKey,ReadOnlyMemory<float>,RespireVectorSearchOptions,RespireVectorEncoding):RespirePending<RespireVectorMatch[]>",
+        "SearchByMember(RespireKey,RespireValue,RespireVectorSearchOptions):RespirePending<RespireVectorMatch[]>",
+        "SetAttributesJson(RespireKey,RespireValue,RespireValue):RespirePending<bool>",
+        "SetAttributes`1(RespireKey,RespireValue,T):RespirePending<bool>"
+      ],
+      "Contract": "Queue methods own synchronous validation and serialization. Execute/commit owns transport and cleanup; each pending result owns its later caller inspection and conversion. Never consume a pending result to observe errors."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

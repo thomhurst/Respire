@@ -1,0 +1,23 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IBatchSortedSetCommands",
+      "OwnerType": "Respire.BatchSortedSetCommands",
+      "Members": [
+        "CountByLex(RespireKey,RespireLexRange):RespirePending<long>",
+        "IntersectCount(long,params ReadOnlySpan<RespireKey>):RespirePending<long>",
+        "IntersectCount(params ReadOnlySpan<RespireKey>):RespirePending<long>",
+        "RandomMember(RespireKey):RespirePending<string?>",
+        "RandomMember`1(RespireKey):RespirePending<T?>",
+        "RandomMembers(RespireKey,long):RespirePending<string[]>",
+        "RandomMembersWithScores(RespireKey,long):RespirePending<SortedSetEntry[]>",
+        "RandomMembersWithScores`1(RespireKey,long):RespirePending<SortedSetEntry<T>[]>",
+        "RandomMembers`1(RespireKey,long):RespirePending<T[]>",
+        "RemoveRangeByLex(RespireKey,RespireLexRange):RespirePending<long>"
+      ],
+      "Contract": "Queue methods own synchronous validation and serialization. Execute/commit owns transport and cleanup; each pending result owns its later caller inspection and conversion. Never consume a pending result to observe errors."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

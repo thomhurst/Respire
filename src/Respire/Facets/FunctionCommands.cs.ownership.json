@@ -1,0 +1,33 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IFunctionCommands",
+      "OwnerType": "Respire.FunctionCommands",
+      "Members": [
+        "DeleteAsync(string,CancellationToken):ValueTask<bool>",
+        "DumpAsync(CancellationToken):ValueTask<byte[]>",
+        "ExecuteAsync(RespireFunction,RespireKey[]?,RespireValue[]?,CancellationToken):ValueTask<RespireResult>",
+        "ExecuteAsync`1(RespireFunction,RespireKey[]?,RespireValue[]?,CancellationToken):ValueTask<T?>",
+        "ExecuteIntegerAsync(RespireFunction,RespireKey[]?,RespireValue[]?,CancellationToken):ValueTask<long>",
+        "ExecuteSpanAsync(RespireFunction,ReadOnlySpan<RespireKey>,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<RespireResult>",
+        "ExecuteStringAsync(RespireFunction,RespireKey[]?,RespireValue[]?,CancellationToken):ValueTask<string?>",
+        "FlushAsync(FunctionFlushMode,CancellationToken):ValueTask<bool>",
+        "ListAsync(string?,bool,CancellationToken):ValueTask<RespireFunctionLibraryInfo[]>",
+        "LoadAsync(RespireFunctionLibrary,CancellationToken):ValueTask<string>",
+        "LoadAsync(string,bool,CancellationToken):ValueTask<string>",
+        "RestoreAsync(ReadOnlyMemory<byte>,FunctionRestorePolicy,CancellationToken):ValueTask<bool>",
+        "StatsAsync(CancellationToken):ValueTask<RespireFunctionStats>"
+      ],
+      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner.",
+      "Overrides": {
+        "ExecuteIntegerAsync(RespireFunction,RespireKey[]?,RespireValue[]?,CancellationToken):ValueTask<long>": "Respire.IFunctionCommands.ExecuteIntegerAsync(RespireFunction,RespireKey[]?,RespireValue[]?,CancellationToken):ValueTask<long>",
+        "ExecuteAsync(RespireFunction,RespireKey[]?,RespireValue[]?,CancellationToken):ValueTask<RespireResult>": "Respire.IFunctionCommands.ExecuteAsync(RespireFunction,RespireKey[]?,RespireValue[]?,CancellationToken):ValueTask<RespireResult>",
+        "LoadAsync(RespireFunctionLibrary,CancellationToken):ValueTask<string>": "Respire.IFunctionCommands.LoadAsync(RespireFunctionLibrary,CancellationToken):ValueTask<string>",
+        "ExecuteStringAsync(RespireFunction,RespireKey[]?,RespireValue[]?,CancellationToken):ValueTask<string?>": "Respire.IFunctionCommands.ExecuteStringAsync(RespireFunction,RespireKey[]?,RespireValue[]?,CancellationToken):ValueTask<string?>",
+        "ExecuteAsync`1(RespireFunction,RespireKey[]?,RespireValue[]?,CancellationToken):ValueTask<T?>": "Respire.IFunctionCommands.ExecuteAsync`1(RespireFunction,RespireKey[]?,RespireValue[]?,CancellationToken):ValueTask<T?>"
+      }
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

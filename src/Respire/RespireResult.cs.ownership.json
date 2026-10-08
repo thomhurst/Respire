@@ -1,0 +1,36 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.RespireResult",
+      "OwnerType": "Respire.RespireResult",
+      "Members": [
+        "AsBoolean():bool",
+        "AsBytes():byte[]",
+        "AsDouble():double",
+        "AsInteger():long",
+        "AsSpan():ReadOnlySpan<byte>",
+        "AsString():string",
+        "As`1():T?",
+        "Dispose():void",
+        "GetEnumerator():Enumerator",
+        "ToString():string"
+      ],
+      "Contract": "After raw result return, typed inspection is a separate logical caller boundary. Observe conversion failure once without consuming the pooled result or changing its reference ownership; disposal keeps its existing contract."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": [
+    {
+      "Member": "Respire.RespireResult.Enumerator.Dispose():void",
+      "Reason": "Local enumeration or copying of an already received value; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireResult.Enumerator.MoveNext():bool",
+      "Reason": "Local enumeration or copying of an already received value; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireResult.Enumerator.Reset():void",
+      "Reason": "Local enumeration or copying of an already received value; no command dispatch."
+    }
+  ]
+}

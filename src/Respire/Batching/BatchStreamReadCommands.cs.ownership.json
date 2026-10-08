@@ -1,0 +1,17 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IBatchStreamCommands",
+      "OwnerType": "Respire.BatchStreamCommands",
+      "Members": [
+        "Read(ReadOnlySpan<(RespireKeyKey,RespireStreamIdAfter)>,int?):RespirePending<RespireStreamReadResult[]>",
+        "Read(RespireKey,RespireStreamId,int?):RespirePending<RespireStreamEntry[]>",
+        "Read(StreamReadOptions,ReadOnlySpan<(RespireKeyKey,RespireStreamIdAfter)>):RespirePending<RespireStreamReadResult[]>",
+        "Read(StreamReadOptions,RespireKey,RespireStreamId):RespirePending<RespireStreamEntry[]>"
+      ],
+      "Contract": "Queue methods own synchronous validation and serialization. Execute/commit owns transport and cleanup; each pending result owns its later caller inspection and conversion. Never consume a pending result to observe errors."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

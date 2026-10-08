@@ -1,0 +1,14 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.RespireTransactionRetryOptions",
+      "OwnerType": "Respire.RespireTransactionRetryOptions",
+      "Members": [
+        "ExponentialBackoff(TimeSpan,TimeSpan):Func<int,TimeSpan>"
+      ],
+      "Contract": "Keep the caller owner through watch validation, commit, reply conversion, unwatch and dedicated-connection cleanup; deferred pending inspections are separate logical callers."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

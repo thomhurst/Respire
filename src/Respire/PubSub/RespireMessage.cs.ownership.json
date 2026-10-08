@@ -1,0 +1,22 @@
+{
+  "Surfaces": [],
+  "Boundaries": [],
+  "NonRoutes": [
+    {
+      "Member": "Respire.RespireMessage.As`1():T?",
+      "Reason": "Local subscription payload conversion or notification parsing; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireMessage.ToString():string",
+      "Reason": "Local subscription payload conversion or notification parsing; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireMessage.TryParseKeyNotification(ReadOnlySpan<byte>,out RespireKeyNotification):bool",
+      "Reason": "Local subscription payload conversion or notification parsing; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireMessage.TryParseKeyNotification(out RespireKeyNotification):bool",
+      "Reason": "Local subscription payload conversion or notification parsing; no command dispatch."
+    }
+  ]
+}

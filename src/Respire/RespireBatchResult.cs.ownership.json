@@ -1,0 +1,14 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.RespireBatchResult",
+      "OwnerType": "Respire.RespireBatchResult",
+      "Members": [
+        "ThrowIfAnyFailed():void"
+      ],
+      "Contract": "Queue methods own synchronous validation and serialization. Execute/commit owns transport and cleanup; each pending result owns its later caller inspection and conversion. Never consume a pending result to observe errors."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

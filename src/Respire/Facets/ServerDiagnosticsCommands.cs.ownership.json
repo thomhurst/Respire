@@ -1,0 +1,25 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IServerCommands",
+      "OwnerType": "Respire.ServerCommands",
+      "Members": [
+        "LatencyDoctorAsync(CancellationToken):ValueTask<string>",
+        "LatencyDoctorOnAllNodesAsync(CancellationToken):ValueTask<RespireServerResult<string>[]>",
+        "LatencyHistogramsAsync(ReadOnlySpan<string>,CancellationToken):ValueTask<RespireLatencyHistogram[]>",
+        "LatencyHistogramsOnAllNodesAsync(ReadOnlySpan<string>,CancellationToken):ValueTask<RespireServerResult<RespireLatencyHistogram[]>[]>",
+        "LatencyHistoryAsync(string,CancellationToken):ValueTask<RespireLatencyHistorySample[]>",
+        "LatencyHistoryOnAllNodesAsync(string,CancellationToken):ValueTask<RespireServerResult<RespireLatencyHistorySample[]>[]>",
+        "MemoryDoctorAsync(CancellationToken):ValueTask<string>",
+        "MemoryDoctorOnAllNodesAsync(CancellationToken):ValueTask<RespireServerResult<string>[]>",
+        "PurgeMemoryAsync(CancellationToken):ValueTask",
+        "PurgeMemoryOnAllNodesAsync(CancellationToken):ValueTask<RespireServerResult<bool>[]>",
+        "SlowLogLengthAsync(CancellationToken):ValueTask<long>",
+        "SlowLogLengthOnAllNodesAsync(CancellationToken):ValueTask<RespireServerResult<long>[]>"
+      ],
+      "Contract": "Start before admin preflight or validation. Keep ownership through each node, conversion and cleanup. Returned per-node failures are caller observations; transparent retries borrow ownership."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

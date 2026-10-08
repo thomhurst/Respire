@@ -1,0 +1,33 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.RespireSentinelClient",
+      "OwnerType": "Respire.RespireSentinelClient",
+      "Members": [
+        "CheckQuorumAsync(string,CancellationToken):ValueTask<string>",
+        "ConfigGetAsync(string,CancellationToken):ValueTask<IReadOnlyDictionary<string,string>>",
+        "ConfigSetAsync(IReadOnlyDictionary<string,string>,CancellationToken):ValueTask",
+        "ConnectAsync(RespireEndpoint,RespireOptions?,CancellationToken):ValueTask<RespireSentinelClient>",
+        "DisposeAsync():ValueTask",
+        "FailoverAsync(string,CancellationToken):ValueTask",
+        "FlushConfigAsync(CancellationToken):ValueTask",
+        "InfoCacheAsync(string[]?,CancellationToken):ValueTask<RespireSentinelInfo[]>",
+        "IsPrimaryDownByAddressAsync(RespireEndpoint,long,string,CancellationToken):ValueTask<RespireSentinelDownState>",
+        "MonitorAsync(string,RespireEndpoint,int,CancellationToken):ValueTask",
+        "MyIdAsync(CancellationToken):ValueTask<string>",
+        "PendingScriptsAsync(CancellationToken):ValueTask<RespireSentinelScript[]>",
+        "PrimariesAsync(CancellationToken):ValueTask<RespireSentinelPrimary[]>",
+        "PrimaryAsync(string,CancellationToken):ValueTask<RespireSentinelPrimary>",
+        "RemoveAsync(string,CancellationToken):ValueTask",
+        "ReplicasAsync(string,CancellationToken):ValueTask<RespireSentinelReplica[]>",
+        "ResetAsync(string,CancellationToken):ValueTask<long>",
+        "SentinelsAsync(string,CancellationToken):ValueTask<RespireSentinelPeer[]>",
+        "SetAsync(string,IEnumerable<KeyValuePair<string,string>>,CancellationToken):ValueTask",
+        "SimulateFailureAsync(RespireSentinelFailure,CancellationToken):ValueTask"
+      ],
+      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

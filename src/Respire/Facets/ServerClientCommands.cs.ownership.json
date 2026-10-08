@@ -1,0 +1,32 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IServerCommands",
+      "OwnerType": "Respire.ServerCommands",
+      "Members": [
+        "ClientsOnAllNodesAsync(CancellationToken):ValueTask<RespireServerResult<RespireServerClientInfo[]>[]>",
+        "GetClientConnectionAsync(CancellationToken):ValueTask<RespireServerClientConnection>"
+      ],
+      "Contract": "Start before admin preflight or validation. Keep ownership through each node, conversion and cleanup. Returned per-node failures are caller observations; transparent retries borrow ownership."
+    },
+    {
+      "Type": "Respire.RespireServerClientConnection",
+      "OwnerType": "Respire.RespireServerClientConnection",
+      "Members": [
+        "EchoAsync(ReadOnlyMemory<byte>,CancellationToken):ValueTask<byte[]>",
+        "GetNameAsync(CancellationToken):ValueTask<string?>",
+        "InfoAsync(CancellationToken):ValueTask<RespireServerClientInfo>",
+        "PauseClientsAsync(TimeSpan,RespireClientPauseMode,CancellationToken):ValueTask",
+        "SetInfoAsync(RespireClientInfoAttribute,string,CancellationToken):ValueTask",
+        "SetNoEvictAsync(bool,CancellationToken):ValueTask",
+        "SetNoTouchAsync(bool,CancellationToken):ValueTask",
+        "TrackingInfoAsync(CancellationToken):ValueTask<RespireClientTrackingInfo>",
+        "UnblockClientAsync(long,RespireClientUnblockMode,CancellationToken):ValueTask<bool>",
+        "UnpauseClientsAsync(CancellationToken):ValueTask"
+      ],
+      "Contract": "Start before admin preflight or validation. Keep ownership through each node, conversion and cleanup. Returned per-node failures are caller observations; transparent retries borrow ownership."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

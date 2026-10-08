@@ -1,0 +1,58 @@
+{
+  "Surfaces": [],
+  "Boundaries": [],
+  "NonRoutes": [
+    {
+      "Member": "Respire.RespireChannel.KeyEvent(ReadOnlySpan<byte>,int?):RespireChannel",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireChannel.KeyEvent(RespireKeyNotificationType,int?):RespireChannel",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireChannel.KeySpacePattern(RespireKey,int?):RespireChannel",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireChannel.KeySpacePrefix(RespireKey,int?):RespireChannel",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireChannel.KeySpaceSingleKey(RespireKey,int):RespireChannel",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireChannel.SubKeyEvent(ReadOnlySpan<byte>,int?):RespireChannel",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireChannel.SubKeyEvent(RespireKeyNotificationType,int?):RespireChannel",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireChannel.SubKeySpaceEvent(ReadOnlySpan<byte>,RespireKey,int?):RespireChannel",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireChannel.SubKeySpaceEvent(RespireKeyNotificationType,RespireKey,int?):RespireChannel",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireChannel.SubKeySpaceItem(RespireKey,RespireKey,int):RespireChannel",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireChannel.SubKeySpacePattern(RespireKey,int?):RespireChannel",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireChannel.SubKeySpacePrefix(RespireKey,int?):RespireChannel",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireChannel.SubKeySpaceSingleKey(RespireKey,int):RespireChannel",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    }
+  ]
+}

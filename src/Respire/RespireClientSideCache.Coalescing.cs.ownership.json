@@ -1,0 +1,34 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "cache-producer",
+      "Role": "borrower",
+      "Member": "Respire.ClientSideCacheCoordinator.ProduceSharedReadAsync`1(SharedRead<RespValue>,TState,Func<TState,CancellationToken,ValueTask<RespValue>>):Task",
+      "Owner": "Respire.ClientSideCacheCoordinator.CoalesceReadAsync`1(ClientCacheCommandKey,TState,Func<TState,CancellationToken,ValueTask<RespValue>>,CancellationToken):ValueTask<RespValue>",
+      "Contract": "Producer handles one shared attempt. It cannot publish every waiter final failure; each logical waiter retains separate owner even with one shared exception."
+    },
+    {
+      "Name": "cache-typed-producer",
+      "Role": "borrower",
+      "Member": "Respire.ClientSideCacheCoordinator.ProduceSharedGetReadAsync`1(SharedRead<GetReadResult>,TState,Func<TState,CancellationToken,ValueTask<GetReadResult>>):Task",
+      "Owner": "Respire.ClientSideCacheCoordinator.CoalesceGetReadAsync`3(ClientCacheCommandKey,TReadState,Func<TReadState,CancellationToken,ValueTask<GetReadResult>>,TState,GetReadConverter<TState,TResult>,CancellationToken):ValueTask<TResult>",
+      "Contract": "Shared GET producer owns only its borrowed attempt. Typed conversion belongs to each caller after sharing."
+    },
+    {
+      "Name": "cache-waiter",
+      "Role": "helper",
+      "Member": "Respire.ClientSideCacheCoordinator.WaitForSharedReadAsync(SharedRead<RespValue>,CancellationToken):ValueTask<RespValue>",
+      "Owner": "Respire.ClientSideCacheCoordinator.CoalesceReadAsync`1(ClientCacheCommandKey,TState,Func<TState,CancellationToken,ValueTask<RespValue>>,CancellationToken):ValueTask<RespValue>",
+      "Contract": "Each coalesced caller keeps a distinct final owner through cancellation, response ownership transfer and cleanup."
+    },
+    {
+      "Name": "cache-typed-waiter",
+      "Role": "helper",
+      "Member": "Respire.ClientSideCacheCoordinator.WaitForSharedGetReadAsync`2(SharedRead<GetReadResult>,CancellationToken,TState,GetReadConverter<TState,TResult>):ValueTask<TResult>",
+      "Owner": "Respire.ClientSideCacheCoordinator.CoalesceGetReadAsync`3(ClientCacheCommandKey,TReadState,Func<TReadState,CancellationToken,ValueTask<GetReadResult>>,TState,GetReadConverter<TState,TResult>,CancellationToken):ValueTask<TResult>",
+      "Contract": "Keep each coalesced caller owner through typed converter and response cleanup; do not count the shared producer as the waiter."
+    }
+  ],
+  "NonRoutes": []
+}

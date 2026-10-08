@@ -1,0 +1,22 @@
+{
+  "Surfaces": [],
+  "Boundaries": [],
+  "NonRoutes": [
+    {
+      "Member": "Respire.Serialization.IRespireSerializer.Deserialize(Type,ReadOnlySpan<byte>):object?",
+      "Reason": "Serialization or codec helper; the enclosing command construction or result inspection owns caller failures."
+    },
+    {
+      "Member": "Respire.Serialization.IRespireSerializer.Deserialize`1(ReadOnlySpan<byte>):T?",
+      "Reason": "Serialization or codec helper; the enclosing command construction or result inspection owns caller failures."
+    },
+    {
+      "Member": "Respire.Serialization.IRespireSerializer.Serialize(IBufferWriter<byte>,Type,object?):void",
+      "Reason": "Serialization or codec helper; the enclosing command construction or result inspection owns caller failures."
+    },
+    {
+      "Member": "Respire.Serialization.IRespireSerializer.Serialize`1(IBufferWriter<byte>,T):void",
+      "Reason": "Serialization or codec helper; the enclosing command construction or result inspection owns caller failures."
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IServerCommands",
+      "OwnerType": "Respire.ServerCommands",
+      "Members": [
+        "ClientsAsync(CancellationToken):ValueTask<RespireServerClientInfo[]>",
+        "CommandCountAsync(CancellationToken):ValueTask<long>",
+        "CommandListAsync(CancellationToken):ValueTask<string[]>",
+        "ConfigAsync(string,CancellationToken):ValueTask<Dictionary<string,string>>",
+        "DatabaseSizeAsync(CancellationToken):ValueTask<long>",
+        "FlushAllAsync(CancellationToken):ValueTask",
+        "FlushAllAsync(ServerFlushMode,CancellationToken):ValueTask",
+        "FlushDatabaseAsync(CancellationToken):ValueTask",
+        "FlushDatabaseAsync(ServerFlushMode,CancellationToken):ValueTask",
+        "InfoAsync(string?,CancellationToken):ValueTask<string>",
+        "KillClientAsync(long,bool,CancellationToken):ValueTask<bool>",
+        "LastSaveAsync(CancellationToken):ValueTask<DateTimeOffset>",
+        "LatestLatencyAsync(CancellationToken):ValueTask<RespireLatencySample[]>",
+        "MemoryStatsAsync(CancellationToken):ValueTask<RespireMemoryStats>",
+        "MemoryUsageAsync(RespireKey,long?,CancellationToken):ValueTask<long?>",
+        "ResetLatencyAsync(CancellationToken):ValueTask<long>",
+        "ResetLatencyAsync(string,CancellationToken):ValueTask<long>",
+        "ResetSlowLogAsync(CancellationToken):ValueTask",
+        "RoleAsync(CancellationToken):ValueTask<RespireServerRole>",
+        "SetConfigAsync(string,RespireValue,CancellationToken):ValueTask",
+        "SlowLogAsync(long?,CancellationToken):ValueTask<RespireSlowLogEntry[]>",
+        "TimeAsync(CancellationToken):ValueTask<DateTimeOffset>"
+      ],
+      "Contract": "Start before admin preflight or validation. Keep ownership through each node, conversion and cleanup. Returned per-node failures are caller observations; transparent retries borrow ownership."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": [
+    {
+      "Member": "Respire.RespireMemoryStatValue.ToString():string",
+      "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    }
+  ]
+}

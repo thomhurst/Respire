@@ -1,0 +1,50 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.RespireTransaction",
+      "OwnerType": "Respire.RespireTransaction",
+      "Members": [
+        "CommitAsync(CancellationToken):ValueTask"
+      ],
+      "Contract": "Keep the caller owner through watch validation, commit, reply conversion, unwatch and dedicated-connection cleanup; deferred pending inspections are separate logical callers."
+    },
+    {
+      "Type": "Respire.RespireTransactionBase",
+      "OwnerType": "Respire.RespireTransactionBase",
+      "Members": [
+        "Decrement(RespireKey,long):RespirePending<long>",
+        "Delete(params ReadOnlySpan<RespireKey>):RespirePending<long>",
+        "DisposeAsync():ValueTask",
+        "Execute(RespireCommand,params RespireValue[]):RespirePending<RespireResult>",
+        "Exists(RespireKey):RespirePending<bool>",
+        "Expire(RespireKey,RespireExpiry,ExpireWhen):RespirePending<bool>",
+        "GetBytes(RespireKey):RespirePending<byte[]?>",
+        "GetString(RespireKey):RespirePending<string?>",
+        "Get`1(RespireKey):RespirePending<T?>",
+        "Increment(RespireKey,long):RespirePending<long>",
+        "Set(RespireKey,RespireValue,RespireExpiry,SetWhen):RespirePending<bool>",
+        "Set`1(RespireKey,T,RespireExpiry,SetWhen):RespirePending<bool>",
+        "TryGet`1(RespireKey):RespirePending<RespireGet<T>>"
+      ],
+      "Contract": "Keep the caller owner through watch validation, commit, reply conversion, unwatch and dedicated-connection cleanup; deferred pending inspections are separate logical callers."
+    },
+    {
+      "Type": "Respire.RespireWatchedTransaction",
+      "OwnerType": "Respire.RespireWatchedTransaction",
+      "Members": [
+        "CommitAsync(CancellationToken):ValueTask<bool>"
+      ],
+      "Contract": "Keep the caller owner through watch validation, commit, reply conversion, unwatch and dedicated-connection cleanup; deferred pending inspections are separate logical callers."
+    }
+  ],
+  "Boundaries": [
+    {
+      "Name": "transaction-commit",
+      "Role": "final",
+      "Member": "Respire.RespireTransaction.CommitAsync(CancellationToken):ValueTask",
+      "Owner": "Respire.RespireTransaction.CommitAsync(CancellationToken):ValueTask",
+      "Contract": "Commit owns preflight, watch validation, all replies and UNWATCH/dedicated cleanup. Pending inspection remains separate."
+    }
+  ],
+  "NonRoutes": []
+}
