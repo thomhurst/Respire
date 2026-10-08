@@ -7,12 +7,20 @@ internal readonly struct RawCommand(byte[] preEncoded, ReadCommandKind readKind 
 {
     public int GetWriteSizeHint() => preEncoded.Length;
     public ReadCommandKind ReadKind => readKind;
+    public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => ClientCacheCommandMetadata.Get(operation);
+
+    public RespireCacheMutation GetCacheMutation(string operation)
+        => ReferenceEquals(preEncoded, RespCommands.Ping) || ReferenceEquals(preEncoded, RespCommands.RandomKey)
+            || ReferenceEquals(preEncoded, RespCommands.DbSize) || ReferenceEquals(preEncoded, RespCommands.Info)
+            || ReferenceEquals(preEncoded, RespCommands.Time) || ReferenceEquals(preEncoded, RespCommands.LastSave)
+            || ReferenceEquals(preEncoded, RespCommands.Role)
+            ? RespireCacheMutation.ReadOnly : RespireCommands.GetCacheMutation(operation);
 
     public void Write(ref RespWriter writer) => writer.WriteRaw(preEncoded);
 }
 
 /// <summary>HELLO 3 [AUTH username password] — RESP3 protocol negotiation.</summary>
-internal readonly struct HelloCommand(string? username, string? password) : IRespCommand
+internal readonly struct HelloCommand(string? username, string? password) : IConnectionProtocolCommand
 {
     public int GetWriteSizeHint() => password is null ? "*2\r\n$5\r\nHELLO\r\n$1\r\n3\r\n"u8.Length
         : CommandWriteSizeHint.For("*5\r\n$5\r\nHELLO\r\n$1\r\n3\r\n$4\r\nAUTH\r\n"u8.Length,
@@ -34,7 +42,7 @@ internal readonly struct HelloCommand(string? username, string? password) : IRes
 }
 
 /// <summary>AUTH [username] password — RESP2 authentication.</summary>
-internal readonly struct AuthCommand(string? username, string password) : IRespCommand
+internal readonly struct AuthCommand(string? username, string password) : IConnectionProtocolCommand
 {
     public int GetWriteSizeHint() => CommandWriteSizeHint.For("*2\r\n$4\r\nAUTH\r\n"u8.Length,
         username is null ? 0 : ((RespireValue)username).GetWriteSizeHint(), ((RespireValue)password).GetWriteSizeHint());
@@ -57,7 +65,7 @@ internal readonly struct AuthCommand(string? username, string password) : IRespC
 }
 
 /// <summary>CLIENT SETNAME name.</summary>
-internal readonly struct ClientSetNameCommand(string name) : IRespCommand
+internal readonly struct ClientSetNameCommand(string name) : IConnectionProtocolCommand
 {
     public int GetWriteSizeHint() => CommandWriteSizeHint.For("*3\r\n$6\r\nCLIENT\r\n$7\r\nSETNAME\r\n"u8.Length,
         ((RespireValue)name).GetWriteSizeHint());
@@ -88,7 +96,7 @@ internal readonly record struct ClientTrackingConfiguration
 /// (none means every key). Invalidation pushes arrive on the connection that performed the read, so
 /// they stay in wire order with its replies and no redirect connection is needed.
 /// </remarks>
-internal readonly struct ClientTrackingCommand(ClientTrackingConfiguration configuration = default) : IRespCommand
+internal readonly struct ClientTrackingCommand(ClientTrackingConfiguration configuration = default) : IConnectionProtocolCommand
 {
     public ReadCommandKind ReadKind => ReadCommandKind.None;
 
@@ -114,7 +122,7 @@ internal readonly struct ClientTrackingCommand(ClientTrackingConfiguration confi
 /// A Cluster ASK retry writes <c>ASKING</c>, this prelude, and the read as one such sequence. BCAST
 /// reads and reads outside the configured prefixes omit the prelude, so Redis does not track them.
 /// </remarks>
-internal readonly struct ClientCachingCommand : IRespCommand
+internal readonly struct ClientCachingCommand : IConnectionProtocolCommand
 {
     public int GetWriteSizeHint() => "*3\r\n$6\r\nCLIENT\r\n$7\r\nCACHING\r\n$3\r\nYES\r\n"u8.Length;
     public ReadCommandKind ReadKind => ReadCommandKind.None;
@@ -124,7 +132,7 @@ internal readonly struct ClientCachingCommand : IRespCommand
 }
 
 /// <summary>CLIENT ID.</summary>
-internal readonly struct ClientIdCommand : IRespCommand
+internal readonly struct ClientIdCommand : IConnectionProtocolCommand
 {
     public int GetWriteSizeHint() => "*2\r\n$6\r\nCLIENT\r\n$2\r\nID\r\n"u8.Length;
     public ReadCommandKind ReadKind => ReadCommandKind.None;
@@ -134,7 +142,7 @@ internal readonly struct ClientIdCommand : IRespCommand
 }
 
 /// <summary>CLIENT KILL ID id [SKIPME yes].</summary>
-internal readonly struct ClientKillIdCommand(long id, bool skipMe = false) : IRespCommand
+internal readonly struct ClientKillIdCommand(long id, bool skipMe = false) : IConnectionProtocolCommand
 {
     public ReadCommandKind ReadKind => ReadCommandKind.None;
 
@@ -158,7 +166,7 @@ internal readonly struct ClientKillIdCommand(long id, bool skipMe = false) : IRe
 }
 
 /// <summary>SELECT database.</summary>
-internal readonly struct SelectCommand(int database) : IRespCommand
+internal readonly struct SelectCommand(int database) : IConnectionProtocolCommand
 {
     public int GetWriteSizeHint() => CommandWriteSizeHint.For("*2\r\n$6\r\nSELECT\r\n"u8.Length,
         CommandWriteSizeHint.Bulk(20));

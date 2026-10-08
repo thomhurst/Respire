@@ -75,15 +75,17 @@ internal sealed partial class RespireConnection
                 $"Streaming command {typeof(TCommand).Name} has no connection write path.");
 
     internal ValueTask<RespValue> SendAskingStreamedSetAsync(
-        in RawCommand asking, StreamedSetCommand command, CancellationToken cancellationToken,
+        in ProtocolCommand<RawCommand> asking, StreamedSetCommand command, CancellationToken cancellationToken,
         CommandDeadline commandDeadline, DedicatedStreamRoute streamingRoute)
         => SendStreamedSetAsync(command, cancellationToken, commandDeadline, streamingRoute, asking);
 
     private async ValueTask<RespValue> SendStreamedSetAsync(
         StreamedSetCommand command, CancellationToken cancellationToken, CommandDeadline deadline,
-        DedicatedStreamRoute streamingRoute, RawCommand? prelude = null,
+        DedicatedStreamRoute streamingRoute, ProtocolCommand<RawCommand>? prelude = null,
         CommandWriteObservation? writeObservation = null, bool throwOnError = true)
     {
+        _cacheMutationAdmission?.ValidateDispatchAdmission(in command);
+        if (prelude is { } dispatchPrelude) _cacheMutationAdmission?.ValidateDispatchAdmission(in dispatchPrelude);
         using var timeoutCancellation = deadline.IsSet
             ? new StreamDeadlineCancellation(this, deadline)
             : null;

@@ -9,6 +9,64 @@ namespace Respire.Tests.Networking;
 public class ServerClientCommandTests
 {
     [Test]
+    [Arguments("ID")]
+    [Arguments("INFO")]
+    [Arguments("GETNAME")]
+    [Arguments("TRACKINGINFO")]
+    public async Task PinnedInspectionPreservesPopulatedCache(string inspection)
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
+                "CLIENT ID" => Integer(42),
+                "CLIENT INFO" => Bulk("id=42 addr=host:1 name=worker db=0 flags=N cmd=client|info age=0 idle=0\n"),
+                "CLIENT GETNAME" => Bulk("worker"),
+                "CLIENT TRACKINGINFO" => Sequence('%', Bulk("flags"), Sequence('~', Bulk("on"), Bulk("optin")),
+                    Bulk("redirect"), Integer(0), Bulk("prefixes"), Sequence('*')),
+                _ => command.StartsWith("GET ", StringComparison.Ordinal) ? Bulk("value") : FakeRespServer.OkReply,
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server.Port) with
+        {
+            Protocol = RespProtocol.Resp3, ClientSideCache = new(),
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
+        });
+        // Populate after obtaining the handle so each non-ID case isolates its own command.
+        var handle = inspection == "ID" ? null : await client.Server.GetClientConnectionAsync();
+        foreach (var key in new[] { "first", "second" })
+            await Assert.That(await client.GetStringAsync(key)).IsEqualTo("value");
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(2);
+        var before = client.ClientSideCache.GetStatistics();
+        var commandsBefore = server.CommandsSeen;
+        switch (inspection)
+        {
+            case "ID":
+                handle = await client.WithKeyPrefix("ignored:").Server.GetClientConnectionAsync();
+                await Assert.That(handle.Id).IsEqualTo(42);
+                break;
+            case "INFO": await Assert.That((await handle!.InfoAsync()).Id).IsEqualTo(42); break;
+            case "GETNAME": await Assert.That(await handle!.GetNameAsync()).IsEqualTo("worker"); break;
+            case "TRACKINGINFO":
+                await Assert.That((await handle!.TrackingInfoAsync()).Flags).IsEquivalentTo(["on", "optin"]);
+                break;
+        }
+        await Assert.That(server.CommandsSeen).IsEqualTo(commandsBefore + 1);
+        await Assert.That(server.ReceivedCommands[^1]).IsEqualTo($"CLIENT {inspection}");
+        await Assert.That(client.ClientSideCache.Count).IsEqualTo(2);
+        await Assert.That(client.ClientSideCache.GetStatistics().Invalidations).IsEqualTo(before.Invalidations);
+        foreach (var key in new[] { "first", "second" })
+            await Assert.That(await client.GetStringAsync(key)).IsEqualTo("value");
+        await Assert.That(client.ClientSideCache.GetStatistics().Hits).IsEqualTo(before.Hits + 2);
+        await Assert.That(server.CommandsSeen).IsEqualTo(commandsBefore + 1);
+
+        // Un-audited pinned controls retain conservative mutation admission.
+        await handle!.SetNoTouchAsync(true);
+        await Assert.That(client.ClientSideCache.Count).IsEqualTo(0);
+    }
+
+    [Test]
     [NotInParallel]
     [Arguments(false, false)]
     [Arguments(true, false)]
@@ -133,25 +191,42 @@ public class ServerClientCommandTests
     }
 
     [Test]
-    public async Task HandlesDoNotRotateAcrossMultiplexedConnections()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task HandlesDoNotRotateAcrossMultiplexedConnections(bool caching)
     {
         await using var server = new FakeRespServer(2, FakeRespServer.OkReply);
-        server.SuppressReply = command =>
+        server.ReplyOverride = (socket, command) => command switch
         {
-            if (command != "CLIENT ID") return false;
-            var socket = server.ReceivedConnectionIds[^1];
-            _ = server.SendRawAsync(Integer(socket + 100), socket);
-            return true;
+            "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
+            "CLIENT ID" => Integer(socket + 100),
+            "CLIENT INFO" => Bulk($"id={socket + 100} addr=host:1 name=worker db=0 flags=N cmd=client|info age=0 idle=0\n"),
+            "CLIENT GETNAME" => Bulk("worker"),
+            "CLIENT TRACKINGINFO" => Sequence('*', Bulk("flags"), Sequence('*', Bulk("on")),
+                Bulk("redirect"), Integer(0), Bulk("prefixes"), Sequence('*')),
+            _ => FakeRespServer.OkReply,
         };
-        await using var client = await RespireClient.ConnectAsync(Options(server.Port) with { Connections = 2 });
+        await using var client = await RespireClient.ConnectAsync(Options(server.Port) with
+        {
+            Connections = 2, Protocol = caching ? RespProtocol.Resp3 : RespProtocol.Resp2,
+            ClientSideCache = caching ? new() : null,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
+        });
         var first = await client.Server.GetClientConnectionAsync();
         var second = await client.Server.GetClientConnectionAsync();
         await Assert.That(first.Id).IsNotEqualTo(second.Id);
+        var commandsBefore = server.CommandsSeen;
         await first.SetNoEvictAsync(true);
         await second.SetNoTouchAsync(true);
         await first.SetInfoAsync(RespireClientInfoAttribute.LibraryName, "first");
-        await Assert.That(server.ReceivedConnectionIds.Skip(2)).IsEquivalentTo(
-            [(int)first.Id - 100, (int)second.Id - 100, (int)first.Id - 100], CollectionOrdering.Matching);
+        await Assert.That((await first.InfoAsync()).Id).IsEqualTo(first.Id);
+        await Assert.That((await second.InfoAsync()).Id).IsEqualTo(second.Id);
+        await Assert.That(await first.GetNameAsync()).IsEqualTo("worker");
+        await Assert.That((await second.TrackingInfoAsync()).Flags).IsEquivalentTo(["on"]);
+        var firstSocket = (int)first.Id - 100;
+        var secondSocket = (int)second.Id - 100;
+        await Assert.That(server.ReceivedConnectionIds.Skip(commandsBefore)).IsEquivalentTo(
+            [firstSocket, secondSocket, firstSocket, firstSocket, secondSocket, firstSocket, secondSocket], CollectionOrdering.Matching);
     }
 
     [Test]
@@ -227,24 +302,52 @@ public class ServerClientCommandTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task PinnedClusterControlsNeverFollowRedirects(bool kill)
+    [Arguments("KILL", false)]
+    [Arguments("PAUSE", false)]
+    [Arguments("INFO", false)]
+    [Arguments("GETNAME", false)]
+    [Arguments("TRACKINGINFO", false)]
+    [Arguments("KILL", true)]
+    [Arguments("PAUSE", true)]
+    [Arguments("INFO", true)]
+    [Arguments("GETNAME", true)]
+    [Arguments("TRACKINGINFO", true)]
+    public async Task PinnedClusterControlsNeverFollowRedirects(string control, bool caching)
     {
         await using var target = new FakeRespServer(FakeRespServer.OkReply);
-        await using var seed = new FakeRespServer("*0\r\n"u8.ToArray(), Integer(1),
-            Encoding.ASCII.GetBytes($"-MOVED 0 127.0.0.1:{target.Port}\r\n"));
-        await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with { UseCluster = true });
+        await using var seed = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
+                "CLUSTER SLOTS" => "*0\r\n"u8.ToArray(),
+                "CLIENT TRACKING ON OPTIN" => FakeRespServer.OkReply,
+                "CLIENT ID" => Integer(1),
+                _ => Encoding.ASCII.GetBytes($"-MOVED 0 127.0.0.1:{target.Port}\r\n"),
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with
+        {
+            UseCluster = true, Protocol = RespProtocol.Resp3, ClientSideCache = caching ? new() : null,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
+        });
         var connection = await client.Server.GetClientConnectionAsync();
+        var commandsBefore = seed.CommandsSeen;
         var error = await Assert.That(async () =>
         {
-            if (kill) await connection.KillClientsAsync(new() { Ids = [42] });
-            else await connection.PauseClientsAsync(TimeSpan.Zero);
+            switch (control)
+            {
+                case "KILL": await connection.KillClientsAsync(new() { Ids = [42] }); break;
+                case "PAUSE": await connection.PauseClientsAsync(TimeSpan.Zero); break;
+                case "INFO": await connection.InfoAsync(); break;
+                case "GETNAME": await connection.GetNameAsync(); break;
+                case "TRACKINGINFO": await connection.TrackingInfoAsync(); break;
+            }
         }).ThrowsExactly<RespireServerException>();
         await Assert.That(error!.Code).IsEqualTo("MOVED");
         await Assert.That(connection.Endpoint.Port).IsEqualTo(seed.Port);
         await Assert.That(target.CommandsSeen).IsEqualTo(0);
-        await Assert.That(seed.CommandsSeen).IsEqualTo(3);
+        await Assert.That(seed.CommandsSeen).IsEqualTo(commandsBefore + 1);
     }
 
     [Test]

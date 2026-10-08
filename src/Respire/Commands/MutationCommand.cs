@@ -9,6 +9,7 @@ internal readonly struct MutationCommand<TCommand>(TCommand command,
     where TCommand : struct, IRespCommand
 {
     public void Write(ref RespWriter writer) => command.Write(ref writer);
+    public bool IsConnectionProtocol => CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in command);
     public int GetWriteSizeHint() => command.GetWriteSizeHint();
     public void OnAccepted() => command.OnAccepted();
     public void ValidateAdmission() => command.ValidateAdmission();

@@ -95,6 +95,30 @@ When Respire cannot name the affected keys (unknown raw commands, scripts,
 cluster-wide mutations, blocking commands, batches, transactions, and time-series writes that can
 update compaction destinations), it flushes the whole local cache instead.
 
+Every transport owned by a caching client checks mutation admission before publishing command
+bytes or a response slot. This includes redirected, replica, dedicated, streamed, explicit-node,
+and fan-out dispatch. An internal dispatch path that omits a live admission from its owning client
+fails before reaching Redis. A diagnostic command name cannot authorize a write as a read.
+Compound sends check each prelude independently, so it cannot borrow the final command's
+mutation scope or silently discard a separate mutation owner.
+Audited read-only declarations and internal connection setup retain their existing contracts.
+With caching disabled, native dispatch skips this check.
+
+For contributors adding command paths, retain the mutation fence and immutable command
+classification through `IRespCommandWrapper`. Serialized snapshots preserve classification,
+but do not replace caller/native ownership or acceptance callbacks. Protocol setup must declare
+its connection-owned role explicitly; application data mutations still require logical admission.
+The source architecture tests inventory native publication helpers and restrict read-only
+declarations to the audited script and explicit-node factories. Bypass views retain command
+classification even though they do not serve or publish local cache entries. An empty watched
+transaction still sends `MULTI`/`EXEC` to validate `WATCH`; any queued command requires its fence.
+
+For correctness changes that should preserve local read performance, the
+`run-cache-read-parity-benchmarks` label compares hot hits, concurrent hits, and tracked misses
+against two baseline controls on .NET 10. Review latency intervals, baseline drift, and allocations
+before accepting the comparison. The `run-cache-read-benchmarks` label retains its stricter
+required improvement for concurrent hits and remains the gate for cache-read optimizations.
+
 ## Options
 
 Every option has a bounded default, so `new()` is a complete configuration:

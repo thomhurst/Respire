@@ -60,6 +60,14 @@ internal sealed class ClientCore : IAsyncDisposable
     public DedicatedConnectionPool DedicatedPool => TestingDedicatedPoolOverride ?? Sentinel?.Current?.Pool ?? Volatile.Read(ref _dedicatedPool);
     internal readonly SentinelRouter? Sentinel;
     internal readonly ReadEndpointRouter ReadRouter;
+
+    /// <summary>Preserves the logical cache owner on every data, replica and dedicated transport.</summary>
+    internal RespireConnectionOptions CreateConnectionOptions(RespirePushHandler? pushHandler = null,
+        bool enableClientTracking = false, bool enableMaintenanceNotifications = false)
+        => Options.ToConnectionOptions(pushHandler, enableClientTracking, enableMaintenanceNotifications) with
+        {
+            CacheMutationAdmission = ClientCache,
+        };
     public readonly ClusterRouter? Cluster;
     public readonly ClientSideCacheCoordinator? ClientCache;
     public volatile bool Disposed;
@@ -76,7 +84,7 @@ internal sealed class ClientCore : IAsyncDisposable
             : null;
         var clientCache = ClientCache;
         RespirePushHandler? pushHandler = clientCache is null ? null : clientCache.HandlePush;
-        var connectionOptions = options.ToConnectionOptions(
+        var connectionOptions = CreateConnectionOptions(
             pushHandler,
             enableClientTracking: ClientCache is not null, enableMaintenanceNotifications: true) with
         {
@@ -186,7 +194,7 @@ internal sealed class ClientCore : IAsyncDisposable
 
     internal CorrectionLease GetCorrectionLease(RespireEndpoint endpoint, RespireConnection? original)
     {
-        var options = Options.ToConnectionOptions();
+        var options = CreateConnectionOptions();
         if (options.UseTls)
             options = options with { TlsOptions = RespireConnection.CreateTlsOptions(options.TlsOptions, original?.Host ?? endpoint.Host) };
         // Client IDs belong to the original physical server, not the current MOVING destination.
@@ -223,7 +231,7 @@ internal sealed class ClientCore : IAsyncDisposable
         var endpoint = publication.Endpoint;
         DedicatedConnectionPool? pool = null;
         pool = new DedicatedConnectionPool(endpoint.Host, endpoint.Port,
-            Options.ToConnectionOptions(enableMaintenanceNotifications: true), Logger, NotifyRecoveryStateChanged,
+            CreateConnectionOptions(enableMaintenanceNotifications: true), Logger, NotifyRecoveryStateChanged,
             connection =>
             {
                 if (Cluster is not null || Sentinel is not null) return;
@@ -693,8 +701,8 @@ internal sealed class ClientCore : IAsyncDisposable
         lock (_hubGate)
         {
             ObjectDisposedException.ThrowIf(Disposed, this);
-            var options = controlConnection ? Options.ToControlConnectionOptions()
-                : Options.ToConnectionOptions(enableMaintenanceNotifications: !endpoint.IsUnixSocket);
+            var options = controlConnection ? Options.ToControlConnectionOptions() with { CacheMutationAdmission = ClientCache }
+                : CreateConnectionOptions(enableMaintenanceNotifications: !endpoint.IsUnixSocket);
             if (commandTimeout is { } timeout) options = options with { CommandTimeout = timeout };
             var pool = new DedicatedConnectionPool(endpoint.Host, endpoint.Port, options, Logger,
                 NotifyRecoveryStateChanged);

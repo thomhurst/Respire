@@ -91,7 +91,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            var options = (original.Multiplexer?.Options ?? core.Options.ToConnectionOptions()) with
+            var options = (original.Multiplexer?.Options ?? core.CreateConnectionOptions()) with
             {
                 Generation = null, EnableClientTracking = false, PushHandler = null, SubscriptionConfirmationHandler = null,
                 MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
@@ -523,10 +523,10 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
             _owner = owner;
             _core = core;
             Endpoint = options.PrimaryEndpoint;
-            ConnectionOptions = options.ToConnectionOptions(enableMaintenanceNotifications: true) with { Generation = this };
+            ConnectionOptions = core.CreateConnectionOptions(enableMaintenanceNotifications: true) with { Generation = this };
             var clientCache = core.ClientCache;
             RespirePushHandler? pushHandler = clientCache is null ? null : clientCache.HandlePush;
-            var commandOptions = options.ToConnectionOptions(pushHandler,
+            var commandOptions = core.CreateConnectionOptions(pushHandler,
                 enableClientTracking: core.ClientCache is not null, enableMaintenanceNotifications: true) with
             {
                 Generation = this,

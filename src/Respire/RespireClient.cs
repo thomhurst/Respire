@@ -841,7 +841,7 @@ public sealed partial class RespireClient : IRespireClient
             tokens, routingKeyIndex, firstArgumentIndex,
             readKind: RawCommandDescriptorLookup.GetReadKind(operation, arguments),
             cursorArgumentIndex: Verb.GetCursorArgumentIndex(operation),
-            cacheMetadata: ReadCache is null ? default : ClientCacheCommandMetadata.Get(operation));
+            cacheMetadata: _core.ClientCache is null ? default : ClientCacheCommandMetadata.Get(operation));
         var isBlocking = RespireCommand.IsBlocking(
             operation, RespireCommand.Classify(operation), arguments);
         RespValue response;
@@ -899,7 +899,7 @@ public sealed partial class RespireClient : IRespireClient
             tokens, routingKeyIndex, firstArgumentIndex,
             readKind: RawCommandDescriptorLookup.GetReadKind(operation, arguments),
             cursorArgumentIndex: Verb.GetCursorArgumentIndex(operation),
-            cacheMetadata: ReadCache is null ? default : ClientCacheCommandMetadata.Get(operation));
+            cacheMetadata: _core.ClientCache is null ? default : ClientCacheCommandMetadata.Get(operation));
         if (_core.Cluster is { } cluster
             && DynamicCommandRouting.IsClusterWideMutation(operation, arguments))
         {
@@ -1069,7 +1069,7 @@ public sealed partial class RespireClient : IRespireClient
         return (storedProcedureName,
             new DynamicCommand(tokens, routingKeyIndex, firstArgumentIndex, cacheMutation, readKind,
                 Verb.GetCursorArgumentIndex(operation), hasExplicitCacheMutation,
-                ReadCache is null ? default : ClientCacheCommandMetadata.Get(operation)));
+                _core.ClientCache is null ? default : ClientCacheCommandMetadata.Get(operation)));
     }
 
     private RawCommandKeyLayouts.KeyRouting ValidateClusterRawKeys(string operation, ReadOnlySpan<RespireValue> arguments)
@@ -1488,7 +1488,8 @@ public sealed partial class RespireClient : IRespireClient
         try
         {
             var command = new CmdN(Verbs.Watch, watchKeys);
-            using var reply = await SendOnConnectionAsync("WATCH", connection, command, cancellationToken).ConfigureAwait(false);
+            using var reply = await SendOnConnectionAsync("WATCH", connection,
+                new ProtocolCommand<CmdN>(command), cancellationToken).ConfigureAwait(false);
             if (_core.ClientCache is { } cache)
             {
                 // Tracking pushes use other sockets and may lag writes processed before WATCH.
@@ -3675,6 +3676,29 @@ public sealed partial class RespireClient : IRespireClient
 
     // Physical handles cannot follow transport retirement to a replacement socket. Keep the
     // same telemetry/error path, including atomic ASKING prefixes on checked destinations.
+    internal ValueTask<RespValue> SendAdmittedOnPinnedConnectionAsync<TCommand>(
+        string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+    {
+        var cache = _core.ClientCache;
+        // Audited physical-connection inspections do not mutate application data.
+        var mutationFence = cache is null || CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in command)
+            ? default : cache.BeforeCommand(operation, in command);
+        if (!mutationFence.IsRequired)
+            return SendOnPinnedConnectionAsync(operation, connection, command, cancellationToken);
+        try
+        {
+            return CompleteMutationAsync(
+                SendOnPinnedConnectionAsync(operation, connection, new MutationCommand<TCommand>(command, mutationFence), cancellationToken),
+                cache!, mutationFence);
+        }
+        catch
+        {
+            cache!.CompleteMutation(in mutationFence);
+            throw;
+        }
+    }
+
     internal ValueTask<RespValue> SendOnPinnedConnectionAsync<TCommand>(
         string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken,
         bool sendAsking = false)
@@ -4302,6 +4326,7 @@ public sealed partial class RespireClient : IRespireClient
     internal readonly struct SendTimestampCommand<TCommand>(TCommand command, TrackedScriptExecution execution) : IRespCommandWrapper
         where TCommand : struct, IRespCommand
     {
+        public bool IsConnectionProtocol => CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in command);
         public int GetWriteSizeHint() => command.GetWriteSizeHint();
         public void Write(ref RespWriter writer)
         {
@@ -4311,7 +4336,7 @@ public sealed partial class RespireClient : IRespireClient
 
         public ReadCommandKind ReadKind => command.ReadKind;
 
-        public ClientSideCacheCoordinator.MutationFence GetMutationFence() => command.GetMutationFence();
+        public ClientSideCacheCoordinator.MutationFence GetMutationFence() => CommandDispatchAdmission<TCommand>.GetMutationFence(in command);
 
         public void OnAccepted()
         {
@@ -4376,7 +4401,8 @@ public sealed partial class RespireClient : IRespireClient
                 {
                     clusterReply = await SendClusterAsync(
                         script.EvalShaOperation, cluster,
-                        new MutationCommand<Cmd2N>(new Cmd2N(script.EvalShaVerb, script.Sha1, tail[0], arguments), mutationFence),
+                        new MutationCommand<ReadOnlyCommand<Cmd2N>>(ReadOnlyCommand<Cmd2N>.ForAuditedScript(new Cmd2N(script.EvalShaVerb, script.Sha1, tail[0], arguments),
+                            script.IsCacheReadOnly), mutationFence),
                         cancellationToken, script.Sha1, allowReadFrom: true,
                         suppressTelemetry: true, scriptTelemetry: scriptTelemetry).ConfigureAwait(false);
                 }
@@ -4384,7 +4410,8 @@ public sealed partial class RespireClient : IRespireClient
                 {
                     clusterReply = await SendClusterAsync(
                         script.EvalOperation, cluster,
-                        new MutationCommand<Cmd2N>(new Cmd2N(script.EvalVerb, script.Source, tail[0], arguments), mutationFence),
+                        new MutationCommand<ReadOnlyCommand<Cmd2N>>(ReadOnlyCommand<Cmd2N>.ForAuditedScript(new Cmd2N(script.EvalVerb, script.Source, tail[0], arguments),
+                            script.IsCacheReadOnly), mutationFence),
                         cancellationToken, script.Sha1, allowReadFrom: true,
                         suppressTelemetry: true, scriptTelemetry: scriptTelemetry).ConfigureAwait(false);
                 }
@@ -4788,7 +4815,7 @@ public sealed partial class RespireClient : IRespireClient
         {
             var reply = await SendScriptCommandAsync(
                     script.EvalShaOperation, connection, new Cmd2N(script.EvalShaVerb, script.Sha1, tail[0], tail[1..]),
-                    cancellationToken, execution, mutationFence)
+                    cancellationToken, execution, mutationFence, script.IsCacheReadOnly)
                 .ConfigureAwait(false);
             return new RespireResult(in reply, _core.Options.Serializer);
         }
@@ -4798,7 +4825,7 @@ public sealed partial class RespireClient : IRespireClient
             if (execution is not null) execution.StartedTimestamp = Stopwatch.GetTimestamp();
             var reply = await SendScriptCommandAsync(
                     script.EvalOperation, connection, new Cmd2N(script.EvalVerb, script.Source, tail[0], tail[1..]),
-                    cancellationToken, execution, mutationFence)
+                    cancellationToken, execution, mutationFence, script.IsCacheReadOnly)
                 .ConfigureAwait(false);
             return new RespireResult(in reply, _core.Options.Serializer);
         }
@@ -4809,13 +4836,16 @@ public sealed partial class RespireClient : IRespireClient
         RespireConnection connection,
         Cmd2N command,
         CancellationToken cancellationToken,
-        TrackedScriptExecution? execution, ClientSideCacheCoordinator.MutationFence mutationFence)
+        TrackedScriptExecution? execution, ClientSideCacheCoordinator.MutationFence mutationFence, bool cacheReadOnly)
     {
         if (!mutationFence.IsRequired)
+        {
+            var readOnly = ReadOnlyCommand<Cmd2N>.ForAuditedScript(command, cacheReadOnly);
             return execution is null
-                ? SendOnConnectionCoreAsync(operation, connection, command, cancellationToken)
-                : SendOnConnectionCoreAsync(
-                    operation, connection, new SendTimestampCommand<Cmd2N>(command, execution), cancellationToken);
+                ? SendOnConnectionCoreAsync(operation, connection, readOnly, cancellationToken)
+                : SendOnConnectionCoreAsync(operation, connection,
+                    new SendTimestampCommand<ReadOnlyCommand<Cmd2N>>(readOnly, execution), cancellationToken);
+        }
         var bound = new MutationCommand<Cmd2N>(command, mutationFence);
         return execution is null
             ? SendOnConnectionCoreAsync(operation, connection, bound, cancellationToken)

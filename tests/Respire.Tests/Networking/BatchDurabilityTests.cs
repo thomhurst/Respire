@@ -12,6 +12,71 @@ namespace Respire.Tests.Networking;
 public class BatchDurabilityTests
 {
     [Test]
+    [MatrixDataSource]
+    public async Task CachedDurabilityRetainsAdmissionUntilAcknowledgementCleanup(
+        [Matrix(false, true)] bool aof, [Matrix("success", "cancel", "error")] string outcome)
+    {
+        var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var value = "old";
+        await using var server = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
+                "GET key" => Encoding.ASCII.GetBytes($"${value.Length}\r\n{value}\r\n"),
+                _ => null,
+            },
+            SuppressReply = command =>
+            {
+                if (command == "SET key new") value = "new";
+                if (!command.StartsWith("WAIT", StringComparison.Ordinal)) return false;
+                waiting.TrySetResult();
+                return true;
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp3, ClientSideCache = new(), Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
+        });
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("old");
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
+        using var cancellation = new CancellationTokenSource();
+        using var batch = client.CreateBatch();
+        var write = batch.Set("key", "new");
+        var executing = Execute(batch, aof, 1, TimeSpan.Zero, cancellation.Token);
+        await Task.WhenAny(waiting.Task, executing).WaitAsync(TimeSpan.FromSeconds(5));
+        if (executing.IsCompleted) await executing;
+        await waiting.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var cache = client.Core.ClientCache!;
+        await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(1);
+        await Assert.That(write.Result).IsTrue();
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("new");
+        await Assert.That(client.ClientSideCache.Count).IsEqualTo(0);
+
+        if (outcome == "cancel")
+        {
+            cancellation.Cancel();
+            await Assert.That(async () => await executing.WaitAsync(TimeSpan.FromSeconds(5))).Throws<OperationCanceledException>();
+        }
+        else
+        {
+            var acknowledgementIndex = Array.FindIndex(server.ReceivedCommands.ToArray(),
+                command => command.StartsWith("WAIT", StringComparison.Ordinal));
+            var reply = aof ? "*2\r\n:1\r\n:0\r\n"u8.ToArray() : ":0\r\n"u8.ToArray();
+            if (outcome == "error") reply = "-ERR acknowledgement failed\r\n"u8.ToArray();
+            await server.SendRawAsync(reply, server.ReceivedConnectionIds[acknowledgementIndex]);
+            if (outcome == "error")
+                await Assert.That(async () => await executing.WaitAsync(TimeSpan.FromSeconds(5))).ThrowsExactly<RespireServerException>();
+            else await Assert.That(await executing.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(new RespireAofAcknowledgement(aof ? 1 : 0, 0));
+        }
+        await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(0);
+        await Assert.That(write.Result).IsTrue();
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("new");
+        await Assert.That(client.ClientSideCache.Count).IsEqualTo(1);
+    }
+
+    [Test]
     [Arguments(false, false)]
     [Arguments(false, true)]
     [Arguments(true, false)]

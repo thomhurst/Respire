@@ -200,8 +200,11 @@ public sealed class RespireHashImportSession : IAsyncDisposable
         var fence = cache is null ? default : cache.BeforeCommand(operation, in command);
         try
         {
-            using var response = await _client.SendMutationOnConnectionAsync(operation, _connection, command,
-                fence, cancellationToken, allowStreamingConnectionReroute: false).ConfigureAwait(false);
+            using var response = operation == SetOperation
+                ? await _client.SendMutationOnConnectionAsync(operation, _connection, command,
+                    fence, cancellationToken, allowStreamingConnectionReroute: false).ConfigureAwait(false)
+                : await _client.SendOnConnectionAsync(operation, _connection, new ProtocolCommand<CmdN>(command),
+                    cancellationToken, allowStreamingConnectionReroute: false).ConfigureAwait(false);
             return convert(response);
         }
         catch (Exception error)
