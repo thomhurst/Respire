@@ -410,7 +410,7 @@ jobs:
           TUNIT_DISABLE_HTML_REPORTER: 'true'
         run: >-
           dotnet run --project tests/Respire.Tests -c Debug -f net8.0 --no-build --
-          --treenode-filter '/*/*/(WriterInvariantTests)|(ReservedWriterTests)|(CommandCatalogTests)|(RespWriterTests)|(CommandWriterTests)|(Utf8SuffixWriterTests)|(RespFramingTests)/*'
+          --treenode-filter "$(cat .github/writer-invariants-filter.txt)"
           --minimum-expected-tests "$(cat .github/writer-invariants-minimum.txt)"
           --report-trx --results-directory writer-invariants-net8.0
 

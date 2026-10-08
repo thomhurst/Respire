@@ -183,7 +183,7 @@ internal sealed class WriteBuffer
         internal long Begin()
         {
             if (_hasUnpublishedBytes)
-                throw new InvalidOperationException("Complete or roll back the RESP writer before creating another writer.");
+                throw new InvalidOperationException("A previous RESP writer left unfinished bytes. Complete it, or roll back with TruncateTo or Reset, before creating another writer.");
             return _nextSequence = unchecked(_nextSequence + 1);
         }
 
