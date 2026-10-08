@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.SignalR.Protocol;
+using Microsoft.Extensions.Logging;
 using Respire.SignalR.Internal;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -71,6 +72,49 @@ public class RemoteInvocationLifetimeTests
         await Assert.That(results.TryGetType("id", out _)).IsTrue();
         await Assert.That(calls).IsEqualTo(1);
         await results.CompleteAllAsync();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DetachedExpiryObservesCompletionFailure(bool asynchronous)
+    {
+        var results = new ClientResultsManager();
+        using var disconnected = new CancellationTokenSource();
+        disconnected.Cancel();
+        var logger = new CompletionLogger();
+        var failure = new IOException("Forwarding failed.");
+        var forwarding = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        var lifetime = new RemoteInvocationLifetime(results, "id", disconnected.Token, TimeSpan.FromMinutes(1), _ =>
+        {
+            Interlocked.Increment(ref calls);
+            if (!asynchronous) throw failure;
+            return forwarding.Task;
+        }, logger);
+        Register(results, lifetime);
+        lifetime.Start();
+        await Assert.That(results.TryGetType("id", out _)).IsFalse();
+        if (asynchronous) forwarding.SetException(failure);
+        var observed = await logger.Failure.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(ReferenceEquals(observed, failure)).IsTrue();
+        await lifetime.CompleteAsync(CompletionMessage.WithResult("id", 1));
+        await Assert.That(calls).IsEqualTo(1);
+        await Assert.That(logger.Calls).IsEqualTo(1);
+    }
+
+    private sealed class CompletionLogger : ILogger
+    {
+        internal TaskCompletionSource<Exception> Failure { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal int Calls;
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel level) => true;
+        public void Log<TState>(LogLevel level, EventId id, TState state, Exception? error, Func<TState, Exception?, string> format)
+        {
+            if (id.Id != 13 || error is null) return;
+            Interlocked.Increment(ref Calls);
+            Failure.TrySetResult(error);
+        }
     }
 
     private static void Register(ClientResultsManager results, RemoteInvocationLifetime lifetime)

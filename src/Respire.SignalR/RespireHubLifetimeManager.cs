@@ -572,7 +572,7 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
                     {
                         RedisLog.ErrorForwardingResult(_logger, completionMessage.InvocationId!, ex);
                     }
-                });
+                }, _logger);
                 try
                 {
                     _clientResultsManager.AddInvocation(invocation.InvocationId,

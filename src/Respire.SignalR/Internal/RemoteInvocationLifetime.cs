@@ -1,4 +1,6 @@
 using Microsoft.AspNetCore.SignalR.Protocol;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Respire.SignalR.Internal;
 
@@ -13,17 +15,19 @@ internal sealed class RemoteInvocationLifetime
     private readonly CancellationToken _disconnected;
     private readonly Func<CompletionMessage, Task> _forward;
     private readonly TimeSpan _timeout;
+    private readonly ILogger _logger;
     private CancellationTokenRegistration _registration;
     private bool _completed;
 
     internal RemoteInvocationLifetime(ClientResultsManager results, string invocationId,
-        CancellationToken disconnected, TimeSpan timeout, Func<CompletionMessage, Task> forward)
+        CancellationToken disconnected, TimeSpan timeout, Func<CompletionMessage, Task> forward, ILogger? logger = null)
     {
         _results = results;
         _invocationId = invocationId;
         _disconnected = disconnected;
         _forward = forward;
         _timeout = timeout;
+        _logger = logger ?? NullLogger.Instance;
         _lifetime = CancellationTokenSource.CreateLinkedTokenSource(disconnected);
         _token = _lifetime.Token;
     }
@@ -73,8 +77,21 @@ internal sealed class RemoteInvocationLifetime
         {
             var error = _disconnected.IsCancellationRequested
                 ? "Connection disconnected." : "Remote client result timed out.";
-            // Forwarding catches transport failures; pub/sub cannot replay a lost completion.
-            _ = pending.Completion(pending.Tcs, CompletionMessage.WithError(_invocationId, error));
+            _ = CompleteExpiredAsync(pending.Completion, pending.Tcs,
+                CompletionMessage.WithError(_invocationId, error));
+        }
+    }
+
+    private async Task CompleteExpiredAsync(Func<object, CompletionMessage, Task> complete,
+        object owner, CompletionMessage message)
+    {
+        try
+        {
+            await complete(owner, message).ConfigureAwait(false);
+        }
+        catch (Exception error)
+        {
+            RedisLog.ErrorForwardingResult(_logger, _invocationId, error);
         }
     }
 }
