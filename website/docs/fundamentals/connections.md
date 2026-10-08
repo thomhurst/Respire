@@ -633,6 +633,24 @@ endpoints that recovered without changing address. A concurrent topology publica
 one retry when it replaces every captured candidate, under the original sampling budget.
 Healthy cached candidates continue serving reads while that refresh runs.
 
+Prepared Cluster replica selection does not allocate refresh callbacks until a refresh is
+needed. Optimized Release allocation controls cover healthy `Replica`, `ReplicaPreferred`, pinned replica
+cursor routes, and `Nearest` routes with cached latency samples, plus a primary control.
+They do not claim that a public read, connection establishment, discovery, an expired
+sample, or a topology retry is allocation-free. Replica revalidation and sampling intervals
+are unchanged. Debug builds also validate routing correctness, but compiler-generated async
+state-machine objects still allocate in that configuration.
+
+The `run-cluster-replica-benchmarks` pull request label compares the pinned merge and its
+actual base on one net10.0 runner, using the same real primary/replica cluster and fixture.
+It brackets the candidate with two baseline runs and measures prepared routing, public
+replica GETs at one and fifty concurrent reads, and matching primary controls. Review
+latency confidence intervals, allocations, dispersion, and CPU per operation before
+accepting a performance change. CPU counters include the entire client benchmark process
+after setup, including calibration, warmup, background refresh and response completion;
+they do not isolate measured iterations or Redis server CPU. Dry runs establish fixture
+correctness only.
+
 PING round-trip time includes local connection queues, server scheduling, and network delay.
 It does not measure geographic distance, replication lag, or the execution time of a particular
 read. Configured and Sentinel candidates still follow the replication-link preference described

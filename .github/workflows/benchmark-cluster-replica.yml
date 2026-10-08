@@ -1,0 +1,165 @@
+name: Cluster replica routing benchmarks
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}-${{ github.event.label.name }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    if: github.event.label.name == 'run-cluster-replica-benchmarks'
+    name: Cluster replica routing (${{ matrix.framework }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: [net10.0]
+    services:
+      redis:
+        image: redis:8.10@sha256:2c2dff791878316e3b083188be0d578423b24813cdda5de0e80ea4f7b3e6bfd6
+        ports: [6379:6379, 6380:6380, 6381:6381]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      FRAMEWORK: ${{ matrix.framework }}
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: 6380
+      REDIS_REPLICA_PORT: 6381
+      EXPECTED_MERGE_SHA: ${{ github.sha }}
+      EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: |
+            10.0.x
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: candidate
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Pin the merge snapshot and its actual baseline
+        id: revisions
+        shell: python
+        run: |
+          import os
+          import subprocess
+          from pathlib import Path
+
+          def git(*arguments):
+              return subprocess.check_output(['git', '-C', 'candidate', *arguments], text=True).strip()
+
+          merge = git('rev-parse', 'HEAD')
+          parents = git('show', '-s', '--format=%P', 'HEAD').split()
+          if merge != os.environ['EXPECTED_MERGE_SHA']:
+              raise SystemExit(f'Candidate merge changed: {merge}')
+          if len(parents) != 2 or parents[1] != os.environ['EXPECTED_HEAD_SHA']:
+              raise SystemExit(f'Candidate does not merge the expected PR head: {parents}')
+          # The payload base can lag main; use the immutable merge's actual first parent.
+          # This keeps both sources aligned even when the PR merge ref moves during the run.
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'baseline_sha={parents[0]}\n')
+          Path(os.environ['GITHUB_WORKSPACE'], 'comparison-revisions.txt').write_text(
+              f'merge={merge}\nbaseline={parents[0]}\nhead={parents[1]}\n'
+              f'event_base={os.environ["EVENT_BASE_SHA"]}\n')
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.revisions.outputs.baseline_sha }}
+          path: baseline
+          persist-credentials: false
+      - name: Start a cluster primary and its replica
+        shell: bash
+        env:
+          REDIS_CONTAINER: ${{ job.services.redis.id }}
+        run: |
+          set -euo pipefail
+          docker exec -i "$REDIS_CONTAINER" sh -s < candidate/scripts/benchmarks/start-cluster-replica.sh
+      - name: Validate both builds and measure baseline, candidate, baseline
+        shell: bash
+        env:
+          EXPECTED_BASE_SHA: ${{ steps.revisions.outputs.baseline_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git -C baseline rev-parse HEAD)" = "$EXPECTED_BASE_SHA"
+          test "$(git -C candidate rev-parse HEAD)" = "$EXPECTED_MERGE_SHA"
+          test "$(git -C candidate rev-parse HEAD^1)" = "$EXPECTED_BASE_SHA"
+          test "$(git -C candidate rev-parse HEAD^2)" = "$EXPECTED_HEAD_SHA"
+          cp candidate/benchmarks/Respire.Benchmarks/ClusterReplicaRoutingBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
+          for phase in baseline-validation candidate-validation baseline-a candidate baseline-b; do
+            source=baseline
+            job=Medium
+            if [[ "$phase" == candidate* ]]; then source=candidate; fi
+            if [[ "$phase" == *validation ]]; then job=Dry; fi
+            (
+              cd "$source"
+              git rev-parse HEAD
+              dotnet run --project benchmarks/Respire.Benchmarks -c Release -f "$FRAMEWORK" -- \
+                --filter '*ClusterReplicaRoutingBenchmarks*' --job "$job" --exporters json markdown \
+                --artifacts "$GITHUB_WORKSPACE/results/$phase"
+            ) > "$GITHUB_WORKSPACE/$phase.log" 2>&1
+          done
+      - name: Require all paired cases and publish reports
+        shell: python
+        run: |
+          import json
+          import os
+          from pathlib import Path
+          expected = {'PreparedReplicaRoute', 'PreparedPrimaryRoute', 'ReplicaStringSingle', 'PrimaryStringSingle',
+                      'ReplicaStringConcurrent50', 'PrimaryStringConcurrent50'}
+          revisions = dict(line.split('=', 1) for line in Path('comparison-revisions.txt').read_text().splitlines())
+          counters = {}
+          launch_counters = {}
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write('## Cluster replica routing before/after\n\nPinned base and matching merge candidate use the same replicated cluster and fixture. Assess CPU per operation, latency confidence intervals, allocations, primary controls, and both baseline runs. A material regression blocks acceptance. CPU counters cover the whole benchmark process, including warmup, calibration, and completion work. Raw launch counters remain in the logs.\n')
+              summary.write('\nCandidate merge and its base/head parents:\n\n' + Path('comparison-revisions.txt').read_text() + '\n')
+              for phase in ('baseline-validation', 'candidate-validation', 'baseline-a', 'candidate', 'baseline-b'):
+                  reports = list(Path('results', phase, 'results').glob('*-report-full-compressed.json'))
+                  assert len(reports) == 1, f'Missing report: {phase}'
+                  cases = json.loads(reports[0].read_text())['Benchmarks']
+                  assert len(cases) == 6 and {case['Method'] for case in cases} == expected, f'Missing paired cases: {phase}'
+                  assert all(case.get('Statistics') and case['Statistics']['Mean'] > 0 for case in cases), phase
+                  assert all(case.get('Memory') is not None for case in cases), phase
+                  lines = Path(f'{phase}.log').read_text().splitlines()
+                  assert lines[0] == revisions['merge' if phase.startswith('candidate') else 'baseline'], phase
+                  prefix = 'CLUSTER_REPLICA_PROCESS_METRICS '
+                  records = [json.loads(line[len(prefix):]) for line in lines if line.startswith(prefix)]
+                  assert {record['operation'] for record in records} == expected, f'Missing CPU cases: {phase}'
+                  assert all(record['operations'] > 0 and record['cpuMilliseconds'] >= 0 and record['elapsedSeconds'] > 0 for record in records), phase
+                  if 'validation' not in phase:
+                      counters[phase] = {}
+                      launch_counters[phase] = {}
+                      for method in sorted(expected):
+                          launches = [record for record in records if record['operation'] == method]
+                          cpu = sum(record['cpuMilliseconds'] for record in launches)
+                          assert cpu > 0, (phase, method)
+                          counters[phase][method] = cpu * 1e6 / sum(record['operations'] for record in launches)
+                          launch_counters[phase][method] = [dict(record, cpuNanosecondsPerOperation=
+                              record['cpuMilliseconds'] * 1e6 / record['operations']) for record in launches]
+                      summary.write(f'\n### {phase}\n\n')
+                      summary.write(next(Path('results', phase, 'results').glob('*-report-github.md')).read_text())
+              summary.write('\n### Whole-process CPU (ns per operation)\n\n| Method | Baseline A | Candidate | Baseline B |\n|---|---:|---:|---:|\n')
+              for method in sorted(expected):
+                  values = [counters[phase][method] for phase in ('baseline-a', 'candidate', 'baseline-b')]
+                  summary.write(f'| {method} | ' + ' | '.join(f'{value:.2f}' for value in values) + ' |\n')
+          Path('results/cpu-summary.json').write_text(json.dumps(counters, indent=2))
+          Path('results/cpu-launches.json').write_text(json.dumps(launch_counters, indent=2))
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: cluster-replica-routing-${{ matrix.framework }}
+          path: |
+            results/
+            *.log
+            comparison-revisions.txt
+          retention-days: 30

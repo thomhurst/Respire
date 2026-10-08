@@ -119,7 +119,7 @@ internal sealed partial class ClusterRouter
                 && (ReferenceEquals(currentRoute.Primary, node) || currentRoute.Replicas?.Nodes.Contains(node) == true))
             {
                 if (routes is { IsDueForRevalidation: true })
-                    _ = routes.JoinOrStartRefresh(() => RefreshReplicaRoutesAsync(slot));
+                    _ = JoinReplicaRefresh(routes, slot);
                 return selected;
             }
         }
@@ -130,7 +130,7 @@ internal sealed partial class ClusterRouter
             // which can learn a replacement through another still-healthy master.
             var currentRoute = RoutingSnapshot[slot];
             if (ReferenceEquals(owner, currentRoute.Primary) && ReferenceEquals(routes, currentRoute.Replicas)
-                && routes?.JoinOrStartRefresh(() => RefreshReplicaRoutesAsync(slot)) is { } refresh)
+                && routes is not null && JoinReplicaRefresh(routes, slot) is { } refresh)
                 await refresh.WaitAsync(cancellationToken).ConfigureAwait(false);
             return await GetNearestReadConnectionAsync(slot, cancellationToken, discovery, retry: false,
                 samplingDeadline: deadline, previousFailure: lastError, excluded: excluded).ConfigureAwait(false);
