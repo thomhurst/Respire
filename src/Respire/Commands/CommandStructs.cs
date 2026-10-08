@@ -51,6 +51,8 @@ internal readonly struct SnapshotCommand(byte[] frame, int? clusterSlot, ReadCom
 internal readonly struct Cmd(Verb verb) : IRespCommand
 {
     public int GetWriteSizeHint() => CommandWriteSizeHint.For(verb);
+    public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => verb.CacheMetadata;
+    public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
     public ReadCommandKind ReadKind => verb.ReadKind;
     public int CursorArgumentIndex => verb.CursorArgumentIndex;
 
@@ -81,6 +83,8 @@ internal readonly struct Cmd1(Verb verb, RespireValue a1) : IRespCommand
         return index == 0;
     }
 
+    public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => verb.CacheMetadata;
+    public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
     public ReadCommandKind ReadKind => verb.ReadKind;
     public int CursorArgumentIndex => verb.CursorArgumentIndex;
 
@@ -106,6 +110,8 @@ internal readonly struct Cmd1(Verb verb, RespireValue a1) : IRespCommand
 internal readonly struct Cmd2(Verb verb, RespireValue a1, RespireValue a2) : IRespCommand
 {
     public int GetWriteSizeHint() => CommandWriteSizeHint.For(verb, a1.GetWriteSizeHint(), a2.GetWriteSizeHint());
+    public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => verb.CacheMetadata;
+    public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
     public ReadCommandKind ReadKind => verb.ReadKind;
     public int CursorArgumentIndex => verb.CursorArgumentIndex;
 
@@ -135,6 +141,8 @@ internal readonly struct Cmd3(Verb verb, RespireValue a1, RespireValue a2, Respi
 {
     public int GetWriteSizeHint() => CommandWriteSizeHint.For(verb,
         a1.GetWriteSizeHint(), a2.GetWriteSizeHint(), a3.GetWriteSizeHint());
+    public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => verb.CacheMetadata;
+    public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
     public ReadCommandKind ReadKind => verb.ReadKind;
     public int CursorArgumentIndex => verb.CursorArgumentIndex;
 
@@ -167,6 +175,8 @@ internal readonly struct Cmd4(Verb verb, RespireValue a1, RespireValue a2, Respi
 {
     public int GetWriteSizeHint() => CommandWriteSizeHint.For(verb,
         a1.GetWriteSizeHint(), a2.GetWriteSizeHint(), a3.GetWriteSizeHint(), a4.GetWriteSizeHint());
+    public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => verb.CacheMetadata;
+    public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
     public ReadCommandKind ReadKind => verb.ReadKind;
     public int CursorArgumentIndex => verb.CursorArgumentIndex;
 
@@ -202,6 +212,8 @@ internal readonly struct Cmd5(Verb verb, RespireValue a1, RespireValue a2, Respi
 {
     public int GetWriteSizeHint() => CommandWriteSizeHint.For(verb,
         a1.GetWriteSizeHint(), a2.GetWriteSizeHint(), a3.GetWriteSizeHint(), a4.GetWriteSizeHint(), a5.GetWriteSizeHint());
+    public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => verb.CacheMetadata;
+    public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
     public ReadCommandKind ReadKind => verb.ReadKind;
     public int CursorArgumentIndex => verb.CursorArgumentIndex;
 
@@ -240,6 +252,8 @@ internal readonly struct Cmd5(Verb verb, RespireValue a1, RespireValue a2, Respi
 internal readonly struct CmdN(Verb verb, RespireValue[] args) : IRespCommand
 {
     public int GetWriteSizeHint() => CommandWriteSizeHint.For(verb, args);
+    public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => verb.CacheMetadata;
+    public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
     public ReadCommandKind ReadKind => verb.ReadKind;
     public int CursorArgumentIndex => verb.CursorArgumentIndex;
 
@@ -299,6 +313,8 @@ internal readonly struct Cmd1N(Verb verb, RespireValue a1, RespireValue[] rest) 
 {
     public int GetWriteSizeHint() => CommandWriteSizeHint.Add(
         CommandWriteSizeHint.For(verb, a1.GetWriteSizeHint()), rest);
+    public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => verb.CacheMetadata;
+    public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
     public ReadCommandKind ReadKind => verb.ReadKind;
     public int CursorArgumentIndex => verb.CursorArgumentIndex;
 
@@ -401,6 +417,8 @@ internal readonly struct Cmd2N(Verb verb, RespireValue a1, RespireValue a2, Resp
         return false;
     }
 
+    public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => verb.CacheMetadata;
+    public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
     public ReadCommandKind ReadKind => verb.ReadKind;
     public int CursorArgumentIndex => verb.CursorArgumentIndex;
 
@@ -477,7 +495,8 @@ internal readonly struct DynamicCommand(
     RespireCacheMutation cacheMutation = RespireCacheMutation.Unknown,
     ReadCommandKind readKind = ReadCommandKind.None,
     int cursorArgumentIndex = -1,
-    bool hasExplicitCacheMutation = false) : IRespCommand
+    bool hasExplicitCacheMutation = false,
+    ClientCacheCommandMetadata cacheMetadata = default) : IRespCommand
 {
     public int GetWriteSizeHint() => CommandWriteSizeHint.Add(CommandWriteSizeHint.HeaderLength, tokens);
     public ReadCommandKind ReadKind => readKind;
@@ -485,8 +504,11 @@ internal readonly struct DynamicCommand(
 
     public RespireCacheMutation GetCacheMutation(string operation)
         => cacheMutation == RespireCacheMutation.Unknown && !hasExplicitCacheMutation
-            ? RespireCommands.GetCacheMutation(operation)
+            ? GetClientCacheMetadata(operation).Policy
             : cacheMutation;
+
+    public ClientCacheCommandMetadata GetClientCacheMetadata(string operation)
+        => cacheMetadata.IsInitialized ? cacheMetadata : ClientCacheCommandMetadata.Get(operation);
 
     public bool TryGetArgument(int index, out RespireValue value)
     {
@@ -698,13 +720,17 @@ internal readonly struct CatalogCommand(RespireCommand command, RespireValue[] a
     public ReadCommandKind ReadKind => readKind;
     public int CursorArgumentIndex => command.CursorArgumentIndex;
 
+    public ClientCacheCommandMetadata GetClientCacheMetadata(string operation)
+        => operation.Equals(command.Name, StringComparison.OrdinalIgnoreCase) && command.Verb.CacheMetadata.IsInitialized
+            ? command.Verb.CacheMetadata : ClientCacheCommandMetadata.Get(operation);
+
     public RespireCacheMutation GetCacheMutation(string operation)
     {
         if (command.HasExplicitCacheMutation) return command.CacheMutation;
         if (!operation.Equals(command.Name, StringComparison.OrdinalIgnoreCase)
             || command.CacheMutation == RespireCacheMutation.Unknown)
         {
-            return RespireCommands.GetCacheMutation(operation);
+            return GetClientCacheMetadata(operation).Policy;
         }
 
         return command.CacheMutation;
@@ -769,6 +795,8 @@ internal readonly struct CatalogCommand(RespireCommand command, RespireValue[] a
 internal readonly struct MSetExCommand(Verb verb, RespireValue[] args) : IRespCommand
 {
     public int GetWriteSizeHint() => CommandWriteSizeHint.For(verb, args);
+    public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => verb.CacheMetadata;
+    public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
     public ReadCommandKind ReadKind => verb.ReadKind;
     public int CursorArgumentIndex => verb.CursorArgumentIndex;
 
@@ -819,6 +847,8 @@ internal readonly struct MSetExCommand(Verb verb, RespireValue[] args) : IRespCo
 /// </summary>
 internal readonly struct IncrementCommand(Verb one, Verb by, RespireValue key, long delta) : IRespCommand
 {
+    public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => (delta == 1 ? one : by).CacheMetadata;
+    public RespireCacheMutation GetCacheMutation(string operation) => GetClientCacheMetadata(operation).Policy;
     public int GetWriteSizeHint() => CommandWriteSizeHint.For(delta == 1 ? one : by,
         key.GetWriteSizeHint(), delta == 1 ? 0 : CommandWriteSizeHint.Bulk(20));
     public ReadCommandKind ReadKind => ReadCommandKind.None;
@@ -853,6 +883,8 @@ internal readonly struct IncrementCommand(Verb one, Verb by, RespireValue key, l
 internal readonly struct SetCommand(
     RespireValue key, RespireValue value, RespireExpiry expiry, SetWhen when, bool returnOld) : IRespCommand
 {
+    public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => Verbs.Set.CacheMetadata;
+    public RespireCacheMutation GetCacheMutation(string operation) => Verbs.Set.CacheMetadata.Policy;
     public int GetWriteSizeHint() => CommandWriteSizeHint.For(Verbs.Set,
         key.GetWriteSizeHint(), value.GetWriteSizeHint(), CommandWriteSizeHint.SetOptions);
     public ReadCommandKind ReadKind => ReadCommandKind.None;
@@ -934,6 +966,8 @@ internal readonly struct SetCommand(
 /// <summary>GETEX key PX milliseconds | PXAT unix-milliseconds | PERSIST.</summary>
 internal readonly struct GetExCommand(RespireValue key, RespireExpiry expiry) : IRespCommand
 {
+    public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => RespireCommands.String.GETEX.Verb.CacheMetadata;
+    public RespireCacheMutation GetCacheMutation(string operation) => RespireCommands.String.GETEX.Verb.CacheMetadata.Policy;
     public int GetWriteSizeHint() => CommandWriteSizeHint.For(RespireCommands.String.GETEX.Verb,
         key.GetWriteSizeHint(), CommandWriteSizeHint.ExpiryOptions + CommandOptionFrames.PERSIST.Length);
     public ReadCommandKind ReadKind => ReadCommandKind.None;

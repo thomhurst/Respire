@@ -5,6 +5,7 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
+using Respire.Commands;
 using Respire.Networking;
 using Respire.Internal;
 
@@ -290,6 +291,9 @@ internal interface IRespCommand
 
     /// <summary>Returns cache mutation metadata for the command.</summary>
     RespireCacheMutation GetCacheMutation(string operation) => RespireCommands.GetCacheMutation(operation);
+
+    /// <summary>Returns precomputed cache classification, or conservatively classifies a custom command.</summary>
+    ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => ClientCacheCommandMetadata.Get(operation);
 
     /// <summary>Returns the command's primary routing key when it is represented explicitly.</summary>
     bool TryGetPrimaryKey(out RespireValue key)

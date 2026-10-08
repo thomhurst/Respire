@@ -31,6 +31,7 @@ Benchmark concurrency groups must include `github.event.label.name` alongside th
 | `benchmark-aggregate-parsing.yml` | `run-aggregate-benchmarks` |
 | `benchmark-byte-get.yml` | `run-byte-get-benchmarks` |
 | `benchmark-cache-aside.yml` | `run-cache-aside-benchmarks` |
+| `benchmark-cache-classification.yml` | `run-cache-classification-benchmarks` |
 | `benchmark-cache-contention.yml` | `run-cache-contention-benchmarks` |
 | `benchmark-cache-invalidation.yml` | `run-cache-invalidation-benchmarks` |
 | `benchmark-cache-read.yml` | `run-cache-read-benchmarks` |

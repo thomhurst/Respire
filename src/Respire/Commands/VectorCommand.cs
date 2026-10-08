@@ -7,6 +7,8 @@ namespace Respire.Commands;
 internal readonly struct VectorCommand(Verb verb, RespireValue key, ReadOnlyMemory<float> vector,
     RespireVectorEncoding encoding, RespireValue[] before, RespireValue[] after) : IRespCommand
 {
+    public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => verb.CacheMetadata;
+    public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
     public ReadCommandKind ReadKind => verb.ReadKind;
     public int CursorArgumentIndex => verb.CursorArgumentIndex;
 

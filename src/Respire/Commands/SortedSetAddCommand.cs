@@ -9,6 +9,8 @@ internal readonly struct SortedSetAddCommand(
     bool increment = false, RespireValue[]? pairs = null) : IRespCommand
 {
     public ReadCommandKind ReadKind => ReadCommandKind.None;
+    public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => Verbs.ZAdd.CacheMetadata;
+    public RespireCacheMutation GetCacheMutation(string operation) => Verbs.ZAdd.CacheMetadata.Policy;
     public bool TryGetPrimaryKey(out RespireValue primaryKey) { primaryKey = key; return true; }
     public bool TryGetClusterSlot(out int slot) => key.TryGetClusterSlot(out slot);
 

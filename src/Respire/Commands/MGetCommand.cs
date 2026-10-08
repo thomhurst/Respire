@@ -13,6 +13,8 @@ internal readonly struct MGetCommand(RespireValue[] arguments, int? clusterSlot)
     private CmdN Command => new(Verbs.MGet, arguments);
     /// <inheritdoc />
     public ReadCommandKind ReadKind => Verbs.MGet.ReadKind;
+    public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => Verbs.MGet.CacheMetadata;
+    public RespireCacheMutation GetCacheMutation(string operation) => Verbs.MGet.CacheMetadata.Policy;
     public int GetWriteSizeHint() => Command.GetWriteSizeHint();
     /// <summary>Uses the validated slot, falling back to normal command hashing when none was supplied.</summary>
     public bool TryGetClusterSlot(out int slot)

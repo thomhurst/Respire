@@ -198,6 +198,17 @@ for `GET`, `MGET`, and `HGET`, plus hot `GET`, against both same-run baseline co
 include one complete burst and its local cache eviction. Process CPU counters include benchmark
 warmup/calibration and background client work; they are diagnostic, not per-operation CPU samples.
 
+Known command descriptors retain cache classification computed when their verbs initialize.
+Argument-dependent key counts, destination layouts, and `CLIENT` subcommands are still
+checked for each invocation. Explicit mutation declarations remain effective, and unknown
+commands retain conservative invalidation.
+
+The cache-classification comparison measures typed and raw cached `SET` with 50 callers,
+cache-off controls, two-key `MSET`/`DEL` pairs, and an independent `GET` miss. Separate
+classification cases isolate the existing command metadata API. Public write measurements
+include task scheduling, response validation, and cache fencing; classification timings alone
+do not establish an equivalent improvement in Redis throughput.
+
 ## Partial hash reads
 
 Set `ClientSideCache = new() { ReuseHashFields = true }` to enable partial hash reads.

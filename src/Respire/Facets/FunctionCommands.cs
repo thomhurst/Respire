@@ -162,6 +162,8 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
     {
         public int GetWriteSizeHint() => command.GetWriteSizeHint();
         public ReadCommandKind ReadKind => command.ReadKind;
+        public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => command.GetClientCacheMetadata(operation);
+        public RespireCacheMutation GetCacheMutation(string operation) => command.GetCacheMutation(operation);
         public bool TryGetClusterSlot(out int slot) => command.TryGetClusterSlot(out slot);
         public void Write(ref RespWriter writer) => command.Write(ref writer);
         public CancellationToken GetResponseCancellationToken(CancellationToken admissionToken) => callerToken;

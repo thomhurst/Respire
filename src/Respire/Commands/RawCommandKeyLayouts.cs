@@ -27,9 +27,9 @@ internal static class RawCommandKeyLayouts
 
     internal readonly record struct KeyLayout(int Start, int Count, int Stride = 1, int Extra = -1);
 
-    private enum LayoutKind
+    internal enum LayoutKind : byte
     {
-        None, First, FirstTwo, AfterFirst, All, Triples, Pairs, BitOp, CountedAfterName, Counted, CountedWithDestination,
+        Unknown, None, First, FirstTwo, AfterFirst, All, Triples, Pairs, BitOp, CountedAfterName, Counted, CountedWithDestination,
         AllExceptLast, CountedPairs, CountedAfterTimeout, StreamRead, StreamGroupRead, Migrate,
     }
     // Prefixable marks layouts that name every key position, so key-prefixed views may rewrite them.
@@ -44,10 +44,14 @@ internal static class RawCommandKeyLayouts
     internal static MutationKind GetMutationKind(string operation)
         => Layouts.TryGetValue(operation, out var definition) ? definition.Mutation : MutationKind.Unknown;
 
+    internal static (LayoutKind Layout, MutationKind Mutation) GetMutationMetadata(string operation)
+        => Layouts.TryGetValue(operation, out var definition)
+            ? (definition.Kind, definition.Mutation) : (LayoutKind.Unknown, MutationKind.Unknown);
+
     private static Definition CreateDefinition(string operation, LayoutKind kind, bool deferred, bool prefixable = false)
     {
         // Provider metadata owns read/write classification; this table owns which arguments are written.
-        var mutation = RespireCommands.GetCacheMutation(operation) switch
+        var mutation = CommandCacheMutationMetadata.Get(operation) switch
         {
             RespireCacheMutation.ReadOnly => MutationKind.ReadOnly,
             RespireCacheMutation.Mutation or RespireCacheMutation.SingleKey or RespireCacheMutation.MultiKey
@@ -200,15 +204,18 @@ internal static class RawCommandKeyLayouts
     /// </summary>
     internal static bool TryGetMutationLayout(
         string operation, in ClientCacheCommandKey args, out KeyLayout layout, bool includeReadKeys = false)
+        => TryGetMutationLayout(ClientCacheCommandMetadata.Get(operation), in args, out layout, includeReadKeys);
+
+    internal static bool TryGetMutationLayout(
+        ClientCacheCommandMetadata metadata, in ClientCacheCommandKey args, out KeyLayout layout, bool includeReadKeys = false)
     {
         layout = default;
-        if (!Layouts.TryGetValue(operation, out var definition)) return false;
-        if (definition.Mutation is MutationKind.Unknown or MutationKind.IndirectKeys) return false;
-        if (!TryGetArgumentLayout(definition.Kind, in args, out layout)) return false;
+        if (metadata.MutationKind is MutationKind.Unknown or MutationKind.IndirectKeys) return false;
+        if (!TryGetArgumentLayout(metadata.ArgumentLayout, in args, out layout)) return false;
         // An explicit MultiKey policy intentionally fences every declared key, including sources.
         if (includeReadKeys) return true;
         // Validate the full argument shape before projecting only the written destination.
-        layout = definition.Mutation switch
+        layout = metadata.MutationKind switch
         {
             MutationKind.FirstArgument => new(0, 0, Extra: 0),
             MutationKind.SecondArgument => new(0, 0, Extra: 1),

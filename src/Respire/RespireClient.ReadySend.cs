@@ -16,7 +16,7 @@ public sealed partial class RespireClient
         where TCommand : struct, IRespCommand
         => !RespireTelemetry.IsOperationEnabled(operation)
             && (_readFrom == RespireReadFrom.Primary || command.ReadKind == ReadCommandKind.None)
-            && (ReadCache is null || !ClientSideCacheCoordinator.CanCacheOperation(operation));
+            && (ReadCache is null || !command.GetClientCacheMetadata(operation).CacheableRead);
 
     private ValueTask<RespValue> SendOnReadyPrimaryAsync<TCommand>(
         string operation, RespireConnectionMultiplexer multiplexer, in TCommand command,

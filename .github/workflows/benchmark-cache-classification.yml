@@ -1,0 +1,28 @@
+name: Client cache classification benchmarks
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}-${{ github.event.label.name }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    if: github.event.label.name == 'run-cache-classification-benchmarks'
+    uses: ./.github/workflows/benchmark-compare.yml
+    with:
+      event-base-sha: ${{ github.event.pull_request.base.sha }}
+      candidate-sha: ${{ github.sha }}
+      expected-head-sha: ${{ github.event.pull_request.head.sha }}
+      fixture: benchmarks/Respire.Benchmarks/ClientCacheClassificationBenchmarks.cs
+      filter: '*ClientCacheClassificationBenchmarks*'
+      expected-case-count: 10
+      expected-methods: TypedSetConcurrent50Cache,TypedSetConcurrent50Coalescing,TypedSetConcurrent50CacheDisabled,RawSetConcurrent50Cache,RawSetConcurrent50CacheDisabled,MultiKeyMutationConcurrent50Cache,ClassifyTypedSet,ClassifyMultiKeyMutation,ClassifyRawCatalogSet,GetMissCache
+      zero-allocation-methods: ClassifyTypedSet,ClassifyMultiKeyMutation,ClassifyRawCatalogSet
+      improvement-methods: ClassifyTypedSet,ClassifyMultiKeyMutation
+      artifact-prefix: cache-classification-comparison

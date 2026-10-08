@@ -9,6 +9,11 @@ internal readonly struct StreamReadCommand(RespireValue[] keys, RespireStreamId[
     private static readonly ReadCommandKind ReadClassification = CommandReadMetadata.Get("XREAD").Kind;
     private static readonly ReadCommandKind GroupReadClassification = CommandReadMetadata.Get("XREADGROUP").Kind;
     public ReadCommandKind ReadKind => group is null ? ReadClassification : GroupReadClassification;
+    private static readonly ClientCacheCommandMetadata ReadCacheMetadata = ClientCacheCommandMetadata.Get("XREAD");
+    private static readonly ClientCacheCommandMetadata GroupReadCacheMetadata = ClientCacheCommandMetadata.Get("XREADGROUP");
+    public ClientCacheCommandMetadata GetClientCacheMetadata(string operation)
+        => group is null ? ReadCacheMetadata : GroupReadCacheMetadata;
+    public RespireCacheMutation GetCacheMutation(string operation) => GetClientCacheMetadata(operation).Policy;
 
     // Sends are sequential. Cursors change only after a successful read's reply is fully owned;
     // failed/cancelled sends retry unchanged cursors and never mutate a still-borrowed command.

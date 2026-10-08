@@ -14,6 +14,7 @@ internal readonly struct Verb
     public readonly int RoutingKeyIndex;
     public readonly ReadCommandKind ReadKind;
     public readonly int CursorArgumentIndex;
+    public readonly ClientCacheCommandMetadata CacheMetadata;
 
     public Verb(string command, bool allowReadRouting = true) : this(0, command, allowReadRouting)
     {
@@ -32,6 +33,13 @@ internal readonly struct Verb
         var metadata = CommandReadMetadata.Get(command);
         ReadKind = allowReadRouting ? metadata.Kind : ReadCommandKind.None;
         CursorArgumentIndex = metadata.CursorArgumentIndex;
+        // These fixed options extend the wire verb, but do not change its cache effects.
+        var cacheOperation = command.ToUpperInvariant() switch
+        {
+            "SCRIPT FLUSH SYNC" or "SCRIPT FLUSH ASYNC" => "SCRIPT FLUSH",
+            var operation => operation,
+        };
+        CacheMetadata = ClientCacheCommandMetadata.Get(cacheOperation);
         Tokens = 0;
         var encodedLength = 0;
         var start = 0;
