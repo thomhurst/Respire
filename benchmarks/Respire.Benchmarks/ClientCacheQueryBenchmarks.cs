@@ -155,7 +155,7 @@ public class ClientCacheQueryBenchmarks
     {
         // Reflection is outside measured methods, after every producer has joined.
         // The same copied fixture supports baselines without the new pending index.
-        var pending = PendingDependencies(_sharing) + PendingDependencies(_independent);
+        var pending = PendingDependencies(_sharing?.ClientSideCache) + PendingDependencies(_independent?.ClientSideCache);
         if (pending != 0) throw new InvalidOperationException("Completed workload retained pending dependency keys.");
         GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
         var info = GC.GetGCMemoryInfo();
@@ -169,11 +169,23 @@ public class ClientCacheQueryBenchmarks
         }));
     }
 
-    private static int PendingDependencies(RespireClient? client)
+    private static int PendingDependencies(object? cache)
     {
-        var cache = client?.ClientSideCache;
-        return cache?.GetType().GetField("_queryDependencies", BindingFlags.Instance | BindingFlags.NonPublic)
-            ?.GetValue(cache) is ICollection dependencies ? dependencies.Count : 0;
+        if (cache is null) return 0;
+        var type = cache.GetType();
+        var field = type.GetField("_queryDependencies", BindingFlags.Instance | BindingFlags.NonPublic);
+        if (field is null)
+        {
+            // The pre-fencing baseline lacks both the index and its inspection diagnostic.
+            // A renamed index in a fencing implementation must fail rather than report zero.
+            var inspection = type.GetNestedType("TestInspection", BindingFlags.NonPublic);
+            if (inspection?.GetProperty("PendingQueryDependencyCount", BindingFlags.Instance | BindingFlags.NonPublic) is not null)
+                throw new InvalidOperationException("Query dependency diagnostic exists but its pending index is missing.");
+            return 0;
+        }
+        if (field.GetValue(cache) is not ICollection dependencies)
+            throw new InvalidOperationException("Pending query dependency index is not a collection.");
+        return dependencies.Count;
     }
 
     [GlobalCleanup]

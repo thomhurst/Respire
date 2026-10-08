@@ -170,8 +170,9 @@ public interface IRespireClientSideCache
 /// <para>
 /// Insertion invariant: a per-key read publishes only if its key generation, the continuity epoch,
 /// and the active <see cref="CacheStore"/> all still match the values captured when the read began;
-/// a query read additionally matches the query epoch. Invalidation advances the generation and
-/// query epoch before removing dependent projections, and publication and invalidation are
+/// a query read additionally matches every registered dependency generation and the query epoch.
+/// Key invalidation advances dependency generations; full-store flushes advance the global epochs.
+/// These barriers precede removal of dependent projections, and publication and invalidation are
 /// serialized, so a racing invalidation is never undone by a stale insert. Cancellation, timeout,
 /// protocol failure, and conversion failure release the token without publishing. A Cluster
 /// redirect rebases the token after the continuity flush so the retried read can insert.
@@ -767,6 +768,8 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                 Interlocked.Increment(ref _continuityEpoch);
                 Interlocked.Increment(ref _queryEpoch);
                 var replacement = new CacheStore(_options, RecordRemoval);
+                // Retirement takes the old store's _removalLock while _queryLock is held;
+                // preserve this query-then-removal order for publication and full flushes.
                 removed = Interlocked.Exchange(ref _store, replacement).Retire();
             }
             if (removed > 0)
