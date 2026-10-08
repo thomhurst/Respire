@@ -392,6 +392,63 @@ public class ClientCacheStringPublicationTests
         return GC.GetAllocatedBytesForCurrentThread() - start;
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CoalescedConversionCleanupPreservesOtherWaiters(bool throwFromConverter)
+    {
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = CreateServer(FakeRespServer.OkReply);
+        server.SuppressReply = command =>
+        {
+            if (command != "GET key") return false;
+            received.TrySetResult();
+            return true;
+        };
+        var expectedError = new InvalidOperationException("caller conversion failure");
+        RespireClient? connected = null;
+        var serializer = new TransformingSerializer(() =>
+        {
+            // A custom converter must not hold the shared-read gate. Clearing on another
+            // thread also retires publication while the other waiters still own their bytes.
+            Task.Run(async () =>
+            {
+                // This miss must acquire the shared-read gate, even when invalidation
+                // could otherwise take its empty-dictionary fast path.
+                await connected!.GetStringAsync("gate-probe");
+                connected.ClientSideCache!.Clear();
+            }).WaitAsync(Limit).GetAwaiter().GetResult();
+            if (throwFromConverter) throw expectedError;
+        });
+        await using var client = await ConnectAsync(server, coalesce: true, maxSizeBytes: 80, serializer: serializer);
+        connected = client;
+        var custom = client.GetAsync<Payload>("key").AsTask();
+        await received.Task.WaitAsync(Limit);
+        var first = client.GetStringAsync("key").AsTask();
+        var second = client.GetStringAsync("key").AsTask();
+        var bytes = client.GetBytesAsync("key").AsTask();
+        var expected = new string('é', 40_000);
+        var payload = Encoding.UTF8.GetBytes(expected);
+        await server.SendRawAsync(Encoding.UTF8.GetBytes($"${payload.Length}\r\n{expected}\r\n"));
+        if (throwFromConverter)
+        {
+            var error = await Assert.That(async () => await custom.WaitAsync(Limit)).ThrowsExactly<InvalidOperationException>();
+            await Assert.That(error).IsSameReferenceAs(expectedError);
+        }
+        else await Assert.That((await custom.WaitAsync(Limit))!.Text).IsEqualTo("transformed-1");
+        var text = await first.WaitAsync(Limit);
+        await Assert.That(text).IsEqualTo(expected);
+        await Assert.That(await second.WaitAsync(Limit)).IsSameReferenceAs(text);
+        var ownedBytes = (await bytes.WaitAsync(Limit))!;
+        await Assert.That(ownedBytes.AsSpan().SequenceEqual(payload)).IsTrue();
+        ownedBytes[0] = 0;
+        await Assert.That(text).IsEqualTo(expected);
+        await Assert.That(client.Core.ClientCache!.ActiveSharedReadCount).IsEqualTo(0);
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
+        await Assert.That(server.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
+        await Assert.That(server.ReceivedCommands.Count(command => command == "GET gate-probe")).IsEqualTo(1);
+    }
+
     private static FakeRespServer CreateServer(byte[] getReply)
         => new(Hello, FakeRespServer.OkReply)
         {
@@ -411,14 +468,17 @@ public class ClientCacheStringPublicationTests
 
     private sealed record Payload(string Text);
 
-    private sealed class TransformingSerializer : IRespireSerializer
+    private sealed class TransformingSerializer(Action? onDeserialize = null) : IRespireSerializer
     {
         internal int Calls;
         public void Serialize(IBufferWriter<byte> destination, Type type, object? value)
             => throw new NotSupportedException();
         public void Serialize<T>(IBufferWriter<byte> destination, T value) => throw new NotSupportedException();
         public object Deserialize(Type type, ReadOnlySpan<byte> payload)
-            => new Payload("transformed-" + Interlocked.Increment(ref Calls));
+        {
+            onDeserialize?.Invoke();
+            return new Payload("transformed-" + Interlocked.Increment(ref Calls));
+        }
         public T? Deserialize<T>(ReadOnlySpan<byte> payload) => (T)Deserialize(typeof(T), payload);
     }
 }

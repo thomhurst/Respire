@@ -1,10 +1,11 @@
-# Reviewed source-declared member signatures: 312 total; per-type counts include owner, derived and accessible nested declarations.
-# Count: Respire.ClientSideCacheCoordinator | 53
+# Reviewed source-declared member signatures: 332 total; per-type counts include owner, derived and accessible nested declarations.
+# Count: Respire.ClientSideCacheCoordinator | 54
 Respire.ClientSideCacheCoordinator | class CacheEntry(byte[]?, long, long, string?)
 Respire.ClientSideCacheCoordinator | class CacheStore()
 Respire.ClientSideCacheCoordinator | class InflightRead(RespireKey, bool)
 Respire.ClientSideCacheCoordinator | class QueryCacheEntry(RespValue, RespireKey[], long, long)
 Respire.ClientSideCacheCoordinator | constructor ClientSideCacheCoordinator(RespireClientSideCacheOptions)
+Respire.ClientSideCacheCoordinator | delegate GetReadConverter`2(TState, in GetReadResult) : TResult
 Respire.ClientSideCacheCoordinator | enum CacheRemoval : int
 Respire.ClientSideCacheCoordinator | enum MutationFenceKind : byte
 Respire.ClientSideCacheCoordinator | method BeforeCommand`1(string, in TCommand) : MutationFence
@@ -14,7 +15,7 @@ Respire.ClientSideCacheCoordinator | method BeginUnknownMutation() : MutationFen
 Respire.ClientSideCacheCoordinator | method CanCacheOperation(string) : bool
 Respire.ClientSideCacheCoordinator | method CanTrack(in RespireKey) : bool
 Respire.ClientSideCacheCoordinator | method Clear() : void
-Respire.ClientSideCacheCoordinator | method CoalesceGetReadAsync`1(ClientCacheCommandKey, TState, Func<TState, CancellationToken, ValueTask<GetReadResult>>, CancellationToken) : ValueTask<GetReadResult>
+Respire.ClientSideCacheCoordinator | method CoalesceGetReadAsync`3(ClientCacheCommandKey, TReadState, Func<TReadState, CancellationToken, ValueTask<GetReadResult>>, TState, GetReadConverter<TState, TResult>, CancellationToken) : ValueTask<TResult>
 Respire.ClientSideCacheCoordinator | method CoalesceReadAsync`1(ClientCacheCommandKey, TState, Func<TState, CancellationToken, ValueTask<RespValue>>, CancellationToken) : ValueTask<RespValue>
 Respire.ClientSideCacheCoordinator | method CompleteMutation(in MutationFence) : void
 Respire.ClientSideCacheCoordinator | method CompleteRead(in QueryReadToken, in RespValue, bool) : void
