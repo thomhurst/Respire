@@ -200,6 +200,74 @@ public sealed class EndpointCircuitBreakerTests
     }
 
     [Test]
+    [Arguments(0)]
+    [Arguments(1)]
+    [Arguments(2)]
+    public async Task CopiedClosedPermitRecordsOnlyFirstOutcome(int outcomeValue)
+    {
+        var outcome = (CircuitOutcome)outcomeValue;
+        var breaker = New(new Clock(), new() { MinimumFailureCount = 2 });
+        var permit = Acquire(breaker);
+        var copy = permit;
+        breaker.Complete(ref permit, outcome);
+        breaker.Complete(ref copy, CircuitOutcome.Failure);
+        var count = outcome == CircuitOutcome.Ignored ? 0 : 1;
+        var failures = outcome == CircuitOutcome.Failure ? 1 : 0;
+        await Assert.That(breaker.Snapshot()).IsEqualTo(new CircuitSnapshot(EndpointCircuitState.Closed, count, failures, 0, 0));
+    }
+
+    [Test]
+    public async Task ClosedPermitCopyCannotConsumeReusedTicket()
+    {
+        var breaker = New(new Clock(), new() { MinimumFailureCount = 2 });
+        var permit = Acquire(breaker);
+        var copy = permit;
+        breaker.Complete(ref permit, CircuitOutcome.Ignored);
+        var replacement = Acquire(breaker);
+        breaker.Complete(ref copy, CircuitOutcome.Failure);
+        breaker.Complete(ref replacement, CircuitOutcome.Success);
+        await Assert.That(breaker.Snapshot()).IsEqualTo(new CircuitSnapshot(EndpointCircuitState.Closed, 1, 0, 0, 0));
+    }
+
+    [Test]
+    public async Task ConcurrentClosedCopiesRecordOneOutcome()
+    {
+        var breaker = New(new Clock(), new() { MinimumFailureCount = 2 });
+        var permit = Acquire(breaker);
+        var copies = Enumerable.Repeat(permit, 128).ToArray();
+        Parallel.For(0, copies.Length, i => breaker.Complete(ref copies[i], CircuitOutcome.Failure));
+        await Assert.That(breaker.Snapshot()).IsEqualTo(new CircuitSnapshot(EndpointCircuitState.Closed, 1, 1, 0, 0));
+    }
+
+    [Test]
+    public async Task MaximumRecoveryBatchReusesIgnoredSlotsAndResetsAfterFailure()
+    {
+        var clock = new Clock();
+        var breaker = Open(clock, 65536);
+        clock.Advance(TimeSpan.FromSeconds(5));
+        var probes = Enumerable.Range(0, 65536).Select(_ => Acquire(breaker)).ToArray();
+        await Assert.That(breaker.TryAcquire(out _, out _)).IsFalse();
+        for (var i = 0; i < probes.Length; i += 2)
+        {
+            var copy = probes[i];
+            breaker.Complete(ref probes[i], CircuitOutcome.Ignored);
+            probes[i] = Acquire(breaker);
+            breaker.Complete(ref copy, CircuitOutcome.Failure);
+        }
+        await Assert.That(breaker.Snapshot().ActiveProbes).IsEqualTo(65536);
+        breaker.Complete(ref probes[0], CircuitOutcome.Failure);
+        clock.Advance(TimeSpan.FromSeconds(5));
+        for (var i = 0; i < probes.Length; i++)
+        {
+            breaker.Complete(ref probes[i], CircuitOutcome.Success);
+            probes[i] = Acquire(breaker);
+        }
+        await Assert.That(breaker.Snapshot().ActiveProbes).IsEqualTo(65536);
+        for (var i = probes.Length - 1; i >= 0; i--) breaker.Complete(ref probes[i], CircuitOutcome.Success);
+        await Assert.That(breaker.Snapshot().State).IsEqualTo(EndpointCircuitState.Closed);
+    }
+
+    [Test]
     public async Task ConsumedPermitAndCopiedProbeCannotCompleteTwice()
     {
         var clock = new Clock();
@@ -344,6 +412,33 @@ public sealed class EndpointCircuitBreakerTests
         var healthy = AllocationMeasurement.WithoutConcurrentGc(() => Measure(breaker, false));
         var positive = AllocationMeasurement.WithoutConcurrentGc(() => Measure(breaker, true));
         await Assert.That(healthy).IsEqualTo(0);
+        await Assert.That(positive > 0).IsTrue();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long MeasureRecovery(EndpointCircuitBreaker breaker, Clock clock, bool allocate)
+    {
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        for (var i = 0; i < 1000; i++)
+        {
+            Finish(breaker, CircuitOutcome.Failure);
+            clock.Advance(TimeSpan.FromSeconds(5));
+            for (var probe = 0; probe < 4; probe++) Finish(breaker, CircuitOutcome.Success);
+            if (allocate) GC.KeepAlive(new byte[128]);
+        }
+        return GC.GetAllocatedBytesForCurrentThread() - before;
+    }
+
+    [Test, NotInParallel]
+    public async Task WarmRecoveryUsesNoPerProbeAllocationWithPositiveControl()
+    {
+        var clock = new Clock();
+        var breaker = New(clock, new() { MinimumFailureCount = 1, HalfOpenProbeCount = 4 });
+        MeasureRecovery(breaker, clock, false);
+        MeasureRecovery(breaker, clock, true);
+        var recovery = AllocationMeasurement.WithoutConcurrentGc(() => MeasureRecovery(breaker, clock, false));
+        var positive = AllocationMeasurement.WithoutConcurrentGc(() => MeasureRecovery(breaker, clock, true));
+        await Assert.That(recovery).IsEqualTo(0);
         await Assert.That(positive > 0).IsTrue();
     }
 
