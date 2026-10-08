@@ -272,7 +272,8 @@ internal interface IRespCommand
     void Write(ref RespWriter writer);
 
     /// <summary>A checked complete-frame upper bound, or zero for the growing fallback.</summary>
-    /// <remarks>A positive bound must cover the complete frame; it disables growth during serialization.</remarks>
+    /// <remarks>A positive bound must cover the complete frame; it disables growth during serialization.
+    /// Keep bounds tight without extra payload scans: bounds above the scratch retention limit select gate-held serialization.</remarks>
     int GetWriteSizeHint() => 0;
 
     void OnAccepted() { }

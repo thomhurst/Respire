@@ -39,11 +39,15 @@ public class DeadlinePublicationTests
 
     /// <summary>Admission after a full-ring wait publishes the original deadline and retains FIFO replies.</summary>
     [Test]
-    [Arguments(0)]
-    [Arguments(1)]
-    [Arguments(2)]
-    [Arguments(3)]
-    public async Task CapacityWaitPublishesOriginalDeadline(int path)
+    [Arguments(0, false)]
+    [Arguments(0, true)]
+    [Arguments(1, false)]
+    [Arguments(1, true)]
+    [Arguments(2, false)]
+    [Arguments(2, true)]
+    [Arguments(3, false)]
+    [Arguments(3, true)]
+    public async Task CapacityWaitPublishesOriginalDeadline(int path, bool direct)
     {
         var firstSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer("$4\r\npong\r\n"u8.ToArray())
@@ -66,7 +70,7 @@ public class DeadlinePublicationTests
             if (connection.InspectForTests().Inflight.TryPeek(out var source))
                 accepted.SetResult(source.Deadline.RawValue);
         });
-        var second = SendAsync(connection, command, expected, path, direct: false);
+        var second = SendAsync(connection, command, expected, path, direct);
         await Assert.That(second.IsCompleted).IsFalse();
         await Assert.That(accepted.Task.IsCompleted).IsFalse();
         await server.SendRawAsync("$4\r\npong\r\n"u8.ToArray());
@@ -114,25 +118,16 @@ public class DeadlinePublicationTests
     private static async Task SendAsync(RespireConnection connection, AcceptanceCommand command,
         CommandDeadline deadline, int path, bool direct)
     {
-        // The budget is thread-local. Set it only around synchronous admission and restore it
-        // before awaiting, so unrelated continuations cannot inherit this test's writer path.
-        var budget = typeof(RespireConnection).GetField("_directPathBudget", BindingFlags.NonPublic | BindingFlags.Static)!;
-        var previous = budget.GetValue(null);
-        Task response;
-        try
+        command = command.WithSizeHint(direct ? 65_537 : FakeRespServer.PingFrame.Length);
+        var response = path switch
         {
-            budget.SetValue(null, direct ? 1 : 0);
-            response = path switch
-            {
-                0 => ConsumeAsync(connection.SendCheckedAsync(in command, commandDeadline: deadline)),
-                1 => connection.SendStringAsync(in command, commandDeadline: deadline).AsTask(),
-                2 => connection.SendBytesAsync(in command, commandDeadline: deadline).AsTask(),
-                _ => connection.SendConvertedAsync<AcceptanceCommand, int, int>(in command, 0,
-                    static (int state, in RespValue reply) => state + reply.AsSpan().Length,
-                    transferOwnership: false, commandDeadline: deadline).AsTask(),
-            };
-        }
-        finally { budget.SetValue(null, previous); }
+            0 => ConsumeAsync(connection.SendCheckedAsync(in command, commandDeadline: deadline)),
+            1 => connection.SendStringAsync(in command, commandDeadline: deadline).AsTask(),
+            2 => connection.SendBytesAsync(in command, commandDeadline: deadline).AsTask(),
+            _ => connection.SendConvertedAsync<AcceptanceCommand, int, int>(in command, 0,
+                static (int state, in RespValue reply) => state + reply.AsSpan().Length,
+                transferOwnership: false, commandDeadline: deadline).AsTask(),
+        };
         await response.WaitAsync(TimeSpan.FromSeconds(10));
     }
 
@@ -141,8 +136,10 @@ public class DeadlinePublicationTests
         using var reply = await response;
     }
 
-    private readonly struct AcceptanceCommand(Action accepted) : IRespCommand
+    private readonly struct AcceptanceCommand(Action accepted, int sizeHint = 0) : IRespCommand
     {
+        public int GetWriteSizeHint() => sizeHint;
+        public AcceptanceCommand WithSizeHint(int bound) => new(accepted, bound);
         public ReadCommandKind ReadKind => ReadCommandKind.None;
         public void Write(ref RespWriter writer) => writer.WriteRaw(FakeRespServer.PingFrame);
         public void OnAccepted() => accepted();

@@ -45,6 +45,7 @@ Benchmark concurrency groups must include `github.event.label.name` alongside th
 | `benchmark-idle-read-watchdog.yml` | `run-idle-read-watchdog-benchmarks` |
 | `benchmark-inflight.yml` | `run-inflight-benchmarks` |
 | `benchmark-key-prefix.yml` | `run-key-prefix-benchmarks` |
+| `benchmark-large-command-serialization.yml` | `run-large-command-serialization-benchmarks` |
 | `benchmark-pinned-receive.yml` | `run-pinned-receive-benchmarks` |
 | `benchmark-primitive-codec.yml` | `run-primitive-codec-benchmarks` |
 | `benchmark-pubsub.yml` | `run-pubsub-benchmarks` |
