@@ -10,5 +10,10 @@
     }
   ],
   "Boundaries": [],
-  "NonRoutes": []
+  "NonRoutes": [
+    {
+      "Member": "Respire.RespireHashChangeTracker`1.CreateBinary(IRespireClient,RespireKey,Func<T,Dictionary<string,byte[]>>,string[],IReadOnlyDictionary<string,long>,T?,RespireHashExpiryMode):RespireHashChangeTracker<T>",
+      "Reason": "Constructs a local tracker and snapshots its baseline without command dispatch; UpdateAsync owns later validation, writes and baseline advancement."
+    }
+  ]
 }
