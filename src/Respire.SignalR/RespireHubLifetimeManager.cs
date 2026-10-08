@@ -379,7 +379,7 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
     }
 
     /// <inheritdoc/>
-    /// <remarks>Caller cancellation cancels the returned task with the caller's token. Remote result state expires independently on the receiving server.</remarks>
+    /// <remarks>Caller cancellation cancels the returned task with the caller's token and takes precedence over manager shutdown. Manager shutdown faults pending invocations with <see cref="HubException"/>, including during the initial send. Remote result state expires independently on the receiving server.</remarks>
     public override async Task<T> InvokeConnectionAsync<T>(string connectionId, string methodName, object?[] args, CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
@@ -422,6 +422,8 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
             if (error is OperationCanceledException)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                if (_bus.Stopping.IsCancellationRequested)
+                    throw new HubException("SignalR backplane disposed.");
                 if (connection?.ConnectionAborted.IsCancellationRequested == true)
                     throw new IOException($"Connection '{connectionId}' disconnected.");
             }

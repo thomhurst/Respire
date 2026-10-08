@@ -31,6 +31,66 @@ namespace Respire.SignalR.Tests;
 public class BackplaneIntegrationTests(RedisTestContainer fixture)
 {
     [Test]
+    [Arguments(false, false, false)]
+    [Arguments(true, false, false)]
+    [Arguments(false, true, false)]
+    [Arguments(true, true, false)]
+    [Arguments(false, false, true)]
+    [Arguments(true, false, true)]
+    [Arguments(false, true, true)]
+    [Arguments(true, true, true)]
+    public async Task ManagerShutdownHasConsistentFailureAcrossWriteBoundary(bool duringWrite, bool cancelCaller, bool disconnect)
+    {
+        await using var host = await BackplaneHost.StartAsync(fixture.ConnectionString, Guid.NewGuid().ToString("N"), false, false);
+        using var caller = new CancellationTokenSource();
+        using var disconnected = new CancellationTokenSource();
+        async Task StopAsync()
+        {
+            if (cancelCaller) caller.Cancel();
+            var disposing = ((IAsyncDisposable)host.Manager).DisposeAsync().AsTask();
+            if (disconnect) disconnected.Cancel();
+            await disposing;
+        }
+        var connection = new ShutdownBoundaryConnection(disconnected.Token, duringWrite, StopAsync);
+        await host.Manager.OnConnectedAsync(connection);
+        var pending = host.Manager.InvokeConnectionAsync<int>(connection.ConnectionId, "answer", [], caller.Token);
+        if (!duringWrite) await StopAsync();
+        if (cancelCaller)
+        {
+            var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(10))).Throws<OperationCanceledException>();
+            await Assert.That(error!.CancellationToken).IsEqualTo(caller.Token);
+            await Assert.That(pending.IsCanceled).IsTrue();
+        }
+        else
+        {
+            var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(10))).ThrowsExactly<HubException>();
+            await Assert.That(error!.Message).IsEqualTo("SignalR backplane disposed.");
+            await Assert.That(pending.IsFaulted).IsTrue();
+        }
+        await Assert.That(connection.InvocationId).IsNotEmpty();
+        await Assert.That(host.Manager.TryGetReturnType(connection.InvocationId, out _)).IsFalse();
+        await Assert.That(PendingClientResults(host.Manager)).IsEqualTo(0);
+        var client = host.Application.Services.GetRequiredService<RespireClient>();
+        await Assert.That(await client.PingAsync()).IsGreaterThanOrEqualTo(TimeSpan.Zero);
+    }
+
+    private sealed class ShutdownBoundaryConnection(CancellationToken disconnected, bool duringWrite, Func<Task> stop)
+        : HubConnectionContext(new DefaultConnectionContext(Guid.NewGuid().ToString("N")), new(), NullLoggerFactory.Instance)
+    {
+        public override CancellationToken ConnectionAborted => disconnected;
+        internal string InvocationId { get; private set; } = "";
+
+        public override async ValueTask WriteAsync(HubMessage message, CancellationToken cancellationToken = default)
+        {
+            InvocationId = ((InvocationMessage)message).InvocationId!;
+            if (!duringWrite) return;
+            // Join real manager shutdown inside the virtual write, before the initial-send catch executes.
+            await stop();
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+    }
+
+    [Test]
     [Arguments(false, false)]
     [Arguments(true, false)]
     [Arguments(false, true)]
