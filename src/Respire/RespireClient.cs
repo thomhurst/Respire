@@ -3676,6 +3676,27 @@ public sealed partial class RespireClient : IRespireClient
 
     // Physical handles cannot follow transport retirement to a replacement socket. Keep the
     // same telemetry/error path, including atomic ASKING prefixes on checked destinations.
+    internal ValueTask<RespValue> SendAdmittedOnPinnedConnectionAsync<TCommand>(
+        string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+    {
+        var cache = _core.ClientCache;
+        var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
+        if (!mutationFence.IsRequired)
+            return SendOnPinnedConnectionAsync(operation, connection, command, cancellationToken);
+        try
+        {
+            return CompleteMutationAsync(
+                SendOnPinnedConnectionAsync(operation, connection, new MutationCommand<TCommand>(command, mutationFence), cancellationToken),
+                cache!, mutationFence);
+        }
+        catch
+        {
+            cache!.CompleteMutation(in mutationFence);
+            throw;
+        }
+    }
+
     internal ValueTask<RespValue> SendOnPinnedConnectionAsync<TCommand>(
         string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken,
         bool sendAsking = false)

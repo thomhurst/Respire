@@ -102,9 +102,11 @@ public sealed partial class RespireBatch
         DedicatedConnectionPool? pool = null;
         RespireConnection? connection = null;
         Exception? operationError = null;
-        core.ClientCache?.FlushForUnknownCommand();
+        var cache = core.ClientCache;
+        var mutationFence = cache is null ? default : cache.BeginUnknownMutation();
         try
         {
+            foreach (var op in _ops) op.MutationFence = mutationFence;
             pool = core.Cluster is { } cluster
                 ? await cluster.GetDedicatedPoolAsync(slot, cancellationToken, discovery: null).ConfigureAwait(false)
                 : await core.GetDedicatedPoolAsync(cancellationToken).ConfigureAwait(false);
@@ -125,7 +127,8 @@ public sealed partial class RespireBatch
             new RespireBatchResult(_ops.Count, CollectFailures(_ops)).ThrowIfAnyFailed();
             cancellationToken.ThrowIfCancellationRequested();
 
-            using var response = await connection.SendWithoutResponseTimeoutAsync(acknowledgement, cancellationToken).ConfigureAwait(false);
+            var admittedAcknowledgement = new MutationCommand<TCommand>(acknowledgement, mutationFence);
+            using var response = await connection.SendWithoutResponseTimeoutAsync(admittedAcknowledgement, cancellationToken).ConfigureAwait(false);
             if (response.IsError) throw ResponseReader.ServerError(in response, operation);
             return convert(response);
         }
@@ -138,7 +141,6 @@ public sealed partial class RespireBatch
         }
         finally
         {
-            core.ClientCache?.FlushForUnknownCommand();
             try
             {
                 if (connection is not null)
@@ -158,13 +160,17 @@ public sealed partial class RespireBatch
             }
             finally
             {
-                if (connection is null && operationError is not null)
-                    RespireTelemetry.RecordUnroutedBatchFailure(operation, _ops, static op => op.Operation,
-                        core.Options.Database, started, operationError,
-                        endpoint: pool?.Endpoint ?? (core.Cluster is null && core.Sentinel is null
-                            ? core.Multiplexer.ActiveConnectionEndpoint : (RespireEndpoint?)null));
-                telemetry.Complete(core, telemetryOperation, error: operationError, connection: connection,
-                    batchSize: _ops.Count == 1 ? null : _ops.Count);
+                try
+                {
+                    if (connection is null && operationError is not null)
+                        RespireTelemetry.RecordUnroutedBatchFailure(operation, _ops, static op => op.Operation,
+                            core.Options.Database, started, operationError,
+                            endpoint: pool?.Endpoint ?? (core.Cluster is null && core.Sentinel is null
+                                ? core.Multiplexer.ActiveConnectionEndpoint : (RespireEndpoint?)null));
+                    telemetry.Complete(core, telemetryOperation, error: operationError, connection: connection,
+                        batchSize: _ops.Count == 1 ? null : _ops.Count);
+                }
+                finally { cache?.CompleteMutation(in mutationFence); }
             }
         }
     }

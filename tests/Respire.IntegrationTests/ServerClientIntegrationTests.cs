@@ -15,9 +15,10 @@ public class ServerClientIntegrationTests
     public required ModernRedisTestContainer Redis8 { get; init; }
 
     [Test]
-    [Arguments(2)]
-    [Arguments(3)]
-    public async Task ConnectionControlsStayOnOneSocketAndNode(int protocol)
+    [Arguments(2, false)]
+    [Arguments(3, false)]
+    [Arguments(3, true)]
+    public async Task ConnectionControlsStayOnOneSocketAndNode(int protocol, bool caching)
     {
         // PAUSE affects the whole server, so this test owns its container.
         await using var container = new RedisBuilder("redis:8.10-alpine").Build();
@@ -27,6 +28,7 @@ public class ServerClientIntegrationTests
             Endpoints = [new(container.Hostname, container.GetMappedPublicPort(6379))],
             Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3,
             Connections = 2, AllowAdmin = true, ClientName = "admin-test",
+            ClientSideCache = caching ? new() : null,
         };
         await using var client = await RespireClient.ConnectAsync(options);
         var first = await client.WithKeyPrefix("ignored:").Server.GetClientConnectionAsync();
@@ -49,7 +51,7 @@ public class ServerClientIntegrationTests
         await first.SetNoTouchAsync(false);
         (await first.InfoAsync()).Flags.Should().NotContain("e").And.NotContain("T");
         var tracking = await first.TrackingInfoAsync();
-        tracking.Flags.Should().Contain("off");
+        tracking.Flags.Should().Contain(caching ? "on" : "off");
         tracking.Prefixes.Should().BeEmpty();
         byte[] payload = [255, 0, 128];
         (await first.EchoAsync(payload)).Should().Equal(payload);
