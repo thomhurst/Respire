@@ -149,6 +149,10 @@ internal static class RawCommandKeyLayouts
             "VADD", "VREM", "VSETATTR");
         AddMutation(LayoutKind.CountedWithDestination, MutationKind.FirstArgument,
             ["CMS.MERGE", "TDIGEST.MERGE"], deferred: false, prefixable: true);
+        // Generated hash I/O uses catalog commands; each command names exactly one key.
+        // Preserve their existing deferred support while enabling prefix rewriting.
+        foreach (var operation in new[] { "HSET", "HDEL", "HGETALL", "HMGET" })
+            layouts[operation] = layouts[operation] with { Prefixable = true };
         return layouts.ToFrozenDictionary(StringComparer.Ordinal);
 
         void Add(LayoutKind kind, params string[] operations)

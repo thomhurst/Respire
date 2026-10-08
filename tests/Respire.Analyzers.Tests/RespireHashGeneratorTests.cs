@@ -26,6 +26,8 @@ public class RespireHashGeneratorTests
         await Assert.That(diagnostics).IsEmpty();
         await Assert.That(generated).Contains(" ToFields(");
         await Assert.That(generated).Contains(" FromFields(");
+        await Assert.That(generated).Contains(" SetAsync(");
+        await Assert.That(generated).Contains(" GetPartialAsync(");
         await Assert.That(generated.Contains("Reflection")).IsFalse();
         await Assert.That(generated.Contains(".As<")).IsFalse();
     }
@@ -84,6 +86,14 @@ public class RespireHashGeneratorTests
     }
 
     [Test]
+    public async Task PartialReadTypeAvoidsPropertyNameCollision()
+    {
+        var (_, generated, diagnostics) = Generate("[RespireHash(\"constant\")] public partial record User(string PartialRead, int PartialRead_);");
+        await Assert.That(diagnostics).IsEmpty();
+        await Assert.That(generated).Contains("class PartialRead__");
+    }
+
+    [Test]
     public async Task UnrelatedSyntaxChangeCachesRenderedOutput()
     {
         var compilation = CreateCompilation("[RespireHash(\"{Id}\")] public partial record User(string Id);");
@@ -107,6 +117,18 @@ public class RespireHashGeneratorTests
             RespireKey key = UserHashMapper.GetKey(user); // user:{42}
             Dictionary<string, string> fields = UserHashMapper.ToFields(user);
             User copy = UserHashMapper.FromFields(fields);
+            await using var root = await RespireClient.ConnectAsync("localhost:6379");
+            var client = root.WithKeyPrefix("app:");
+            await UserHashMapper.SetAsync(client, user);
+            User? stored = await UserHashMapper.GetAsync(client, UserHashMapper.GetKey(user));
+            RespireKey binaryKey = new byte[] { 0xff, 0, 0x80 };
+            await UserHashMapper.SetAsync(client, binaryKey, user);
+            var partial = await UserHashMapper.GetPartialAsync(client, binaryKey,
+                [nameof(User.Name), nameof(User.SessionToken)]);
+            bool requested = partial.SessionToken.Selected;
+            bool exists = partial.SessionToken.Found;
+            string? name = partial.Name.Value;
+            bool idRequested = partial.Id.Selected;
 
             [RespireHash("user:{{{Id}}}")]
             public partial record User(string Id, string Name, string? SessionToken);

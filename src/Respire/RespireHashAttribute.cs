@@ -4,7 +4,8 @@ namespace Respire;
 /// <param name="keyTemplate">A key template with property placeholders, for example <c>user:{Id}</c>.</param>
 /// <remarks>
 /// Apply to a public or internal top-level, non-generic partial class or record class.
-/// Escape literal braces as <c>{{</c> and <c>}}</c>. The generated codec performs no Redis I/O.
+/// Escape literal braces as <c>{{</c> and <c>}}</c>. The companion also provides explicit Redis
+/// full writes, full reads and partial reads without reflection or dynamic serialization.
 /// </remarks>
 [AttributeUsage(AttributeTargets.Class, Inherited = false)]
 public sealed class RespireHashAttribute(string keyTemplate) : Attribute
