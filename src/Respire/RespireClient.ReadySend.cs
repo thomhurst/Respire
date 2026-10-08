@@ -92,7 +92,7 @@ public sealed partial class RespireClient
     {
         // Readiness is an observation, not a lease: socket loss, retirement, or disposal
         // can make GetConnection or admission throw after validation. A command writer
-        // can also throw before admission. Preserve the former async Sentinel result.
+        // can also throw before admission. Preserve the former async acquisition result.
         if (mutationFence.IsRequired) cache!.CompleteMutation(in mutationFence);
         return ReadySendFailureAsync<TResult>(error);
     }
@@ -101,7 +101,7 @@ public sealed partial class RespireClient
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
     private static async ValueTask<TResult> ReadySendFailureAsync<TResult>(Exception error)
-        // Keep the former async Sentinel path's cancellation status and original exception/token,
+        // Keep the async route's cancellation status and original exception/token,
         // including OperationCanceledException carrying an uncanceled token. Only failures use this.
         => await ValueTask.FromException<TResult>(error).ConfigureAwait(false);
 }

@@ -11,6 +11,42 @@ namespace Respire.IntegrationTests;
 [Category(TestCategories.ProtocolIndependent)]
 public class ReplicaReadRoutingIntegrationTests
 {
+    [Test]
+    [NotInParallel]
+    [Arguments(RespireContainerServer.Redis, RespProtocol.Resp2)]
+    [Arguments(RespireContainerServer.Redis, RespProtocol.Resp3)]
+    [Arguments(RespireContainerServer.Valkey, RespProtocol.Resp2)]
+    [Arguments(RespireContainerServer.Valkey, RespProtocol.Resp3)]
+    public async Task PreparedStandaloneReplicaKeepsTypedAndStreamedReplies(
+        RespireContainerServer server, RespProtocol protocol)
+    {
+        await using var fixture = await RespireContainerFixture.StartAsync(new()
+        {
+            Server = server, Topology = RespireContainerTopology.Sentinel,
+        });
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [fixture.DataEndpoints[0]], ReplicaEndpoints = [fixture.DataEndpoints[1]],
+            Protocol = protocol, Connections = 1, ThreadPoolMonitoring = false,
+            ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
+        });
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        const string key = "prepared-replica";
+        await client.SetAsync(key, "hello", cancellationToken: deadline.Token);
+        var reader = client.WithReadFrom(RespireReadFrom.Replica);
+        while (await reader.GetStringAsync(key, deadline.Token) != "hello")
+            await Task.Delay(10, deadline.Token);
+        for (var i = 0; i < 8; i++)
+        {
+            (await reader.GetStringAsync(key, deadline.Token)).Should().Be("hello");
+            (await reader.GetBytesAsync(key, deadline.Token)).Should().Equal("hello"u8.ToArray());
+            (await reader.Strings.LengthAsync(key, deadline.Token)).Should().Be(5);
+            await using var stream = await reader.Strings.GetStreamAsync(key, deadline.Token);
+            using var text = new StreamReader(stream!);
+            (await text.ReadToEndAsync(deadline.Token)).Should().Be("hello");
+        }
+    }
+
     /// <summary>Proves commands from a different trace cannot contaminate routing assertions.</summary>
     [Test]
     [NotInParallel]

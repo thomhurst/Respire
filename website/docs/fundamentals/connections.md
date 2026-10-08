@@ -755,6 +755,23 @@ topology can be:
 
 `TimeSpan.Zero` revalidates on every read and disables the cooldown.
 
+Uninstrumented typed reads can dispatch directly on a prepared standalone replica when the
+view uses `Replica` or `ReplicaPreferred`, the current topology has exactly one replica,
+one physical connection is configured, and that connection has a fresh successful `ROLE` check with a connected
+replication link. Selection rechecks the current endpoint publication, entry identity and
+connection admission state. String, binary and scalar replies use their specialized pooled
+sources. Cache coordination, telemetry listeners, hedging, cursor affinity, multiple replicas,
+multiple sockets, zone policies, and `Nearest` retain their existing routing paths. Sentinel
+discovery still runs when its refresh interval expires. Readiness does not lease a socket;
+connection retirement and command admission continue to enforce their normal lifetime rules.
+
+Prepared single-replica reads still advance the shared atomic rotation counter. A topology-growth
+regression checks that selection across multiple replicas resumes from that cursor. The counter
+is retained to preserve this behavior; no counter-only performance improvement is claimed.
+The prepared-read comparison isolates fresh validation and dispatch. Its results do not isolate
+the counter cost, measure periodic `ROLE` checks or establish performance for every routing policy.
+It exercises string `GET` calls and prepared route selection, with matching primary controls.
+
 A replica removed from the topology stops receiving new reads at once. Its connections stay open
 for up to one second, then drain the commands they already accepted before closing. The drain
 waits for every accepted command, including a `GetStreamAsync` reply that is still being consumed;
