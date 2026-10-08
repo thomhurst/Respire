@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -485,6 +486,82 @@ public class StandaloneCircuitDispatchTests
             await Assert.That(pool.CaptureRetirementState().Borrowed).IsEqualTo(0);
         }
         await Assert.That(server.CommandsSeen).IsEqualTo(commands);
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task UploadHandoffBeforeAdmissionUsesReplacementCircuit(bool targetOpen, bool retireSocket)
+    {
+        await using var target = Server();
+        await using var source = Server();
+        await using var client = await RespireClient.ConnectAsync(Options(source) with
+        {
+            Protocol = RespProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            CommandTimeout = TimeSpan.FromSeconds(10),
+        });
+        var (sourceCircuit, _) = await Prepare(client, source);
+        var multiplexer = client.Core.Multiplexer;
+        var original = multiplexer.GetConnection();
+        var pool = await client.Core.GetDedicatedPoolAsync(default);
+        var lease = await pool.RentAsync(default, kind: DedicatedLeaseKind.Streaming);
+        pool.Return(lease);
+        var failed = client.Core.Circuits!.Acquire(new("127.0.0.1", source.Port), default);
+        failed.Failed(new RespireConnectionException("source unavailable"), default);
+        failed.Dispose();
+        var endpoint = new RespireEndpoint("127.0.0.1", target.Port);
+        var targetAdmission = client.Core.Circuits.Acquire(endpoint, default);
+        if (targetOpen) targetAdmission.Failed(new RespireConnectionException("target unavailable"), default);
+        targetAdmission.Dispose();
+        var targetCircuit = client.Core.Circuits.GetForTests(endpoint);
+        var announcement = multiplexer.CaptureMovingAnnouncement(0, original,
+            new MaintenanceNotification("MOVING", 1, 10, endpoint));
+        var commands = source.CommandsSeen;
+        using var published = new ManualResetEventSlim();
+        multiplexer.MovingHandoffPublished += published.Set;
+        var handoffs = 0;
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "Respire",
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+            ActivityStarted = activity =>
+            {
+                if (activity.OperationName != "SET" || !Equals(activity.GetTagItem("server.port"), source.Port)
+                    || Interlocked.Increment(ref handoffs) != 1) return;
+                // The upload has rented the warmed lease, but has not acquired circuit admission.
+                // Publish the real maintenance replacement before allowing admission to continue.
+                multiplexer.QueueDedicatedMovingHandoff(original, announcement, static () => true);
+                if (!published.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Upload handoff did not publish.");
+                if (retireSocket) _ = lease.RetireAsync();
+            },
+        };
+        ActivitySource.AddActivityListener(listener);
+        using var payload = new MemoryStream("value"u8.ToArray());
+        if (targetOpen)
+        {
+            var error = await Failure(async () => await client.Strings.SetAsync("routed", payload, 5));
+            await Assert.That(error).IsTypeOf<RespireCircuitOpenException>();
+            await Assert.That(((RespireCircuitOpenException)error).Endpoint).IsEqualTo(endpoint);
+            await Assert.That(payload.Position).IsEqualTo(0);
+        }
+        else
+        {
+            await client.Strings.SetAsync("routed", payload, 5);
+            await Assert.That(payload.Position).IsEqualTo(5);
+        }
+        await Assert.That(handoffs).IsEqualTo(1);
+        await Assert.That(multiplexer.ActiveConnectionEndpoint).IsEqualTo(endpoint);
+        await Assert.That(source.CommandsSeen).IsEqualTo(commands);
+        await Assert.That(target.ReceivedCommands.Count(command => command == "SET routed value")).IsEqualTo(targetOpen ? 0 : 1);
+        await Assert.That(sourceCircuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Open);
+        await Assert.That(sourceCircuit.Snapshot().ActiveProbes).IsEqualTo(0);
+        await Assert.That(targetCircuit.Snapshot().State).IsEqualTo(targetOpen ? EndpointCircuitState.Open : EndpointCircuitState.Closed);
+        await Assert.That(targetCircuit.Snapshot().ActiveProbes).IsEqualTo(0);
+        await Assert.That(pool.CaptureRetirementState().Borrowed).IsEqualTo(0);
+        var replacementPool = await client.Core.GetDedicatedPoolAsync(default);
+        await Assert.That(replacementPool.CaptureRetirementState().Borrowed).IsEqualTo(0);
     }
 
     [Test]
