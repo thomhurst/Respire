@@ -1739,10 +1739,11 @@ public sealed partial class RespireClient : IRespireClient
         if (cache.TryGetString(in resolvedKey, out var cached) && IsCacheGenerationCurrent(generation))
             return new ValueTask<string?>(cached);
 
-        return GetAndCacheAsync(
-            resolvedKey, cache,
-            cancellationToken,
-            static (RespireClient _, in RespValue value) => ResponseReader.StringOrNull(in value));
+        return cache.CoalesceConcurrentMisses
+            ? GetSharedCacheReadAsync(resolvedKey, cache, cancellationToken, 0,
+                static (int _, in ClientSideCacheCoordinator.GetReadResult result) => result.GetString(), decodeString: true)
+            : FetchGetCacheReadAsync(resolvedKey, cache, cancellationToken, 0,
+                static (int _, in ClientSideCacheCoordinator.GetReadResult result) => result.GetString(), decodeString: true);
     }
 
     internal ValueTask<byte[]?> CachedGetBytesAsync(RespireKey resolvedKey, CancellationToken cancellationToken)
@@ -1925,33 +1926,53 @@ public sealed partial class RespireClient : IRespireClient
             ? GetSharedAndCacheAsync(resolvedKey, cache, cancellationToken, converter)
             : FetchGetAndCacheAsync(resolvedKey, cache, cancellationToken, converter);
 
-#if NET
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-#endif
-    private async ValueTask<TResult> GetSharedAndCacheAsync<TResult>(
+    private ValueTask<TResult> GetSharedAndCacheAsync<TResult>(
         RespireKey resolvedKey, ClientSideCacheCoordinator cache, CancellationToken cancellationToken,
         ResponseConverter<RespireClient, TResult> converter)
-    {
-        var identity = new ClientCacheCommandKey("GET", resolvedKey.AsValue());
-        using var response = await cache.CoalesceReadAsync(
-            identity, (Client: this, Key: resolvedKey, Cache: cache),
-            static (state, token) => state.Client.FetchGetAndCacheAsync(state.Key, state.Cache, token,
-                static (RespireClient _, in RespValue value) => value, transferResponse: true),
-            cancellationToken).ConfigureAwait(false);
-        return converter(this, in response);
-    }
+        => GetSharedCacheReadAsync(resolvedKey, cache, cancellationToken, (Client: this, Converter: converter),
+            static ((RespireClient Client, ResponseConverter<RespireClient, TResult> Converter) state,
+                in ClientSideCacheCoordinator.GetReadResult result) => state.Converter(state.Client, in result.Response));
+
+    private delegate TResult CacheGetConverter<in TState, out TResult>(
+        TState state, in ClientSideCacheCoordinator.GetReadResult result);
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
-    private async ValueTask<TResult> FetchGetAndCacheAsync<TResult>(
+    private async ValueTask<TResult> GetSharedCacheReadAsync<TState, TResult>(
+        RespireKey resolvedKey, ClientSideCacheCoordinator cache, CancellationToken cancellationToken,
+        TState state, CacheGetConverter<TState, TResult> converter, bool decodeString = false)
+    {
+        var identity = new ClientCacheCommandKey("GET", resolvedKey.AsValue());
+        var result = await cache.CoalesceGetReadAsync(
+            identity, (Client: this, Key: resolvedKey, Cache: cache, DecodeString: decodeString),
+            static (state, token) => state.Client.FetchGetCacheReadAsync(state.Key, state.Cache, token, 0,
+                static (int _, in ClientSideCacheCoordinator.GetReadResult value) => value,
+                transferResponse: true, decodeString: state.DecodeString),
+            cancellationToken).ConfigureAwait(false);
+        using var response = result.Response;
+        return converter(state, in result);
+    }
+
+    private ValueTask<TResult> FetchGetAndCacheAsync<TResult>(
         RespireKey resolvedKey, ClientSideCacheCoordinator cache, CancellationToken cancellationToken,
         ResponseConverter<RespireClient, TResult> converter, bool transferResponse = false)
+        => FetchGetCacheReadAsync(resolvedKey, cache, cancellationToken, (Client: this, Converter: converter),
+            static ((RespireClient Client, ResponseConverter<RespireClient, TResult> Converter) state,
+                in ClientSideCacheCoordinator.GetReadResult result) => state.Converter(state.Client, in result.Response),
+            transferResponse);
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<TResult> FetchGetCacheReadAsync<TState, TResult>(
+        RespireKey resolvedKey, ClientSideCacheCoordinator cache, CancellationToken cancellationToken,
+        TState state, CacheGetConverter<TState, TResult> converter, bool transferResponse = false, bool decodeString = false)
     {
         var generation = _core.Sentinel?.Current;
-        if (cache.CoalesceConcurrentMisses && cache.TryPeek(in resolvedKey, out var cached)
+        if (cache.CoalesceConcurrentMisses && cache.TryPeekRead(in resolvedKey, out var cached)
             && IsCacheGenerationCurrent(generation))
-            return converter(this, in cached);
+            return converter(state, in cached);
         var token = cache.BeginRead(in resolvedKey);
         var command = new Cmd1(Verbs.Get, token.State.Key.AsValue());
         var response = default(RespValue);
@@ -1964,10 +1985,13 @@ public sealed partial class RespireClient : IRespireClient
         {
             response = await SendTrackedAsync(
                 "GET", command, cancellationToken, onRedirect, token.State.CanCache).ConfigureAwait(false);
+            var decodedText = decodeString ? ResponseReader.StringOrNull(in response) : null;
             released = true;
             var currentToken = redirect is null ? token : redirect.Token;
-            cache.CompleteRead(in currentToken, in response, allowInsert: true);
-            var result = converter(this, in response);
+            var entry = cache.CompleteRead(in currentToken, in response, allowInsert: true, decodedText);
+            var readResult = new ClientSideCacheCoordinator.GetReadResult(
+                response, currentToken.State.Key, currentToken.Store, entry, decodedText);
+            var result = converter(state, in readResult);
             returned = transferResponse;
             return result;
         }
