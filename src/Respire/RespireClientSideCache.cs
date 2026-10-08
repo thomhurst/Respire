@@ -1,6 +1,10 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.Numerics;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Text;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Protocol;
@@ -199,8 +203,8 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     private CacheStore _store;
     private long _continuityEpoch;
     private long _queryEpoch;
-    private long _hits;
-    private long _misses;
+    private readonly RequestCounters[] _requests = new RequestCounters[
+        BitOperations.RoundUpToPowerOf2((uint)Math.Clamp(Environment.ProcessorCount, 4, 64))];
     private long _invalidations;
     private long _evictions;
     private long _continuityFlushes;
@@ -221,9 +225,15 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     public RespireClientSideCacheStatistics GetStatistics()
     {
         var store = Volatile.Read(ref _store);
+        long hits = 0, misses = 0;
+        foreach (ref var counters in _requests.AsSpan())
+        {
+            hits += Interlocked.Read(ref counters.Hits);
+            misses += Interlocked.Read(ref counters.Misses);
+        }
         return new(
-            Interlocked.Read(ref _hits),
-            Interlocked.Read(ref _misses),
+            hits,
+            misses,
             Interlocked.Read(ref _invalidations),
             Interlocked.Read(ref _evictions),
             Interlocked.Read(ref _continuityFlushes),
@@ -238,16 +248,39 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         var store = Volatile.Read(ref _store);
         if (store.TryGet(in key, out var payload))
         {
-            Interlocked.Increment(ref _hits);
-            RespireTelemetry.RecordCacheRequest(hit: true);
+            RecordRequest(hit: true);
             value = payload is null ? RespValue.Null : RespValue.BulkString(payload);
             return true;
         }
 
-        Interlocked.Increment(ref _misses);
-        RespireTelemetry.RecordCacheRequest(hit: false);
+        RecordRequest(hit: false);
         value = default;
         return false;
+    }
+
+    internal bool TryGetString(in RespireKey key, out string? value)
+    {
+        var found = Volatile.Read(ref _store).TryGetString(in key, out value);
+        RecordRequest(found);
+        return found;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void RecordRequest(bool hit)
+    {
+        ref var counters = ref _requests[Thread.GetCurrentProcessorId() & (_requests.Length - 1)];
+        if (hit) Interlocked.Increment(ref counters.Hits);
+        else Interlocked.Increment(ref counters.Misses);
+        RespireTelemetry.RecordCacheRequest(hit);
+    }
+
+    // Processor stripes and separated hit/miss lanes avoid one shared cache line.
+    // Atomic increments retain exact totals once concurrent lookups have finished.
+    [StructLayout(LayoutKind.Explicit, Size = 128)]
+    private struct RequestCounters
+    {
+        [FieldOffset(0)] internal long Hits;
+        [FieldOffset(64)] internal long Misses;
     }
 
     internal bool TryPeek(in RespireKey key, out RespValue value)
@@ -294,13 +327,11 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         var query = request.Query;
         if (store.TryGet(in query, out value))
         {
-            Interlocked.Increment(ref _hits);
-            RespireTelemetry.RecordCacheRequest(hit: true);
+            RecordRequest(hit: true);
             return true;
         }
 
-        Interlocked.Increment(ref _misses);
-        RespireTelemetry.RecordCacheRequest(hit: false);
+        RecordRequest(hit: false);
         return false;
     }
 
@@ -937,7 +968,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     /// or global lock. <see cref="RespireClientSideCacheOptions.MaxEntries"/> and
     /// <see cref="RespireClientSideCacheOptions.MaxSizeBytes"/> are hard limits; the first exceeded
     /// triggers eviction, which enumerates only after a limit is crossed so auxiliary state stays
-    /// bounded under invalidate/reinsert churn. Size counts deep payloads, arguments, dependency keys,
+    /// bounded under invalidate/reinsert churn. Size counts deep payloads, decoded GET strings, arguments, dependency keys,
     /// and a fixed per-entry overhead. A single value larger than the limit is returned uncached.
     /// </remarks>
     internal sealed class CacheStore
@@ -981,11 +1012,51 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
 
         public bool TryGet(in RespireKey key, out byte[]? payload)
         {
+            var found = TryGetEntry(in key, out var entry);
+            payload = entry?.Payload;
+            return found;
+        }
+
+        public bool TryGetString(in RespireKey key, out string? value)
+        {
+            if (!TryGetEntry(in key, out var entry))
+            {
+                value = null;
+                return false;
+            }
+            if (entry.Payload is null)
+            {
+                value = null;
+                return true;
+            }
+            value = entry.DecodedText;
+            if (value is not null) return true;
+
+            var decoded = Encoding.UTF8.GetString(entry.Payload);
+            lock (_removalLock)
+            {
+                value = entry.DecodedText;
+                if (value is not null) return true;
+                value = decoded;
+                // An invalidated/replaced/retired entry can still serve this borrowed
+                // lookup, but must never increase the current store's accounted size.
+                if (_state == StoreState.Retired || !_entries.TryGetValue(key, out var current)
+                    || !ReferenceEquals(current, entry)) return true;
+                var added = (24L + decoded.Length * sizeof(char) + 7) & ~7L;
+                entry.SetDecodedText(decoded, added);
+                Interlocked.Add(ref _sizeBytes, added);
+            }
+            Trim();
+            return true;
+        }
+
+        private bool TryGetEntry(in RespireKey key, [NotNullWhen(true)] out CacheEntry? found)
+        {
             while (_entries.TryGetValue(key, out var entry))
             {
                 if (entry.ExpiresAt == 0 || Stopwatch.GetTimestamp() < entry.ExpiresAt)
                 {
-                    payload = entry.Payload;
+                    found = entry;
                     return true;
                 }
 
@@ -995,7 +1066,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                 }
             }
 
-            payload = null;
+            found = null;
             return false;
         }
 
@@ -1318,9 +1389,19 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
 
     internal sealed class CacheEntry(byte[]? payload, long size, long expiresAt)
     {
+        private string? _decodedText;
+        private long _size = size;
         public byte[]? Payload { get; } = payload;
-        public long Size { get; } = size;
+        public long Size => Interlocked.Read(ref _size);
         public long ExpiresAt { get; } = expiresAt;
+        internal string? DecodedText => Volatile.Read(ref _decodedText);
+
+        // The store's removal gate serializes accounting, publication and removal.
+        internal void SetDecodedText(string text, long addedSize)
+        {
+            Interlocked.Add(ref _size, addedSize);
+            Volatile.Write(ref _decodedText, text);
+        }
     }
 
     internal sealed class QueryCacheEntry(

@@ -8,6 +8,28 @@ namespace Respire.Tests;
 public class RespireValueTests
 {
     [Test]
+    [Arguments(0)]
+    [Arguments(255)]
+    [Arguments(256)]
+    [Arguments(257)]
+    [Arguments(1024)]
+    public async Task HashesAgreeAcrossBinaryTextAndPrefixedStorageAtEncodingBoundaries(int leadingLength)
+    {
+        string[] suffixes = ["", "é", "😀", "\uD800", "\uDC00", "é\uD800😀"];
+        foreach (var suffix in suffixes)
+        {
+            var text = new string('a', leadingLength) + suffix;
+            RespireValue value = text;
+            RespireValue bytes = System.Text.Encoding.UTF8.GetBytes(text);
+            RespireValue prefixed = RespireValue.Prefixed(new Respire.Internal.KeyPrefix("tenant:"), text, default);
+            RespireValue complete = "tenant:" + text;
+            await Assert.That(value.GetHashCode()).IsEqualTo(bytes.GetHashCode());
+            await Assert.That(prefixed.GetHashCode()).IsEqualTo(complete.GetHashCode());
+            await Assert.That(value).IsEqualTo(bytes);
+        }
+    }
+
+    [Test]
     public async Task NullStringAndByteArray_ConvertToNullValue()
     {
         string? nullString = null;

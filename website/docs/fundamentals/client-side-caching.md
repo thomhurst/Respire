@@ -37,7 +37,10 @@ arguments.
 
 Missing keys are cached too. Replies are deep-owned internally and converted for each call, so
 enabling caching does not introduce shared mutable objects; serializers run on every hit and
-`GetBytesAsync` still returns a caller-owned array. One cache belongs to each client and is shared
+`GetBytesAsync` still returns a caller-owned array. `GetStringAsync` lazily retains the decoded
+immutable string for a cached `GET`, avoiding repeated decoding on later hits. Its storage counts
+against `MaxSizeBytes`; decoding can evict entries when that limit is crossed. Other conversions
+keep their existing behavior. One cache belongs to each client and is shared
 by all of its `WithKeyPrefix` views.
 
 Enabling the cache requires RESP3: connection setup fails if Redis cannot negotiate RESP3 or enable

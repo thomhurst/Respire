@@ -1,5 +1,5 @@
-# Reviewed source-declared member signatures: 308 total; per-type counts include owner, derived and accessible nested declarations.
-# Count: Respire.ClientSideCacheCoordinator | 49
+# Reviewed source-declared member signatures: 312 total; per-type counts include owner, derived and accessible nested declarations.
+# Count: Respire.ClientSideCacheCoordinator | 50
 Respire.ClientSideCacheCoordinator | class CacheEntry(byte[]?, long, long)
 Respire.ClientSideCacheCoordinator | class CacheStore()
 Respire.ClientSideCacheCoordinator | class InflightRead(RespireKey, bool)
@@ -37,6 +37,7 @@ Respire.ClientSideCacheCoordinator | method SubscribeInvalidations(RespireKey, A
 Respire.ClientSideCacheCoordinator | method TryCreateQuery`1(string, in TCommand, out QueryRequest) : bool
 Respire.ClientSideCacheCoordinator | method TryGet(in QueryRequest, out RespValue) : bool
 Respire.ClientSideCacheCoordinator | method TryGet(in RespireKey, out RespValue) : bool
+Respire.ClientSideCacheCoordinator | method TryGetString(in RespireKey, out string?) : bool
 Respire.ClientSideCacheCoordinator | method TryPeek(in QueryRequest, out RespValue) : bool
 Respire.ClientSideCacheCoordinator | method TryPeek(in RespireKey, out RespValue) : bool
 Respire.ClientSideCacheCoordinator | property ActiveSharedReadCount [internal; get] : int
@@ -51,12 +52,14 @@ Respire.ClientSideCacheCoordinator | readonly record struct ReadToken(InflightRe
 # Designated borrowed view; source keys retain readonly/ref and compiled metadata checks stack-only visibility.
 Respire.ClientSideCacheCoordinator | readonly ref struct TestInspection(ClientSideCacheCoordinator)
 Respire.ClientSideCacheCoordinator | readonly struct MutationFence()
-# Count: Respire.ClientSideCacheCoordinator.CacheEntry | 3
+# Count: Respire.ClientSideCacheCoordinator.CacheEntry | 5
 # Reviewed accessible nested operational members; new inspection state belongs in the designated borrowed view.
+Respire.ClientSideCacheCoordinator.CacheEntry | method SetDecodedText(string, long) : void
+Respire.ClientSideCacheCoordinator.CacheEntry | property DecodedText [internal; get] : string?
 Respire.ClientSideCacheCoordinator.CacheEntry | property ExpiresAt [public; get] : long
 Respire.ClientSideCacheCoordinator.CacheEntry | property Payload [public; get] : byte[]?
 Respire.ClientSideCacheCoordinator.CacheEntry | property Size [public; get] : long
-# Count: Respire.ClientSideCacheCoordinator.CacheStore | 11
+# Count: Respire.ClientSideCacheCoordinator.CacheStore | 12
 Respire.ClientSideCacheCoordinator.CacheStore | constructor CacheStore(RespireClientSideCacheOptions, Action<CacheRemoval>)
 Respire.ClientSideCacheCoordinator.CacheStore | method Invalidate(in RespireKey) : int
 Respire.ClientSideCacheCoordinator.CacheStore | method Retire() : int
@@ -66,6 +69,7 @@ Respire.ClientSideCacheCoordinator.CacheStore | method Trim() : void
 Respire.ClientSideCacheCoordinator.CacheStore | method TryCreateEntry(in ClientCacheCommandKey, RespireKey[], in RespValue, out QueryCacheEntry?) : bool
 Respire.ClientSideCacheCoordinator.CacheStore | method TryGet(in ClientCacheCommandKey, out RespValue) : bool
 Respire.ClientSideCacheCoordinator.CacheStore | method TryGet(in RespireKey, out byte[]?) : bool
+Respire.ClientSideCacheCoordinator.CacheStore | method TryGetString(in RespireKey, out string?) : bool
 Respire.ClientSideCacheCoordinator.CacheStore | property Count [public; get] : int
 Respire.ClientSideCacheCoordinator.CacheStore | property SizeBytes [public; get] : long
 # Count: Respire.ClientSideCacheCoordinator.InflightRead | 5

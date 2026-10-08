@@ -1726,11 +1726,16 @@ public sealed partial class RespireClient : IRespireClient
     /// </summary>
     internal ValueTask<string?> CachedGetStringAsync(RespireKey resolvedKey, CancellationToken cancellationToken)
     {
-        if (GetReadCache is null)
+        var cache = GetReadCache;
+        if (cache is null)
             return StringOrNullAsync("GET", new Cmd1(Verbs.Get, resolvedKey.AsValue()), cancellationToken);
 
-        return CachedGetAsync(
-            resolvedKey,
+        var generation = _core.Sentinel?.Current;
+        if (cache.TryGetString(in resolvedKey, out var cached) && IsCacheGenerationCurrent(generation))
+            return new ValueTask<string?>(cached);
+
+        return GetAndCacheAsync(
+            resolvedKey, cache,
             cancellationToken,
             static (RespireClient _, in RespValue value) => ResponseReader.StringOrNull(in value));
     }
@@ -1947,21 +1952,16 @@ public sealed partial class RespireClient : IRespireClient
         var response = default(RespValue);
         var released = false;
         var returned = false;
-        Action? onRedirect = null;
-        if (_core.Cluster is not null)
-        {
-            onRedirect = () =>
-            {
-                token = cache.RebaseRead(in token);
-            };
-        }
+        var redirect = _core.Cluster is null ? null : new CacheGetRedirect(cache, token);
+        Action? onRedirect = redirect is null ? null : redirect.Rebase;
 
         try
         {
             response = await SendTrackedAsync(
                 "GET", command, cancellationToken, onRedirect, token.State.CanCache).ConfigureAwait(false);
             released = true;
-            cache.CompleteRead(in token, in response, allowInsert: true);
+            var currentToken = redirect is null ? token : redirect.Token;
+            cache.CompleteRead(in currentToken, in response, allowInsert: true);
             var result = converter(this, in response);
             returned = transferResponse;
             return result;
@@ -1970,10 +1970,17 @@ public sealed partial class RespireClient : IRespireClient
         {
             if (!released)
             {
-                cache.CompleteRead(in token, in response, allowInsert: false);
+                var currentToken = redirect is null ? token : redirect.Token;
+                cache.CompleteRead(in currentToken, in response, allowInsert: false);
             }
             if (!returned) response.Dispose();
         }
+    }
+
+    private sealed class CacheGetRedirect(ClientSideCacheCoordinator cache, ClientSideCacheCoordinator.ReadToken token)
+    {
+        internal ClientSideCacheCoordinator.ReadToken Token = token;
+        internal void Rebase() => Token = cache.RebaseRead(in Token);
     }
 
     /// <summary>Fills missing result positions and retries if the Sentinel cache generation changes.</summary>
@@ -2147,6 +2154,9 @@ public sealed partial class RespireClient : IRespireClient
         }
     }
 
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
     private async ValueTask<RespValue> SendTrackedAsync<TCommand>(
         string operation,
         TCommand command,
@@ -2192,6 +2202,9 @@ public sealed partial class RespireClient : IRespireClient
         return response;
     }
 
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
     private async ValueTask<RespValue> SendTrackedClusterAsync<TCommand>(
         string operation,
         ClusterRouter cluster,
@@ -2534,21 +2547,16 @@ public sealed partial class RespireClient : IRespireClient
         var snapshot = SnapshotCommand.Create(in command);
         var token = cache.BeginRead(operation, in request);
         var completed = false;
-        Action? onRedirect = null;
-        if (_core.Cluster is not null)
-        {
-            onRedirect = () =>
-            {
-                token = cache.RebaseRead(in token);
-            };
-        }
+        var redirect = _core.Cluster is null ? null : new CacheQueryRedirect(cache, token);
+        Action? onRedirect = redirect is null ? null : redirect.Rebase;
 
         var response = default(RespValue);
         try
         {
             response = await SendTrackedAsync(
                 operation, snapshot, cancellationToken, onRedirect, token.CanCache).ConfigureAwait(false);
-            cache.CompleteRead(in token, in response, allowInsert: true);
+            var currentToken = redirect is null ? token : redirect.Token;
+            cache.CompleteRead(in currentToken, in response, allowInsert: true);
             completed = true;
             return response;
         }
@@ -2556,10 +2564,17 @@ public sealed partial class RespireClient : IRespireClient
         {
             if (!completed)
             {
-                cache.CompleteRead(in token, in response, allowInsert: false);
+                var currentToken = redirect is null ? token : redirect.Token;
+                cache.CompleteRead(in currentToken, in response, allowInsert: false);
                 response.Dispose();
             }
         }
+    }
+
+    private sealed class CacheQueryRedirect(ClientSideCacheCoordinator cache, ClientSideCacheCoordinator.QueryReadToken token)
+    {
+        internal ClientSideCacheCoordinator.QueryReadToken Token = token;
+        internal void Rebase() => Token = cache.RebaseRead(in Token);
     }
 
 #if NET
