@@ -24,6 +24,65 @@ public class CommandRouteOwnershipTests
         => new([new("Respire.IExampleCommands", "Respire.ExampleCommands", [Route], Contract: "Own validation through cleanup.")], boundaries);
 
     [Test]
+    [Arguments("DEBUG")]
+    [Arguments("TRACE")]
+    public async Task ConfigurationConstantsMatchTheCompiledCore(string symbol)
+    {
+        var expected = symbol == "TRACE";
+#if DEBUG
+        expected = true;
+#endif
+        var source = CommandRouteOwnership.Discover([("configuration.cs", $$"""
+            public class Routes {
+            #if {{symbol}}
+                public int Added() => 1;
+            #endif
+                private void Probe() { }
+            }
+            """)]);
+        foreach (var framework in new[] { "net8.0", "net10.0" })
+        {
+            await Assert.That(source.Any(m => m.Framework == framework && m.PublicRoute)).IsEqualTo(expected);
+            await Assert.That(CommandRouteOwnership.Validate(source, new([], []))
+                .Contains("Undeclared public route: Routes.Added():int [" + framework + "]")).IsEqualTo(expected);
+        }
+    }
+
+    [Test]
+    [Arguments("public class Routes { public void Added( { }")]
+    [Arguments("public static class Routes { extension(string value) { public int Added() => 1; } }")]
+    public async Task ParserErrorsAndUnsupportedDeclarationsFailClosed(string source)
+    {
+        await Assert.That(() => CommandRouteOwnership.Discover([("unsupported.cs", source)]))
+            .Throws<InvalidOperationException>();
+    }
+
+    [Test]
+    public async Task ModernCollectionExpressionRoutesAreDiscovered()
+    {
+        var source = Discover("public class Routes { public int[] Added(bool all) => all ? [] : [1]; }");
+        await Assert.That(CommandRouteOwnership.Validate(source, new([], [])))
+            .Contains("Undeclared public route: Routes.Added(bool):int[] [net8.0]");
+    }
+
+    [Test]
+    [Arguments("", "ICommands<T>", "Respire")]
+    [Arguments("using Respire;", "ICommands<T>", "Implementation")]
+    [Arguments("using Root = Respire;", "Root.ICommands<T>", "Implementation")]
+    [Arguments("", "global::Respire.ICommands<T>", "Implementation")]
+    [Arguments("using Contract = Respire.ICommands<int>;", "Contract", "Implementation")]
+    public async Task GenericOwnersImplementNormalizedContract(string imports, string contract, string ownerNamespace)
+    {
+        var source = CommandRouteOwnership.Discover([
+            ("contract.cs", "namespace Respire; public interface ICommands<T> { int Get(); }"),
+            ("owner.cs", imports + " namespace " + ownerNamespace + "; internal class Commands<T> : " + contract
+                + " { public int Get() => 1; }")]);
+        var inventory = new CommandRouteOwnership.Inventory([
+            new("Respire.ICommands`1", ownerNamespace + ".Commands`1", ["Get():int"], Contract: "Control")], []);
+        await Assert.That(CommandRouteOwnership.Validate(source, inventory)).IsEmpty();
+    }
+
+    [Test]
     public async Task SourceRoutesHaveDeclaredExecutableFinalOwners()
     {
         var repo = CommandRouteOwnership.FindRepository();

@@ -33,4 +33,23 @@
         <PackageReference Include="Microsoft.Testing.Extensions.HangDump" />
     </ItemGroup>
 
+    <!-- Query the core project after the SDK adds implicit constants. No hand-maintained symbol list. -->
+    <Target Name="CollectCommandRouteSymbols" BeforeTargets="PrepareForBuild" Condition="'$(TargetFramework)' != ''">
+        <ItemGroup>
+            <_CommandRouteFramework Include="net8.0;net10.0" />
+        </ItemGroup>
+        <MSBuild Projects="../../src/Respire/Respire.csproj"
+                 Targets="GetCommandRouteSymbols"
+                 Properties="TargetFramework=%(_CommandRouteFramework.Identity);Configuration=$(Configuration);CustomAfterMicrosoftCommonTargets=$(MSBuildProjectDirectory)/CommandRouteDiscovery.targets"
+                 RemoveProperties="RuntimeIdentifier;SelfContained">
+            <Output TaskParameter="TargetOutputs" ItemName="_CommandRouteSymbols" />
+        </MSBuild>
+        <Error Condition="'@(_CommandRouteSymbols)' == ''" Text="Core command route symbols were not produced." />
+        <WriteLinesToFile File="$(IntermediateOutputPath)CommandRouteSymbols.txt" Lines="@(_CommandRouteSymbols)"
+                          Overwrite="true" WriteOnlyWhenDifferent="true" />
+        <ItemGroup>
+            <EmbeddedResource Include="$(IntermediateOutputPath)CommandRouteSymbols.txt" LogicalName="Respire.Tests.CommandRouteSymbols" />
+        </ItemGroup>
+    </Target>
+
 </Project>

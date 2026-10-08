@@ -19,29 +19,45 @@ internal static class CommandRouteOwnership
     internal static Member[] Discover(IEnumerable<(string File, string Source)> files)
     {
         var source = files.ToArray();
-        return DiscoverFramework(source, "net8.0", FrameworkSymbols(8))
-            .Concat(DiscoverFramework(source, "net10.0", FrameworkSymbols(10)))
+        return Configurations.Value.SelectMany(configuration => DiscoverFramework(source, configuration.Framework, configuration.Symbols))
             .ToArray();
     }
 
-    private static string[] FrameworkSymbols(int majorVersion)
+    private sealed record Configuration(string Framework, string[] Symbols);
+    private static readonly Lazy<Configuration[]> Configurations = new(ReadConfigurations);
+
+    private static Configuration[] ReadConfigurations()
     {
-        // Match SDK GenerateTargetFrameworkDefineConstants/GenerateNETCompatibleDefineConstants
-        // for the platform-neutral .NET targets used by the core project.
-        var symbols = new List<string> { "NET", "NETCOREAPP", $"NET{majorVersion}_0" };
-        foreach (var version in new[] { "1_0", "1_1", "2_0", "2_1", "2_2", "3_0", "3_1" })
-            symbols.Add("NETCOREAPP" + version + "_OR_GREATER");
-        for (var version = 5; version <= majorVersion; version++)
-            symbols.Add($"NET{version}_0_OR_GREATER");
-        return symbols.ToArray();
+        using var stream = typeof(CommandRouteOwnership).Assembly.GetManifestResourceStream("Respire.Tests.CommandRouteSymbols")
+            ?? throw new InvalidOperationException("Core command route symbols are missing; rebuild the test project.");
+        using var reader = new StreamReader(stream);
+        var rows = reader.ReadToEnd().Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Split('|')).ToArray();
+        if (rows.Length != 2 || rows.Any(row => row.Length != 3 || string.IsNullOrWhiteSpace(row[1]) || string.IsNullOrWhiteSpace(row[2]))
+            || !rows.Select(row => row[0]).Order().SequenceEqual(new[] { "net10.0", "net8.0" })
+            || rows.Select(row => row[1]).Distinct().Count() != 1)
+            throw new InvalidOperationException("Core command route symbols must include both frameworks in the same build configuration.");
+        return rows.Select(row => new Configuration(row[0], row[2].Split(',', StringSplitOptions.RemoveEmptyEntries))).ToArray();
     }
 
     private static Member[] DiscoverFramework((string File, string Source)[] files, string framework, string[] symbols)
     {
         var members = new List<Member>();
-        var roots = files.Select(file => (file.File,
-            Root: CSharpSyntaxTree.ParseText(file.Source,
-                new CSharpParseOptions(LanguageVersion.Preview, preprocessorSymbols: symbols)).GetRoot())).ToArray();
+        var roots = files.Select(file =>
+        {
+            var tree = CSharpSyntaxTree.ParseText(file.Source,
+                new CSharpParseOptions(LanguageVersion.Preview, preprocessorSymbols: symbols), path: file.File);
+            var errors = tree.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).ToArray();
+            if (errors.Length != 0)
+                throw new InvalidOperationException("Command route source parse failed [" + framework + "]: "
+                    + string.Join(Environment.NewLine, errors.Select(d => d.ToString())));
+            var root = tree.GetRoot();
+            // Extension receivers require distinct member identities; never treat them as ordinary static methods.
+            if (root.DescendantNodes().OfType<ExtensionBlockDeclarationSyntax>().Any())
+                throw new InvalidOperationException("Command route extension blocks require explicit discovery support ["
+                    + framework + "]: " + file.File);
+            return (file.File, Root: root);
+        }).ToArray();
         var publicTypes = roots.SelectMany(file => file.Root.DescendantNodes().OfType<TypeDeclarationSyntax>())
             .Where(type => type.Modifiers.Any(SyntaxKind.PublicKeyword))
             .Select(TypeId).ToHashSet(StringComparer.Ordinal);
@@ -51,7 +67,7 @@ internal static class CommandRouteOwnership
             .Where(u => u.GlobalKeyword.IsKind(SyntaxKind.GlobalKeyword)).ToArray();
         string ResolveContract(TypeSyntax parent, TypeDeclarationSyntax declaration)
         {
-            var name = Compact(parent);
+            var name = ContractName(parent);
             if (name.StartsWith("global::", StringComparison.Ordinal)) return name["global::".Length..];
             var usings = declaration.Ancestors().OfType<BaseNamespaceDeclarationSyntax>().SelectMany(n => n.Usings)
                 .Concat(((CompilationUnitSyntax)declaration.SyntaxTree.GetRoot()).Usings).Concat(globalUsings).ToArray();
@@ -59,7 +75,7 @@ internal static class CommandRouteOwnership
             {
                 var alias = directive.Alias!.Name.Identifier.ValueText;
                 if (name == alias || name.StartsWith(alias + ".", StringComparison.Ordinal) || name.StartsWith(alias + "::", StringComparison.Ordinal))
-                    return Compact(directive.Name!).Replace("global::", "", StringComparison.Ordinal)
+                    return ContractName(directive.Name!).Replace("global::", "", StringComparison.Ordinal)
                         + name[alias.Length..].Replace("::", ".", StringComparison.Ordinal);
             }
             var space = Namespace(declaration);
@@ -106,6 +122,7 @@ internal static class CommandRouteOwnership
                 if (types.Length == 0) continue;
                 var type = TypeId(types[^1]);
                 var explicitContract = method.ExplicitInterfaceSpecifier?.Name.ToString();
+                var explicitContractId = method.ExplicitInterfaceSpecifier is null ? null : ContractName(method.ExplicitInterfaceSpecifier.Name);
                 var signature = (explicitContract is null ? "" : explicitContract + ".") + method.Identifier.ValueText + Arity(method.TypeParameterList) + "(" +
                     string.Join(",", method.ParameterList.Parameters.Select(Parameter)) + "):" + Compact(method.ReturnType);
                 var visible = types.All(t => publicTypes.Contains(TypeId(t)));
@@ -114,8 +131,8 @@ internal static class CommandRouteOwnership
                         && !method.Modifiers.Any(SyntaxKind.InternalKeyword));
                 var route = visible && publicMethod;
                 var contracts = Contracts(type);
-                var implements = publicMethod || (explicitContract is not null && contracts.Any(c =>
-                    c == explicitContract || c.EndsWith("." + explicitContract, StringComparison.Ordinal)));
+                var implements = publicMethod || (explicitContractId is not null && contracts.Any(c =>
+                    c == explicitContractId || c.EndsWith("." + explicitContractId, StringComparison.Ordinal)));
                 members.Add(new(type + "." + signature, type, signature, method.Identifier.ValueText,
                     route, method.Body is not null || method.ExpressionBody is not null, file,
                     types[^1] is InterfaceDeclarationSyntax, implements, contracts, framework));
@@ -140,6 +157,13 @@ internal static class CommandRouteOwnership
     }
 
     private static string TypeName(TypeDeclarationSyntax type) => type.Identifier.ValueText + Arity(type.TypeParameterList);
+    private static string ContractName(TypeSyntax type) => type switch
+    {
+        GenericNameSyntax generic => generic.Identifier.ValueText + "`" + generic.TypeArgumentList.Arguments.Count,
+        QualifiedNameSyntax qualified => ContractName(qualified.Left) + "." + ContractName(qualified.Right),
+        AliasQualifiedNameSyntax alias => alias.Alias.Identifier.ValueText + "::" + ContractName(alias.Name),
+        _ => Compact(type)
+    };
     private static string TypeId(TypeDeclarationSyntax type)
     {
         var space = Namespace(type);
