@@ -65,6 +65,19 @@ public class StreamWorkerTests
         await fixture.StopAsync();
         var pending = await fixture.View.Streams.PendingAsync("events", "workers");
         await Assert.That(state.WarningCount).IsEqualTo(failure == "nack" ? 0 : 1);
+        foreach (var warning in state.Warnings)
+        {
+            var exceptionType = failure switch
+            {
+                "cancel" => typeof(OperationCanceledException).FullName,
+                "deserialize" => typeof(FormatException).FullName,
+                _ => typeof(InvalidOperationException).FullName,
+            };
+            await Assert.That(warning.Fields.SingleOrDefault(pair => pair.Key == "ExceptionType").Value)
+                .IsEqualTo(exceptionType);
+            await Assert.That(warning.Message.Contains("private payload", StringComparison.Ordinal)).IsFalse();
+            await Assert.That(warning.Exception).IsNull();
+        }
         await Assert.That(pending.Length).IsEqualTo(1);
         await Assert.That(pending[0].DeliveryCount).IsEqualTo(1);
         await Assert.That(state.ScopeIds.Count).IsEqualTo(failure == "deserialize" ? 1 : 2);
@@ -106,6 +119,53 @@ public class StreamWorkerTests
                 .IsEqualTo(consumers * (batch - 1));
         }
         finally { release.TrySetResult(); }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ShutdownStopsReadersBeforeHandlerCancellationCallbacks(bool dispose)
+    {
+        // The cancellation callback waits for the worker drain before returning.
+        // Readers must already be cancelled or this callback blocks shutdown.
+        var completion = new TaskCompletionSource<RespireStreamWorkerResult>();
+        var waiting = NewSignal();
+        Fixture? fixture = null;
+        // Dispose this registration after shutdown. Disposing inside the handler
+        // would join the callback that is waiting for that same handler to finish.
+        CancellationTokenRegistration registration = default;
+        var state = new State { Handle = (entry, token) =>
+        {
+            if (entry.GetString("payload") != "0") return ValueTask.FromResult(RespireStreamWorkerResult.Nack);
+            registration = token.Register(() =>
+            {
+                completion.TrySetResult(RespireStreamWorkerResult.Nack);
+                fixture!.Service.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+            });
+            waiting.TrySetResult();
+            return new(completion.Task);
+        } };
+        fixture = await Fixture.CreateAsync(state: state, options: new() { BatchSize = 2 });
+        await using var owned = fixture;
+        await fixture.AddAsync(0);
+        await fixture.AddAsync(1);
+        await fixture.StartAsync();
+        await waiting.Task.WaitAsync(Deadline);
+        try
+        {
+            if (dispose) fixture.Service.Dispose();
+            else await fixture.Service.StopAsync(new CancellationToken(canceled: true)).WaitAsync(Deadline);
+            await fixture.Service.ExecuteTask!.WaitAsync(Deadline);
+            await Assert.That(state.ScopeIds.Count).IsEqualTo(1);
+            await Assert.That(state.DisposedScopes).IsEqualTo(1);
+            await Assert.That(state.WarningCount).IsEqualTo(0);
+            await Assert.That((await fixture.View.Streams.PendingSummaryAsync("events", "workers")).Count).IsEqualTo(2);
+        }
+        finally
+        {
+            completion.TrySetResult(RespireStreamWorkerResult.Nack);
+            registration.Dispose();
+        }
     }
 
     [Test]
@@ -381,6 +441,7 @@ public class StreamWorkerTests
         public int Peak;
         public int DisposedScopes;
         public int WarningCount;
+        public ConcurrentBag<(string Message, Exception? Exception, KeyValuePair<string, object?>[] Fields)> Warnings { get; } = [];
     }
 
     public sealed class ScopeProbe(State state) : IAsyncDisposable
@@ -429,7 +490,12 @@ public class StreamWorkerTests
             public void Log<TState>(LogLevel logLevel, EventId eventId, TState value, Exception? exception,
                 Func<TState, Exception?, string> formatter)
             {
-                if (logLevel == LogLevel.Warning) Interlocked.Increment(ref state.WarningCount);
+                if (logLevel == LogLevel.Warning)
+                {
+                    state.Warnings.Add((formatter(value, exception), exception,
+                        ((IEnumerable<KeyValuePair<string, object?>>)value!).ToArray()));
+                    Interlocked.Increment(ref state.WarningCount);
+                }
             }
         }
     }

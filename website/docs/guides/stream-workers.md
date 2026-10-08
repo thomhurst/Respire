@@ -95,9 +95,9 @@ use Respire's dedicated blocking connection path.
 
 Return `Ack` only after successful processing. `Nack`, a serializer or handler exception,
 an unknown result, or handler cancellation leaves the entry pending. The worker continues
-reading new entries. A warning reports handler/serializer failures without including their
-exception messages or payloads. DI activation, scope disposal, read and acknowledgement
-failures fault the background service and follow the application's `HostOptions`
+reading new entries. A warning reports the exception type for handler/serializer failures
+without including exception messages or payloads. DI activation, scope disposal, read and
+acknowledgement failures fault the background service and follow the application's `HostOptions`
 background-service failure policy. Handler activation failures, including transient dependency
 construction failures, stop the worker rather than retry activation. The first consumer's
 infrastructure failure reaches the host even when a sibling handler ignores cancellation;

@@ -95,10 +95,11 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                 throw new InvalidOperationException("The stream handler returned an unknown completion result.");
         }
         catch (OperationCanceledException) when (_handlers.IsCancellationRequested) { return; }
-        catch (Exception)
+        catch (Exception error)
         {
             // Exception messages may contain payloads. Do not pass them to the logger by default.
-            HandlerFailed(logger);
+            var exceptionType = error.GetType();
+            HandlerFailed(logger, exceptionType.FullName ?? exceptionType.Name);
             return;
         }
 
@@ -140,6 +141,6 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
         catch (ObjectDisposedException) { } // Stop/Dispose can be called after the execution task has completed.
     }
 
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Stream handler or serializer failed; delivery remains pending.")]
-    private static partial void HandlerFailed(ILogger logger);
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Stream handler or serializer failed ({ExceptionType}); delivery remains pending.")]
+    private static partial void HandlerFailed(ILogger logger, string exceptionType);
 }
