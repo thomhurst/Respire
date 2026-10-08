@@ -58,9 +58,9 @@ public class RedisMetricSchemaTests
         }
     }
 
-    /// <summary>Forces a flush between scalar and dependent-query removal for one invalidation.</summary>
+    /// <summary>A full flush waits for dependency invalidation and counts each removed response once.</summary>
     [Test]
-    public async Task FlushDuringInvalidationCountsEachResponseOnce()
+    public async Task FlushWaitsForInvalidationAndCountsEachResponseOnce()
     {
         using var capture = new Capture();
         var cache = new ClientSideCacheCoordinator(new());
@@ -84,19 +84,32 @@ public class RedisMetricSchemaTests
             }
         });
         Task invalidating = Task.CompletedTask;
+        Task flushing = Task.CompletedTask;
         try
         {
             await held.Task.WaitAsync(TimeSpan.FromSeconds(10));
             invalidating = Task.Run(() => cache.Invalidate(in key, RespireClientCacheInvalidationReason.ServerInvalidation));
             // The scalar is removed, but dependency removal is blocked on the held gate.
             await Assert.That(SpinWait.SpinUntil(() => store.Count == 1, TimeSpan.FromSeconds(10))).IsTrue();
-            using var flush = RespValue.Array(RespValue.SimpleString("invalidate"u8.ToArray()), RespValue.Null);
-            cache.HandlePush(in flush);
+            var started = new TaskCompletionSource<Thread>(TaskCreationOptions.RunContinuationsAsynchronously);
+            flushing = Task.Factory.StartNew(() =>
+            {
+                started.TrySetResult(Thread.CurrentThread);
+                using var flush = RespValue.Array(RespValue.SimpleString("invalidate"u8.ToArray()), RespValue.Null);
+                cache.HandlePush(in flush);
+            }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+            var flushThread = await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            // Observe the dedicated thread actually waiting, not merely an unscheduled task.
+            // Publication/invalidation now share the query gate with full-store replacement.
+            await Assert.That(SpinWait.SpinUntil(() => flushing.IsCompleted
+                || (flushThread.ThreadState & ThreadState.WaitSleepJoin) != 0, TimeSpan.FromSeconds(10))).IsTrue();
+            await Assert.That(flushing.IsCompleted).IsFalse();
+            await Assert.That(cache.Count).IsEqualTo(1);
         }
         finally
         {
             release.TrySetResult();
-            await Task.WhenAll(holder, invalidating).WaitAsync(TimeSpan.FromSeconds(10));
+            await Task.WhenAll(holder, invalidating, flushing).WaitAsync(TimeSpan.FromSeconds(10));
         }
         await Assert.That(capture.Items.Where(item => item.Name == "redis.client.csc.evictions").Sum(item => item.Value)).IsEqualTo(2);
         await Assert.That(cache.Count).IsEqualTo(0);
