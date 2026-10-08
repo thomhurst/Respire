@@ -107,6 +107,69 @@ public class ClientCacheStringPublicationTests
     }
 
     [Test]
+    [Arguments(0, 0)]
+    [Arguments(0, 1)]
+    [Arguments(0, 2)]
+    [Arguments(0, 3)]
+    [Arguments(1, 0)]
+    [Arguments(1, 1)]
+    [Arguments(1, 2)]
+    [Arguments(1, 3)]
+    [Arguments(2, 0)]
+    [Arguments(2, 1)]
+    [Arguments(2, 2)]
+    [Arguments(2, 3)]
+    public async Task UncachedCoalescedStringWaitersShareTextRegardlessOfTheProducer(int producer, int rejection)
+    {
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var serializer = new TransformingSerializer();
+        await using var server = CreateServer(FakeRespServer.OkReply);
+        server.SuppressReply = command =>
+        {
+            if (!command.StartsWith("GET ", StringComparison.Ordinal)) return false;
+            received.TrySetResult();
+            return true;
+        };
+        await using var client = await ConnectAsync(server, coalesce: true,
+            maxSizeBytes: rejection == 0 ? 80 : rejection == 1 ? 200 : 1_000_000, serializer: serializer);
+        Task<byte[]?>? byteRead = null;
+        Task<Payload?>? customRead = null;
+        Task<string?>? stringRead = null;
+        if (producer == 0) byteRead = client.GetBytesAsync("key").AsTask();
+        else if (producer == 1) customRead = client.GetAsync<Payload>("key").AsTask();
+        else stringRead = client.GetStringAsync("key").AsTask();
+        await received.Task.WaitAsync(Limit);
+        var first = client.GetStringAsync("key").AsTask();
+        var second = client.GetStringAsync("key").AsTask();
+        var key = new RespireKey("key");
+        if (rejection == 2) client.Core.ClientCache!.Invalidate(in key);
+        else if (rejection == 3) client.ClientSideCache!.Clear();
+        var expected = new string('x', 100);
+        await server.SendRawAsync(Encoding.UTF8.GetBytes("$100\r\n" + expected + "\r\n"));
+        var text = await first.WaitAsync(Limit);
+        await Assert.That(text).IsEqualTo(expected);
+        await Assert.That(await second.WaitAsync(Limit)).IsSameReferenceAs(text);
+        if (stringRead is not null)
+            await Assert.That(await stringRead.WaitAsync(Limit)).IsSameReferenceAs(text);
+        if (byteRead is not null)
+        {
+            var bytes = (await byteRead.WaitAsync(Limit))!;
+            await Assert.That(bytes).IsEquivalentTo(Encoding.UTF8.GetBytes(expected));
+            bytes[0] = 0;
+            await Assert.That(text).IsEqualTo(expected);
+        }
+        if (customRead is not null)
+        {
+            await Assert.That((await customRead.WaitAsync(Limit))!.Text).IsEqualTo("transformed-1");
+            await Assert.That(serializer.Calls).IsEqualTo(1);
+        }
+        await Assert.That(client.Core.ClientCache!.Count).IsEqualTo(0);
+        await Assert.That(client.Core.ClientCache.SizeBytes).IsEqualTo(0);
+        await Assert.That(client.Core.ClientCache.ActiveSharedReadCount).IsEqualTo(0);
+        await Assert.That(server.ReceivedCommands.Count(c => c.StartsWith("GET "))).IsEqualTo(1);
+    }
+
+    [Test]
     [Arguments(false, false)]
     [Arguments(false, true)]
     [Arguments(true, false)]
