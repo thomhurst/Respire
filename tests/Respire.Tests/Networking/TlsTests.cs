@@ -300,5 +300,5 @@ public class TlsTests
         await tls.WriteAsync(FakeRespServer.PongReply);
     }
 
-    private static X509Certificate2 CreateCertificate(string hostname = "localhost") => TestTlsCertificate.Create(hostname);
+    internal static X509Certificate2 CreateCertificate(string hostname = "localhost") => TestTlsCertificate.Create(hostname);
 }

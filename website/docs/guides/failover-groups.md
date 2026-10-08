@@ -200,6 +200,13 @@ The group records these instruments on the `Respire` meter:
 | `respire.failover.endpoint.switches` | `respire.failover.switch.reason`, `respire.failover.endpoint.previous`, `respire.failover.endpoint.current` | Selected endpoint changes. The reason is a `RespireFailoverSwitchReasons` value; a missing endpoint is reported as `none`. |
 | `respire.failover.monitor.errors` | `respire.failover.error.source`, `error.type` | Unexpected monitor failures (`monitor`) and exceptions thrown by `EndpointSwitched` handlers (`handler`). The monitor continues after either. |
 
+When Resiliency metrics are enabled, failed health probes also report
+`redis.client.errors` with `redis.client.errors.internal = true`. This includes rejected
+PINGs, failed or malformed CLUSTER INFO replies, an unhealthy cluster state and deployment
+conflicts. Probe failures update endpoint health; they are not final application command
+failures. Expected cancellation when startup or monitoring stops does not report a probe
+error. Commands sent through `ActiveClient` retain their normal final error boundary.
+
 ## Logging
 
 The group logs through the first candidate whose `RespireOptions.LoggerFactory` is set, under the

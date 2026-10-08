@@ -70,17 +70,29 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
     /// Creates a subscription and activates it before handing it back, so it is already live
     /// server-side when the caller sees it — enumeration only drains the buffer.
     /// </summary>
-    public async ValueTask<RespireSubscription> SubscribeAsync(
+    public ValueTask<RespireSubscription> SubscribeAsync(
         SubscriptionKind kind,
         RespireChannel[] names,
         RespireSubscriptionOptions options,
         CancellationToken cancellationToken)
     {
+        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        return RespireTelemetry.ObserveFinalError(
+            SubscribeAsync(kind, names, options, cancellationToken, observation), observation);
+    }
+
+    public async ValueTask<RespireSubscription> SubscribeAsync(
+        SubscriptionKind kind,
+        RespireChannel[] names,
+        RespireSubscriptionOptions options,
+        CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation)
+    {
         var subscription = CreateSubscription(kind, names, options);
         if (IsClusterSharded(kind))
-            await ActivateShardedAsync(subscription, cancellationToken).ConfigureAwait(false);
+            await ActivateShardedAsync(subscription, cancellationToken, observation).ConfigureAwait(false);
         else
-            await ActivateAsync(subscription, cancellationToken).ConfigureAwait(false);
+            await ActivateAsync(subscription, cancellationToken, observation).ConfigureAwait(false);
         return subscription;
     }
 
@@ -89,7 +101,8 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
     /// caller's <see cref="RespireSubscription.DisposeAsync"/>, which unsubscribes every route it
     /// takes back out.
     /// </summary>
-    private async ValueTask ActivateAsync(RespireSubscription subscription, CancellationToken cancellationToken)
+    private async ValueTask ActivateAsync(RespireSubscription subscription, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation)
     {
         await _controlGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         RespireConnection? connection = null;
@@ -100,7 +113,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
             {
                 if (subscription.Names.Any(static name => !name.IsNotification))
                     throw new ArgumentException("Cluster notification subscriptions cannot mix notification descriptors and ordinary channels.", nameof(subscription));
-                await ActivateClusterNotificationsAsync(subscription, cancellationToken).ConfigureAwait(false);
+                await ActivateClusterNotificationsAsync(subscription, cancellationToken, observation).ConfigureAwait(false);
                 return;
             }
             connection = await EnsureConnectionAsync(cancellationToken).ConfigureAwait(false);
@@ -130,7 +143,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
             {
                 await SendControlAsync(
                         connection, SubscribeVerb(subscription.Kind), SubscribeOperation(subscription.Kind), name,
-                        cancellationToken, instrument: true)
+                        cancellationToken, instrument: true, observation: observation)
                     .ConfigureAwait(false);
             }
         }
@@ -383,7 +396,8 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
         RespireChannel name,
         CancellationToken cancellationToken,
         bool instrument,
-        bool ask = false)
+        bool ask = false,
+        RespireTelemetry.ErrorObservation observation = default)
     {
         var telemetry = instrument
             ? RespireTelemetry.StartOperation(
@@ -393,8 +407,10 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
         {
             var command = new ProtocolCommand<Cmd1>(new Cmd1(verb, name.AsValue()));
             var reply = ask
-                ? await ClusterRouter.SendAskingAsync(connection, in command, cancellationToken, operation).ConfigureAwait(false)
-                : await connection.SendAsync(command, cancellationToken).ConfigureAwait(false);
+                ? await ClusterRouter.SendAskingAsync(connection, in command, cancellationToken, operation,
+                    observation: observation).ConfigureAwait(false)
+                : await connection.SendAsync(command, cancellationToken, commandName: operation,
+                    observation: observation).ConfigureAwait(false);
             if (reply.IsError)
             {
                 var error = ResponseReader.ServerError(in reply, operation);
@@ -408,6 +424,22 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
         catch (Exception ex)
         {
             telemetry.Complete(core, operation, error: ex, connection: connection);
+            throw;
+        }
+    }
+
+    private async ValueTask SendRecoveryControlAsync(RespireConnection connection,
+        SubscriptionKind kind, RespireChannel name, CancellationToken cancellationToken)
+    {
+        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        try
+        {
+            await SendControlAsync(connection, SubscribeVerb(kind), SubscribeOperation(kind), name,
+                cancellationToken, instrument: false, observation: observation).ConfigureAwait(false);
+        }
+        catch (Exception error) when (!_disposed && !core.Disposed && !cancellationToken.IsCancellationRequested)
+        {
+            observation.Handled(error);
             throw;
         }
     }
@@ -569,9 +601,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
 
                     foreach (var (kind, name) in routes)
                     {
-                        await SendControlAsync(
-                                replacement, SubscribeVerb(kind), SubscribeOperation(kind), name,
-                                CancellationToken.None, instrument: false)
+                        await SendRecoveryControlAsync(replacement, kind, name, CancellationToken.None)
                             .ConfigureAwait(false);
                     }
 

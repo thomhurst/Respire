@@ -2246,7 +2246,7 @@ public class ClusterNodeIdentityTests
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port));
         var script = RespireScript.Create("return redis.call('GET', KEYS[1])");
         var execution = await client.StartTrackedScriptExecutionAsync(script, ["key"], [], CancellationToken.None);
-        using var result = await execution.Response;
+        using var result = await execution.ConsumeResponseAsync();
         var original = execution.Connection;
         var router = client.Core.Cluster!;
         await router.GetMasterConnectionsAsync(CancellationToken.None, discovery: null);

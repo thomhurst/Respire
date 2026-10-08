@@ -219,7 +219,7 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
     {
         ArgumentNullException.ThrowIfNull(script);
         var tail = client.BuildScriptTail(keys, args);
-        return ExecuteTypedCoreAsync<T>(script, tail, cancellationToken);
+        return client.ExecuteScriptConvertedAsync(script, tail, cancellationToken, static result => result.As<T>());
     }
 
     public ValueTask<long> ExecuteIntegerAsync(
@@ -228,7 +228,7 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
     {
         ArgumentNullException.ThrowIfNull(script);
         var tail = client.BuildScriptTail(keys, args);
-        return ExecuteIntegerCoreAsync(script, tail, cancellationToken);
+        return client.ExecuteScriptConvertedAsync(script, tail, cancellationToken, static result => result.AsInteger());
     }
 
     public ValueTask<string?> ExecuteStringAsync(
@@ -237,33 +237,8 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
     {
         ArgumentNullException.ThrowIfNull(script);
         var tail = client.BuildScriptTail(keys, args);
-        return ExecuteStringCoreAsync(script, tail, cancellationToken);
-    }
-
-    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
-    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-    private async ValueTask<T?> ExecuteTypedCoreAsync<T>(
-        RespireScript script, RespireValue[] tail, CancellationToken cancellationToken)
-    {
-        using var result = await client.ExecuteScriptAsync(script, tail, cancellationToken).ConfigureAwait(false);
-        return result.As<T>();
-    }
-
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-    private async ValueTask<long> ExecuteIntegerCoreAsync(
-        RespireScript script, RespireValue[] tail, CancellationToken cancellationToken)
-    {
-        using var result = await client.ExecuteScriptAsync(script, tail, cancellationToken).ConfigureAwait(false);
-        return result.AsInteger();
-    }
-
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-    private async ValueTask<string?> ExecuteStringCoreAsync(
-        RespireScript script, RespireValue[] tail, CancellationToken cancellationToken)
-    {
-        using var result = await client.ExecuteScriptAsync(script, tail, cancellationToken).ConfigureAwait(false);
-        return result.IsNull ? null : result.AsString();
+        return client.ExecuteScriptConvertedAsync(script, tail, cancellationToken,
+            static result => result.IsNull ? null : result.AsString());
     }
 
     public ValueTask<bool[]> ExistsAsync(params ReadOnlySpan<string> sha1s)
@@ -315,22 +290,19 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         ClusterRouter cluster, CmdN command, CancellationToken cancellationToken)
     {
         var results = await SendToPrimariesAsync(cluster, "SCRIPT EXISTS", command,
-            static (ScriptCommands _, in RespValue value) => ResponseReader.FlagArray(in value), cancellationToken)
-            .ConfigureAwait(false);
-        var result = results[0];
-        for (var primary = 1; primary < results.Length; primary++)
-        {
-            var exists = results[primary];
-            if (exists.Length != result.Length)
+            static (ScriptCommands _, in RespValue value) => ResponseReader.FlagArray(in value), cancellationToken,
+            static results =>
             {
-                throw new RespireProtocolException("SCRIPT EXISTS returned inconsistent result lengths.");
-            }
-            for (var i = 0; i < result.Length; i++)
-            {
-                result[i] &= exists[i];
-            }
-        }
-        return result;
+                var result = results[0];
+                for (var primary = 1; primary < results.Length; primary++)
+                {
+                    var exists = results[primary];
+                    if (exists.Length != result.Length)
+                        throw new RespireProtocolException("SCRIPT EXISTS returned inconsistent result lengths.");
+                    for (var i = 0; i < result.Length; i++) result[i] &= exists[i];
+                }
+            }).ConfigureAwait(false);
+        return results[0];
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
@@ -365,38 +337,50 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         CancellationToken cancellationToken)
     {
         var results = await SendToPrimariesAsync(cluster, "SCRIPT LOAD", new Cmd1(Verbs.ScriptLoad, script.Source),
-            static (ScriptCommands _, in RespValue value) => ResponseReader.String(in value), cancellationToken)
-            .ConfigureAwait(false);
-        var digest = results[0];
-        for (var i = 1; i < results.Length; i++)
-        {
-            if (!string.Equals(digest, results[i], StringComparison.Ordinal))
+            static (ScriptCommands _, in RespValue value) => ResponseReader.String(in value), cancellationToken,
+            static results =>
             {
-                throw new RespireProtocolException("SCRIPT LOAD returned inconsistent digests across primaries.");
-            }
-        }
-        return digest;
+                for (var i = 1; i < results.Length; i++)
+                    if (!string.Equals(results[0], results[i], StringComparison.Ordinal))
+                        throw new RespireProtocolException("SCRIPT LOAD returned inconsistent digests across primaries.");
+            }).ConfigureAwait(false);
+        return results[0];
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<TResult[]> SendToPrimariesAsync<TCommand, TResult>(
         ClusterRouter cluster, string operation, TCommand command,
-        ResponseConverter<ScriptCommands, TResult> convert, CancellationToken cancellationToken)
+        ResponseConverter<ScriptCommands, TResult> convert, CancellationToken cancellationToken,
+        Action<TResult[]>? validate = null)
         where TCommand : struct, IRespCommand
     {
-        var masters = await cluster.GetMasterConnectionsAsync(cancellationToken, discovery: null).ConfigureAwait(false);
-        if (masters.Length == 0)
+        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        var targetsReportedFailure = false;
+        try
         {
-            throw new RespireConnectionException($"{operation} did not reach any Redis Cluster primary.");
+            var masters = await cluster.GetMasterConnectionsAsync(cancellationToken, discovery: null).ConfigureAwait(false);
+            if (masters.Length == 0)
+                throw new RespireConnectionException($"{operation} did not reach any Redis Cluster primary.");
+            var responses = new Task<TResult>[masters.Length];
+            for (var i = 0; i < masters.Length; i++)
+                responses[i] = SendAndConvertAsync(operation, masters[i], command, convert, cancellationToken).AsTask();
+            TResult[] results;
+            try { results = await Task.WhenAll(responses).ConfigureAwait(false); }
+            catch
+            {
+                // Join every target before propagation. Each target owns its transport and
+                // conversion failures; the parent only owns discovery and result validation.
+                targetsReportedFailure = true;
+                throw;
+            }
+            validate?.Invoke(results);
+            return results;
         }
-        var responses = new Task<TResult>[masters.Length];
-        for (var i = 0; i < masters.Length; i++)
+        catch (Exception error)
         {
-            responses[i] = SendAndConvertAsync(operation, masters[i], command, convert, cancellationToken).AsTask();
+            if (!targetsReportedFailure) observation.Final(error);
+            throw;
         }
-        // Observe every send, including failures, before returning. Each operation owns and
-        // disposes its reply independently, even when another primary fails or cancels.
-        return await Task.WhenAll(responses).ConfigureAwait(false);
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
@@ -405,8 +389,17 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         ResponseConverter<ScriptCommands, TResult> convert, CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
-        using var reply = await client.SendToClusterTargetAsync(operation, connection, command, cancellationToken)
-            .ConfigureAwait(false);
-        return convert(this, in reply);
+        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        try
+        {
+            using var reply = await client.SendToClusterTargetAsync(operation, connection, command, cancellationToken,
+                observeErrors: false, observation: observation).ConfigureAwait(false);
+            return convert(this, in reply);
+        }
+        catch (Exception error)
+        {
+            observation.Final(error);
+            throw;
+        }
     }
 }

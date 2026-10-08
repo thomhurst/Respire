@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
+using Respire.Internal;
 
 namespace Respire;
 
@@ -25,16 +26,19 @@ public enum RespirePendingStatus
 /// </summary>
 public sealed class RespirePending<T>
 {
+    private const int StatusMask = 3;
+    private const int ErrorRecorded = 4;
     private int _state;
     private T? _value;
     private Exception? _error;
+    private int _errorAttempts;
 
     internal RespirePending()
     {
     }
 
     /// <summary>The pending result's current lifecycle state.</summary>
-    public RespirePendingStatus Status => (RespirePendingStatus)Volatile.Read(ref _state);
+    public RespirePendingStatus Status => (RespirePendingStatus)(Volatile.Read(ref _state) & StatusMask);
 
     /// <summary>Whether the command has reached a terminal state.</summary>
     public bool IsCompleted => Status != RespirePendingStatus.Pending;
@@ -84,16 +88,37 @@ public sealed class RespirePending<T>
     internal void Succeed(T value)
     {
         _value = value;
-        Volatile.Write(ref _state, (int)RespirePendingStatus.Succeeded);
+        SetStatus(RespirePendingStatus.Succeeded);
     }
 
     internal void Fail(Exception error)
     {
         _error = error;
-        Volatile.Write(ref _state, (int)RespirePendingStatus.Faulted);
+        SetStatus(RespirePendingStatus.Faulted);
     }
 
-    internal void Abort() => Volatile.Write(ref _state, (int)RespirePendingStatus.Aborted);
+    // The batch/transaction owner reports after its correction and resource cleanup.
+    // Reading Result again, or creating its summary, must not repeat this boundary.
+    internal bool ReportError()
+    {
+        if (Status != RespirePendingStatus.Faulted) return false;
+        if ((Interlocked.Or(ref _state, ErrorRecorded) & ErrorRecorded) == 0)
+        {
+            RespireTelemetry.RecordError(_error!, internallyHandled: false, _errorAttempts);
+        }
+        return true;
+    }
+
+    internal void AdvanceErrorAttempt() => _errorAttempts++;
+
+    internal void AddErrorAttempts(int attempts) => _errorAttempts += attempts;
+
+    internal void Abort() => SetStatus(RespirePendingStatus.Aborted);
+
+    // The batch owns terminal transitions. Preserve its reported-error flag if it updates
+    // the outcome during cleanup; the flag shares existing status storage instead of adding padding.
+    private void SetStatus(RespirePendingStatus status)
+        => Volatile.Write(ref _state, (Volatile.Read(ref _state) & ErrorRecorded) | (int)status);
 
     /// <summary>Returns the synchronous awaiter for this deferred result.</summary>
     public RespirePendingAwaiter<T> GetAwaiter() => new(this);

@@ -48,10 +48,8 @@ public sealed partial class RespireServerClientConnection
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<RespireServerClientInfo[]> ReadClientsAsync(CmdN command, CancellationToken cancellationToken)
-    {
-        using var reply = await SendAsync("CLIENT LIST", command, cancellationToken).ConfigureAwait(false);
-        return ServerCommands.ParseClientList(in reply);
-    }
+        => await ConvertAsync("CLIENT LIST", command, cancellationToken,
+            static (RespireServerClientConnection _, in RespValue reply) => ServerCommands.ParseClientList(in reply)).ConfigureAwait(false);
 
     /// <summary>Kills matching clients on this handle's endpoint and returns the count. Requires AllowAdmin.</summary>
     /// <remarks>SkipMe refers to this handle's socket only. Killing it invalidates the handle; it never reconnects.</remarks>
@@ -64,8 +62,6 @@ public sealed partial class RespireServerClientConnection
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<long> KillClientsCoreAsync(CmdN command, CancellationToken cancellationToken)
-    {
-        using var reply = await SendAsync("CLIENT KILL", command, cancellationToken).ConfigureAwait(false);
-        return reply.AsInteger();
-    }
+        => await ConvertAsync("CLIENT KILL", command, cancellationToken,
+            static (RespireServerClientConnection _, in RespValue reply) => reply.AsInteger()).ConfigureAwait(false);
 }

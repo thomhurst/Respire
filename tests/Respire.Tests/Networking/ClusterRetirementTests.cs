@@ -267,7 +267,7 @@ public class ClusterRetirementTests
         };
         var method = typeof(RespireClient).GetMethod("SendTrackedClusterAsync", Private)!.MakeGenericMethod(typeof(Cmd2));
         var pending = ((ValueTask<Respire.Protocol.RespValue>)method.Invoke(client,
-            ["SET", router, new Cmd2(RespireCommands.String.SET.Verb, "key", "value"), timeout.Token, onRedirect, true])!).AsTask();
+            ["SET", router, new Cmd2(RespireCommands.String.SET.Verb, "key", "value"), timeout.Token, onRedirect, true, null])!).AsTask();
         Publish(router, new("127.0.0.1", second.Port), "second", 2);
         try
         {
@@ -368,7 +368,7 @@ public class ClusterRetirementTests
             {
                 var method = typeof(RespireClient).GetMethod("SendTrackedClusterAsync", Private)!.MakeGenericMethod(typeof(Cmd2));
                 using var reply = await (ValueTask<Respire.Protocol.RespValue>)method.Invoke(client,
-                    ["SET", router, command, timeout.Token, null, true])!;
+                    ["SET", router, command, timeout.Token, null, true, null])!;
             }
             else if (path == "pinned")
             {
@@ -481,7 +481,7 @@ public class ClusterRetirementTests
                 case "tracked":
                     var method = typeof(RespireClient).GetMethod("SendTrackedClusterAsync", Private)!.MakeGenericMethod(typeof(Cmd2));
                     using (await (ValueTask<Respire.Protocol.RespValue>)method.Invoke(client,
-                        ["SET", router, new Cmd2(RespireCommands.String.SET.Verb, "key", "value"), timeout.Token, null, true])!) { }
+                        ["SET", router, new Cmd2(RespireCommands.String.SET.Verb, "key", "value"), timeout.Token, null, true, null])!) { }
                     break;
                 case "batch":
                     var batch = client.CreateBatch();
@@ -492,7 +492,7 @@ public class ClusterRetirementTests
                 case "script":
                     var execution = await client.StartTrackedScriptExecutionAsync(
                         RespireScript.Create("return redis.call('SET', KEYS[1], ARGV[1])"), ["key"], ["value"], timeout.Token);
-                    using (await execution.Response) { }
+                    using (await execution.ConsumeResponseAsync()) { }
                     break;
                 case "native-lock":
                     await client.ExecuteLockAsync("key", new RespireLockToken("owner"), 1000, timeout.Token);
@@ -593,7 +593,7 @@ public class ClusterRetirementTests
             {
                 var method = typeof(RespireClient).GetMethod("SendTrackedClusterAsync", Private)!.MakeGenericMethod(typeof(Cmd2));
                 using var response = await (ValueTask<Respire.Protocol.RespValue>)method.Invoke(client,
-                    ["SET", router, new Cmd2(RespireCommands.String.SET.Verb, "key", "value"), timeout.Token, null, true])!;
+                    ["SET", router, new Cmd2(RespireCommands.String.SET.Verb, "key", "value"), timeout.Token, null, true, null])!;
                 await Assert.That(response.AsString()).IsEqualTo("OK");
             }
             else await Assert.That(await client.SetAsync("key", "value", cancellationToken: timeout.Token)).IsTrue();
@@ -809,7 +809,7 @@ public class ClusterRetirementTests
             {
                 var method = typeof(RespireClient).GetMethod("SendTrackedClusterAsync", Private)!.MakeGenericMethod(typeof(Cmd2));
                 using var reply = await (ValueTask<Respire.Protocol.RespValue>)method.Invoke(client,
-                    ["SET", router, command, caller.Token, null, true])!;
+                    ["SET", router, command, caller.Token, null, true, null])!;
             }
             else
             {
@@ -908,7 +908,7 @@ public class ClusterRetirementTests
                     Action onRedirect = () => rebased++;
                     var method = typeof(RespireClient).GetMethod("SendTrackedClusterAsync", Private)!.MakeGenericMethod(typeof(Cmd2));
                     var pending = (ValueTask<Respire.Protocol.RespValue>)method.Invoke(client,
-                        ["SET", router, new Cmd2(RespireCommands.String.SET.Verb, "key", "value"), timeout.Token, onRedirect, true])!;
+                        ["SET", router, new Cmd2(RespireCommands.String.SET.Verb, "key", "value"), timeout.Token, onRedirect, true, null])!;
                     using (var reply = await pending) await Assert.That(reply.AsString()).IsEqualTo("OK");
                     await Assert.That(rebased).IsEqualTo(1);
                     break;
@@ -1027,7 +1027,7 @@ public class ClusterRetirementTests
             var method = typeof(RespireClient).GetMethod("SendTrackedClusterAsync", Private)!.MakeGenericMethod(typeof(Cmd2));
             Action onRedirect = () => rebased.Add(true);
             pending = ((ValueTask<Respire.Protocol.RespValue>)method.Invoke(client,
-                ["SET", router, command, timeout.Token, onRedirect, true])!).AsTask();
+                ["SET", router, command, timeout.Token, onRedirect, true, null])!).AsTask();
         }
         else pending = client.SendAsync("SET", command, timeout.Token).AsTask();
         var signal = typeof(RespireConnection).GetField("_capacitySignal", Private)!.GetValue(old)!;
@@ -1148,13 +1148,13 @@ public class ClusterRetirementTests
             var execution = await client.StartTrackedScriptExecutionAsync(
                 RespireScript.Create("return 1"), ["key"], [], timeout.Token, true);
             currentIdentity = () => execution.ConnectionIdentity;
-            operation = CompleteScriptAsync(execution.Response);
+            operation = CompleteScriptAsync(execution.ConsumeResponseAsync());
         }
         else
         {
             var execution = await client.StartLockExecutionAsync("key", "token", null, true, false, timeout.Token);
             currentIdentity = () => execution.ConnectionIdentity;
-            operation = execution.Response.AsTask();
+            operation = execution.ConsumeResponseAsync().AsTask();
         }
         await Assert.That(operation.IsCompleted).IsFalse();
         Publish(router, new("127.0.0.1", newServer.Port), "new", 2);
@@ -2229,7 +2229,7 @@ public class ClusterRetirementTests
                 var execution = await client.StartTrackedScriptExecutionAsync(
                     RespireScript.Create("return 1"), ["key"], [], CancellationToken.None,
                     requireReliableCorrectionOrdering: requireIdentity, captureSendTimestampOnly: !requireIdentity);
-                using var _ = await execution.Response;
+                using var _ = await execution.ConsumeResponseAsync();
             }).Throws<RespireTimeoutException>();
 
         // A capture-only script never asks for a client identity, so ACL guidance would mislead.
@@ -2257,7 +2257,7 @@ public class ClusterRetirementTests
 
         var execution = await client.StartTrackedScriptExecutionAsync(
             RespireScript.Create("return 1"), ["key"], [], timeout.Token, captureSendTimestampOnly: true);
-        using (await execution.Response) { }
+        using (await execution.ConsumeResponseAsync()) { }
 
         // Lease-based callers measure validity from this timestamp, so it must belong to the
         // redirected send, not the rejected first attempt.

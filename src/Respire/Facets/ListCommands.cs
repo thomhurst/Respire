@@ -284,11 +284,10 @@ internal sealed partial class ListCommands(RespireClient client) : IListCommands
         RespireKey key, TimeSpan wait, Verb blocking, string blockingName, CancellationToken cancellationToken)
     {
         // BLPOP replies [key, value], or null on timeout.
-        var reply = await client.SendBlockingAsync(
-            blockingName, new Cmd2(blocking, client.Key(in key), ToSeconds(wait)), cancellationToken).ConfigureAwait(false);
-        var popped = reply.IsNull ? null : reply.AsArray()[1].AsString();
-        reply.Dispose();
-        return popped;
+        return await client.ConvertBlockingResponseAsync(
+            blockingName, new Cmd2(blocking, client.Key(in key), ToSeconds(wait)), cancellationToken, 0,
+            static (int _, in RespValue reply) => reply.IsNull ? null : reply.AsArray()[1].AsString())
+            .ConfigureAwait(false);
     }
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
@@ -346,16 +345,10 @@ internal sealed partial class ListCommands(RespireClient client) : IListCommands
         RespireKey key, TimeSpan wait, Verb blocking, string blockingName, CancellationToken cancellationToken)
     {
         // BLPOP replies [key, value], or null on timeout.
-        var reply = await client.SendBlockingAsync(
-            blockingName, new Cmd2(blocking, client.Key(in key), ToSeconds(wait)), cancellationToken).ConfigureAwait(false);
-        try
-        {
-            return reply.IsNull ? default : client.DeserializeBorrowed<T>(in reply.AsArray()[1]);
-        }
-        finally
-        {
-            reply.Dispose();
-        }
+        return await client.ConvertBlockingResponseAsync(
+            blockingName, new Cmd2(blocking, client.Key(in key), ToSeconds(wait)), cancellationToken, client,
+            static (RespireClient owner, in RespValue reply) => reply.IsNull ? default : owner.DeserializeBorrowed<T>(in reply.AsArray()[1]))
+            .ConfigureAwait(false);
     }
 
     public ValueTask<string?> MoveAsync(
@@ -381,13 +374,11 @@ internal sealed partial class ListCommands(RespireClient client) : IListCommands
         RespireKey source, RespireKey destination, RespireValue fromSide, RespireValue toSide, TimeSpan wait,
         CancellationToken cancellationToken)
     {
-        var reply = await client.SendBlockingAsync(
+        return await client.ConvertBlockingResponseAsync(
             "BLMOVE",
             new Cmd5(Verbs.BLMove, client.Key(in source), client.Key(in destination), fromSide, toSide, ToSeconds(wait)),
-            cancellationToken).ConfigureAwait(false);
-        var moved = ResponseReader.StringOrNull(in reply);
-        reply.Dispose();
-        return moved;
+            cancellationToken, 0, static (int _, in RespValue reply) => ResponseReader.StringOrNull(in reply))
+            .ConfigureAwait(false);
     }
 
     public ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken = default)

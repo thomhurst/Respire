@@ -1,7 +1,9 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
+using Respire.Commands;
 using Respire.Internal;
+using Respire.Protocol;
 
 namespace Respire;
 
@@ -392,6 +394,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
     private async Task ProbeAsync(CandidateState candidate, CancellationToken cancellationToken)
     {
         if (!candidate.TryAcquireProbe(out var permit)) return;
+        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
         var outcome = CircuitOutcome.Ignored;
         try
         {
@@ -402,7 +405,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
             string conflict;
             try
             {
-                await candidate.ProbeAsync(timeout.Token).ConfigureAwait(false);
+                await candidate.ProbeAsync(timeout.Token, observation).ConfigureAwait(false);
                 var found = FindDeploymentConflict(candidate, _candidates);
                 if (found is null)
                 {
@@ -422,6 +425,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
             }
             catch (Exception error)
             {
+                observation.Handled(error);
                 outcome = candidate.MarkFailed(error, _clock.GetUtcNow(), _options, openCircuit: permit.ProbeSlot >= 0);
                 // Start the open period before synchronous observers can delay completion.
                 // Complete clears the permit, so the finally guard remains safe for earlier exceptions.
@@ -435,8 +439,9 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
 
             // A duplicate deployment adds no redundancy, so it is unhealthy at once instead of after FailureThreshold
             // probes. It is checked again whenever its circuit allows the next probe.
-            outcome = candidate.MarkFailed(new RespireConfigurationException(conflict), _clock.GetUtcNow(),
-                _options, openCircuit: true);
+            var conflictError = new RespireConfigurationException(conflict);
+            observation.Handled(conflictError);
+            outcome = candidate.MarkFailed(conflictError, _clock.GetUtcNow(), _options, openCircuit: true);
             candidate.CompleteProbe(ref permit, outcome);
             RespireTelemetry.RecordFailoverProbe(
                 candidate.TelemetryEndpoint,
@@ -700,13 +705,17 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         public bool Precedes(CandidateState other)
             => Priority < other.Priority || Priority == other.Priority && Order < other.Order;
 
+        private static readonly CmdN ClusterInfoCommand = new(new Verb(-1, "CLUSTER", "INFO"), []);
+
         /// <summary>Runs the health check for this candidate's deployment type. Throws when it is unhealthy.</summary>
-        public async ValueTask ProbeAsync(CancellationToken cancellationToken)
+        public async ValueTask ProbeAsync(CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         {
             if (Client.Core.Cluster is not null)
             {
                 // A keyless PING reaches one arbitrary node, which can answer while slots are unserved.
-                var info = await Client.Server.ClusterInfoAsync(cancellationToken).ConfigureAwait(false);
+                var info = await Client.ConvertUnobservedResponseAsync(
+                    "CLUSTER INFO", ClusterInfoCommand, cancellationToken, 0,
+                    static (int _, in RespValue value) => ClusterInspectionParser.Info(in value), observation).ConfigureAwait(false);
                 if (!string.Equals(info.State, "ok", StringComparison.OrdinalIgnoreCase))
                     throw new RespireConnectionException($"Cluster reports cluster_state:{info.State}.");
                 return;
@@ -716,7 +725,9 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
             // through ACL rules or a proxy) is unhealthy, as the documented health contract says.
             if (Client.Core.Sentinel is { } sentinel)
                 await sentinel.EnsureValidatedPrimaryAsync(cancellationToken).ConfigureAwait(false);
-            await Client.PingAsync(cancellationToken).ConfigureAwait(false);
+            await Client.ConvertUnobservedResponseAsync(
+                "PING", new RawCommand(RespCommands.Ping), cancellationToken, 0,
+                static (int _, in RespValue _) => true, observation).ConfigureAwait(false);
         }
         public bool IsHealthy { get { lock (_gate) return _isHealthy; } }
         public int ConsecutiveFailures { get { lock (_gate) return _consecutiveFailures; } }

@@ -40,7 +40,8 @@ public class ClientCacheMissAllocationTests
     }
 
     private delegate ValueTask<RespValue> MissProducer(RespireKey key, ClientSideCacheCoordinator cache,
-        CancellationToken cancellationToken, ResponseConverter<RespireClient, RespValue> converter, bool transferResponse);
+        CancellationToken cancellationToken, ResponseConverter<RespireClient, RespValue> converter, bool transferResponse,
+        RespireTelemetry.ErrorObservation observation);
 
     [Test]
     [Arguments(false)]
@@ -60,7 +61,7 @@ public class ClientCacheMissAllocationTests
         var producer = BindProducer(client);
         using var cancellation = new CancellationTokenSource();
         Exception expected = canceled ? new OperationCanceledException(cancellation.Token) : new FormatException("converter");
-        var operation = producer(key, cache, default, (RespireClient _, in RespValue _) => throw expected, true);
+        var operation = producer(key, cache, default, (RespireClient _, in RespValue _) => throw expected, true, default);
         await Assert.That(operation.IsCompleted).IsTrue();
         await Assert.That(operation.IsCanceled).IsEqualTo(canceled);
         await Assert.That(operation.IsFaulted).IsEqualTo(!canceled);
@@ -71,7 +72,7 @@ public class ClientCacheMissAllocationTests
         await Assert.That(cancellation.IsCancellationRequested).IsFalse();
         cancellation.Cancel();
         var control = producer(key, cache, cancellation.Token,
-            static (RespireClient _, in RespValue value) => value, true);
+            static (RespireClient _, in RespValue value) => value, true, default);
         await Assert.That(control.IsCompletedSuccessfully).IsTrue();
         await Assert.That(control.Result.AsString()).IsEqualTo("value");
         await Assert.That(client.IsConnected).IsFalse();
@@ -116,7 +117,7 @@ public class ClientCacheMissAllocationTests
                 SynchronizationContext.SetSynchronizationContext(changed);
                 if (throws) throw expected;
                 return value;
-            }, true);
+            }, true, default);
             valueAfter = local.Value;
             contextAfter = SynchronizationContext.Current;
         }
@@ -141,7 +142,7 @@ public class ClientCacheMissAllocationTests
         for (var index = 0; index < 1000; index++)
         {
             var operation = producer(key, cache, default,
-                static (RespireClient _, in RespValue value) => value, true);
+                static (RespireClient _, in RespValue value) => value, true, default);
             if (!operation.IsCompletedSuccessfully || !operation.Result.AsSpan().SequenceEqual("value"u8))
                 throw new InvalidOperationException("Expected the racing producer to use the published cache entry.");
             if (control) GC.KeepAlive(new byte[37]);

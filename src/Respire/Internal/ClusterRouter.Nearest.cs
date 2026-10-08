@@ -14,7 +14,8 @@ internal sealed partial class ClusterRouter
     private async ValueTask<RespireConnection> GetNearestReadConnectionAsync(
         int slot, CancellationToken cancellationToken, DiscoveryRound? discovery, bool retry = true,
         long? samplingDeadline = null, Exception? previousFailure = null,
-        HashSet<RespireConnectionMultiplexer>? excluded = null)
+        HashSet<RespireConnectionMultiplexer>? excluded = null,
+        RespireTelemetry.ErrorObservation observation = default)
     {
         var deadline = samplingDeadline ?? NearestReadSelection.CreateDeadline();
         var sampler = LazyInitializer.EnsureInitialized(ref NearestLatency, ref _nearestGate, static () => ReadLatencySampler.Create());
@@ -35,6 +36,7 @@ internal sealed partial class ClusterRouter
             }
             catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
             {
+                observation.Handled(error);
                 lastError = error;
                 if (owner is not null) sampler.ConnectionFailed(owner);
             }
@@ -46,7 +48,7 @@ internal sealed partial class ClusterRouter
             // Retry a replacement owner before unknown replica coverage can block this read.
             if (retry)
                 return await GetNearestReadConnectionAsync(slot, cancellationToken, discovery, retry: false,
-                    samplingDeadline: deadline, previousFailure: lastError, excluded: excluded).ConfigureAwait(false);
+                    samplingDeadline: deadline, previousFailure: lastError, excluded: excluded, observation: observation).ConfigureAwait(false);
             primary = null;
         }
         var routes = route.Replicas;
@@ -60,7 +62,11 @@ internal sealed partial class ClusterRouter
             else
             {
                 try { routes = await GetReplicaRoutesAsync(slot, cancellationToken).ConfigureAwait(false); }
-                catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken)) { lastError = error; }
+                catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
+                {
+                    observation.Handled(error);
+                    lastError = error;
+                }
             }
         }
 
@@ -93,6 +99,7 @@ internal sealed partial class ClusterRouter
                 }
                 catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
                 {
+                    observation.Handled(error);
                     lastError = error;
                     sampler.ConnectionFailed(node);
                     continue;
@@ -133,7 +140,7 @@ internal sealed partial class ClusterRouter
                 && routes is not null && JoinReplicaRefresh(routes, slot) is { } refresh)
                 await refresh.WaitAsync(cancellationToken).ConfigureAwait(false);
             return await GetNearestReadConnectionAsync(slot, cancellationToken, discovery, retry: false,
-                samplingDeadline: deadline, previousFailure: lastError, excluded: excluded).ConfigureAwait(false);
+                samplingDeadline: deadline, previousFailure: lastError, excluded: excluded, observation: observation).ConfigureAwait(false);
         }
         throw new RespireConnectionException($"Redis Cluster slot {slot} has no healthy eligible endpoint for Nearest reads.",
             lastError ?? new InvalidOperationException("The read topology changed during selection."));

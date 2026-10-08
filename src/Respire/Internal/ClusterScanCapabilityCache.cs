@@ -27,7 +27,7 @@ internal sealed class ClusterScanCapabilityCache
         => Volatile.Write(ref _connections.GetOrCreateValue(connection).Evidence, new(runId, false));
 
     internal async ValueTask<bool> SupportsAsync(RespireClient client, RespireConnection connection,
-        string runId, ProbeRound round, CancellationToken cancellationToken)
+        string runId, ProbeRound round, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         var capability = _connections.GetOrCreateValue(connection);
         if (Volatile.Read(ref capability.Evidence) is { } known && known.RunId == runId) return known.Supported;
@@ -35,7 +35,7 @@ internal sealed class ClusterScanCapabilityCache
         try
         {
             using var reply = await client.SendOnPinnedConnectionAsync("COMMAND INFO", connection,
-                new Cmd1(RespireCommands.Server.COMMAND_INFO.Verb, "CLUSTERSCAN"), cancellationToken).ConfigureAwait(false);
+                new Cmd1(RespireCommands.Server.COMMAND_INFO.Verb, "CLUSTERSCAN"), cancellationToken, observation: observation).ConfigureAwait(false);
             var supported = ReadSupport(in reply);
             if (supported is { } value)
             {
@@ -46,6 +46,7 @@ internal sealed class ClusterScanCapabilityCache
         catch (RespireServerException error) when (ClusterScanCommandErrors.IsMetadataUnavailable(error))
         {
             // No definitive capability evidence was returned.
+            observation.Handled(error);
         }
         round.RecordUnknown(connection, runId);
         return false;

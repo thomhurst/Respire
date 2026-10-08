@@ -417,7 +417,7 @@ public class HashFieldLeaseWireTests
         await WaitForSentinelMonitorAsync(client);
         var execution = await client.StartTrackedScriptExecutionAsync(
             RespireScript.Create("return 1"), ["acquire"], [], default, requireReliableCorrectionOrdering: true);
-        using (var response = await execution.Response) await Assert.That(response.AsInteger()).IsEqualTo(1);
+        using (var response = await execution.ConsumeResponseAsync()) await Assert.That(response.AsInteger()).IsEqualTo(1);
 
         primaryPort = promotedPrimary.Port;
         oldPrimary.CloseConnections();
@@ -478,7 +478,7 @@ public class HashFieldLeaseWireTests
 
         var execution = await client.StartTrackedScriptExecutionAsync(
             RespireScript.Create("return 1"), ["registry"], [], default, requireReliableCorrectionOrdering: true);
-        using (var response = await execution.Response) await Assert.That(response.AsInteger()).IsEqualTo(1);
+        using (var response = await execution.ConsumeResponseAsync()) await Assert.That(response.AsInteger()).IsEqualTo(1);
         await client.GetStringAsync("registry");
         oldOwner.SuppressReply = command => command.StartsWith("EVAL ", StringComparison.Ordinal);
         await new RespireCoordination(client).BestEffortReleaseHashFieldLeaseAsync(
@@ -528,7 +528,7 @@ public class HashFieldLeaseWireTests
 
         var execution = await client.StartTrackedScriptExecutionAsync(
             RespireScript.Create("return 1"), ["registry"], [], default, requireReliableCorrectionOrdering: true);
-        using (var response = await execution.Response) await Assert.That(response.AsInteger()).IsEqualTo(1);
+        using (var response = await execution.ConsumeResponseAsync()) await Assert.That(response.AsInteger()).IsEqualTo(1);
         await client.GetStringAsync("registry");
         // When the original correction is answered, monitoring must still continue for the stalled owner.
         if (originalCorrectionStalls)
@@ -588,7 +588,7 @@ public class HashFieldLeaseWireTests
         await WaitForSentinelMonitorAsync(client);
         var execution = await client.StartTrackedScriptExecutionAsync(
             RespireScript.Create("return 1"), ["acquire"], [], default, requireReliableCorrectionOrdering: true);
-        using (var response = await execution.Response) await Assert.That(response.AsInteger()).IsEqualTo(1);
+        using (var response = await execution.ConsumeResponseAsync()) await Assert.That(response.AsInteger()).IsEqualTo(1);
         oldPrimary.SuppressReply = command => command.StartsWith("EVAL ", StringComparison.Ordinal);
         if (promotedReleaseStalls)
             promotedPrimary.SuppressReply = command => command.StartsWith("EVAL ", StringComparison.Ordinal);

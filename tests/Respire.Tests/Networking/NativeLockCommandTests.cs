@@ -243,14 +243,26 @@ public class NativeLockCommandTests
     [Arguments(true)]
     public async Task TimeoutNeverTriggersFallback(bool extend)
     {
-        await using var server = new FakeRespServer { SuppressReply = _ => true };
+        var written = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer
+        {
+            SuppressReply = _ => { written.TrySetResult(); return true; },
+        };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) }, Connections = 1,
-            CommandTimeout = TimeSpan.FromMilliseconds(100),
+            CommandTimeout = null,
         });
-        await Assert.That(async () => await ExecuteAsync(client, extend)).Throws<RespireTimeoutException>();
+        var connection = client.Core.Multiplexer.GetConnection();
+        var execution = ExecuteAsync(client, extend).AsTask();
+        await written.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        // Admission has finished and replies are suppressed. Complete the live source through
+        // the real timeout transition; a setup/JIT delay must not expire before any command is sent.
+        await Assert.That(connection.InspectForTests().Inflight.TryPeek(out var source)).IsTrue();
+        RespireTimeoutDiagnostics? diagnostics = null;
+        await Assert.That(source!.TrySetTimedOut(source.State, TimeSpan.FromMilliseconds(100), ref diagnostics, connection)).IsTrue();
+        await Assert.That(async () => await execution.WaitAsync(TimeSpan.FromSeconds(5))).Throws<RespireTimeoutException>();
         await Assert.That(server.CommandsSeen).IsEqualTo(1);
     }
 

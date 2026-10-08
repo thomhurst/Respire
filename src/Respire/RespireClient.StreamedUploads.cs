@@ -44,11 +44,23 @@ public sealed partial class RespireClient
     }
 
     /// <summary>Sends an upload on a dedicated lease without blocking multiplexed traffic.</summary>
-    private async ValueTask<RespValue> SendStreamedUploadAsync<TCommand>(
+    private ValueTask<RespValue> SendStreamedUploadAsync<TCommand>(
+        string operation, TCommand command, CancellationToken cancellationToken, bool noRedirect,
+        RespireTelemetry.ErrorObservation observation = default)
+        where TCommand : struct, IRespCommand
+    {
+        var ownsObservation = observation.IsEmpty;
+        if (observation.IsEmpty) observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        var response = SendStreamedUploadCoreAsync(operation, command, cancellationToken, noRedirect, observation);
+        return ownsObservation ? RespireTelemetry.ObserveFinalError(response, observation) : response;
+    }
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private async ValueTask<RespValue> SendStreamedUploadCoreAsync<TCommand>(
         string operation,
         TCommand command,
         CancellationToken cancellationToken,
-        bool noRedirect)
+        bool noRedirect, RespireTelemetry.ErrorObservation observation)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
@@ -66,7 +78,7 @@ public sealed partial class RespireClient
             if (core.Cluster is { } cluster)
             {
                 return await SendStreamedUploadClusterAsync(
-                        operation, cluster, command, cancellationToken, noRedirect, started)
+                        operation, cluster, command, cancellationToken, noRedirect, started, observation)
                     .ConfigureAwait(false);
             }
 
@@ -103,10 +115,11 @@ public sealed partial class RespireClient
                     {
                         response = await connection.SendCheckedAsync(in command, cancellationToken, commandName: operation,
                             commandDeadline: commandDeadline, allowStreamingConnectionReroute: false,
-                            streamingRoute: new DedicatedStreamRoute(core, pool, connection)).ConfigureAwait(false);
+                            streamingRoute: new DedicatedStreamRoute(core, pool, connection),
+                            observation: observation).ConfigureAwait(false);
                         break;
                     }
-                    catch (RespireConnectionRetiredException) when (attempt < ClusterRouter.RedirectLimit
+                    catch (RespireConnectionRetiredException error) when (attempt < ClusterRouter.RedirectLimit
                         && !core.Disposed && !cancellationToken.IsCancellationRequested)
                     {
                         // The header was rejected before acceptance; the streaming command retains
@@ -114,6 +127,7 @@ public sealed partial class RespireClient
                         commandDeadline = connection.GetReroutedCommandDeadline(commandDeadline);
                         pool.Return(connection);
                         connection = null;
+                        observation.Handled(error);
                     }
                 }
                 pool.Return(connection);
@@ -155,13 +169,14 @@ public sealed partial class RespireClient
         }
     }
 
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<RespValue> SendStreamedUploadClusterAsync<TCommand>(
         string operation,
         ClusterRouter cluster,
         TCommand command,
         CancellationToken cancellationToken,
         bool noRedirect,
-        RespireTelemetry.OperationStart started)
+        RespireTelemetry.OperationStart started, RespireTelemetry.ErrorObservation observation)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
@@ -219,9 +234,11 @@ public sealed partial class RespireClient
                         var route = new DedicatedStreamRoute(cluster, pool, connection, slot, routeVersion, asking.IsActive);
                         response = await (asking.IsActive
                             ? ClusterRouter.SendAskingAsync(connection, in command, cancellationToken,
-                                operation, commandDeadline, allowStreamingConnectionReroute: false, streamingRoute: route)
+                                operation, commandDeadline, allowStreamingConnectionReroute: false,
+                                streamingRoute: route, observation: observation)
                             : connection.SendCheckedAsync(in command, cancellationToken, commandName: operation,
-                                commandDeadline: commandDeadline, allowStreamingConnectionReroute: false, streamingRoute: route))
+                                commandDeadline: commandDeadline, allowStreamingConnectionReroute: false,
+                                streamingRoute: route, observation: observation))
                             .ConfigureAwait(false);
                     }
                     catch (RespireServerException error) { serverError = error; }
@@ -236,6 +253,7 @@ public sealed partial class RespireClient
                             core.ClientCache?.FlushForContinuityLoss();
                             // The source reply completed; no redirected command has been accepted yet.
                             cluster.RecordRejection(ref discovery, connection, error);
+                            observation.Handled(error);
                             acquiringRedirectPool = true;
                             commandDeadline = connection.GetReroutedCommandDeadline(commandDeadline);
                             acquisitionToken = ArmDedicatedAcquisition(acquisitionCancellation, commandDeadline, cancellationToken);
@@ -272,6 +290,7 @@ public sealed partial class RespireClient
                         cluster.RecordRejection(ref discovery, connection, error);
                         if (!returned) pool.Return(connection);
                     }
+                    observation.Handled(error);
                     acquisitionToken = ArmDedicatedAcquisition(acquisitionCancellation, commandDeadline, cancellationToken);
                     if (asking.IsActive && cluster.CaptureSlotVersion(slot) == routeVersion)
                         pool = await cluster.GetRedirectDedicatedPoolAsync(

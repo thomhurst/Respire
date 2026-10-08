@@ -943,23 +943,31 @@ public class ClusterNotificationRoutingTests
         await using var first = new FakeRespServer(20);
         await using var second = new FakeRespServer(20);
         var topology = SinglePrimaryTopology(first.Port);
-        Configure(first, () => topology, resp3: false);
+        Configure(first, () => Volatile.Read(ref topology), resp3: false);
         var stableDescriptor = RespireChannel.KeySpacePrefix("stable:", 0);
         var tenantDescriptor = RespireChannel.KeySpacePrefix("tenant:", 0);
         var stableReplays = 0;
         var stableReplayed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        Configure(second, () => topology, resp3: false, command =>
+        Configure(second, () => Volatile.Read(ref topology), resp3: false, command =>
         {
             if (command == $"PSUBSCRIBE {stableDescriptor}" && Interlocked.Increment(ref stableReplays) == 2)
                 stableReplayed.TrySetResult();
         });
-        second.SuppressReply = command => command == $"PSUBSCRIBE {tenantDescriptor}";
+        var tenantAdmitted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        second.SuppressReply = command =>
+        {
+            if (command != $"PSUBSCRIBE {tenantDescriptor}") return false;
+            tenantAdmitted.TrySetResult();
+            return true;
+        };
         await using var client = RespireClient.Create(new RespireOptions
         {
             UseCluster = true,
             Protocol = RespProtocol.Resp2,
             Connections = 1,
-            CommandTimeout = TimeSpan.FromMilliseconds(200),
+            // Expire the admitted notification command explicitly. A short global deadline
+            // would also time out unrelated topology discovery under test-host contention.
+            CommandTimeout = TimeSpan.FromMinutes(1),
             ReconnectPolicy = new RespireReconnectPolicy
             {
                 InitialDelay = TimeSpan.FromMilliseconds(1),
@@ -974,9 +982,16 @@ public class ClusterNotificationRoutingTests
 
         // Both subscriptions gain the second primary. The tenant SUBSCRIBE times out, which
         // closes the socket the stable subscription shares, and exhausts only the tenant one.
-        topology = Topology(first.Port, second.Port);
+        // Reproduce a topology reply arriving after the fixture's former 200 ms deadline.
+        first.DelayCommand("CLUSTER SLOTS", 300);
+        Volatile.Write(ref topology, Topology(first.Port, second.Port));
         _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null)
             .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
+        await tenantAdmitted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(stableReplays).IsEqualTo(1);
+        await Assert.That(client.Core.Hub!.ExpireClusterNotificationCommandForTesting(
+            new RespireEndpoint("127.0.0.1", second.Port))).IsTrue();
 
         await Assert.That(await tenant.Completion.WaitAsync(TimeSpan.FromSeconds(10)))
             .IsEqualTo(RespireSubscriptionEndReason.ReconnectExhausted);

@@ -123,15 +123,17 @@ public class ErrorMetricFoundationTests
         var expected = new InvalidOperationException("application failure");
         var source = new ResponseSource(expected, asynchronous);
         Exception? actual = null;
+        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        observation.SetAttempts(3);
         if (generic)
         {
-            var pending = RespireTelemetry.ObserveFinalError(new ValueTask<int>(source, 0), 3);
+            var pending = RespireTelemetry.ObserveFinalError(new ValueTask<int>(source, 0), observation);
             if (asynchronous) source.Complete();
             try { await pending; } catch (Exception error) { actual = error; }
         }
         else
         {
-            var pending = RespireTelemetry.ObserveFinalError(new ValueTask(source, 0), 3);
+            var pending = RespireTelemetry.ObserveFinalError(new ValueTask(source, 0), observation);
             if (asynchronous) source.Complete();
             try { await pending; } catch (Exception error) { actual = error; }
         }
@@ -322,7 +324,7 @@ public class ErrorMetricFoundationTests
                 else
                 {
                     var observe = telemetry.GetMethods(flags).Single(method => method.Name == "ObserveFinalError" && method.IsGenericMethodDefinition).MakeGenericMethod(typeof(int));
-                    var pending = (ValueTask<int>)observe.Invoke(null, [ValueTask.FromException<int>(original), 0])!;
+                    var pending = (ValueTask<int>)observe.Invoke(null, [ValueTask.FromException<int>(original), Activator.CreateInstance(observe.GetParameters()[1].ParameterType)])!;
                     Exception? actual = null;
                     try { await pending; } catch (Exception error) { actual = error; }
                     await Assert.That(ReferenceEquals(actual, original)).IsTrue();
@@ -364,12 +366,13 @@ public class ErrorMetricFoundationTests
             };
             listener.Start();
             var observe = telemetry.GetMethods(flags).Single(method => method.Name == "ObserveFinalError" && method.IsGenericMethodDefinition == generic);
+            var noObservation = Activator.CreateInstance(observe.GetParameters()[1].ParameterType);
             if (generic)
             {
-                var pending = (ValueTask<int>)observe.MakeGenericMethod(typeof(int)).Invoke(null, [new ValueTask<int>(42), 0])!;
+                var pending = (ValueTask<int>)observe.MakeGenericMethod(typeof(int)).Invoke(null, [new ValueTask<int>(42), noObservation])!;
                 await Assert.That(await pending).IsEqualTo(42);
             }
-            else await (ValueTask)observe.Invoke(null, [ValueTask.CompletedTask, 0])!;
+            else await (ValueTask)observe.Invoke(null, [ValueTask.CompletedTask, noObservation])!;
             await Assert.That(publications).IsEqualTo(0);
             telemetry.GetMethod("RecordError", flags)!.Invoke(null, [new InvalidOperationException(), false, 0]);
             await Assert.That(publications).IsEqualTo(1);

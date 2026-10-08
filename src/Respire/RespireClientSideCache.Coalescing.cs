@@ -34,9 +34,16 @@ internal sealed partial class ClientSideCacheCoordinator
         ClientCacheCommandKey identity, TState state,
         Func<TState, CancellationToken, ValueTask<RespValue>> read,
         CancellationToken cancellationToken)
+        => CoalesceReadAsync(identity, (State: state, Read: read),
+            static (state, token, _) => state.Read(state.State, token), cancellationToken, default);
+
+    internal ValueTask<RespValue> CoalesceReadAsync<TState>(
+        ClientCacheCommandKey identity, TState state,
+        Func<TState, CancellationToken, RespireTelemetry.ErrorObservation, ValueTask<RespValue>> read,
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation callerObservation = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (!_options.CoalesceConcurrentMisses) return read(state, cancellationToken);
+        if (!_options.CoalesceConcurrentMisses) return read(state, cancellationToken, callerObservation);
 
         var shared = JoinSharedRead<RespValue>(identity, out var owner);
 
@@ -44,21 +51,21 @@ internal sealed partial class ClientSideCacheCoordinator
         // Every producer snapshots its inputs before its first asynchronous suspension.
         // ProduceSharedReadAsync must capture every failure in Completion; it is not awaited here.
         if (owner) _ = ProduceSharedReadAsync(shared, state, read);
-        return WaitForSharedReadAsync(shared, cancellationToken);
+        return WaitForSharedReadAsync(shared, cancellationToken, callerObservation);
     }
 
     internal ValueTask<TResult> CoalesceGetReadAsync<TReadState, TState, TResult>(
         ClientCacheCommandKey identity, TReadState readState,
-        Func<TReadState, CancellationToken, ValueTask<GetReadResult>> read,
+        Func<TReadState, CancellationToken, RespireTelemetry.ErrorObservation, ValueTask<GetReadResult>> read,
         TState state, GetReadConverter<TState, TResult> converter,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation callerObservation = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (!_options.CoalesceConcurrentMisses)
-            return ConvertGetReadAsync(read(readState, cancellationToken), state, converter);
+            return ConvertGetReadAsync(read(readState, cancellationToken, callerObservation), state, converter);
         var shared = JoinSharedRead<GetReadResult>(identity, out var owner);
         if (owner) _ = ProduceSharedGetReadAsync(shared, readState, read);
-        return WaitForSharedGetReadAsync(shared, cancellationToken, state, converter);
+        return WaitForSharedGetReadAsync(shared, cancellationToken, state, converter, callerObservation);
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
@@ -105,14 +112,15 @@ internal sealed partial class ClientSideCacheCoordinator
     }
 
     private async Task ProduceSharedReadAsync<TState>(
-        SharedRead<RespValue> shared, TState state, Func<TState, CancellationToken, ValueTask<RespValue>> read)
+        SharedRead<RespValue> shared, TState state,
+        Func<TState, CancellationToken, RespireTelemetry.ErrorObservation, ValueTask<RespValue>> read)
     {
         RespValue owned = default;
         try
         {
             try
             {
-                using var response = await read(state, shared.Cancellation.Token).ConfigureAwait(false);
+                using var response = await read(state, shared.Cancellation.Token, shared.Observation).ConfigureAwait(false);
                 // ToOwned recursively allocates GC-owned arrays; it never rents buffers.
                 // If every waiter cancels, Completion and this value become collectible.
                 owned = response.ToOwned();
@@ -132,7 +140,8 @@ internal sealed partial class ClientSideCacheCoordinator
     }
 
     private async ValueTask<RespValue> WaitForSharedReadAsync(
-        SharedRead<RespValue> shared, CancellationToken cancellationToken)
+        SharedRead<RespValue> shared, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation callerObservation)
     {
         try
         {
@@ -148,19 +157,19 @@ internal sealed partial class ClientSideCacheCoordinator
             }
             return response.ToOwned();
         }
-        finally { ReleaseSharedRead(shared); }
+        finally { ReleaseSharedRead(shared, callerObservation); }
     }
 
     private async Task ProduceSharedGetReadAsync<TState>(
         SharedRead<GetReadResult> shared, TState state,
-        Func<TState, CancellationToken, ValueTask<GetReadResult>> read)
+        Func<TState, CancellationToken, RespireTelemetry.ErrorObservation, ValueTask<GetReadResult>> read)
     {
         GetReadResult owned = default;
         try
         {
             try
             {
-                var result = await read(state, shared.Cancellation.Token).ConfigureAwait(false);
+                var result = await read(state, shared.Cancellation.Token, shared.Observation).ConfigureAwait(false);
                 using var response = result.Response;
                 owned = result.ToOwned(shareText: true);
             }
@@ -179,7 +188,8 @@ internal sealed partial class ClientSideCacheCoordinator
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<TResult> WaitForSharedGetReadAsync<TState, TResult>(
         SharedRead<GetReadResult> shared, CancellationToken cancellationToken,
-        TState state, GetReadConverter<TState, TResult> converter)
+        TState state, GetReadConverter<TState, TResult> converter,
+        RespireTelemetry.ErrorObservation callerObservation)
     {
         try
         {
@@ -192,15 +202,20 @@ internal sealed partial class ClientSideCacheCoordinator
             using var response = result.Response;
             return converter(state, in result);
         }
-        finally { ReleaseSharedRead(shared); }
+        finally { ReleaseSharedRead(shared, callerObservation); }
     }
 
-    private void ReleaseSharedRead(SharedRead shared)
+    private void ReleaseSharedRead(SharedRead shared, RespireTelemetry.ErrorObservation callerObservation)
     {
         var cancel = false;
         var dispose = false;
         lock (_sharedReadLock)
         {
+            // Copy a scalar while the gate still protects the producer's active lease.
+            // Completed producers already returned it and retain only the final count.
+            if (!callerObservation.IsEmpty)
+                callerObservation.SetAttempts(callerObservation.Attempts +
+                    (shared.Finished ? shared.CompletedAttempts : shared.Observation.Attempts));
             if (--shared.Waiters == 0)
             {
                 RemoveSharedRead(shared);
@@ -217,6 +232,8 @@ internal sealed partial class ClientSideCacheCoordinator
         bool dispose;
         lock (_sharedReadLock)
         {
+            shared.CompletedAttempts = shared.Observation.Attempts;
+            shared.Observation.Dispose();
             shared.Finished = true;
             RemoveSharedRead(shared);
             _activeSharedReads.Remove(shared);
@@ -320,6 +337,8 @@ internal sealed partial class ClientSideCacheCoordinator
     {
         internal readonly ClientCacheCommandKey Identity = identity;
         internal readonly CancellationTokenSource Cancellation = new();
+        internal readonly RespireTelemetry.ErrorObservation Observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        internal int CompletedAttempts;
         internal int Waiters;
         internal bool Finished;
         internal bool CancellationStarted;

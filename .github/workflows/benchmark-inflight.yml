@@ -8,14 +8,21 @@ permissions:
   contents: read
 
 concurrency:
-  # Reapplying the benchmark label supersedes older runs on the same PR.
+  # Reapplying this label supersedes its older run; unrelated labels cannot cancel it.
+  # Non-label events would use an empty label segment without changing their grouping.
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event.label.name }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   inflight-comparison:
     if: github.event.label.name == 'run-inflight-benchmarks'
-    name: Compare in-flight FIFO (informational)
+    name: Compare in-flight FIFO (${{ matrix.error-metrics }}, informational)
+    strategy:
+      fail-fast: false
+      matrix:
+        error-metrics: [disabled, enabled]
+    env:
+      RESPIRE_BENCH_ERRORS: ${{ matrix.error-metrics }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -25,12 +32,34 @@ jobs:
             10.0.x
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: baseline
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          path: candidate
+      - name: Verify the immutable merge and derive its baseline
+        id: revisions
+        shell: python
+        env:
+          MERGE_SHA: ${{ github.sha }}
+          EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          import os, re, subprocess
+          for variable in ('MERGE_SHA', 'EXPECTED_HEAD_SHA', 'EVENT_BASE_SHA'):
+              assert re.fullmatch(r'[0-9a-f]{40}', os.environ[variable]), 'A pinned full SHA is required'
+          actual = subprocess.check_output(['git', '-C', 'candidate', 'rev-parse', 'HEAD'], text=True).strip()
+          assert actual == os.environ['MERGE_SHA'], 'Wrong candidate merge'
+          parents = subprocess.check_output(['git', '-C', 'candidate', 'show', '-s', '--format=%P', 'HEAD'], text=True).split()
+          assert len(parents) == 2, 'Candidate must be a two-parent PR merge'
+          assert parents[1] == os.environ['EXPECTED_HEAD_SHA'], 'Wrong PR head'
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
+              print('baseline-sha=' + parents[0], file=stream)
+          with open('revisions.log', 'w') as stream:
+              print('merge=' + actual, 'baseline=' + parents[0],
+                    'head=' + parents[1], 'event-base=' + os.environ['EVENT_BASE_SHA'], sep='\n', file=stream)
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          path: candidate
+          ref: ${{ steps.revisions.outputs.baseline-sha }}
+          path: baseline
       - name: Compare pinned baseline, candidate, baseline on one runner
         shell: bash
         env:
@@ -41,7 +70,7 @@ jobs:
         run: |
           set -euo pipefail
           # The new coverage case must run against identical sources in both checkouts.
-          cp candidate/benchmarks/Respire.Benchmarks/{InflightRingBenchmarks,DiagnosticsPipelineBenchmarks}.cs baseline/benchmarks/Respire.Benchmarks/
+          cp candidate/benchmarks/Respire.Benchmarks/{InflightRingBenchmarks,DiagnosticsPipelineBenchmarks,ErrorMetricBenchmarkScope}.cs baseline/benchmarks/Respire.Benchmarks/
           for phase in validation baseline-a candidate baseline-b; do
             source=baseline
             job=Medium
@@ -60,16 +89,23 @@ jobs:
         shell: python
         run: |
           import json
+          import os
           from pathlib import Path
           for phase in ("validation", "baseline-a", "candidate", "baseline-b"):
               log = Path(f"{phase}.log").read_text()
+              enabled = os.environ["RESPIRE_BENCH_ERRORS"] == "enabled"
+              marker = f"ERROR_METRICS requested={enabled}; published="
+              assert marker in log, f"Missing metric selection evidence: {phase}"
+              if phase in ("validation", "candidate"):
+                  assert marker + "True" in log, f"Candidate errors instrument was not published: {phase}"
               assert "Assembly listing for method Respire.Benchmarks.InflightRingBenchmarks:EnqueueAndDequeue" in log, \
                   f"Missing process JIT diagnostics: {phase}"
               reports = list(Path("results", phase, "results").glob("*-report*.json"))
               assert reports, f"Missing benchmark results: {phase}"
               for report in reports:
                   benchmarks = json.loads(report.read_text())["Benchmarks"]
-                  assert benchmarks, f"No benchmarks: {report}"
+                  expected = 3 if "DiagnosticsPipelineBenchmarks" in report.name else 1
+                  assert len(benchmarks) == expected, f"Expected {expected} benchmark cases: {report}"
                   for benchmark in benchmarks:
                       statistics = benchmark.get("Statistics")
                       assert statistics and statistics["Mean"] > 0, f"Failed benchmark: {report}"
@@ -132,7 +168,7 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
-          name: inflight-fifo-comparison
+          name: inflight-fifo-comparison-${{ matrix.error-metrics }}
           path: |
             results/
             *.log

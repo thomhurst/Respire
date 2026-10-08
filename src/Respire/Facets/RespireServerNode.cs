@@ -247,38 +247,49 @@ public sealed partial class RespireServerNode
         TimeSpan? commandTimeout = null)
         => WithNodeConnectionAsync(operation, callKind,
             (Client: _client, Operation: operation, Arguments: arguments, Parser: parser, ReadOnly: callKind == NodeCallKind.Read),
-            static async (connection, state, token, fence) =>
+            static async (connection, state, token, fence, observation) =>
             {
                 var command = ReadOnlyCommand<CmdN>.ForNodeRead(new CmdN(new Verb(-1, state.Operation), state.Arguments), state.ReadOnly);
                 using var reply = await state.Client.SendOnPinnedConnectionAsync(state.Operation, connection,
-                    new MutationCommand<ReadOnlyCommand<CmdN>>(command, fence), token).ConfigureAwait(false);
+                    new MutationCommand<ReadOnlyCommand<CmdN>>(command, fence), token, observation).ConfigureAwait(false);
                 return state.Parser(in reply);
             }, cancellationToken, commandTimeout);
 
     private async ValueTask<T> WithNodeConnectionAsync<TState, T>(string operation, NodeCallKind callKind,
-        TState state, Func<RespireConnection, TState, CancellationToken, ClientSideCacheCoordinator.MutationFence, ValueTask<T>> execute,
+        TState state, Func<RespireConnection, TState, CancellationToken, ClientSideCacheCoordinator.MutationFence,
+            RespireTelemetry.ErrorObservation, ValueTask<T>> execute,
         CancellationToken cancellationToken, TimeSpan? commandTimeout = null)
     {
-        var mutation = callKind is NodeCallKind.Mutation or NodeCallKind.ControlMutation;
-        if (mutation) ServerCommands.EnsureAdminAllowed(_client, operation);
-        ObjectDisposedException.ThrowIf(_client.Core.Disposed, _client);
-        cancellationToken.ThrowIfCancellationRequested();
-        var cache = mutation ? _client.Core.ClientCache : null;
-        var fence = cache is null ? default : cache.BeginUnknownMutation();
-        DedicatedConnectionPool? pool = null;
+        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
         try
         {
-            pool = _client.Core.CreateServerPool(Endpoint,
-                controlConnection: callKind == NodeCallKind.ControlMutation, commandTimeout: commandTimeout);
-            var connection = await pool.RentAsync(cancellationToken).ConfigureAwait(false);
-            return await execute(connection, state, cancellationToken, fence).ConfigureAwait(false);
+            var mutation = callKind is NodeCallKind.Mutation or NodeCallKind.ControlMutation;
+            if (mutation) ServerCommands.EnsureAdminAllowed(_client, operation);
+            ObjectDisposedException.ThrowIf(_client.Core.Disposed, _client);
+            cancellationToken.ThrowIfCancellationRequested();
+            var cache = mutation ? _client.Core.ClientCache : null;
+            var fence = cache is null ? default : cache.BeginUnknownMutation();
+            DedicatedConnectionPool? pool = null;
+            try
+            {
+                pool = _client.Core.CreateServerPool(Endpoint,
+                    controlConnection: callKind == NodeCallKind.ControlMutation, commandTimeout: commandTimeout);
+                var connection = await pool.RentAsync(cancellationToken).ConfigureAwait(false);
+                return await execute(connection, state, cancellationToken, fence, observation).ConfigureAwait(false);
+            }
+            finally
+            {
+                // Explicit-node commands retain conservative completion work. Disposing this
+                // operation's pool drains its native owners before the outer fence can leave.
+                try { if (pool is not null) await _client.Core.ReleaseServerPoolAsync(pool).ConfigureAwait(false); }
+                finally { if (fence.IsRequired) cache!.CompleteMutation(in fence); }
+            }
         }
-        finally
+        catch (Exception error)
         {
-            // Explicit-node commands retain conservative completion work. Disposing this
-            // operation's pool drains its native owners before the outer fence can leave.
-            try { if (pool is not null) await _client.Core.ReleaseServerPoolAsync(pool).ConfigureAwait(false); }
-            finally { if (fence.IsRequired) cache!.CompleteMutation(in fence); }
+            // The physical send borrows this owner. Report only after parsing and cleanup.
+            observation.Final(error);
+            throw;
         }
     }
 
@@ -288,10 +299,10 @@ public sealed partial class RespireServerNode
 
     private async ValueTask ShutdownWriteAsync(RespireValue[] arguments, CancellationToken cancellationToken)
         => _ = await WithNodeConnectionAsync("SHUTDOWN", NodeCallKind.ControlMutation, arguments,
-            static async (connection, tokens, token, fence) =>
+            static async (connection, tokens, token, fence, observation) =>
             {
                 await connection.SendFireAndForgetAsync(new MutationCommand<CmdN>(new CmdN(new Verb(-1, "SHUTDOWN"), tokens), fence),
-                    token, "SHUTDOWN").ConfigureAwait(false);
+                    token, "SHUTDOWN", observation: observation).ConfigureAwait(false);
                 return true;
             }, cancellationToken).ConfigureAwait(false);
 

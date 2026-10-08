@@ -1134,7 +1134,7 @@ public class ClientSideCacheTests
         InsertCachedValue(cache, "key", "old");
 
         await server.SendRawAsync(":1\r\n"u8.ToArray());
-        using var result = await execution.Response;
+        using var result = await execution.ConsumeResponseAsync();
 
         await Assert.That(result.AsInteger()).IsEqualTo(1);
         await Assert.That(cache.Count).IsEqualTo(0);

@@ -312,7 +312,8 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     }
 
     /// <summary>Opens all connections on first call; later calls return immediately.</summary>
-    public async ValueTask EnsureConnectedAsync(CancellationToken cancellationToken = default)
+    public async ValueTask EnsureConnectedAsync(CancellationToken cancellationToken = default,
+        bool observeEstablishmentErrors = false)
     {
         ThrowIfUnavailable();
         if (_connected)
@@ -323,7 +324,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stopConnecting.Token);
         try
         {
-            await InitializeConnectionsAsync(lifetime.Token).ConfigureAwait(false);
+            await InitializeConnectionsAsync(lifetime.Token, observeEstablishmentErrors).ConfigureAwait(false);
         }
         catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(
             error, cancellationToken, lifetime.Token))
@@ -333,7 +334,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         }
     }
 
-    private async ValueTask InitializeConnectionsAsync(CancellationToken cancellationToken)
+    private async ValueTask InitializeConnectionsAsync(CancellationToken cancellationToken, bool observeEstablishmentErrors)
     {
         await _connectGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -345,10 +346,11 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
             }
 
             var connectTasks = new Task<RespireConnection>[_connections.Length];
+            var options = observeEstablishmentErrors ? _options with { ObserveEstablishmentErrors = true } : _options;
             for (var i = 0; i < connectTasks.Length; i++)
             {
                 var endpoint = Volatile.Read(ref _activeEndpoint);
-                connectTasks[i] = RespireConnection.ConnectAsync(endpoint.Host, endpoint.Port, _options, _logger, cancellationToken);
+                connectTasks[i] = RespireConnection.ConnectAsync(endpoint.Host, endpoint.Port, options, _logger, cancellationToken);
             }
 
             try
@@ -651,7 +653,8 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     internal async ValueTask SendToAllConnectionsAsync<TCommand>(
         TCommand command,
         bool sendAsking = false,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
     {
         ThrowIfUnavailable();
@@ -694,11 +697,13 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
                 }
                 catch (Exception ex) when (IsConnectionLoss(ex))
                 {
+                    observation.Handled(ex);
                     RecordRetiredConnectionIdentity(connection);
                     ScheduleReconnect(slot);
                 }
-                catch (RespireConnectionRetiredException)
+                catch (RespireConnectionRetiredException retirement)
                 {
+                    observation.Handled(retirement);
                     // Never admitted, so nothing to fence; the replacement gets the next pass.
                     retiredBeforeAdmission = true;
                 }
@@ -722,6 +727,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
                 {
                     if (IsConnectionLoss(ex) || ex is RespireConnectionRetiredException)
                     {
+                        observation.Handled(ex);
                         retry = true;
                     }
                     else
@@ -1014,7 +1020,10 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         {
             if (delay > TimeSpan.Zero) await Task.Delay(delay, _stopConnecting.Token).ConfigureAwait(false);
             var endpoint = Volatile.Read(ref _activeEndpoint);
-            replacement = await RespireConnection.ConnectAsync(endpoint.Host, endpoint.Port, _options, _logger, _stopConnecting.Token)
+            // Initial replica setup can observe discarded candidates. Reconnect owns
+            // its failed attempts and must not inherit that establishment observer.
+            var reconnectOptions = _options with { ObserveEstablishmentErrors = false };
+            replacement = await RespireConnection.ConnectAsync(endpoint.Host, endpoint.Port, reconnectOptions, _logger, _stopConnecting.Token)
                 .ConfigureAwait(false);
             if (Volatile.Read(ref _trackServerClientIds) != 0)
                 await replacement.EnsureServerClientIdAsync(_stopConnecting.Token).ConfigureAwait(false);
@@ -1061,6 +1070,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
             }
             if (IsOperational)
             {
+                RespireTelemetry.RecordError(ex, internallyHandled: true, attempt);
                 lock (_lifecycleGate)
                 {
                     if (IsOperational && _connections[slot] is { IsAcceptingCommands: true })

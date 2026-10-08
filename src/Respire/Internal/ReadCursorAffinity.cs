@@ -76,13 +76,14 @@ internal sealed class ReadCursorAffinity
 
     internal async ValueTask<RespireConnection> GetClusterConnectionAsync(
         ClusterRouter cluster, int slot, RespireReadFrom readFrom, ReadAffinity? affinity,
-        bool isContinuation, CancellationToken cancellationToken)
+        bool isContinuation, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation = default)
     {
         if (affinity is not null)
         {
             if (affinity.ClusterNode is { } pinned)
                 return await cluster.GetPinnedReadConnectionAsync(slot, pinned, cancellationToken, readFrom: affinity.ReadFrom).ConfigureAwait(false);
-            var first = await cluster.GetReadConnectionAsync(slot, readFrom, cancellationToken).ConfigureAwait(false);
+            var first = await cluster.GetReadConnectionAsync(slot, readFrom, cancellationToken, observation: observation).ConfigureAwait(false);
             affinity.ClusterSlot = slot;
             affinity.ClusterNode = first.Multiplexer;
             affinity.ReadFrom = readFrom;
@@ -95,6 +96,7 @@ internal sealed class ReadCursorAffinity
             try { return await cluster.GetPinnedReadConnectionAsync(slot, sharedNode, cancellationToken, revalidate: !isContinuation, readFrom: shared.ReadFrom).ConfigureAwait(false); }
             catch (Exception error) when (ReadEndpointRouter.IsUnavailable(error, cancellationToken))
             {
+                if (!isContinuation) observation.Handled(error);
                 _clusterShared.TryRemove(new KeyValuePair<(RespireReadFrom, int), ReadAffinity>(key, shared));
             }
         }
@@ -112,10 +114,11 @@ internal sealed class ReadCursorAffinity
                 try { return await cluster.GetPinnedReadConnectionAsync(slot, currentNode, cancellationToken, revalidate: true, readFrom: shared.ReadFrom).ConfigureAwait(false); }
                 catch (Exception error) when (ReadEndpointRouter.IsUnavailable(error, cancellationToken))
                 {
+                    observation.Handled(error);
                     _clusterShared.TryRemove(new KeyValuePair<(RespireReadFrom, int), ReadAffinity>(key, shared));
                 }
             }
-            var connection = await cluster.GetReadConnectionAsync(slot, readFrom, cancellationToken).ConfigureAwait(false);
+            var connection = await cluster.GetReadConnectionAsync(slot, readFrom, cancellationToken, observation: observation).ConfigureAwait(false);
             _clusterShared[key] = new ReadAffinity { ClusterNode = connection.Multiplexer, ClusterSlot = slot, ReadFrom = readFrom };
             return connection;
         }

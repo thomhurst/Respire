@@ -94,41 +94,39 @@ public sealed class RespireHotKeysTracker
         EnsureAdmin("HOTKEYS START");
         ArgumentNullException.ThrowIfNull(options);
         var command = options.BuildCommand();
-        using var reply = await SendAsync("HOTKEYS START", command, cancellationToken).ConfigureAwait(false);
-        HotKeysParser.Ok(in reply);
+        _ = await ConvertAsync("HOTKEYS START", command, cancellationToken,
+            static (RespireHotKeysTracker _, in RespValue reply) => HotKeysParser.Ok(in reply)).ConfigureAwait(false);
     }
 
     /// <summary>Returns owned snapshot maps in server order, or null when no session exists. Does not stop tracking.</summary>
     /// <remarks>Does not require AllowAdmin; server ACLs still apply. The array preserves the server's outer
     /// reply without assuming that future servers always return exactly one snapshot.</remarks>
     public async ValueTask<RespireHotKeysSnapshot[]?> GetAsync(CancellationToken cancellationToken = default)
-    {
-        using var reply = await SendAsync("HOTKEYS GET", new Cmd(HotKeysCommands.Get), cancellationToken).ConfigureAwait(false);
-        return HotKeysParser.Parse(in reply);
-    }
+        => await ConvertAsync("HOTKEYS GET", new Cmd(HotKeysCommands.Get), cancellationToken,
+            static (RespireHotKeysTracker _, in RespValue reply) => HotKeysParser.Parse(in reply)).ConfigureAwait(false);
 
     /// <summary>Stops collection, retaining its data. Requires AllowAdmin; false means no active session.</summary>
     public async ValueTask<bool> StopAsync(CancellationToken cancellationToken = default)
     {
         EnsureAdmin("HOTKEYS STOP");
-        using var reply = await SendAsync("HOTKEYS STOP", new Cmd(HotKeysCommands.Stop), cancellationToken).ConfigureAwait(false);
-        return HotKeysParser.Stopped(in reply);
+        return await ConvertAsync("HOTKEYS STOP", new Cmd(HotKeysCommands.Stop), cancellationToken,
+            static (RespireHotKeysTracker _, in RespValue reply) => HotKeysParser.Stopped(in reply)).ConfigureAwait(false);
     }
 
     /// <summary>Releases stopped session data. Requires AllowAdmin; an active session fails on the server.</summary>
     public async ValueTask ResetAsync(CancellationToken cancellationToken = default)
     {
         EnsureAdmin("HOTKEYS RESET");
-        using var reply = await SendAsync("HOTKEYS RESET", new Cmd(HotKeysCommands.Reset), cancellationToken).ConfigureAwait(false);
-        HotKeysParser.Ok(in reply);
+        _ = await ConvertAsync("HOTKEYS RESET", new Cmd(HotKeysCommands.Reset), cancellationToken,
+            static (RespireHotKeysTracker _, in RespValue reply) => HotKeysParser.Ok(in reply)).ConfigureAwait(false);
     }
 
-    private ValueTask<RespValue> SendAsync<TCommand>(string operation, TCommand command, CancellationToken cancellationToken)
+    private ValueTask<TResult> ConvertAsync<TCommand, TResult>(string operation, TCommand command,
+        CancellationToken cancellationToken, ResponseConverter<RespireHotKeysTracker, TResult> converter)
         where TCommand : struct, IRespCommand
     {
-        ObjectDisposedException.ThrowIf(_client.Core.Disposed, _client);
-        cancellationToken.ThrowIfCancellationRequested();
-        return _client.SendOnConnectionAsync(operation, _connection, command, cancellationToken);
+        return _client.ConvertOnConnectionAsync(operation, _connection, command, cancellationToken,
+            this, converter, pinToConnection: false);
     }
 
     private void EnsureAdmin(string operation)

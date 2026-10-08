@@ -400,32 +400,32 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
                     _ => [cursor, "MATCH", effectiveMatch!.Value, "COUNT", countHint, "TYPE", typeToken],
                 };
                 var command = new CmdN(Verbs.Scan, args);
-                string[] page;
-                int pageCount;
-                using (var reply = await client.SendCursorPageAsync("SCAN", command, affinity, token).ConfigureAwait(false))
-                {
-                    var elements = reply.AsArray();
-                    cursor = elements[0].AsString();
-                    if (prefix is null)
+                var result = await client.ConvertCursorPageAsync("SCAN", command, affinity, token, prefix,
+                    static (KeyPrefix? prefix, in RespValue reply) =>
                     {
-                        page = ResponseReader.StringArray(in elements[1]);
-                        pageCount = page.Length;
-                    }
-                    else
-                    {
-                        var values = elements[1].AsArray();
-                        page = new string[values.Length];
-                        pageCount = 0;
-                        foreach (ref readonly var value in values)
+                        var elements = reply.AsArray();
+                        string[] page;
+                        int pageCount;
+                        if (prefix is null)
                         {
-                            if (ScanKey(in value, prefix) is { } key) page[pageCount++] = key;
+                            page = ResponseReader.StringArray(in elements[1]);
+                            pageCount = page.Length;
                         }
-                    }
-                }
+                        else
+                        {
+                            var values = elements[1].AsArray();
+                            page = new string[values.Length];
+                            pageCount = 0;
+                            foreach (ref readonly var value in values)
+                                if (ScanKey(in value, prefix) is { } key) page[pageCount++] = key;
+                        }
+                        return (Cursor: elements[0].AsString(), Page: page, Count: pageCount);
+                    }).ConfigureAwait(false);
+                cursor = result.Cursor;
 
-                for (var index = 0; index < pageCount; index++)
+                for (var index = 0; index < result.Count; index++)
                 {
-                    yield return page[index];
+                    yield return result.Page[index];
                 }
             }
             while (cursor != "0");

@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Diagnostics.CodeAnalysis;
 using Respire.Commands;
 using Respire.Internal;
@@ -65,6 +66,22 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
     {
         _client = client.ForDeferredBatch();
         _importSession = importSession;
+    }
+
+    private RespireHashImportSession.Usage? EnterObservedOperation()
+    {
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_sent) throw new InvalidOperationException("This batch has already been sent.");
+            return ConnectionPolicy.EnterOperation();
+        }
+        catch (Exception error)
+        {
+            // No queued command owns an observation until setup succeeds.
+            RespireTelemetry.RecordError(error, internallyHandled: false);
+            throw;
+        }
     }
 
     /// <summary>Gets whether any batch execution method has started sending this batch.</summary>
@@ -229,13 +246,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
     /// </summary>
     public async ValueTask<RespireBatchResult> TryExecuteAsync(CancellationToken cancellationToken = default)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        if (_sent)
-        {
-            throw new InvalidOperationException("This batch has already been sent.");
-        }
-
-        using var importUsage = ConnectionPolicy.EnterOperation();
+        using var importUsage = EnterObservedOperation();
         _sent = true;
         var core = _client.Core;
         var telemetryOperation = "PIPELINE";
@@ -303,7 +314,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
 
                 await Task.WhenAll(clusterTasks).ConfigureAwait(false);
 
-                var failures = CollectFailures(_ops);
+                var failures = CompleteMutationAndCollectFailures(ref cacheToInvalidate, in mutationFence);
                 var firstError = failures is { Length: > 0 } ? failures[0].Error : null;
                 telemetry.Complete(
                     core,
@@ -339,7 +350,8 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
                     telemetryOperation,
                     error: ex,
                     batchSize: _ops.Count == 1 ? null : _ops.Count);
-                return new RespireBatchResult(_ops.Count, CollectFailures(_ops));
+                return new RespireBatchResult(_ops.Count,
+                    CompleteMutationAndCollectFailures(ref cacheToInvalidate, in mutationFence));
             }
 
             // CommandTimeout is enforced per command by the connection's deadline sweep, which
@@ -352,12 +364,20 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             else
             {
                 var tasks = new Task<Exception?>[_ops.Count];
-                for (var i = 0; i < _ops.Count; i++)
-                    tasks[i] = _ops[i].RunAsync(_client, connection, cancellationToken);
-                await Task.WhenAll(tasks).ConfigureAwait(false);
+                var observations = ArrayPool<RespireTelemetry.ErrorObservation>.Shared.Rent(_ops.Count);
+                try
+                {
+                    for (var i = 0; i < _ops.Count; i++)
+                    {
+                        observations[i] = RespireTelemetry.ErrorObservation.Rent(force: true);
+                        tasks[i] = _ops[i].RunAsync(_client, connection, cancellationToken, observations[i]);
+                    }
+                    await Task.WhenAll(tasks).ConfigureAwait(false);
+                }
+                finally { CompleteObservations(_ops, observations); }
             }
 
-            var batchFailures = CollectFailures(_ops);
+            var batchFailures = CompleteMutationAndCollectFailures(ref cacheToInvalidate, in mutationFence);
             var batchFirstError = batchFailures is { Length: > 0 } ? batchFailures[0].Error : null;
             telemetry.Complete(
                 core,
@@ -426,49 +446,80 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
     {
         RespireConnection connection;
         RespireConnection? continuationConnection;
+        // Shared read selection precedes each command's deferred owner. Keep its failures once,
+        // then copy the completed count into every member without sharing a live pooled handle.
+        var selectionObservation = _client.GetBatchReadFromPolicy() != RespireReadFrom.Primary
+            ? RespireTelemetry.ErrorObservation.Rent(force: true) : default;
+        var selectionAttempts = 0;
         try
         {
             if (slot is null && operations.Exists(static operation => operation.Operation is "FLUSHDB" or "FLUSHALL"))
                 slot = await _client.Core.Cluster!.GetPrimaryRoutingSlotAsync(cancellationToken).ConfigureAwait(false);
             (connection, continuationConnection) = await AcquireGroupConnectionsAsync(
-                slot, operations, readFrom, cancellationToken).ConfigureAwait(false);
+                slot, operations, readFrom, cancellationToken, selectionObservation).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
             foreach (var operation in operations)
             {
+                operation.AddErrorAttempts(selectionObservation.Attempts);
                 operation.Fail(ex);
             }
 
             return;
         }
+        finally
+        {
+            selectionAttempts = selectionObservation.Attempts;
+            selectionObservation.Dispose();
+        }
 
         var sends = new ValueTask<RespValue>[operations.Count];
-        // Start every send in queue order before awaiting responses to retain pipelining.
-        for (var i = 0; i < operations.Count; i++)
+        var observations = ArrayPool<RespireTelemetry.ErrorObservation>.Shared.Rent(operations.Count);
+        try
         {
-            try
+            // Start every send in queue order before awaiting responses to retain pipelining.
+            for (var i = 0; i < operations.Count; i++)
+            {
+                observations[i] = RespireTelemetry.ErrorObservation.Rent(force: true);
+                if (selectionAttempts != 0) observations[i].SetAttempts(selectionAttempts);
+                try
+                {
+                    var operationConnection = operations[i].IsCursorContinuation == true ? continuationConnection ?? connection : connection;
+                    sends[i] = operations[i].StartClusterSend(_client, operationConnection, cancellationToken, observations[i]);
+                }
+                catch (Exception ex)
+                {
+                    sends[i] = ValueTask.FromException<RespValue>(ex);
+                }
+            }
+
+            for (var i = 0; i < operations.Count; i++)
             {
                 var operationConnection = operations[i].IsCursorContinuation == true ? continuationConnection ?? connection : connection;
-                sends[i] = operations[i].StartClusterSend(_client, operationConnection, cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                sends[i] = ValueTask.FromException<RespValue>(ex);
+                _ = await operations[i].CompleteClusterSendAsync(
+                        this, operationConnection, sends[i], readFrom, cancellationToken, observations[i])
+                    .ConfigureAwait(false);
             }
         }
+        finally { CompleteObservations(operations, observations); }
+    }
 
+    // Leases belong to an execution, not to every queued command object's layout.
+    // Keep them alive through all replies and recovery, then copy immutable attempt counts.
+    private static void CompleteObservations(IReadOnlyList<Op> operations,
+        RespireTelemetry.ErrorObservation[] observations)
+    {
         for (var i = 0; i < operations.Count; i++)
         {
-            var operationConnection = operations[i].IsCursorContinuation == true ? continuationConnection ?? connection : connection;
-            _ = await operations[i].CompleteClusterSendAsync(
-                    this, operationConnection, sends[i], readFrom, cancellationToken)
-                .ConfigureAwait(false);
+            operations[i].AddErrorAttempts(observations[i].DisposeAndGetAttempts());
         }
+        ArrayPool<RespireTelemetry.ErrorObservation>.Shared.Return(observations, clearArray: true);
     }
 
     private async ValueTask<(RespireConnection Connection, RespireConnection? Continuation)> AcquireGroupConnectionsAsync(
-        int? slot, List<Op> operations, RespireReadFrom readFrom, CancellationToken cancellationToken)
+        int? slot, List<Op> operations, RespireReadFrom readFrom, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation)
     {
         var configuredReadFrom = _client.GetBatchReadFromPolicy();
         var hasFreshCursor = false;
@@ -483,18 +534,18 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             }
         }
         if ((!hasFreshCursor && !hasContinuation) || slot is not { } cursorSlot)
-            return (await _client.AcquireConnectionAsync(slot, cancellationToken, readFrom).ConfigureAwait(false), null);
+            return (await _client.AcquireConnectionAsync(slot, cancellationToken, readFrom, observation).ConfigureAwait(false), null);
 
         // Capture the issuing connection before a fresh scan can revalidate and replace the shared pin.
         var cursors = _client.Core.ReadRouter.Cursors;
         var cluster = _client.Core.Cluster!;
         var continuationConnection = hasContinuation
             ? await cursors.GetClusterConnectionAsync(cluster, cursorSlot, configuredReadFrom,
-                affinity: null, isContinuation: true, cancellationToken).ConfigureAwait(false)
+                affinity: null, isContinuation: true, cancellationToken, observation).ConfigureAwait(false)
             : null;
         var connection = hasFreshCursor
             ? await cursors.GetClusterConnectionAsync(cluster, cursorSlot, configuredReadFrom,
-                affinity: null, isContinuation: false, cancellationToken).ConfigureAwait(false)
+                affinity: null, isContinuation: false, cancellationToken, observation).ConfigureAwait(false)
             : continuationConnection!;
         if (readFrom != configuredReadFrom)
         {
@@ -524,7 +575,17 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         return policy;
     }
 
-    private static RespireBatchFailure[]? CollectFailures(IReadOnlyList<Op> operations)
+    private RespireBatchFailure[]? CompleteMutationAndCollectFailures(
+        ref ClientSideCacheCoordinator? cache, in ClientSideCacheCoordinator.MutationFence fence)
+    {
+        // Native response ownership may outlive caller cancellation. Complete only the
+        // logical fence before reporting; clear the owner to avoid completing it twice.
+        cache?.CompleteMutation(in fence);
+        cache = null;
+        return CollectFailures(_ops);
+    }
+
+    private static RespireBatchFailure[]? CollectFailures(IReadOnlyList<Op> operations, bool reportErrors = true)
     {
         var failureCount = 0;
         for (var i = 0; i < operations.Count; i++)
@@ -547,6 +608,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             var operation = operations[i];
             if (operation.Error is { } error)
             {
+                if (reportErrors) operation.ReportError();
                 failures[failureIndex++] = new RespireBatchFailure(
                     i, operation.Operation, error);
             }
@@ -587,7 +649,8 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         public abstract bool AllowsReadRouting { get; }
 
         public abstract Task<Exception?> RunAsync(
-            RespireClient client, RespireConnection connection, CancellationToken cancellationToken);
+            RespireClient client, RespireConnection connection, CancellationToken cancellationToken,
+            RespireTelemetry.ErrorObservation observation);
 
         public abstract ValueTask<Task<Exception?>> StartImportAsync(
             RespireClient client, RespireConnection connection, CancellationToken cancellationToken);
@@ -599,16 +662,20 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         public abstract ValueTask<RespValue> StartClusterSend(
             RespireClient client,
             RespireConnection connection,
-            CancellationToken cancellationToken);
+            CancellationToken cancellationToken,
+            RespireTelemetry.ErrorObservation observation);
 
         public abstract Task<Exception?> CompleteClusterSendAsync(
             RespireBatch batch,
             RespireConnection connection,
             ValueTask<RespValue> send,
             RespireReadFrom readFrom,
-            CancellationToken cancellationToken);
+            CancellationToken cancellationToken,
+            RespireTelemetry.ErrorObservation observation);
 
         public abstract void Fail(Exception error);
+        public abstract bool ReportError();
+        public abstract void AddErrorAttempts(int attempts);
     }
 
     private sealed class Op<TCommand, T>(
@@ -633,22 +700,28 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             ? CursorCommandMetadata.IsCursorContinuation(in command) : null;
 
         public override void Fail(Exception error) => pending.Fail(error);
+        public override bool ReportError() => pending.ReportError();
+        public override void AddErrorAttempts(int attempts) => pending.AddErrorAttempts(attempts);
 
         public override bool TryGetClusterSlot(out int slot) => command.TryGetClusterSlot(out slot);
 
         public override ValueTask<RespValue> StartClusterSend(
             RespireClient client,
             RespireConnection connection,
-            CancellationToken cancellationToken)
-            => client.SendOnConnectionAsync(Operation, connection,
-                new MutationCommand<TCommand>(command, MutationFence), cancellationToken);
+            CancellationToken cancellationToken,
+            RespireTelemetry.ErrorObservation observation)
+        {
+            return client.SendOnConnectionAsync(Operation, connection, new MutationCommand<TCommand>(command, MutationFence), cancellationToken,
+                observation: observation);
+        }
 
         public override async Task<Exception?> CompleteClusterSendAsync(
             RespireBatch batch,
             RespireConnection connection,
             ValueTask<RespValue> send,
             RespireReadFrom readFrom,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            RespireTelemetry.ErrorObservation observation)
         {
             try
             {
@@ -661,7 +734,8 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
                 {
                     // Retry only this rejected operation; other pipeline entries may already be accepted.
                     value = await batch._client.ResumeRetiredClusterSendAsync(
-                        Operation, new MutationCommand<TCommand>(command, MutationFence), connection, error, readFrom, cancellationToken).ConfigureAwait(false);
+                        Operation, new MutationCommand<TCommand>(command, MutationFence), connection, error, readFrom, cancellationToken,
+                        observation: observation).ConfigureAwait(false);
                 }
                 catch (RespireServerException error) when (batch.ConnectionPolicy.CanReplayRejectedCommands
                     && command.TryGetClusterSlot(out var readSlot)
@@ -670,14 +744,16 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
                 {
                     // Complete each operation in queue order; retry only its rejected read.
                     value = await batch._client.ResumeRejectedClusterSendAsync(
-                            Operation, new MutationCommand<TCommand>(command, MutationFence), connection, error, readFrom, cancellationToken)
+                            Operation, new MutationCommand<TCommand>(command, MutationFence), connection, error, readFrom, cancellationToken,
+                            observation: observation)
                         .ConfigureAwait(false);
                 }
                 catch (RespireServerException error) when (
                     batch.ConnectionPolicy.CanRecoverRejectedCommand(error, command.TryGetClusterSlot(out var slot) ? slot : null))
                 {
                     value = await batch._client.ResumeRejectedClusterSendAsync(
-                            Operation, new MutationCommand<TCommand>(command, MutationFence), connection, error, readFrom, cancellationToken)
+                            Operation, new MutationCommand<TCommand>(command, MutationFence), connection, error, readFrom, cancellationToken,
+                            observation: observation)
                         .ConfigureAwait(false);
                 }
 
@@ -707,12 +783,14 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         }
 
         public override Task<Exception?> RunAsync(
-            RespireClient client, RespireConnection connection, CancellationToken cancellationToken)
+            RespireClient client, RespireConnection connection, CancellationToken cancellationToken,
+            RespireTelemetry.ErrorObservation observation)
         {
             try
             {
                 var bound = new MutationCommand<TCommand>(command, MutationFence);
-                return CompleteReplyAsync(client, connection.SendAsync(in bound, cancellationToken, commandName: Operation));
+                return CompleteReplyAsync(client, connection.SendAsync(in bound, cancellationToken,
+                    commandName: Operation, observation: observation));
             }
             catch (Exception ex)
             {

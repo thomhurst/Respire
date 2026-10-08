@@ -443,34 +443,123 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     /// A correction chasing an abandoned wait requires the wire client for ordering; after an
     /// observed reply, or with a mocked client, one ordinary send is sufficient.
     /// </summary>
-    private ValueTask RunCorrectionAsync(
+    private async ValueTask RunCorrectionAsync(
         RespireScript script,
         string key,
         Func<RespireValue[]> args,
-        RespireClient.TrackedConnectionIdentity originalConnection = default)
-        => CorrectionCoordinator.ConvergeAsync(originalConnection,
-            (Cache: this, Script: script, Key: key, Args: args),
-            static (state, identity) => state.Cache._wireClient is { } wire
-                ? wire.Core.Corrections.CreateFence(wire, identity) : null,
-            static (state, ordered, identity) => state.Cache.RunCorrectionPassAsync(
-                state.Script, state.Key, state.Args(), ordered, identity),
-            CorrectionWaitBound, SendDelayTolerance);
+        RespireClient.TrackedConnectionIdentity originalConnection = default,
+        RespireTelemetry.ErrorObservation observation = default)
+    {
+        // Convergence can leave an idempotent pass running after its bounded foreground
+        // wait. Such passes must never retain the caller's pooled observation.
+        var errors = observation.IsEmpty ? null : new CorrectionErrors(observation.Attempts);
+        Exception? failure = null;
+        try
+        {
+            await CorrectionCoordinator.ConvergeAsync(originalConnection,
+                (Cache: this, Script: script, Key: key, Args: args, Errors: errors),
+                static (state, identity) => state.Cache._wireClient is { } wire
+                    ? wire.Core.Corrections.CreateFence(wire, identity) : null,
+                static (state, ordered, identity) => state.Cache.RunCorrectionPassAsync(
+                    state.Script, state.Key, state.Args(), ordered, identity, state.Errors),
+                CorrectionWaitBound, SendDelayTolerance).ConfigureAwait(false);
+        }
+        catch (Exception error)
+        {
+            failure = error;
+            throw;
+        }
+        finally { errors?.CompleteForeground(observation, failure); }
+    }
 
     private async Task RunCorrectionPassAsync(
         RespireScript script,
         string key,
         RespireValue[] args,
         bool requiresOrdering,
-        RespireClient.TrackedConnectionIdentity originalConnection)
+        RespireClient.TrackedConnectionIdentity originalConnection,
+        CorrectionErrors? errors)
     {
-        if (requiresOrdering && _wireClient is { } wire)
+        errors?.StartPass();
+        Exception? failure = null;
+        try
         {
-            await wire.ExecuteOnAllConnectionsAsync(script, [key], args, originalConnection).ConfigureAwait(false);
+            if (requiresOrdering && _wireClient is { } wire)
+            {
+                await wire.ExecuteOnAllConnectionsAsync(script, [key], args, originalConnection,
+                    errors?.Observation ?? default).ConfigureAwait(false);
+            }
+            else
+            {
+                using var result = await (_wireClient is { } client && errors is not null
+                    ? client.ExecuteScriptBorrowedAsync(script, [key], args, CancellationToken.None, errors.Observation)
+                    : _client.Scripts.ExecuteAsync(script, [key], args, CancellationToken.None)).ConfigureAwait(false);
+            }
         }
-        else
+        catch (Exception error)
         {
-            var result = await _client.Scripts.ExecuteAsync(script, [key], args, CancellationToken.None).ConfigureAwait(false);
-            result.Dispose();
+            failure = error;
+            throw;
+        }
+        finally { errors?.CompletePass(failure); }
+    }
+
+    // Only delayed/cancelled reads allocate this scope. Foreground and outstanding passes
+    // each own a reference; the last completion returns the independent pooled lease.
+    private sealed class CorrectionErrors
+    {
+        private readonly Lock _gate = new();
+        internal readonly RespireTelemetry.ErrorObservation Observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        private int _owners = 1;
+        private bool _foregroundEnded;
+        private List<Exception>? _failures;
+
+        internal CorrectionErrors(int attempts) => Observation.SetAttempts(attempts);
+
+        internal void StartPass() { lock (_gate) _owners++; }
+
+        internal void CompletePass(Exception? failure)
+        {
+            try
+            {
+                if (failure is null) return;
+                lock (_gate)
+                {
+                    if (!_foregroundEnded)
+                    {
+                        (_failures ??= []).Add(failure);
+                        return;
+                    }
+                }
+                Observation.Handled(failure);
+            }
+            finally { Release(); }
+        }
+
+        internal void CompleteForeground(RespireTelemetry.ErrorObservation caller, Exception? propagated)
+        {
+            try
+            {
+                List<Exception>? failures;
+                lock (_gate)
+                {
+                    _foregroundEnded = true;
+                    failures = _failures;
+                    _failures = null;
+                }
+                if (failures is not null)
+                    foreach (var error in failures)
+                        if (!ReferenceEquals(error, propagated)) Observation.Handled(error);
+                caller.SetAttempts(Observation.Attempts);
+            }
+            finally { Release(); }
+        }
+
+        private void Release()
+        {
+            bool completed;
+            lock (_gate) completed = --_owners == 0;
+            if (completed) Observation.Dispose();
         }
     }
 
@@ -674,8 +763,23 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<RespireResult> RunGetScriptAsync(string key, bool returnData, CancellationToken token)
     {
-        var trackedWire = await GetTrackedWireAsync(token).ConfigureAwait(false);
+        var observation = _wireClient is null ? default : RespireTelemetry.ErrorObservation.Rent(force: true);
+        try
+        {
+            var trackedWire = await GetTrackedWireAsync(token).ConfigureAwait(false);
+            return await RunGetScriptCoreAsync(key, returnData, token, trackedWire, observation).ConfigureAwait(false);
+        }
+        catch (Exception error)
+        {
+            observation.Final(error);
+            throw;
+        }
+        finally { observation.Dispose(); }
+    }
 
+    private async ValueTask<RespireResult> RunGetScriptCoreAsync(string key, bool returnData, CancellationToken token,
+        RespireClient? trackedWire, RespireTelemetry.ErrorObservation observation)
+    {
         var now = DateTimeOffset.UtcNow;
         RespireResult result;
         RespireClient.TrackedConnectionIdentity originalConnection = default;
@@ -683,12 +787,16 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         try
         {
             var args = new RespireValue[] { returnData ? "1" : "0", now.UtcTicks };
-            if (trackedWire is not null)
+            if ((trackedWire ?? _wireClient) is { } wire)
             {
-                trackedExecution = await trackedWire.StartTrackedScriptExecutionAsync(
-                        GetAndRefreshScript, [key], args, token)
+                // Real-client fallback still borrows this owner. Timestamp-only tracking
+                // preserves best-effort correction when CLIENT ID is unavailable.
+                trackedExecution = await wire.StartTrackedScriptExecutionAsync(
+                        GetAndRefreshScript, [key], args, token,
+                        captureSendTimestampOnly: trackedWire is null, errorObservation: observation)
                     .ConfigureAwait(false);
-                result = await trackedExecution.Response.ConfigureAwait(false);
+                result = await ((RespireClient.ITrackedCorrectionExecution<RespireResult>)trackedExecution)
+                    .Response.ConfigureAwait(false);
             }
             else
             {
@@ -707,11 +815,12 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
             // best-effort as in SetCoreAsync.
             try
             {
-                await CapRefreshedTtlAsync(key, originalConnection).ConfigureAwait(false);
+                await CapRefreshedTtlAsync(key, originalConnection, observation).ConfigureAwait(false);
             }
             catch (RespireException correctionFailure) when (
                 originalConnection.ServerClientId == 0 && correctionFailure is not RespireServerException)
             {
+                observation.Handled(correctionFailure);
             }
 
             throw;
@@ -727,7 +836,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         {
             try
             {
-                await CapRefreshedTtlAsync(key).ConfigureAwait(false);
+                await CapRefreshedTtlAsync(key, observation: observation).ConfigureAwait(false);
             }
             catch
             {
@@ -746,12 +855,13 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
 
     private ValueTask CapRefreshedTtlAsync(
         string key,
-        RespireClient.TrackedConnectionIdentity originalConnection = default)
+        RespireClient.TrackedConnectionIdentity originalConnection = default,
+        RespireTelemetry.ErrorObservation observation = default)
         => RunCorrectionAsync(
             CapRefreshedTtlScript,
             key,
             () => [DateTimeOffset.UtcNow.UtcTicks],
-            originalConnection);
+            originalConnection, observation);
 
     private static DateTimeOffset? GetAbsoluteExpiration(DateTimeOffset now, DistributedCacheEntryOptions options)
     {

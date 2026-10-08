@@ -3525,7 +3525,7 @@ public partial class SentinelRoutingTests
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         var script = RespireScript.Create("return 1");
         var execution = await client.StartTrackedScriptExecutionAsync(script, ["key"], [], default, true);
-        using (var reply = await execution.Response) await Assert.That(reply.AsInteger()).IsEqualTo(1);
+        using (var reply = await execution.ConsumeResponseAsync()) await Assert.That(reply.AsInteger()).IsEqualTo(1);
         var original = execution.ConnectionIdentity;
         await Assert.That(original.ServerClientId).IsEqualTo(41);
         Volatile.Write(ref primaryPort, promoted.Port);
@@ -3533,7 +3533,7 @@ public partial class SentinelRoutingTests
         await Assert.That(async () => await client.SetAsync("trigger", "value")).Throws<RespireServerException>();
         await client.EnsureReliableCorrectionOrderingAsync().AsTask().WaitAsync(Limit);
         var next = await client.StartTrackedScriptExecutionAsync(script, ["next"], [], default, true);
-        using (var reply = await next.Response) await Assert.That(reply.AsInteger()).IsEqualTo(1);
+        using (var reply = await next.ConsumeResponseAsync()) await Assert.That(reply.AsInteger()).IsEqualTo(1);
         await Assert.That(next.ConnectionIdentity.ServerClientId).IsEqualTo(42);
         await Assert.That(next.ConnectionIdentity.Endpoint.Port).IsEqualTo(promoted.Port);
         await client.ExecuteOnAllConnectionsAsync(script, ["key"], [], original).AsTask().WaitAsync(Limit);
@@ -3573,14 +3573,14 @@ public partial class SentinelRoutingTests
             await Assert.That(async () =>
             {
                 var execution = await client.StartLockExecutionAsync("key", "token", release ? null : 1000, true, false, default);
-                await execution.Response;
+                await execution.ConsumeResponseAsync();
             }).ThrowsExactly<RespireServerException>();
             await Assert.That(promoted.ReceivedCommands.Any(IsLockMutation)).IsFalse();
         }
         else
         {
             var execution = await client.StartLockExecutionAsync("key", "token", release ? null : 1000, true, false, default);
-            await Assert.That(await execution.Response).IsTrue();
+            await Assert.That(await execution.ConsumeResponseAsync()).IsTrue();
             await Assert.That(execution.ConnectionIdentity.ServerClientId).IsEqualTo(42);
             await Assert.That(execution.ConnectionIdentity.Endpoint.Port).IsEqualTo(promoted.Port);
             var commands = promoted.ReceivedCommands.ToList();

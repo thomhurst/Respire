@@ -40,7 +40,7 @@ public sealed class StreamedSetTests
         var command = new StreamedSetCommand((RespireValue)"key", source, 4, default, SetWhen.Always);
         var asking = new ProtocolCommand<RawCommand>(new("*1\r\n$6\r\nASKING\r\n"u8.ToArray()));
         var pending = connection.SendAskingStreamedSetAsync(in asking, command, timeout.Token,
-            CommandDeadline.After(10_000), new DedicatedStreamRoute(client.Core, pool, connection)).AsTask();
+            CommandDeadline.After(10_000), new DedicatedStreamRoute(client.Core, pool, connection), errorAttempts: 0).AsTask();
         while (!oldTarget.ReceivedCommands.Contains("ASKING"))
         {
             if (pending.IsCompleted) await pending;
@@ -920,6 +920,9 @@ public sealed class StreamedSetTests
     }
 
     [Test]
+    // This test deliberately holds a ThreadPool worker inside a source read. Keep other
+    // blocking tests from starving the continuations that verify cancellation and cleanup.
+    [NotInParallel]
     public async Task CancellationDuringSynchronouslyBlockedPrefetchReturnsAndRetainsBufferUntilReadSettles()
     {
         await using var server = new CountingSetServer();
@@ -981,6 +984,9 @@ public sealed class StreamedSetTests
     }
 
     [Test]
+    // A source read occupies a worker until transport cancellation arrives. Run alone so
+    // small ThreadPools do not turn unrelated blocking reads into a five-second timeout.
+    [NotInParallel]
     [Arguments(false)]
     [Arguments(true)]
     public async Task TokenlessSourceCancellationIsClassifiedFromLinkedSources(bool timeout)

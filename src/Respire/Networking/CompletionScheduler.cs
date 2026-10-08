@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using Respire.Internal;
 using Respire.Protocol;
 
 namespace Respire.Networking;
@@ -127,6 +128,7 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
     {
         if (!source.TryReserveResult())
         {
+            RespireTelemetry.RecordDiscardedError(in value, source.CommandName, source.ErrorAttempts);
             value.Dispose();
             source.ReleaseRef();
             return;

@@ -45,7 +45,7 @@ public class InflightRingOrderingTests
             for (var i = 0; i < count; i++)
             {
                 while (!(i % 3 == 0
-                    ? ring.TryEnqueueDiscard("SET", i + 1)
+                    ? ring.TryEnqueueDiscard(i % 2 == 0 ? "SET" : null, i + 1, i % 17)
                     : ring.TryEnqueue(sources[i % sources.Length], i + 1)))
                 {
                     token.ThrowIfCancellationRequested();
@@ -62,14 +62,16 @@ public class InflightRingOrderingTests
             {
                 PendingResponse source;
                 string? operation;
-                while (!ring.TryDequeue(out source, out operation))
+                int retryAttempts;
+                while (!ring.TryDequeue(out source, out operation, out retryAttempts))
                 {
                     token.ThrowIfCancellationRequested();
                     spin.SpinOnce(sleep1Threshold: -1);
                 }
                 spin.Reset();
                 var expected = i % 3 == 0 ? InflightRing.DiscardSentinel : sources[i % sources.Length];
-                if (!ReferenceEquals(source, expected) || operation != (i % 3 == 0 ? "SET" : null)
+                if (!ReferenceEquals(source, expected) || operation != (i % 6 == 0 ? "SET" : null)
+                    || retryAttempts != (i % 3 == 0 ? i % 17 : 0)
                     || ring.CompletedWriteEnd != i + 1)
                 {
                     cancellation.Cancel();
@@ -82,6 +84,39 @@ public class InflightRingOrderingTests
         await Assert.That(ring.Count).IsEqualTo(0);
         await Assert.That(ring.ConsumerPosition).IsEqualTo((long)count);
         await Assert.That(ring.CompletedWriteEnd).IsEqualTo((long)count);
+    }
+
+    [Test]
+    public async Task DiscardMetadataIsClearedByEveryDequeueOverloadBeforeSlotReuse()
+    {
+        var ring = new InflightRing(1);
+        var normal = new PendingResponseSource();
+        for (var cycle = 0; cycle < 100; cycle++)
+        {
+            await Assert.That(ring.TryEnqueueDiscard("SET", 1, 3)).IsTrue();
+            await Assert.That(ring.TryEnqueueDiscard("FAILED", 2, 7)).IsFalse();
+            if (cycle % 2 == 0)
+                await Assert.That(ring.TryDequeue(out _)).IsTrue();
+            else
+                await Assert.That(ring.TryDequeue(out _, out _)).IsTrue();
+            await Assert.That(ring.TryEnqueue(normal, 3)).IsTrue();
+            await Assert.That(ring.TryDequeue(out var source, out var operation, out var attempts)).IsTrue();
+            await Assert.That(ReferenceEquals(source, normal)).IsTrue();
+            await Assert.That(operation).IsNull();
+            await Assert.That(attempts).IsEqualTo(0);
+            await Assert.That(ring.TryEnqueueDiscard(null, 4, 2)).IsTrue();
+            await Assert.That(ring.TryDequeue(out source, out operation, out attempts)).IsTrue();
+            await Assert.That(ReferenceEquals(source, InflightRing.DiscardSentinel)).IsTrue();
+            await Assert.That(operation).IsNull();
+            await Assert.That(attempts).IsEqualTo(2);
+            await Assert.That(ring.TryEnqueueDiscard(null, 5)).IsTrue();
+            await Assert.That(ring.TryDequeue(out _, out operation, out attempts)).IsTrue();
+            await Assert.That(operation).IsNull();
+            await Assert.That(attempts).IsEqualTo(0);
+            await Assert.That(ring.TryDequeue(out _, out operation, out attempts)).IsFalse();
+            await Assert.That(operation).IsNull();
+            await Assert.That(attempts).IsEqualTo(0);
+        }
     }
 
     [Test]

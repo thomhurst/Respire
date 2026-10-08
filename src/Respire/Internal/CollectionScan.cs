@@ -30,19 +30,15 @@ internal static class CollectionScan
         {
             cancellationToken.ThrowIfCancellationRequested();
             var args = Arguments(wireKey, cursor, match, countHint, noValues);
-            var reply = await client.SendCursorPageAsync(operation, new CmdN(verb, args), affinity, cancellationToken)
-                .ConfigureAwait(false);
-
-            T[] page;
-            try
-            {
-                var elements = ParsePage(in reply, operation, out cursor);
-                page = parsePage(in elements[1]);
-            }
-            finally
-            {
-                reply.Dispose();
-            }
+            var result = await client.ConvertCursorPageAsync(operation, new CmdN(verb, args), affinity,
+                cancellationToken, (Operation: operation, Parser: parsePage),
+                static ((string Operation, ScanPageParser<T> Parser) state, in RespValue reply) =>
+                {
+                    var elements = ParsePage(in reply, state.Operation, out var nextCursor);
+                    return (Cursor: nextCursor, Page: state.Parser(in elements[1]));
+                }).ConfigureAwait(false);
+            cursor = result.Cursor;
+            var page = result.Page;
 
             foreach (var item in page)
             {

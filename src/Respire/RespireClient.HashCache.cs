@@ -9,7 +9,7 @@ public sealed partial class RespireClient
 {
     private ValueTask<RespValue> CachedHashGetManyAsync(
         ClientSideCacheCoordinator cache, ClientSideCacheCoordinator.QueryRequest request,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var fieldCount = request.Query.ArgumentCount - 1;
@@ -64,40 +64,40 @@ public sealed partial class RespireClient
                 allFields[index] = request.Query.GetArgument(index + 1).Snapshot();
         }
         return FetchHashFieldsAndCacheAsync(key.Snapshot(), missingFields, missingIndexes!, result,
-            cache, cancellationToken, generation, allFields);
+            cache, cancellationToken, generation, allFields, observation);
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<RespValue> FetchHashFieldsAndCacheAsync(
         RespireKey key, RespireValue[] fields, int[] missingIndexes, RespValue[] result,
         ClientSideCacheCoordinator cache, CancellationToken cancellationToken,
-        SentinelRouter.Generation? generation, RespireValue[]? allFields)
+        SentinelRouter.Generation? generation, RespireValue[]? allFields, RespireTelemetry.ErrorObservation observation = default)
     {
         // Share only the missing wire fields. Each waiter keeps its own cached values,
         // result ordering, and ownership, even when different full requests join this producer.
         using var response = await (cache.CoalesceConcurrentMisses
             ? cache.CoalesceReadAsync(new ClientCacheCommandKey("HMGET", key.AsValue(), fields),
                 (Client: this, Key: key, Fields: fields, Cache: cache),
-                static (state, token) => state.Client.FetchHashFieldsAsync(state.Key, state.Fields, state.Cache, token),
-                cancellationToken)
-            : FetchHashFieldsAsync(key, fields, cache, cancellationToken)).ConfigureAwait(false);
+                static (state, token, producerObservation) => state.Client.FetchHashFieldsAsync(state.Key, state.Fields, state.Cache, token, producerObservation),
+                cancellationToken, observation)
+            : FetchHashFieldsAsync(key, fields, cache, cancellationToken, observation)).ConfigureAwait(false);
         for (var index = 0; index < fields.Length; index++)
             result[missingIndexes[index]] = response.AsArray()[index].ToOwned();
         var combined = RespValue.Array(result);
         if (allFields is null || IsCacheGenerationCurrent(generation)) return combined;
         combined.Dispose();
-        return await FetchHashFieldsForCurrentGenerationAsync(key, allFields, cache, cancellationToken).ConfigureAwait(false);
+        return await FetchHashFieldsForCurrentGenerationAsync(key, allFields, cache, cancellationToken, observation).ConfigureAwait(false);
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<RespValue> FetchHashFieldsForCurrentGenerationAsync(
         RespireKey key, RespireValue[] fields, ClientSideCacheCoordinator cache,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
     {
         while (true)
         {
             var generation = _core.Sentinel?.Current;
-            var response = await FetchHashFieldsAsync(key, fields, cache, cancellationToken).ConfigureAwait(false);
+            var response = await FetchHashFieldsAsync(key, fields, cache, cancellationToken, observation).ConfigureAwait(false);
             if (IsCacheGenerationCurrent(generation)) return response;
             response.Dispose();
         }
@@ -106,7 +106,7 @@ public sealed partial class RespireClient
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<RespValue> FetchHashFieldsAsync(
         RespireKey key, RespireValue[] fields, ClientSideCacheCoordinator cache,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
     {
         // Each field uses the existing HGET identity and hash-key dependency. A single hash
         // invalidation therefore removes every projection, regardless of the requested list.
@@ -127,7 +127,7 @@ public sealed partial class RespireClient
                 };
             }
             response = await SendTrackedAsync("HMGET", new Cmd1N(Verbs.HMGet, key.AsValue(), fields),
-                cancellationToken, onRedirect).ConfigureAwait(false);
+                cancellationToken, onRedirect, observation: observation).ConfigureAwait(false);
             if (response.Type != RespDataType.Array || response.AsArray().Length != fields.Length)
                 throw new RespireProtocolException($"HMGET must return an array with {fields.Length} field values.");
             // Validate the entire reply before publishing any field from an untrusted frame.

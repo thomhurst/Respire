@@ -66,22 +66,24 @@ internal sealed partial class RespireConnection
 
     private ValueTask<RespValue> SendStreamingAsync<TCommand>(
         in TCommand command, CancellationToken cancellationToken, CommandDeadline commandDeadline,
-        DedicatedStreamRoute streamingRoute, bool throwOnError, CommandWriteObservation? writeObservation = null)
+        DedicatedStreamRoute streamingRoute, bool throwOnError, int errorAttempts,
+        CommandWriteObservation? writeObservation = null)
         where TCommand : struct, IRespCommand
         => command is StreamedSetCommand streamedSet
             ? SendStreamedSetAsync(streamedSet, cancellationToken, commandDeadline,
-                streamingRoute: streamingRoute, writeObservation: writeObservation, throwOnError: throwOnError)
+                streamingRoute: streamingRoute, errorAttempts: errorAttempts,
+                writeObservation: writeObservation, throwOnError: throwOnError)
             : throw new NotSupportedException(
                 $"Streaming command {typeof(TCommand).Name} has no connection write path.");
 
     internal ValueTask<RespValue> SendAskingStreamedSetAsync(
         in ProtocolCommand<RawCommand> asking, StreamedSetCommand command, CancellationToken cancellationToken,
-        CommandDeadline commandDeadline, DedicatedStreamRoute streamingRoute)
-        => SendStreamedSetAsync(command, cancellationToken, commandDeadline, streamingRoute, asking);
+        CommandDeadline commandDeadline, DedicatedStreamRoute streamingRoute, int errorAttempts)
+        => SendStreamedSetAsync(command, cancellationToken, commandDeadline, streamingRoute, asking, errorAttempts);
 
     private async ValueTask<RespValue> SendStreamedSetAsync(
         StreamedSetCommand command, CancellationToken cancellationToken, CommandDeadline deadline,
-        DedicatedStreamRoute streamingRoute, ProtocolCommand<RawCommand>? prelude = null,
+        DedicatedStreamRoute streamingRoute, ProtocolCommand<RawCommand>? prelude = null, int errorAttempts = 0,
         CommandWriteObservation? writeObservation = null, bool throwOnError = true)
     {
         _cacheMutationAdmission?.ValidateDispatchAdmission(in command);
@@ -113,6 +115,7 @@ internal sealed partial class RespireConnection
         try
         {
             source = _sourcePool.Rent(throwOnError, commandName: "SET");
+            source.ErrorAttempts = errorAttempts;
         }
         catch
         {
@@ -178,7 +181,7 @@ internal sealed partial class RespireConnection
                 try
                 {
                     using var askingResponse = await AppendStreamingPreludeAsync(
-                        prefix, effectiveCancellation, deadline, writeObservation).ConfigureAwait(false);
+                        prefix, effectiveCancellation, deadline, errorAttempts, writeObservation).ConfigureAwait(false);
                 }
                 catch (RespireServerException)
                 {
@@ -305,11 +308,12 @@ internal sealed partial class RespireConnection
     }
 
     private async ValueTask<RespValue> AppendStreamingPreludeAsync<TCommand>(
-        TCommand command, CancellationToken cancellationToken, CommandDeadline deadline,
+        TCommand command, CancellationToken cancellationToken, CommandDeadline deadline, int errorAttempts,
         CommandWriteObservation? writeObservation = null)
         where TCommand : struct, IRespCommand
     {
         var source = _sourcePool.Rent(throwOnError: true, commandName: "ASKING");
+        source.ErrorAttempts = errorAttempts;
         bool startedBatch;
         try
         {

@@ -16,7 +16,7 @@ public partial class SentinelRoutingTests
     [Arguments("bytes")]
     [Arguments("integer")]
     [Arguments("raw")]
-    public async Task ReadySentinelUsesTheConnectionReplySource(string shape)
+    public async Task ReadySentinelPreservesSpecializedRepliesAndRawFinalOwner(string shape)
     {
         await using var primary = Primary();
         primary.SuppressReply = command => command.StartsWith("GET ") || command.StartsWith("INCR");
@@ -45,8 +45,10 @@ public partial class SentinelRoutingTests
                     ":7\r\n"u8.ToArray(), static value => value == 7);
                 break;
             case "raw":
+                // Raw commands retain a pooled final-error observer even when command
+                // telemetry is off, so late error-metric activation still sees completion.
                 await VerifySourceAsync(client.SendAsync("GET", new Cmd1(Verbs.Get, "ready"), default),
-                    "PendingResponseSource", "$5\r\nvalue\r\n"u8.ToArray(), static value =>
+                    "StateMachineBox", "$5\r\nvalue\r\n"u8.ToArray(), static value =>
                     {
                         using (value) return value.AsSpan().SequenceEqual("value"u8);
                     });
