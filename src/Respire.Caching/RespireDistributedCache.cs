@@ -188,6 +188,9 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         return RespireClient.Create(_wireClient.Core.Options with
         {
             KeyPrefix = default,
+            // Coherence channels are explicitly configured physical names, independent
+            // of pub/sub prefixes on the application client's options or views.
+            PubSubPrefix = default,
             Connections = 1,
             ReadFrom = RespireReadFrom.Primary,
             ClientSideCache = trackingOptions,

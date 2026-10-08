@@ -38,8 +38,14 @@ public readonly record struct RespireSubscriptionOptions(
     int? BufferSize = null,
     SubscriptionOverflow? Overflow = null)
 {
+    /// <summary>Maximum retained payload bytes per message; null leaves payload size unrestricted.</summary>
+    /// <remarks>Oversized messages are discarded before copying into the subscription buffer and produce a delivery gap.</remarks>
+    public int? MaxPayloadBytes { get; init; }
+
     internal (int BufferSize, SubscriptionOverflow Overflow) Resolve(RespireOptions defaults)
     {
+        if (MaxPayloadBytes is < 1)
+            throw new ArgumentOutOfRangeException(nameof(MaxPayloadBytes), MaxPayloadBytes, "Must be at least one.");
         if (BufferSize is < 1)
         {
             throw new ArgumentOutOfRangeException(nameof(BufferSize), BufferSize, "Must be at least one.");
@@ -84,13 +90,15 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
         SubscriptionKind kind,
         RespireChannel[] names,
         int bufferSize,
-        SubscriptionOverflow overflow)
+        SubscriptionOverflow overflow,
+        int? maxPayloadBytes = null)
     {
         _hub = hub;
         Kind = kind;
         Names = names;
         Targets = Array.AsReadOnly(names);
         _overflow = overflow;
+        MaxPayloadBytes = maxPayloadBytes;
         Buffer = new SubscriptionBuffer(bufferSize, overflow);
     }
 
@@ -114,6 +122,7 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
     public Task<RespireSubscriptionEndReason> Completion => _completion.Task;
 
     internal RespireChannel[] Names { get; }
+    internal int? MaxPayloadBytes { get; }
 
     internal SubscriptionBuffer Buffer { get; }
 

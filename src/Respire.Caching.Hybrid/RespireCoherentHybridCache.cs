@@ -11,7 +11,7 @@ using Lock = System.Object;
 
 namespace Respire.Caching.Hybrid;
 
-internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAsyncDisposable
+internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposable, IAsyncDisposable
 {
     private readonly Lock _gate = new();
     private readonly Dictionary<string, Observation> _observations = new(StringComparer.Ordinal);
@@ -53,6 +53,7 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
         TrackingClient = _distributed.CreateCoherenceTrackingClient(options.TrackingOptions);
         _sweep = new Timer(static state => ((RespireCoherentHybridCache)state!).SweepObservations(),
             this, options.ObservationSweepInterval, options.ObservationSweepInterval);
+        StartTagPropagation(options);
     }
 
     internal RespireClient TrackingClient { get; }
@@ -68,12 +69,14 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var observation = Acquire(key, options);
+        tags = PrepareTags(tags);
+        if (_tagMessage is not null) await _tagStarted.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var observation = Acquire(key, options, tags);
         try
         {
             var cache = await SelectCacheAsync(observation, cancellationToken).ConfigureAwait(false);
             return await cache.GetOrCreateAsync(key, state, underlyingDataCallback,
-                ReferenceEquals(cache, _unobserved) ? WithoutLocalCache(options) : options,
+                observation is null || !ReferenceEquals(cache, observation.Cache) ? WithoutLocalCache(options) : options,
                 tags, cancellationToken).ConfigureAwait(false);
         }
         finally { Release(observation); }
@@ -84,13 +87,15 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        tags = PrepareTags(tags);
+        if (_tagMessage is not null) await _tagStarted.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
         RetireKey(key);
-        var observation = Acquire(key, options);
+        var observation = Acquire(key, options, tags);
         try
         {
             var cache = await SelectCacheAsync(observation, cancellationToken).ConfigureAwait(false);
             await cache.SetAsync(key, value,
-                ReferenceEquals(cache, _unobserved) ? WithoutLocalCache(options) : options,
+                observation is null || !ReferenceEquals(cache, observation.Cache) ? WithoutLocalCache(options) : options,
                 tags, cancellationToken).ConfigureAwait(false);
         }
         finally { Release(observation); }
@@ -113,24 +118,14 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
                 ThrowIfDisposed();
                 if (string.IsNullOrWhiteSpace(tag)) return;
                 var timestamp = _clock.GetUtcNow();
-                if (!_tagHistoryExhausted)
-                {
-                    if (!_removedTags.ContainsKey(tag) && _removedTags.Count >= _maxRememberedTags)
-                    {
-                        _tagHistoryExhausted = true;
-                        _removedTags.Clear();
-                        RetireAll();
-                    }
-                    else _removedTags[tag] = timestamp;
-                }
-                var localUpdates = _observations.Values.Select(observation =>
-                    ReplayTagAsync(observation.Cache, tag, timestamp)).ToArray();
-                // The fallback uses the original backend: this is the single shared L2 write.
+                var message = _tagMessage?.Encode(_tagSender, tag, timestamp);
+                ResetTagContinuityUnderGate();
+                var localUpdates = ApplyLocalTagInvalidation(tag, timestamp);
+                // Preserve the single shared marker and publish only after it completes.
                 Task remoteUpdate;
                 try
                 {
-                    using (_clock.Replay(timestamp))
-                        remoteUpdate = _unobserved.RemoveByTagAsync(tag, cancellationToken).AsTask();
+                    remoteUpdate = WriteTagAndPublishAsync(tag, timestamp, message, cancellationToken);
                 }
                 catch (Exception error) { remoteUpdate = Task.FromException(error); }
                 updates = [remoteUpdate, .. localUpdates];
@@ -170,7 +165,7 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
     private HybridCacheEntryFlags EffectiveFlags(HybridCacheEntryOptions? options)
         => options?.Flags ?? _hybridOptions.DefaultEntryOptions?.Flags ?? HybridCacheEntryFlags.None;
 
-    private Observation? Acquire(string key, HybridCacheEntryOptions? options)
+    private Observation? Acquire(string key, HybridCacheEntryOptions? options, IEnumerable<string>? tags)
     {
         Observation? acquired = null;
         try
@@ -178,15 +173,23 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
             lock (_gate)
             {
                 ThrowIfDisposed();
+                ResetTagContinuityUnderGate();
                 // Let HybridCache itself retain its validation and uncached-factory behavior.
-                if (_trackingStopped || _tagHistoryExhausted || string.IsNullOrWhiteSpace(key) || key.Length > _hybridOptions.MaximumKeyLength
+                if (!CanUseTagLocalCache || _trackingStopped || _tagHistoryExhausted || string.IsNullOrWhiteSpace(key) || key.Length > _hybridOptions.MaximumKeyLength
                     || HasControlCharacter(key)
                     || (EffectiveFlags(options) & HybridCacheEntryFlags.DisableLocalCache) == HybridCacheEntryFlags.DisableLocalCache)
                     return null;
                 if (_observations.TryGetValue(key, out var current))
                 {
-                    current.ActiveCalls++;
-                    return acquired = current;
+                    if (_tagMessage is not null && tags is not null
+                        && current.RequestTags!.Count + tags.Distinct(StringComparer.Ordinal).Count(tag => !current.RequestTags.Contains(tag)) > _maxTagsPerEntry)
+                        Retire(current);
+                    else
+                    {
+                        if (_tagMessage is not null && tags is not null) current.RequestTags!.UnionWith(tags);
+                        current.ActiveCalls++;
+                        return acquired = current;
+                    }
                 }
                 if (_observations.Count >= _maxObservedKeys) return null;
 
@@ -194,6 +197,7 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
                 if (!RespireDistributedCache.CanTrackCoherenceKey(TrackingClient, in physicalKey)) return null;
 
                 var observation = new Observation(this, key);
+                if (_tagMessage is not null) observation.RequestTags = new(tags ?? [], StringComparer.Ordinal);
                 _observations.Add(key, observation);
                 try
                 {
@@ -258,7 +262,7 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
 
     private async ValueTask<HybridCache> SelectCacheAsync(Observation? observation, CancellationToken cancellationToken)
     {
-        if (observation is null) return _unobserved;
+        if (observation is null) return FallbackCache();
         try
         {
             await observation.Tracking.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -269,9 +273,9 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
         {
             // Tracking failure must never turn an ordinary L2 request into an unobserved L1 hit.
             Retire(observation);
-            return _unobserved;
+            return FallbackCache();
         }
-        lock (_gate) return observation.Retired ? _unobserved : observation.Cache;
+        lock (_gate) return observation.Retired || !CanUseTagLocalCache ? FallbackCache() : observation.Cache;
     }
 
     private void Release(Observation? observation)
@@ -504,8 +508,10 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
     {
         if (!TryBeginDisposal()) return;
         Exception? failure = null;
+        TrackingClient.ConnectionStateChanged -= TagConnectionStateChanged;
         try
         {
+            _tagLifetime.Cancel();
             _sweep.Dispose();
             failure = RetireAllAndWaitAsync().GetAwaiter().GetResult();
         }
@@ -514,6 +520,9 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
         // ConfigureAwait(false), so this wait does not require the caller's context.
         try { TrackingClient.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
         catch (Exception error) { failure = CombineFailures(failure, error); }
+        try { _tagWorker.GetAwaiter().GetResult(); }
+        catch (Exception error) { failure = CombineFailures(failure, error); }
+        finally { _tagLifetime.Dispose(); }
         ThrowCleanupFailure(failure);
     }
 
@@ -521,14 +530,19 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
     {
         if (!TryBeginDisposal()) return;
         Exception? failure = null;
+        TrackingClient.ConnectionStateChanged -= TagConnectionStateChanged;
         try
         {
+            await _tagLifetime.CancelAsync().ConfigureAwait(false);
             await _sweep.DisposeAsync().ConfigureAwait(false);
             failure = await RetireAllAndWaitAsync().ConfigureAwait(false);
         }
         catch (Exception error) { failure = error; }
         try { await TrackingClient.DisposeAsync().ConfigureAwait(false); }
         catch (Exception error) { failure = CombineFailures(failure, error); }
+        try { await _tagWorker.ConfigureAwait(false); }
+        catch (Exception error) { failure = CombineFailures(failure, error); }
+        finally { _tagLifetime.Dispose(); }
         ThrowCleanupFailure(failure);
     }
 
@@ -542,6 +556,7 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
         internal HybridCache Cache = null!;
         internal Task Tracking = Task.CompletedTask;
         internal Task TagReplay = Task.CompletedTask;
+        internal HashSet<string>? RequestTags;
         internal IRespireClientCacheInvalidationSubscription? Subscription;
         internal IRespireClientCacheInvalidationSubscription? SourceSubscription;
         internal CancellationTokenRegistration Stopped;
@@ -631,7 +646,7 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
             lock (owner._gate)
             {
                 value = null;
-                return observation is { Retired: false }
+                return owner.CanUseTagLocalCache && observation is { Retired: false }
                     && owner._memory.TryGetValue(MemoryKey(key), out value);
             }
         }
@@ -663,7 +678,7 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
         {
             lock (owner._gate)
             {
-                if (observation is null || observation.Retired)
+                if (observation is null || observation.Retired || !owner.CanUseTagLocalCache)
                 {
                     // Commit as already expired, so Microsoft's recycling callbacks still run.
                     entry.AbsoluteExpirationRelativeToNow = null;

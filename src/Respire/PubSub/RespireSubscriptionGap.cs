@@ -19,6 +19,8 @@ public enum RespireSubscriptionGapReason
     Reconnect = 1,
     /// <summary>The subscription buffer discarded one or more messages.</summary>
     BufferOverflow = 2,
+    /// <summary>A message exceeded the subscription's configured payload limit.</summary>
+    PayloadTooLarge = 4,
 }
 
 /// <summary>An observed delivery gap. Reconnect loss counts are unknown.</summary>
