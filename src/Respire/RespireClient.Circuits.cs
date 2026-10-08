@@ -24,15 +24,26 @@ public sealed partial class RespireClient
 
     private RespireConnection GetCircuitConnectionSlow(RespireConnectionMultiplexer multiplexer, CancellationToken cancellationToken)
     {
-        try { return multiplexer.GetConnection(); }
-        catch (RespireConnectionException error)
+        while (true)
         {
-            // Selection can fail before reaching the dispatch guard. Prefer circuit rejection
-            // when this endpoint is open; otherwise record the endpoint's lost availability.
-            var admission = _core.Circuits!.Acquire(multiplexer.ActiveConnectionEndpoint, cancellationToken);
-            try { admission.Failed(error, cancellationToken); }
-            finally { admission.Dispose(); }
-            throw;
+            var routing = multiplexer.CaptureMovingPublication();
+            try { return multiplexer.GetConnection(); }
+            catch (RespireConnectionException error)
+            {
+                // A handoff can publish after selection observes the dead source. Retry that
+                // stale selection before rejecting or recording availability for either endpoint.
+                if (!ReferenceEquals(routing.Publication, multiplexer.MovingPublication))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    continue;
+                }
+                // Selection can fail before reaching the dispatch guard. Prefer circuit rejection
+                // when the selected endpoint is open; otherwise record its lost availability.
+                var admission = _core.Circuits!.Acquire(routing.Endpoint, cancellationToken);
+                try { admission.Failed(error, cancellationToken); }
+                finally { admission.Dispose(); }
+                throw;
+            }
         }
     }
 

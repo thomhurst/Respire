@@ -39,6 +39,75 @@ public class StandaloneCircuitDispatchTests
     }
 
     [Test]
+    [Arguments("raw", false, false)]
+    [Arguments("raw", false, true)]
+    [Arguments("raw", true, false)]
+    [Arguments("raw", true, true)]
+    [Arguments("string", false, false)]
+    [Arguments("string", false, true)]
+    [Arguments("string", true, false)]
+    [Arguments("string", true, true)]
+    public async Task SelectionFailureDuringPublicationRetriesWithoutChargingReplacement(
+        string shape, bool sourceOpen, bool targetOpen)
+    {
+        await using var target = Server();
+        await using var source = Server();
+        await using var client = await RespireClient.ConnectAsync(Options(source) with
+        {
+            Protocol = RespProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            ReconnectPolicy = new() { InitialDelay = TimeSpan.FromMinutes(1), MaxDelay = TimeSpan.FromMinutes(1) },
+        });
+        var (sourceCircuit, _) = await Prepare(client, source);
+        if (sourceOpen) await Trip(client, source);
+        var multiplexer = client.Core.Multiplexer;
+        var original = multiplexer.GetConnection();
+        var endpoint = new RespireEndpoint("127.0.0.1", target.Port);
+        var targetAdmission = client.Core.Circuits!.Acquire(endpoint, default);
+        if (targetOpen) targetAdmission.Failed(new RespireConnectionException("target unavailable"), default);
+        targetAdmission.Dispose();
+        var targetCircuit = client.Core.Circuits.GetForTests(endpoint);
+        var announcement = multiplexer.CaptureMovingAnnouncement(0, original,
+            new MaintenanceNotification("MOVING", 1, 10, endpoint));
+        source.CloseConnections();
+        await original.Closed.WaitAsync(TimeSpan.FromSeconds(5));
+        var commands = source.CommandsSeen;
+        using var published = new ManualResetEventSlim();
+        var handoffs = 0;
+        multiplexer.MovingHandoffPublished += published.Set;
+        multiplexer.StateChanged += change =>
+        {
+            if (change.State != RespireConnectionState.Reconnecting || Interlocked.Increment(ref handoffs) != 1) return;
+            // Selection already observed the dead source. Publish its captured MOVING before
+            // GetConnection throws, so the catch must not charge or reject the new endpoint.
+            multiplexer.QueueDedicatedMovingHandoff(original, announcement, static () => true);
+            published.Wait(TimeSpan.FromSeconds(5));
+        };
+
+        var pending = Task.Run(() => Send(client, shape, "routed"));
+        if (targetOpen)
+        {
+            var error = await Failure(() => pending.WaitAsync(TimeSpan.FromSeconds(10)));
+            await Assert.That(error).IsTypeOf<RespireCircuitOpenException>();
+            await Assert.That(((RespireCircuitOpenException)error).Endpoint).IsEqualTo(endpoint);
+        }
+        else
+        {
+            await pending.WaitAsync(TimeSpan.FromSeconds(10));
+            await Send(client, shape, "next");
+        }
+        await Assert.That(published.IsSet).IsTrue();
+        await Assert.That(handoffs).IsEqualTo(1);
+        await Assert.That(multiplexer.ActiveConnectionEndpoint).IsEqualTo(endpoint);
+        await Assert.That(sourceCircuit.Snapshot().State).IsEqualTo(sourceOpen ? EndpointCircuitState.Open : EndpointCircuitState.Closed);
+        await Assert.That(sourceCircuit.Snapshot().ActiveProbes).IsEqualTo(0);
+        await Assert.That(targetCircuit.Snapshot().State).IsEqualTo(targetOpen ? EndpointCircuitState.Open : EndpointCircuitState.Closed);
+        await Assert.That(targetCircuit.Snapshot().ActiveProbes).IsEqualTo(0);
+        await Assert.That(source.CommandsSeen).IsEqualTo(commands);
+        await Assert.That(target.ReceivedCommands.Count(command => command == "GET routed")).IsEqualTo(targetOpen ? 0 : 1);
+        await Assert.That(target.ReceivedCommands.Count(command => command == "GET next")).IsEqualTo(targetOpen ? 0 : 1);
+    }
+
+    [Test]
     [Arguments("array")]
     [Arguments("span")]
     [Arguments("async-array")]
