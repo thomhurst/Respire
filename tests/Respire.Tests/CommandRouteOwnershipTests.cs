@@ -163,6 +163,57 @@ public class CommandRouteOwnershipTests
     }
 
     [Test]
+    [Arguments("NET")]
+    [Arguments("NETCOREAPP")]
+    [Arguments("NETCOREAPP1_0_OR_GREATER")]
+    [Arguments("NETCOREAPP1_1_OR_GREATER")]
+    [Arguments("NETCOREAPP2_0_OR_GREATER")]
+    [Arguments("NETCOREAPP2_1_OR_GREATER")]
+    [Arguments("NETCOREAPP2_2_OR_GREATER")]
+    [Arguments("NETCOREAPP3_0_OR_GREATER")]
+    [Arguments("NETCOREAPP3_1_OR_GREATER")]
+    [Arguments("NET5_0_OR_GREATER")]
+    [Arguments("NET6_0_OR_GREATER")]
+    [Arguments("NET7_0_OR_GREATER")]
+    [Arguments("NET8_0_OR_GREATER")]
+    public async Task SdkCompatibilitySymbolsCannotHideUndeclaredRoutes(string symbol)
+    {
+        var source = CommandRouteOwnership.Discover([("fixture.cs", $$"""
+            public class Routes {
+            #if {{symbol}}
+                public int Added() => 1;
+            #endif
+            }
+            """)]);
+        var errors = CommandRouteOwnership.Validate(source, new([], []));
+        await Assert.That(errors).Contains("Undeclared public route: Routes.Added():int [net8.0]");
+        await Assert.That(errors).Contains("Undeclared public route: Routes.Added():int [net10.0]");
+        var inventory = new CommandRouteOwnership.Inventory([
+            new("Routes", "Routes", ["Added():int"], Contract: "Own calls through completion.")], []);
+        await Assert.That(CommandRouteOwnership.Validate(source, inventory)).IsEmpty();
+    }
+
+    [Test]
+    [Arguments("NET8_0", "net8.0")]
+    [Arguments("NET10_0", "net10.0")]
+    [Arguments("NET9_0_OR_GREATER", "net10.0")]
+    [Arguments("NET10_0_OR_GREATER", "net10.0")]
+    public async Task SdkTargetSymbolsStayWithinTheirFramework(string symbol, string framework)
+    {
+        var source = CommandRouteOwnership.Discover([("fixture.cs", $$"""
+            public class Routes {
+            #if {{symbol}}
+                public int Added() => 1;
+            #endif
+                private void Probe() { }
+            }
+            """)]);
+        await Assert.That(source.Where(m => m.PublicRoute).Single().Framework).IsEqualTo(framework);
+        await Assert.That(CommandRouteOwnership.Validate(source, new([], [])))
+            .Contains("Undeclared public route: Routes.Added():int [" + framework + "]");
+    }
+
+    [Test]
     public async Task SynchronousMethodsOnUnfamiliarTypesRequireClassification()
     {
         var source = Discover("public class NovelSurface { public int Foo() => 1; public bool TryX(int key) => true; }");

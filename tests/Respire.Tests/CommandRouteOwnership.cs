@@ -19,9 +19,21 @@ internal static class CommandRouteOwnership
     internal static Member[] Discover(IEnumerable<(string File, string Source)> files)
     {
         var source = files.ToArray();
-        return DiscoverFramework(source, "net8.0", ["NET", "NET8_0", "NET8_0_OR_GREATER"])
-            .Concat(DiscoverFramework(source, "net10.0", ["NET", "NET10_0", "NET8_0_OR_GREATER", "NET9_0_OR_GREATER", "NET10_0_OR_GREATER"]))
+        return DiscoverFramework(source, "net8.0", FrameworkSymbols(8))
+            .Concat(DiscoverFramework(source, "net10.0", FrameworkSymbols(10)))
             .ToArray();
+    }
+
+    private static string[] FrameworkSymbols(int majorVersion)
+    {
+        // Match SDK GenerateTargetFrameworkDefineConstants/GenerateNETCompatibleDefineConstants
+        // for the platform-neutral .NET targets used by the core project.
+        var symbols = new List<string> { "NET", "NETCOREAPP", $"NET{majorVersion}_0" };
+        foreach (var version in new[] { "1_0", "1_1", "2_0", "2_1", "2_2", "3_0", "3_1" })
+            symbols.Add("NETCOREAPP" + version + "_OR_GREATER");
+        for (var version = 5; version <= majorVersion; version++)
+            symbols.Add($"NET{version}_0_OR_GREATER");
+        return symbols.ToArray();
     }
 
     private static Member[] DiscoverFramework((string File, string Source)[] files, string framework, string[] symbols)

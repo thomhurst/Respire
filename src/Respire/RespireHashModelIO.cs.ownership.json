@@ -6,7 +6,8 @@
       "Members": [
         "ReadAsync(IRespireClient,RespireKey,CancellationToken):ValueTask<Dictionary<string,string>>",
         "ReadPartialAsync(IRespireClient,RespireKey,string[],string[],CancellationToken):ValueTask<Dictionary<string,string?>>",
-        "WriteAsync(IRespireClient,RespireKey,IReadOnlyDictionary<string,string>,string[],CancellationToken):ValueTask"
+        "WriteAsync(IRespireClient,RespireKey,IReadOnlyDictionary<string,string>,string[],CancellationToken):ValueTask",
+        "WriteAsync(IRespireClient,RespireKey,IReadOnlyDictionary<string,string>,string[],IReadOnlyDictionary<string,long>,RespireHashExpiryMode,CancellationToken):ValueTask"
       ],
       "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
     }
