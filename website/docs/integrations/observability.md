@@ -533,8 +533,11 @@ validation, batch execution and pending inspection have distinct lifetimes.
 Returned per-node failures must not also become duplicate parent failures.
 
 Run `CommandRouteOwnershipTests` on net8.0 and net10.0. The guard scans the core
-library source, including catalog dispatch and framework
-branches. New signatures, missing declarations and removed executable owners fail;
+library source, including catalog dispatch, and validates each target framework
+independently. A route's executable owner and inherited interface contract must
+exist on the same target; a body in another framework branch cannot supply them.
+Declarations for target-specific routes apply only where those routes are public.
+New signatures, missing declarations and removed executable owners fail;
 negative controls exercise those failures. The source-local declarations specify
 required ownership. They do not prove that runtime instrumentation is present or
 that a delegate passes its lease correctly. Route-family integration must also test final

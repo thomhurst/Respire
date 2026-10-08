@@ -9,7 +9,7 @@ internal static class CommandRouteOwnership
 {
     internal sealed record Member(string Id, string Type, string Signature, string Name,
         bool PublicRoute, bool HasBody, string File, bool IsInterface = false,
-        bool PublicImplementation = false, string[]? Contracts = null);
+        bool PublicImplementation = false, string[]? Contracts = null, string Framework = "");
     internal sealed record Surface(string Type, string OwnerType, string[] Members,
         Dictionary<string, string>? Overrides = null, string Contract = "", string[]? AdditionalOwnerTypes = null);
     internal sealed record Boundary(string Name, string Role, string Member, string? Owner, string Contract);
@@ -18,18 +18,55 @@ internal static class CommandRouteOwnership
 
     internal static Member[] Discover(IEnumerable<(string File, string Source)> files)
     {
+        var source = files.ToArray();
+        return DiscoverFramework(source, "net8.0", ["NET", "NET8_0", "NET8_0_OR_GREATER"])
+            .Concat(DiscoverFramework(source, "net10.0", ["NET", "NET10_0", "NET8_0_OR_GREATER", "NET9_0_OR_GREATER", "NET10_0_OR_GREATER"]))
+            .ToArray();
+    }
+
+    private static Member[] DiscoverFramework((string File, string Source)[] files, string framework, string[] symbols)
+    {
         var members = new List<Member>();
-        var symbolSets = new[] { Array.Empty<string>(),
-            new[] { "NET", "NET8_0", "NET8_0_OR_GREATER" },
-            new[] { "NET", "NET10_0", "NET8_0_OR_GREATER", "NET9_0_OR_GREATER", "NET10_0_OR_GREATER" } };
-        var roots = files.SelectMany(file => symbolSets.Select(symbols => (file.File,
+        var roots = files.Select(file => (file.File,
             Root: CSharpSyntaxTree.ParseText(file.Source,
-                new CSharpParseOptions(LanguageVersion.Preview, preprocessorSymbols: symbols)).GetRoot()))).ToArray();
+                new CSharpParseOptions(LanguageVersion.Preview, preprocessorSymbols: symbols)).GetRoot())).ToArray();
         var publicTypes = roots.SelectMany(file => file.Root.DescendantNodes().OfType<TypeDeclarationSyntax>())
             .Where(type => type.Modifiers.Any(SyntaxKind.PublicKeyword))
             .Select(TypeId).ToHashSet(StringComparer.Ordinal);
         var typesById = roots.SelectMany(file => file.Root.DescendantNodes().OfType<TypeDeclarationSyntax>())
             .GroupBy(TypeId).ToDictionary(g => g.Key, g => g.ToArray(), StringComparer.Ordinal);
+        var globalUsings = roots.SelectMany(file => ((CompilationUnitSyntax)file.Root).Usings)
+            .Where(u => u.GlobalKeyword.IsKind(SyntaxKind.GlobalKeyword)).ToArray();
+        string ResolveContract(TypeSyntax parent, TypeDeclarationSyntax declaration)
+        {
+            var name = Compact(parent);
+            if (name.StartsWith("global::", StringComparison.Ordinal)) return name["global::".Length..];
+            var usings = declaration.Ancestors().OfType<BaseNamespaceDeclarationSyntax>().SelectMany(n => n.Usings)
+                .Concat(((CompilationUnitSyntax)declaration.SyntaxTree.GetRoot()).Usings).Concat(globalUsings).ToArray();
+            foreach (var directive in usings.Where(u => u.Alias is not null && u.Name is not null))
+            {
+                var alias = directive.Alias!.Name.Identifier.ValueText;
+                if (name == alias || name.StartsWith(alias + ".", StringComparison.Ordinal) || name.StartsWith(alias + "::", StringComparison.Ordinal))
+                    return Compact(directive.Name!).Replace("global::", "", StringComparison.Ordinal)
+                        + name[alias.Length..].Replace("::", ".", StringComparison.Ordinal);
+            }
+            var space = Namespace(declaration);
+            while (true)
+            {
+                var candidate = space.Length == 0 ? name : space + "." + name;
+                if (typesById.ContainsKey(candidate)) return candidate;
+                var separator = space.LastIndexOf('.');
+                if (space.Length == 0) break;
+                space = separator < 0 ? "" : space[..separator];
+            }
+            foreach (var directive in usings.Where(u => u.Alias is null && u.Name is not null && !u.StaticKeyword.IsKind(SyntaxKind.StaticKeyword)))
+            {
+                var candidate = Compact(directive.Name!).Replace("global::", "", StringComparison.Ordinal) + "." + name;
+                if (typesById.ContainsKey(candidate)) return candidate;
+            }
+            var currentSpace = Namespace(declaration);
+            return name.Contains('.') || currentSpace.Length == 0 ? name : currentSpace + "." + name;
+        }
         var contractCache = new Dictionary<string, string[]>(StringComparer.Ordinal);
         string[] Contracts(string type)
         {
@@ -41,9 +78,7 @@ internal static class CommandRouteOwnership
                 foreach (var declaration in declarations)
                     foreach (var parent in declaration.BaseList?.Types ?? [])
                     {
-                        var name = Compact(parent.Type).Replace("global::", "", StringComparison.Ordinal);
-                        var space = Namespace(declaration);
-                        var qualified = name.Contains('.') || space.Length == 0 ? name : space + "." + name;
+                        var qualified = ResolveContract(parent.Type, declaration);
                         if (result.Add(qualified)) Visit(qualified);
                     }
             }
@@ -52,7 +87,7 @@ internal static class CommandRouteOwnership
         }
         foreach (var (file, root) in roots)
         {
-            // Union framework branches and public partial declarations independently of telemetry.
+            // Merge partial declarations only within this target framework, independently of telemetry.
             foreach (var method in root.DescendantNodes().OfType<MethodDeclarationSyntax>())
             {
                 var types = method.Ancestors().OfType<TypeDeclarationSyntax>().Reverse().ToArray();
@@ -71,7 +106,7 @@ internal static class CommandRouteOwnership
                     c == explicitContract || c.EndsWith("." + explicitContract, StringComparison.Ordinal)));
                 members.Add(new(type + "." + signature, type, signature, method.Identifier.ValueText,
                     route, method.Body is not null || method.ExpressionBody is not null, file,
-                    types[^1] is InterfaceDeclarationSyntax, implements, contracts));
+                    types[^1] is InterfaceDeclarationSyntax, implements, contracts, framework));
             }
             // Deferred inspection and borrowed payload state also have property boundaries.
             foreach (var property in root.DescendantNodes().OfType<PropertyDeclarationSyntax>())
@@ -82,7 +117,7 @@ internal static class CommandRouteOwnership
                 var typeId = TypeId(type);
                 members.Add(new(typeId + "." + signature, typeId, signature, property.Identifier.ValueText,
                     false, property.ExpressionBody is not null || property.AccessorList?.Accessors.Any(a =>
-                        a.Body is not null || a.ExpressionBody is not null) == true, file));
+                        a.Body is not null || a.ExpressionBody is not null) == true, file, Framework: framework));
             }
         }
         return members.GroupBy(m => m.Id).Select(g => g.First() with {
@@ -106,6 +141,37 @@ internal static class CommandRouteOwnership
         + (parameter.Type is null ? "" : Compact(parameter.Type));
 
     internal static string[] Validate(Member[] source, Inventory inventory)
+    {
+        if (source.Length == 0) return ValidateFramework(source, inventory);
+        var publicIds = source.Where(m => m.PublicRoute).Select(m => m.Id).ToHashSet(StringComparer.Ordinal);
+        var ids = source.Select(m => m.Id).ToHashSet(StringComparer.Ordinal);
+        var errors = new List<string>();
+        foreach (var duplicate in inventory.Boundaries.GroupBy(b => b.Name).Where(group => group.Count() > 1))
+            errors.Add("Duplicate boundary: " + duplicate.Key);
+        foreach (var framework in source.GroupBy(m => m.Framework))
+        {
+            var members = framework.ToArray();
+            var frameworkPublicIds = members.Where(m => m.PublicRoute).Select(m => m.Id).ToHashSet(StringComparer.Ordinal);
+            var frameworkIds = members.Select(m => m.Id).ToHashSet(StringComparer.Ordinal);
+            // A declaration can cover a target-specific route or boundary. Missing declarations
+            // still fail globally; executable owners and inherited contracts stay target-specific.
+            bool IncludesRoute(string id) => frameworkPublicIds.Contains(id) || !publicIds.Contains(id);
+            var surfaces = inventory.Surfaces.Select(surface => surface with {
+                Members = surface.Members.Where(signature => IncludesRoute(surface.Type + "." + signature)).ToArray(),
+                Overrides = surface.Overrides?.Where(pair => !surface.Members.Contains(pair.Key)
+                    || IncludesRoute(surface.Type + "." + pair.Key)).ToDictionary(pair => pair.Key, pair => pair.Value)
+            }).ToArray();
+            var targetInventory = inventory with {
+                Surfaces = surfaces,
+                Boundaries = inventory.Boundaries.Where(b => frameworkIds.Contains(b.Member) || !ids.Contains(b.Member)).ToArray(),
+                NonRoutes = inventory.NonRoutes?.Where(n => IncludesRoute(n.Member)).ToArray()
+            };
+            errors.AddRange(ValidateFramework(members, targetInventory).Select(error => error + " [" + framework.Key + "]"));
+        }
+        return errors.ToArray();
+    }
+
+    private static string[] ValidateFramework(Member[] source, Inventory inventory)
     {
         var errors = new List<string>();
         var members = source.ToDictionary(m => m.Id, StringComparer.Ordinal);
