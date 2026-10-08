@@ -103,7 +103,7 @@ internal sealed partial class ServerCommands
         var fence = cache is null ? default : cache.BeforeCommand("COMMANDLOG RESET", command);
         try
         {
-            return await FanOutAsync("COMMANDLOG RESET", command, cancellationToken,
+            return await FanOutAsync("COMMANDLOG RESET", new MutationCommand<Cmd1>(command, fence), cancellationToken,
                 static (ServerCommands _, in RespValue value) => CommandLogParser.Ok(in value)).ConfigureAwait(false);
         }
         finally

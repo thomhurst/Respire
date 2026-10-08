@@ -383,7 +383,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             }
         }
         return new(query, dependencies, Volatile.Read(ref _queryEpoch), Volatile.Read(ref _continuityEpoch),
-            Volatile.Read(ref _store), lease is not null, lease, lease?.Generation ?? 0);
+            Volatile.Read(ref _store), lease is not null && !HasActiveMutation(dependencies), lease, lease?.Generation ?? 0);
     }
 
     internal void CompleteRead(in QueryReadToken token, in RespValue response, bool allowInsert)
@@ -425,7 +425,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         lock (_queryLock)
         {
             // Only a live redirect owner may move registrations. Completed copies cannot create a new owner.
-            if (!token.CanCache || token.Lease is not { } lease || lease.Generation != token.LeaseGeneration)
+            if (!CanTrackAll(token.Dependencies) || token.Lease is not { } lease || lease.Generation != token.LeaseGeneration)
                 return token with { CanCache = false, Lease = null, LeaseGeneration = 0 };
             ReleaseQueryRead(lease, token.LeaseGeneration);
             var query = token.Query;
@@ -580,7 +580,8 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                     state,
                     state.Generation,
                     Volatile.Read(ref _continuityEpoch),
-                    Volatile.Read(ref _store));
+                    Volatile.Read(ref _store),
+                    CanCache: !HasActiveMutation(in ownedKey));
             }
         }
     }
@@ -593,6 +594,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             try
             {
                 if (allowInsert
+                    && token.CanCache
                     && state.CanCache
                     && state.Generation == token.Generation
                     && Volatile.Read(ref _continuityEpoch) == token.ContinuityEpoch
@@ -640,6 +642,16 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     internal void Invalidate(in RespireKey key,
         RespireClientCacheInvalidationReason reason = RespireClientCacheInvalidationReason.LocalMutation)
     {
+        var removed = InvalidateState(in key);
+        if (reason == RespireClientCacheInvalidationReason.ServerInvalidation)
+            RespireTelemetry.RecordCacheEvictions(removed, "invalidation");
+        Interlocked.Increment(ref _invalidations);
+        PublishInvalidation(in key, reason);
+        RespireTelemetry.ClientCacheInvalidations.Add(1);
+    }
+
+    private int InvalidateState(in RespireKey key)
+    {
         BeginSharedReadInvalidation();
         int removed;
         try
@@ -659,11 +671,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             }
         }
         finally { EndSharedReadInvalidation(); }
-        if (reason == RespireClientCacheInvalidationReason.ServerInvalidation)
-            RespireTelemetry.RecordCacheEvictions(removed, "invalidation");
-        Interlocked.Increment(ref _invalidations);
-        PublishInvalidation(in key, reason);
-        RespireTelemetry.ClientCacheInvalidations.Add(1);
+        return removed;
     }
 
     internal MutationFence BeforeCommand<TCommand>(string operation, in TCommand command)
@@ -692,15 +700,13 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             && singleKeyLayout.Count == 1 && singleKeyLayout.Extra < 0)
         {
             var key = singleKeyArguments.GetArgument(singleKeyLayout.Start).AsKey().Snapshot();
-            Invalidate(in key);
-            return MutationFence.ForKey(key);
+            return BeginKeyMutation(key);
         }
 
         if (mutation == RespireCacheMutation.SingleKey && command.TryGetPrimaryKey(out var primaryKey))
         {
             var key = primaryKey.AsKey().Snapshot();
-            Invalidate(in key);
-            return MutationFence.ForKey(key);
+            return BeginKeyMutation(key);
         }
 
         if (mutation == RespireCacheMutation.Mutation
@@ -708,8 +714,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             && command.TryGetPrimaryKey(out primaryKey))
         {
             var key = primaryKey.AsKey().Snapshot();
-            Invalidate(in key);
-            return MutationFence.ForKey(key);
+            return BeginKeyMutation(key);
         }
 
         if (mutation == RespireCacheMutation.Mutation
@@ -718,8 +723,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             && destinationLayout.Extra >= 0)
         {
             var destination = destinationArguments.GetArgument(destinationLayout.Extra).AsKey().Snapshot();
-            Invalidate(in destination);
-            return MutationFence.ForKey(destination);
+            return BeginKeyMutation(destination);
         }
 
         if (mutation is RespireCacheMutation.MultiKey or RespireCacheMutation.Mutation
@@ -731,30 +735,31 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                 return BeginMultiKeyMutation(in arguments, layout);
 
             var key = arguments.GetArgument(layout.Start).AsKey().Snapshot();
-            Invalidate(in key);
-            return MutationFence.ForKey(key);
+            return BeginKeyMutation(key);
         }
 
         return BeginUnknownMutation();
     }
 
     internal MutationFence BeginUnknownMutation()
-    {
-        Flush(continuityLost: false);
-        return MutationFence.All;
-    }
+        => BeginMutation(MutationFenceKind.All, default, null);
 
-    internal void CompleteMutation(in MutationFence fence)
+    internal void CompleteMutation(in MutationFence fence, bool succeeded = false)
+        => fence.CompleteLogical(this, succeeded);
+
+    private void ReinvalidateMutation(in MutationFence fence, bool observe = true)
     {
         switch (fence.Kind)
         {
             case MutationFenceKind.Key:
                 var single = fence.Key;
-                Invalidate(in single);
+                if (observe) Invalidate(in single);
+                else InvalidateState(in single);
                 break;
             case MutationFenceKind.Keys:
                 foreach (var key in fence.Keys!)
-                    Invalidate(in key);
+                    if (observe) Invalidate(in key);
+                    else InvalidateState(in key);
                 break;
             case MutationFenceKind.All:
                 Flush(continuityLost: false);
@@ -777,8 +782,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         if (keyCapacity == 1)
         {
             var key = arguments.GetArgument(layout.Extra >= 0 ? layout.Extra : layout.Start).AsKey().Snapshot();
-            Invalidate(in key);
-            return MutationFence.ForKey(key);
+            return BeginKeyMutation(key);
         }
 
         // Duplicate keys (DEL a a) are skipped so each key is invalidated, published and counted once.
@@ -790,7 +794,6 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             var key = arguments.GetArgument(layout.Start + index * layout.Stride).AsKey().Snapshot();
             if (seen is not null ? !seen.Add(key) : ContainsKey(keys, keyCount, in key)) continue;
             keys[keyCount++] = key;
-            Invalidate(in key);
         }
         if (layout.Extra >= 0)
         {
@@ -798,13 +801,12 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             if (seen is not null ? seen.Add(key) : !ContainsKey(keys, keyCount, in key))
             {
                 keys[keyCount++] = key;
-                Invalidate(in key);
             }
         }
 
-        if (keyCount == 1) return MutationFence.ForKey(keys[0]);
+        if (keyCount == 1) return BeginKeyMutation(keys[0]);
         if (keyCount != keys.Length) Array.Resize(ref keys, keyCount);
-        return MutationFence.ForKeys(keys);
+        return BeginKeysMutation(keys);
 
         static bool ContainsKey(RespireKey[] keys, int count, in RespireKey key)
         {
@@ -1109,7 +1111,8 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         InflightRead State,
         long Generation,
         long ContinuityEpoch,
-        CacheStore Store);
+        CacheStore Store,
+        bool CanCache = true);
 
     // Canonical GET text is separate from arbitrary caller converters. Coalesced
     // callers copy response storage but share this immutable text/publication handle.
@@ -1729,15 +1732,12 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     {
         private readonly RespireKey _key;
         private readonly RespireKey[]? _keys;
+        private readonly MutationLease? _lease;
+        private readonly long _epoch;
 
-        private MutationFence(MutationFenceKind kind, RespireKey key, RespireKey[]? keys)
-            => (Kind, _key, _keys) = (kind, key, keys);
-
-        internal static MutationFence All => new(MutationFenceKind.All, default, null);
-
-        internal static MutationFence ForKey(RespireKey key) => new(MutationFenceKind.Key, key, null);
-
-        internal static MutationFence ForKeys(RespireKey[] keys) => new(MutationFenceKind.Keys, default, keys);
+        internal MutationFence(MutationFenceKind kind, RespireKey key, RespireKey[]? keys,
+            MutationLease lease, long epoch)
+            => (Kind, _key, _keys, _lease, _epoch) = (kind, key, keys, lease, epoch);
 
         internal MutationFenceKind Kind { get; }
 
@@ -1748,5 +1748,19 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         internal RespireKey[]? Keys => _keys;
 
         internal bool IsRequired => Kind != MutationFenceKind.None;
+
+        internal bool RetainNative() => _lease?.RetainNative(_epoch) == true;
+
+        internal MutationReference BindNative() => RetainNative() ? new(_lease!, _epoch) : default;
+
+        internal void CompleteLogical(ClientSideCacheCoordinator owner, bool succeeded)
+            => _lease?.Release(_epoch, logical: true, succeeded, owner);
+
+    }
+
+    internal readonly struct MutationReference(MutationLease? lease, long epoch)
+    {
+        internal bool IsRequired => lease is not null;
+        internal void Release() => lease?.Release(epoch, logical: false, succeeded: true);
     }
 }

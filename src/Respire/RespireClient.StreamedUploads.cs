@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+using Respire.Commands;
 using Respire.Internal;
 using Respire.Networking;
 using Respire.Protocol;
@@ -55,6 +57,11 @@ public sealed partial class RespireClient
         var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
         try
         {
+            if (mutationFence.IsRequired && typeof(TCommand) == typeof(StreamedSetCommand))
+            {
+                var bound = Unsafe.As<TCommand, StreamedSetCommand>(ref command).WithMutationFence(mutationFence);
+                command = Unsafe.As<StreamedSetCommand, TCommand>(ref bound);
+            }
             var started = RespireTelemetry.CaptureOperationStart(operation);
             if (core.Cluster is { } cluster)
             {

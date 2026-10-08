@@ -905,7 +905,7 @@ public class ClientSideCacheTests
     }
 
     [Test]
-    public async Task TransactionCompletion_FlushesEntriesInsertedDuringExecution()
+    public async Task TransactionCompletion_RejectsPublicationDuringExecution()
     {
         await using var server = new FakeRespServer(
             2,
@@ -921,13 +921,17 @@ public class ClientSideCacheTests
         var commit = transaction.CommitAsync().AsTask();
         await parked.WaitAsync();
         var cache = client.Core.ClientCache!;
+        await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(1);
         InsertCachedValue(cache, "key", "old");
-        await Assert.That(cache.Count).IsEqualTo(1);
+        await Assert.That(cache.Count).IsEqualTo(0);
 
         await parked.ReleaseAsync("*1\r\n+OK\r\n"u8.ToArray());
         await commit;
 
+        await WaitUntilAsync(() => cache.InspectForTests().ActiveMutationCount == 0);
         await Assert.That(cache.Count).IsEqualTo(0);
+        InsertCachedValue(cache, "key", "new");
+        await Assert.That(cache.Count).IsEqualTo(1);
     }
 
     [Test]
@@ -1694,6 +1698,65 @@ public class ClientSideCacheTests
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("old");
         await Assert.That(server.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments(0)]
+    [Arguments(1)]
+    [Arguments(2)]
+    [Arguments(3)]
+    [Arguments(4)]
+    public async Task CancelledMutationRetainsPublicationFenceUntilLateNativeReply(int path)
+    {
+        await using var server = new FakeRespServer(HelloReply, FakeRespServer.OkReply);
+        var parked = new ParkedReply(server, path switch
+        {
+            2 => "MSET ",
+            3 => "EVALSHA ",
+            _ => "SET ",
+        });
+        await using var client = await ConnectAsync(server);
+        using var cancellation = new CancellationTokenSource();
+        using var batch = client.CreateBatch();
+        var cache = client.Core.ClientCache!;
+        InsertCachedValue(cache, "key", "old");
+        var mutation = SendAsync();
+        await parked.WaitAsync();
+        cancellation.Cancel();
+        await Assert.That(async () => await mutation).Throws<OperationCanceledException>();
+        await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(1);
+        cache.Clear();
+        cache.FlushForContinuityLoss();
+        InsertCachedValue(cache, "key", "stale");
+        await Assert.That(cache.Count).IsEqualTo(0);
+
+        await parked.ReleaseAsync(path == 3 ? ":1\r\n"u8.ToArray() : FakeRespServer.OkReply);
+        await WaitUntilAsync(() => cache.InspectForTests().ActiveMutationCount == 0);
+        InsertCachedValue(cache, "key", "new");
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("new");
+
+        async Task SendAsync()
+        {
+            switch (path)
+            {
+                case 0:
+                    await client.Strings.SetAsync("key", "new", cancellationToken: cancellation.Token);
+                    break;
+                case 1:
+                    using (await client.ExecuteAsync(RespireCommands.String.SET, ["key", "new"], cancellationToken: cancellation.Token)) { }
+                    break;
+                case 2:
+                    using (await client.ExecuteAsync(RespireCommands.String.MSET, ["key", "new", "other", "new"], cancellationToken: cancellation.Token)) { }
+                    break;
+                case 3:
+                    await client.Scripts.ExecuteIntegerAsync(RespireScript.Create("return 1"), ["key"], cancellationToken: cancellation.Token);
+                    break;
+                default:
+                    _ = batch.Strings.Set("key", "new");
+                    await batch.ExecuteAsync(cancellation.Token);
+                    break;
+            }
+        }
     }
 
     private static ValueTask<RespireClient> ConnectAsync(FakeRespServer server)

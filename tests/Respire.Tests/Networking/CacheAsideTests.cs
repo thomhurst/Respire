@@ -160,6 +160,9 @@ public class CacheAsideTests
         await Assert.That(server.Commands.Count(command => command == "SET key value PX 12000 NX GET")).IsEqualTo(expected);
         values[0]![0] = (byte)'X';
         await Assert.That(Encoding.UTF8.GetString(values[1]!)).IsEqualTo("value");
+        // Public completion can precede the receive owner's final release. Cache insertion
+        // becomes eligible only after every overlapping native mutation has retired.
+        await WaitUntilAsync(() => client.Core.ClientCache!.InspectForTests().ActiveMutationCount == 0);
         var populated = await client.GetOrSetAsync<byte[]>("key", _ => throw new Exception("factory"), Ttl);
         populated![0] = (byte)'Y';
         var getCount = server.Commands.Count(command => command == "GET key");

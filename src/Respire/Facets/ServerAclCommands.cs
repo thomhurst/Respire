@@ -103,7 +103,7 @@ internal sealed partial class ServerCommands
         var fence = cache is null ? default : cache.BeforeCommand(call.Operation, call.Command);
         try
         {
-            return await FanOutAsync(call.Operation, call.Command, cancellationToken, call.Convert).ConfigureAwait(false);
+            return await FanOutAsync(call.Operation, new MutationCommand<CmdN>(call.Command, fence), cancellationToken, call.Convert).ConfigureAwait(false);
         }
         finally
         {

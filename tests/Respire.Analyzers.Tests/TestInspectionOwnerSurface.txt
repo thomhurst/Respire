@@ -1,5 +1,5 @@
-# Reviewed source-declared member signatures: 351 total; per-type counts include owner, derived and accessible nested declarations.
-# Count: Respire.ClientSideCacheCoordinator | 57
+# Reviewed source-declared member signatures: 367 total; per-type counts include owner, derived and accessible nested declarations.
+# Count: Respire.ClientSideCacheCoordinator | 59
 Respire.ClientSideCacheCoordinator | class CacheEntry(byte[]?, long, long, string?)
 Respire.ClientSideCacheCoordinator | class CacheStore()
 Respire.ClientSideCacheCoordinator | class InflightRead(RespireKey, bool)
@@ -19,7 +19,6 @@ Respire.ClientSideCacheCoordinator | method CanTrack(in RespireKey) : bool
 Respire.ClientSideCacheCoordinator | method Clear() : void
 Respire.ClientSideCacheCoordinator | method CoalesceGetReadAsync`3(ClientCacheCommandKey, TReadState, Func<TReadState, CancellationToken, ValueTask<GetReadResult>>, TState, GetReadConverter<TState, TResult>, CancellationToken) : ValueTask<TResult>
 Respire.ClientSideCacheCoordinator | method CoalesceReadAsync`1(ClientCacheCommandKey, TState, Func<TState, CancellationToken, ValueTask<RespValue>>, CancellationToken) : ValueTask<RespValue>
-Respire.ClientSideCacheCoordinator | method CompleteMutation(in MutationFence) : void
 Respire.ClientSideCacheCoordinator | method CompleteRead(in QueryReadToken, in RespValue, bool) : void
 Respire.ClientSideCacheCoordinator | method CompleteRead(in ReadToken, in RespValue, bool, string?) : CacheEntry?
 Respire.ClientSideCacheCoordinator | method FlushForContinuityLoss() : void
@@ -54,11 +53,14 @@ Respire.ClientSideCacheCoordinator | property SizeBytes [public; get] : long
 Respire.ClientSideCacheCoordinator | readonly record struct QueryDependencyStamp(QueryDependencyState, long)
 Respire.ClientSideCacheCoordinator | readonly record struct QueryReadToken(ClientCacheCommandKey, RespireKey[], long, long, CacheStore, bool, QueryReadLease?, long)
 Respire.ClientSideCacheCoordinator | readonly record struct QueryRequest(ClientCacheCommandKey, RespireKey)
-Respire.ClientSideCacheCoordinator | readonly record struct ReadToken(InflightRead, long, long, CacheStore)
 # Designated borrowed view; source keys retain readonly/ref and compiled metadata checks stack-only visibility.
 Respire.ClientSideCacheCoordinator | readonly ref struct TestInspection(ClientSideCacheCoordinator)
 Respire.ClientSideCacheCoordinator | readonly struct MutationFence()
 Respire.ClientSideCacheCoordinator | readonly struct GetReadResult(RespValue, RespireKey, CacheStore?, CacheEntry?, string?)
+Respire.ClientSideCacheCoordinator | class MutationLease()
+Respire.ClientSideCacheCoordinator | method CompleteMutation(in MutationFence, bool) : void
+Respire.ClientSideCacheCoordinator | readonly record struct ReadToken(InflightRead, long, long, CacheStore, bool)
+Respire.ClientSideCacheCoordinator | readonly struct MutationReference(MutationLease?, long)
 # Count: Respire.ClientSideCacheCoordinator.CacheEntry | 6
 Respire.ClientSideCacheCoordinator.CacheEntry | method DecodedSize(string) : long
 # Reviewed accessible nested operational members; new inspection state belongs in the designated borrowed view.
@@ -92,14 +94,15 @@ Respire.ClientSideCacheCoordinator.InflightRead | field Readers : int
 Respire.ClientSideCacheCoordinator.InflightRead | field Retired : bool
 Respire.ClientSideCacheCoordinator.InflightRead | property CanCache [public; get] : bool
 Respire.ClientSideCacheCoordinator.InflightRead | property Key [public; get] : RespireKey
-# Count: Respire.ClientSideCacheCoordinator.MutationFence | 7
-Respire.ClientSideCacheCoordinator.MutationFence | method ForKey(RespireKey) : MutationFence
-Respire.ClientSideCacheCoordinator.MutationFence | method ForKeys(RespireKey[]) : MutationFence
-Respire.ClientSideCacheCoordinator.MutationFence | property All [internal; get] : MutationFence
+# Count: Respire.ClientSideCacheCoordinator.MutationFence | 8
 Respire.ClientSideCacheCoordinator.MutationFence | property IsRequired [internal; get] : bool
 Respire.ClientSideCacheCoordinator.MutationFence | property Key [internal; get] : RespireKey
 Respire.ClientSideCacheCoordinator.MutationFence | property Keys [internal; get] : RespireKey[]?
 Respire.ClientSideCacheCoordinator.MutationFence | property Kind [internal; get] : MutationFenceKind
+Respire.ClientSideCacheCoordinator.MutationFence | constructor MutationFence(MutationFenceKind, RespireKey, RespireKey[]?, MutationLease, long)
+Respire.ClientSideCacheCoordinator.MutationFence | method BindNative() : MutationReference
+Respire.ClientSideCacheCoordinator.MutationFence | method CompleteLogical(ClientSideCacheCoordinator, bool) : void
+Respire.ClientSideCacheCoordinator.MutationFence | method RetainNative() : bool
 # Count: Respire.ClientSideCacheCoordinator.QueryCacheEntry | 4
 Respire.ClientSideCacheCoordinator.QueryCacheEntry | property Dependencies [public; get] : RespireKey[]
 Respire.ClientSideCacheCoordinator.QueryCacheEntry | property ExpiresAt [public; get] : long
@@ -182,7 +185,7 @@ Respire.Networking.MultiReplyPendingResponseSource | method TryReserveResult() :
 Respire.Networking.MultiReplyPendingResponseSource | method TrySetResult(in RespValue) : bool
 Respire.Networking.MultiReplyPendingResponseSource | property CommandName [internal; get] : string?
 Respire.Networking.MultiReplyPendingResponseSource | property Task [internal; get] : ValueTask<RespValue>
-# Count: Respire.Networking.PendingResponse | 23
+# Count: Respire.Networking.PendingResponse | 25
 Respire.Networking.PendingResponse | field WriteEnd : long
 Respire.Networking.PendingResponse | field WriteStart : long
 Respire.Networking.PendingResponse | method CompleteReservedResult(in RespValue) : bool
@@ -208,6 +211,8 @@ Respire.Networking.PendingResponse | property Deadline [internal; get, set] : Co
 Respire.Networking.PendingResponse | property State [internal; get] : long
 # Designated borrowed view; source keys retain readonly/ref and compiled metadata checks stack-only visibility.
 Respire.Networking.PendingResponse | readonly ref struct TestInspection(PendingResponse)
+Respire.Networking.PendingResponse | method BindMutationFence(in ClientSideCacheCoordinator.MutationFence) : void
+Respire.Networking.PendingResponse | method DispatchException(Exception) : void
 # Count: Respire.Networking.PendingResponseSource | 11
 Respire.Networking.PendingResponseSource | constructor PendingResponseSource()
 Respire.Networking.PendingResponseSource | method Configure(bool, string?) : void
@@ -267,7 +272,6 @@ Respire.Networking.RespireConnection | method SendPrefixedBulkStreamAsync`2(in T
 Respire.Networking.RespireConnection | method SendPrefixedCheckedAsync`2(in TPrefix, in TCommand, CancellationToken, string?, CommandDeadline, bool, string?) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendPrefixedWithoutResponseTimeoutAsync`2(TPrefix, TCommand, bool, CancellationToken) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendStringAsync`1(in TCommand, CancellationToken, string?, CommandDeadline, RespireTelemetry.OperationStart) : ValueTask<string?>
-Respire.Networking.RespireConnection | method SendTransactionAsync(ReadOnlyMemory<byte>, int, CancellationToken, TimeSpan?, CancellationToken, bool, CommandDeadline, RespireTransactionBase?) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendValidatedPrefixedAsync`2(in TPrefix, in TCommand, CancellationToken, string, string?, bool, CommandDeadline) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendValidatedPrefixedAsync`3(in TFirstPrefix, in TSecondPrefix, in TCommand, CancellationToken, string, string?) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendWithoutResponseTimeoutAsync`1(TCommand, CancellationToken) : ValueTask<RespValue>
@@ -312,6 +316,7 @@ Respire.Networking.RespireConnection | property WriteBufferCapacity [internal; g
 # Designated borrowed view; source keys retain readonly/ref and compiled metadata checks stack-only visibility.
 Respire.Networking.RespireConnection | readonly ref struct TestInspection(RespireConnection)
 Respire.Networking.RespireConnection | readonly struct CredentialSequenceLease(SemaphoreSlim?)
+Respire.Networking.RespireConnection | method SendTransactionAsync(ReadOnlyMemory<byte>, int, CancellationToken, TimeSpan?, CancellationToken, bool, CommandDeadline, RespireTransactionBase?, ClientSideCacheCoordinator.MutationFence) : ValueTask<RespValue>
 # Count: Respire.Networking.RespireConnection.CredentialSequenceLease | 1
 Respire.Networking.RespireConnection.CredentialSequenceLease | method Dispose() : void
 # Count: Respire.Networking.StringPendingResponseSource | 10
@@ -382,3 +387,17 @@ Respire.RespireWatchedTransaction | constructor RespireWatchedTransaction(Respir
 Respire.RespireWatchedTransaction | method CommitAsync(CancellationToken) : ValueTask<bool>
 Respire.RespireWatchedTransaction | method CommitWithWatchValidationAsync(CancellationToken) : ValueTask<bool>
 Respire.RespireWatchedTransaction | property WatchPool [private protected; get] : DedicatedConnectionPool?
+# Count: Respire.ClientSideCacheCoordinator.MutationLease | 3
+Respire.ClientSideCacheCoordinator.MutationLease | method Release(long, bool, bool, ClientSideCacheCoordinator?) : void
+Respire.ClientSideCacheCoordinator.MutationLease | method Rent(ClientSideCacheCoordinator, MutationFenceKind, RespireKey, RespireKey[]?) : MutationFence
+Respire.ClientSideCacheCoordinator.MutationLease | method RetainNative(long) : bool
+# Count: Respire.ClientSideCacheCoordinator.MutationReference | 2
+Respire.ClientSideCacheCoordinator.MutationReference | method Release() : void
+Respire.ClientSideCacheCoordinator.MutationReference | property IsRequired [internal; get] : bool
+# Count: Respire.Networking.MutationDiscardPendingResponse | 6
+Respire.Networking.MutationDiscardPendingResponse | method DispatchException(Exception) : void
+Respire.Networking.MutationDiscardPendingResponse | method Rent(string?) : MutationDiscardPendingResponse
+Respire.Networking.MutationDiscardPendingResponse | method ResetAndReturn() : void
+Respire.Networking.MutationDiscardPendingResponse | method SetExceptionCore(Exception) : void
+Respire.Networking.MutationDiscardPendingResponse | method SetResultCore(in RespValue) : void
+Respire.Networking.MutationDiscardPendingResponse | property CommandName [internal; get] : string?

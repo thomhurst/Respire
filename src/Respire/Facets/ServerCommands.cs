@@ -335,7 +335,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IServerComm
             foreach (var connection in connections)
             {
                 var reply = await client.SendToClusterTargetAsync(
-                        operation, connection, command, cancellationToken)
+                        operation, connection, new MutationCommand<Cmd>(command, mutationFence), cancellationToken)
                     .ConfigureAwait(false);
                 try
                 {

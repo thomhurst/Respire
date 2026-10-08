@@ -274,6 +274,8 @@ public sealed partial class RespireServerNode
         }
         finally
         {
+            // Explicit-node commands retain conservative completion work. Disposing this
+            // operation's pool drains its native owners before the outer fence can leave.
             try { if (pool is not null) await _client.Core.ReleaseServerPoolAsync(pool).ConfigureAwait(false); }
             finally { if (fence.IsRequired) cache!.CompleteMutation(in fence); }
         }

@@ -595,8 +595,17 @@ or none. Local writes, `Clear()`, and continuity flushes do not increment
 Pending deterministic queries fence publication against every physical dependency key.
 An invalidation of a hash rejects all pending projections of that hash; a multi-key query
 is rejected if any dependency changes. A write to an unrelated key does not prevent a
-valid query reply from entering the cache. Local mutations still invalidate before dispatch
-and after completion, including failed or cancelled writes.
+valid query reply from entering the cache. Local mutations invalidate before dispatch and
+retain a publication fence until both the caller and every accepted native attempt retire.
+Reads starting during that lifetime remain uncached even if their replies arrive afterward.
+Affected misses also remain independent rather than joining an older shared producer.
+Clears and continuity flushes do not remove active mutation ownership.
+
+Successful known-key mutations can then omit the second projection invalidation and shared-read
+retirement. Their local invalidation notifications and counter increments still occur at caller
+completion. Failed, cancelled, unbound, and unknown-effect mutations keep conservative completion
+invalidation. Unknown effects, batches, transactions, streamed uploads, and native lock mutations
+retain their completion fencing; a cancelled caller cannot release accepted native ownership.
 
 Dependency generations exist only while queries are pending. Completion, cancellation,
 failed replies, and redirect rebasing release those registrations. This state scales with
@@ -608,7 +617,7 @@ Whole-cache clears, continuity loss, and conservative flushes retain their globa
 and reject every older query. Queries outside the configured key prefixes remain uncached.
 
 Respire rejects a stale read response when an invalidation races cache insertion. It also flushes
-after awaited local mutations and on detected connection loss, reconnect, redirect, and cluster
+after conservative local mutations and on detected connection loss, reconnect, redirect, and cluster
 topology retirement. In `OptIn` mode an `ASK` retry sends `ASKING`, `CLIENT CACHING YES`, and the
 read as one uninterrupted sequence, so the migration target tracks the key. Local TTL is an
 additional staleness bound, not a substitute for tracking. Like every server-assisted client cache, it

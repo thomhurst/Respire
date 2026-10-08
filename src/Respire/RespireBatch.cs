@@ -271,27 +271,28 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             && _client.GetBatchReadFromPolicy() != RespireReadFrom.Primary
             && _ops.TrueForAll(static operation => operation.IsReadOnly))
             cacheToInvalidate = null;
-        cacheToInvalidate?.FlushForUnknownCommand();
-
-        if (core.Cluster is not null && ConnectionPolicy.CanReplayRejectedCommands)
+        var mutationFence = cacheToInvalidate is null ? default : cacheToInvalidate.BeginUnknownMutation();
+        try
         {
-            var groups = new List<(int? Slot, List<Op> Operations)>();
-            var groupIndexes = new Dictionary<int, int>();
-            foreach (var op in _ops)
+            foreach (var op in _ops) op.MutationFence = mutationFence;
+
+            if (core.Cluster is not null && ConnectionPolicy.CanReplayRejectedCommands)
             {
-                var groupKey = op.TryGetClusterSlot(out var slot) ? slot + 1 : 0;
-                if (!groupIndexes.TryGetValue(groupKey, out var groupIndex))
+                var groups = new List<(int? Slot, List<Op> Operations)>();
+                var groupIndexes = new Dictionary<int, int>();
+                foreach (var op in _ops)
                 {
-                    groupIndex = groups.Count;
-                    groupIndexes.Add(groupKey, groupIndex);
-                    groups.Add((groupKey == 0 ? null : slot, []));
+                    var groupKey = op.TryGetClusterSlot(out var slot) ? slot + 1 : 0;
+                    if (!groupIndexes.TryGetValue(groupKey, out var groupIndex))
+                    {
+                        groupIndex = groups.Count;
+                        groupIndexes.Add(groupKey, groupIndex);
+                        groups.Add((groupKey == 0 ? null : slot, []));
+                    }
+
+                    groups[groupIndex].Operations.Add(op);
                 }
 
-                groups[groupIndex].Operations.Add(op);
-            }
-
-            try
-            {
                 var clusterTasks = new Task[groups.Count];
                 for (var i = 0; i < groups.Count; i++)
                 {
@@ -301,56 +302,49 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
                 }
 
                 await Task.WhenAll(clusterTasks).ConfigureAwait(false);
+
+                var failures = CollectFailures(_ops);
+                var firstError = failures is { Length: > 0 } ? failures[0].Error : null;
+                telemetry.Complete(
+                    core,
+                    telemetryOperation,
+                    error: firstError,
+                    batchSize: _ops.Count == 1 ? null : _ops.Count);
+                return new RespireBatchResult(_ops.Count, failures);
             }
-            finally
+
+            RespireConnection? connection = null;
+            try
             {
-                cacheToInvalidate?.FlushForUnknownCommand();
+                connection = ConnectionPolicy.PinnedConnection ?? await _client.AcquireConnectionAsync(cancellationToken).ConfigureAwait(false);
+                if (core.Sentinel is not null)
+                    telemetry = RespireTelemetry.StartBatchOperation(
+                        "PIPELINE", _ops, static op => op.Operation,
+                        connection.Host, connection.Port, core.Options.Database, out telemetryOperation, sentinelStarted);
             }
-
-            var failures = CollectFailures(_ops);
-            var firstError = failures is { Length: > 0 } ? failures[0].Error : null;
-            telemetry.Complete(
-                core,
-                telemetryOperation,
-                error: firstError,
-                batchSize: _ops.Count == 1 ? null : _ops.Count);
-            return new RespireBatchResult(_ops.Count, failures);
-        }
-
-        RespireConnection? connection = null;
-        try
-        {
-            connection = ConnectionPolicy.PinnedConnection ?? await _client.AcquireConnectionAsync(cancellationToken).ConfigureAwait(false);
-            if (core.Sentinel is not null)
-                telemetry = RespireTelemetry.StartBatchOperation(
-                    "PIPELINE", _ops, static op => op.Operation,
-                    connection.Host, connection.Port, core.Options.Database, out telemetryOperation, sentinelStarted);
-        }
-        catch (Exception ex)
-        {
-            // The batch is single-shot: without a connection nothing ran, so every pending
-            // must observe the acquisition failure rather than stay unreadable forever.
-            foreach (var op in _ops)
+            catch (Exception ex)
             {
-                op.Fail(ex);
+                // The batch is single-shot: without a connection nothing ran, so every pending
+                // must observe the acquisition failure rather than stay unreadable forever.
+                foreach (var op in _ops)
+                {
+                    op.Fail(ex);
+                }
+
+                if (connection is null)
+                    RespireTelemetry.RecordUnroutedBatchFailure("PIPELINE", _ops, static op => op.Operation,
+                        core.Options.Database, sentinelStarted, ex);
+                telemetry.Complete(
+                    core,
+                    telemetryOperation,
+                    error: ex,
+                    batchSize: _ops.Count == 1 ? null : _ops.Count);
+                return new RespireBatchResult(_ops.Count, CollectFailures(_ops));
             }
 
-            if (connection is null)
-                RespireTelemetry.RecordUnroutedBatchFailure("PIPELINE", _ops, static op => op.Operation,
-                    core.Options.Database, sentinelStarted, ex);
-            telemetry.Complete(
-                core,
-                telemetryOperation,
-                error: ex,
-                batchSize: _ops.Count == 1 ? null : _ops.Count);
-            return new RespireBatchResult(_ops.Count, CollectFailures(_ops));
-        }
-
-        // CommandTimeout is enforced per command by the connection's deadline sweep, which
-        // fails an expired operation with a RespireTimeoutException carrying its name — no
-        // batch-level CancellationTokenSource or per-operation registrations needed.
-        try
-        {
+            // CommandTimeout is enforced per command by the connection's deadline sweep, which
+            // fails an expired operation with a RespireTimeoutException carrying its name — no
+            // batch-level CancellationTokenSource or per-operation registrations needed.
             if (ConnectionPolicy.IsImportSession)
             {
                 await RunImportBatchAsync(connection, cancellationToken).ConfigureAwait(false);
@@ -362,21 +356,18 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
                     tasks[i] = _ops[i].RunAsync(_client, connection, cancellationToken);
                 await Task.WhenAll(tasks).ConfigureAwait(false);
             }
-        }
-        finally
-        {
-            cacheToInvalidate?.FlushForUnknownCommand();
-        }
 
-        var batchFailures = CollectFailures(_ops);
-        var batchFirstError = batchFailures is { Length: > 0 } ? batchFailures[0].Error : null;
-        telemetry.Complete(
-            core,
-            telemetryOperation,
-            error: batchFirstError,
-            connection: connection,
-            batchSize: _ops.Count == 1 ? null : _ops.Count);
-        return new RespireBatchResult(_ops.Count, batchFailures);
+            var batchFailures = CollectFailures(_ops);
+            var batchFirstError = batchFailures is { Length: > 0 } ? batchFailures[0].Error : null;
+            telemetry.Complete(
+                core,
+                telemetryOperation,
+                error: batchFirstError,
+                connection: connection,
+                batchSize: _ops.Count == 1 ? null : _ops.Count);
+            return new RespireBatchResult(_ops.Count, batchFailures);
+        }
+        finally { cacheToInvalidate?.CompleteMutation(in mutationFence); }
     }
 
     private async Task RunImportBatchAsync(RespireConnection connection, CancellationToken cancellationToken)
@@ -585,6 +576,8 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
 
         public string Operation { get; }
 
+        internal ClientSideCacheCoordinator.MutationFence MutationFence;
+
         public abstract Exception? Error { get; }
 
         public abstract bool IsCompleted { get; }
@@ -647,7 +640,8 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             RespireClient client,
             RespireConnection connection,
             CancellationToken cancellationToken)
-            => client.SendOnConnectionAsync(Operation, connection, command, cancellationToken);
+            => client.SendOnConnectionAsync(Operation, connection,
+                new MutationCommand<TCommand>(command, MutationFence), cancellationToken);
 
         public override async Task<Exception?> CompleteClusterSendAsync(
             RespireBatch batch,
@@ -667,7 +661,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
                 {
                     // Retry only this rejected operation; other pipeline entries may already be accepted.
                     value = await batch._client.ResumeRetiredClusterSendAsync(
-                        Operation, command, connection, error, readFrom, cancellationToken).ConfigureAwait(false);
+                        Operation, new MutationCommand<TCommand>(command, MutationFence), connection, error, readFrom, cancellationToken).ConfigureAwait(false);
                 }
                 catch (RespireServerException error) when (batch.ConnectionPolicy.CanReplayRejectedCommands
                     && command.TryGetClusterSlot(out var readSlot)
@@ -676,14 +670,14 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
                 {
                     // Complete each operation in queue order; retry only its rejected read.
                     value = await batch._client.ResumeRejectedClusterSendAsync(
-                            Operation, command, connection, error, readFrom, cancellationToken)
+                            Operation, new MutationCommand<TCommand>(command, MutationFence), connection, error, readFrom, cancellationToken)
                         .ConfigureAwait(false);
                 }
                 catch (RespireServerException error) when (
                     batch.ConnectionPolicy.CanRecoverRejectedCommand(error, command.TryGetClusterSlot(out var slot) ? slot : null))
                 {
                     value = await batch._client.ResumeRejectedClusterSendAsync(
-                            Operation, command, connection, error, readFrom, cancellationToken)
+                            Operation, new MutationCommand<TCommand>(command, MutationFence), connection, error, readFrom, cancellationToken)
                         .ConfigureAwait(false);
                 }
 
@@ -701,7 +695,8 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         {
             try
             {
-                var reply = await connection.EnqueuePinnedAsync(command, cancellationToken, Operation).ConfigureAwait(false);
+                var reply = await connection.EnqueuePinnedAsync(new MutationCommand<TCommand>(command, MutationFence),
+                    cancellationToken, Operation).ConfigureAwait(false);
                 return CompleteReplyAsync(client, reply);
             }
             catch (Exception ex)
@@ -716,7 +711,8 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         {
             try
             {
-                return CompleteReplyAsync(client, connection.SendAsync(in command, cancellationToken, commandName: Operation));
+                var bound = new MutationCommand<TCommand>(command, MutationFence);
+                return CompleteReplyAsync(client, connection.SendAsync(in bound, cancellationToken, commandName: Operation));
             }
             catch (Exception ex)
             {

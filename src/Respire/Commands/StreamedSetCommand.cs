@@ -93,6 +93,23 @@ internal readonly struct StreamedSetCommand : IReplayableStreamingRespCommand
     private readonly long _length;
     private readonly RespireExpiry _expiry;
     private readonly SetWhen _when;
+    private readonly ClientSideCacheCoordinator.MutationFence _mutationFence;
+
+    private StreamedSetCommand(in StreamedSetCommand command, ClientSideCacheCoordinator.MutationFence fence)
+    {
+        _key = command._key;
+        _stream = command._stream;
+        _sequence = command._sequence;
+        _length = command._length;
+        _expiry = command._expiry;
+        _when = command._when;
+        _mutationFence = fence;
+    }
+
+    internal StreamedSetCommand WithMutationFence(ClientSideCacheCoordinator.MutationFence fence)
+        => new(this, fence);
+
+    public ClientSideCacheCoordinator.MutationFence GetMutationFence() => _mutationFence;
 
     internal StreamedSetCommand(RespireValue key, Stream source, long length, RespireExpiry expiry, SetWhen when)
     {

@@ -59,6 +59,10 @@ on:
         description: BenchmarkDotNet measurement preset (Short, Default, or Medium)
         default: Medium
         type: string
+      require-eventpipe-traces:
+        description: Require separate EventPipe profile artifacts for every measured case
+        default: false
+        type: boolean
       redis-server:
         description: Start a pinned Redis service for fixtures that use a real server
         default: false
@@ -248,6 +252,17 @@ jobs:
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as stream:
               stream.write(summary)
           assert not failures, '; '.join(failures)
+      - name: Require separate profile traces
+        if: inputs.require-eventpipe-traces
+        shell: python
+        run: |
+          from pathlib import Path
+          for phase in ('baseline-a', 'candidate', 'baseline-b'):
+              traces = list(Path('results', phase).rglob('*.nettrace'))
+              profiles = list(Path('results', phase).rglob('*.speedscope.json'))
+              expected = int('${{ inputs.expected-case-count }}')
+              assert len(traces) >= expected and len(profiles) >= expected, f'Missing EventPipe profiles: {phase}'
+              assert all(trace.stat().st_size > 0 for trace in traces), f'Empty trace: {phase}'
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:

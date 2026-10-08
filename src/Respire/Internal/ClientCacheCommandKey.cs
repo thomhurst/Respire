@@ -57,6 +57,8 @@ internal readonly struct ClientCacheCommandKey : IEquatable<ClientCacheCommandKe
 
     internal int ArgumentCount => Count - _argumentOffset;
 
+    internal string Operation => _operation;
+
     internal RespireValue GetArgument(int index) => this[index + _argumentOffset];
 
     internal RespireValue this[int index]
