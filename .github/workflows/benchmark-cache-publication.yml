@@ -1,0 +1,29 @@
+name: Client cache string publication benchmarks
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}-${{ github.event.label.name }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    if: github.event.label.name == 'run-cache-publication-benchmarks'
+    uses: ./.github/workflows/benchmark-compare.yml
+    with:
+      event-base-sha: ${{ github.event.pull_request.base.sha }}
+      candidate-sha: ${{ github.sha }}
+      expected-head-sha: ${{ github.event.pull_request.head.sha }}
+      fixture: benchmarks/Respire.Benchmarks/ClientCachePublicationBenchmarks.cs
+      filter: '*ClientCachePublicationBenchmarks*'
+      expected-case-count: 6
+      expected-methods: ColdStringMiss,ColdMissAndFirstReuse,WarmStringHit
+      zero-allocation-methods: WarmStringHit
+      retained-memory: true
+      retained-memory-stages: before-connect,connected-idle,after-first-reuse,after-dispose
+      artifact-prefix: cache-publication-comparison
