@@ -11,6 +11,72 @@ namespace Respire.Caching.Hybrid.Tests;
 public partial class RespireHybridCacheCoherenceTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task AcquisitionCleanupFailureRollsBackTheUnreturnedCall(bool repeatedFailure)
+    {
+        using var memory = new ProbingMemoryCache();
+        await using var provider = BuildProvider(false, memory: memory);
+        var firstKey = NewKey();
+        var fillEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var fillRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cleanupFailure = new InvalidOperationException("cleanup failed during acquisition");
+        var contexts = 0;
+        RespireCoherentHybridCache? coherent = null;
+        coherent = new RespireCoherentHybridCache(provider, _ =>
+        {
+            // The new context is created under the observation gate. Retire another
+            // generation reentrantly so its cleanup is deferred to Acquire's final drain.
+            if (++contexts == 3) coherent!.RemoveAsync(firstKey).GetAwaiter().GetResult();
+            return new ControlledTagCache(() => ValueTask.CompletedTask);
+        }, new());
+        await using var owned = coherent;
+        var fill = coherent.GetOrCreateAsync(firstKey, async _ =>
+        {
+            fillEntered.TrySetResult();
+            await fillRelease.Task;
+            return "value";
+        }).AsTask();
+        try
+        {
+            await fillEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            var removals = 0;
+            memory.OnRemove = () =>
+            {
+                if (++removals == 1 || repeatedFailure) throw cleanupFailure;
+            };
+            Exception? failure = null;
+            var callbackRan = false;
+            try
+            {
+                await coherent.GetOrCreateAsync(NewKey(), _ =>
+                {
+                    callbackRan = true;
+                    return ValueTask.FromResult("unreachable");
+                });
+            }
+            catch (Exception caught) { failure = caught; }
+            await Assert.That(coherent.ObservationCount).IsEqualTo(0);
+            coherent.SweepObservations();
+            await Assert.That(coherent.ObservationCount).IsEqualTo(0);
+            await Assert.That(callbackRan).IsFalse();
+            if (repeatedFailure)
+            {
+                await Assert.That(failure is AggregateException).IsTrue();
+                await Assert.That(((AggregateException)failure!).InnerExceptions.Count).IsEqualTo(2);
+                await Assert.That(((AggregateException)failure!).InnerExceptions.All(error => ReferenceEquals(error, cleanupFailure))).IsTrue();
+            }
+            else await Assert.That(ReferenceEquals(failure, cleanupFailure)).IsTrue();
+        }
+        finally
+        {
+            memory.OnRemove = null;
+            fillRelease.TrySetResult();
+            await fill.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+    }
+
+    [Test]
     [Arguments(false, false)]
     [Arguments(true, false)]
     [Arguments(true, true)]

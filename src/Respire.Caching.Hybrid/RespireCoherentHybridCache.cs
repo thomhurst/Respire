@@ -170,6 +170,7 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
 
     private Observation? Acquire(string key, HybridCacheEntryOptions? options)
     {
+        Observation? acquired = null;
         try
         {
             lock (_gate)
@@ -183,7 +184,7 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
                 if (_observations.TryGetValue(key, out var current))
                 {
                     current.ActiveCalls++;
-                    return current;
+                    return acquired = current;
                 }
                 if (_observations.Count >= _maxObservedKeys) return null;
 
@@ -218,7 +219,7 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
                     // HEXISTS is a typed, cache-eligible hash read. It establishes actual OPTIN
                     // tracking before L2 is read, without duplicating the serialized payload.
                     observation.Tracking = TrackingClient.Hashes.ExistsAsync(physicalKey, "data").AsTask();
-                    return observation;
+                    return acquired = observation;
                 }
                 catch (ObjectDisposedException)
                 {
@@ -233,7 +234,18 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
                 }
             }
         }
-        finally { DrainRetiredObservations(); }
+        finally
+        {
+            try { DrainRetiredObservations(); }
+            catch (Exception cleanupError)
+            {
+                // The caller cannot release a call that Acquire never returned.
+                // Roll it back even if the failing cleanup belongs to another key.
+                try { Release(acquired); }
+                catch (Exception rollbackError) { throw new AggregateException(cleanupError, rollbackError); }
+                throw;
+            }
+        }
     }
 
     private static bool HasControlCharacter(string key)
@@ -322,6 +334,8 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
         {
             if (observation.Retired) return;
             observation.Retired = true;
+            // Readers check Retired under this gate, so deferred physical removal
+            // cannot expose this generation. Entry publication stays fenced here too.
             _observations.Remove(observation.Key);
             _retiredObservations.Enqueue(observation);
         }
