@@ -62,7 +62,8 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
             kind,
             [.. names.Distinct()],
             bufferSize,
-            overflow);
+            overflow,
+            options.MaxPayloadBytes);
     }
 
     /// <summary>
@@ -404,7 +405,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
             : default;
         try
         {
-            var command = new Cmd1(verb, name.AsValue());
+            var command = new ProtocolCommand<Cmd1>(new Cmd1(verb, name.AsValue()));
             var reply = ask
                 ? await ClusterRouter.SendAskingAsync(connection, in command, cancellationToken, operation,
                     observation: observation).ConfigureAwait(false)
@@ -483,7 +484,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
                 endpoint = core.Options.PrimaryEndpoint;
             }
 
-            var options = core.Options.ToConnectionOptions((in RespValue value) => OnPush(epoch, in value)) with
+            var options = core.CreateConnectionOptions((in RespValue value) => OnPush(epoch, in value)) with
             {
                 SubscriptionConfirmationHandler = (in RespValue value) => OnSubscriptionConfirmation(epoch, in value),
                 UnexpectedConnectionClosed = core.Options.ReconnectEpisodeStarted is null ? null : OnUnexpectedConnectionClosed,
@@ -794,18 +795,32 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
             if (_disposed || epoch != _connectionEpoch
                 || !Routes(kind).TryGetValue(routeName, out var cachedRouteName, out var targets)) return;
             var channelName = isPattern ? RespireChannel.FromOwnedBytes(channel.ToArray()) : cachedRouteName;
-            var message = new RespireMessage(channelName,
-                isPattern ? cachedRouteName : (RespireChannel?)null, payload.ToArray(), core.Options.Serializer);
-            foreach (var target in targets)
-            {
-                if (target.Buffer.Write(message) is { } gap) (drops ??= []).Add((target, gap));
-            }
+            EnqueueMessage(targets, channelName, isPattern ? cachedRouteName : (RespireChannel?)null, payload, ref drops);
         }
         // User handlers and metric callbacks never run under the routing/buffer gates.
         RespireTelemetry.RecordReceivedMessage(kind == SubscriptionKind.Sharded);
         if (drops is not null)
         {
             foreach (var (subscription, gap) in drops) subscription.NotifyDrop(gap);
+        }
+    }
+
+    private void EnqueueMessage(List<RespireSubscription> targets, RespireChannel channel,
+        RespireChannel? pattern, ReadOnlySpan<byte> payload,
+        ref List<(RespireSubscription Subscription, RespireSubscriptionGap Gap)>? drops)
+    {
+        RespireMessage? message = null;
+        foreach (var target in targets)
+        {
+            if (target.MaxPayloadBytes is { } limit && payload.Length > limit)
+            {
+                var now = DateTimeOffset.UtcNow;
+                var gap = new RespireSubscriptionGap(RespireSubscriptionGapReason.PayloadTooLarge, now, now, 1);
+                if (target.Buffer.WriteGap(gap)) (drops ??= []).Add((target, gap));
+                continue;
+            }
+            message ??= new RespireMessage(channel, pattern, payload.ToArray(), core.Options.Serializer);
+            if (target.Buffer.Write(message.Value) is { } dropped) (drops ??= []).Add((target, dropped));
         }
     }
 

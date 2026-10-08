@@ -7,12 +7,12 @@ namespace Respire.Networking;
 
 internal sealed partial class RespireConnection
 {
-    private static readonly RawCommand EnableMaintenance = new(
-        "*3\r\n$6\r\nCLIENT\r\n$19\r\nMAINT_NOTIFICATIONS\r\n$2\r\nON\r\n"u8.ToArray());
+    private static readonly ProtocolCommand<RawCommand> EnableMaintenance = new(new(
+        "*3\r\n$6\r\nCLIENT\r\n$19\r\nMAINT_NOTIFICATIONS\r\n$2\r\nON\r\n"u8.ToArray()));
     private const string MaintenanceDrainCommandName = "RESP3 maintenance drain PING";
     private const int UnpublishedMigrationCapacity = 128;
 
-    private readonly struct MaintenanceDrainBarrierCommand : IRespCommand
+    private readonly struct MaintenanceDrainBarrierCommand : IConnectionProtocolCommand
     {
         public int GetWriteSizeHint() => "*1\r\n$4\r\nPING\r\n"u8.Length;
         public ReadCommandKind ReadKind => ReadCommandKind.None;

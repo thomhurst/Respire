@@ -38,7 +38,7 @@ public sealed class StreamedSetTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await using var source = new MemoryStream("data"u8.ToArray());
         var command = new StreamedSetCommand((RespireValue)"key", source, 4, default, SetWhen.Always);
-        var asking = new RawCommand("*1\r\n$6\r\nASKING\r\n"u8.ToArray());
+        var asking = new ProtocolCommand<RawCommand>(new("*1\r\n$6\r\nASKING\r\n"u8.ToArray()));
         var pending = connection.SendAskingStreamedSetAsync(in asking, command, timeout.Token,
             CommandDeadline.After(10_000), new DedicatedStreamRoute(client.Core, pool, connection), errorAttempts: 0).AsTask();
         while (!oldTarget.ReceivedCommands.Contains("ASKING"))
@@ -1173,33 +1173,40 @@ public sealed class StreamedSetTests
     }
 
     [Test]
-    public async Task StalledPayloadWriteHonorsCommandTimeout()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task StalledPeerWriteHonorsCommandTimeout(bool stallPayload)
     {
-        await using var server = new CountingSetServer();
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var accept = listener.AcceptSocketAsync();
         GatedWriteStream? transport = null;
-        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
-        {
-            Protocol = RespProtocol.Resp2,
-            CommandTimeout = TimeSpan.FromSeconds(5),
-            TestingStreamFactory = async (host, port, cancellationToken) =>
+        await using var connection = await RespireConnection.ConnectAsync(
+            "127.0.0.1", ((IPEndPoint)listener.LocalEndpoint).Port, new()
             {
-                var client = new TcpClient();
-                await client.ConnectAsync(host, port, cancellationToken);
-                return transport = new GatedWriteStream(client);
-            },
-        });
-        transport!.GateSecondWrite();
-        const int length = RespireConnection.StreamChunkSize * 2;
+                Protocol = RespProtocol.Resp2,
+                CommandTimeout = TimeSpan.FromSeconds(2),
+                TestingStreamFactory = async (host, port, cancellationToken) =>
+                {
+                    var client = new TcpClient();
+                    await client.ConnectAsync(host, port, cancellationToken);
+                    return transport = new GatedWriteStream(client);
+                },
+            });
+        using var peer = await accept.WaitAsync(TimeSpan.FromSeconds(5));
+        if (stallPayload) transport!.GateSecondWrite();
+        else transport!.CloseGate();
+        // An exact MemoryStream fills inline, so thread-pool starvation cannot expire the
+        // deadline before the header is queued. Gate the transport instead of relying on
+        // kernel socket capacity, and prove that the selected frame write actually started.
+        using var source = new MemoryStream(new byte[] { 1 });
         var command = new StreamedSetCommand(
-            (RespireValue)"stalled", new GeneratedStream(length), length, default, SetWhen.Always);
-        var send = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
+            (RespireValue)"stalled", source, source.Length, default, SetWhen.Always);
+        var set = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
+        await (stallPayload ? transport.SecondWriteStarted : transport.WriteStarted)
+            .WaitAsync(TimeSpan.FromSeconds(5));
 
-        // The header write finishes before this payload write starts. A timeout before
-        // the header legitimately preserves the connection, so it is not this control.
-        await transport.SecondWriteStarted.WaitAsync(TimeSpan.FromSeconds(5));
-        await Assert.That(send.IsCompleted).IsFalse();
-
-        var error = await Assert.That(async () => await send.WaitAsync(TimeSpan.FromSeconds(10)))
+        var error = await Assert.That(async () => await set.WaitAsync(TimeSpan.FromSeconds(10)))
             .Throws<RespireTimeoutException>();
         await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Writing);
         await Assert.That(connection.IsConnected).IsFalse();

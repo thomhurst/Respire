@@ -1,5 +1,5 @@
-# Reviewed source-declared member signatures: 372 total; per-type counts include owner, derived and accessible nested declarations.
-# Count: Respire.ClientSideCacheCoordinator | 60
+# Reviewed source-declared member signatures: 375 total; per-type counts include owner, derived and accessible nested declarations.
+# Count: Respire.ClientSideCacheCoordinator | 61
 Respire.ClientSideCacheCoordinator | class CacheEntry(byte[]?, long, long, string?)
 Respire.ClientSideCacheCoordinator | class CacheStore()
 Respire.ClientSideCacheCoordinator | class InflightRead(RespireKey, bool)
@@ -11,6 +11,7 @@ Respire.ClientSideCacheCoordinator | delegate GetReadConverter`2(TState, in GetR
 Respire.ClientSideCacheCoordinator | enum CacheRemoval : int
 Respire.ClientSideCacheCoordinator | enum MutationFenceKind : byte
 Respire.ClientSideCacheCoordinator | method BeforeCommand`1(string, in TCommand, bool) : MutationFence
+Respire.ClientSideCacheCoordinator | method ValidateDispatchAdmission`1(in TCommand) : void
 Respire.ClientSideCacheCoordinator | method BeginRead(in RespireKey) : ReadToken
 Respire.ClientSideCacheCoordinator | method BeginRead(string, in QueryRequest) : QueryReadToken
 Respire.ClientSideCacheCoordinator | method BeginUnknownMutation() : MutationFence
@@ -95,7 +96,8 @@ Respire.ClientSideCacheCoordinator.InflightRead | field Readers : int
 Respire.ClientSideCacheCoordinator.InflightRead | field Retired : bool
 Respire.ClientSideCacheCoordinator.InflightRead | property CanCache [public; get] : bool
 Respire.ClientSideCacheCoordinator.InflightRead | property Key [public; get] : RespireKey
-# Count: Respire.ClientSideCacheCoordinator.MutationFence | 9
+# Count: Respire.ClientSideCacheCoordinator.MutationFence | 10
+Respire.ClientSideCacheCoordinator.MutationFence | method IsLiveFor(ClientSideCacheCoordinator) : bool
 Respire.ClientSideCacheCoordinator.MutationFence | method AbortBeforeDispatch() : void
 Respire.ClientSideCacheCoordinator.MutationFence | property IsRequired [internal; get] : bool
 Respire.ClientSideCacheCoordinator.MutationFence | property Key [internal; get] : RespireKey
@@ -261,8 +263,8 @@ Respire.Networking.RespireConnection | method RecordConnectionWait(long) : void
 Respire.Networking.RespireConnection | method ReplayUnpublishedMigrations() : void
 Respire.Networking.RespireConnection | method RequestMetricCloseReason(string) : void
 Respire.Networking.RespireConnection | method RetireAsync() : Task
-Respire.Networking.RespireConnection | method SendAskingStreamedSetAsync(in RawCommand, StreamedSetCommand, CancellationToken, CommandDeadline, DedicatedStreamRoute, int) : ValueTask<RespValue>
-Respire.Networking.RespireConnection | method SendAskingStreamAttemptAsync(RawCommand, StreamedSetCommand, CancellationToken, CommandDeadline, DedicatedStreamRoute) : ValueTask<CommandAttemptResult>
+Respire.Networking.RespireConnection | method SendAskingStreamedSetAsync(in ProtocolCommand<RawCommand>, StreamedSetCommand, CancellationToken, CommandDeadline, DedicatedStreamRoute, int) : ValueTask<RespValue>
+Respire.Networking.RespireConnection | method SendAskingStreamAttemptAsync(ProtocolCommand<RawCommand>, StreamedSetCommand, CancellationToken, CommandDeadline, DedicatedStreamRoute) : ValueTask<CommandAttemptResult>
 Respire.Networking.RespireConnection | method SendAttemptAsync`1(TCommand, CancellationToken, string?, CommandDeadline, int, int, bool, DedicatedStreamRoute, bool) : ValueTask<CommandAttemptResult>
 Respire.Networking.RespireConnection | method SendAsync`1(in TCommand, CancellationToken, bool, string?, bool, string?, RespireTelemetry.ErrorObservation) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendBulkStreamAsync`1(in TCommand, CancellationToken, string?, Action<Exception?>?, string?, RespireTelemetry.ErrorObservation) : ValueTask<Stream?>
@@ -390,7 +392,8 @@ Respire.RespireWatchedTransaction | constructor RespireWatchedTransaction(Respir
 Respire.RespireWatchedTransaction | method CommitAsync(CancellationToken) : ValueTask<bool>
 Respire.RespireWatchedTransaction | method CommitWithWatchValidationAsync(CancellationToken) : ValueTask<bool>
 Respire.RespireWatchedTransaction | property WatchPool [private protected; get] : DedicatedConnectionPool?
-# Count: Respire.ClientSideCacheCoordinator.MutationLease | 5
+# Count: Respire.ClientSideCacheCoordinator.MutationLease | 6
+Respire.ClientSideCacheCoordinator.MutationLease | method IsLiveFor(long, ClientSideCacheCoordinator) : bool
 Respire.ClientSideCacheCoordinator.MutationLease | method AbortBeforeDispatch(long) : void
 Respire.ClientSideCacheCoordinator.MutationLease | method CompleteLogical(long, ClientSideCacheCoordinator, bool) : void
 Respire.ClientSideCacheCoordinator.MutationLease | method ReleaseNative(long) : void

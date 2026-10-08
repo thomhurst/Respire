@@ -347,7 +347,7 @@ internal sealed partial class ClusterRouter
                 // Do not put CLUSTER SLOTS ahead of its reads in the data connection's FIFO.
                 var endpoint = node.ActiveConnectionEndpoint;
                 await using var connection = await RespireConnection.ConnectAsync(endpoint.Host, endpoint.Port,
-                    _options.ToConnectionOptions(), _logger, cancellationToken).ConfigureAwait(false);
+                    CreateConnectionOptions(), _logger, cancellationToken).ConfigureAwait(false);
                 var load = await TryLoadSlotsAsync(node, cancellationToken,
                     expectedTopologyVersion: expectedTopologyVersion, snapshotBatch: refreshRound.SnapshotBatch,
                     keepUncoveredOwners: true, requiredSlot: slot, replicaRefresh: refreshRound,

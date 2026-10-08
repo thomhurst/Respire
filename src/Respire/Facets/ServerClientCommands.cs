@@ -56,8 +56,6 @@ public partial interface IServerCommands
 
 internal sealed partial class ServerCommands
 {
-    private static readonly Verb ClientIdVerb = new(-1, "CLIENT", "ID");
-
     public async ValueTask<RespireServerClientConnection> GetClientConnectionAsync(CancellationToken cancellationToken = default)
     {
         using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
@@ -65,8 +63,8 @@ internal sealed partial class ServerCommands
         {
             cancellationToken.ThrowIfCancellationRequested();
             var connection = await client.AcquireConnectionAsync(cancellationToken).ConfigureAwait(false);
-            using var reply = await client.SendOnPinnedConnectionAsync("CLIENT ID", connection,
-                new Cmd(ClientIdVerb), cancellationToken, observation).ConfigureAwait(false);
+            using var reply = await client.SendAdmittedOnPinnedConnectionAsync("CLIENT ID", connection,
+                new ClientIdCommand(), cancellationToken, observation).ConfigureAwait(false);
             if (reply.Type != RespDataType.Integer || reply.AsInteger() <= 0)
                 throw new RespireProtocolException("CLIENT ID must return a positive integer.");
             return new RespireServerClientConnection(client, connection, reply.AsInteger());
@@ -127,12 +125,12 @@ public sealed partial class RespireServerClientConnection
 
     /// <summary>Reads owned CLIENT INFO, preserving unknown attributes. Requires Redis 6.2+.</summary>
     public async ValueTask<RespireServerClientInfo> InfoAsync(CancellationToken cancellationToken = default)
-        => await ConvertAsync("CLIENT INFO", new Cmd(ClientInfo), cancellationToken,
+        => await ConvertAsync("CLIENT INFO", new ProtocolCommand<Cmd>(new Cmd(ClientInfo)), cancellationToken,
             static (RespireServerClientConnection _, in RespValue reply) => ServerCommands.ParseClientInfo(in reply)).ConfigureAwait(false);
 
     /// <summary>Reads this connection's name, or null when unset. Redis: CLIENT GETNAME (2.6.9+).</summary>
     public async ValueTask<string?> GetNameAsync(CancellationToken cancellationToken = default)
-        => await ConvertAsync("CLIENT GETNAME", new Cmd(ClientGetName), cancellationToken,
+        => await ConvertAsync("CLIENT GETNAME", new ProtocolCommand<Cmd>(new Cmd(ClientGetName)), cancellationToken,
             static (RespireServerClientConnection _, in RespValue reply) => ResponseReader.StringOrNull(in reply)).ConfigureAwait(false);
 
     /// <summary>Changes this connection's library metadata. Requires AllowAdmin and Redis 7.2+.</summary>
@@ -243,7 +241,7 @@ public sealed partial class RespireServerClientConnection
 
     /// <summary>Reads this connection's tracking configuration without changing internal caching. Redis 6.2+.</summary>
     public async ValueTask<RespireClientTrackingInfo> TrackingInfoAsync(CancellationToken cancellationToken = default)
-        => await ConvertAsync("CLIENT TRACKINGINFO", new Cmd(ClientTrackingInfo), cancellationToken,
+        => await ConvertAsync("CLIENT TRACKINGINFO", new ProtocolCommand<Cmd>(new Cmd(ClientTrackingInfo)), cancellationToken,
             static (RespireServerClientConnection _, in RespValue reply) => ParseTrackingInfo(in reply)).ConfigureAwait(false);
 
     private static RespireClientTrackingInfo ParseTrackingInfo(in RespValue reply)
@@ -281,7 +279,7 @@ public sealed partial class RespireServerClientConnection
     {
         // Conversion takes ownership after preflight; no additional async wrapper is needed.
         return _client.ConvertOnConnectionAsync(operation, _connection, command, cancellationToken,
-            this, converter, observation: observation);
+            this, converter, observation: observation, admit: true);
     }
 
     private async ValueTask OkAsync<TCommand>(string operation, TCommand command, CancellationToken cancellationToken,

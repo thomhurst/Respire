@@ -163,9 +163,87 @@ write must still retire local state.
 Local `RemoveByTagAsync` writes the shared tag marker once and preserves its timestamp across
 local generations. `MaxRememberedTagInvalidations` bounds this additional history: exhausting
 it permanently disables L1 for that provider, preserving ordinary L2/tag behavior. Use tags
-consistently across calls, as with ordinary `HybridCache`. Propagating another process's tag
-removal to already populated L1 remains separate work tracked by
-[#1225](https://github.com/thomhurst/Respire/issues/1225).
+consistently across reads and writes, as with ordinary `HybridCache`. Tags read from a serialized
+L2 payload validate that payload; they do not replace the caller's tag list on the resulting L1 entry.
+
+### Cross-instance tag invalidation
+
+Enable tag propagation explicitly on every participating instance:
+
+```csharp
+builder.Services.AddRespireHybridCache("redis://localhost", instanceName: "myapp:")
+    .WithRespireClientSideCoherence(options =>
+    {
+        options.TagInvalidationChannel = "myapp:hybrid-tags:v1";
+        options.TagInvalidationNamespace = "myapp:cache:v1";
+        options.MaxTagInvalidationMessageBytes = 4_096;
+        options.TagInvalidationBufferSize = 256;
+        options.MaxTagsPerEntry = 64;
+    });
+```
+
+Both the literal channel and namespace are required. Use the same namespace only for instances
+sharing the same logical L2 cache, database, key prefixes, codecs, and tag contract. Redis pub/sub
+channels span databases: the explicit namespace prevents accidental cross-cache replay on a shared
+channel. The channel is a physical literal: distributed-client pub/sub views, `PubSubPrefix`, cache key
+prefixes, and `InstanceName` are not implicitly added to it. Set both properties to null
+to retain the existing tracking-only mode. Ordinary L2-only registration creates no subscriber.
+The extension captures the validated settings when it is called; later changes to the callback's
+configuration object do not change the subscriber channel or bounds.
+
+`RemoveByTagAsync("tag")`, the multiple-tag overload, and `RemoveByTagAsync("*")` propagate.
+The wildcard invalidates all entries, including entries without tags. Other strings are literal
+tags, not glob patterns. Each tag writes its original shared HybridCache marker once, then publishes
+its original UTC timestamp. Receivers update local tag metadata without publishing another message,
+writing a later marker, or deleting shared values. Unrelated idle L1 entries remain cached. Active
+fills are retired conservatively because Microsoft's public API keeps stored tags opaque; callers
+already in progress can still receive their earlier result, but later requests cannot join that fill
+or use its late L1 publication. Concurrent L2 factory writes retain ordinary HybridCache behavior.
+
+The first local admission waits for the subscriber acknowledgment and honors the request's
+cancellation token. The owned subscriber inherits the client's `ConnectTimeout` and
+`CommandTimeout` settings, each 10 seconds by default; disabling `CommandTimeout` also removes
+the acknowledgment deadline, so provide request cancellation when using that configuration.
+Startup failure or terminal
+subscriber failure disables L1 for that provider; recreate it to retry startup. During detected
+subscriber reconnects, reads bypass L1. A reconnect, buffer discard, or oversized-message gap retires
+all local generations and clears remembered timestamps so new contexts refetch authoritative L2
+tag metadata. Fallback requests use fresh metadata contexts, including after observation or tag
+history exhaustion. Malformed frames and foreign namespaces are ignored safely.
+Replay or cleanup failure also ends the consumer and disables L1 rather than automatically
+retrying partially applied local state. Dispose the provider asynchronously when possible;
+synchronous disposal waits for its owned subscriber and retirement cleanup to finish.
+
+Redis pub/sub is eventual and does not replay lost messages. A successful removal waits for its
+shared-marker write and publication, not for every receiver to process the message. Publication
+failure is reported after the shared marker may already have changed. A disconnected instance can
+serve earlier L1 data until the client detects the failure; a silently lost publication without a
+detected gap cannot be recovered by this backplane. All tag writers must participate. Applications
+requiring durable invalidation or linearizable reads need additional application coordination.
+UTC timestamps follow HybridCache's clock contract: synchronize instance clocks. Receivers retain
+the newest observed timestamp for a tag, but clock skew can still cause early invalidation or leave
+values created by a fast clock valid after a slower clock's removal. The backplane does not replace
+HybridCache's shared-marker last-writer behavior with a distributed clock or transaction.
+
+The message limit includes a 32-byte header, UTF-8 namespace, and UTF-8 tag. Each oversized local tag
+is rejected before its marker is written; multiple-tag removal is per-tag and can partially complete.
+Inbound oversized payloads are discarded before they enter the bounded
+subscription queue. The transport still parses incoming Redis frames using its ordinary buffers.
+The queue retains at most `TagInvalidationBufferSize` payloads and one consumer processes them;
+overflow causes conservative invalidation rather than unbounded queued work. Propagation allows
+at most `MaxTagsPerEntry` supplied tags per entry, and each local generation retains at most that
+many distinct caller tags before starting a fresh generation. Remembered invalidations remain bounded
+by `MaxRememberedTagInvalidations`; observed keys remain bounded by `MaxObservedKeys`. These bounds
+limit bridge retention, not memory owned by callers or Microsoft's serialized payload processing.
+Choose stable, low-cardinality tags rather than request IDs or user-generated unlimited tag sets.
+
+Tag names and namespaces are plaintext on the channel, together with timestamps and a process-local
+sender identifier. They are not protected by the value codec. Do not place secrets or personal data
+in tags, namespaces, or channel names. Restrict publishing/subscribing with Redis ACLs and use TLS
+when required; a publisher authorized for this channel can invalidate local cache state. This mode
+requires `SUBSCRIBE`, `UNSUBSCRIBE`, and `PUBLISH` permission in addition to tracking permissions.
+Provider disposal cancels the consumer, unsubscribes, and joins owned work without disposing a
+user-registered client.
 
 Disposing the provider stops the bridge's timer, subscriptions, and owned tracker. It never
 disposes an externally registered client; the distributed cache retains its existing ownership

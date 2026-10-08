@@ -8,7 +8,7 @@ namespace Respire.Commands;
 /// or an in-memory <see cref="ReadOnlySequence{T}"/>. The connection writes the frame through its
 /// streaming path (<see cref="IStreamingRespCommand"/>); <see cref="Write"/> is never used.
 /// </summary>
-internal readonly struct StreamedSetCommand : IReplayableStreamingRespCommand
+internal readonly struct StreamedSetCommand : IReplayableStreamingRespCommand, IMutationAdmissionCommand
 {
     private sealed class StreamSource
     {

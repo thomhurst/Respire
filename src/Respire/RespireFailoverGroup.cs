@@ -137,10 +137,13 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
     /// <summary>Friend-test access; never used by normal failover coordination.</summary>
     internal TestAccess ForTests => new(this);
 
-    /// <summary>Read-only inspection for tests that control shutdown callbacks before disposal.</summary>
+    /// <summary>Friend-test controls for probe rounds, circuit inspection, and shutdown callbacks.</summary>
     internal readonly struct TestAccess(RespireFailoverGroup group)
     {
         internal CancellationToken StopToken => group._stop.Token;
+        internal Task ProbeAsync(int index, CancellationToken cancellationToken = default)
+            => group.ProbeAsync(group._candidates[index], cancellationToken);
+        internal CircuitSnapshot Circuit(int index) => group._candidates[index].CircuitSnapshot();
     }
 
     private RespireFailoverGroup(CandidateState[] candidates, RespireFailoverGroupOptions options, TimeProvider clock, ILogger? logger)
@@ -252,7 +255,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                 logger ??= snapshot.CreateLogger("Respire.FailoverGroup");
                 var client = RespireClient.Create(snapshot);
                 states.Add(new CandidateState(client, candidate.Priority, states.Count, fallbackEndpoint,
-                    snapshot.SentinelPrimaryName, snapshot.Endpoints));
+                    snapshot.SentinelPrimaryName, snapshot.Endpoints, settings, clock));
             }
 
             if (states.Count == 0) throw new ArgumentException("At least one failover candidate is required.", nameof(candidates));
@@ -369,9 +372,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
             {
                 try
                 {
-                    var now = _clock.GetTimestamp();
                     await Task.WhenAll(_candidates
-                        .Where(candidate => candidate.CanProbe(_clock, now))
                         .Select(candidate => ProbeAsync(candidate, _stop.Token))).ConfigureAwait(false);
                     await SelectActiveAsync().ConfigureAwait(false);
                 }
@@ -392,56 +393,70 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
 
     private async Task ProbeAsync(CandidateState candidate, CancellationToken cancellationToken)
     {
+        if (!candidate.TryAcquireProbe(out var permit)) return;
         using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(_options.ProbeTimeout);
-        var started = Stopwatch.GetTimestamp();
-        string conflict;
+        var outcome = CircuitOutcome.Ignored;
         try
         {
-            await candidate.ProbeAsync(timeout.Token, observation).ConfigureAwait(false);
-            var found = FindDeploymentConflict(candidate, _candidates);
-            if (found is null)
+            cancellationToken.ThrowIfCancellationRequested();
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(_options.ProbeTimeout);
+            var started = Stopwatch.GetTimestamp();
+            string conflict;
+            try
             {
-                candidate.MarkHealthy(_clock.GetTimestamp());
+                await candidate.ProbeAsync(timeout.Token, observation).ConfigureAwait(false);
+                var found = FindDeploymentConflict(candidate, _candidates);
+                if (found is null)
+                {
+                    candidate.MarkHealthy(_clock.GetTimestamp());
+                    outcome = CircuitOutcome.Success;
+                    RespireTelemetry.RecordFailoverProbe(
+                        candidate.TelemetryEndpoint,
+                        succeeded: true,
+                        Stopwatch.GetElapsedTime(started).TotalSeconds);
+                    return;
+                }
+                conflict = found;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception error)
+            {
+                observation.Handled(error);
+                outcome = candidate.MarkFailed(error, _clock.GetUtcNow(), _options, openCircuit: permit.ProbeSlot >= 0);
+                // Start the open period before synchronous observers can delay completion.
+                // Complete clears the permit, so the finally guard remains safe for earlier exceptions.
+                candidate.CompleteProbe(ref permit, outcome);
                 RespireTelemetry.RecordFailoverProbe(
                     candidate.TelemetryEndpoint,
-                    succeeded: true,
+                    succeeded: false,
                     Stopwatch.GetElapsedTime(started).TotalSeconds);
                 return;
             }
-            conflict = found;
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception error)
-        {
-            observation.Handled(error);
-            candidate.MarkFailed(error, _clock.GetUtcNow(), _clock.GetTimestamp(), _options);
+
+            // A duplicate deployment adds no redundancy, so it is unhealthy at once instead of after FailureThreshold
+            // probes. It is checked again whenever its circuit allows the next probe.
+            var conflictError = new RespireConfigurationException(conflict);
+            observation.Handled(conflictError);
+            outcome = candidate.MarkFailed(conflictError, _clock.GetUtcNow(), _options, openCircuit: true);
+            candidate.CompleteProbe(ref permit, outcome);
             RespireTelemetry.RecordFailoverProbe(
                 candidate.TelemetryEndpoint,
                 succeeded: false,
                 Stopwatch.GetElapsedTime(started).TotalSeconds);
-            return;
+            try
+            {
+                _logger?.FailoverDuplicateDeployment(candidate.TelemetryEndpoint, conflict);
+            }
+            catch { /* Logging must not stop health monitoring. */ }
         }
-
-        // A duplicate deployment adds no redundancy, so it is unhealthy at once instead of after FailureThreshold
-        // probes. It is checked again whenever its circuit allows the next probe.
-        var conflictError = new RespireConfigurationException(conflict);
-        observation.Handled(conflictError);
-        candidate.MarkFailed(conflictError, _clock.GetUtcNow(), _clock.GetTimestamp(),
-            _options, openCircuit: true);
-        RespireTelemetry.RecordFailoverProbe(
-            candidate.TelemetryEndpoint,
-            succeeded: false,
-            Stopwatch.GetElapsedTime(started).TotalSeconds);
-        try
+        finally
         {
-            _logger?.FailoverDuplicateDeployment(candidate.TelemetryEndpoint, conflict);
+            candidate.CompleteProbe(ref permit, outcome);
         }
-        catch { /* Logging must not stop health monitoring. */ }
     }
 
     private async ValueTask SelectActiveAsync()
@@ -647,16 +662,26 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
     }
 
     private sealed class CandidateState(RespireClient client, int priority, int order, RespireEndpoint fallbackEndpoint,
-        string? sentinelPrimaryName, IEnumerable<RespireEndpoint> configuredEndpoints)
+        string? sentinelPrimaryName, IEnumerable<RespireEndpoint> configuredEndpoints,
+        RespireFailoverGroupOptions options, TimeProvider clock)
     {
         private readonly Lock _gate = new();
+        // Consecutive failure policy remains here; the shared core owns admission and recovery.
+        // One failure is published only after that policy opens, so no rolling-history limit
+        // constrains FailureThreshold and successes always reset the consecutive count.
+        private readonly EndpointCircuitBreaker _circuit = new(fallbackEndpoint, new()
+        {
+            MinimumFailureCount = 1,
+            MaximumSampleCount = 1,
+            FailureRateThreshold = 1,
+            HalfOpenProbeCount = 1,
+            OpenDuration = options.CircuitOpenDuration,
+        }, clock);
         // Standalone and Cluster clients have a fixed endpoint; a Sentinel candidate's endpoint is its current primary.
         private readonly RespireEndpoint? _fixedEndpoint = client.Core.Sentinel is null ? client.Endpoint : (RespireEndpoint?)null;
         private bool _isHealthy;
         private int _consecutiveFailures;
         private DateTimeOffset? _circuitOpenUntil;
-        private long? _circuitOpenedAt;
-        private TimeSpan _circuitOpenDuration;
         private long? _healthySince;
         private string? _lastErrorType;
 
@@ -708,14 +733,9 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         public int ConsecutiveFailures { get { lock (_gate) return _consecutiveFailures; } }
         public DateTimeOffset? CircuitOpenUntil { get { lock (_gate) return _circuitOpenUntil; } }
 
-        public bool CanProbe(TimeProvider clock, long now)
-        {
-            lock (_gate)
-            {
-                return _circuitOpenedAt is not { } openedAt
-                    || HasElapsed(clock, openedAt, now, _circuitOpenDuration);
-            }
-        }
+        public bool TryAcquireProbe(out CircuitPermit permit) => _circuit.TryAcquire(out permit, out _);
+        public void CompleteProbe(ref CircuitPermit permit, CircuitOutcome outcome) => _circuit.Complete(ref permit, outcome);
+        public CircuitSnapshot CircuitSnapshot() => _circuit.Snapshot();
 
         public bool HasCompletedFailbackGrace(TimeProvider clock, long now, TimeSpan gracePeriod)
         {
@@ -751,29 +771,28 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                 _isHealthy = true;
                 _consecutiveFailures = 0;
                 _circuitOpenUntil = null;
-                _circuitOpenedAt = null;
                 _lastErrorType = null;
             }
         }
 
-        public void MarkFailed(Exception error, DateTimeOffset now, long timestamp, RespireFailoverGroupOptions options,
+        public CircuitOutcome MarkFailed(Exception error, DateTimeOffset now, RespireFailoverGroupOptions options,
             bool openCircuit = false)
         {
             lock (_gate)
             {
-                _consecutiveFailures++;
+                if (_consecutiveFailures < int.MaxValue) _consecutiveFailures++;
                 // Any failed probe restarts the failback grace period, even before the circuit opens.
                 _healthySince = null;
-                if (openCircuit || _consecutiveFailures >= options.FailureThreshold)
+                var opens = openCircuit || _consecutiveFailures >= options.FailureThreshold;
+                if (opens)
                 {
                     _isHealthy = false;
-                    _circuitOpenedAt = timestamp;
-                    _circuitOpenDuration = options.CircuitOpenDuration;
                     _circuitOpenUntil = options.CircuitOpenDuration >= DateTimeOffset.MaxValue - now
                         ? DateTimeOffset.MaxValue
                         : now + options.CircuitOpenDuration;
                 }
                 _lastErrorType = error.GetType().Name;
+                return opens ? CircuitOutcome.Failure : CircuitOutcome.Ignored;
             }
         }
     }

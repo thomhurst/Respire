@@ -222,7 +222,7 @@ internal sealed partial class SubscriptionHub
         RespireConnectionMultiplexer owner, RespireConnectionMultiplexer? askSource, CancellationToken cancellationToken)
     {
         var primary = new PrimarySubscriptionConnection(owner, askSource);
-        var options = core.Options.ToConnectionOptions((in RespValue value) => OnPrimaryPush(primary, in value));
+        var options = core.CreateConnectionOptions((in RespValue value) => OnPrimaryPush(primary, in value));
         options = options with
         {
             SubscriptionConfirmationHandler = (in RespValue value) => OnSubscriptionConfirmation(0, in value, primary),
@@ -288,9 +288,7 @@ internal sealed partial class SubscriptionHub
             if (_disposed || !Routes(SubscriptionKind.Sharded).TryGetValue(channel, out var name, out var targets)
                 || !_shardedOwners.TryGetValue(name, out var owner) || !ReferenceEquals(owner, primary)
                 || !primary.Confirmed.Contains(name)) return;
-            var message = new RespireMessage(name, null, payload.ToArray(), core.Options.Serializer);
-            foreach (var target in targets)
-                if (target.Buffer.Write(message) is { } gap) (drops ??= []).Add((target, gap));
+            EnqueueMessage(targets, name, null, payload, ref drops);
         }
         RespireTelemetry.RecordReceivedMessage(sharded: true);
         if (drops is not null)

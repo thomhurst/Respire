@@ -309,7 +309,9 @@ public sealed class GatheredSetTests
         else if (boundary == "deadline")
             await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(3), guard.Token)).Throws<RespireTimeoutException>();
         else
-            await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(3), guard.Token)).Throws<RespireConnectionException>();
+            // Socket backpressure can be temporary: further successful sends reset the
+            // idle watchdog. Bound the whole test, not three seconds from the first stall.
+            await Assert.That(async () => await pending.WaitAsync(guard.Token)).Throws<RespireConnectionException>();
         await Assert.That(connection.IsConnected).IsFalse();
         await Assert.That(server.CommandsSeen).IsEqualTo(pausedConsumer ? 1 : 0);
         // Completion is observable while the peer remains parked: every kernel send reference

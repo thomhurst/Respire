@@ -232,6 +232,7 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
         TimeSpan budget, RespireServerException lastMissingFunction, CancellationToken callerToken) : IRespCommandWrapper
     {
         public int GetWriteSizeHint() => command.GetWriteSizeHint();
+        public bool IsConnectionProtocol => false;
         public ReadCommandKind ReadKind => command.ReadKind;
         public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => command.GetClientCacheMetadata(operation);
         public RespireCacheMutation GetCacheMutation(string operation) => command.GetCacheMutation(operation);

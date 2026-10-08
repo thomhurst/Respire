@@ -90,6 +90,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private readonly long _teardownRescueBudgetMilliseconds;
     private readonly long _starvedRunnerMilliseconds;
     private readonly long _commandTimeoutMilliseconds;
+    private readonly ClientSideCacheCoordinator? _cacheMutationAdmission;
     private readonly ProducerProgress _producerProgress = new();
     private readonly FlushProgress _flushProgress = new();
     private readonly ReceiveProgress _receiveProgress = new();
@@ -300,6 +301,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             host, port, OperationMetricNamespace, _networkPeerAddress, _networkPeerPort);
         _logger = logger;
         _generation = options.Generation;
+        _cacheMutationAdmission = options.CacheMutationAdmission;
         _pushHandler = options.PushHandler;
         _subscriptionPushFilter = options.SubscriptionPushFilter;
         _subscriptionConfirmationHandler = options.SubscriptionConfirmationHandler;
@@ -727,7 +729,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         if (options.ReadOnly && !deferSessionSteps)
         {
             (pending ??= new(4)).Add(("READONLY", SendAsync(
-                new Commands.Cmd(Commands.Verbs.ReadOnly), cancellationToken, armCommandDeadline: armCommandDeadline)));
+                new ProtocolCommand<Cmd>(new Cmd(Verbs.ReadOnly)), cancellationToken, armCommandDeadline: armCommandDeadline)));
         }
 
         if (options.EnableClientTracking && !deferSessionSteps)
@@ -798,7 +800,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 cancellationToken, armCommandDeadline).ConfigureAwait(false);
             if (options.ReadOnly)
             {
-                await CompleteHandshakeStepAsync("READONLY", new Commands.Cmd(Commands.Verbs.ReadOnly),
+                await CompleteHandshakeStepAsync("READONLY", new ProtocolCommand<Cmd>(new Cmd(Verbs.ReadOnly)),
                     cancellationToken, armCommandDeadline).ConfigureAwait(false);
             }
             if (options.EnableClientTracking)
@@ -1237,7 +1239,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         where TPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
         => SendBulkStreamCoreAsync(
-            new PrefixedCommand<TPrefix, TCommand>(prefix, command),
+            new PrefixedCommand<TPrefix, TCommand>(prefix, command, _cacheMutationAdmission),
             new BulkStreamPendingResponseSource(commandName, hasPrefixReply: true, onFrameCompleted,
                 cancellationToken, OnBulkStreamLifetimeCancelled),
             discardRepliesBefore: 1, retainRepliesBefore: true, cancellationToken,
@@ -1457,7 +1459,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         return SendCoreAsync(
-            new PrefixedCommand<TPrefix, TCommand>(prefix, command),
+            new PrefixedCommand<TPrefix, TCommand>(prefix, command, _cacheMutationAdmission),
             discardRepliesBefore: 1,
             throwOnError,
             cancellationToken,
@@ -1491,7 +1493,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         return SendMultiReplyCoreAsync(
-            new PrefixedCommand<TPrefix, TCommand>(prefix, command),
+            new PrefixedCommand<TPrefix, TCommand>(prefix, command, _cacheMutationAdmission),
             repliesBeforeFinal: 1,
             firstQueueReply: 0,
             cancellationToken,
@@ -1519,7 +1521,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         return SendMultiReplyCoreAsync(
             new PrefixedCommand<TFirstPrefix, PrefixedCommand<TSecondPrefix, TCommand>>(
-                firstPrefix, new PrefixedCommand<TSecondPrefix, TCommand>(secondPrefix, command)),
+                firstPrefix, new PrefixedCommand<TSecondPrefix, TCommand>(secondPrefix, command, _cacheMutationAdmission),
+                _cacheMutationAdmission),
             repliesBeforeFinal: 2,
             firstQueueReply: 0,
             cancellationToken,
@@ -1814,6 +1817,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     {
         startedBatch = false;
         writeTask = null;
+
+        _cacheMutationAdmission?.ValidateDispatchAdmission(in command);
 
         Debug.Assert(!ReferenceEquals(source, InflightRing.DiscardSentinel) || !command.GetMutationFence().IsRequired,
             "A mutation command requires an owned native response, even when its reply is discarded.");
@@ -3466,7 +3471,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// <summary>Writes an optional MULTI, a pre-serialized command block, and EXEC.
     /// Only an exclusive caller that already confirmed MULTI may omit it.</summary>
     private readonly struct TransactionCommand(ReadOnlyMemory<byte> serializedCommands, bool includeMulti,
-        RespireTransactionBase? transaction, ClientSideCacheCoordinator.MutationFence mutationFence) : IRespCommand
+        RespireTransactionBase? transaction, ClientSideCacheCoordinator.MutationFence mutationFence) : IMutationAdmissionCommand
     {
         public int GetWriteSizeHint() => checked(serializedCommands.Length + RespCommands.Exec.Length
             + (includeMulti ? RespCommands.Multi.Length : 0));
@@ -3478,6 +3483,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         public ReadCommandKind ReadKind => ReadCommandKind.None;
 
         public ClientSideCacheCoordinator.MutationFence GetMutationFence() => mutationFence;
+
+        // Empty MULTI/EXEC validates WATCH without changing data. Any queued command still
+        // requires the logical transaction's owning mutation fence, including queued reads.
+        public RespireCacheMutation GetCacheMutation(string operation)
+            => serializedCommands.IsEmpty ? RespireCacheMutation.ReadOnly : RespireCacheMutation.Unknown;
 
         public void Write(ref RespWriter writer)
         {
@@ -3495,8 +3505,18 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         private readonly TPrefix _prefix;
         private readonly TCommand _command;
 
-        public PrefixedCommand(TPrefix prefix, TCommand command)
+        public PrefixedCommand(TPrefix prefix, TCommand command, ClientSideCacheCoordinator? cacheMutationAdmission)
         {
+            if (cacheMutationAdmission is not null)
+            {
+                // Prelude replies are drained with the final response, but cannot retain
+                // an independent mutation owner or borrow the final command's key scope.
+                if (CommandDispatchAdmission<TPrefix>.GetMutationFence(in prefix).IsRequired)
+                    throw new InvalidOperationException("A command prelude cannot own an independent cache mutation.");
+                cacheMutationAdmission.ValidateDispatchAdmission(in prefix);
+            }
+            // The constructor checks the prelude independently. TryEnqueue checks the final
+            // command through this wrapper again so its fence is live when bytes are published.
             _prefix = prefix;
             _command = command;
         }
@@ -3511,7 +3531,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         public void OnAccepted() => _command.OnAccepted();
-        public ClientSideCacheCoordinator.MutationFence GetMutationFence() => _command.GetMutationFence();
+        public bool IsConnectionProtocol => CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in _command);
+        public ClientSideCacheCoordinator.MutationFence GetMutationFence() => CommandDispatchAdmission<TCommand>.GetMutationFence(in _command);
+        public RespireCacheMutation GetCacheMutation(string operation) => _command.GetCacheMutation(operation);
+        public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => _command.GetClientCacheMetadata(operation);
         public void ValidateAdmission() => _command.ValidateAdmission();
         public CancellationToken GetResponseCancellationToken(CancellationToken admissionToken)
             => _command.GetResponseCancellationToken(admissionToken);
@@ -4206,6 +4229,7 @@ internal sealed record RespireConnectionOptions
     internal TimeProvider CredentialTimeProvider { get; init; } = TimeProvider.System;
     internal Func<int>? CredentialCacheInvalidation { get; init; }
     internal Action? CredentialCacheRetirementFence { get; init; }
+    internal ClientSideCacheCoordinator? CacheMutationAdmission { get; init; }
 
     /// <summary>When set, CLIENT SETNAME runs during the handshake.</summary>
     public string? ClientName { get; init; }

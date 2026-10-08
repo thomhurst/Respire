@@ -31,6 +31,38 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  mapper-native-aot:
+    name: Generated mapper Native AOT (${{ matrix.framework }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: [net8.0, net10.0]
+    services:
+      redis:
+        image: redis:8.10-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+        ports:
+          - 6379/tcp
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 1s
+          --health-timeout 3s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-dotnet
+      - name: Record SDK and runtime toolchain
+        run: dotnet --info
+      - name: Publish trimmed Native AOT mapper sample
+        run: >-
+          dotnet publish samples/Respire.Samples.Mappers -c Release -f ${{ matrix.framework }}
+          -r linux-x64 -o artifacts/mapper-aot/${{ matrix.framework }}
+      - name: Execute hash, JSON and Search conformance with RESP2 and RESP3
+        run: >-
+          artifacts/mapper-aot/${{ matrix.framework }}/Respire.Samples.Mappers
+          redis://127.0.0.1:${{ job.services.redis.ports['6379'] }}
+
   benchmark-policy:
     name: Benchmark label cancellation policy
     runs-on: ubuntu-latest

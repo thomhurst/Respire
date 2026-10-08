@@ -1763,6 +1763,8 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
 
         internal bool IsRequired => Kind != MutationFenceKind.None;
 
+        internal bool IsLiveFor(ClientSideCacheCoordinator owner) => _lease?.IsLiveFor(_epoch, owner) == true;
+
         internal bool RetainNative() => _lease?.RetainNative(_epoch) == true;
 
         internal MutationReference BindNative() => RetainNative() ? new(_lease!, _epoch) : default;

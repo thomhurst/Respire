@@ -153,6 +153,7 @@ internal static class RawCommandKeyLayouts
         // Preserve their existing deferred support while enabling prefix rewriting.
         foreach (var operation in new[] { "HSET", "HDEL", "HGETALL", "HMGET" })
             layouts[operation] = layouts[operation] with { Prefixable = true };
+        AddPrefixable(LayoutKind.First, "HSETEX", "HPEXPIRE");
         return layouts.ToFrozenDictionary(StringComparer.Ordinal);
 
         void Add(LayoutKind kind, params string[] operations)

@@ -284,15 +284,18 @@ public sealed partial class RespireClient
     internal ValueTask<TResult> ConvertOnConnectionAsync<TCommand, TState, TResult>(
         string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken,
         TState state, ResponseConverter<TState, TResult> converter, bool pinToConnection = true,
-        RespireTelemetry.ErrorObservation observation = default)
+        RespireTelemetry.ErrorObservation observation = default, bool admit = false)
         where TCommand : struct, IRespCommand
     {
         if (observation.IsEmpty) observation = RespireTelemetry.ErrorObservation.Rent(force: true);
         ValueTask<RespValue> response;
         try
         {
-            response = SendOnConnectionObservedAsync(operation, connection, command, cancellationToken,
-                pinToConnection, observation);
+            // Admitted routes are pinned and complete any client-cache mutation fence before conversion.
+            response = admit
+                ? SendAdmittedOnPinnedConnectionAsync(operation, connection, command, cancellationToken, observation)
+                : SendOnConnectionObservedAsync(operation, connection, command, cancellationToken,
+                    pinToConnection, observation);
         }
         catch (Exception error)
         {

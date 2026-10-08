@@ -53,7 +53,7 @@ namespace Respire.Internal;
 internal sealed partial class ClusterRouter : IAsyncDisposable
 {
     private const int MaxRedirects = 5;
-    private static readonly RawCommand Asking = new("*1\r\n$6\r\nASKING\r\n"u8.ToArray());
+    private static readonly ProtocolCommand<RawCommand> Asking = new(new("*1\r\n$6\r\nASKING\r\n"u8.ToArray()));
     private readonly RespireOptions _options;
     private readonly ILogger? _logger;
     private readonly RespireConnectionOptions _commandConnectionOptions;
@@ -120,7 +120,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     private readonly ClusterTopologyRefreshScheduler _topologyRefresh;
 
     internal ClusterRouter(RespireOptions options, RespireConnectionMultiplexer primary, Func<long>? migrationClock = null)
-        : this(options, primary, options.ToConnectionOptions(enableMaintenanceNotifications: true), migrationClock)
+        : this(options, primary, options.ToConnectionOptions(enableMaintenanceNotifications: true) with
+            { CacheMutationAdmission = primary.Options.CacheMutationAdmission }, migrationClock)
     {
     }
 
@@ -148,6 +149,12 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         _sharedRefreshCoordinator = new SharedRefreshCoordinator(_topologyRefreshClock, TopologyRefreshCoalescingWindow);
         ObserveNode(primary);
     }
+
+    private RespireConnectionOptions CreateConnectionOptions(bool enableMaintenanceNotifications = false)
+        => _options.ToConnectionOptions(enableMaintenanceNotifications: enableMaintenanceNotifications) with
+        {
+            CacheMutationAdmission = _commandConnectionOptions.CacheMutationAdmission,
+        };
 
     internal bool IsConnected
     {
@@ -2268,7 +2275,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             created = new DedicatedConnectionPool(
                 endpoint.Host,
                 endpoint.Port,
-                _options.ToConnectionOptions(enableMaintenanceNotifications: true) with { ReadOnly = node.Options.ReadOnly },
+                CreateConnectionOptions(enableMaintenanceNotifications: true) with { ReadOnly = node.Options.ReadOnly },
                 _options.CreateLogger($"Respire.Cluster.Blocking.{node.Host}:{node.Port}"),
                 change => DedicatedStateChanged?.Invoke(change),
                 connection =>
@@ -2486,7 +2493,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         {
             try
             {
-                var reply = await connection.SendAsync(new Cmd(Verbs.ClusterSlots), cancellationToken,
+                var reply = await connection.SendAsync(new ProtocolCommand<Cmd>(new Cmd(Verbs.ClusterSlots)), cancellationToken,
                     pinToConnection: true).ConfigureAwait(false);
                 return (connection, reply);
             }

@@ -10,6 +10,7 @@
     <ItemGroup>
         <ProjectReference Include="..\..\src\Respire\Respire.csproj" />
         <ProjectReference Include="..\..\src\Respire.Json\Respire.Json.csproj" />
+        <ProjectReference Include="..\..\src\Respire.Search\Respire.Search.csproj" />
         <ProjectReference Include="..\..\src\Respire.Analyzers\Respire.Analyzers.csproj" />
     </ItemGroup>
 

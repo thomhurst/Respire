@@ -212,7 +212,10 @@ subscription with `RespireSubscriptionOptions`:
 ```csharp
 var options = new RespireSubscriptionOptions(
     BufferSize: 128,
-    Overflow: SubscriptionOverflow.DropNewest);
+    Overflow: SubscriptionOverflow.DropNewest)
+{
+    MaxPayloadBytes = 16 * 1024,
+};
 await using var telemetry = await redis.SubscribeAsync(
     "telemetry", options, stoppingToken);
 ```
@@ -221,6 +224,12 @@ Blocking and throwing policies are intentionally unavailable because they would 
 pub/sub reader and affect unrelated subscriptions. `DroppedMessages` reports the number discarded
 for that subscription, and the `respire.pubsub.messages.dropped` counter exposes the same event to
 metrics collectors.
+
+`MaxPayloadBytes` is optional and defaults to null, preserving unrestricted payload sizes.
+An oversized payload is discarded before being copied into this subscription's queue and produces
+a `PayloadTooLarge` gap. Other subscriptions on the same route keep their own limits. The transport
+still parses incoming Redis frames using its ordinary buffers; this limit bounds retained subscription
+payloads. `DroppedMessages` also counts these discards.
 
 Pub/sub is transient: Redis does not retain messages for disconnected subscribers. Use streams when delivery tracking and replay matter.
 
@@ -251,7 +260,7 @@ await foreach (var message in subscription.WithCancellation(stoppingToken))
 }
 ```
 
-`message.Gap` reports `Reason` (`Reconnect`, `BufferOverflow`, or both), `StartedAt`, `EndedAt`,
+`message.Gap` reports `Reason` (`Reconnect`, `BufferOverflow`, `PayloadTooLarge`, or combined reasons), `StartedAt`, `EndedAt`,
 `Duration`, and the known local `DroppedMessages` count. Connection loss counts are unknown.
 The reconnect interval begins when the client observes a failed connection, which can be later
 than the actual interruption, and ends at the target's resubscription acknowledgement.

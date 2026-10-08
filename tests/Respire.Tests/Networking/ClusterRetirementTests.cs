@@ -32,7 +32,7 @@ public class ClusterRetirementTests
         var command = new AdmissionCallbackCommand(() => accepted++);
         var wrapper = typeof(RespireConnection).GetNestedType("PrefixedCommand`2", BindingFlags.NonPublic)!
             .MakeGenericType(typeof(Cmd), typeof(AdmissionCallbackCommand));
-        var prefixed = (IRespCommand)Activator.CreateInstance(wrapper, prefix, command)!;
+        var prefixed = (IRespCommand)Activator.CreateInstance(wrapper, prefix, command, null)!;
 
         prefixed.OnAccepted();
 

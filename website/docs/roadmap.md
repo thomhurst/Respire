@@ -52,6 +52,8 @@ Server and protocol requirements vary by feature; each linked guide describes it
   [probabilistic](guides/probabilistic.md), and [vector-set](guides/vector-sets.md) APIs.
 - [Generated JSON mappers](guides/generated-json-mappers.md) with reflection-free scalar codecs,
   model key templates, and typed RedisJSON document and property operations.
+- [Generated Search schemas](guides/generated-search-schemas.md) for mapped hash and JSON properties,
+  with vector codecs, compile-time diagnostics and a public VectorStore metadata seam.
 
 ### Caching, integration, and testing
 
@@ -59,7 +61,8 @@ Server and protocol requirements vary by feature; each linked guide describes it
   with OPTIN or BCAST/prefix tracking for eligible reads.
 - Typed serialization and custom serializers, with optional [value compression codecs](guides/value-codecs.md).
 - [Dependency injection](integrations/dependency-injection.md),
-  [Microsoft distributed caching and `HybridCache`](integrations/caching.md), including opt-in L1 invalidation, and
+  [Microsoft distributed caching and `HybridCache`](integrations/caching.md), including opt-in L1 key tracking
+  and cross-instance tag invalidation, and
   [OpenTelemetry traces and metrics](integrations/observability.md).
 - An [in-memory testing server](guides/in-memory-testing.md) with controlled expiry and faults,
   [Redis/Valkey container fixtures](guides/testing-containers.md), and a
@@ -79,11 +82,11 @@ acceptance criteria, dependencies, and current status:
 - [Ecosystem integrations](https://github.com/thomhurst/Respire/issues/859): Aspire, ASP.NET Core,
   messaging, caching, and other libraries that currently depend on StackExchange.Redis.
 - [Higher-level capabilities](https://github.com/thomhurst/Respire/issues/860): stream workers,
-  source-generated object mapping, distributed `HybridCache` tag propagation, and field-level caching research.
+  source-generated object mapping and field-level caching research.
   [Generated hash codecs](./guides/generated-hash-codecs) provide scalar model conversion, key templates,
-  Redis hash writes/full reads and explicit partial reads. The remaining
+  Redis hash writes/full reads, explicit partial reads, field TTL and change tracking. The remaining
   [object mapper work](https://github.com/thomhurst/Respire/issues/895) includes
-  field TTL, change tracking, Search, and final AOT/performance acceptance.
+  final AOT/performance acceptance.
 - [Documentation and samples](https://github.com/thomhurst/Respire/issues/861): guides and runnable
   examples for the expanded feature set.
 

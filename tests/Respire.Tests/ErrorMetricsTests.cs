@@ -1553,8 +1553,9 @@ public partial class ErrorMetricsTests
         var policy = RespireReadFrom.PrimaryPreferred;
         var original = await client.Core.ReadRouter.GetConnectionAsync(policy, deadline.Token);
         _ = await client.Core.ReadRouter.GetConnectionAsync(policy, deadline.Token);
-        var held = original.SendCheckedAsync(new RawCommand("*2\r\n$4\r\nPING\r\n$4\r\nhold\r\n"u8.ToArray())).AsTask();
-        var secondHeld = original.SendCheckedAsync(new RawCommand("*2\r\n$4\r\nPING\r\n$4\r\nhold\r\n"u8.ToArray())).AsTask();
+        // The cache-enabled transport admits only protocol commands outside the logical client.
+        var held = original.SendCheckedAsync(new ProtocolCommand<RawCommand>(new("*2\r\n$4\r\nPING\r\n$4\r\nhold\r\n"u8.ToArray()))).AsTask();
+        var secondHeld = original.SendCheckedAsync(new ProtocolCommand<RawCommand>(new("*2\r\n$4\r\nPING\r\n$4\r\nhold\r\n"u8.ToArray()))).AsTask();
         await heldWritten.Task.WaitAsync(deadline.Token);
         using var capture = new Capture(throwOnMeasurement: true, commandMetrics: commandMetrics);
         var view = client.WithReadFrom(policy);

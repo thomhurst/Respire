@@ -319,6 +319,9 @@ internal interface IRespCommand
 
     void OnAccepted() { }
 
+    /// <summary>Explicitly identifies connection-owned protocol setup, rather than application data dispatch.</summary>
+    bool IsConnectionProtocol => false;
+
     /// <summary>Retains cache mutation ownership through native FIFO response retirement.</summary>
     ClientSideCacheCoordinator.MutationFence GetMutationFence() => default;
 
@@ -333,6 +336,8 @@ internal interface IRespCommand
     int CursorArgumentIndex => -1;
 
     /// <summary>Returns cache mutation metadata for the command.</summary>
+    /// <remarks>An empty operation requests classification from the wire command or an explicit declaration,
+    /// without trusting a diagnostic name. Unclassified commands must remain unknown.</remarks>
     RespireCacheMutation GetCacheMutation(string operation) => RespireCommands.GetCacheMutation(operation);
 
     /// <summary>Returns precomputed cache classification, or conservatively classifies a custom command.</summary>
@@ -388,11 +393,19 @@ internal interface IStreamingRespCommand : IRespCommand
 /// Requires wrappers to choose admission, response cancellation, and acceptance behavior explicitly.
 /// Ordinary commands retain the defaults on <see cref="IRespCommand"/>.
 /// </summary>
-internal interface IRespCommandWrapper : IRespCommand
+internal interface IRespCommandWrapper : IMutationAdmissionCommand
 {
+    new bool IsConnectionProtocol { get; }
+    new RespireCacheMutation GetCacheMutation(string operation);
+    new ClientCacheCommandMetadata GetClientCacheMetadata(string operation);
     new void ValidateAdmission();
     new CancellationToken GetResponseCancellationToken(CancellationToken admissionToken);
     new void OnAccepted();
+}
+
+/// <summary>Explicitly carries a mutation fence; ordinary commands need no boxed default call.</summary>
+internal interface IMutationAdmissionCommand : IRespCommand
+{
     new ClientSideCacheCoordinator.MutationFence GetMutationFence();
 }
 
