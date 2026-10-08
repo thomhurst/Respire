@@ -19,6 +19,9 @@ internal sealed class WriteBuffer
     internal long UnpublishedWriterSequence;
     // Publishing, discarding, or replacing storage invalidates other writers' cached spans.
     internal long WriterMutationVersion;
+
+    // Keep the helper itself out of Release metadata as well as removing its callers.
+    private void InvalidateWriters() => WriterMutationVersion++;
 #endif
 
     public WriteBuffer(int initialCapacity)
@@ -51,7 +54,7 @@ internal sealed class WriteBuffer
         bytes.CopyTo(GetSpan(bytes.Length));
         _count += bytes.Length;
 #if DEBUG
-        WriterMutationVersion++;
+        InvalidateWriters();
 #endif
     }
 
@@ -71,7 +74,7 @@ internal sealed class WriteBuffer
     {
         _count += count;
 #if DEBUG
-        WriterMutationVersion++;
+        InvalidateWriters();
 #endif
     }
 
@@ -109,7 +112,7 @@ internal sealed class WriteBuffer
         _count = 0;
 #if DEBUG
         HasUnpublishedWriterBytes = false;
-        WriterMutationVersion++;
+        InvalidateWriters();
 #endif
     }
 
@@ -124,7 +127,7 @@ internal sealed class WriteBuffer
         _count = position;
 #if DEBUG
         HasUnpublishedWriterBytes = false;
-        WriterMutationVersion++;
+        InvalidateWriters();
 #endif
     }
 
@@ -143,7 +146,7 @@ internal sealed class WriteBuffer
         RespirePools.WriteBuffers.Return(_array);
         _array = newArray;
 #if DEBUG
-        WriterMutationVersion++;
+        InvalidateWriters();
 #endif
     }
 
@@ -154,7 +157,7 @@ internal sealed class WriteBuffer
         _count = 0;
 #if DEBUG
         HasUnpublishedWriterBytes = false;
-        WriterMutationVersion++;
+        InvalidateWriters();
 #endif
         if (array.Length > 0)
         {

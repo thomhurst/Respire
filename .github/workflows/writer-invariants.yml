@@ -10,6 +10,7 @@ on:
       - 'tests/Respire.Tests/Protocol/**'
       - 'tests/Respire.Tests/Networking/CommandCatalogTests.cs'
       - '.github/workflows/writer-invariants.yml'
+      - '.github/writer-invariants-minimum.txt'
 
 permissions:
   contents: read
@@ -41,7 +42,8 @@ jobs:
         run: >-
           dotnet run --project tests/Respire.Tests -c Debug -f net10.0 --
           --treenode-filter '/*/*/(WriterInvariantTests)|(ReservedWriterTests)|(CommandCatalogTests)|(RespWriterTests)|(CommandWriterTests)|(Utf8SuffixWriterTests)|(RespFramingTests)/*'
-          --minimum-expected-tests 502 --report-trx --results-directory writer-invariants
+          --minimum-expected-tests ([int](Get-Content -LiteralPath .github/writer-invariants-minimum.txt))
+          --report-trx --results-directory writer-invariants
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:

@@ -410,7 +410,8 @@ jobs:
         run: >-
           dotnet run --project tests/Respire.Tests -c Debug -f net8.0 --no-build --
           --treenode-filter '/*/*/(WriterInvariantTests)|(ReservedWriterTests)|(CommandCatalogTests)|(RespWriterTests)|(CommandWriterTests)|(Utf8SuffixWriterTests)|(RespFramingTests)/*'
-          --minimum-expected-tests 502 --report-trx --results-directory writer-invariants-net8.0
+          --minimum-expected-tests "$(cat .github/writer-invariants-minimum.txt)"
+          --report-trx --results-directory writer-invariants-net8.0
 
       - name: Upload net8.0 writer invariant results
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
