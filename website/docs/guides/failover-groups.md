@@ -19,6 +19,15 @@ before opening. Recovery waits for the monotonic `OpenDuration` and admits at mo
 failed probe reopens the circuit. Canceled or ignored probes release capacity
 without counting as successes or failures.
 
+Every admitted operation must complete its internal permit, including cancellation,
+exceptions, and operations that never dispatch. Permits have no lease or automatic
+expiry: abandoning a half-open permit retains its slot indefinitely and can prevent
+recovery. The dispatch integration in [#1255](https://github.com/thomhurst/Respire/issues/1255)
+must guard every admission with `finally` or a `using`-style completion guard, and
+complete canceled or undispatched operations with the ignored outcome. Operation
+timeouts and cancellation belong to that integration; `OpenDuration` only controls
+the delay before recovery starts, not the lifetime of an admitted probe.
+
 The rejection contract identifies the endpoint and remaining `RetryAfter` delay.
 `RetryAfter` is null when recovery probes fill the slots and their completion
 determines the next admission. This delay is informational; a retry must reacquire

@@ -2,6 +2,9 @@ namespace Respire.Internal;
 
 internal enum EndpointCircuitState { Closed, Open, HalfOpen }
 internal enum CircuitOutcome { Success, Failure, Ignored }
+// Every acquired permit must be completed by its owner, including cancellation and exceptions.
+// Dispatch must guard completion with finally/using; permits have no lease or automatic expiry.
+// An abandoned half-open permit retains capacity and can prevent recovery indefinitely.
 internal readonly record struct CircuitPermit(EndpointCircuitBreaker? Owner, long Generation, int ProbeSlot, long PermitId,
     EndpointCircuitBreaker.CompletionTicket? Ticket = null);
 internal readonly record struct CircuitSnapshot(EndpointCircuitState State, int SampleCount, int FailureCount, int ActiveProbes, int SuccessfulProbes);
@@ -92,6 +95,9 @@ internal sealed class EndpointCircuitBreaker
         }
     }
 
+    // Required for every successful TryAcquire. Call from a finally/using guard after admission;
+    // use Ignored for cancellation or an operation that never dispatches. Complete releases probe
+    // capacity; elapsed time alone never reclaims an incomplete permit.
     public void Complete(ref CircuitPermit permit, CircuitOutcome outcome)
     {
         if (outcome is not (CircuitOutcome.Success or CircuitOutcome.Failure or CircuitOutcome.Ignored))
