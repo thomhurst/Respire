@@ -305,7 +305,10 @@ public sealed class GatheredSetTests
             Protocol = RespProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
             Endpoints = [new("127.0.0.1", server.Port)],
             CommandTimeout = boundary == "deadline" ? TimeSpan.FromMilliseconds(250) : null,
-            ConnectionIdleReadTimeout = TimeSpan.FromSeconds(1),
+            // A resumed 5 MiB copied send can remain pending while Linux drains it, especially
+            // under coverage. Give that positive control a finite drain budget; stalled-peer
+            // controls retain the short timeout that proves prompt ownership release.
+            ConnectionIdleReadTimeout = TimeSpan.FromSeconds(boundary == "resume" ? 5 : 1),
         });
         var connection = client.Core.Multiplexer.GetConnection();
         var socket = (Socket)typeof(RespireConnection).GetField("_socket", BindingFlags.Instance | BindingFlags.NonPublic)!
@@ -324,6 +327,8 @@ public sealed class GatheredSetTests
         var pending = client.SetAsync("queued-borrowed", (RespireValue)payload,
             cancellationToken: cancellation.Token).AsTask();
         await Assert.That(connection.CaptureTimeoutDiagnostics().PendingWriteBytes > payload.Length).IsTrue();
+        await Assert.That(ReadBorrowedWatch(connection).Buffers).IsEqualTo(1);
+        await Assert.That(ReadBorrowedWatch(connection).Timestamp != 0).IsTrue();
         if (boundary == "cancel") await cancellation.CancelAsync();
         try
         {
@@ -334,7 +339,10 @@ public sealed class GatheredSetTests
                 await copied.WaitAsync(guard.Token);
                 await Assert.That(server.ReceivedArguments[0][2].All(value => value == 0)).IsTrue();
                 await Assert.That(server.ReceivedArguments[1][2].All(value => value == (byte)'a')).IsTrue();
-                await Task.Delay(TimeSpan.FromMilliseconds(1200), guard.Token);
+                // Both write owners have finished. Inspect the quiescent watch directly rather
+                // than making successful drainage depend on a one-second scheduling budget.
+                await Assert.That(ReadBorrowedWatch(connection).Buffers).IsEqualTo(0);
+                await Assert.That(ReadBorrowedWatch(connection).Timestamp).IsEqualTo(0);
                 await Assert.That(connection.IsConnected).IsTrue();
                 await Assert.That(await client.SetAsync("following", "small", cancellationToken: guard.Token)).IsTrue();
                 return;
@@ -356,6 +364,15 @@ public sealed class GatheredSetTests
             try { await copied; } catch (RespireException) { }
             reads.TrySetResult();
         }
+    }
+
+    private static (int Buffers, long Timestamp) ReadBorrowedWatch(RespireConnection connection)
+    {
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var progress = typeof(RespireConnection).GetField("_flushProgress", flags)!.GetValue(connection)!;
+        var type = progress.GetType();
+        return ((int)type.GetField("GatheredWriteBufferCount", flags)!.GetValue(progress)!,
+            (long)type.GetField("GatheredWriteDeadlineTimestamp", flags)!.GetValue(progress)!);
     }
 
     [Test]
