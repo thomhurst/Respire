@@ -12,6 +12,50 @@ namespace Respire.SignalR.Tests;
 public class SubscriptionLifetimeTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CancelledInvocationRetainsTokenAndRejectsLateCompletion(bool alreadyCancelled)
+    {
+        var results = new ClientResultsManager();
+        using var cancellation = new CancellationTokenSource();
+        if (alreadyCancelled) cancellation.Cancel();
+        var pending = results.AddInvocation<int>("connection", "id", cancellation.Token);
+        cancellation.Cancel();
+        var error = await Assert.That(async () => await pending).Throws<OperationCanceledException>();
+        await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
+        await Assert.That(pending.IsCanceled).IsTrue();
+        await Assert.That(results.TryGetType("id", out _)).IsFalse();
+        await Assert.That(results.RemoveInvocation("id").HasValue).IsFalse();
+        await results.TryCompleteResult("connection", CompletionMessage.WithResult("id", 1));
+        var next = results.AddInvocation<int>("connection", "next", CancellationToken.None);
+        await results.TryCompleteResult("connection", CompletionMessage.WithResult("next", 2));
+        await Assert.That(await next).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task CompletionBeforeRegistrationCannotCancelReusedInvocation()
+    {
+        var results = new ClientResultsManager();
+        using var cancellation = new CancellationTokenSource();
+        var first = new ClientResultsManager.TaskCompletionSourceWithCancellation<int>(
+            results, "connection", "id", cancellation.Token);
+        results.AddInvocation("id", (typeof(int), "connection", first, static (owner, message) =>
+        {
+            ((ClientResultsManager.TaskCompletionSourceWithCancellation<int>)owner).SetResult((int)message.Result!);
+            return Task.CompletedTask;
+        }));
+        await results.TryCompleteResult("connection", CompletionMessage.WithResult("id", 1));
+        await Assert.That(await first.Task).IsEqualTo(1);
+        first.RegisterCancellation();
+        var next = results.AddInvocation<int>("connection", "id", CancellationToken.None);
+        cancellation.Cancel();
+        await Assert.That(next.IsCompleted).IsFalse();
+        await Assert.That(results.TryGetType("id", out _)).IsTrue();
+        await results.TryCompleteResult("connection", CompletionMessage.WithResult("id", 2));
+        await Assert.That(await next).IsEqualTo(2);
+    }
+
+    [Test]
     public async Task ForwardedCompletionIsAwaitedAndOwnedOnce()
     {
         var results = new ClientResultsManager();

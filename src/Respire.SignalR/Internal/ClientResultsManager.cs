@@ -62,7 +62,7 @@ internal sealed class ClientResultsManager : IInvocationBinder
             // if false the connection disconnected right after the above TryGetValue
             // or someone else completed the invocation (likely a bad client)
             // we'll ignore both cases
-            if (_pendingInvocations.Remove(message.InvocationId!, out _))
+            if (_pendingInvocations.TryRemove(new(message.InvocationId!, item)))
             {
                 return item.Complete(item.Tcs, message);
             }
@@ -77,6 +77,13 @@ internal sealed class ClientResultsManager : IInvocationBinder
     public (Type Type, string ConnectionId, object Tcs, Func<object, CompletionMessage, Task> Completion)? RemoveInvocation(string invocationId)
     {
         return _pendingInvocations.TryRemove(invocationId, out var item) ? item : null;
+    }
+
+    private bool RemoveInvocation(string invocationId, string connectionId, object owner)
+    {
+        return _pendingInvocations.TryGetValue(invocationId, out var item)
+            && item.ConnectionId == connectionId && ReferenceEquals(item.Tcs, owner)
+            && _pendingInvocations.TryRemove(new(invocationId, item));
     }
 
     internal async Task CompleteAllAsync()
@@ -127,8 +134,9 @@ internal sealed class ClientResultsManager : IInvocationBinder
         private readonly string _connectionId;
         private readonly string _invocationId;
         private readonly CancellationToken _token;
-
+        private readonly Lock _gate = new();
         private CancellationTokenRegistration _tokenRegistration;
+        private bool _completed;
 
         public TaskCompletionSourceWithCancellation(ClientResultsManager clientResultsManager, string connectionId, string invocationId,
             CancellationToken cancellationToken)
@@ -144,35 +152,63 @@ internal sealed class ClientResultsManager : IInvocationBinder
         // not canceling when the dictionary hasn't been updated yet.
         public void RegisterCancellation()
         {
-            if (_token.CanBeCanceled)
+            if (!_token.CanBeCanceled) return;
+            lock (_gate)
             {
-                _tokenRegistration = _token.UnsafeRegister(static o =>
-                {
-                    var tcs = (TaskCompletionSourceWithCancellation<T>)o!;
-                    tcs.SetCanceled();
-                }, this);
+                if (_completed) return;
             }
+
+            var registration = _token.UnsafeRegister(static o =>
+            {
+                var tcs = (TaskCompletionSourceWithCancellation<T>)o!;
+                tcs.SetCanceled();
+            }, this);
+            lock (_gate)
+            {
+                if (!_completed)
+                {
+                    _tokenRegistration = registration;
+                    return;
+                }
+            }
+            // Completion can run before UnsafeRegister returns, including synchronous cancellation.
+            registration.Dispose();
         }
 
         public new void SetCanceled()
         {
             // Microsoft's wire protocol carries no cancellation notification. The
             // receiving Respire server bounds its separate owner with RemoteClientResultTimeout.
-            // Typed cancellation completion is synchronous; forwarding callbacks are not registered here.
-            _clientResultsManager.TryCompleteResult(_connectionId, CompletionMessage.WithError(_invocationId, "Invocation canceled by the server."))
-                .GetAwaiter().GetResult();
+            if (_clientResultsManager.RemoveInvocation(_invocationId, _connectionId, this))
+            {
+                DisposeCancellationRegistration();
+                base.SetCanceled(_token);
+            }
         }
 
         public new void SetResult(T result)
         {
-            _tokenRegistration.Dispose();
+            DisposeCancellationRegistration();
             base.SetResult(result);
         }
 
         public new void SetException(Exception exception)
         {
-            _tokenRegistration.Dispose();
+            DisposeCancellationRegistration();
             base.SetException(exception);
+        }
+
+        private void DisposeCancellationRegistration()
+        {
+            CancellationTokenRegistration registration;
+            lock (_gate)
+            {
+                _completed = true;
+                registration = _tokenRegistration;
+                _tokenRegistration = default;
+            }
+            // Dispose can wait for the callback; never hold the gate while joining it.
+            registration.Dispose();
         }
 
 #pragma warning disable IDE0060 // Remove unused parameter

@@ -379,6 +379,7 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
     }
 
     /// <inheritdoc/>
+    /// <remarks>Caller cancellation cancels the returned task with the caller's token. Remote result state expires independently on the receiving server.</remarks>
     public override async Task<T> InvokeConnectionAsync<T>(string connectionId, string methodName, object?[] args, CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
@@ -415,15 +416,25 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
                 await connection.WriteAsync(message, linkedToken).ConfigureAwait(false);
             }
         }
-        catch
+        catch (Exception error)
         {
             _clientResultsManager.RemoveInvocation(invocationId);
+            if (error is OperationCanceledException) cancellationToken.ThrowIfCancellationRequested();
             throw;
         }
 
         try
         {
             return await task.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            throw;
+        }
+        catch (OperationCanceledException) when (_bus.Stopping.IsCancellationRequested)
+        {
+            throw new HubException("SignalR backplane disposed.");
         }
         catch
         {

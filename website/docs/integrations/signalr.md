@@ -119,7 +119,10 @@ Expiry removes the pending result and disconnect registration, and sends an erro
 when possible. It does not stop the client handler. This also bounds retained state when
 a caller cancels, disappears, or uses Microsoft's provider, whose compatible envelope has
 no cancellation notification. An originating wait still needs its own deadline if the
-error completion is lost or the receiver uses Microsoft's provider.
+error completion is lost or the receiver uses Microsoft's provider. Caller cancellation
+on a Respire origin cancels the invocation task with the original caller token, including
+after publication. Late completions are ignored. Remote state remains bounded by the
+receiver timeout because the compatible envelope carries no cancellation notification.
 [Ordinary Cluster `PUBLISH`](https://redis.io/docs/latest/commands/publish/) reports only
 node-local receiver counts, so zero receivers cannot establish that a remote client is
 missing. Standalone and sharded sends can detect a missing subscriber immediately.

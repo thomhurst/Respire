@@ -30,6 +30,26 @@ public class BackplaneIntegrationTests(RedisTestContainer fixture)
     [Test]
     [Arguments(false)]
     [Arguments(true)]
+    public async Task AlreadyCancelledClientResultRetainsCallerToken(bool local)
+    {
+        var prefix = Guid.NewGuid().ToString("N");
+        await using var first = await BackplaneHost.StartAsync(fixture.ConnectionString, prefix, false, false);
+        await using var second = await BackplaneHost.StartAsync(fixture.ConnectionString, prefix, false, false);
+        await using var client = await (local ? first : second).ConnectAsync("client", false);
+        using var answer = client.Connection.On("answer", [], static (_, _) => Task.FromResult<object?>(7), null!);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var pending = first.Manager.InvokeConnectionAsync<int>(client.Id, "answer", [], cancellation.Token);
+        var error = await Assert.That(async () => await pending).Throws<OperationCanceledException>();
+        await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
+        await Assert.That(pending.IsCanceled).IsTrue();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await Assert.That(await first.Manager.InvokeConnectionAsync<int>(client.Id, "answer", [], deadline.Token)).IsEqualTo(7);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
     public async Task CallerCancellationCannotRetainRemoteResultState(bool microsoftCaller)
     {
         var prefix = Guid.NewGuid().ToString("N");
@@ -48,7 +68,14 @@ public class BackplaneIntegrationTests(RedisTestContainer fixture)
             await entered.Task.WaitAsync(deadline.Token);
             await Assert.That(PendingClientResults(second.Manager)).IsEqualTo(1);
             cancellation.Cancel();
-            await Assert.That(async () => await pending).Throws<Exception>();
+            if (microsoftCaller)
+                await Assert.That(async () => await pending).ThrowsExactly<HubException>();
+            else
+            {
+                var error = await Assert.That(async () => await pending).Throws<OperationCanceledException>();
+                await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
+                await Assert.That(pending.IsCanceled).IsTrue();
+            }
             // The client handler remains blocked and connected. Only receiver expiry can retire this owner.
             while (PendingClientResults(second.Manager) != 0)
                 await Task.Delay(10, deadline.Token);
@@ -241,7 +268,9 @@ public class BackplaneIntegrationTests(RedisTestContainer fixture)
         {
             await entered.Task.WaitAsync(deadline.Token);
             cancellation.Cancel();
-            await Assert.That(async () => await pending).ThrowsExactly<HubException>();
+            var cancelled = await Assert.That(async () => await pending).Throws<OperationCanceledException>();
+            await Assert.That(cancelled!.CancellationToken).IsEqualTo(cancellation.Token);
+            await Assert.That(pending.IsCanceled).IsTrue();
         }
         finally { cancellation.Cancel(); release.TrySetResult(99); }
         using var answer = remote.Connection.On("answer", [], static (_, _) => Task.FromResult<object?>(7), null!);
