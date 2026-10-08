@@ -6,7 +6,7 @@ namespace Respire.Networking;
 /// <summary>One reusable vector send, owned exclusively by a buffer's persistent sender.</summary>
 internal sealed class GatheredSocketSend : SocketAsyncEventArgs, IValueTaskSource<int>
 {
-    private ManualResetValueTaskSourceCore<int> _core = new() { RunContinuationsAsynchronously = true };
+    private ManualResetValueTaskSourceCore<int> _core;
 
     internal ValueTask<int> SendAsync(Socket socket, List<ArraySegment<byte>> segments)
     {
@@ -30,6 +30,8 @@ internal sealed class GatheredSocketSend : SocketAsyncEventArgs, IValueTaskSourc
 
     protected override void OnCompleted(SocketAsyncEventArgs e)
     {
+        // Only the persistent sender awaits this source. Resume that internal pump directly;
+        // the write lease separately queues public continuations away from the sender.
         if (SocketError == SocketError.Success) _core.SetResult(BytesTransferred);
         else _core.SetException(new SocketException((int)SocketError));
     }

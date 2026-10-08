@@ -62,10 +62,10 @@ internal readonly struct GatheredSetCommand(SetCommand command, ArraySegment<byt
 }
 
 /// <summary>Bounded pooled ownership barrier shared by redirect attempts of one public SET.</summary>
-internal sealed class GatheredSetWriteLease : IValueTaskSource<bool>
+internal sealed class GatheredSetWriteLease : IValueTaskSource<bool>, IThreadPoolWorkItem
 {
     private static readonly ObjectPool<GatheredSetWriteLease, PoolPolicy> Pool = new(4096);
-    private ManualResetValueTaskSourceCore<bool> _core = new() { RunContinuationsAsynchronously = true };
+    private ManualResetValueTaskSourceCore<bool> _core;
     private int _references;
 
     internal static GatheredSetWriteLease Rent()
@@ -79,13 +79,20 @@ internal sealed class GatheredSetWriteLease : IValueTaskSource<bool>
 
     internal void ReleaseWrite()
     {
-        if (Interlocked.Decrement(ref _references) == 0) _core.SetResult(true);
+        // The persistent sender must never run a public continuation. Queue the lease
+        // itself instead of letting the value-task core allocate a dispatch callback.
+        if (Interlocked.Decrement(ref _references) == 0)
+            ThreadPool.UnsafeQueueUserWorkItem(this, preferLocal: false);
     }
+
+    void IThreadPoolWorkItem.Execute() => _core.SetResult(true);
 
     internal ValueTask<bool> FinishOperation()
     {
         var pending = new ValueTask<bool>(this, _core.Version);
-        ReleaseWrite();
+        // No awaiter can be attached to this newly created task yet. If all writes
+        // already finished, publish synchronously without another worker dispatch.
+        if (Interlocked.Decrement(ref _references) == 0) _core.SetResult(true);
         return pending;
     }
 

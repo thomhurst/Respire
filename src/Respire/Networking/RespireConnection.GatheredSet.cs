@@ -9,7 +9,8 @@ internal sealed partial class RespireConnection
 {
     private bool TryEnqueueGathered(in GatheredSetCommand command, PendingResponse source,
         CommandDeadline deadline, out bool startedBatch, out Task? writeTask, bool trackWrite,
-        int discardRepliesBefore, bool retainRepliesBefore, string? discardedOperation)
+        int discardRepliesBefore, bool retainRepliesBefore, string? discardedOperation,
+        CommandWriteObservation? writeObservation = null)
     {
         startedBatch = false;
         writeTask = null;
@@ -22,7 +23,7 @@ internal sealed partial class RespireConnection
             if (!_activeBuffer.PrepareBorrowedPayload())
                 return TryEnqueueDirect(in command, command.GetWriteSizeHint(), source, deadline,
                     out startedBatch, out writeTask, trackWrite, discardRepliesBefore, retainRepliesBefore,
-                    discardedOperation);
+                    discardedOperation, writeObservation);
 
             var mark = _activeBuffer.Count;
             startedBatch = mark == 0 && _inflight.Count == 0;
@@ -44,6 +45,7 @@ internal sealed partial class RespireConnection
             _activeBuffer.AddBorrowedPayload(offset, command.Payload, command.Lease);
             if (_responseTimeout is not null) _activeReplyCount += discardRepliesBefore + 1;
             var start = StampWritePosition(source, frameLength);
+            writeObservation?.RecordQueued(this, start, _producerProgress.EnqueuedBytes);
             StampDeadline(source, deadline);
             for (var index = 0; index < discardRepliesBefore; index++)
                 _inflight.TryEnqueue(retainRepliesBefore ? source : InflightRing.DiscardSentinel, start);

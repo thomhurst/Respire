@@ -14,6 +14,34 @@ namespace Respire.Tests.Networking;
 public sealed class GatheredSetTests
 {
     [Test]
+    public async Task FinalWriteReleaseNeverRunsTheCallerOnTheSenderThread()
+    {
+        var lease = GatheredSetWriteLease.Rent();
+        lease.RetainWrite();
+        var completion = lease.FinishOperation().ConfigureAwait(false).GetAwaiter();
+        var resumed = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        completion.UnsafeOnCompleted(() =>
+        {
+            try
+            {
+                completion.GetResult();
+                resumed.TrySetResult(Environment.CurrentManagedThreadId);
+            }
+            catch (Exception error) { resumed.TrySetException(error); }
+        });
+        var senderId = 0;
+        var sender = new Thread(() =>
+        {
+            senderId = Environment.CurrentManagedThreadId;
+            lease.ReleaseWrite();
+        });
+        sender.Start();
+        var resumedId = await resumed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(sender.Join(TimeSpan.FromSeconds(5))).IsTrue();
+        await Assert.That(resumedId).IsNotEqualTo(senderId);
+    }
+
+    [Test]
     [Arguments("true", true)]
     [Arguments("false", true)]
     [Arguments("error", true)]

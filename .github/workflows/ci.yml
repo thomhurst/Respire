@@ -404,7 +404,7 @@ jobs:
         run: >-
           dotnet run --project tests/Respire.Tests -c Release -f net8.0 --no-build --
           --treenode-filter '/*/*/CommandWriteOutcomeTests/*'
-          --minimum-expected-tests 33
+          --minimum-expected-tests 35
           --report-trx --results-directory command-write-outcomes-net8
 
       - name: Upload command write outcome regressions (net8.0)
@@ -421,7 +421,7 @@ jobs:
         run: >-
           dotnet run --project tests/Respire.Tests -c Release -f net8.0 --no-build --
           --treenode-filter '/*/*/GatheredSetTests/*'
-          --minimum-expected-tests 32
+          --minimum-expected-tests 33
 
       - name: Upload standalone replica regression report (net8.0)
         if: always()

@@ -1710,7 +1710,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             var gathered = Unsafe.As<TCommand, GatheredSetCommand>(ref Unsafe.AsRef(in command));
             return TryEnqueueGathered(in gathered, source, commandDeadline, out startedBatch,
-                out writeTask, trackWrite, discardRepliesBefore, retainRepliesBefore, discardedOperation);
+                out writeTask, trackWrite, discardRepliesBefore, retainRepliesBefore, discardedOperation, writeObservation);
         }
         if (writeSizeHint > ScratchRetainLimit)
         {
