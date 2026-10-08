@@ -1,4 +1,6 @@
 using System.Runtime.CompilerServices;
+using System.Net.Sockets;
+using Respire.Commands;
 
 namespace Respire.Networking;
 
@@ -12,6 +14,85 @@ internal sealed class WriteBuffer
     private byte[] _array;
     private int _count;
     private TaskCompletionSource? _writeCompletion;
+    private List<BorrowedPayload>? _borrowedPayloads;
+    private List<ArraySegment<byte>>? _sendSegments;
+    private GatheredSocketSend? _gatheredSend;
+    private readonly record struct BorrowedPayload(int Offset, ArraySegment<byte> Payload, GatheredSetWriteLease Lease);
+
+    internal bool HasBorrowedPayloads => _borrowedPayloads is { Count: > 0 };
+
+    internal ValueTask<int> SendSegmentsAsync(Socket socket, List<ArraySegment<byte>> segments)
+        => (_gatheredSend ??= new()).SendAsync(socket, segments);
+
+    // Bound descriptor retention and syscall vector size independently of the command limit.
+    internal bool PrepareBorrowedPayload()
+    {
+        var payloads = _borrowedPayloads ??= new(4);
+        if (payloads.Count == 256) return false;
+        payloads.EnsureCapacity(payloads.Count + 1);
+        return true;
+    }
+
+    internal void AddBorrowedPayload(int offset, ArraySegment<byte> payload, GatheredSetWriteLease lease)
+    {
+        lease.RetainWrite();
+        _borrowedPayloads!.Add(new(offset, payload, lease));
+    }
+
+    /// <summary>Builds at most sixteen ordered buffers; the sender alone advances this cursor.</summary>
+    internal List<ArraySegment<byte>> GetSendSegments(ref int part)
+    {
+#if DEBUG
+        if (_writerGuard.HasUnpublishedBytes)
+            throw new InvalidOperationException("Complete or roll back the RESP writer before consuming its buffer.");
+#endif
+        var segments = _sendSegments ??= new(16);
+        segments.Clear();
+        var payloads = _borrowedPayloads!;
+        while (part <= payloads.Count * 2 && segments.Count < 16)
+        {
+            var index = part / 2;
+            ArraySegment<byte> segment;
+            if ((part & 1) != 0) segment = payloads[index].Payload;
+            else
+            {
+                var start = index == 0 ? 0 : payloads[index - 1].Offset;
+                var end = index == payloads.Count ? _count : payloads[index].Offset;
+                segment = new(_array, start, end - start);
+            }
+            part++;
+            if (segment.Count != 0) segments.Add(segment);
+        }
+        return segments;
+    }
+
+    /// <summary>Consumes actual socket progress without losing an unsent suffix of any segment.</summary>
+    internal static void ConsumeSentSegments(List<ArraySegment<byte>> segments, int sent)
+    {
+        while (segments.Count != 0 && sent >= segments[0].Count)
+        {
+            sent -= segments[0].Count;
+            segments.RemoveAt(0);
+        }
+        if (sent != 0)
+        {
+            var first = segments[0];
+            segments[0] = new(first.Array!, first.Offset + sent, first.Count - sent);
+        }
+    }
+
+    private void ReleaseBorrowedPayloads()
+    {
+        _sendSegments?.Clear();
+        if (_borrowedPayloads is not { } payloads) return;
+        for (var index = 0; index < payloads.Count; index++)
+        {
+            var lease = payloads[index].Lease;
+            payloads[index] = default;
+            lease.ReleaseWrite();
+        }
+        payloads.Clear();
+    }
 #if DEBUG
     private WriterGuard _writerGuard;
 
@@ -31,6 +112,7 @@ internal sealed class WriteBuffer
         _array = RespirePools.WriteBuffers.Rent(initialCapacity);
     }
 
+    /// <summary>Bytes in this buffer's owned array; gathered payloads have separate storage.</summary>
     public int Count => _count;
 
     public int Capacity => _array.Length;
@@ -40,6 +122,8 @@ internal sealed class WriteBuffer
         get
         {
 #if DEBUG
+            if (HasBorrowedPayloads)
+                throw new InvalidOperationException("Gathered payloads require the ordered send segments.");
             if (_writerGuard.HasUnpublishedBytes)
                 throw new InvalidOperationException("Complete or roll back the RESP writer before consuming its buffer.");
 #endif
@@ -111,6 +195,7 @@ internal sealed class WriteBuffer
 
     public void Reset()
     {
+        ReleaseBorrowedPayloads();
         _count = 0;
 #if DEBUG
         _writerGuard.MarkPublished();
@@ -118,10 +203,17 @@ internal sealed class WriteBuffer
 #endif
     }
 
-    public void CompleteWrite() => Interlocked.Exchange(ref _writeCompletion, null)?.TrySetResult();
+    public void CompleteWrite()
+    {
+        ReleaseBorrowedPayloads();
+        Interlocked.Exchange(ref _writeCompletion, null)?.TrySetResult();
+    }
 
     public void FailWrite(Exception exception)
-        => Interlocked.Exchange(ref _writeCompletion, null)?.TrySetException(exception);
+    {
+        ReleaseBorrowedPayloads();
+        Interlocked.Exchange(ref _writeCompletion, null)?.TrySetException(exception);
+    }
 
     /// <summary>Truncates back to a marked position (used to undo a partially written command).</summary>
     public void TruncateTo(int position)
@@ -154,6 +246,9 @@ internal sealed class WriteBuffer
 
     public void Release()
     {
+        ReleaseBorrowedPayloads();
+        _gatheredSend?.Dispose();
+        _gatheredSend = null;
         var array = _array;
         _array = [];
         _count = 0;

@@ -1704,6 +1704,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         var writeSizeHint = command.GetWriteSizeHint();
+        if (_stream is null && writeSizeHint > 0 && typeof(TCommand) == typeof(GatheredSetCommand))
+        {
+            var gathered = Unsafe.As<TCommand, GatheredSetCommand>(ref Unsafe.AsRef(in command));
+            return TryEnqueueGathered(in gathered, source, commandDeadline, out startedBatch,
+                out writeTask, trackWrite, discardRepliesBefore, retainRepliesBefore, discardedOperation);
+        }
         if (writeSizeHint > ScratchRetainLimit)
         {
             return TryEnqueueDirect(
@@ -2313,8 +2319,14 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     }
 
                     // Never cancelled: a partial RESP frame on the wire is unrecoverable.
-                    var memory = sending.WrittenMemory;
-                    if (_stream is null)
+                    var memory = sending.HasBorrowedPayloads ? ReadOnlyMemory<byte>.Empty : sending.WrittenMemory;
+                    if (sending.HasBorrowedPayloads)
+                    {
+                        var pending = SendGatheredBufferAsync(sending);
+                        if (!pending.IsCompletedSuccessfully) synchronousBatches = -1;
+                        await pending.ConfigureAwait(false);
+                    }
+                    else if (_stream is null)
                     {
                         while (memory.Length > 0)
                         {

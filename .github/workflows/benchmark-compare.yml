@@ -55,6 +55,10 @@ on:
         description: Comma-separated snapshot stages required in every phase
         default: before-connect,connected-idle,after-dispose
         type: string
+      large-set-stress:
+        description: Require bounded public 5 MiB SET stress counters in every phase
+        default: false
+        type: boolean
       job:
         description: BenchmarkDotNet measurement preset (Short, Default, or Medium)
         default: Medium
@@ -99,6 +103,7 @@ jobs:
       FRAMEWORK: ${{ matrix.framework }}
       RETAINED_MEMORY: ${{ inputs.retained-memory }}
       RETAINED_MEMORY_STAGES: ${{ inputs.retained-memory-stages }}
+      LARGE_SET_STRESS: ${{ inputs.large-set-stress }}
     steps:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
@@ -243,6 +248,25 @@ jobs:
                           assert all(isinstance(item[field], int) and item[field] >= 0 for item in samples)
                           values.append(str(int(statistics.median(item[field] for item in samples))))
                       lines.append(f"| {phase} | {stage} | {len(samples)} | {' | '.join(values)} |")
+          if os.environ.get('LARGE_SET_STRESS', 'false').lower() == 'true':
+              lines.extend(['', '## Bounded public SET stress', '',
+                            'Each fixture process sends 64 public 5 MiB SET commands between the connected and after-sustained snapshots. Counts exclude forced snapshot collections. Review every raw sample and retention stage before accepting performance.', '',
+                            '| Phase | Samples | Gen2 collections (min / median / max) | Allocated bytes (min / median / max) |',
+                            '| --- | ---: | ---: | ---: |'])
+              for phase in ('baseline-validation', 'candidate-validation', 'baseline-a', 'candidate', 'baseline-b'):
+                  samples = [json.loads(line.removeprefix('LARGE_SET_STRESS '))
+                             for line in Path(f'{phase}.log').read_text().splitlines()
+                             if line.startswith('LARGE_SET_STRESS ')]
+                  assert len(samples) >= expected_count, f'Missing SET stress counters: {phase}'
+                  for item in samples:
+                      assert item['operations'] == 64 and item['payloadBytes'] == 5 * 1024 * 1024
+                      assert all(type(item[field]) is int and item[field] >= 0
+                                 for field in ('gen2Collections', 'allocatedBytes'))
+                  values = []
+                  for field in ('gen2Collections', 'allocatedBytes'):
+                      counts = [item[field] for item in samples]
+                      values.append(f'{min(counts)} / {int(statistics.median(counts))} / {max(counts)}')
+                  lines.append(f"| {phase} | {len(samples)} | {' | '.join(values)} |")
           summary = '\n'.join(lines) + '\n'
           Path('comparison.md').write_text(summary)
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as stream:

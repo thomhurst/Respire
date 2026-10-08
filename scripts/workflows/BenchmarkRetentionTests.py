@@ -13,7 +13,8 @@ STAGES = ('before-connect', 'connected-idle', 'after-first-reuse', 'after-dispos
 
 
 class BenchmarkRetentionTests(unittest.TestCase):
-    def run_summary(self, missing=None, invalid=None, stages=STAGES):
+    def run_summary(self, missing=None, invalid=None, stages=STAGES, stress=False,
+                    missing_stress=None, invalid_stress=None):
         workflow = Path(__file__).resolve().parents[2] / '.github/workflows/benchmark-compare.yml'
         section = workflow.read_text().split('      - name: Require complete results and summarize both controls\n')[1]
         script = section.split('        run: |\n')[1].split('      - uses:')[0]
@@ -41,6 +42,12 @@ class BenchmarkRetentionTests(unittest.TestCase):
                             if invalid == (phase, stage):
                                 snapshot['managedBytes'] = -1
                             snapshots.append('RECEIVE_MEMORY ' + json.dumps(snapshot))
+                        if stress and phase != missing_stress:
+                            counters = {'operations': 64, 'payloadBytes': 5 * 1024 * 1024,
+                                        'gen2Collections': 0, 'allocatedBytes': 64}
+                            if invalid_stress and phase == invalid_stress[0]:
+                                counters[invalid_stress[1]] = invalid_stress[2]
+                            snapshots.append('LARGE_SET_STRESS ' + json.dumps(counters))
                 report = root / 'results' / phase / 'results'
                 report.mkdir(parents=True)
                 (report / 'Publication-report-full-compressed.json').write_text(json.dumps({'Benchmarks': cases}))
@@ -51,6 +58,7 @@ class BenchmarkRetentionTests(unittest.TestCase):
                                HEAD_SHA='c' * 40, BASE_SHA='b' * 40, EXPECTED_HEAD_SHA='h' * 40,
                                EVENT_BASE_SHA='b' * 40, RETAINED_MEMORY='true',
                                RETAINED_MEMORY_STAGES=','.join(stages), GITHUB_STEP_SUMMARY=str(root / 'step.md'))
+            environment['LARGE_SET_STRESS'] = str(stress).lower()
             result = subprocess.run([sys.executable, 'summary.py'], cwd=root, env=environment,
                                     capture_output=True, text=True)
             summary = root / 'comparison.md'
@@ -78,6 +86,26 @@ class BenchmarkRetentionTests(unittest.TestCase):
         result, summary = self.run_summary(missing=('candidate', 'after-first-reuse'), stages=stages)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn('| after-first-reuse |', summary)
+
+    def test_bounded_set_stress_is_reported_for_every_phase(self):
+        result, summary = self.run_summary(stress=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for phase in PHASES:
+            self.assertIn(f'| {phase} | 6 | 0 / 0 / 0 | 64 / 64 / 64 |', summary)
+
+    def test_missing_set_stress_in_any_phase_is_rejected(self):
+        for phase in PHASES:
+            with self.subTest(phase=phase):
+                result, _ = self.run_summary(stress=True, missing_stress=phase)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(f'Missing SET stress counters: {phase}', result.stderr)
+
+    def test_invalid_set_stress_counters_are_rejected(self):
+        for field, value in (('operations', 63), ('payloadBytes', 1024),
+                             ('gen2Collections', -1), ('allocatedBytes', True)):
+            with self.subTest(field=field):
+                result, _ = self.run_summary(stress=True, invalid_stress=('candidate', field, value))
+                self.assertNotEqual(result.returncode, 0)
 
 
 if __name__ == '__main__':

@@ -899,6 +899,19 @@ internal readonly struct SetCommand(
 
     public void Write(ref RespWriter writer)
     {
+        WritePrefix(ref writer);
+        value.WriteTo(ref writer);
+        WriteOptions(ref writer);
+    }
+
+    internal void WriteGatherHeader(ref RespWriter writer, int payloadLength)
+    {
+        WritePrefix(ref writer);
+        writer.WriteBulkStringHeader(payloadLength);
+    }
+
+    private void WritePrefix(ref RespWriter writer)
+    {
         ValidateExpiry(expiry);
         ValidateWhen(when);
 
@@ -909,8 +922,10 @@ internal readonly struct SetCommand(
         writer.WriteArrayHeader(count);
         writer.WriteRaw(Verbs.Set.Bulk);
         key.WriteTo(ref writer);
-        value.WriteTo(ref writer);
+    }
 
+    internal void WriteOptions(ref RespWriter writer)
+    {
         if (expiry.TryGetRelativeMilliseconds(out var milliseconds))
         {
             writer.WriteRaw(CommandOptionFrames.PX);

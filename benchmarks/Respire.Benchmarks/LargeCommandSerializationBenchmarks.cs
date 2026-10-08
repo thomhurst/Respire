@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Text.Json;
 using BenchmarkDotNet.Attributes;
 using DotNet.Testcontainers.Containers;
 using Testcontainers.Redis;
@@ -26,6 +28,7 @@ public class LargeCommandSerializationBenchmarks
     [GlobalSetup]
     public async Task Setup()
     {
+        ReportMemory("before-connect");
         var host = Environment.GetEnvironmentVariable("REDIS_HOST");
         var port = int.TryParse(Environment.GetEnvironmentVariable("REDIS_PORT"), out var configuredPort)
             ? configuredPort : 6379;
@@ -47,6 +50,19 @@ public class LargeCommandSerializationBenchmarks
         if (await LargeThenSmallPipeline() != SmallPipelineLength
             || await ConcurrentSmallSetPipelines() != Concurrency * WorkerPipelineLength)
             throw new InvalidOperationException("Large/small pipelines lost replies.");
+        ReportMemory("connected-idle");
+        // A bounded, real public-command workload records GC/retention separately from BDN timing.
+        // Take collection counts after the snapshot's forced collections and before the next snapshot.
+        var gen2 = GC.CollectionCount(2);
+        var allocated = GC.GetTotalAllocatedBytes(precise: true);
+        for (var index = 0; index < 64; index++) await Set5MiB();
+        Console.WriteLine("LARGE_SET_STRESS " + JsonSerializer.Serialize(new
+        {
+            operations = 64, payloadBytes = 5 * 1024 * 1024,
+            gen2Collections = GC.CollectionCount(2) - gen2,
+            allocatedBytes = GC.GetTotalAllocatedBytes(precise: true) - allocated,
+        }));
+        ReportMemory("after-sustained");
     }
 
     [Benchmark]
@@ -57,6 +73,14 @@ public class LargeCommandSerializationBenchmarks
 
     [Benchmark]
     public ValueTask<bool> Set5MiB() => SetChecked(_fiveMiB);
+
+    /// <summary>A bounded sustained public SET workload, normalized per command.</summary>
+    [Benchmark(OperationsPerInvoke = 32)]
+    public async ValueTask<int> SustainedSet5MiB()
+    {
+        for (var index = 0; index < 32; index++) await Set5MiB();
+        return 32;
+    }
 
     private async ValueTask<bool> SetChecked(RespireValue value)
     {
@@ -99,7 +123,26 @@ public class LargeCommandSerializationBenchmarks
     [GlobalCleanup]
     public async Task Cleanup()
     {
-        if (_client is not null) await _client.DisposeAsync();
-        if (_container is not null) await _container.DisposeAsync();
+        if (_client is not null) { await _client.DisposeAsync(); _client = null!; }
+        if (_container is not null) { await _container.DisposeAsync(); _container = null; }
+        Array.Clear(_pings);
+        foreach (var pending in _pending) Array.Clear(pending);
+        Array.Clear(_workers);
+        ReportMemory("after-dispose");
+    }
+
+    private static void ReportMemory(string stage)
+    {
+        GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
+        GC.WaitForPendingFinalizers();
+        GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
+        var info = GC.GetGCMemoryInfo();
+        using var process = Process.GetCurrentProcess();
+        Console.WriteLine("RECEIVE_MEMORY " + JsonSerializer.Serialize(new
+        {
+            stage, managedBytes = GC.GetTotalMemory(false), pohBytes = info.GenerationInfo[4].SizeAfterBytes,
+            pohFragmentedBytes = info.GenerationInfo[4].FragmentationAfterBytes,
+            workingSetBytes = process.WorkingSet64,
+        }));
     }
 }

@@ -73,7 +73,12 @@ await redis.SetAsync("visits", 1);
 long visits = await redis.IncrementAsync("visits");
 ```
 
-For large binary values, stream the payload without building a payload-sized command buffer:
+Large array-backed binary values can be sent directly from caller memory on plain socket connections.
+Keep the input unchanged until `SetAsync` completes, including cancellation, timeout, or failure.
+Cancellation and command deadlines can wait for an accepted socket write to finish before the
+operation returns. TLS, custom streams, and unsupported command shapes retain the copying path.
+
+For large binary values held in a stream, stream the payload without building a payload-sized command buffer:
 
 ```csharp
 await using var file = File.OpenRead("archive.bin");
