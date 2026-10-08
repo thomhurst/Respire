@@ -1,4 +1,5 @@
 using System.Net.Sockets;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using Respire.Commands;
 
@@ -51,20 +52,54 @@ internal sealed partial class RespireConnection
 #endif
     private async ValueTask SendGatheredBufferAsync(WriteBuffer buffer)
     {
-        var part = 0;
-        while (true)
+        var watchWrite = _responseTimeout is not null;
+        if (watchWrite) SetGatheredWriteDeadline(Stopwatch.GetTimestamp());
+        try
         {
-            var segments = buffer.GetSendSegments(ref part);
-            if (segments.Count == 0) return;
-            while (segments.Count != 0)
+            var part = 0;
+            while (true)
             {
-                // No cancellation: even a cancelled response cannot abandon an open RESP frame.
-                // Abort closes the socket; the lease is released only after this send has returned.
-                var sent = await buffer.SendSegmentsAsync(_socket!, segments).ConfigureAwait(false);
-                if (sent <= 0) throw new IOException("Socket closed during gathered SET write.");
-                RecordWrite(sent);
-                WriteBuffer.ConsumeSentSegments(segments, sent);
+                var segments = buffer.GetSendSegments(ref part);
+                if (segments.Count == 0) return;
+                while (segments.Count != 0)
+                {
+                    // Response cancellation cannot abandon an open RESP frame. When configured,
+                    // the connection watchdog bounds stalled writes by closing the whole socket.
+                    // The lease is released only after this kernel send has returned.
+                    var sent = await buffer.SendSegmentsAsync(_socket!, segments).ConfigureAwait(false);
+                    if (sent <= 0) throw new IOException("Socket closed during gathered SET write.");
+                    RecordWrite(sent);
+                    if (watchWrite) SetGatheredWriteDeadline(Stopwatch.GetTimestamp());
+                    WriteBuffer.ConsumeSentSegments(segments, sent);
+                }
             }
         }
+        finally { if (watchWrite) SetGatheredWriteDeadline(0); }
+    }
+
+    private void SetGatheredWriteDeadline(long timestamp)
+    {
+        // Clearing or advancing progress cannot race the watchdog's terminal decision.
+        // This gate is used only when the existing watchdog is configured.
+        lock (_receiveDeadlineGate) Volatile.Write(ref _flushProgress.GatheredWriteDeadlineTimestamp, timestamp);
+    }
+
+    private bool TryAbortStalledGatheredWrite(TimeSpan timeout)
+    {
+        var timestamp = Volatile.Read(ref _flushProgress.GatheredWriteDeadlineTimestamp);
+        if (timestamp == 0 || Stopwatch.GetElapsedTime(timestamp) < timeout) return false;
+        bool closed;
+        lock (_receiveDeadlineGate)
+        {
+            var effectiveTimeout = MaintenanceTimeout(timeout, Environment.TickCount64, out _, out _);
+            if (timestamp != _flushProgress.GatheredWriteDeadlineTimestamp
+                || Volatile.Read(ref _responseTimeoutSuppressions) != 0
+                || Stopwatch.GetElapsedTime(timestamp) < effectiveTimeout) return false;
+            closed = Abort(new RespireConnectionException(
+                $"Connection to {Host}:{Port} gathered SET write made no progress for {effectiveTimeout}."),
+                publishConnectionMetrics: false);
+        }
+        if (closed) _connectionMetrics?.Closed(_abortReason, Volatile.Read(ref _peerClosed));
+        return closed;
     }
 }

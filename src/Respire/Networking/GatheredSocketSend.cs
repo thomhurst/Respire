@@ -36,6 +36,8 @@ internal sealed class GatheredSocketSend : SocketAsyncEventArgs, IValueTaskSourc
 
     int IValueTaskSource<int>.GetResult(short token)
     {
+        // One persistent sender awaits each send once; no concurrent or copied awaiters may
+        // consume this reusable source before BufferList is cleared and its version advances.
         if (_core.GetStatus(token) == ValueTaskSourceStatus.Pending)
             throw new InvalidOperationException("The gathered socket send has not completed.");
         try { return _core.GetResult(token); }

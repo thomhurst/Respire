@@ -118,6 +118,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         // Protected by _writeGate. Includes every byte in a selected send buffer, even before
         // an ambiguous socket/TLS write has reported any successful progress.
         [FieldOffset(80)] internal long ClaimedWriteEnd;
+        [FieldOffset(88)] internal long GatheredWriteDeadlineTimestamp;
     }
 
     [StructLayout(LayoutKind.Explicit, Size = 128)]
@@ -3381,6 +3382,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     await DelayWatchdogAsync(timeout, cancellationToken).ConfigureAwait(false);
                     continue;
                 }
+
+                if (TryAbortStalledGatheredWrite(timeout)) return;
 
                 var deadlineStart = Volatile.Read(ref _receiveProgress.DeadlineTimestamp);
                 if (deadlineStart == 0)

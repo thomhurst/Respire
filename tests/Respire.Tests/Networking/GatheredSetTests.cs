@@ -71,15 +71,15 @@ public sealed class GatheredSetTests
             Endpoints = [new("127.0.0.1", server.Port)],
             CommandTimeout = boundary == "deadline" ? TimeSpan.FromMilliseconds(500) : null,
         });
-        var peer = await (Task<Socket>)server.ConnectionAccepted;
-        peer.ReceiveBufferSize = 1024;
+        await server.ConnectionAccepted;
         var connection = client.Core.Multiplexer.GetConnection();
         var initialCapacity = connection.WriteBufferCapacity;
         // Configure only this fixture's real socket, without adding a production testing hook.
         var socket = (Socket)typeof(RespireConnection).GetField("_socket", BindingFlags.Instance | BindingFlags.NonPublic)!
             .GetValue(connection)!;
-        // Windows loopback can buffer a whole frame despite a tiny send buffer. Disable that
-        // buffering and require an outstanding kernel send before triggering each boundary.
+        // Disable this socket's send buffering and require an outstanding kernel send.
+        // Keep the peer's normal receive window: shrinking it after connect clamps Linux TCP
+        // and can make draining a resumed 5 MiB frame exceed the guard without any ownership bug.
         socket.SendBufferSize = 0;
         var payload = new byte[5 * 1024 * 1024];
         payload.AsSpan().Fill((byte)'a');
@@ -102,7 +102,6 @@ public sealed class GatheredSetTests
             Console.WriteLine($"GATHER_WRITE_BOUNDARY {boundary}: pending write bytes {remaining}");
             await Assert.That(remaining > 0).IsTrue();
             await Assert.That(pending.IsCompleted).IsFalse();
-            peer.ReceiveBufferSize = 1024 * 1024;
             reads.TrySetResult();
             if (boundary == "cancel")
                 await Assert.That(async () => await pending.WaitAsync(guard.Token)).Throws<OperationCanceledException>();
@@ -124,6 +123,79 @@ public sealed class GatheredSetTests
             payload.AsSpan().Fill((byte)'b');
         }
         reads.TrySetResult();
+    }
+
+    [Test]
+    [Arguments("cancel")]
+    [Arguments("deadline")]
+    [Arguments("watchdog")]
+    [NotInParallel]
+    public async Task ConfiguredWatchdogReleasesBorrowedMemoryWhenPeerNeverResumes(string boundary)
+    {
+        var reads = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(FakeRespServer.OkReply) { ReadGate = reads.Task };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            CommandTimeout = boundary == "deadline" ? TimeSpan.FromMilliseconds(250) : null,
+            ConnectionIdleReadTimeout = TimeSpan.FromSeconds(1),
+        });
+        var connection = client.Core.Multiplexer.GetConnection();
+        var socket = (Socket)typeof(RespireConnection).GetField("_socket", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(connection)!;
+        socket.SendBufferSize = 0;
+        var payload = Enumerable.Repeat((byte)'a', 5 * 1024 * 1024).ToArray();
+        using var cancellation = new CancellationTokenSource();
+        using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var pending = client.SetAsync("never-resumed", (RespireValue)payload,
+            cancellationToken: cancellation.Token).AsTask();
+        while (connection.CaptureTimeoutDiagnostics().InflightBytes == 0 || socket.Poll(0, SelectMode.SelectWrite))
+        {
+            if (pending.IsCompleted) await pending;
+            await Task.Delay(1, guard.Token);
+        }
+        await Assert.That(connection.CaptureTimeoutDiagnostics().PendingWriteBytes > 0).IsTrue();
+        if (boundary == "cancel") await cancellation.CancelAsync();
+        if (boundary is "cancel" or "deadline")
+        {
+            await WaitForNativeCompletionAsync(connection, guard.Token);
+            await Assert.That(pending.IsCompleted).IsFalse();
+        }
+        if (boundary == "cancel")
+            await Assert.That(async () => await pending.WaitAsync(guard.Token)).Throws<OperationCanceledException>();
+        else if (boundary == "deadline")
+            await Assert.That(async () => await pending.WaitAsync(guard.Token)).Throws<RespireTimeoutException>();
+        else
+            await Assert.That(async () => await pending.WaitAsync(guard.Token)).Throws<RespireConnectionException>();
+        await Assert.That(connection.IsConnected).IsFalse();
+        await Assert.That(server.CommandsSeen).IsEqualTo(0);
+        // Completion is observable while the peer remains parked: every kernel send reference
+        // has ended before this caller reuses its array. A partial frame cannot be reused.
+        payload.AsSpan().Fill((byte)'b');
+        reads.TrySetResult();
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task CompletedBorrowedWriteDoesNotLeaveAnIdleWatchdogArmed()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            ConnectionIdleReadTimeout = TimeSpan.FromMilliseconds(200), CommandTimeout = null,
+        });
+        var connection = client.Core.Multiplexer.GetConnection();
+        using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await Assert.That(await client.SetAsync("complete", new byte[512 * 1024],
+            cancellationToken: guard.Token)).IsTrue();
+        // Cover multiple real watchdog scans after both the write and its reply have completed.
+        await Task.Delay(600, guard.Token);
+        await Assert.That(connection.IsConnected).IsTrue();
+        await Assert.That(await client.SetAsync("following", "small", cancellationToken: guard.Token)).IsTrue();
+        await Assert.That(server.ReceivedCommands[1]).IsEqualTo("SET following small");
     }
 
     [Test]

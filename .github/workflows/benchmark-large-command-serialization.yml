@@ -26,5 +26,4 @@ jobs:
       retained-memory: true
       retained-memory-stages: before-connect,connected-idle,after-sustained,after-dispose
       large-set-stress: true
-      redis-server: true
       artifact-prefix: large-command-serialization-comparison

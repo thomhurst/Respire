@@ -75,6 +75,9 @@ public partial interface IStringCommands
     /// Keep binary input unchanged until the returned operation completes, including exceptional
     /// completion. Large array-backed values can be sent directly from caller memory. Cancellation
     /// and command deadlines may therefore wait for an accepted socket write to finish.
+    /// Configure <see cref="RespireOptions.ConnectionIdleReadTimeout"/> to abort a borrowed socket
+    /// write that makes no completed send progress. With that watchdog disabled, caller completion
+    /// can wait until the peer resumes reading, the socket fails, or the client is disposed.
     /// </remarks>
     ValueTask<bool> SetAsync(
         RespireKey key,

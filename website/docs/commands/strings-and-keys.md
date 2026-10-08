@@ -77,6 +77,13 @@ Large array-backed binary values can be sent directly from caller memory on plai
 Keep the input unchanged until `SetAsync` completes, including cancellation, timeout, or failure.
 Cancellation and command deadlines can wait for an accepted socket write to finish before the
 operation returns. TLS, custom streams, and unsupported command shapes retain the copying path.
+Set `ConnectionIdleReadTimeout` to bound a stalled borrowed write: when no completed socket send
+makes progress for that period, the connection watchdog closes the socket and waits for the
+kernel send to release caller memory before completing the operation. The connection is then
+discarded; other pending commands on it can fail, and Redis may have received part or all of
+the SET. Cancellation alone does not abort an accepted frame. With this watchdog disabled
+(the default), a peer that never resumes reading can retain the operation until the socket
+fails or the client is disposed, even after response cancellation or a command deadline.
 
 For large binary values held in a stream, stream the payload without building a payload-sized command buffer:
 
