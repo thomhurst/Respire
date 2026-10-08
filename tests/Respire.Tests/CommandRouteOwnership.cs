@@ -59,7 +59,10 @@ internal static class CommandRouteOwnership
             return (file.File, Root: root);
         }).ToArray();
         var publicTypes = roots.SelectMany(file => file.Root.DescendantNodes().OfType<TypeDeclarationSyntax>())
-            .Where(type => type.Modifiers.Any(SyntaxKind.PublicKeyword))
+            .Where(type => type.Modifiers.Any(SyntaxKind.PublicKeyword)
+                || (type.Parent is InterfaceDeclarationSyntax && !type.Modifiers.Any(token =>
+                    token.IsKind(SyntaxKind.PrivateKeyword) || token.IsKind(SyntaxKind.InternalKeyword)
+                    || token.IsKind(SyntaxKind.ProtectedKeyword))))
             .Select(TypeId).ToHashSet(StringComparer.Ordinal);
         var typesById = roots.SelectMany(file => file.Root.DescendantNodes().OfType<TypeDeclarationSyntax>())
             .GroupBy(TypeId).ToDictionary(g => g.Key, g => g.ToArray(), StringComparer.Ordinal);

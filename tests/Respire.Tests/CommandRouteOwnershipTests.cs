@@ -66,6 +66,60 @@ public class CommandRouteOwnershipTests
     }
 
     [Test]
+    public async Task ImplicitlyPublicNestedInterfaceRequiresExecutableOwner()
+    {
+        var source = CommandRouteOwnership.Discover([("fixture.cs", """
+            public interface Outer { interface Commands { ValueTask RunAsync(); } }
+            internal class Owner : Outer.Commands { public ValueTask RunAsync() => default; }
+            """)]);
+        var inventory = new CommandRouteOwnership.Inventory([
+            new("Outer.Commands", "Owner", ["RunAsync():ValueTask"], Contract: "Own calls through completion.")], []);
+        foreach (var framework in new[] { "net8.0", "net10.0" })
+        {
+            await Assert.That(CommandRouteOwnership.Validate(source, new([], [])))
+                .Contains("Undeclared public route: Outer.Commands.RunAsync():ValueTask [" + framework + "]");
+            await Assert.That(CommandRouteOwnership.Validate(source.Where(m => m.Type != "Owner").ToArray(), inventory))
+                .Contains("Missing final owner: Outer.Commands.RunAsync():ValueTask => Owner.RunAsync():ValueTask [" + framework + "]");
+        }
+        await Assert.That(CommandRouteOwnership.Validate(source, inventory)).IsEmpty();
+    }
+
+    [Test]
+    [Arguments("interface", "")]
+    [Arguments("class", "public")]
+    [Arguments("struct", "public")]
+    [Arguments("record", "public")]
+    [Arguments("record struct", "public")]
+    public async Task TypesNestedInPublicInterfacesDefaultToPublic(string kind, string methodVisibility)
+    {
+        var source = CommandRouteOwnership.Discover([("fixture.cs", "public interface Outer { interface Middle { "
+            + kind + " Commands { " + methodVisibility + " ValueTask RunAsync() => default; } } }")]);
+        await Assert.That(source.All(m => m.PublicRoute)).IsTrue();
+        foreach (var framework in new[] { "net8.0", "net10.0" })
+            await Assert.That(CommandRouteOwnership.Validate(source, new([], [])))
+                .Contains("Undeclared public route: Outer.Middle.Commands.RunAsync():ValueTask [" + framework + "]");
+        var inventory = new CommandRouteOwnership.Inventory([
+            new("Outer.Middle.Commands", "Outer.Middle.Commands", ["RunAsync():ValueTask"], Contract: "Own calls through completion.")], []);
+        await Assert.That(CommandRouteOwnership.Validate(source, inventory)).IsEmpty();
+    }
+
+    [Test]
+    [Arguments("public interface", "private")]
+    [Arguments("public interface", "internal")]
+    [Arguments("public interface", "protected")]
+    [Arguments("public interface", "private protected")]
+    [Arguments("public interface", "protected internal")]
+    [Arguments("internal interface", "")]
+    [Arguments("public class", "")]
+    public async Task NonPublicNestedTypesDoNotBecomePublicRoutes(string outer, string nestedVisibility)
+    {
+        var source = CommandRouteOwnership.Discover([("fixture.cs", outer + " Outer { " + nestedVisibility
+            + " interface Commands { ValueTask RunAsync() => default; } }")]);
+        await Assert.That(source.All(m => !m.PublicRoute)).IsTrue();
+        await Assert.That(CommandRouteOwnership.Validate(source, new([], []))).IsEmpty();
+    }
+
+    [Test]
     [Arguments("", "ICommands<T>", "Respire")]
     [Arguments("using Respire;", "ICommands<T>", "Implementation")]
     [Arguments("using Root = Respire;", "Root.ICommands<T>", "Implementation")]
