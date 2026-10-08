@@ -259,6 +259,10 @@ public class GeneratedHashMutationTests
         await Assert.That(async () => await pending).Throws<RespireTimeoutException>();
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { "COMMAND INFO HPEXPIRE" });
 
+        await tracker.UpdateAsync(first);
+        await tracker.UpdateAsync(first);
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { "COMMAND INFO HPEXPIRE" });
+
         server.SuppressReply = null;
         // Fan-out disposes its dedicated inspection connection after the timeout.
         await tracker.UpdateAsync(next);
@@ -268,6 +272,26 @@ public class GeneratedHashMutationTests
             "COMMAND INFO HPEXPIRE", "COMMAND INFO HPEXPIRE",
             "HSET expiring:x Token new", "HPEXPIRE expiring:x 10000 FIELDS 1 Token",
         });
+    }
+
+    [Test]
+    [Arguments(1)]
+    [Arguments(2)]
+    public async Task UnsupportedCapabilityKeepsRevertedBaselineNoOp(int connections)
+    {
+        await using var server = new FakeRespServer(connections + 3, "*1\r\n$-1\r\n"u8.ToArray());
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = connections,
+        });
+        var first = new ExpiringHashModel("x", "name", "old", null);
+        var tracker = ExpiringHashModelHashMapper.Track(client, first, RespireHashExpiryMode.HSetThenExpire);
+        await Assert.That(async () => await tracker.UpdateAsync(first with { Token = "new" })).Throws<NotSupportedException>();
+        await tracker.UpdateAsync(first);
+        await tracker.UpdateAsync(first);
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { "COMMAND INFO HPEXPIRE" });
     }
 
     [Test]

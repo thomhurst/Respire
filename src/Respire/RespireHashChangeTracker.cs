@@ -81,9 +81,10 @@ public sealed class RespireHashChangeTracker<T> where T : class
                     // A command timeout abandons only the response wait. No retry through this
                     // client can prove that an accepted write on another connection has settled.
                     if (writeStarted && error is RespireTimeoutException { IsCommandNotSubmitted: false }) _writeTimedOut = true;
-                    // Some commands may have applied. Resend these fields even if the caller
-                    // reverts to the old baseline, so partially applied values can be corrected.
-                    foreach (var field in changed) _retryFields.Add(field);
+                    // Read-only preflight failures cannot change the hash. Preserve any earlier
+                    // retry fields, but retain this delta only when writes may have applied.
+                    if (writeStarted)
+                        foreach (var field in changed) _retryFields.Add(field);
                     throw;
                 }
             }
