@@ -70,9 +70,11 @@ public sealed partial class RespireClient
     /// <summary>
     /// Fences the connection that carried an uncertain lock command without letting a fence
     /// failure replace the caller's original error. A failure is logged, because the latent
-    /// command may still run after the caller has treated ownership as lost.
+    /// command may still run after the caller has treated ownership as lost. The borrowed
+    /// observation reports the swallowed fence failure as internally handled.
     /// </summary>
-    internal async ValueTask TryFenceLockConnectionAsync(TrackedConnectionIdentity identity, string operation)
+    internal async ValueTask TryFenceLockConnectionAsync(TrackedConnectionIdentity identity, string operation,
+        RespireTelemetry.ErrorObservation observation)
     {
         try
         {
@@ -80,6 +82,7 @@ public sealed partial class RespireClient
         }
         catch (Exception error)
         {
+            observation.Handled(error);
             _core.Logger?.NativeLockFenceFailed(identity.ServerClientId, identity.Endpoint, operation, error);
         }
     }

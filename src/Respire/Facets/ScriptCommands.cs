@@ -206,9 +206,15 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         ReadOnlySpan<RespireValue> args,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(script);
-        var tail = client.BuildScriptTailFromSpans(keys, args);
-        return client.ExecuteScriptAsync(script, tail, cancellationToken);
+        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        RespireValue[] tail;
+        try
+        {
+            ArgumentNullException.ThrowIfNull(script);
+            tail = client.BuildScriptTailFromSpans(keys, args);
+        }
+        catch (Exception error) { observation.Final(error); observation.Dispose(); throw; }
+        return client.ExecuteScriptAsync(script, tail, cancellationToken, observation);
     }
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
@@ -216,29 +222,33 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
     public ValueTask<T?> ExecuteAsync<T>(
         RespireScript script, RespireKey[]? keys = null, RespireValue[]? args = null,
         CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(script);
-        var tail = client.BuildScriptTail(keys, args);
-        return client.ExecuteScriptConvertedAsync(script, tail, cancellationToken, static result => result.As<T>());
-    }
+        => ExecuteConvertedAsync(script, keys, args, cancellationToken, static result => result.As<T>());
 
     public ValueTask<long> ExecuteIntegerAsync(
         RespireScript script, RespireKey[]? keys = null, RespireValue[]? args = null,
         CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(script);
-        var tail = client.BuildScriptTail(keys, args);
-        return client.ExecuteScriptConvertedAsync(script, tail, cancellationToken, static result => result.AsInteger());
-    }
+        => ExecuteConvertedAsync(script, keys, args, cancellationToken, static result => result.AsInteger());
 
     public ValueTask<string?> ExecuteStringAsync(
         RespireScript script, RespireKey[]? keys = null, RespireValue[]? args = null,
         CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(script);
-        var tail = client.BuildScriptTail(keys, args);
-        return client.ExecuteScriptConvertedAsync(script, tail, cancellationToken,
+        => ExecuteConvertedAsync(script, keys, args, cancellationToken,
             static result => result.IsNull ? null : result.AsString());
+
+    // The SCRIPT owner starts before argument preflight and transfers into converted execution.
+    private ValueTask<TResult> ExecuteConvertedAsync<TResult>(
+        RespireScript script, RespireKey[]? keys, RespireValue[]? args,
+        CancellationToken cancellationToken, Func<RespireResult, TResult> convert)
+    {
+        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        RespireValue[] tail;
+        try
+        {
+            ArgumentNullException.ThrowIfNull(script);
+            tail = client.BuildScriptTail(keys, args);
+        }
+        catch (Exception error) { observation.Final(error); observation.Dispose(); throw; }
+        return client.ExecuteScriptConvertedAsync(script, tail, cancellationToken, convert, observation);
     }
 
     public ValueTask<bool[]> ExistsAsync(params ReadOnlySpan<string> sha1s)

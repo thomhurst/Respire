@@ -3,6 +3,7 @@ using System.Buffers.Text;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using Respire.Commands;
+using Respire.Internal;
 using Respire.Protocol;
 
 namespace Respire;
@@ -909,12 +910,26 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
             "XINFO CONSUMERS", new Cmd2(XInfoConsumers, client.Key(in key), group), cancellationToken, this,
             static (StreamCommands _, in RespValue value) => ParseConsumerInfo(in value));
 
+    // Iterator preflight runs on the first MoveNextAsync, before any page conversion owns errors.
+    private RespireValue ResolveGroupReadKey(in RespireKey key, int batchSize)
+    {
+        try
+        {
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batchSize);
+            return client.Key(in key);
+        }
+        catch (Exception error)
+        {
+            RespireTelemetry.RecordError(error, internallyHandled: false);
+            throw;
+        }
+    }
+
     public async IAsyncEnumerable<RespireStreamEntry> ReadGroupAsync(
         RespireKey key, string group, string consumer, int batchSize = 64,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batchSize);
-        var resolvedKey = client.Key(in key);
+        var resolvedKey = ResolveGroupReadKey(in key, batchSize);
         while (!cancellationToken.IsCancellationRequested)
         {
             var entries = await client.ConvertBlockingResponseAsync(
@@ -943,9 +958,9 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
         int batchSize = 64,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batchSize);
         if (startAt is null)
         {
+            // The live iterator performs and observes the same preflight on its first page.
             await foreach (var entry in ReadGroupAsync(key, group, consumer, batchSize, cancellationToken)
                 .ConfigureAwait(false))
             {
@@ -955,7 +970,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
             yield break;
         }
 
-        var resolvedKey = client.Key(in key);
+        var resolvedKey = ResolveGroupReadKey(in key, batchSize);
         var cursor = startAt.Value;
         while (!cancellationToken.IsCancellationRequested)
         {

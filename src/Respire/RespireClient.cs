@@ -676,17 +676,27 @@ public sealed partial class RespireClient : IRespireClient
         RespireCommandFlags flags,
         CancellationToken cancellationToken)
     {
-        ValidateResultFlags(flags);
-        ValidateCatalogCommand(command);
-        args = PrefixCatalogKeys(command.Name, args);
-
-        var storedProcedureName = StoredProcedureName(command.Name, args);
-        var commandValue = new CatalogCommand(command, args, ValidateClusterRawKeys(command.Name, args));
-        RespValue response;
-        if (_core.Cluster is { } cluster
-            && DynamicCommandRouting.IsClusterWideMutation(command.Name, args))
+        string? storedProcedureName;
+        CatalogCommand commandValue;
+        ClusterRouter? clusterWide = null;
+        try
         {
-            ValidateClusterWideFlags(command.Name, flags);
+            ValidateResultFlags(flags);
+            ValidateCatalogCommand(command);
+            args = PrefixCatalogKeys(command.Name, args);
+            storedProcedureName = StoredProcedureName(command.Name, args);
+            commandValue = new CatalogCommand(command, args, ValidateClusterRawKeys(command.Name, args));
+            if (_core.Cluster is { } router && DynamicCommandRouting.IsClusterWideMutation(command.Name, args))
+            {
+                ValidateClusterWideFlags(command.Name, flags);
+                clusterWide = router;
+            }
+        }
+        catch (Exception error) { RecordExecutePreflightFailure(error); throw; }
+
+        RespValue response;
+        if (clusterWide is { } cluster)
+        {
             response = await SendClusterWideAsync(
                     command.Name, cluster, commandValue, cancellationToken)
                 .ConfigureAwait(false);
@@ -767,20 +777,33 @@ public sealed partial class RespireClient : IRespireClient
         ReadCommandKind readKind = ReadCommandKind.None,
         bool allowReadFrom = false)
     {
-        ValidateResultFlags(flags);
-        var (operation, words, firstArgumentIndex) = ParseRawCommand(command, ref args);
-        var (storedProcedureName, commandValue) = CreateRawCommand(
-            operation, words, firstArgumentIndex, args, cacheMutation, hasExplicitCacheMutation, readKind);
-        var isBlocking = RespireCommand.IsBlocking(
-            operation,
-            RespireCommand.Classify(operation),
-            words.AsSpan(firstArgumentIndex),
-            args);
-        RespValue response;
-        if (_core.Cluster is { } cluster
-            && DynamicCommandRouting.IsClusterWideMutation(operation, args))
+        string operation;
+        string? storedProcedureName;
+        DynamicCommand commandValue;
+        bool isBlocking;
+        ClusterRouter? clusterWide = null;
+        try
         {
-            ValidateClusterWideFlags(operation, flags);
+            ValidateResultFlags(flags);
+            (operation, var words, var firstArgumentIndex) = ParseRawCommand(command, ref args);
+            (storedProcedureName, commandValue) = CreateRawCommand(
+                operation, words, firstArgumentIndex, args, cacheMutation, hasExplicitCacheMutation, readKind);
+            isBlocking = RespireCommand.IsBlocking(
+                operation,
+                RespireCommand.Classify(operation),
+                words.AsSpan(firstArgumentIndex),
+                args);
+            if (_core.Cluster is { } router && DynamicCommandRouting.IsClusterWideMutation(operation, args))
+            {
+                ValidateClusterWideFlags(operation, flags);
+                clusterWide = router;
+            }
+        }
+        catch (Exception error) { RecordExecutePreflightFailure(error); throw; }
+
+        RespValue response;
+        if (clusterWide is { } cluster)
+        {
             response = await SendClusterWideAsync(
                     operation, cluster, commandValue, cancellationToken)
                 .ConfigureAwait(false);
@@ -865,24 +888,37 @@ public sealed partial class RespireClient : IRespireClient
         RespireCommandFlags flags,
         CancellationToken cancellationToken)
     {
-        ValidateResultFlags(flags);
-        var (initialOperation, tokens) = command.Build();
-        var (operation, firstArgumentIndex) = NormalizeInterpolatedOperation(initialOperation, tokens);
-        var arguments = tokens.AsSpan(firstArgumentIndex);
-        var storedProcedureName = StoredProcedureName(operation, arguments);
-        var routingKeyIndex = GetRawRoutingKeyIndex(operation, tokens, firstArgumentIndex);
-        var commandValue = new DynamicCommand(
-            tokens, routingKeyIndex, firstArgumentIndex,
-            readKind: RawCommandDescriptorLookup.GetReadKind(operation, arguments),
-            cursorArgumentIndex: Verb.GetCursorArgumentIndex(operation),
-            cacheMetadata: _core.ClientCache is null ? default : ClientCacheCommandMetadata.Get(operation));
-        var isBlocking = RespireCommand.IsBlocking(
-            operation, RespireCommand.Classify(operation), arguments);
-        RespValue response;
-        if (_core.Cluster is { } cluster
-            && DynamicCommandRouting.IsClusterWideMutation(operation, arguments))
+        string operation;
+        string? storedProcedureName;
+        DynamicCommand commandValue;
+        bool isBlocking;
+        ClusterRouter? clusterWide = null;
+        try
         {
-            ValidateClusterWideFlags(operation, flags);
+            ValidateResultFlags(flags);
+            var (initialOperation, tokens) = command.Build();
+            (operation, var firstArgumentIndex) = NormalizeInterpolatedOperation(initialOperation, tokens);
+            var arguments = tokens.AsSpan(firstArgumentIndex);
+            storedProcedureName = StoredProcedureName(operation, arguments);
+            var routingKeyIndex = GetRawRoutingKeyIndex(operation, tokens, firstArgumentIndex);
+            commandValue = new DynamicCommand(
+                tokens, routingKeyIndex, firstArgumentIndex,
+                readKind: RawCommandDescriptorLookup.GetReadKind(operation, arguments),
+                cursorArgumentIndex: Verb.GetCursorArgumentIndex(operation),
+                cacheMetadata: _core.ClientCache is null ? default : ClientCacheCommandMetadata.Get(operation));
+            isBlocking = RespireCommand.IsBlocking(
+                operation, RespireCommand.Classify(operation), arguments);
+            if (_core.Cluster is { } router && DynamicCommandRouting.IsClusterWideMutation(operation, arguments))
+            {
+                ValidateClusterWideFlags(operation, flags);
+                clusterWide = router;
+            }
+        }
+        catch (Exception error) { RecordExecutePreflightFailure(error); throw; }
+
+        RespValue response;
+        if (clusterWide is { } cluster)
+        {
             response = await SendClusterWideAsync(
                     operation, cluster, commandValue, cancellationToken)
                 .ConfigureAwait(false);
@@ -1061,6 +1097,11 @@ public sealed partial class RespireClient : IRespireClient
            || candidate.EqualsAsciiIgnoreCase("UNBLOCK")
            || candidate.EqualsAsciiIgnoreCase("UNPAUSE");
 
+    // Execute entry points validate and build commands before a send owns final errors.
+    // Each selected send records its own final failure, so preflight records separately.
+    private static void RecordExecutePreflightFailure(Exception error)
+        => RespireTelemetry.RecordError(error, internallyHandled: false);
+
     private static (string Operation, string[] Words, int FirstArgumentIndex) ParseRawCommand(string command, ref RespireValue[] args)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(command);
@@ -1227,12 +1268,12 @@ public sealed partial class RespireClient : IRespireClient
     /// unsubscribes. Redis: SUBSCRIBE.
     /// </summary>
     public ValueTask<RespireSubscription> SubscribeAsync(string channel, CancellationToken cancellationToken = default)
-        => SubscribeAsync(new RespireChannel(channel), cancellationToken);
+        => SubscribeAsync(SubscriptionChannel(channel), cancellationToken);
 
     /// <summary>Subscribes to one channel with per-subscription buffer settings. Redis: SUBSCRIBE.</summary>
     public ValueTask<RespireSubscription> SubscribeAsync(
         string channel, RespireSubscriptionOptions options, CancellationToken cancellationToken)
-        => SubscribeAsync(new RespireChannel(channel), options, cancellationToken);
+        => SubscribeAsync(SubscriptionChannel(channel), options, cancellationToken);
 
     /// <inheritdoc cref="SubscribeAsync(string, CancellationToken)"/>
     public ValueTask<RespireSubscription> SubscribeAsync(params ReadOnlySpan<string> channels)
@@ -1255,12 +1296,12 @@ public sealed partial class RespireClient : IRespireClient
     /// Redis: PSUBSCRIBE.
     /// </summary>
     public ValueTask<RespireSubscription> SubscribePatternAsync(string pattern, CancellationToken cancellationToken = default)
-        => SubscribeAsync(new RespireChannel(pattern).WithKind(SubscriptionKind.Pattern), cancellationToken);
+        => SubscribeAsync(SubscriptionChannel(pattern).WithKind(SubscriptionKind.Pattern), cancellationToken);
 
     /// <summary>Subscribes to one pattern with per-subscription buffer settings. Redis: PSUBSCRIBE.</summary>
     public ValueTask<RespireSubscription> SubscribePatternAsync(
         string pattern, RespireSubscriptionOptions options, CancellationToken cancellationToken)
-        => SubscribeAsync(new RespireChannel(pattern).WithKind(SubscriptionKind.Pattern), options, cancellationToken);
+        => SubscribeAsync(SubscriptionChannel(pattern).WithKind(SubscriptionKind.Pattern), options, cancellationToken);
 
     /// <inheritdoc cref="SubscribePatternAsync(string, CancellationToken)"/>
     public ValueTask<RespireSubscription> SubscribePatternAsync(params ReadOnlySpan<string> patterns)
@@ -1283,12 +1324,12 @@ public sealed partial class RespireClient : IRespireClient
     /// Redis: SSUBSCRIBE.
     /// </summary>
     public ValueTask<RespireSubscription> SubscribeShardedAsync(string channel, CancellationToken cancellationToken = default)
-        => SubscribeAsync(new RespireChannel(channel).WithKind(SubscriptionKind.Sharded), cancellationToken);
+        => SubscribeAsync(SubscriptionChannel(channel).WithKind(SubscriptionKind.Sharded), cancellationToken);
 
     /// <summary>Subscribes to one sharded channel with per-subscription buffer settings. Redis: SSUBSCRIBE.</summary>
     public ValueTask<RespireSubscription> SubscribeShardedAsync(
         string channel, RespireSubscriptionOptions options, CancellationToken cancellationToken)
-        => SubscribeAsync(new RespireChannel(channel).WithKind(SubscriptionKind.Sharded), options, cancellationToken);
+        => SubscribeAsync(SubscriptionChannel(channel).WithKind(SubscriptionKind.Sharded), options, cancellationToken);
 
     /// <inheritdoc cref="SubscribeShardedAsync(string, CancellationToken)"/>
     public ValueTask<RespireSubscription> SubscribeShardedAsync(params ReadOnlySpan<string> channels)
@@ -1378,7 +1419,9 @@ public sealed partial class RespireClient : IRespireClient
         {
             if (channel.Kind != kind)
             {
-                throw new ArgumentException("All targets in one subscription must have the same kind.", nameof(channels));
+                var error = new ArgumentException("All targets in one subscription must have the same kind.", nameof(channels));
+                RecordSubscriptionPreflightFailure(error);
+                throw error;
             }
         }
         return SubscribeCoreAsync(kind, channels.ToArray(), options, cancellationToken);
@@ -1386,12 +1429,12 @@ public sealed partial class RespireClient : IRespireClient
 
     /// <summary>Subscribes to raw bytes using the pattern command family.</summary>
     public ValueTask<RespireSubscription> SubscribePatternAsync(RespireChannel channel, CancellationToken cancellationToken = default)
-        => SubscribeAsync(channel.WithKind(SubscriptionKind.Pattern), cancellationToken);
+        => SubscribeAsync(SubscriptionChannel(channel, SubscriptionKind.Pattern), cancellationToken);
 
     /// <summary>Subscribes to raw bytes with per-subscription buffer settings.</summary>
     public ValueTask<RespireSubscription> SubscribePatternAsync(
         RespireChannel channel, RespireSubscriptionOptions options, CancellationToken cancellationToken)
-        => SubscribeAsync(channel.WithKind(SubscriptionKind.Pattern), options, cancellationToken);
+        => SubscribeAsync(SubscriptionChannel(channel, SubscriptionKind.Pattern), options, cancellationToken);
 
     /// <summary>Subscribes to binary targets using the pattern command family.</summary>
     public ValueTask<RespireSubscription> SubscribePatternAsync(ReadOnlySpan<RespireChannel> channels, CancellationToken cancellationToken)
@@ -1404,12 +1447,12 @@ public sealed partial class RespireClient : IRespireClient
 
     /// <summary>Subscribes to raw bytes using the sharded command family.</summary>
     public ValueTask<RespireSubscription> SubscribeShardedAsync(RespireChannel channel, CancellationToken cancellationToken = default)
-        => SubscribeAsync(channel.WithKind(SubscriptionKind.Sharded), cancellationToken);
+        => SubscribeAsync(SubscriptionChannel(channel, SubscriptionKind.Sharded), cancellationToken);
 
     /// <summary>Subscribes to raw bytes with per-subscription buffer settings.</summary>
     public ValueTask<RespireSubscription> SubscribeShardedAsync(
         RespireChannel channel, RespireSubscriptionOptions options, CancellationToken cancellationToken)
-        => SubscribeAsync(channel.WithKind(SubscriptionKind.Sharded), options, cancellationToken);
+        => SubscribeAsync(SubscriptionChannel(channel, SubscriptionKind.Sharded), options, cancellationToken);
 
     /// <summary>Subscribes to binary targets using the sharded command family.</summary>
     public ValueTask<RespireSubscription> SubscribeShardedAsync(ReadOnlySpan<RespireChannel> channels, CancellationToken cancellationToken)
@@ -1420,24 +1463,49 @@ public sealed partial class RespireClient : IRespireClient
         ReadOnlySpan<RespireChannel> channels, RespireSubscriptionOptions options, CancellationToken cancellationToken)
         => SubscribeCoreAsync(SubscriptionKind.Sharded, MapChannels(channels, SubscriptionKind.Sharded), options, cancellationToken);
 
+    // Channel mapping and validation run before SubscribeCoreAsync starts the activation owner.
+    // Report their caller-visible failures here; the activation never sees these inputs.
+    private static void RecordSubscriptionPreflightFailure(Exception error)
+        => RespireTelemetry.RecordError(error, internallyHandled: false);
+
+    private static RespireChannel SubscriptionChannel(string name)
+    {
+        try { return new RespireChannel(name); }
+        catch (Exception error) { RecordSubscriptionPreflightFailure(error); throw; }
+    }
+
+    private static RespireChannel SubscriptionChannel(RespireChannel channel, SubscriptionKind kind)
+    {
+        try { return channel.WithKind(kind); }
+        catch (Exception error) { RecordSubscriptionPreflightFailure(error); throw; }
+    }
+
     private static RespireChannel[] MapChannels(ReadOnlySpan<RespireChannel> channels, SubscriptionKind kind)
     {
-        var names = channels.ToArray();
-        for (var i = 0; i < names.Length; i++)
+        try
         {
-            names[i] = names[i].WithKind(kind);
+            var names = channels.ToArray();
+            for (var i = 0; i < names.Length; i++)
+            {
+                names[i] = names[i].WithKind(kind);
+            }
+            return names;
         }
-        return names;
+        catch (Exception error) { RecordSubscriptionPreflightFailure(error); throw; }
     }
 
     private static RespireChannel[] MapChannels(ReadOnlySpan<string> names, SubscriptionKind kind)
     {
-        var channels = new RespireChannel[names.Length];
-        for (var i = 0; i < names.Length; i++)
+        try
         {
-            channels[i] = new RespireChannel(names[i]).WithKind(kind);
+            var channels = new RespireChannel[names.Length];
+            for (var i = 0; i < names.Length; i++)
+            {
+                channels[i] = new RespireChannel(names[i]).WithKind(kind);
+            }
+            return channels;
         }
-        return channels;
+        catch (Exception error) { RecordSubscriptionPreflightFailure(error); throw; }
     }
 
     // Batches and transactions

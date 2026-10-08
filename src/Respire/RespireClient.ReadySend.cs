@@ -45,24 +45,65 @@ public sealed partial class RespireClient
             if (observeSelectionErrors) RespireTelemetry.RecordError(error, internallyHandled: false);
             throw;
         }
+        if (mutationFence.IsRequired)
+            return SendReadyMutationAsync<TCommand, TResult, TSend>(connection, operation, in command, cancellationToken, sender,
+                cache!, mutationFence, durationStarted);
         try
         {
-            if (!mutationFence.IsRequired)
-                return sender.Send(connection, operation, in command, cancellationToken, durationStarted);
-            var bound = new MutationCommand<TCommand>(command, mutationFence);
-            return CompleteMutationAsync(sender.Send(connection, operation, in bound, cancellationToken, durationStarted),
-                cache!, mutationFence);
+            return sender.Send(connection, operation, in command, cancellationToken, durationStarted);
         }
         // _core is readonly: this filter observes the same core captured by the caller.
         catch (Exception error) when (_core.Sentinel is not null || durationStarted.MetricEnabled)
         {
-            return CaptureReadySendFailure<TResult>(error, cache, mutationFence);
+            return CaptureReadySendFailure<TResult>(error);
         }
-        catch
+    }
+
+    // A typed source reports in GetResult, while the awaiting fence is still open. The fenced
+    // path lends it an owner instead and reports once, after the logical mutation completes.
+    private static ValueTask<TResult> SendReadyMutationAsync<TCommand, TResult, TSend>(
+        RespireConnection connection, string operation, in TCommand command, CancellationToken cancellationToken,
+        TSend sender, ClientSideCacheCoordinator cache, ClientSideCacheCoordinator.MutationFence mutationFence,
+        RespireTelemetry.OperationStart durationStarted)
+        where TCommand : struct, IRespCommand
+        where TSend : struct, IReadySend<TResult>
+    {
+        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        ValueTask<TResult> response;
+        try
         {
-            if (mutationFence.IsRequired) cache!.CompleteMutation(in mutationFence);
-            throw;
+            response = sender.Send(connection, operation, new MutationCommand<TCommand>(command, mutationFence),
+                cancellationToken, observation, durationStarted);
         }
+        catch (Exception error)
+        {
+            // The async boundary keeps cancellation status, as the former ready-send failure path did.
+            response = ValueTask.FromException<TResult>(error);
+        }
+        return CompleteObservedMutationAsync(response, cache, mutationFence, observation);
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private static async ValueTask<TResult> CompleteObservedMutationAsync<TResult>(
+        ValueTask<TResult> response, ClientSideCacheCoordinator cache,
+        ClientSideCacheCoordinator.MutationFence fence, RespireTelemetry.ErrorObservation observation)
+    {
+        try
+        {
+            TResult result;
+            try { result = await response.ConfigureAwait(false); }
+            catch (Exception error)
+            {
+                cache.CompleteMutation(in fence, false);
+                observation.Final(error);
+                throw;
+            }
+            cache.CompleteMutation(in fence, true);
+            return result;
+        }
+        finally { observation.Dispose(); }
     }
 
     // Constrained value-type dispatch keeps each specialized response source without a delegate or boxing.
@@ -71,6 +112,10 @@ public sealed partial class RespireClient
         bool ObserveDuration { get; }
         ValueTask<TResult> Send<TCommand>(RespireConnection connection, string operation,
             in TCommand command, CancellationToken cancellationToken,
+            RespireTelemetry.OperationStart durationStarted) where TCommand : struct, IRespCommand;
+        // A supplied observation is borrowed: the source records nothing itself.
+        ValueTask<TResult> Send<TCommand>(RespireConnection connection, string operation,
+            in TCommand command, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation,
             RespireTelemetry.OperationStart durationStarted) where TCommand : struct, IRespCommand;
     }
 
@@ -81,6 +126,10 @@ public sealed partial class RespireClient
             in TCommand command, CancellationToken cancellationToken,
             RespireTelemetry.OperationStart durationStarted) where TCommand : struct, IRespCommand
             => client.SendOnConnectionAsync(operation, connection, command, cancellationToken, observation: observation);
+        public ValueTask<RespValue> Send<TCommand>(RespireConnection connection, string operation,
+            in TCommand command, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation borrowed,
+            RespireTelemetry.OperationStart durationStarted) where TCommand : struct, IRespCommand
+            => client.SendOnConnectionAsync(operation, connection, command, cancellationToken, observation: borrowed);
     }
 
     private readonly struct StringReadySend : IReadySend<string?>, IClusterReadySend<string?>
@@ -128,6 +177,11 @@ public sealed partial class RespireClient
             RespireTelemetry.OperationStart durationStarted) where TCommand : struct, IRespCommand
             => connection.SendConvertedAsync(in command, state, converter, transferOwnership, cancellationToken, operation,
                 durationStarted: durationStarted);
+        public ValueTask<TResult> Send<TCommand>(RespireConnection connection, string operation,
+            in TCommand command, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation,
+            RespireTelemetry.OperationStart durationStarted) where TCommand : struct, IRespCommand
+            => connection.SendConvertedAsync(in command, state, converter, transferOwnership, cancellationToken, operation,
+                observation: observation, durationStarted: durationStarted);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]

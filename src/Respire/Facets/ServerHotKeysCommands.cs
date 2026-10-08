@@ -91,11 +91,18 @@ public sealed class RespireHotKeysTracker
     /// <summary>Starts a shared node-local session. Requires AllowAdmin; an active session fails on the server.</summary>
     public async ValueTask StartAsync(RespireHotKeysOptions options, CancellationToken cancellationToken = default)
     {
-        EnsureAdmin("HOTKEYS START");
-        ArgumentNullException.ThrowIfNull(options);
-        var command = options.BuildCommand();
+        // The owner covers handle preflight and transfers into conversion.
+        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        CmdN command;
+        try
+        {
+            EnsureAdmin("HOTKEYS START");
+            ArgumentNullException.ThrowIfNull(options);
+            command = options.BuildCommand();
+        }
+        catch (Exception error) { observation.Final(error); observation.Dispose(); throw; }
         _ = await ConvertAsync("HOTKEYS START", command, cancellationToken,
-            static (RespireHotKeysTracker _, in RespValue reply) => HotKeysParser.Ok(in reply)).ConfigureAwait(false);
+            static (RespireHotKeysTracker _, in RespValue reply) => HotKeysParser.Ok(in reply), observation).ConfigureAwait(false);
     }
 
     /// <summary>Returns owned snapshot maps in server order, or null when no session exists. Does not stop tracking.</summary>
@@ -108,25 +115,35 @@ public sealed class RespireHotKeysTracker
     /// <summary>Stops collection, retaining its data. Requires AllowAdmin; false means no active session.</summary>
     public async ValueTask<bool> StopAsync(CancellationToken cancellationToken = default)
     {
-        EnsureAdmin("HOTKEYS STOP");
+        var observation = AdminObservation("HOTKEYS STOP");
         return await ConvertAsync("HOTKEYS STOP", new Cmd(HotKeysCommands.Stop), cancellationToken,
-            static (RespireHotKeysTracker _, in RespValue reply) => HotKeysParser.Stopped(in reply)).ConfigureAwait(false);
+            static (RespireHotKeysTracker _, in RespValue reply) => HotKeysParser.Stopped(in reply), observation).ConfigureAwait(false);
     }
 
     /// <summary>Releases stopped session data. Requires AllowAdmin; an active session fails on the server.</summary>
     public async ValueTask ResetAsync(CancellationToken cancellationToken = default)
     {
-        EnsureAdmin("HOTKEYS RESET");
+        var observation = AdminObservation("HOTKEYS RESET");
         _ = await ConvertAsync("HOTKEYS RESET", new Cmd(HotKeysCommands.Reset), cancellationToken,
-            static (RespireHotKeysTracker _, in RespValue reply) => HotKeysParser.Ok(in reply)).ConfigureAwait(false);
+            static (RespireHotKeysTracker _, in RespValue reply) => HotKeysParser.Ok(in reply), observation).ConfigureAwait(false);
+    }
+
+    // Starts the final owner before AllowAdmin preflight; conversion takes ownership on success.
+    private RespireTelemetry.ErrorObservation AdminObservation(string operation)
+    {
+        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        try { EnsureAdmin(operation); }
+        catch (Exception error) { observation.Final(error); observation.Dispose(); throw; }
+        return observation;
     }
 
     private ValueTask<TResult> ConvertAsync<TCommand, TResult>(string operation, TCommand command,
-        CancellationToken cancellationToken, ResponseConverter<RespireHotKeysTracker, TResult> converter)
+        CancellationToken cancellationToken, ResponseConverter<RespireHotKeysTracker, TResult> converter,
+        RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
     {
         return _client.ConvertOnConnectionAsync(operation, _connection, command, cancellationToken,
-            this, converter, pinToConnection: false);
+            this, converter, pinToConnection: false, observation: observation);
     }
 
     private void EnsureAdmin(string operation)
