@@ -50,6 +50,8 @@ Server and protocol requirements vary by feature; each linked guide describes it
   with fencing tokens, leases, semaphores, and rate limiting.
 - Typed [JSON](guides/json.md), [Search](guides/search.md), [TimeSeries](guides/timeseries.md),
   [probabilistic](guides/probabilistic.md), and [vector-set](guides/vector-sets.md) APIs.
+- [Generated JSON mappers](guides/generated-json-mappers.md) with reflection-free scalar codecs,
+  model key templates, and typed RedisJSON document and property operations.
 
 ### Caching, integration, and testing
 
@@ -79,7 +81,7 @@ acceptance criteria, dependencies, and current status:
   [Generated hash codecs](./guides/generated-hash-codecs) provide scalar model conversion, key templates,
   Redis hash writes/full reads and explicit partial reads. The remaining
   [object mapper work](https://github.com/thomhurst/Respire/issues/895) includes
-  field TTL, change tracking, JSON, Search, and final AOT/performance acceptance.
+  field TTL, change tracking, Search, and final AOT/performance acceptance.
 - [Documentation and samples](https://github.com/thomhurst/Respire/issues/861): guides and runnable
   examples for the expanded feature set.
 

@@ -15,5 +15,8 @@ public static class DiagnosticIds
     /// <summary>A <c>[RespireHash]</c> model cannot be generated.</summary>
     public const string InvalidGeneratedHash = "RESP004";
 
+    /// <summary>A <c>[RespireJson]</c> model cannot be generated.</summary>
+    public const string InvalidGeneratedJson = "RESP005";
+
     internal const string Category = "Respire";
 }
