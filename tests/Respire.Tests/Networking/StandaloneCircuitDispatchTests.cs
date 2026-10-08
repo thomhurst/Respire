@@ -17,6 +17,88 @@ namespace Respire.Tests.Networking;
 public class StandaloneCircuitDispatchTests
 {
     [Test]
+    [Arguments(false, "string")]
+    [Arguments(true, "string")]
+    [Arguments(false, "bytes")]
+    [Arguments(true, "bytes")]
+    [Arguments(false, "converted")]
+    [Arguments(true, "converted")]
+    public async Task SuccessfulTypedMutationDoesNotReinvalidateAfterItsReply(bool enabled, string shape)
+    {
+        await using var server = Server();
+        await using var client = await RespireClient.ConnectAsync(Options(server) with
+        {
+            Protocol = RespProtocol.Resp3, ClientSideCache = new(),
+            CircuitBreaker = enabled ? Options(server).CircuitBreaker : null,
+        });
+        await client.GetStringAsync("warm");
+        var cache = client.Core.ClientCache!;
+        RespireKey key = "key";
+        var read = cache.BeginRead(in key);
+        try
+        {
+            var command = new CatalogCommand(RespireCommands.String.SET, ["key", "new"]);
+            if (shape == "string")
+                await Assert.That(await client.StringOrNullAsync("SET", in command, default)).IsEqualTo("OK");
+            else if (shape == "bytes")
+                await Assert.That((await client.BytesOrNullAsync("SET", in command, default))!).IsEquivalentTo("OK"u8.ToArray());
+            else
+                await Assert.That(await client.OkResultAsync("SET", in command, default)).IsTrue();
+            // Keep an in-flight read generation alive across the mutation. Admission
+            // invalidates it once; a successful reply must not invalidate it again.
+            await Assert.That(read.State.Generation).IsEqualTo(read.Generation + 1);
+            await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(0);
+            await Assert.That(server.ReceivedCommands.Count(command => command == "SET key new")).IsEqualTo(1);
+        }
+        finally { cache.CompleteRead(in read, default, allowInsert: false); }
+    }
+
+    [Test]
+    [Arguments("redis")]
+    [Arguments("converter")]
+    [Arguments("rejection")]
+    public async Task FailedTypedMutationStillReinvalidatesAndReleasesItsFence(string failure)
+    {
+        await using var server = Server();
+        await using var client = await RespireClient.ConnectAsync(Options(server) with
+        {
+            Protocol = RespProtocol.Resp3, ClientSideCache = new(),
+        });
+        await client.GetStringAsync("warm");
+        if (failure == "redis")
+            server.ReplyOverride = (_, command) => command == "SET key new" ? "-ERR rejected\r\n"u8.ToArray() : null;
+        else if (failure == "rejection")
+        {
+            var admission = client.Core.Circuits!.Acquire(new("127.0.0.1", server.Port), default);
+            admission.Failed(new RespireConnectionException("unavailable"), default);
+            admission.Dispose();
+        }
+        var cache = client.Core.ClientCache!;
+        RespireKey key = "key";
+        var read = cache.BeginRead(in key);
+        try
+        {
+            var command = new CatalogCommand(RespireCommands.String.SET, ["key", "new"]);
+            var conversionError = new InvalidOperationException("conversion failed");
+            var error = await Failure(async () =>
+            {
+                if (failure == "converter")
+                    await client.ConvertResponseAsync<CatalogCommand, Exception, bool>("SET", in command, default,
+                        conversionError, static (Exception error, in RespValue _) => throw error);
+                else await client.OkResultAsync("SET", in command, default);
+            });
+            if (failure == "rejection") await Assert.That(error).IsTypeOf<RespireCircuitOpenException>();
+            else if (failure == "redis") await Assert.That(error).IsTypeOf<RespireServerException>();
+            else await Assert.That(error).IsSameReferenceAs(conversionError);
+            await Assert.That(read.State.Generation).IsEqualTo(read.Generation + 2);
+            await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(0);
+            await Assert.That(server.ReceivedCommands.Count(command => command == "SET key new"))
+                .IsEqualTo(failure == "rejection" ? 0 : 1);
+        }
+        finally { cache.CompleteRead(in read, default, allowInsert: false); }
+    }
+
+    [Test]
     public async Task SelectionFailureOpensCircuitWithoutDispatchingACommand()
     {
         await using var server = Server();

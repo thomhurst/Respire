@@ -127,6 +127,7 @@ public sealed partial class RespireClient
         var commandDeadline = CreateCircuitDeadline();
         var attemptStarted = durationStarted with { SuppressRetirement = true };
         var durationOwnedByTransport = false;
+        var succeeded = false;
         // Circuit rejection must release the logical command's mutation fence too.
         try
         {
@@ -144,6 +145,7 @@ public sealed partial class RespireClient
                             cancellationToken, attemptStarted, commandDeadline, pinToConnection: true).ConfigureAwait(false)
                         : await sender.Send(connection, operation, command, cancellationToken, attemptStarted,
                             commandDeadline, pinToConnection: true).ConfigureAwait(false);
+                    succeeded = true;
                     admission.Success();
                     return response;
                 }
@@ -174,7 +176,7 @@ public sealed partial class RespireClient
         }
         finally
         {
-            if (mutationFence.IsRequired) cache!.CompleteMutation(in mutationFence);
+            if (mutationFence.IsRequired) cache!.CompleteMutation(in mutationFence, succeeded);
         }
     }
 
