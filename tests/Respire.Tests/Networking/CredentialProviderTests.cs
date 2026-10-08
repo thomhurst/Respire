@@ -491,46 +491,54 @@ public class CredentialProviderTests
         return listener;
     }
 
-    private static Task StartSend(RespireConnection connection, string kind, bool direct, CancellationToken cancellationToken = default)
+    private static async Task StartSend(RespireConnection connection, string kind, bool direct, CancellationToken cancellationToken = default)
     {
-        // The large-frame fallback is thread-static. Set and restore it synchronously
-        // around the initial enqueue attempt, never across an await or another thread.
-        var budget = typeof(RespireConnection).GetField("_directPathBudget",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
-        var previous = budget.GetValue(null);
+        var ping = new BoundedPingCommand(direct ? 65_537 : FakeRespServer.PingFrame.Length);
+        switch (kind)
+        {
+            case "string":
+                await connection.SendStringAsync(ping, cancellationToken);
+                break;
+            case "converted":
+                await connection.SendConvertedAsync(ping, 0,
+                    static (int _, in RespValue value) => value.AsString(), false, cancellationToken);
+                break;
+            case "fire-and-forget":
+                await connection.SendFireAndForgetAsync(ping, cancellationToken);
+                break;
+            case "prefix":
+                using (await connection.SendPrefixedCheckedAsync(ping, ping, cancellationToken)) { }
+                break;
+            case "transaction":
+                using (await connection.SendTransactionAsync(direct ? LargePingFrame() : FakeRespServer.PingFrame,
+                    1, cancellationToken)) { }
+                break;
+            default:
+                using (await connection.SendAsync(ping, cancellationToken)) { }
+                break;
+        }
+    }
+
+    private readonly struct BoundedPingCommand(int sizeHint) : IRespCommand
+    {
+        public int GetWriteSizeHint() => sizeHint;
+        public ReadCommandKind ReadKind => ReadCommandKind.None;
+        public void Write(ref RespWriter writer) => writer.WriteRaw(FakeRespServer.PingFrame);
+    }
+
+    private static byte[] LargePingFrame()
+    {
+        var buffer = new WriteBuffer(70_000);
         try
         {
-            budget.SetValue(null, direct ? 1 : 0);
-            return SendAsync();
+            var writer = new RespWriter(buffer);
+            writer.WriteArrayHeader(2);
+            writer.WriteBulkString("PING");
+            writer.WriteBulkString(new byte[65_536]);
+            writer.Complete();
+            return buffer.WrittenMemory.ToArray();
         }
-        finally { budget.SetValue(null, previous); }
-
-        async Task SendAsync()
-        {
-            var ping = new RawCommand(FakeRespServer.PingFrame);
-            switch (kind)
-            {
-                case "string":
-                    await connection.SendStringAsync(ping, cancellationToken);
-                    break;
-                case "converted":
-                    await connection.SendConvertedAsync(ping, 0,
-                        static (int _, in RespValue value) => value.AsString(), false, cancellationToken);
-                    break;
-                case "fire-and-forget":
-                    await connection.SendFireAndForgetAsync(ping, cancellationToken);
-                    break;
-                case "prefix":
-                    using (await connection.SendPrefixedCheckedAsync(ping, ping, cancellationToken)) { }
-                    break;
-                case "transaction":
-                    using (await connection.SendTransactionAsync(FakeRespServer.PingFrame, 1, cancellationToken)) { }
-                    break;
-                default:
-                    using (await connection.SendAsync(ping, cancellationToken)) { }
-                    break;
-            }
-        }
+        finally { buffer.Release(); }
     }
 
     [Test]

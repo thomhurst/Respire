@@ -128,7 +128,7 @@ internal sealed partial class ClusterRouter
             if (round > 0) break;
             // Empty or exhausted routes refresh at most once per interval for this range. Callers
             // that arrive while a refresh runs wait for it instead of failing against stale routes.
-            var refresh = routes.JoinOrStartRefresh(() => RefreshReplicaRoutesAsync(slot));
+            var refresh = JoinReplicaRefresh(routes, slot);
             if (refresh is not null) await refresh.WaitAsync(cancellationToken).ConfigureAwait(false);
             var current = GetKnownReplicas(slot);
             // A fast refresh can finish and retire the selected node before selection fails.
@@ -169,7 +169,7 @@ internal sealed partial class ClusterRouter
                     // Healthy reads do not redirect; background revalidation discovers promotions.
                     // RefreshReplicaRoutesAsync catches and logs every refresh failure.
                     if (routes.IsDueForRevalidation)
-                        _ = routes.JoinOrStartRefresh(() => RefreshReplicaRoutesAsync(slot));
+                        _ = JoinReplicaRefresh(routes, slot);
                     var connection = GetNodeReadConnection(node, slot, readFrom);
                     if (excludedPeer is not null && !HedgedReadPolicy.IsDifferentPeer(excludedPeer, connection)) continue;
                     if (fallbacks.Offer(connection, ReadFallbackPolicy.IsSameZone(connection, _options.ClientAvailabilityZone),
@@ -212,7 +212,7 @@ internal sealed partial class ClusterRouter
         }
         else if (needsReplicaRevalidation && GetKnownReplicas(slot) is { IsDueForRevalidation: true } previous)
         {
-            var refresh = previous.JoinOrStartRefresh(() => RefreshReplicaRoutesAsync(slot));
+            var refresh = JoinReplicaRefresh(previous, slot);
             if (refresh is not null) await refresh.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
         var route = RoutingSnapshot[slot];
@@ -236,6 +236,11 @@ internal sealed partial class ClusterRouter
 
     private static RespireConnectionException CursorReadTopologyChanged()
         => new("The Redis Cluster node that issued this cursor left the slot's read topology.");
+
+    // Keep the slot-capturing callback in a cold method. Declaring it in an async selector
+    // allocates its closure before even a prepared, healthy route can return.
+    private Task? JoinReplicaRefresh(ClusterReplicaSet routes, int slot)
+        => routes.JoinOrStartRefresh(() => RefreshReplicaRoutesAsync(slot));
 
     // Shared by every caller that joins the refresh, so it is not bound to any one caller's
     // cancellation. It stops on router disposal or after one connect plus one command timeout.

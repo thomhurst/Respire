@@ -1596,21 +1596,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     [ThreadStatic]
     private static WriteBuffer? _serializeScratch;
 
-    /// <summary>
-    /// Positive after a frame outgrew <see cref="ScratchRetainLimit"/>: the thread's next
-    /// commands serialize directly into the active buffer under the gate, whose storage
-    /// persists across commands. Any further large frame refreshes the budget, so workloads
-    /// mixing large writes with small commands stay on the direct path instead of renting,
-    /// copying, and discarding an oversized scratch buffer per large command (above the
-    /// pool's limit that is an LOH allocation each time). Sustained small traffic decays the
-    /// budget and returns to the scratch path.
-    /// </summary>
-    [ThreadStatic]
-    private static int _directPathBudget;
-
     private const int ScratchInitialSize = 4 * 1024;
+    // Also selects direct serialization: known frames larger than retained scratch bypass the scratch copy.
     private const int ScratchRetainLimit = 64 * 1024;
-    private const int DirectPathBudgetAfterLargeFrame = 64;
 
     /// <summary>
     /// Appends the command and its pending source atomically: buffer byte order must exactly
@@ -1618,9 +1606,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// A composite command reserves <paramref name="discardRepliesBefore"/> slots ahead of
     /// its final reply. Ordinary prefixes discard them; transactions retain them in their
     /// multi-reply source so queue errors remain observable.
-    /// Serialization runs outside the write gate into a per-thread scratch buffer, so
-    /// concurrent callers contend only for a memcpy and the ring enqueue — not for UTF-8
-    /// encoding their payloads.
+    /// Small and unknown-size commands serialize outside the write gate into per-thread scratch.
+    /// Those callers contend only for a memcpy and the ring enqueue, avoiding contention during
+    /// UTF-8 encoding of their payloads.
     /// </summary>
     private bool TryEnqueue<TCommand>(
         in TCommand command,
@@ -1682,11 +1670,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             return false;
         }
 
-        if (_directPathBudget > 0)
+        var writeSizeHint = command.GetWriteSizeHint();
+        if (writeSizeHint > ScratchRetainLimit)
         {
-            _directPathBudget--;
             return TryEnqueueDirect(
                 in command,
+                writeSizeHint,
                 source,
                 commandDeadline,
                 out startedBatch,
@@ -1701,7 +1690,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         try
         {
             scratch.Reset();
-            var writer = new RespWriter(scratch, command.GetWriteSizeHint());
+            var writer = new RespWriter(scratch, writeSizeHint);
             command.Write(ref writer);
             writer.Complete();
             var frame = scratch.WrittenMemory.Span;
@@ -1760,18 +1749,18 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             {
                 _serializeScratch = null;
                 scratch.Release();
-                _directPathBudget = DirectPathBudgetAfterLargeFrame;
             }
         }
     }
 
     /// <summary>
-    /// The pre-scratch path: serializes under the gate straight into the active buffer, whose
-    /// storage persists across commands. Used while the thread's direct-path budget lasts so
-    /// large-write workloads reuse the active buffer's growth instead of churning scratch.
+    /// Commands whose complete-frame bound exceeds scratch retention serialize directly into
+    /// the active buffer under the gate, avoiding an oversized scratch rental and frame copy.
+    /// The current command's bound selects this path independently of earlier traffic.
     /// </summary>
     private bool TryEnqueueDirect<TCommand>(
         in TCommand command,
+        int writeSizeHint,
         PendingResponse source,
         CommandDeadline commandDeadline,
         out bool startedBatch,
@@ -1803,7 +1792,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             startedBatch = mark == 0 && _inflight.Count == 0;
             try
             {
-                var writer = new RespWriter(_activeBuffer, command.GetWriteSizeHint());
+                var writer = new RespWriter(_activeBuffer, writeSizeHint);
                 command.Write(ref writer);
                 command.ValidateAdmission();
                 writer.Complete();
@@ -1812,11 +1801,6 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             {
                 _activeBuffer.TruncateTo(mark);
                 throw;
-            }
-
-            if (_activeBuffer.Count - mark > ScratchRetainLimit)
-            {
-                _directPathBudget = DirectPathBudgetAfterLargeFrame;
             }
 
             if (_responseTimeout is not null)
