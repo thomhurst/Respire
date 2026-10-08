@@ -40,8 +40,10 @@ public sealed class RespireHashChangeTracker<T> where T : class
     }
 
     /// <summary>Writes changed fields and removes fields changed to null. An unchanged model sends no commands.</summary>
-    /// <remarks>No server comparison or rollback occurs. On failure the entire previous baseline remains available for retry.
-    /// Cancellation after encoding waits for the write group to finish before releasing the tracker.
+    /// <remarks>No server comparison or rollback occurs. Failed writes retain the previous baseline for retry.
+    /// Cancellation can stop read-only capability checks. Once writes start, cancellation waits for the write group
+    /// to finish before releasing the tracker. Successful writes advance the baseline before reporting cancellation.
+    /// RespireOptions.CommandTimeout bounds each command; disabling it can leave accepted writes waiting indefinitely.
     /// A timeout of a possibly submitted write invalidates the tracker: later updates throw.</remarks>
     public async ValueTask UpdateAsync(T value, CancellationToken cancellationToken = default)
     {
@@ -70,11 +72,8 @@ public sealed class RespireHashChangeTracker<T> where T : class
                 try
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    // Accepted writes must settle before a retry can use another connection.
-                    // Cancelling the response wait would release this tracker too early.
                     await RespireHashModelIO.WriteAsync(_client, _key, writes, changed.ToArray(),
-                        _fieldTtls, _expiryMode, CancellationToken.None, () => writeStarted = true).ConfigureAwait(false);
-                    cancellationToken.ThrowIfCancellationRequested();
+                        _fieldTtls, _expiryMode, cancellationToken, () => writeStarted = true).ConfigureAwait(false);
                 }
                 catch (Exception error)
                 {
@@ -90,6 +89,7 @@ public sealed class RespireHashChangeTracker<T> where T : class
             }
             _baseline = next;
             _retryFields.Clear();
+            cancellationToken.ThrowIfCancellationRequested();
         }
         finally
         {

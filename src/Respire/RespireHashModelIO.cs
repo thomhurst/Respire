@@ -8,10 +8,12 @@ namespace Respire;
 [EditorBrowsable(EditorBrowsableState.Never)]
 public static class RespireHashModelIO
 {
+    private static readonly IReadOnlyDictionary<string, long> EmptyFieldTtls = new Dictionary<string, long>();
+
     /// <summary>Writes present fields, then removes absent mapped fields. The two commands are not atomic.</summary>
     public static ValueTask WriteAsync(IRespireClient client, RespireKey key,
         IReadOnlyDictionary<string, string> fields, string[] mappedFields, CancellationToken cancellationToken = default)
-        => WriteAsync(client, key, fields, mappedFields, new Dictionary<string, long>(),
+        => WriteAsync(client, key, fields, mappedFields, EmptyFieldTtls,
             RespireHashExpiryMode.HSetEx, cancellationToken);
 
     /// <summary>Writes mapped fields with explicit field expiries, then removes absent mapped fields.</summary>
@@ -55,21 +57,29 @@ public static class RespireHashModelIO
             if (!snapshot.ContainsKey(field)) removals.Add(field);
 
         // Check every discovered node, without caching capabilities across failover or topology changes.
-        // HSETEX is attempted first below; an unknown command refuses before ordinary writes/removals.
-        if (expiring.Length != 0 && expiryMode == RespireHashExpiryMode.HSetThenExpire)
+        if (expiring.Length != 0)
         {
-            var nodes = await client.Server.CommandInfoOnAllNodesAsync([RespireCommands.Hash.HPEXPIRE], cancellationToken).ConfigureAwait(false);
-            if (nodes.Length == 0) throw new NotSupportedException("Cannot establish HPEXPIRE server support.");
+            var command = expiryMode == RespireHashExpiryMode.HSetEx ? RespireCommands.Hash.HSETEX : RespireCommands.Hash.HPEXPIRE;
+            var unsupportedMessage = expiryMode == RespireHashExpiryMode.HSetEx
+                ? "Generated field expiry requires HSETEX (Redis 8.0+). Opt in to HSetThenExpire for Redis 7.4+. No fields were written."
+                : "Generated field expiry requires HPEXPIRE (Redis 7.4+). No fields were written.";
+            var nodes = await client.Server.CommandInfoOnAllNodesAsync([command], cancellationToken).ConfigureAwait(false);
+            if (nodes.Length == 0) throw new NotSupportedException(unsupportedMessage);
             foreach (var node in nodes)
             {
                 if (!node.IsSuccess) throw node.Error!;
                 if (node.Value.Length != 1 || node.Value[0] is null)
-                    throw new NotSupportedException("Generated field expiry requires HPEXPIRE (Redis 7.4+). No fields were written.");
+                    throw new NotSupportedException(unsupportedMessage);
             }
         }
+        cancellationToken.ThrowIfCancellationRequested();
         // Preflight is read-only. Only mutating commands can leave uncertain writes behind.
-        if (expiring.Length != 0 || writes.Length > 1 || removals.Count > 1)
-            onWriteStarting?.Invoke();
+        if (onWriteStarting is not null && (expiring.Length != 0 || writes.Length > 1 || removals.Count > 1))
+        {
+            onWriteStarting();
+            // Tracked writes must settle before the overlap guard can be released.
+            cancellationToken = CancellationToken.None;
+        }
         foreach (var group in expiring)
         {
             var pairs = new RespireValue[group.Fields.Length * 2];

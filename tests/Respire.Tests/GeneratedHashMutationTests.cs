@@ -6,6 +6,8 @@ namespace Respire.Tests;
 
 public class GeneratedHashMutationTests
 {
+    private static readonly byte[] HSetExCommandInfo = "*1\r\n*6\r\n$6\r\nhsetex\r\n:-6\r\n*0\r\n:1\r\n:1\r\n:1\r\n"u8.ToArray();
+
     [Test]
     public async Task CreationChangesNullDeletionAndNoOpSendOnlyRequiredFields()
     {
@@ -63,7 +65,10 @@ public class GeneratedHashMutationTests
     [Test]
     public async Task ExpiryGroupsUseHSetExAndUnchangedFieldsKeepTheirExpiry()
     {
-        await using var server = new FakeRespServer(":1\r\n"u8.ToArray());
+        await using var server = new FakeRespServer(3, ":1\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command == "COMMAND INFO HSETEX" ? HSetExCommandInfo : null,
+        };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var first = new ExpiringHashModel("x", "name", "token", 0);
         await ExpiringHashModelHashMapper.SetAsync(client, first);
@@ -73,10 +78,11 @@ public class GeneratedHashMutationTests
         await tracker.UpdateAsync(first with { Token = "new", Counter = null });
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
         {
+            "COMMAND INFO HSETEX",
             "HSETEX expiring:x PX 10000 FIELDS 1 Token token",
             "HSETEX expiring:x PX 20000 FIELDS 1 Counter 0",
             "HSET expiring:x Id x Name name",
-            "HSETEX expiring:x PX 10000 FIELDS 1 Token new",
+            "COMMAND INFO HSETEX", "HSETEX expiring:x PX 10000 FIELDS 1 Token new",
             "HDEL expiring:x Counter",
         });
     }
@@ -84,11 +90,11 @@ public class GeneratedHashMutationTests
     [Test]
     public async Task UnsupportedHSetExRefusesBeforeOrdinaryWrites()
     {
-        await using var server = new FakeRespServer("-ERR unknown command 'HSETEX', with args beginning with: 'key'\r\n"u8.ToArray());
+        await using var server = new FakeRespServer(2, "*1\r\n$-1\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         await Assert.That(async () => await ExpiringHashModelHashMapper.SetAsync(client, new ExpiringHashModel("x", "name", "token", null)))
             .Throws<NotSupportedException>();
-        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(1);
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { "COMMAND INFO HSETEX" });
     }
 
     [Test]
@@ -97,7 +103,17 @@ public class GeneratedHashMutationTests
     [Arguments("+OK\r\n")]
     public async Task MalformedExpiryWriteRetainsRetryState(string reply)
     {
-        await using var server = new FakeRespServer(System.Text.Encoding.UTF8.GetBytes(reply), ":1\r\n"u8.ToArray());
+        var attempts = 0;
+        await using var server = new FakeRespServer(3, ":1\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "COMMAND INFO HSETEX" => HSetExCommandInfo,
+                _ when command.StartsWith("HSETEX", StringComparison.Ordinal) && Interlocked.Increment(ref attempts) == 1
+                    => System.Text.Encoding.UTF8.GetBytes(reply),
+                _ => null,
+            },
+        };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var first = new ExpiringHashModel("x", "name", "old", null);
         var tracker = ExpiringHashModelHashMapper.Track(client, first);
@@ -107,8 +123,8 @@ public class GeneratedHashMutationTests
         await tracker.UpdateAsync(next);
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
         {
-            "HSETEX expiring:x PX 10000 FIELDS 1 Token new",
-            "HSETEX expiring:x PX 10000 FIELDS 1 Token new",
+            "COMMAND INFO HSETEX", "HSETEX expiring:x PX 10000 FIELDS 1 Token new",
+            "COMMAND INFO HSETEX", "HSETEX expiring:x PX 10000 FIELDS 1 Token new",
         });
     }
 
@@ -179,7 +195,7 @@ public class GeneratedHashMutationTests
     [Test]
     [Arguments(1)]
     [Arguments(2)]
-    public async Task ConcurrentUpdateRejectedAndCancellationRetainsRetryState(int connections)
+    public async Task ConcurrentUpdateRejectedAndCancellationCommitsSuccessfulBaseline(int connections)
     {
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(connections, ":0\r\n"u8.ToArray())
@@ -206,6 +222,8 @@ public class GeneratedHashMutationTests
         // Cancellation cannot release the tracker before the accepted write settles.
         await server.SendRawAsync(":0\r\n"u8.ToArray(), server.ReceivedConnectionIds.Single());
         await Assert.That(async () => await pending).Throws<OperationCanceledException>();
+        await tracker.UpdateAsync(next);
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { "HSET model:{x} Count 1" });
         await tracker.UpdateAsync(first);
         await tracker.UpdateAsync(first);
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { "HSET model:{x} Count 1", "HSET model:{x} Count 0" });
@@ -292,6 +310,101 @@ public class GeneratedHashMutationTests
         await tracker.UpdateAsync(first);
         await tracker.UpdateAsync(first);
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { "COMMAND INFO HPEXPIRE" });
+    }
+
+    [Test]
+    [Arguments(1)]
+    [Arguments(2)]
+    public async Task UnsupportedHSetExDoesNotBlockOrdinaryChangesAfterReversion(int connections)
+    {
+        await using var server = new FakeRespServer(connections + 1, ":0\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "COMMAND INFO HSETEX" => "*1\r\n$-1\r\n"u8.ToArray(),
+                _ when command.StartsWith("HSETEX", StringComparison.Ordinal) => "-ERR unknown command 'HSETEX'\r\n"u8.ToArray(),
+                _ => null,
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)], Connections = connections,
+        });
+        var first = new ExpiringHashModel("x", "name", "old", null);
+        var tracker = ExpiringHashModelHashMapper.Track(client, first);
+        await Assert.That(async () => await tracker.UpdateAsync(first with { Token = "new" })).Throws<NotSupportedException>();
+        await tracker.UpdateAsync(first);
+        await tracker.UpdateAsync(first with { Name = "changed" });
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { "COMMAND INFO HSETEX", "HSET expiring:x Name changed" });
+    }
+
+    [Test]
+    [Arguments(1, RespireHashExpiryMode.HSetEx)]
+    [Arguments(2, RespireHashExpiryMode.HSetEx)]
+    [Arguments(1, RespireHashExpiryMode.HSetThenExpire)]
+    [Arguments(2, RespireHashExpiryMode.HSetThenExpire)]
+    public async Task CallerCancellationStopsReadOnlyPreflightWithoutCommandTimeout(int connections, RespireHashExpiryMode mode)
+    {
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(connections + 1, ":0\r\n"u8.ToArray())
+        {
+            SuppressReply = command => { received.TrySetResult(); return true; },
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = connections, CommandTimeout = null,
+        });
+        var first = new ExpiringHashModel("x", "name", "old", null);
+        var tracker = ExpiringHashModelHashMapper.Track(client, first, mode);
+        using var cancellation = new CancellationTokenSource();
+        var pending = tracker.UpdateAsync(first with { Token = "new" }, cancellation.Token).AsTask();
+        await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        cancellation.Cancel();
+        await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(2))).Throws<OperationCanceledException>();
+        await tracker.UpdateAsync(first);
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
+        {
+            mode == RespireHashExpiryMode.HSetEx ? "COMMAND INFO HSETEX" : "COMMAND INFO HPEXPIRE",
+        });
+    }
+
+    [Test]
+    [Arguments(1)]
+    [Arguments(2)]
+    public async Task CancellationAfterSuccessfulExpiryDoesNotRefreshExpiryOnRetry(int connections)
+    {
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(connections + 1, ":1\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command == "COMMAND INFO HSETEX" ? HSetExCommandInfo : null,
+            SuppressReply = command =>
+            {
+                if (!command.StartsWith("HSETEX", StringComparison.Ordinal)) return false;
+                received.TrySetResult();
+                return true;
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)], Connections = connections,
+        });
+        var first = new ExpiringHashModel("x", "name", "old", null);
+        var next = first with { Token = "new" };
+        var tracker = ExpiringHashModelHashMapper.Track(client, first);
+        using var cancellation = new CancellationTokenSource();
+        var pending = tracker.UpdateAsync(next, cancellation.Token).AsTask();
+        await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        cancellation.Cancel();
+        await Assert.That(pending.IsCompleted).IsFalse();
+        await Assert.That(async () => await tracker.UpdateAsync(next)).Throws<InvalidOperationException>();
+        await server.SendRawAsync(":1\r\n"u8.ToArray(), server.ReceivedConnectionIds.Last());
+        await Assert.That(async () => await pending).Throws<OperationCanceledException>();
+        await tracker.UpdateAsync(next);
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
+        {
+            "COMMAND INFO HSETEX", "HSETEX expiring:x PX 10000 FIELDS 1 Token new",
+        });
     }
 
     [Test]
