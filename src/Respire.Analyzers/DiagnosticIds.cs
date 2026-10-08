@@ -12,5 +12,8 @@ public static class DiagnosticIds
     /// <summary>A <c>[RespireCommands]</c> interface or method cannot be generated.</summary>
     public const string InvalidGeneratedCommand = "RESP003";
 
+    /// <summary>A <c>[RespireHash]</c> model cannot be generated.</summary>
+    public const string InvalidGeneratedHash = "RESP004";
+
     internal const string Category = "Respire";
 }
