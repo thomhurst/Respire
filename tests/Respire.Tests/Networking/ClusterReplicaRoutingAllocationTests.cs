@@ -35,18 +35,22 @@ public class ClusterReplicaRoutingAllocationTests
         });
         var router = client.Core.Cluster!;
         var slot = ClusterHash.GetSlot("ready-replica");
-        var prepared = await router.GetReadConnectionAsync(slot, RespireReadFrom.Replica, default);
+        await router.GetReadConnectionAsync(slot, RespireReadFrom.Replica, default);
+        var route = router.RoutingSnapshot[slot];
+        var replicaNode = route.Replicas!.Nodes.Single();
         // Cache deterministic samples; route revalidation keeps its normal production interval.
         router.NearestLatency = new ReadLatencySampler<RespireConnection>(
-            static (_, _) => ValueTask.FromResult(10L), static () => 0L);
+            (connection, _) => ValueTask.FromResult(ReferenceEquals(connection.Multiplexer, replicaNode) ? 10L : 100L),
+            static () => 0L);
         var pinned = selection == "Pinned";
         var policy = pinned ? RespireReadFrom.Replica : Enum.Parse<RespireReadFrom>(selection);
-        _ = Measure(router, slot, prepared.Multiplexer!, policy, pinned, false);
-        _ = Measure(router, slot, prepared.Multiplexer!, policy, pinned, true);
+        var expectedNode = policy == RespireReadFrom.Primary ? route.Primary! : replicaNode;
+        _ = Measure(router, slot, expectedNode, policy, pinned, false);
+        _ = Measure(router, slot, expectedNode, policy, pinned, true);
         var topologyReads = primary.ReceivedCommands.Count(command => command == "CLUSTER SLOTS");
         var result = AllocationMeasurement.WithoutConcurrentGc(() =>
-            (Measure(router, slot, prepared.Multiplexer!, policy, pinned, false),
-                Measure(router, slot, prepared.Multiplexer!, policy, pinned, true)));
+            (Measure(router, slot, expectedNode, policy, pinned, false),
+                Measure(router, slot, expectedNode, policy, pinned, true)));
 
         await Assert.That(result.Item2 - result.Item1).IsGreaterThanOrEqualTo(37_000L);
         await Assert.That(primary.ReceivedCommands.Count(command => command == "CLUSTER SLOTS")).IsEqualTo(topologyReads);
@@ -60,22 +64,21 @@ public class ClusterReplicaRoutingAllocationTests
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static long Measure(ClusterRouter router, int slot, RespireConnectionMultiplexer node,
+    private static long Measure(ClusterRouter router, int slot, RespireConnectionMultiplexer expectedNode,
         RespireReadFrom policy, bool pinned, bool allocate)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
         for (var i = 0; i < 1_000; i++)
         {
             var pending = pinned
-                ? router.GetPinnedReadConnectionAsync(slot, node, default, revalidate: true, readFrom: policy)
+                ? router.GetPinnedReadConnectionAsync(slot, expectedNode, default, revalidate: true, readFrom: policy)
                 : router.GetReadConnectionAsync(slot, policy, default);
             // A prepared route must complete inline; no task allocation may hide in the measurement.
             if (!pending.IsCompletedSuccessfully)
                 throw new InvalidOperationException("The prepared cluster route did not complete synchronously.");
             var connection = pending.GetAwaiter().GetResult();
-            if (policy != RespireReadFrom.Nearest && policy != RespireReadFrom.Primary
-                && !ReferenceEquals(connection.Multiplexer, node))
-                throw new InvalidOperationException("The prepared replica route selected a different node.");
+            if (!ReferenceEquals(connection.Multiplexer, expectedNode))
+                throw new InvalidOperationException("The prepared cluster route selected a different node.");
             if (allocate) GC.KeepAlive(new byte[37]);
         }
         return GC.GetAllocatedBytesForCurrentThread() - before;

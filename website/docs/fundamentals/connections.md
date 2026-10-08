@@ -651,6 +651,15 @@ after setup, including calibration, warmup, background refresh and response comp
 they do not isolate measured iterations or Redis server CPU. Dry runs establish fixture
 correctness only.
 
+The [selected cluster comparison](https://github.com/thomhurst/Respire/actions/runs/37707575496)
+removes 80 bytes per prepared replica selection and reduces its measured latency by
+17–19% and whole-process client CPU per operation by 15–16% against both controls.
+Public replica GET allocation falls by about 80 bytes, but its latency confidence
+intervals overlap and its CPU counters do not establish an improvement. The primary
+prepared control costs an additional 0.40–0.66 ns; public primary GET latency intervals
+overlap. These results describe prepared routing, not a general read-throughput or
+server CPU improvement. Discovery, sampling and refresh intervals remain unchanged.
+
 PING round-trip time includes local connection queues, server scheduling, and network delay.
 It does not measure geographic distance, replication lag, or the execution time of a particular
 read. Configured and Sentinel candidates still follow the replication-link preference described
