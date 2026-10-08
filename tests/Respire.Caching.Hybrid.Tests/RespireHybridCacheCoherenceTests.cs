@@ -208,6 +208,8 @@ public partial class RespireHybridCacheCoherenceTests(RedisTestContainer fixture
         using var result = expire
             ? await external.ExecuteAsync("PEXPIRE", InstanceName + key, "1")
             : await external.ExecuteAsync("DEL", InstanceName + key);
+        // Setting a TTL itself invalidates tracking before expiry removes the L2 key.
+        if (expire) await UntilAsync(async () => !await external.ExistsAsync(InstanceName + key));
         await UntilAsync(() => Coherent(reader).ObservationCount == 0);
         var calls = 0;
         var value = await reader.GetRequiredService<HybridCache>().GetOrCreateAsync(key, _ =>

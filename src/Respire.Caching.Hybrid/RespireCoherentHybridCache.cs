@@ -31,9 +31,7 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
     private bool _trackingStopped;
     private bool _tagHistoryExhausted;
     private int _disposed;
-    private int _activeRetirementDrains;
-    private TaskCompletionSource<Exception?>? _retirementCompletion;
-    private Exception? _disposalRetirementFailure;
+    private readonly DrainTracker _retirementDrains = new();
 
     internal RespireCoherentHybridCache(IServiceProvider services,
         Func<IServiceProvider, HybridCache> factory, RespireHybridCacheCoherenceOptions options)
@@ -370,7 +368,7 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
             lock (_gate)
             {
                 if (!_retiredObservations.TryDequeue(out observation!)) return failure;
-                _activeRetirementDrains++;
+                _retirementDrains.Claim();
             }
             // No external memory-cache or subscription cleanup runs under the bridge gate.
             Exception? cleanupFailure = null;
@@ -393,22 +391,13 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
 
     private void CompleteRetirementDrain(Exception? failure)
     {
-        TaskCompletionSource<Exception?>? completion = null;
-        Exception? disposalFailure = null;
+        (TaskCompletionSource<Exception?>? Completion, Exception? Failure) result;
         lock (_gate)
         {
-            if (Volatile.Read(ref _disposed) != 0)
-                _disposalRetirementFailure = CombineFailures(_disposalRetirementFailure, failure);
-            _activeRetirementDrains--;
-            if (_activeRetirementDrains == 0 && _retiredObservations.Count == 0)
-            {
-                completion = _retirementCompletion;
-                _retirementCompletion = null;
-                disposalFailure = _disposalRetirementFailure;
-                if (completion is not null) _disposalRetirementFailure = null;
-            }
+            result = _retirementDrains.Complete(failure, Volatile.Read(ref _disposed) != 0,
+                _retiredObservations.Count == 0);
         }
-        completion?.TrySetResult(disposalFailure);
+        result.Completion?.TrySetResult(result.Failure);
     }
 
     private ValueTask<Exception?> RetireAllAndWaitAsync()
@@ -419,13 +408,82 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
         _ = TryDrainRetiredObservations();
         lock (_gate)
         {
-            if (_activeRetirementDrains == 0 && _retiredObservations.Count == 0)
+            return _retirementDrains.Join(_retiredObservations.Count == 0);
+        }
+    }
+
+    private bool TryBeginDisposal()
+    {
+        lock (_gate)
+        {
+            if (Volatile.Read(ref _disposed) != 0) return false;
+            // A cleanup cannot join its own call stack. Reject before closing admission,
+            // allowing the outer caller to dispose after that cleanup has unwound.
+            if (_retirementDrains.IsDrainingCurrentContext)
+                throw new InvalidOperationException("Cannot dispose the cache from its active retirement cleanup.");
+            return Interlocked.Exchange(ref _disposed, 1) == 0;
+        }
+    }
+
+    // Every member runs under the owner's gate. External cleanup and completion signalling
+    // remain outside it. Logical scopes flow into callbacks' Task.Run work and remain
+    // active across nested cleanup through another cache. Captured scopes expire on completion.
+    private sealed class DrainTracker
+    {
+        private readonly AsyncLocal<CleanupScope?> _scope = new();
+        private int _count;
+        private TaskCompletionSource<Exception?>? _completion;
+        private Exception? _failure;
+
+        internal bool IsDrainingCurrentContext
+        {
+            get
             {
-                var failure = _disposalRetirementFailure;
-                _disposalRetirementFailure = null;
+                for (var scope = _scope.Value; scope is not null; scope = scope.Parent)
+                    if (Volatile.Read(ref scope.Active) != 0) return true;
+                return false;
+            }
+        }
+
+        internal void Claim()
+        {
+            // Scope allocation belongs to physical retirement, never healthy cache reads.
+            // Do not pool scopes: a child execution context may retain one after completion.
+            _scope.Value = new CleanupScope(_scope.Value);
+            _count++;
+        }
+
+        internal (TaskCompletionSource<Exception?>? Completion, Exception? Failure) Complete(
+            Exception? failure, bool disposing, bool queueEmpty)
+        {
+            var scope = _scope.Value!;
+            Volatile.Write(ref scope.Active, 0);
+            _scope.Value = scope.Parent;
+            if (disposing) _failure = CombineFailures(_failure, failure);
+            _count--;
+            if (_count != 0 || !queueEmpty) return default;
+            var completion = _completion;
+            _completion = null;
+            var error = _failure;
+            if (completion is not null) _failure = null;
+            return (completion, error);
+        }
+
+        internal ValueTask<Exception?> Join(bool queueEmpty)
+        {
+            if (_count == 0 && queueEmpty)
+            {
+                var failure = _failure;
+                _failure = null;
                 return new(failure);
             }
-            return new((_retirementCompletion ??= new(TaskCreationOptions.RunContinuationsAsynchronously)).Task);
+            return new((_completion ??= new(TaskCreationOptions.RunContinuationsAsynchronously)).Task);
+        }
+
+        private sealed class CleanupScope(CleanupScope? parent)
+        {
+            internal CleanupScope? Parent { get; } = parent;
+            internal int Active = 1;
         }
     }
 
@@ -444,7 +502,7 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
 
     public void Dispose()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        if (!TryBeginDisposal()) return;
         Exception? failure = null;
         try
         {
@@ -461,7 +519,7 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
 
     public async ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        if (!TryBeginDisposal()) return;
         Exception? failure = null;
         try
         {
