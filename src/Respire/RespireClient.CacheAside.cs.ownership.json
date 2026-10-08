@@ -13,7 +13,7 @@
     {
       "Name": "cache-aside-producer",
       "Role": "borrower",
-      "Member": "Respire.RespireClient.ProduceCacheAsideAsync`1(RespireKey,Func<CancellationToken,ValueTask<T?>>,long,CancellationToken,bool):ValueTask<RespValue>",
+      "Member": "Respire.RespireClient.ProduceCacheAsideAsync`1(RespireKey,Func<CancellationToken,ValueTask<T?>>,long,CancellationToken,RespireTelemetry.ErrorObservation,bool):ValueTask<RespValue>",
       "Owner": "Respire.RespireClient.GetOrSetAsync`1(RespireKey,Func<CancellationToken,ValueTask<T?>>,TimeSpan,CancellationToken):ValueTask<T?>",
       "Contract": "Factory, GET and SET borrow the GetOrSet caller owner. Shared producer failures retain separate waiter ownership."
     }

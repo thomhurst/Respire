@@ -529,7 +529,8 @@ public class CommandRouteOwnershipTests
     }
 
     private static readonly string[] RequiredBoundaries = [
-        "native-pooled-inspection", "typed-converter-inspection", "byte-result-inspection", "raw-catalog-dispatch",
+        "native-pooled-inspection", "typed-converter-inspection", "string-result-inspection", "byte-result-inspection",
+        "immediate-pooled-conversion", "pending-pooled-conversion", "raw-catalog-dispatch",
         "raw-dispatch-helper", "catalog-dispatch-helper", "interpolated-dispatch", "interpolated-helper",
         "connection-string-parsing", "connection-setup", "physical-connect-helper", "cache-producer", "cache-typed-producer",
         "cache-waiter", "cache-typed-waiter", "upload-payload-read", "download-payload-read", "fan-out", "fan-out-target",

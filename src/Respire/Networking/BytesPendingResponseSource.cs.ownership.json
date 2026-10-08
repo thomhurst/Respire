@@ -6,7 +6,7 @@
       "Role": "final",
       "Member": "Respire.Networking.BytesPendingResponseSource.IValueTaskSource<byte[]?>.GetResult(short):byte[]?",
       "Owner": "Respire.Networking.BytesPendingResponseSource.IValueTaskSource<byte[]?>.GetResult(short):byte[]?",
-      "Contract": "Byte result inspection owns final failure and native pool lifetime."
+      "Contract": "Byte inspection owns transport, cancellation, server and conversion failures through response cleanup and caller reference release. Existing dispatch publication defaults and copied retry counts remain intact. Copy transferred FinalOwner and attempts before pool reuse and retain the operation until a canceled receive reference drains. Borrowed inspection suppresses publication; successful inspection rents no observation."
     }
   ],
   "NonRoutes": []

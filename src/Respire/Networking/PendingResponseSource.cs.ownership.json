@@ -6,14 +6,21 @@
       "Role": "final",
       "Member": "Respire.Networking.PendingResponseSource.IValueTaskSource<RespValue>.GetResult(short):RespValue",
       "Owner": "Respire.Networking.PendingResponseSource.IValueTaskSource<RespValue>.GetResult(short):RespValue",
-      "Contract": "Native pooled GetResult owns final transport inspection. Keep response references, token checks and pool return intact. Never add a universal ValueTask wrapper."
+      "Contract": "Raw pooled GetResult observes final transport/server inspection only when explicitly enabled. Borrowed raw inspection remains unobserved. A transferred failure-only FinalOwner survives caller reference release and pool reset; publication occurs after cleanup. Keep token checks and response ownership intact."
     },
     {
       "Name": "typed-converter-inspection",
       "Role": "final",
       "Member": "Respire.Networking.ConvertedPendingResponseSource`2.IValueTaskSource<TResult>.GetResult(short):TResult",
       "Owner": "Respire.Networking.ConvertedPendingResponseSource`2.IValueTaskSource<TResult>.GetResult(short):TResult",
-      "Contract": "Converted pooled GetResult keeps ownership through converter invocation and response disposal. Conversion and cleanup failures belong to this caller, not the underlying raw response."
+      "Contract": "Converted pooled GetResult keeps its optional failure-only FinalOwner through transport inspection, converter invocation, response disposal and caller reference release. Existing dispatch publication defaults and copied retry counts remain intact. Publish once after cleanup using local lease and attempt copies so pool reuse cannot change retries. Borrowed conversion suppresses publication."
+    },
+    {
+      "Name": "string-result-inspection",
+      "Role": "final",
+      "Member": "Respire.Networking.StringPendingResponseSource.IValueTaskSource<string?>.GetResult(short):string?",
+      "Owner": "Respire.Networking.StringPendingResponseSource.IValueTaskSource<string?>.GetResult(short):string?",
+      "Contract": "String inspection owns transport, cancellation, server and conversion failures through response cleanup and caller reference release. Existing dispatch publication defaults and copied retry counts remain intact. Retain the operation until a canceled receive reference drains; successful inspection rents no observation."
     }
   ],
   "NonRoutes": []

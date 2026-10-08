@@ -12,6 +12,28 @@ namespace Respire.Tests;
 public class ErrorObservationTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task BorrowAfterFinalPublicationOrCompletionRejectsRetryHistory(bool publishFinal)
+    {
+        using var configuration = new MetricConfigurationScope();
+        using var capture = new Capture();
+        var owner = ErrorObservation.StartFailure();
+        var error = new IOException();
+        owner.RecordHandled(error);
+        if (publishFinal) owner.PublishFinal(error);
+        else owner.Complete();
+        var borrower = owner.Borrow();
+        try
+        {
+            await Assert.That(borrower.RecordHandled(error)).IsFalse();
+            await Assert.That(borrower.Borrow().RecordHandled(error)).IsFalse();
+            await Assert.That(capture.Items.Count).IsEqualTo(publishFinal ? 2 : 1);
+        }
+        finally { borrower.Complete(); owner.Complete(); }
+    }
+
+    [Test]
     public async Task CopiesPublishAndCompleteOnlyOnce()
     {
         using var configuration = new MetricConfigurationScope();

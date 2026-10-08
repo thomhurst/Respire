@@ -18,6 +18,7 @@ internal sealed class BytesPendingResponseSource : PendingResponse, IValueTaskSo
     private bool _hasDirectResult;
     private string? _commandName;
     private bool _observeErrors;
+    private ErrorObservation.FinalOwner _observation;
     private RespireTelemetry.DurationObservation _duration;
 
     private BytesPendingResponseSource()
@@ -29,12 +30,13 @@ internal sealed class BytesPendingResponseSource : PendingResponse, IValueTaskSo
     internal override string? CommandName => _commandName;
 
     public static BytesPendingResponseSource Rent(string? commandName, int errorAttempts = 0, bool observeErrors = true,
-        RespireTelemetry.DurationObservation duration = default)
+        RespireTelemetry.DurationObservation duration = default, ErrorObservation.FinalOwner observation = default)
     {
         var source = Pool.Rent();
 
         source._commandName = commandName;
         source._observeErrors = observeErrors;
+        source._observation = observation;
         source._duration = duration;
         source.PrepareForUse();
         source.ErrorAttempts = errorAttempts;
@@ -75,11 +77,18 @@ internal sealed class BytesPendingResponseSource : PendingResponse, IValueTaskSo
 
     byte[]? IValueTaskSource<byte[]?>.GetResult(short token)
     {
+        var observation = _observation;
+        var observeErrors = _observeErrors;
+        Exception? failure = null;
         try
         {
-            _core.GetResult(token);
-            if (!_hasDirectResult && _response.IsError)
-                throw ResponseReader.ServerError(in _response, _commandName);
+            try
+            {
+                _core.GetResult(token);
+                if (!_hasDirectResult && _response.IsError)
+                    throw ResponseReader.ServerError(in _response, _commandName);
+            }
+            catch (Exception error) { _duration.Complete(_commandName, error); throw; }
             _duration.Complete(_commandName);
             if (_hasDirectResult)
             {
@@ -88,16 +97,15 @@ internal sealed class BytesPendingResponseSource : PendingResponse, IValueTaskSo
 
             return ResponseReader.BytesOrNull(in _response);
         }
-        catch (Exception error)
-        {
-            _duration.Complete(_commandName, error);
-            if (_observeErrors) RespireTelemetry.RecordError(error, internallyHandled: false, ErrorAttempts);
-            throw;
-        }
+        catch (Exception error) { failure = error; throw; }
         finally
         {
-            Clear();
-            ReleaseCallerRef();
+            try { Clear(); }
+            catch (Exception error) { failure = error; throw; }
+            finally
+            {
+                CompleteCallerInspection(observation, failure, observeErrors);
+            }
         }
     }
 
@@ -123,7 +131,9 @@ internal sealed class BytesPendingResponseSource : PendingResponse, IValueTaskSo
         _directResult = null;
         _hasResponse = false;
         _hasDirectResult = false;
-        _commandName = null;
+        _observeErrors = false;
+        _observation = default;
+        // Keep the operation until the receive reference releases a canceled reply.
         _duration = default;
     }
 
@@ -134,6 +144,7 @@ internal sealed class BytesPendingResponseSource : PendingResponse, IValueTaskSo
         public bool TryReset(BytesPendingResponseSource source)
         {
             source.Clear();
+            source._commandName = null;
             source._core.Reset();
             return true;
         }

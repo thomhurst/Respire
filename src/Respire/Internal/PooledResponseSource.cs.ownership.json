@@ -1,0 +1,20 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "immediate-pooled-conversion",
+      "Role": "final",
+      "Member": "Respire.Internal.PooledResponseSource`2.CreateCore(ValueTask<RespValue>,TState,ResponseConverter<TState,TResult>,bool,ErrorObservation.FinalOwner,bool,RespireTelemetry.ErrorObservation):ValueTask<TResult>",
+      "Owner": "Respire.Internal.PooledResponseSource`2.CreateCore(ValueTask<RespValue>,TState,ResponseConverter<TState,TResult>,bool,ErrorObservation.FinalOwner,bool,RespireTelemetry.ErrorObservation):ValueTask<TResult>",
+      "Contract": "Immediate conversion publishes converter and cleanup failures after disposing untransferred response ownership. A supplied failure-only FinalOwner also owns input inspection and retry counts. Without one, input failures belong to the underlying send. Borrowed conversion can suppress observation; success rents no observation."
+    },
+    {
+      "Name": "pending-pooled-conversion",
+      "Role": "final",
+      "Member": "Respire.Internal.PooledResponseSource`2.Complete():void",
+      "Owner": "Respire.Internal.PooledResponseSource`2.Complete():void",
+      "Contract": "Pending conversion owns the same errors as immediate conversion. Clear captured source fields, finish response disposal and complete the failure-only FinalOwner before publishing the caller result. Preserve original exceptions, canceled status and response ownership transfer; no universal ValueTask wrapper."
+    }
+  ],
+  "NonRoutes": []
+}
