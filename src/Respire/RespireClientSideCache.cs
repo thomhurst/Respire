@@ -306,7 +306,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         out QueryRequest request)
         where TCommand : struct, IRespCommand
     {
-        if (IsCacheableRead(operation)
+        if (command.GetClientCacheMetadata(operation).CacheableRead
             && command.TryGetClientCacheKey(operation, out var query)
             && command.TryGetPrimaryKey(out var primaryKey)
             && HasValidDependencies(operation, in query))
@@ -507,7 +507,8 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     internal MutationFence BeforeCommand<TCommand>(string operation, in TCommand command)
         where TCommand : struct, IRespCommand
     {
-        if (DisruptsClientCacheTracking(operation, in command))
+        var metadata = command.GetClientCacheMetadata(operation);
+        if (DisruptsClientCacheTracking(metadata, operation, in command))
         {
             throw new NotSupportedException(
                 $"{operation} cannot execute while client-side caching is enabled because it changes " +
@@ -516,7 +517,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
 
         // Indirect writes (for example TimeSeries compaction) cannot be bounded by argument keys,
         // even when a caller supplies a narrower command declaration.
-        var mutationKind = RawCommandKeyLayouts.GetMutationKind(operation);
+        var mutationKind = metadata.MutationKind;
         if (mutationKind == RawCommandKeyLayouts.MutationKind.IndirectKeys)
             return BeginUnknownMutation();
 
@@ -525,7 +526,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
 
         if (mutation == RespireCacheMutation.SingleKey
             && command.TryGetClientCacheKey(operation, out var singleKeyArguments)
-            && RawCommandKeyLayouts.TryGetMutationLayout(operation, in singleKeyArguments, out var singleKeyLayout)
+            && RawCommandKeyLayouts.TryGetMutationLayout(metadata, in singleKeyArguments, out var singleKeyLayout)
             && singleKeyLayout.Count == 1 && singleKeyLayout.Extra < 0)
         {
             var key = singleKeyArguments.GetArgument(singleKeyLayout.Start).AsKey().Snapshot();
@@ -541,7 +542,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         }
 
         if (mutation == RespireCacheMutation.Mutation
-            && RawCommandKeyLayouts.HasSingleFirstKeyLayout(operation)
+            && metadata.ArgumentLayout == RawCommandKeyLayouts.LayoutKind.First
             && command.TryGetPrimaryKey(out primaryKey))
         {
             var key = primaryKey.AsKey().Snapshot();
@@ -551,7 +552,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
 
         if (mutation == RespireCacheMutation.Mutation
             && command.TryGetClientCacheKey(operation, out var destinationArguments)
-            && RawCommandKeyLayouts.TryGetMutationLayout(operation, in destinationArguments, out var destinationLayout)
+            && RawCommandKeyLayouts.TryGetMutationLayout(metadata, in destinationArguments, out var destinationLayout)
             && destinationLayout.Extra >= 0)
         {
             var destination = destinationArguments.GetArgument(destinationLayout.Extra).AsKey().Snapshot();
@@ -561,7 +562,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
 
         if (mutation is RespireCacheMutation.MultiKey or RespireCacheMutation.Mutation
             && command.TryGetClientCacheKey(operation, out var arguments)
-            && RawCommandKeyLayouts.TryGetMutationLayout(operation, in arguments, out var layout,
+            && RawCommandKeyLayouts.TryGetMutationLayout(metadata, in arguments, out var layout,
                 includeReadKeys: mutation == RespireCacheMutation.MultiKey))
         {
             if (mutation == RespireCacheMutation.MultiKey || layout.Count != 1 || layout.Extra >= 0)
@@ -747,19 +748,19 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         });
     }
 
-    private static bool DisruptsClientCacheTracking<TCommand>(string operation, in TCommand command)
+    private static bool DisruptsClientCacheTracking<TCommand>(ClientCacheCommandMetadata metadata, string operation, in TCommand command)
         where TCommand : struct, IRespCommand
     {
-        if (operation is "CLIENT CACHING" or "CLIENT TRACKING" or "HELLO" or "RESET" or "SELECT")
+        if (metadata.DisruptsTracking)
         {
             return true;
         }
 
-        return operation == "CLIENT"
+        return metadata.CheckClientSubcommand
                && command.TryGetClientCacheKey(operation, out var query)
                && query.ArgumentCount > 0
-               && (query.GetArgument(0).EqualsAsciiIgnoreCase("CACHING")
-                   || query.GetArgument(0).EqualsAsciiIgnoreCase("TRACKING"));
+               && (query.GetArgument(0).EqualsAsciiIgnoreCase(ClientCacheCommandMetadata.CachingSubcommand)
+                   || query.GetArgument(0).EqualsAsciiIgnoreCase(ClientCacheCommandMetadata.TrackingSubcommand));
     }
 
     // Mirrors Redis client-side-cache eligibility: keyed, read-only, deterministic, non-blocking,

@@ -840,7 +840,8 @@ public sealed partial class RespireClient : IRespireClient
         var commandValue = new DynamicCommand(
             tokens, routingKeyIndex, firstArgumentIndex,
             readKind: RawCommandDescriptorLookup.GetReadKind(operation, arguments),
-            cursorArgumentIndex: Verb.GetCursorArgumentIndex(operation));
+            cursorArgumentIndex: Verb.GetCursorArgumentIndex(operation),
+            cacheMetadata: ReadCache is null ? default : ClientCacheCommandMetadata.Get(operation));
         var isBlocking = RespireCommand.IsBlocking(
             operation, RespireCommand.Classify(operation), arguments);
         RespValue response;
@@ -897,7 +898,8 @@ public sealed partial class RespireClient : IRespireClient
         var commandValue = new DynamicCommand(
             tokens, routingKeyIndex, firstArgumentIndex,
             readKind: RawCommandDescriptorLookup.GetReadKind(operation, arguments),
-            cursorArgumentIndex: Verb.GetCursorArgumentIndex(operation));
+            cursorArgumentIndex: Verb.GetCursorArgumentIndex(operation),
+            cacheMetadata: ReadCache is null ? default : ClientCacheCommandMetadata.Get(operation));
         if (_core.Cluster is { } cluster
             && DynamicCommandRouting.IsClusterWideMutation(operation, arguments))
         {
@@ -1066,7 +1068,8 @@ public sealed partial class RespireClient : IRespireClient
             operation, tokens, firstArgumentIndex);
         return (storedProcedureName,
             new DynamicCommand(tokens, routingKeyIndex, firstArgumentIndex, cacheMutation, readKind,
-                Verb.GetCursorArgumentIndex(operation), hasExplicitCacheMutation));
+                Verb.GetCursorArgumentIndex(operation), hasExplicitCacheMutation,
+                ReadCache is null ? default : ClientCacheCommandMetadata.Get(operation)));
     }
 
     private RawCommandKeyLayouts.KeyRouting ValidateClusterRawKeys(string operation, ReadOnlySpan<RespireValue> arguments)
@@ -1142,8 +1145,10 @@ public sealed partial class RespireClient : IRespireClient
             "CONFIG" when candidate.EqualsAsciiIgnoreCase("SET") => "CONFIG SET",
             "FT.CONFIG" when candidate.EqualsAsciiIgnoreCase("GET") => "FT.CONFIG GET",
             "FT.CONFIG" when candidate.EqualsAsciiIgnoreCase("SET") => "FT.CONFIG SET",
-            "CLIENT" when candidate.EqualsAsciiIgnoreCase("CACHING") => "CLIENT CACHING",
-            "CLIENT" when candidate.EqualsAsciiIgnoreCase("TRACKING") => "CLIENT TRACKING",
+            "CLIENT" when candidate.EqualsAsciiIgnoreCase(ClientCacheCommandMetadata.CachingSubcommand)
+                => ClientCacheCommandMetadata.CachingOperation,
+            "CLIENT" when candidate.EqualsAsciiIgnoreCase(ClientCacheCommandMetadata.TrackingSubcommand)
+                => ClientCacheCommandMetadata.TrackingOperation,
             "MEMORY" when candidate.EqualsAsciiIgnoreCase("USAGE") => "MEMORY USAGE",
             "OBJECT" when candidate.EqualsAsciiIgnoreCase("ENCODING") => "OBJECT ENCODING",
             "OBJECT" when candidate.EqualsAsciiIgnoreCase("FREQ") => "OBJECT FREQ",
@@ -4235,6 +4240,7 @@ public sealed partial class RespireClient : IRespireClient
         public int CursorArgumentIndex => command.CursorArgumentIndex;
 
         public RespireCacheMutation GetCacheMutation(string operation) => command.GetCacheMutation(operation);
+        public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => command.GetClientCacheMetadata(operation);
 
         public bool TryGetArgument(int index, out RespireValue value) => command.TryGetArgument(index, out value);
 

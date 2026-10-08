@@ -64,7 +64,14 @@ try {
             throw "Incorrect shared read classification for $($entry.Key)."
         }
     }
-    if ($first.Contains('["TOUCH"]')) { throw 'TOUCH must remain primary-only.' }
+    if ($first.Contains('["TOUCH"] = (ReadCommandKind.')) { throw 'TOUCH must remain primary-only.' }
+    $cacheTable = [regex]::Match($first, '(?s)internal static class CommandCacheMutationMetadata\s*\{(?<body>.*?)\n\}\s*/// <summary>Audited replica-read')
+    if (-not $cacheTable.Success) { throw 'Missing independent cache mutation table.' }
+    foreach ($forbidden in @('s_all', 'RespireCommands.', 'new RespireCommand')) {
+        if ($cacheTable.Groups['body'].Value.Contains($forbidden)) {
+            throw "Cache mutation table depends on descriptor initialization: $forbidden."
+        }
+    }
     $cursorIndices = @{ SCAN = 0; HSCAN = 1; SSCAN = 1; ZSCAN = 1; ARSCAN = -1 }
     foreach ($entry in $cursorIndices.GetEnumerator()) {
         $declaration = '["' + $entry.Key + '"] = (ReadCommandKind.CursorRead, ' + $entry.Value + '),'
@@ -82,6 +89,10 @@ try {
         if ($declarations.Count -ne 1) { throw "Expected one descriptor for $($entry.Key)." }
         if (-not $declarations[0].Groups['arguments'].Value.Contains("RespireCacheMutation.$($entry.Value)")) {
             throw "Incorrect cache mutation metadata for $($entry.Key)."
+        }
+        $independentEntry = 'mutations["' + $entry.Key + '"] = RespireCacheMutation.' + $entry.Value + ';'
+        if (-not $cacheTable.Groups['body'].Value.Contains($independentEntry)) {
+            throw "Independent cache mutation table differs for $($entry.Key)."
         }
     }
     $frames = [regex]::Matches($first,

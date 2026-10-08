@@ -222,12 +222,24 @@ foreach ($reference in $allReferences) {
 }
 [void] $builder.AppendLine('    ];')
 [void] $builder.AppendLine()
+[void] $builder.AppendLine('    internal static RespireCacheMutation GetCacheMutation(string operation)')
+[void] $builder.AppendLine('        => CommandCacheMutationMetadata.Get(operation);')
+[void] $builder.AppendLine()
+[void] $builder.AppendLine('    /// <summary>Every known descriptor, sorted by group and command name.</summary>')
+[void] $builder.AppendLine('    public static ReadOnlySpan<RespireCommand> All => s_all;')
+[void] $builder.AppendLine('}')
+[void] $builder.AppendLine()
+[void] $builder.AppendLine('/// <summary>Cache effects independent of descriptor and verb initialization.</summary>')
+[void] $builder.AppendLine('internal static class CommandCacheMutationMetadata')
+[void] $builder.AppendLine('{')
 [void] $builder.AppendLine('    private static readonly FrozenDictionary<string, RespireCacheMutation> s_cacheMutations = CreateCacheMutations();')
 [void] $builder.AppendLine()
 [void] $builder.AppendLine('    private static FrozenDictionary<string, RespireCacheMutation> CreateCacheMutations()')
 [void] $builder.AppendLine('    {')
 [void] $builder.AppendLine('        var mutations = new Dictionary<string, RespireCacheMutation>(StringComparer.Ordinal);')
-[void] $builder.AppendLine('        foreach (var command in s_all) mutations[command.Name] = command.CacheMutation;')
+foreach ($command in ($merged | Sort-Object Name)) {
+    [void] $builder.AppendLine(('        mutations["{0}"] = RespireCacheMutation.{1};' -f $command.Name, $command.CacheMutation))
+}
 [void] $builder.AppendLine('        foreach (var operation in new string[]')
 [void] $builder.AppendLine('        {')
 foreach ($operation in $cacheReadOnlyOverrides) {
@@ -249,11 +261,8 @@ foreach ($operation in $cacheUnknownOverrides) {
 [void] $builder.AppendLine('        return mutations.ToFrozenDictionary(StringComparer.Ordinal);')
 [void] $builder.AppendLine('    }')
 [void] $builder.AppendLine()
-[void] $builder.AppendLine('    internal static RespireCacheMutation GetCacheMutation(string operation)')
+[void] $builder.AppendLine('    internal static RespireCacheMutation Get(string operation)')
 [void] $builder.AppendLine('        => s_cacheMutations.TryGetValue(operation, out var mutation) ? mutation : RespireCacheMutation.Unknown;')
-[void] $builder.AppendLine()
-[void] $builder.AppendLine('    /// <summary>Every known descriptor, sorted by group and command name.</summary>')
-[void] $builder.AppendLine('    public static ReadOnlySpan<RespireCommand> All => s_all;')
 [void] $builder.AppendLine('}')
 
 # Independent of RespireCommands and Verbs initialization: both consume this table.

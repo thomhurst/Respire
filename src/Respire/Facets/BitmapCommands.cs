@@ -402,6 +402,8 @@ internal readonly struct BitOpCommand(
     RespireValue destination,
     RespireValue[] sourceKeys) : IRespCommand
 {
+    public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => verb.CacheMetadata;
+    public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
     public ReadCommandKind ReadKind => ReadCommandKind.None;
 
     public bool TryGetClusterSlot(out int slot) => destination.TryGetClusterSlot(out slot);
@@ -421,6 +423,8 @@ internal readonly struct BitOpCommand(
 
 internal readonly struct BitFieldCommand(Verb verb, RespireValue key, BitFieldOperation[] operations) : IRespCommand
 {
+    public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => verb.CacheMetadata;
+    public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
     public ReadCommandKind ReadKind => verb.ReadKind;
 
     public bool TryGetPrimaryKey(out RespireValue primaryKey)

@@ -118,6 +118,8 @@ internal readonly struct StreamedSetCommand : IReplayableStreamingRespCommand
     internal long Length => _length;
     public bool CanReplay => _stream?.CanReplay ?? true;
     public ReadCommandKind ReadKind => ReadCommandKind.None;
+    public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => Verbs.Set.CacheMetadata;
+    public RespireCacheMutation GetCacheMutation(string operation) => Verbs.Set.CacheMetadata.Policy;
 
     /// <summary>The stream source, or <see langword="null"/> for an in-memory sequence.</summary>
     internal Stream? SourceStream => _stream?.Current;

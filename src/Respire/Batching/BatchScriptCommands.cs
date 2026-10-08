@@ -84,6 +84,8 @@ internal readonly struct BatchScriptCommand(
     }
 
     public ReadCommandKind ReadKind => verb.ReadKind;
+    public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => verb.CacheMetadata;
+    public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
 
     public bool TryGetClusterSlot(out int slot)
     {

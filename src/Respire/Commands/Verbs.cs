@@ -14,6 +14,8 @@ internal readonly struct Verb
     public readonly int RoutingKeyIndex;
     public readonly ReadCommandKind ReadKind;
     public readonly int CursorArgumentIndex;
+    private readonly ClientCacheCommandMetadata.Cache? _cacheMetadata;
+    public ClientCacheCommandMetadata CacheMetadata => _cacheMetadata?.Value ?? default;
 
     public Verb(string command, bool allowReadRouting = true) : this(0, command, allowReadRouting)
     {
@@ -32,64 +34,49 @@ internal readonly struct Verb
         var metadata = CommandReadMetadata.Get(command);
         ReadKind = allowReadRouting ? metadata.Kind : ReadCommandKind.None;
         CursorArgumentIndex = metadata.CursorArgumentIndex;
+        _cacheMetadata = new(command);
         Tokens = 0;
         var encodedLength = 0;
-        var start = 0;
-        while (start < command.Length)
+        var tokens = new TokenEnumerator(command);
+        while (tokens.MoveNext())
         {
-            while (start < command.Length && command[start] == ' ')
-            {
-                start++;
-            }
-
-            if (start == command.Length)
-            {
-                break;
-            }
-
-            var end = command.IndexOf(' ', start);
-            if (end < 0)
-            {
-                end = command.Length;
-            }
-
-            var length = end - start;
+            var length = tokens.Current.Length;
             encodedLength += 1 + DecimalDigits(length) + 2 + length + 2;
             Tokens++;
-            start = end + 1;
         }
 
         Bulk = GC.AllocateUninitializedArray<byte>(encodedLength);
         var destination = Bulk.AsSpan();
         var offset = 0;
-        start = 0;
-        while (start < command.Length)
+        tokens = new TokenEnumerator(command);
+        while (tokens.MoveNext())
         {
-            while (start < command.Length && command[start] == ' ')
-            {
-                start++;
-            }
-
-            if (start == command.Length)
-            {
-                break;
-            }
-
-            var end = command.IndexOf(' ', start);
-            if (end < 0)
-            {
-                end = command.Length;
-            }
-
-            var length = end - start;
+            var token = tokens.Current;
+            var length = token.Length;
             destination[offset++] = (byte)'$';
             offset += WritePositiveInteger(length, destination[offset..]);
             destination[offset++] = (byte)'\r';
             destination[offset++] = (byte)'\n';
-            offset += Encoding.ASCII.GetBytes(command.AsSpan(start, length), destination[offset..]);
+            offset += Encoding.ASCII.GetBytes(token, destination[offset..]);
             destination[offset++] = (byte)'\r';
             destination[offset++] = (byte)'\n';
-            start = end + 1;
+        }
+    }
+
+    private ref struct TokenEnumerator(ReadOnlySpan<char> remaining)
+    {
+        private ReadOnlySpan<char> _remaining = remaining;
+        internal ReadOnlySpan<char> Current { get; private set; }
+
+        internal bool MoveNext()
+        {
+            _remaining = _remaining.TrimStart(' ');
+            if (_remaining.IsEmpty) return false;
+            var end = _remaining.IndexOf(' ');
+            if (end < 0) end = _remaining.Length;
+            Current = _remaining[..end];
+            _remaining = end == _remaining.Length ? [] : _remaining[(end + 1)..];
+            return true;
         }
     }
 
