@@ -20,6 +20,10 @@
              analyzer itself compiles against. -->
         <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
         <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" />
+        <!-- Execute CA2012 in contract tests without replacing the SDK's build analyzers. -->
+        <PackageReference Include="Microsoft.CodeAnalysis.NetAnalyzers" GeneratePathProperty="true" IncludeAssets="none" PrivateAssets="all" />
+        <Reference Include="Microsoft.CodeAnalysis.NetAnalyzers"
+                   HintPath="$(PkgMicrosoft_CodeAnalysis_NetAnalyzers)/analyzers/dotnet/cs/Microsoft.CodeAnalysis.NetAnalyzers.dll" />
     </ItemGroup>
 
     <ItemGroup>
