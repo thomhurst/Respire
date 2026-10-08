@@ -11,6 +11,101 @@ namespace Respire.Caching.Hybrid.Tests;
 public partial class RespireHybridCacheCoherenceTests
 {
     [Test]
+    public async Task ThrowingInvalidationCleanupDoesNotStopTrackingPump()
+    {
+        using var memory = new ProbingMemoryCache();
+        await using var writer = BuildProvider(false);
+        await using var reader = BuildProvider(true, memory: memory);
+        var writeCache = writer.GetRequiredService<HybridCache>();
+        var readCache = reader.GetRequiredService<HybridCache>();
+        var coherent = Coherent(reader);
+        var key = NewKey();
+        await writeCache.SetAsync(key, "old", LongLived);
+        await Assert.That(await ReadAsync(readCache, key)).IsEqualTo("old");
+        var cleanup = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        memory.OnRemove = () =>
+        {
+            cleanup.TrySetResult();
+            throw new InvalidOperationException("invalidation memory cleanup failed");
+        };
+        try
+        {
+            await writeCache.SetAsync(key, "new", LongLived);
+            await cleanup.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await UntilAsync(() => coherent.ObservationCount == 0);
+            memory.OnRemove = null;
+            await Assert.That(coherent.TrackingClient.IsConnected).IsTrue();
+            await coherent.TrackingClient.PingAsync();
+            await Assert.That(await ReadAsync(readCache, key)).IsEqualTo("new");
+            await writeCache.SetAsync(key, "later", LongLived);
+            await UntilAsync(() => coherent.ObservationCount == 0);
+            await Assert.That(await ReadAsync(readCache, key)).IsEqualTo("later");
+        }
+        finally { memory.OnRemove = null; }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public Task ReentrantAsyncDisposalRejectsJoiningItsOwnDrain(bool nested)
+        => AssertReentrantDisposalAsync(asynchronous: true, nested);
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public Task ReentrantSyncDisposalRejectsJoiningItsOwnDrain(bool nested)
+        => AssertReentrantDisposalAsync(asynchronous: false, nested);
+
+    private async Task AssertReentrantDisposalAsync(bool asynchronous, bool nested)
+    {
+        using var memory = new ProbingMemoryCache();
+        using var otherMemory = new ProbingMemoryCache();
+        await using var provider = BuildProvider(true, memory: memory);
+        await using var otherProvider = BuildProvider(true, memory: otherMemory);
+        var coherent = Coherent(provider);
+        var other = Coherent(otherProvider);
+        var key = NewKey();
+        var otherKey = NewKey();
+        var options = new HybridCacheEntryOptions { Flags = HybridCacheEntryFlags.DisableDistributedCacheWrite };
+        await coherent.GetOrCreateAsync(key, _ => ValueTask.FromResult("value"), options);
+        await other.GetOrCreateAsync(otherKey, _ => ValueTask.FromResult("value"), options);
+        void DisposeFromCleanup()
+        {
+            if (asynchronous)
+            {
+                // Bound the failing-before-fix async join so its enclosing drain can unwind.
+                coherent.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(1)).GetAwaiter().GetResult();
+            }
+            else coherent.Dispose();
+        }
+        otherMemory.OnRemove = DisposeFromCleanup;
+        memory.OnRemove = nested
+            ? () => other.RemoveAsync(otherKey).AsTask().GetAwaiter().GetResult()
+            : DisposeFromCleanup;
+        try
+        {
+            Exception? failure = null;
+            try { await Task.Run(async () => await coherent.RemoveAsync(key)).WaitAsync(TimeSpan.FromSeconds(10)); }
+            catch (Exception error) { failure = error; }
+            await Assert.That(failure is InvalidOperationException).IsTrue();
+            await Assert.That(failure!.Message).IsEqualTo("Cannot dispose the cache from its active retirement cleanup.");
+            // Rejection occurs before closing admission or stopping the tracker.
+            await Assert.That(coherent.TrackingClient.IsConnected).IsTrue();
+            await coherent.TrackingClient.PingAsync();
+            memory.OnRemove = null;
+            otherMemory.OnRemove = null;
+            await coherent.RemoveAsync(NewKey());
+            await coherent.DisposeAsync();
+            await Assert.That(coherent.TrackingClient.IsConnected).IsFalse();
+        }
+        finally
+        {
+            memory.OnRemove = null;
+            otherMemory.OnRemove = null;
+        }
+    }
+
+    [Test]
     [Arguments(false, false)]
     [Arguments(true, false)]
     [Arguments(false, true)]
