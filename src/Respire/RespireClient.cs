@@ -1954,17 +1954,52 @@ public sealed partial class RespireClient : IRespireClient
                 in ClientSideCacheCoordinator.GetReadResult result) => state.Converter(state.Client, in result.Response),
             transferResponse);
 
-#if NET
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-#endif
-    private async ValueTask<TResult> FetchGetCacheReadAsync<TState, TResult>(
+    private ValueTask<TResult> FetchGetCacheReadAsync<TState, TResult>(
         RespireKey resolvedKey, ClientSideCacheCoordinator cache, CancellationToken cancellationToken,
         TState state, ClientSideCacheCoordinator.GetReadConverter<TState, TResult> converter, bool transferResponse = false, bool decodeString = false)
     {
-        var generation = _core.Sentinel?.Current;
-        if (cache.CoalesceConcurrentMisses && cache.TryPeekRead(in resolvedKey, out var cached)
-            && IsCacheGenerationCurrent(generation))
-            return converter(state, in cached);
+        // Another producer may publish after the public lookup. Keep this second lookup
+        // outside the async frame: Debug builds allocate a reference-type state machine.
+        try
+        {
+            var generation = _core.Sentinel?.Current;
+            if (cache.CoalesceConcurrentMisses && cache.TryPeekRead(in resolvedKey, out var cached)
+                && IsCacheGenerationCurrent(generation))
+            {
+                // Start restores ExecutionContext/SynchronizationContext changes made by the converter.
+                // An explicit struct keeps that async-start contract without Debug's generated heap frame.
+                var conversion = new CachedReadConversion<TState, TResult>(state, cached, converter);
+                var builder = AsyncTaskMethodBuilder.Create();
+                builder.Start(ref conversion);
+                return new ValueTask<TResult>(conversion.Result);
+            }
+        }
+        catch (Exception error)
+        {
+            // Preserve the former async failure, including cancellation with an uncanceled token.
+            return ReadySendFailureAsync<TResult>(error);
+        }
+
+        return FetchGetCacheReadSlowAsync(resolvedKey, cache, cancellationToken, state, converter, transferResponse, decodeString);
+    }
+
+    private struct CachedReadConversion<TState, TResult>(TState state,
+        ClientSideCacheCoordinator.GetReadResult cached,
+        ClientSideCacheCoordinator.GetReadConverter<TState, TResult> converter) : IAsyncStateMachine
+    {
+        internal TResult Result = default!;
+        public void MoveNext() => Result = converter(state, in cached);
+        void IAsyncStateMachine.SetStateMachine(IAsyncStateMachine stateMachine)
+            => throw new InvalidOperationException("Cached conversion cannot suspend.");
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<TResult> FetchGetCacheReadSlowAsync<TState, TResult>(
+        RespireKey resolvedKey, ClientSideCacheCoordinator cache, CancellationToken cancellationToken,
+        TState state, ClientSideCacheCoordinator.GetReadConverter<TState, TResult> converter, bool transferResponse, bool decodeString)
+    {
         var token = cache.BeginRead(in resolvedKey);
         var command = new Cmd1(Verbs.Get, token.State.Key.AsValue());
         var response = default(RespValue);
