@@ -192,8 +192,6 @@ internal abstract partial class PendingResponse
             ReturnToPool();
     }
 
-    // Keep pool reset/storage out of each release site's hot reference-count check.
-    [MethodImpl(MethodImplOptions.NoInlining)]
     private void ReturnToPool()
     {
         // Clear the deadline before the epoch store publishes this source as reusable. The
@@ -448,6 +446,8 @@ internal sealed class PendingResponseSource : PendingResponse, IValueTaskSource<
         ValueTaskSourceOnCompletedFlags flags)
         => _core.OnCompleted(continuation, state, token, flags);
 
+    // Keep pool storage out of the devirtualized single-reply release checks.
+    [MethodImpl(MethodImplOptions.NoInlining)]
     protected override void ResetAndReturn()
     {
         if (_pool is { } pool)
@@ -562,6 +562,7 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
         ValueTaskSourceOnCompletedFlags flags)
         => _core.OnCompleted(continuation, state, token, flags);
 
+    [MethodImpl(MethodImplOptions.NoInlining)]
     protected override void ResetAndReturn() => Pool.Return(this);
 
     private void ClearResponse()
@@ -692,6 +693,7 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
         ValueTaskSourceOnCompletedFlags flags)
         => _core.OnCompleted(continuation, state, token, flags);
 
+    [MethodImpl(MethodImplOptions.NoInlining)]
     protected override void ResetAndReturn() => Pool.Return(this);
 
     private void Clear()

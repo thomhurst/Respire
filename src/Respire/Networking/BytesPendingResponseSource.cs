@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Threading.Tasks.Sources;
 using Reservoir;
 using Respire.Internal;
@@ -95,6 +96,7 @@ internal sealed class BytesPendingResponseSource : PendingResponse, IValueTaskSo
         ValueTaskSourceOnCompletedFlags flags)
         => _core.OnCompleted(continuation, state, token, flags);
 
+    [MethodImpl(MethodImplOptions.NoInlining)]
     protected override void ResetAndReturn() => Pool.Return(this);
 
     private void Clear()
