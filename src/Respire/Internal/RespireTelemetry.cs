@@ -13,7 +13,7 @@ namespace Respire.Internal;
 /// values from safe identifiers for arbitrary commands. Subscribe with
 /// <c>tracing.AddSource("Respire")</c> / <c>metrics.AddMeter("Respire")</c>.
 /// </summary>
-internal static class RespireTelemetry
+internal static partial class RespireTelemetry
 {
     public const string SourceName = "Respire";
     private const string DatabaseSystem = "redis";

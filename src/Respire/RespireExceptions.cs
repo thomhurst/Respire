@@ -5,6 +5,10 @@ public class RespireException : Exception
 {
     internal bool IsCommandNotSubmitted { get; set; }
 
+    // Only a transparent wrapper opts into classification through its cause.
+    // Meaningful wrappers retain their own category and canonical exception type.
+    internal virtual Exception? ErrorCause => null;
+
     // Only explicit definitive-reply wrappers qualify; a transport error with an arbitrary
     // inner server error does not prove that the current command finished.
     internal static RespireServerException? GetDefinitiveServerError(Exception? error) => error switch
@@ -28,6 +32,9 @@ public class RespireException : Exception
 /// <summary>The connection failed, was closed by the peer, or was disposed with commands in flight.</summary>
 public class RespireConnectionException : RespireException
 {
+    // Several failed candidates have no single cause; preserve connection meaning.
+    internal override Exception? ErrorCause => InnerException is AggregateException { InnerExceptions.Count: not 1 }
+        ? null : InnerException;
     /// <summary>Creates a connection exception.</summary>
     public RespireConnectionException(string message) : base(message)
     {
@@ -42,6 +49,7 @@ public class RespireConnectionException : RespireException
 /// <summary>Credential acquisition, renewal, or authentication failed.</summary>
 public sealed class RespireAuthenticationException : RespireConnectionException
 {
+    internal override Exception? ErrorCause => null;
     /// <summary>Creates a credential acquisition, renewal, or authentication failure.</summary>
     public RespireAuthenticationException(string message) : base(message) { }
 
@@ -52,6 +60,7 @@ public sealed class RespireAuthenticationException : RespireConnectionException
 /// <summary>A connection recovery episode exhausted its configured replacement attempts.</summary>
 public sealed class RespireReconnectLimitException : RespireConnectionException
 {
+    internal override Exception? ErrorCause => null;
     /// <summary>Creates a recovery limit exception.</summary>
     public RespireReconnectLimitException(string message) : base(message) { }
 
@@ -112,6 +121,7 @@ public sealed class RespireTransactionAbortedException() : RespireException(
 /// This exception is not used for an ambiguous connection failure or an error inside an executed result array.</remarks>
 public sealed class RespireTransactionRetryException : RespireException
 {
+    internal override Exception? ErrorCause => ServerError;
     internal RespireTransactionRetryException(RespireServerException serverError)
         : base("Redis Cluster rejected the watched transaction. Start a new WATCH attempt and re-read all inputs before retrying.", serverError)
         => ServerError = serverError;
@@ -171,6 +181,7 @@ public sealed class RespireServerException : RespireException
 /// <summary>A scripting command failed because its engine is absent from the server's current inventory.</summary>
 public sealed class RespireScriptingEngineUnavailableException : RespireException
 {
+    internal override Exception? ErrorCause => ServerError;
     internal RespireScriptingEngineUnavailableException(string engine, RespireEndpoint endpoint, RespireServerException serverError)
         : base($"Scripting engine '{engine}' is unavailable at {endpoint}. Load the engine on that server before retrying the command.", serverError)
     {
