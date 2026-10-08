@@ -76,6 +76,9 @@ acceptance criteria, dependencies, and current status:
   messaging, caching, and other libraries that currently depend on StackExchange.Redis.
 - [Higher-level capabilities](https://github.com/thomhurst/Respire/issues/860): stream workers,
   source-generated object mapping, distributed `HybridCache` tag propagation, and field-level caching research.
+  [Generated hash codecs](./guides/generated-hash-codecs) provide scalar model conversion and key templates;
+  the remaining [object mapper work](https://github.com/thomhurst/Respire/issues/895) includes Redis I/O,
+  field TTL, change tracking, JSON, Search, and final AOT/performance acceptance.
 - [Documentation and samples](https://github.com/thomhurst/Respire/issues/861): guides and runnable
   examples for the expanded feature set.
 
