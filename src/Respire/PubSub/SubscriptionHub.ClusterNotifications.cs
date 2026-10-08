@@ -491,12 +491,10 @@ internal sealed partial class SubscriptionHub
             // Copy only after a route matched, so a frame for a route that was just removed
             // allocates nothing. Only this node's receive loop and rare route writers contend
             // for this gate, so the copy does not hold up other primaries.
-            var message = new RespireMessage(
+            EnqueueMessage(targets,
                 pattern ? RespireChannel.FromOwnedBytes(channel.ToArray()) : cachedName,
                 pattern ? cachedName : (RespireChannel?)null,
-                payload.ToArray(), core.Options.Serializer);
-            foreach (var target in targets)
-                if (target.Buffer.Write(message) is { } gap) (drops ??= []).Add((target, gap));
+                payload, ref drops);
         }
         RespireTelemetry.RecordReceivedMessage(sharded: false);
         if (drops is not null)
