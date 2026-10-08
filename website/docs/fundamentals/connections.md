@@ -633,6 +633,33 @@ endpoints that recovered without changing address. A concurrent topology publica
 one retry when it replaces every captured candidate, under the original sampling budget.
 Healthy cached candidates continue serving reads while that refresh runs.
 
+Prepared Cluster replica selection does not allocate refresh callbacks until a refresh is
+needed. Optimized Release allocation controls cover healthy `Replica`, `ReplicaPreferred`, pinned replica
+cursor routes, and `Nearest` routes with cached latency samples, plus a primary control.
+They do not claim that a public read, connection establishment, discovery, an expired
+sample, or a topology retry is allocation-free. Replica revalidation and sampling intervals
+are unchanged. Debug builds also validate routing correctness, but compiler-generated async
+state-machine objects still allocate in that configuration.
+
+The `run-cluster-replica-benchmarks` pull request label compares the pinned merge and its
+actual base on one net10.0 runner, using the same real primary/replica cluster and fixture.
+It brackets the candidate with two baseline runs and measures prepared routing, public
+replica GETs at one and fifty concurrent reads, and matching primary controls. Review
+latency confidence intervals, allocations, dispersion, and CPU per operation before
+accepting a performance change. CPU counters include the entire client benchmark process
+after setup, including calibration, warmup, background refresh and response completion;
+they do not isolate measured iterations or Redis server CPU. Dry runs establish fixture
+correctness only.
+
+The [selected cluster comparison](https://github.com/thomhurst/Respire/actions/runs/37707575496)
+removes 80 bytes per prepared replica selection and reduces its measured latency by
+17–19% and whole-process client CPU per operation by 15–16% against both controls.
+Public replica GET allocation falls by about 80 bytes, but its latency confidence
+intervals overlap and its CPU counters do not establish an improvement. The primary
+prepared control costs an additional 0.40–0.66 ns; public primary GET latency intervals
+overlap. These results describe prepared routing, not a general read-throughput or
+server CPU improvement. Discovery, sampling and refresh intervals remain unchanged.
+
 PING round-trip time includes local connection queues, server scheduling, and network delay.
 It does not measure geographic distance, replication lag, or the execution time of a particular
 read. Configured and Sentinel candidates still follow the replication-link preference described
