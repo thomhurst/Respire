@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Respire.Internal;
 using Respire.Networking;
 using Respire.Protocol;
@@ -6,6 +7,24 @@ namespace Respire;
 
 public sealed partial class RespireClient
 {
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool TryDispatchReplica<TCommand, TResult, TSend>(
+        string operation, in TCommand command, CancellationToken cancellationToken,
+        TSend sender, out ValueTask<TResult> response)
+        where TCommand : struct, IRespCommand
+        where TSend : struct, IReadySend<TResult>
+    {
+        if (_readFrom == RespireReadFrom.Primary
+            || TryGetDirectReplicaConnection(operation, in command, cancellationToken) is not { } connection)
+        {
+            response = default;
+            return false;
+        }
+        response = SendOnReadyReplicaAsync<TCommand, TResult, TSend>(
+            operation, connection, in command, cancellationToken, sender);
+        return true;
+    }
+
     private RespireConnection? TryGetDirectReplicaConnection<TCommand>(
         string operation, in TCommand command, CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand

@@ -205,6 +205,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         if (endpoints.Length != 1 || !_entries.TryGetValue(endpoints[0], out var entry)
             || entry.IsCoolingDown || entry.IsReplicationLinkDown) return null;
         var connection = entry.TryGetReadyConnection();
+        // An optimistic snapshot miss always falls back to the full asynchronous selector.
         if (connection is null || !ReferenceEquals(endpoints, Volatile.Read(ref _replicas))) return null;
         ThrowIfDisposed();
         ObjectDisposedException.ThrowIf(core.Disposed, core);

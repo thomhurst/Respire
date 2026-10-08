@@ -5142,10 +5142,9 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
-        if (_readFrom != RespireReadFrom.Primary
-            && TryGetDirectReplicaConnection(operation, in command, ct) is { } readConnection)
-            return SendOnReadyReplicaAsync<TCommand, TResult, ConvertedReadySend<TState, TResult>>(
-                operation, readConnection, in command, ct, new(state, converter, transferOwnership));
+        if (TryDispatchReplica<TCommand, TResult, ConvertedReadySend<TState, TResult>>(
+            operation, in command, ct, new(state, converter, transferOwnership), out var replicaResponse))
+            return replicaResponse;
         if (CanUseDirectReplySource(operation, in command)
             && command is not IStreamingRespCommand)
         {
@@ -5247,10 +5246,9 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
-        if (_readFrom != RespireReadFrom.Primary
-            && TryGetDirectReplicaConnection(operation, in command, ct) is { } readConnection)
-            return SendOnReadyReplicaAsync<TCommand, string?, StringReadySend>(
-                operation, readConnection, in command, ct, default);
+        if (TryDispatchReplica<TCommand, string?, StringReadySend>(
+            operation, in command, ct, default, out var replicaResponse))
+            return replicaResponse;
         if (CanUseDirectReplySource(operation, in command))
         {
             if (core.Cluster is null && core.TryGetReadyPrimaryMultiplexer(out var readyMultiplexer))
@@ -5280,10 +5278,9 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
-        if (_readFrom != RespireReadFrom.Primary
-            && TryGetDirectReplicaConnection(operation, in command, ct) is { } readConnection)
-            return SendOnReadyReplicaAsync<TCommand, byte[]?, BytesReadySend>(
-                operation, readConnection, in command, ct, default);
+        if (TryDispatchReplica<TCommand, byte[]?, BytesReadySend>(
+            operation, in command, ct, default, out var replicaResponse))
+            return replicaResponse;
         if (CanUseDirectReplySource(operation, in command)
             && command is not IStreamingRespCommand)
         {
