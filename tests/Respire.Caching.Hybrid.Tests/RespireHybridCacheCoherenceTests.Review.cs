@@ -11,6 +11,134 @@ namespace Respire.Caching.Hybrid.Tests;
 public partial class RespireHybridCacheCoherenceTests
 {
     [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task DisposalJoinsRetirementAlreadyClaimedByAnotherDrainer(bool asynchronous, bool cleanupFails)
+    {
+        using var memory = new ProbingMemoryCache();
+        await using var provider = BuildProvider(true, memory: memory);
+        var cache = provider.GetRequiredService<HybridCache>();
+        var key = NewKey();
+        await cache.GetOrCreateAsync(key, _ => ValueTask.FromResult("value"),
+            new HybridCacheEntryOptions { Flags = HybridCacheEntryFlags.DisableDistributedCacheWrite });
+        var coherent = Coherent(provider);
+        using var subscription = coherent.TrackingClient.ClientSideCache!.SubscribeInvalidations(
+            InstanceName + key, _ => { });
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var expected = new InvalidOperationException("concurrent retirement cleanup failed");
+        memory.OnRemove = () =>
+        {
+            entered.TrySetResult();
+            release.Task.WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
+            if (cleanupFails) throw expected;
+        };
+        var retirement = Task.Run(async () => await cache.RemoveAsync(key));
+        Task? disposal = null;
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await Assert.That(coherent.ObservationCount).IsEqualTo(0);
+            disposal = Task.Run(async () =>
+            {
+                if (asynchronous) await coherent.DisposeAsync();
+                else coherent.Dispose();
+            });
+            // The public admission guard proves disposal has entered, rather than relying
+            // on a delay after scheduling its task. This key has no observation to retire.
+            var probeKey = NewKey();
+            await UntilAsync(async () =>
+            {
+                try { await coherent.RemoveAsync(probeKey); return false; }
+                catch (ObjectDisposedException) { return true; }
+            });
+            await Assert.That(disposal.IsCompleted).IsFalse();
+            await Assert.That(subscription.Stopped.IsCancellationRequested).IsFalse();
+            release.TrySetResult();
+            Exception? retirementFailure = null;
+            Exception? disposalFailure = null;
+            try { await retirement.WaitAsync(TimeSpan.FromSeconds(10)); }
+            catch (Exception error) { retirementFailure = error; }
+            try { await disposal.WaitAsync(TimeSpan.FromSeconds(10)); }
+            catch (Exception error) { disposalFailure = error; }
+            await Assert.That(ReferenceEquals(retirementFailure, cleanupFails ? expected : null)).IsTrue();
+            await Assert.That(ReferenceEquals(disposalFailure, cleanupFails ? expected : null)).IsTrue();
+            await Assert.That(subscription.Stopped.IsCancellationRequested).IsTrue();
+            await Assert.That(coherent.TrackingClient.IsConnected).IsFalse();
+        }
+        finally
+        {
+            release.TrySetResult();
+            memory.OnRemove = null;
+            try { await retirement.WaitAsync(TimeSpan.FromSeconds(10)); } catch { }
+            if (disposal is not null) { try { await disposal.WaitAsync(TimeSpan.FromSeconds(10)); } catch { } }
+            await coherent.TrackingClient.DisposeAsync();
+        }
+    }
+
+    [Test]
+    [Arguments(false, 1)]
+    [Arguments(true, 1)]
+    [Arguments(false, 2)]
+    [Arguments(true, 2)]
+    public async Task DisposalCleanupFailureStillStopsTheOwnedTracker(bool asynchronous, int keyCount)
+    {
+        using var memory = new ProbingMemoryCache();
+        await using var provider = BuildProvider(true, memory: memory);
+        var cache = provider.GetRequiredService<HybridCache>();
+        var keys = Enumerable.Range(0, keyCount).Select(_ => NewKey()).ToArray();
+        foreach (var key in keys)
+            await cache.GetOrCreateAsync(key, _ => ValueTask.FromResult("value"),
+                new HybridCacheEntryOptions { Flags = HybridCacheEntryFlags.DisableDistributedCacheWrite });
+        var coherent = Coherent(provider);
+        await Assert.That(coherent.ObservationCount).IsEqualTo(keyCount);
+        using var subscription = coherent.TrackingClient.ClientSideCache!.SubscribeInvalidations(
+            InstanceName + keys[0], _ => { });
+        var expected = new InvalidOperationException("disposal memory cleanup failed");
+        var removals = 0;
+        memory.OnRemove = () =>
+        {
+            Interlocked.Increment(ref removals);
+            throw expected;
+        };
+        try
+        {
+            Exception? failure = null;
+            try
+            {
+                if (asynchronous) await coherent.DisposeAsync();
+                else coherent.Dispose();
+            }
+            catch (Exception error) { failure = error; }
+            await Assert.That(subscription.Stopped.IsCancellationRequested).IsTrue();
+            await Assert.That(coherent.TrackingClient.IsConnected).IsFalse();
+            await Assert.That(async () => await coherent.TrackingClient.PingAsync()).Throws<ObjectDisposedException>();
+            await Assert.That(coherent.ObservationCount).IsEqualTo(0);
+            await Assert.That(removals).IsEqualTo(keyCount);
+            if (keyCount == 1) await Assert.That(ReferenceEquals(failure, expected)).IsTrue();
+            else
+            {
+                await Assert.That(failure is AggregateException).IsTrue();
+                var errors = ((AggregateException)failure!).InnerExceptions;
+                await Assert.That(errors.Count).IsEqualTo(keyCount);
+                await Assert.That(errors.All(error => ReferenceEquals(error, expected))).IsTrue();
+            }
+            // A failed first disposal still completes shutdown and remains single-shot.
+            coherent.Dispose();
+            await coherent.DisposeAsync();
+            await Assert.That(removals).IsEqualTo(keyCount);
+        }
+        finally
+        {
+            memory.OnRemove = null;
+            // The failing-before-fix run must also release the leaked tracker.
+            await coherent.TrackingClient.DisposeAsync();
+        }
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task AcquisitionCleanupFailureRollsBackTheUnreturnedCall(bool repeatedFailure)

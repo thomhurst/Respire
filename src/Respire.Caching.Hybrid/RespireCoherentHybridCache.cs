@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Runtime.ExceptionServices;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Caching.Hybrid;
 using Microsoft.Extensions.Caching.Memory;
@@ -30,6 +31,9 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
     private bool _trackingStopped;
     private bool _tagHistoryExhausted;
     private int _disposed;
+    private int _activeRetirementDrains;
+    private TaskCompletionSource<Exception?>? _retirementCompletion;
+    private Exception? _disposalRetirementFailure;
 
     internal RespireCoherentHybridCache(IServiceProvider services,
         Func<IServiceProvider, HybridCache> factory, RespireHybridCacheCoherenceOptions options)
@@ -136,11 +140,11 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
         }
         finally
         {
-            try { DrainRetiredObservations(); }
-            catch (Exception error) when (updates is not null)
+            if (TryDrainRetiredObservations() is { } error)
             {
                 // A custom memory-cache failure must not abandon an already-started marker write.
-                updates = [.. updates, Task.FromException(error)];
+                if (updates is null) ThrowCleanupFailure(error);
+                else updates = [.. updates, Task.FromException(error)];
             }
         }
         var completion = Task.WhenAll(updates);
@@ -236,14 +240,13 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
         }
         finally
         {
-            try { DrainRetiredObservations(); }
-            catch (Exception cleanupError)
+            if (TryDrainRetiredObservations() is { } cleanupError)
             {
                 // The caller cannot release a call that Acquire never returned.
                 // Roll it back even if the failing cleanup belongs to another key.
                 try { Release(acquired); }
-                catch (Exception rollbackError) { throw new AggregateException(cleanupError, rollbackError); }
-                throw;
+                catch (Exception rollbackError) { cleanupError = CombineFailures(cleanupError, rollbackError)!; }
+                ThrowCleanupFailure(cleanupError);
             }
         }
     }
@@ -321,11 +324,16 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
 
     private void RetireAll()
     {
+        MarkAllRetired();
+        DrainRetiredObservations();
+    }
+
+    private void MarkAllRetired()
+    {
         lock (_gate)
         {
             foreach (var observation in _observations.Values.ToArray()) Retire(observation);
         }
-        DrainRetiredObservations();
     }
 
     private void Retire(Observation observation)
@@ -342,25 +350,33 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
         DrainRetiredObservations();
     }
 
-    private void DrainRetiredObservations()
+    private void DrainRetiredObservations() => ThrowCleanupFailure(TryDrainRetiredObservations());
+
+    // Return errors to the owner so admission, tag writes and disposal can apply their
+    // own completion policy. A failed removal still cleans subscriptions and later entries.
+    private Exception? TryDrainRetiredObservations()
     {
         // Subscribe/Stopped registration can invoke a callback synchronously during Acquire.
         // The outer gate owner drains after publishing all handles and releasing the gate.
 #if NET9_0_OR_GREATER
-        if (_gate.IsHeldByCurrentThread) return;
+        if (_gate.IsHeldByCurrentThread) return null;
 #else
-        if (Monitor.IsEntered(_gate)) return;
+        if (Monitor.IsEntered(_gate)) return null;
 #endif
+        Exception? failure = null;
         while (true)
         {
             Observation observation;
             lock (_gate)
             {
-                if (!_retiredObservations.TryDequeue(out observation!)) return;
+                if (!_retiredObservations.TryDequeue(out observation!)) return failure;
+                _activeRetirementDrains++;
             }
             // No external memory-cache or subscription cleanup runs under the bridge gate.
+            Exception? cleanupFailure = null;
             try { _memory.Remove(observation.MemoryKey); }
-            finally
+            catch (Exception error) { cleanupFailure = error; }
+            try
             {
                 observation.Stopped.Unregister();
                 observation.SourceStopped.Unregister();
@@ -369,7 +385,59 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
                 observation.Subscription?.Dispose();
                 observation.SourceSubscription?.Dispose();
             }
+            catch (Exception error) { cleanupFailure = CombineFailures(cleanupFailure, error); }
+            finally { CompleteRetirementDrain(cleanupFailure); }
+            failure = CombineFailures(failure, cleanupFailure);
         }
+    }
+
+    private void CompleteRetirementDrain(Exception? failure)
+    {
+        TaskCompletionSource<Exception?>? completion = null;
+        Exception? disposalFailure = null;
+        lock (_gate)
+        {
+            if (Volatile.Read(ref _disposed) != 0)
+                _disposalRetirementFailure = CombineFailures(_disposalRetirementFailure, failure);
+            _activeRetirementDrains--;
+            if (_activeRetirementDrains == 0 && _retiredObservations.Count == 0)
+            {
+                completion = _retirementCompletion;
+                _retirementCompletion = null;
+                disposalFailure = _disposalRetirementFailure;
+                if (completion is not null) _disposalRetirementFailure = null;
+            }
+        }
+        completion?.TrySetResult(disposalFailure);
+    }
+
+    private ValueTask<Exception?> RetireAllAndWaitAsync()
+    {
+        // Disposal has closed admission. Marking under the gate also includes an Acquire
+        // that entered before closure. Claiming and counting each drain is atomic there.
+        MarkAllRetired();
+        _ = TryDrainRetiredObservations();
+        lock (_gate)
+        {
+            if (_activeRetirementDrains == 0 && _retiredObservations.Count == 0)
+            {
+                var failure = _disposalRetirementFailure;
+                _disposalRetirementFailure = null;
+                return new(failure);
+            }
+            return new((_retirementCompletion ??= new(TaskCreationOptions.RunContinuationsAsynchronously)).Task);
+        }
+    }
+
+    private static Exception? CombineFailures(Exception? first, Exception? second)
+    {
+        if (first is null) return second;
+        return second is null ? first : new AggregateException(first, second);
+    }
+
+    private static void ThrowCleanupFailure(Exception? error)
+    {
+        if (error is not null) ExceptionDispatchInfo.Capture(error).Throw();
     }
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
@@ -377,19 +445,33 @@ internal sealed class RespireCoherentHybridCache : HybridCache, IDisposable, IAs
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-        _sweep.Dispose();
-        RetireAll();
+        Exception? failure = null;
+        try
+        {
+            _sweep.Dispose();
+            failure = RetireAllAndWaitAsync().GetAwaiter().GetResult();
+        }
+        catch (Exception error) { failure = error; }
         // RespireClient exposes only async disposal. Its owned shutdown awaits use
         // ConfigureAwait(false), so this wait does not require the caller's context.
-        TrackingClient.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        try { TrackingClient.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
+        catch (Exception error) { failure = CombineFailures(failure, error); }
+        ThrowCleanupFailure(failure);
     }
 
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-        await _sweep.DisposeAsync().ConfigureAwait(false);
-        RetireAll();
-        await TrackingClient.DisposeAsync().ConfigureAwait(false);
+        Exception? failure = null;
+        try
+        {
+            await _sweep.DisposeAsync().ConfigureAwait(false);
+            failure = await RetireAllAndWaitAsync().ConfigureAwait(false);
+        }
+        catch (Exception error) { failure = error; }
+        try { await TrackingClient.DisposeAsync().ConfigureAwait(false); }
+        catch (Exception error) { failure = CombineFailures(failure, error); }
+        ThrowCleanupFailure(failure);
     }
 
     private sealed class Observation(RespireCoherentHybridCache owner, string key)
