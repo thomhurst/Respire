@@ -1,0 +1,26 @@
+name: Client cache write benchmarks
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}-${{ github.event.label.name }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    if: github.event.label.name == 'run-cache-write-benchmarks'
+    uses: ./.github/workflows/benchmark-compare.yml
+    with:
+      event-base-sha: ${{ github.event.pull_request.base.sha }}
+      candidate-sha: ${{ github.sha }}
+      expected-head-sha: ${{ github.event.pull_request.head.sha }}
+      fixture: benchmarks/Respire.Benchmarks/ClientCacheWriteBenchmarks.cs
+      filter: '*ClientCacheWriteBenchmarks*'
+      expected-case-count: 5
+      expected-methods: SetConcurrent50Coalescing,SetConcurrent50WithoutCoalescing,SetConcurrent50CacheDisabled,ReadWriteConcurrent50,CoalescedGetMissBurst
+      artifact-prefix: cache-write-comparison
