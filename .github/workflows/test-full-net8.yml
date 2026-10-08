@@ -47,8 +47,8 @@ jobs:
           do
             dotnet build "$project" -c Release -f net8.0
             if [[ "$project" == tests/Respire.Tests ]]; then
-              # MetricSelectionTests controls listener state; run it without the HTML reporter below.
-              dotnet run --project "$project" -c Release -f net8.0 --no-build -- \
+              # Core tests own listener state; the HTML reporter adds a process-wide listener.
+              TUNIT_DISABLE_HTML_REPORTER=true dotnet run --project "$project" -c Release -f net8.0 --no-build -- \
                 --treenode-filter '/*/*/(!MetricSelectionTests)/*' --report-trx \
                 --report-trx-filename Respire.Tests-core-net8.trx
             else
