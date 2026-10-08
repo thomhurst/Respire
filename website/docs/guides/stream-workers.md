@@ -42,7 +42,9 @@ Each registration creates a separate hosted service with unique consumer names b
 Set `ConsumerName` to a stable name for a particular host slot when its next process should
 resume its own pending deliveries. Each reader appends its zero-based index to that name.
 Active hosts and registrations sharing a group must use different names; keep the same
-consumer count across restarts to retain all reader identities.
+consumer count across restarts to retain all reader identities. Reducing `ConsumerCount`
+strands pending entries owned by the removed reader indexes; an external recovery process
+must claim those entries.
 Handlers are registered as scoped services unless already registered. A new asynchronous
 DI scope is created for each entry and disposed after handling and acknowledgement finish.
 Avoid registering a handler as a singleton when it depends on scoped services.

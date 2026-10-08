@@ -13,6 +13,50 @@ namespace Respire.Streaming.Tests;
 public class StreamWorkerIntegrationTests(RedisTestContainer fixture)
 {
     [Test]
+    [Arguments(2, false)]
+    [Arguments(3, false)]
+    [Arguments(2, true)]
+    [Arguments(3, true)]
+    public async Task GroupProgressBeforeAndBetweenDeliveriesMatchesRedis(int protocol, bool modern)
+    {
+        await using var modernServer = modern ? new RedisBuilder("redis:7.2.11-alpine").Build() : null;
+        if (modernServer is not null) await modernServer.StartAsync();
+        var options = modernServer is null ? RespireOptions.Parse(fixture.ConnectionString)
+            : new RespireOptions { Endpoints = [new(modernServer.Hostname, modernServer.GetMappedPublicPort(6379))] };
+        await using var real = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        await using var server = new RespireFakeServer(clock: null, modern);
+        await using var fake = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        foreach (var count in new[] { 0, 3 })
+        {
+            var key = "progress-" + count;
+            foreach (var client in new IRespireClient[] { real, fake })
+                for (var i = 1; i <= count; i++)
+                    await client.Streams.AddAsync(key, new StreamAddOptions { Id = $"{i}-0" }, ("f", "value"));
+            foreach (var start in new[] { "0", "1-0", "2-0", "3-0", "4-0", "$" })
+            {
+                foreach (var client in new IRespireClient[] { real, fake })
+                    await client.Streams.CreateGroupAsync(key, start, start);
+                await CompareProgressAsync();
+                for (var page = 0; page < 3; page++)
+                {
+                    foreach (var client in new IRespireClient[] { real, fake })
+                        await client.Streams.ReadGroupOnceAsync(key, start, "consumer", new() { Count = 1 });
+                    await CompareProgressAsync();
+                }
+
+                async Task CompareProgressAsync()
+                {
+                    var expected = (await real.Streams.GroupInfoAsync(key)).Single(group => group.Name == start);
+                    var actual = (await fake.Streams.GroupInfoAsync(key)).Single(group => group.Name == start);
+                    await Assert.That(actual.EntriesRead).IsEqualTo(expected.EntriesRead);
+                    await Assert.That(actual.Lag).IsEqualTo(expected.Lag);
+                    await Assert.That(actual.LastDeliveredId).IsEqualTo(expected.LastDeliveredId);
+                }
+            }
+        }
+    }
+
+    [Test]
     [Arguments(2)]
     [Arguments(3)]
     [Arguments(2, true)]

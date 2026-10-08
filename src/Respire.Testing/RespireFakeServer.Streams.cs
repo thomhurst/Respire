@@ -13,7 +13,7 @@ public sealed partial class RespireFakeServer
     {
         internal SortedDictionary<RespireStreamId, byte[][]> Entries { get; } = [];
         internal Dictionary<byte[], FakeStreamGroup> Groups { get; } = new(BinaryKeyComparer.Instance);
-        internal RespireStreamId Last;
+        internal RespireStreamId Last = new("0-0");
         internal int Duration = 100;
         internal int MaxSize = 100;
         internal Dictionary<byte[], List<StreamIdentity>> Producers { get; } = new(BinaryKeyComparer.Instance);
@@ -169,10 +169,8 @@ public sealed partial class RespireFakeServer
         if (stream is null && args.Length != 6) return FakeReply.Error("ERR The XGROUP subcommand requires the key to exist");
         stream ??= new FakeStream();
         var start = Token(args[4]) == "$" ? stream.Last : StreamId(args[4]);
-        var group = new FakeStreamGroup(start)
-        {
-            EntriesRead = start.CompareTo(RespireStreamId.Beginning) == 0 ? 0 : null,
-        };
+        // Without ENTRIESREAD, Redis keeps this counter unknown until a delivery.
+        var group = new FakeStreamGroup(start);
         if (!stream.Groups.TryAdd(args[3], group)) return FakeReply.Error("BUSYGROUP Consumer Group name already exists");
         if (Find(args[2]) is null) SetEntry(args[2], new Entry(stream));
         // Redis does not invalidate WATCH for group metadata on an existing stream.
@@ -262,7 +260,7 @@ public sealed partial class RespireFakeServer
                 {
                     group.Last = entry.Key;
                     if (group.EntriesRead.HasValue) group.EntriesRead++;
-                    else if (entry.Key == stream.Last) group.EntriesRead = stream.Entries.Count;
+                    else group.EntriesRead = EstimateStreamEntriesRead(stream, entry.Key);
                     group.Pending[entry.Key] = new(request.Consumer!, Now);
                 }
                 else if (group is not null)
@@ -345,6 +343,17 @@ public sealed partial class RespireFakeServer
         return (StreamId(Encoding.UTF8.GetBytes(text)), exclusive);
     }
 
+    private static long? EstimateStreamEntriesRead(FakeStream stream, RespireStreamId id)
+    {
+        // This fake does not support deleting/trimming entries, so the first and last
+        // boundaries are sufficient for Redis's logical-counter estimate.
+        if (stream.Entries.Count == 0) return 0;
+        if (id == stream.Last) return stream.Entries.Count;
+        var first = stream.Entries.First().Key;
+        if (id < first) return 0;
+        return id == first ? 1 : null;
+    }
+
     private FakeReply StreamGroupInfo(Connection connection, byte[][] args)
     {
         if (args.Length != 3 || Token(args[1]) != "GROUPS") return Syntax("XINFO");
@@ -353,13 +362,15 @@ public sealed partial class RespireFakeServer
         return FakeReply.Array(stream.Groups.Select(pair =>
         {
             var group = pair.Value;
+            // Lag may be independently knowable without assigning EntriesRead.
+            var entriesRead = group.EntriesRead ?? EstimateStreamEntriesRead(stream, group.Last);
             FakeReply[] fields = [FakeReply.Text("name"), FakeReply.Bulk(pair.Key),
                 FakeReply.Text("consumers"), FakeReply.Integer(group.Consumers.Count),
                 FakeReply.Text("pending"), FakeReply.Integer(group.Pending.Count),
                 FakeReply.Text("last-delivered-id"), FakeReply.Text(group.Last.ToString()),
                 FakeReply.Text("entries-read"), group.EntriesRead is { } read ? FakeReply.Integer(read) : FakeReply.Null,
-                FakeReply.Text("lag"), group.Last == stream.Last || group.EntriesRead.HasValue
-                    ? FakeReply.Integer(stream.Entries.Keys.Count(id => id > group.Last)) : FakeReply.Null];
+                FakeReply.Text("lag"), entriesRead is { } logicalCount
+                    ? FakeReply.Integer(stream.Entries.Count - logicalCount) : FakeReply.Null];
             return connection.Resp3 ? FakeReply.Map(fields) : FakeReply.Array(fields);
         }).ToArray());
     }

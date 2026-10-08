@@ -103,15 +103,18 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
         }
 
         if (result == RespireStreamWorkerResult.Ack && !_handlers.IsCancellationRequested)
+            // ConsumeAsync treats acknowledgement cancellation as expected only after
+            // readers stop. StopAsync and Dispose must therefore cancel readers first.
             await client.Streams.AcknowledgeAsync(stream, group, [entry.Id], _handlers.Token).ConfigureAwait(false);
     }
 
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
         // BackgroundService cancels readers immediately. Handlers keep a separate token while draining.
+        var stopping = base.StopAsync(cancellationToken);
         using var abort = cancellationToken.UnsafeRegister(static state =>
             ((RespireStreamWorker<THandler, TMessage>)state!).CancelHandlers(), this);
-        try { await base.StopAsync(cancellationToken).ConfigureAwait(false); }
+        try { await stopping.ConfigureAwait(false); }
         finally
         {
             // WaitAsync's cancellation callback can finish the wait and remove our registration first.
@@ -121,8 +124,8 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
 
     public override void Dispose()
     {
-        CancelHandlers();
         base.Dispose();
+        CancelHandlers();
         var running = Volatile.Read(ref _consumerDrain) ?? ExecuteTask;
         if (running is not { IsCompleted: false })
             _handlers.Dispose();
