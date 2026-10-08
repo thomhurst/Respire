@@ -1954,6 +1954,7 @@ public sealed partial class RespireClient : IRespireClient
                 in ClientSideCacheCoordinator.GetReadResult result) => state.Converter(state.Client, in result.Response),
             transferResponse);
 
+#if DEBUG
     private ValueTask<TResult> FetchGetCacheReadAsync<TState, TResult>(
         RespireKey resolvedKey, ClientSideCacheCoordinator cache, CancellationToken cancellationToken,
         TState state, ClientSideCacheCoordinator.GetReadConverter<TState, TResult> converter, bool transferResponse = false, bool decodeString = false)
@@ -1992,14 +1993,28 @@ public sealed partial class RespireClient : IRespireClient
         void IAsyncStateMachine.SetStateMachine(IAsyncStateMachine stateMachine)
             => throw new InvalidOperationException("Cached conversion cannot suspend.");
     }
+#endif
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
+#if DEBUG
     private async ValueTask<TResult> FetchGetCacheReadSlowAsync<TState, TResult>(
         RespireKey resolvedKey, ClientSideCacheCoordinator cache, CancellationToken cancellationToken,
         TState state, ClientSideCacheCoordinator.GetReadConverter<TState, TResult> converter, bool transferResponse, bool decodeString)
+#else
+    private async ValueTask<TResult> FetchGetCacheReadAsync<TState, TResult>(
+        RespireKey resolvedKey, ClientSideCacheCoordinator cache, CancellationToken cancellationToken,
+        TState state, ClientSideCacheCoordinator.GetReadConverter<TState, TResult> converter, bool transferResponse = false, bool decodeString = false)
+#endif
     {
+#if !DEBUG
+        // Release already uses a value-type async frame. Preserve its existing hot path.
+        var generation = _core.Sentinel?.Current;
+        if (cache.CoalesceConcurrentMisses && cache.TryPeekRead(in resolvedKey, out var cached)
+            && IsCacheGenerationCurrent(generation))
+            return converter(state, in cached);
+#endif
         var token = cache.BeginRead(in resolvedKey);
         var command = new Cmd1(Verbs.Get, token.State.Key.AsValue());
         var response = default(RespValue);
