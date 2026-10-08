@@ -10,6 +10,162 @@ namespace Respire.Tests;
 public class ClientCacheQueryDependencyTests
 {
     [Test]
+    [Arguments("publish", false)]
+    [Arguments("abandon", false)]
+    [Arguments("rebase", false)]
+    [Arguments("publish", true)]
+    [Arguments("abandon", true)]
+    [Arguments("rebase", true)]
+    public async Task ReusedRegistrationStorageCannotReviveCompletedCopies(string action, bool publishOriginal)
+    {
+        var cache = new ClientSideCacheCoordinator(new());
+        var request = Request("LCS");
+        using var oldResponse = RespValue.Integer(11);
+        var old = cache.BeginRead("LCS", in request);
+        var oldState = old.Lease!.GetDependency(0).State;
+        cache.CompleteRead(in old, in oldResponse, allowInsert: publishOriginal);
+        // An abandoned owner can be reused within the same store/epochs: only its identity fences stale publication.
+        if (publishOriginal) cache.Clear();
+        var current = cache.BeginRead("LCS", in request);
+        await Assert.That(ReferenceEquals(old.Lease, current.Lease)).IsTrue();
+        await Assert.That(ReferenceEquals(oldState, current.Lease!.GetDependency(0).State)
+            || ReferenceEquals(oldState, current.Lease.GetDependency(1).State)).IsTrue();
+        if (action == "rebase")
+        {
+            var stale = cache.RebaseRead(in old);
+            await Assert.That(stale.CanCache).IsFalse();
+            cache.CompleteRead(in stale, in oldResponse, allowInsert: true);
+        }
+        else cache.CompleteRead(in old, in oldResponse, allowInsert: action == "publish");
+        await Assert.That(cache.Count).IsEqualTo(0);
+        await Assert.That(PendingDependencies(cache)).IsEqualTo(2);
+        RespireKey second = "second";
+        cache.Invalidate(in second);
+        using var response = RespValue.Integer(33);
+        cache.CompleteRead(in current, in response, allowInsert: true);
+        await Assert.That(cache.Count).IsEqualTo(0);
+        await Assert.That(PendingDependencies(cache)).IsEqualTo(0);
+        var positive = cache.BeginRead("LCS", in request);
+        cache.CompleteRead(in positive, in response, allowInsert: true);
+        cache.CompleteRead(in positive, in oldResponse, allowInsert: false);
+        await Assert.That(cache.TryPeek(in request, out var cached)).IsTrue();
+        using (cached) await Assert.That(cached.AsInteger()).IsEqualTo(33);
+        await Assert.That(PendingDependencies(cache)).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task LargeRegistrationStorageIsClearedButNotRetained()
+    {
+        var cache = new ClientSideCacheCoordinator(new());
+        RespireValue[] keys = Enumerable.Range(0, 17).Select(index => (RespireValue)("large:" + index)).ToArray();
+        var request = new ClientSideCacheCoordinator.QueryRequest(new("SINTER", keys), keys[0].AsKey());
+        var first = cache.BeginRead("SINTER", in request);
+        using var unused = RespValue.Null;
+        cache.CompleteRead(in first, in unused, allowInsert: false);
+        var second = cache.BeginRead("SINTER", in request);
+        await Assert.That(ReferenceEquals(first.Lease, second.Lease)).IsFalse();
+        for (var index = 0; index < keys.Length; index++)
+            await Assert.That(first.Lease!.GetDependency(index).State is null).IsTrue();
+        cache.CompleteRead(in second, in unused, allowInsert: false);
+        var idle = cache.InspectForTests().IdleQueryStorage;
+        await Assert.That(idle.Leases).IsEqualTo(0);
+        await Assert.That(idle.States).IsEqualTo(17);
+        await Assert.That(idle.RetainedDependencies).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task FullScalarPoolCanRetainAndReuseMultiDependencyStorage()
+    {
+        var cache = new ClientSideCacheCoordinator(new());
+        var scalar = Request("STRLEN");
+        var tokens = Enumerable.Range(0, 64).Select(_ => cache.BeginRead("STRLEN", in scalar)).ToArray();
+        using var unused = RespValue.Null;
+        foreach (var token in tokens) cache.CompleteRead(in token, in unused, allowInsert: false);
+        var multiple = Request("LCS");
+        var first = cache.BeginRead("LCS", in multiple);
+        cache.CompleteRead(in first, in unused, allowInsert: false);
+        var second = cache.BeginRead("LCS", in multiple);
+        await Assert.That(ReferenceEquals(first.Lease, second.Lease)).IsTrue();
+        cache.CompleteRead(in second, in unused, allowInsert: false);
+        await Assert.That(cache.InspectForTests().IdleQueryStorage.Leases).IsEqualTo(64);
+    }
+
+    [Test]
+    public async Task ExhaustedLeaseIdentityCannotWrapOrReturnToThePool()
+    {
+        var cache = new ClientSideCacheCoordinator(new());
+        var request = Request("STRLEN");
+        var old = cache.BeginRead("STRLEN", in request);
+        // This fresh owner has no concurrent users. Force the terminal identity without billions of rents.
+        old.Lease!.Generation = long.MaxValue;
+        old = old with { LeaseGeneration = long.MaxValue };
+        using var unused = RespValue.Null;
+        cache.CompleteRead(in old, in unused, allowInsert: false);
+        var current = cache.BeginRead("STRLEN", in request);
+        await Assert.That(ReferenceEquals(old.Lease, current.Lease)).IsFalse();
+        cache.CompleteRead(in old, in unused, allowInsert: true);
+        await Assert.That(PendingDependencies(cache)).IsEqualTo(1);
+        cache.CompleteRead(in current, in unused, allowInsert: false);
+        await Assert.That(PendingDependencies(cache)).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task ConcurrentDependencyChurnKeepsIdleStorageBoundedAndCleared()
+    {
+        var cache = new ClientSideCacheCoordinator(new());
+        var tokens = Enumerable.Range(0, 512).Select(index =>
+        {
+            RespireValue[] keys = ["churn:" + index, "source:" + index];
+            var request = new ClientSideCacheCoordinator.QueryRequest(new("LCS", keys), keys[0].AsKey());
+            return cache.BeginRead("LCS", in request);
+        }).ToArray();
+        cache.FlushForContinuityLoss();
+        await Task.Run(() => Parallel.ForEach(tokens, token =>
+        {
+            using var response = RespValue.Integer(1);
+            cache.CompleteRead(in token, in response, allowInsert: true);
+            cache.CompleteRead(in token, in response, allowInsert: false);
+        }));
+        await Assert.That(PendingDependencies(cache)).IsEqualTo(0);
+        await Assert.That(cache.Count).IsEqualTo(0);
+        var idle = cache.InspectForTests().IdleQueryStorage;
+        await Assert.That(idle.Leases).IsEqualTo(64);
+        await Assert.That(idle.States).IsEqualTo(256);
+        await Assert.That(idle.RetainedDependencies).IsEqualTo(0);
+        cache.Clear();
+        for (var index = 0; index < 1_000; index++)
+        {
+            var request = new ClientSideCacheCoordinator.QueryRequest(new("STRLEN", "retired:" + index), "retired:" + index);
+            var token = cache.BeginRead("STRLEN", in request);
+            using var unused = RespValue.Null;
+            cache.CompleteRead(in token, in unused, allowInsert: false);
+        }
+        idle = cache.InspectForTests().IdleQueryStorage;
+        await Assert.That(idle.Leases).IsLessThanOrEqualTo(64);
+        await Assert.That(idle.States).IsLessThanOrEqualTo(256);
+        await Assert.That(idle.RetainedDependencies).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task RetiredRegistrationStorageClearsEveryDependencyReference()
+    {
+        var cache = new ClientSideCacheCoordinator(new());
+        RespireValue[] keys = Enumerable.Range(0, 16).Select(index => (RespireValue)("key:" + index)).ToArray();
+        var request = new ClientSideCacheCoordinator.QueryRequest(new("SINTER", keys), keys[0].AsKey());
+        var token = cache.BeginRead("SINTER", in request);
+        var states = Enumerable.Range(0, 16).Select(index => token.Lease!.GetDependency(index).State).ToArray();
+        using var unused = RespValue.Null;
+        cache.CompleteRead(in token, in unused, allowInsert: false);
+        await Assert.That(token.Lease!.Registered).IsEqualTo(0);
+        for (var index = 0; index < states.Length; index++)
+        {
+            await Assert.That(token.Lease.GetDependency(index).State is null).IsTrue();
+            await Assert.That(states[index].Key.Equals(default(RespireKey))).IsTrue();
+        }
+        await Assert.That(PendingDependencies(cache)).IsEqualTo(0);
+    }
+
+    [Test]
     [Arguments("STRLEN", "other", true)]
     [Arguments("STRLEN", "first", false)]
     [Arguments("LCS", "other", true)]
@@ -90,7 +246,10 @@ public class ClientCacheQueryDependencyTests
         cache.CompleteRead(in redirected, in response, allowInsert: true);
         await Assert.That(cache.Count).IsEqualTo(1);
         cache.Clear();
-        var retried = cache.RebaseRead(in redirected);
+        await Assert.That(cache.RebaseRead(in redirected).CanCache).IsFalse();
+        var fresh = cache.BeginRead("LCS", in request);
+        var retried = cache.RebaseRead(in fresh);
+        cache.CompleteRead(in fresh, in response, allowInsert: false);
         RespireKey second = "second";
         cache.Invalidate(in second);
         cache.CompleteRead(in retried, in response, allowInsert: true);
