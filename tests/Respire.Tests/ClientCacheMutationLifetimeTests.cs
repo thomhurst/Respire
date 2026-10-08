@@ -12,6 +12,28 @@ namespace Respire.Tests;
 
 public class ClientCacheMutationLifetimeTests
 {
+    [Test]
+    public async Task MutationLeaseSupportsNativeOwnersBeyondTheFormerSeventeenBitLimit()
+    {
+        var cache = new ClientSideCacheCoordinator(new());
+        var fence = cache.BeginUnknownMutation();
+        var references = new ClientSideCacheCoordinator.MutationReference[131_071];
+        var retained = 0;
+        try
+        {
+            for (; retained < references.Length; retained++)
+                references[retained] = fence.BindNative();
+            cache.CompleteMutation(in fence, succeeded: true);
+            await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(1);
+        }
+        finally
+        {
+            cache.CompleteMutation(in fence);
+            for (var index = 0; index < retained; index++) references[index].Release();
+        }
+        await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(0);
+    }
+
     [Test, NotInParallel]
     public async Task AdmissionMeterFailurePreservesOriginalErrorAndReleasesUnsubmittedFence()
     {

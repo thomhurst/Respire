@@ -102,6 +102,10 @@ public class ValueCodecIntegrationTests(RedisTestContainer fixture)
         });
         var key = $"codec-cache:{Guid.NewGuid():N}";
         await client.SetAsync(key, new MutablePayload { Text = new string('x', 8192) });
+        // Cache population must follow the write's native retirement, not only its caller.
+        using var retirement = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (client.Core.ClientCache!.InspectForTests().ActiveMutationCount != 0)
+            await Task.Delay(1, retirement.Token);
         var first = (await client.GetAsync<MutablePayload>(key))!;
         var before = client.ClientSideCache!.GetStatistics().Hits;
         first.Text = "caller mutation";

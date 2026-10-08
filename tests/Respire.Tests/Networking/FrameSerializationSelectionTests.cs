@@ -137,7 +137,7 @@ public class FrameSerializationSelectionTests
         var type = typeof(RespireConnection).GetNestedType("TransactionCommand", BindingFlags.NonPublic)!;
         var command = (IRespCommand)Activator.CreateInstance(type,
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, binder: null,
-            args: [new ReadOnlyMemory<byte>(block), includeMulti, null], culture: null)!;
+            args: [new ReadOnlyMemory<byte>(block), includeMulti, null, default(ClientSideCacheCoordinator.MutationFence)], culture: null)!;
         byte[] expected = includeMulti
             ? [.. RespCommands.Multi, .. block, .. RespCommands.Exec]
             : [.. block, .. RespCommands.Exec];

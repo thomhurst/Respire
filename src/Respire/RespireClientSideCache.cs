@@ -1725,8 +1725,10 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     }
 
     /// <summary>
-    /// What a mutation must re-invalidate when its reply arrives. Constructed only through the factories,
-    /// so the payload always matches <see cref="Kind"/>.
+    /// Identifies the mutation's owned payload, which always matches <see cref="Kind"/>.
+    /// Copies identify the same logical owner; copying does not retain native ownership.
+    /// Each accepted native response must bind once and release that reference on retirement.
+    /// Logical completion is idempotent, and an old copy cannot affect a later pooled rental.
     /// </summary>
     internal readonly struct MutationFence
     {

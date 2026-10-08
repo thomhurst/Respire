@@ -171,7 +171,9 @@ internal sealed partial class ClientSideCacheCoordinator
         private const long Failed = 2;
         private const long NativeAttached = 4;
         private const long Reference = 8;
-        private const long EpochIncrement = 1L << 20;
+        // Keep 32 reference bits: a supported int-sized batch also retains its logical
+        // owner. The remaining epoch bits never wrap; exhausted leases leave the pool.
+        private const long EpochIncrement = 1L << 35;
         private const long EpochMask = ~(EpochIncrement - 1);
         private const long ReferenceMask = (EpochIncrement - 1) & ~7L;
         private static readonly ObjectPool<MutationLease, PoolPolicy> Pool = new(4096);
