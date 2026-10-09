@@ -106,6 +106,7 @@ jobs:
       - name: Test pinned Hangfire suite and worker lifecycle on RESP2 and RESP3
         shell: bash
         run: |
+          # 95 cases: 93 ported upstream facts and 2 worker lifecycle cases.
           for protocol in 2 3; do
             RESPIRE_TEST_PROTOCOL="$protocol" dotnet run --project tests/Respire.Hangfire.Acceptance.Tests -c Release \
               -f ${{ matrix.framework }} --no-build -- --minimum-expected-tests 95 --report-trx \

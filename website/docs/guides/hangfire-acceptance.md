@@ -14,6 +14,8 @@ The acceptance project executes that published package against real Redis throug
 Inject the adapter into `RedisStorage`; construct and configure it using native Respire options:
 
 ```csharp
+using Respire.StackExchangeCompat;
+
 await using var multiplexer = RespireConnectionMultiplexer.Create(options);
 var storage = new Hangfire.Redis.StackExchange.RedisStorage(multiplexer,
     new Hangfire.Redis.StackExchange.RedisStorageOptions
@@ -30,7 +32,10 @@ Passing a connection string directly to `RedisStorage` creates StackExchange.Red
 ## Upstream tests exercised
 
 `tests/Respire.Hangfire.Acceptance.Tests` ports **93 of 96 active upstream facts**,
-preserving their method names and assertions. An independent StackExchange.Redis connection
+preserving their method names and behavioral assertions. The subscription timeout keeps
+its minimum wait assertion without a scheduling ceiling. Lock-thread failures are reported
+on the test thread after joining, with waiters released even when a callback fails.
+An independent StackExchange.Redis connection
 arranges and checks Redis state. Production storage, connections, fetched jobs, write
 transactions, locks, and subscriptions receive the shim. Test-only control calls do not
 extend the supported adapter interface. The package's existing friend assembly grant

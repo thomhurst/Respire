@@ -1,10 +1,11 @@
 #nullable disable
 // Adapted from Hangfire.Redis.StackExchange 1.12.0, commit da8e39a33df204900afc30aeb65110f76f081c55.
-// Changes: TUnit discovery, isolated Testcontainers fixture, and injected Respire shim.
+// Changes: TUnit discovery, isolated Testcontainers fixture, injected Respire shim, and test-thread exception reporting.
 // See NOTICE.md and License.md for upstream copyright and LGPLv3 terms.
 using Hangfire.Storage;
 using StackExchange.Redis;
 using System;
+using System.Runtime.ExceptionServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Hangfire.Redis.StackExchange;
@@ -51,38 +52,60 @@ namespace Hangfire.Redis.Tests
         {
             var db = RedisUtils.ShimDatabase;
 
-            var sync = new ManualResetEventSlim();
+            using var sync = new ManualResetEventSlim();
+            ExceptionDispatchInfo thread1Error = null;
+            ExceptionDispatchInfo thread2Error = null;
 
             var thread1 = new Thread(state =>
             {
-                using (var testLock1 = RedisLock.Acquire(db, "test", TimeSpan.FromMilliseconds(50)))
+                try
                 {
-                    // ensure nested lock release doesn't release parent lock
-                    using (var testLock2 = RedisLock.Acquire(db, "test", TimeSpan.FromMilliseconds(50)))
+                    using (var testLock1 = RedisLock.Acquire(db, "test", TimeSpan.FromMilliseconds(50)))
                     {
-                    }
+                        // ensure nested lock release doesn't release parent lock
+                        using (var testLock2 = RedisLock.Acquire(db, "test", TimeSpan.FromMilliseconds(50)))
+                        {
+                        }
 
+                        sync.Set();
+                        Thread.Sleep(200);
+                    }
+                }
+                catch (Exception exception)
+                {
+                    thread1Error = ExceptionDispatchInfo.Capture(exception);
+                }
+                finally
+                {
                     sync.Set();
-                    Thread.Sleep(200);
                 }
             });
 
             var thread2 = new Thread(state =>
             {
-                Assert.True(sync.Wait(1000));
-
-                Assert.Throws<DistributedLockTimeoutException>(() =>
+                try
                 {
-                    using (var testLock2 = RedisLock.Acquire(db, "test", TimeSpan.FromMilliseconds(50)))
+                    Assert.True(sync.Wait(1000));
+
+                    Assert.Throws<DistributedLockTimeoutException>(() =>
                     {
-                    }
-                });
+                        using (var testLock2 = RedisLock.Acquire(db, "test", TimeSpan.FromMilliseconds(50)))
+                        {
+                        }
+                    });
+                }
+                catch (Exception exception)
+                {
+                    thread2Error = ExceptionDispatchInfo.Capture(exception);
+                }
             });
 
             thread1.Start();
             thread2.Start();
             thread1.Join();
             thread2.Join();
+            thread1Error?.Throw();
+            thread2Error?.Throw();
         }
 
         //private async Task NestedTask(IDatabase db)
@@ -117,39 +140,64 @@ namespace Hangfire.Redis.Tests
         {
             var db = RedisUtils.ShimDatabase;
 
-            var sync1 = new ManualResetEventSlim();
-            var sync2 = new ManualResetEventSlim();
+            using var sync1 = new ManualResetEventSlim();
+            using var sync2 = new ManualResetEventSlim();
+            ExceptionDispatchInfo thread1Error = null;
+            ExceptionDispatchInfo thread2Error = null;
 
             var thread1 = new Thread(state =>
             {
-                using (var testLock1 = RedisLock.Acquire(db, "testLock", TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(110)))
+                try
                 {
-                    Assert.NotNull(testLock1);
+                    using (var testLock1 = RedisLock.Acquire(db, "testLock", TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(110)))
+                    {
+                        Assert.NotNull(testLock1);
 
-                    // sleep a bit more than holdDuration
-                    Thread.Sleep(250);
+                        // sleep a bit more than holdDuration
+                        Thread.Sleep(250);
+                        sync1.Set();
+                        sync2.Wait();
+                    }
+                }
+                catch (Exception exception)
+                {
+                    thread1Error = ExceptionDispatchInfo.Capture(exception);
+                }
+                finally
+                {
                     sync1.Set();
-                    sync2.Wait();
                 }
             });
 
             var thread2 = new Thread(state =>
             {
-                Assert.True(sync1.Wait(1000));
-
-                Assert.Throws<DistributedLockTimeoutException>(() =>
+                try
                 {
-                    using (var testLock2 = RedisLock.Acquire(db, "testLock", TimeSpan.FromMilliseconds(100)))
+                    Assert.True(sync1.Wait(1000));
+
+                    Assert.Throws<DistributedLockTimeoutException>(() =>
                     {
-                    }
-                });
+                        using (var testLock2 = RedisLock.Acquire(db, "testLock", TimeSpan.FromMilliseconds(100)))
+                        {
+                        }
+                    });
+                }
+                catch (Exception exception)
+                {
+                    thread2Error = ExceptionDispatchInfo.Capture(exception);
+                }
+                finally
+                {
+                    sync2.Set();
+                }
             });
 
             thread1.Start();
             thread2.Start();
             thread2.Join();
-            sync2.Set();
             thread1.Join();
+            thread1Error?.Throw();
+            thread2Error?.Throw();
         }
     }
 }

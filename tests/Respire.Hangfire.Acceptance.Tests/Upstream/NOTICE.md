@@ -25,6 +25,11 @@ These upstream-derived files retain those terms; the repository's MIT license do
 - Retain the upstream mocks for argument checks and state-handler callback verification.
   They are not used in place of production Redis behavior.
 - Dispose both clients and the watcher/subscription cancellation sources after each test.
+- Preserve the subscription timeout's 99 ms lower bound, removing its 120 ms scheduling
+  ceiling so a loaded host cannot fail a correct wait merely by resuming the thread late.
+- Capture exceptions in lock-test thread callbacks, release waiters in `finally`, and
+  rethrow on the test thread after joining. Dispose the synchronization events after joining.
+  The upstream lock assertions and thread-based ownership checks remain intact.
 - Use assembly name `Hangfire.Redis.Tests` to consume the package's existing `InternalsVisibleTo` grant.
   No production assembly, reflection workaround, or successful default replaces an unsupported call.
 
