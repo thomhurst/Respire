@@ -9,15 +9,15 @@ internal sealed class FailoverMaintenanceWindows
     private long _overflowUntil;
     private long _generation;
 
-    internal void Observe(MaintenanceTimeoutState state)
+    internal void Observe(MaintenanceTimeoutState state, bool started)
     {
         var now = Environment.TickCount64;
         lock (_gate)
         {
             Prune(now);
-            // Record every applied notification, including a zero-grace MOVING handoff that
-            // never opens a window, and retain overlap history after completion or expiry.
-            _generation++;
+            // Retain new-start overlap after completion or expiry, including zero-grace MOVING.
+            // Ignored replays and completion-only notifications cannot suppress probe failures.
+            if (started) _generation++;
             if (state.GetWindow(now) is not { } window) return;
             if (_states.Contains(state)) return;
             if (_states.Count < MaximumStates) _states.Add(state);

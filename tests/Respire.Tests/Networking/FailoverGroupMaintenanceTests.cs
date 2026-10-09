@@ -54,19 +54,14 @@ public class FailoverGroupMaintenanceTests
         var first = new MaintenanceTimeoutState(5000);
         var second = new MaintenanceTimeoutState(5000);
         var now = Environment.TickCount64;
-        first.Apply(new("MIGRATING", 1), now);
-        second.Apply(new("MIGRATING", 1), now);
-        tracker.Observe(first);
-        tracker.Observe(second);
+        tracker.Observe(first, first.Apply(new("MIGRATING", 1), now));
+        tracker.Observe(second, second.Apply(new("MIGRATING", 1), now));
 
-        first.Apply(new("MIGRATED", 1), now);
-        tracker.Observe(first);
+        tracker.Observe(first, first.Apply(new("MIGRATED", 1), now));
         await Assert.That(tracker.IsActive).IsTrue();
-        second.Apply(new("MIGRATED", 1), now);
-        tracker.Observe(second);
+        tracker.Observe(second, second.Apply(new("MIGRATED", 1), now));
         await Assert.That(tracker.IsActive).IsFalse();
-        first.Apply(new("FAILING_OVER", 2), now);
-        tracker.Observe(first);
+        tracker.Observe(first, first.Apply(new("FAILING_OVER", 2), now));
         await Assert.That(tracker.IsActive).IsTrue();
     }
 
@@ -128,16 +123,64 @@ public class FailoverGroupMaintenanceTests
     }
 
     [Test]
+    [Arguments("MIGRATING", "MIGRATED", true)]
+    [Arguments("FAILING_OVER", "FAILED_OVER", true)]
+    [Arguments("MIGRATING", "MIGRATED", false)]
+    [Arguments("FAILING_OVER", "FAILED_OVER", false)]
+    public async Task ReplayedClosedMaintenanceDuringProbeCountsFailure(string start, string finish, bool completed)
+    {
+        await using var server = Server();
+        await using var group = await RespireFailoverGroup.ConnectAsync(
+            [Candidate(server, window: TimeSpan.FromSeconds(1))], ManualOptions());
+        var connection = ((RespireClient)group.ActiveClient).Core.Multiplexer.GetConnection();
+        await server.SendRawAsync(Start(start));
+        await WaitUntilAsync(() => connection.HasMaintenanceWindow);
+        if (completed) await server.SendRawAsync(Finish(finish));
+        await WaitUntilAsync(() => !connection.HasMaintenanceWindow);
+        var replies = server.ReplyOverride!;
+        server.ReplyOverride = (id, command) => command == "PING"
+            ? [.. Start(start), .. "-ERR unavailable\r\n"u8.ToArray()]
+            : replies(id, command);
+
+        // Replaying the closed sequence cannot turn an ordinary failed probe into maintenance.
+        await group.ForTests.ProbeAsync(0);
+        await Assert.That(connection.HasMaintenanceWindow).IsFalse();
+        await Assert.That(group.GetEndpointStatuses()[0].ConsecutiveFailures).IsEqualTo(1);
+        await Assert.That(group.GetEndpointStatuses()[0].IsHealthy).IsFalse();
+        await Assert.That(group.ForTests.Circuit(0).State).IsEqualTo(EndpointCircuitState.Open);
+    }
+
+    [Test]
+    [Arguments("MIGRATED")]
+    [Arguments("FAILED_OVER")]
+    public async Task CompletionWithoutMaintenanceDuringProbeCountsFailure(string finish)
+    {
+        await using var server = Server();
+        await using var group = await RespireFailoverGroup.ConnectAsync([Candidate(server)], ManualOptions());
+        var replies = server.ReplyOverride!;
+        server.ReplyOverride = (id, command) => command == "PING"
+            ? [.. Finish(finish), .. "-ERR unavailable\r\n"u8.ToArray()]
+            : replies(id, command);
+
+        await group.ForTests.ProbeAsync(0);
+        await Assert.That(group.GetEndpointStatuses()[0].ConsecutiveFailures).IsEqualTo(1);
+        await Assert.That(group.GetEndpointStatuses()[0].IsHealthy).IsFalse();
+    }
+
+    [Test]
     public async Task ZeroGraceMovingRecordsOverlapWithoutOpeningWindow()
     {
         var tracker = new FailoverMaintenanceWindows();
         var state = new MaintenanceTimeoutState(5000);
         var generation = tracker.Generation;
-        state.Apply(new("MOVING", 1, 0, new RespireEndpoint("127.0.0.1", 6379)), Environment.TickCount64);
-        tracker.Observe(state);
+        var notification = new MaintenanceNotification("MOVING", 1, 0, new RespireEndpoint("127.0.0.1", 6379));
+        tracker.Observe(state, state.Apply(notification, Environment.TickCount64));
 
         await Assert.That(tracker.Generation).IsGreaterThan(generation);
         await Assert.That(tracker.IsActive).IsFalse();
+        generation = tracker.Generation;
+        tracker.Observe(state, state.Apply(notification, Environment.TickCount64));
+        await Assert.That(tracker.Generation).IsEqualTo(generation);
     }
 
     [Test]

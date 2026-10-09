@@ -220,8 +220,8 @@ internal sealed partial class RespireConnection
                 state = new MaintenanceTimeoutState((long)_maintenanceOptions!.MaintenanceWindowTimeout.TotalMilliseconds);
                 Volatile.Write(ref _maintenanceState, state);
             }
-            state.Apply(notification, Environment.TickCount64);
-            _maintenanceOptions!.FailoverMaintenance?.Observe(state);
+            var started = state.Apply(notification, Environment.TickCount64);
+            _maintenanceOptions!.FailoverMaintenance?.Observe(state, started);
         }
         if (notification.Kind == "MOVING")
         {
