@@ -831,6 +831,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
 
     // A bounded removal wait can leave its command running. Retain the independent owner
     // until that command finishes, then report its failure internally if foreground ended.
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private static async ValueTask<TResult> ExecuteWrappedCommandAsync<TState, TResult>(
         TState state, CorrectionErrors errors, Func<TState, ValueTask<TResult>> send)
     {
