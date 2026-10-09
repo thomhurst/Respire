@@ -50,6 +50,59 @@ public sealed class SentinelCircuitDispatchTests
     }
 
     [Test]
+    public async Task RemovedReplicaHistorySurvivesUntilRetirementCompletes()
+    {
+        await using var primary = Primary();
+        await using var replica = Primary();
+        var dataReply = replica.ReplyOverride!;
+        replica.ReplyOverride = (id, command) => command == "ROLE"
+            ? "*5\r\n+slave\r\n+127.0.0.1\r\n:6379\r\n+connected\r\n:0\r\n"u8.ToArray()
+            : dataReply(id, command);
+        var ports = Enumerable.Repeat(replica.Port, StandaloneCircuitRegistry.RetainedEndpointLimit).ToArray();
+        await using var sentinel = Sentinel(() => primary.Port, ports);
+        await using var client = await Connect(sentinel);
+        var router = client.Core.ReadRouter;
+        await router.RefreshNowAsync(default);
+        var endpoint = new RespireEndpoint("127.0.0.1", replica.Port);
+        var connection = (await router.SelectAsync(RespireReadFrom.Replica, default)).Connection;
+        for (var i = 1; i < ports.Length; i++) ports[i] = 20000 + i;
+        await router.RefreshNowAsync(default);
+        var entry = ReplicaEntries(router)[endpoint];
+        var gate = ReplicaEntryGate(entry);
+        var (circuit, _) = Prepare(client, replica);
+        Open(client, replica);
+        var registry = client.Core.Circuits!;
+        registry.Acquire(new("127.0.0.1", primary.Port), default).Dispose();
+        foreach (var port in ports.Skip(1)) registry.Acquire(new("127.0.0.1", port), default).Dispose();
+
+        // Hold the entry gate so grace expiry cannot make the selected socket reject retirement first.
+        await gate.WaitAsync();
+        try
+        {
+            ports[0] = 29999;
+            await router.RefreshNowAsync(default);
+            await Assert.That(ReplicaRetirements(router).ContainsKey(entry)).IsTrue();
+            for (var i = 0; i < 64; i++) registry.Acquire(new("history", 3000 + i), default).Dispose();
+            await Assert.That(ReferenceEquals(registry.GetForTests(endpoint), circuit)).IsTrue();
+            connection.ThrowIfRetired();
+            var command = new CatalogCommand(RespireCommands.String.GET, ["preselected"]);
+            await Assert.That(async () =>
+            {
+                using var reply = await QueuedCircuitDispatch.SendAsync(registry, connection, command,
+                    "GET", default, default, client: client);
+            }).Throws<RespireCircuitOpenException>();
+            await Assert.That(replica.ReceivedCommands.Contains("GET preselected")).IsFalse();
+        }
+        finally { gate.Release(); }
+
+        using var finished = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (ReplicaRetirements(router).ContainsKey(entry)) await Task.Delay(10, finished.Token);
+        registry.Acquire(new("127.0.0.1", primary.Port), default).Dispose();
+        await Assert.That(registry.CountForTests).IsEqualTo(StandaloneCircuitRegistry.RetainedEndpointLimit);
+        await Assert.That(() => registry.GetForTests(endpoint)).Throws<KeyNotFoundException>();
+    }
+
+    [Test]
     [Arguments("batch")]
     [Arguments("transaction")]
     public async Task RetiredQueueSelectionDoesNotRecordEndpointFailure(string shape)
@@ -596,6 +649,12 @@ public sealed class SentinelCircuitDispatchTests
     }
     [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_clock")]
     private static extern ref TimeProvider CircuitClock(EndpointCircuitBreaker circuit);
+    [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_entries")]
+    private static extern ref ConcurrentDictionary<RespireEndpoint, ReadEndpointRouter.Entry> ReplicaEntries(ReadEndpointRouter router);
+    [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_retiring")]
+    private static extern ref ConcurrentDictionary<ReadEndpointRouter.Entry, byte> ReplicaRetirements(ReadEndpointRouter router);
+    [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_gate")]
+    private static extern ref SemaphoreSlim ReplicaEntryGate(ReadEndpointRouter.Entry entry);
     [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "GetCircuitConnectionSlow")]
     private static extern RespireConnection SelectCircuitConnection(RespireClient client,
         RespireConnectionMultiplexer multiplexer, CancellationToken cancellationToken);

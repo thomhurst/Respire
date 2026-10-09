@@ -46,8 +46,8 @@ handshakes, and explicit health-check probes retain their existing lifecycle.
 A maintenance handoff can move a command only before its frame is accepted. The old admission
 is released as ignored, and the replacement endpoint requires fresh admission under the
 original command deadline. An open replacement circuit rejects without writing there. The
-registry retains at most 16 idle endpoint histories unless more entries are needed by current routing
-or outstanding admissions. Only idle, non-current histories can be evicted; returning to an
+registry retains at most 16 idle endpoint histories unless more entries are needed by current or retiring routing
+or outstanding admissions. Only idle histories outside current and retiring routing can be evicted; returning to an
 evicted endpoint starts fresh history. DNS changes reuse the configured hostname.
 
 An operation already accepted by the transport remains in its FIFO position when another
@@ -180,6 +180,8 @@ replica endpoints when read routing selects them. Sentinel monitor connections, 
 and primary ROLE validation do not use application circuits. They can discover a healthy
 replacement while the old primary's circuit is open. The replacement has independent state;
 key-prefixed and cache-bypass views share that state across its data connections.
+Removed replica endpoints retain their histories while previously selected reads finish during
+retirement grace and accepted replies drain. Their idle histories become trimmable after retirement completes.
 
 When a generation retires before a command is accepted, ordinary immediate sends, batch
 entries, and unwatched transactions can select the current validated primary and acquire

@@ -84,8 +84,16 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
 
     internal bool IsConnected => _entries.Values.Any(static entry => entry.IsConnected);
 
-    internal bool IsCurrentReplicaEndpoint(RespireEndpoint endpoint)
-        => ContainsEndpoint(Volatile.Read(ref _replicas), endpoint);
+    // Called under the circuit registry gate. Use only lock-free routing/retirement reads.
+    internal bool IsCircuitEndpointRetained(RespireEndpoint endpoint)
+    {
+        if (ContainsEndpoint(Volatile.Read(ref _replicas), endpoint) || _entries.ContainsKey(endpoint)) return true;
+        // Removal can precede retirement by a grace period, followed by an accepted-reply drain.
+        // The entry transfer publishes retirement ownership before removing the active entry.
+        foreach (var retirement in _retiring)
+            if (RespireEndpointComparer.Instance.Equals(retirement.Key.Endpoint, endpoint)) return true;
+        return false;
+    }
 
     internal (RespireEndpoint Endpoint, RespireConnection? Connection)[] CaptureHealthConnections()
         => Volatile.Read(ref _replicas).Select(endpoint =>
@@ -120,8 +128,10 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             // Removal and retirement ownership must be atomic with the disposal snapshot.
             if (ReferenceEquals(Volatile.Read(ref _readyReplica)?.Entry, pair.Value))
                 Volatile.Write(ref _readyReplica, null);
-            if (_disposed != 0 || !_entries.TryRemove(pair)) return;
+            if (_disposed != 0 || !_entries.TryGetValue(pair.Key, out var current)
+                || !ReferenceEquals(current, pair.Value)) return;
             _retiring.TryAdd(pair.Value, 0);
+            _entries.TryRemove(pair);
         }
         _ = RetireAsync(pair.Value);
     }
@@ -167,13 +177,16 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             {
                 // If disposal already captured the entry, its shared completion owns this error.
                 if (_retiring.TryRemove(entry, out _))
+                {
+                    core.Circuits?.InvalidateMembership();
                     (_retirementFailures ??= new()).Add(error);
+                }
             }
             try { core.Logger?.ReadReplicaCloseFailed(error); }
             catch (Exception) { }
             return;
         }
-        _retiring.TryRemove(entry, out _);
+        if (_retiring.TryRemove(entry, out _)) core.Circuits?.InvalidateMembership();
     }
 
     /// <summary>Selects a connection for a read under <paramref name="readFrom"/>.</summary>
@@ -631,6 +644,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             _retirementFailures = null;
             _entries.Clear();
             _retiring.Clear();
+            core.Circuits?.InvalidateMembership();
         }
         Cursors.Clear();
         try { await CleanupTasks.WhenAllAsync(entries.Select(entry => entry.DisposeAsync().AsTask())).ConfigureAwait(false); }

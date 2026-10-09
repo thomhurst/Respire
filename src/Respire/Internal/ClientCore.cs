@@ -99,7 +99,7 @@ internal sealed class ClientCore : IAsyncDisposable
             ? new(circuitOptions, () => Multiplexer.ActiveConnectionEndpoint,
                 endpoint => Cluster is { } cluster
                     ? cluster.IsCircuitEndpointCurrent(endpoint)
-                    : Sentinel is not null && ReadRouter.IsCurrentReplicaEndpoint(endpoint)) : null;
+                    : Sentinel is not null && ReadRouter.IsCircuitEndpointRetained(endpoint)) : null;
         _dedicatedPool = CreateStandaloneDedicatedPool(_multiplexer.CaptureMovingPublication());
         _ownedPools.Add(_dedicatedPool);
         Cluster = options.UseCluster
