@@ -146,6 +146,12 @@ The meter name remains `Respire`.
 | `respire.maintenance.notifications` | `redis.client.maintenance.notifications` | `{notification}` | `redis.client.connection.notification` identifies the notification; `server.address` and `server.port` identify its source |
 | Deployment switches between known endpoints | `redis.client.geofailover.failovers` | `{failover}` | `db.client.geofailover.reason=automatic`, `db.client.geofailover.fail_from`, and `db.client.geofailover.fail_to` |
 | New instrument | `redis.client.errors` | `{error}` | Internal handling or final operation failure; category, internal flag, exception type, retry count, and known Redis error code |
+| Ready sockets | `db.client.connection.count` | `{connection}` | Pool and idle/used state; exported as a gauge |
+| Physical connection setup | `db.client.connection.create_time` | `s` | Histogram including handshake, grouped by pool |
+| Replies still owed | `db.client.connection.pending_requests` | `{request}` | Ready sockets grouped by pool; advanced group |
+| Dedicated-pool acquisition | `db.client.connection.wait_time` | `s` | Dedicated socket acquisition histogram; advanced group |
+| Physical closes | `redis.client.connection.closed` | `{connection}` | Close reason and pool; advanced group |
+| Maintenance allowances/handoffs | `redis.client.connection.relaxed_timeout`, `redis.client.connection.handoff` | `{relaxation}`, `1` | Current allowance gauge and published replacement counter; basic group |
 | `db.client.operation.duration` | Unchanged | `s` | Existing logical operation latency and database attributes |
 | New measurement | `redis.client.pubsub.messages` | `{message}` | One message per confirmed publication or accepted incoming frame; direction `out`/`in` and sharded boolean |
 | New measurement | `redis.client.stream.lag` | `s` | Entry timestamp to explicit application processing start |
@@ -170,6 +176,56 @@ flushes, and pub/sub delivery gaps. Mapping existing signals does not imply that
 instrument or configuration group in the Redis specification is implemented. Additional
 dashboard coverage is tracked
 by [#866](https://github.com/thomhurst/Respire/issues/866).
+
+## Prometheus and the published Redis dashboard
+
+The [smoke sample](https://github.com/thomhurst/Respire/tree/main/samples/Respire.Samples.Observability)
+exports actual Redis measurements through OpenTelemetry's Prometheus ASP.NET Core exporter
+`1.19.1-beta.1` (SDK `1.19.1`). It checks names, units, forms, and labels against every query in
+[the published Redis dashboard at revision `033fe86e47440da7f365ed2d8dd7f5d6217a575a`](https://github.com/redis-developer/redis-client-observability/blob/033fe86e47440da7f365ed2d8dd7f5d6217a575a/grafana/dashboards/redis-client-observability.json).
+Pinned promtool `3.5.0` evaluates supported adapted queries against series from that export.
+CI runs the smoke on .NET 8 and .NET 10. Reproduce from the repository root:
+
+```powershell
+pwsh samples/Respire.Samples.Observability/Smoke.ps1 -OutputDirectory ./observability-evidence
+```
+
+Prometheus replaces dots with underscores. Seconds histograms have `_seconds_bucket`,
+`_seconds_sum`, and `_seconds_count`; monotonic counters have `_total`. Braced counting units
+add no other suffix with this exporter. Thus errors become `redis_client_errors_total` and
+stream lag becomes `redis_client_stream_lag_seconds_bucket`. Up/down instruments become gauges.
+The sample explicitly sets histogram boundaries to `0, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 10`
+seconds, rather than using generic histogram buckets for latency.
+
+| Dashboard panels | Required group or feature | Compatibility and scope |
+| --- | --- | --- |
+| Connections, pool state/summary, creation time | Default `ConnectionBasic` | Ready physical sockets. Multiplexed socket state is not command concurrency. |
+| Error rates/type/category | Default `Resiliency` | Includes handled internal failures and final operation failures. The command success formula is approximate: errors are not one failed logical command each. |
+| Latency, throughput, success rate, heatmap | Opt-in `Command` | One logical operation, including a pipeline/transaction, not one sample per wire command. Cache hits need not execute Redis commands. |
+| Pending requests, closes, wait time | Opt-in `ConnectionAdvanced` | Replies owed, physical closes, dedicated-pool acquisition. Wait time excludes multiplexed admission and general command latency. |
+| Cache ratio, requests, evictions | Opt-in `ClientSideCaching` plus enabled cache | Actual lookup/removal counters. An eviction is not an invalidation notification. |
+| Network bytes saved, cached items | Unavailable | Respire does not emit `redis.client.csc.network_saved` or `redis.client.csc.items`. These two queries are explicitly unsupported. |
+| Message rates | Opt-in `PubSub` plus publications/subscriptions | Replace `redis_client_pubsub_direction` with `redis_client_pubsub_message_direction`. |
+| Message rate by channel | Opt-in `PubSub` | Channel names are absent. The adapted sample groups by direction; this is not channel ranking. |
+| Stream/consumer lag | Opt-in `Streaming` plus explicit `RecordProcessingStart()` | Remove `redis_client_stream_name` and `redis_client_stream_consumer_name` grouping to show aggregate lag; these names are absent. |
+| Geo-failovers | Default `Resiliency` plus geographic deployment | Published switches between known endpoints only. Initial selection and generic failovers differ. |
+| Timeout relaxations/handoffs | Default `ConnectionBasic` plus maintenance-capable server/events | Current increased allowances and published `MOVING` handoffs. Standalone Redis generates no such events. |
+
+The original dashboard selects `exported_job` from its Collector/Prometheus setup. A direct
+ASP.NET Core scrape supplies resource metadata through `target_info`, not that label.
+The sample's adapted dashboard selects `db_system_name="redis"` and changes its service variable
+to the database-system label. For multiple services, use actual scrape `job` or Collector
+resource labels to retain service isolation. This adaptation scopes one smoke export.
+
+The report preserves all original/adapted queries: 42 verified targets, three requiring geographic
+or maintenance features, and two unsupported cache measurements. Private channel/stream/consumer
+panels cannot retain their original grouping. The check enables no name-disclosure option.
+Constant repeated exported samples validate query compatibility, not performance; production
+rates require successive live scrapes over a rate interval. Separate `respire.*` diagnostics for
+reconnects, generic failovers, invalidation notifications, and pub/sub gaps are not substitutes
+for the standardized panels.
+Broader schema/configuration acceptance remains tracked in [#866](https://github.com/thomhurst/Respire/issues/866).
+[#928](https://github.com/thomhurst/Respire/issues/928) remains open until its children and original acceptance are complete.
 
 ## Pub/sub messages and stream lag
 

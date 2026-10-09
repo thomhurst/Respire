@@ -69,6 +69,8 @@ Server and protocol requirements vary by feature; each linked guide describes it
   [Microsoft distributed caching and `HybridCache`](integrations/caching.md), including opt-in L1 key tracking
   and cross-instance tag invalidation, and
   [OpenTelemetry traces and metrics](integrations/observability.md).
+- A [Prometheus export and pinned Redis dashboard smoke check](integrations/observability.md#prometheus-and-the-published-redis-dashboard),
+  with default/optional group validation and documented panel adaptations and unavailable measurements.
 - An [in-memory testing server](guides/in-memory-testing.md) with controlled expiry and faults,
   [Redis/Valkey container fixtures](guides/testing-containers.md), and a
   [shared test sample](guides/testing-sample.md) for .NET 8 and .NET 10.
