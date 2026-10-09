@@ -23,6 +23,13 @@ public sealed record RespireStreamWorkerOptions
     /// <summary>Positive interval between bounded recovery scans per reader. Defaults to five seconds.</summary>
     public TimeSpan RecoveryPollInterval { get; init; } = TimeSpan.FromSeconds(5);
 
+    /// <summary>Logical stream key for atomic dead-letter completion. Must share the source's resolved Cluster slot.</summary>
+    public string? DeadLetterStream { get; init; }
+
+    /// <summary>Maximum delivery attempts before unsuccessful processing is dead-lettered. Null retries without a limit.</summary>
+    /// <remarks>Counts initial deliveries, startup replay and recovery claims. Requires DeadLetterStream.</remarks>
+    public int? DeliveryLimit { get; init; }
+
     /// <summary>Whether startup creates the stream and group. Existing groups are retained.</summary>
     public bool CreateGroup { get; init; } = true;
 
@@ -34,6 +41,13 @@ public sealed record RespireStreamWorkerOptions
         if (ConsumerName is not null) ArgumentException.ThrowIfNullOrWhiteSpace(ConsumerName);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(ConsumerCount);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(BatchSize);
+        if (DeadLetterStream is not null) ArgumentException.ThrowIfNullOrWhiteSpace(DeadLetterStream);
+        if (DeliveryLimit is { } limit)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(limit);
+            if (DeadLetterStream is null)
+                throw new ArgumentException("A delivery limit requires a dead-letter stream.", nameof(DeadLetterStream));
+        }
         if (ReadWait <= TimeSpan.Zero || ReadWait > TimeSpan.FromMilliseconds(int.MaxValue))
             throw new ArgumentOutOfRangeException(nameof(ReadWait), "Read wait must be positive and at most Int32.MaxValue milliseconds.");
         if (MinimumIdleTime <= TimeSpan.Zero || MinimumIdleTime > TimeSpan.FromMilliseconds(int.MaxValue))

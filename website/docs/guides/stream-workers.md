@@ -95,12 +95,12 @@ to start a new group after existing entries, or `CreateGroup = false` to require
 group. `ReadWait` is a positive blocking wait, defaulting to five seconds. Blocking reads
 use Respire's dedicated blocking connection path.
 
-Return `Ack` only after successful processing. `Nack`, a serializer or handler exception,
+Return `Ack` only after successful processing. By default `Nack`, a serializer or handler exception,
 an unknown result, or handler cancellation leaves the entry pending. The worker continues
 reading new entries and retries pending entries after the visibility timeout. A warning
 reports the exception type for handler/serializer failures
 without including exception messages or payloads. DI activation, scope disposal, read and
-acknowledgement failures fault the background service and follow the application's `HostOptions`
+acknowledgement or dead-letter completion failures fault the background service and follow the application's `HostOptions`
 background-service failure policy. Handler activation failures, including transient dependency
 construction failures, stop the worker rather than retry activation. The first consumer's
 infrastructure failure reaches the host even when a sibling handler ignores cancellation;
@@ -145,8 +145,60 @@ processes' deliveries after the visibility timeout but accumulate consumer metad
 restarts. Remove unused consumers only after their pending deliveries have been recovered.
 
 Inspect pending entries with `client.Streams.PendingSummaryAsync` and `PendingAsync`.
-There is no delivery limit or dead-letter stream yet. A persistent failure is retried until
-the application succeeds or an operator intervenes.
+Without a delivery limit, a persistent failure is retried until the application succeeds or an operator intervenes.
+
+## Delivery limits and dead-letter inspection
+
+Set `DeadLetterStream` to a logical stream key and optionally set a positive `DeliveryLimit`.
+The source and destination must be distinct after applying the registered client's key prefix,
+and must share a Redis Cluster slot even on standalone Redis. For example, use source
+`"{orders}:events"` and destination `"{orders}:dead"`, or register a view with prefix
+`"{orders}:tenant:"` and use logical keys `"events"` and `"dead"`. Keys are validated before
+group creation. The prefix is applied once by each command, including atomic completion.
+
+Return `RespireStreamWorkerResult.DeadLetter` to complete a delivery explicitly. This requires
+`DeadLetterStream` but does not require a delivery limit. A limit of three permits processing
+on attempts one, two and three. A Nack, handler exception, serializer exception or unknown
+result on the third attempt is dead-lettered. An Ack still completes normally at that limit.
+Counts come from Redis: the initial delivery counts as one, and startup replay and each
+idle recovery increment the count. Prefetched entries also count as deliveries even if
+shutdown prevents their handlers from starting. If the final permitted attempt is abandoned,
+the next replay or recovery increments the count and dead-letters without invoking another
+handler. Thus the recorded count can exceed the limit, while handler invocations remain bounded.
+Handler cancellation during shutdown leaves the entry pending for this later recovery.
+
+Inspect the destination with `client.Streams.ReadAsync` or Redis `XRANGE`. Each dead-letter
+entry has its own newly generated stream ID. Its first five field/value pairs contain:
+
+- `_respire.source_id`: the original stream ID.
+- `_respire.group`: the group name, bounded to 256 bytes.
+- `_respire.attempt`: the fenced Redis delivery count.
+- `_respire.reason`: `explicit`, `nack`, `processing-failed` or `delivery-limit` (at most 64 bytes).
+- `_respire.exception_type`: the exception type for a processing failure, otherwise empty (at most 256 bytes).
+
+The original field/value pairs follow these metadata pairs in their original order, without
+changing any bytes. Original fields may use the same names as metadata; use positional fields
+or raw `XRANGE` when names collide. Exception messages, stack traces and arbitrary failure
+text are never included by default. The destination is not trimmed automatically; operators
+own retention, inspection and requeue policy. Requeue only after fixing the poison payload or handler.
+
+One Lua operation checks the current pending owner and attempt, reads the original fields,
+appends the dead-letter entry and acknowledges the source delivery. A stale processor cannot
+complete a newer attempt, including another attempt under the same consumer name. Source
+entries are not deleted, so other groups keep their independent deliveries. Scripts isolate
+operations but do not roll back earlier writes after an error. The worker therefore verifies
+destination type and both `XADD` and `XACK` ACL permissions before any mutation; all source
+and group checks also precede the append. A rejected write or unexecuted operation leaves
+the source pending. A lost reply or cancellation after execution remains uncertain: either
+both mutations committed or neither did. There is no fallback acknowledgement or blind
+completion retry. Restart the failed worker according to the application's host policy;
+an already acknowledged delivery cannot produce another dead-letter record from the same attempt.
+
+Dead-letter completion requires Redis 7 or a compatible server with Lua `redis.acl_check_cmd`,
+plus `XRANGE`, `TYPE`, `XADD`, `XACK` and the worker's other commands available to its ACL user.
+The fake server recognizes the built-in completion operation; use real Redis controls to
+verify ACL behavior. The fake supports fault injection before and after execution to test
+transport failures, write rejection, cancellation and lost replies.
 
 [Redis consumer groups retain deliveries until acknowledgement](https://redis.io/docs/latest/commands/xreadgroup/).
 An application operation can finish before its acknowledgement is lost, so handlers must
@@ -171,7 +223,6 @@ Lua even when no idle entries exist. External tools must not reset delivery coun
 reuse an attempt token. Consumer-name uniqueness remains required even with attempt fencing.
 
 The remaining reliable worker features are tracked independently:
-[delivery limits and atomic dead-letter completion (#1230)](https://github.com/thomhurst/Respire/issues/1230),
 [capability-aware CLAIM/XNACK/XACKDEL (#1231)](https://github.com/thomhurst/Respire/issues/1231),
 [worker metrics and tracing (#1232)](https://github.com/thomhurst/Respire/issues/1232), and
 [producer retry deduplication (#892)](https://github.com/thomhurst/Respire/issues/892).

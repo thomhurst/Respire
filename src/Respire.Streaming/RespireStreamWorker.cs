@@ -20,6 +20,15 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (options.DeadLetterStream is { } deadLetter)
+        {
+            var sourceKey = client.ResolveKey(stream).ToBytes();
+            var deadLetterKey = client.ResolveKey(deadLetter).ToBytes();
+            if (sourceKey.AsSpan().SequenceEqual(deadLetterKey))
+                throw new ArgumentException("Source and dead-letter streams must be distinct resolved keys.");
+            if (ClusterHash.GetSlot(sourceKey) != ClusterHash.GetSlot(deadLetterKey))
+                throw new ArgumentException("Source and dead-letter streams must share a resolved Cluster slot.");
+        }
         var readers = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
         try
         {
@@ -134,13 +143,20 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
 
     private async Task ProcessAsync(Delivery delivery, string consumer)
     {
+        if (options.DeliveryLimit is { } limit && delivery.Attempt > limit)
+        {
+            await DeadLetterAsync(delivery, consumer, "delivery-limit", "").ConfigureAwait(false);
+            return;
+        }
         await using var scope = scopeFactory.CreateAsyncScope();
         var handler = scope.ServiceProvider.GetRequiredService<THandler>();
         RespireStreamWorkerResult result;
+        var reason = "nack";
+        var failureType = "";
         try
         {
             result = await handler.HandleAsync(deserialize(delivery.Entry), _handlers.Token).ConfigureAwait(false);
-            if (result is not (RespireStreamWorkerResult.Ack or RespireStreamWorkerResult.Nack))
+            if (result is not (RespireStreamWorkerResult.Ack or RespireStreamWorkerResult.Nack or RespireStreamWorkerResult.DeadLetter))
                 throw new InvalidOperationException("The stream handler returned an unknown completion result.");
         }
         catch (OperationCanceledException) when (_handlers.IsCancellationRequested) { return; }
@@ -148,15 +164,34 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
         {
             // Exception messages may contain payloads. Do not pass them to the logger by default.
             var exceptionType = error.GetType();
-            HandlerFailed(logger, exceptionType.FullName ?? exceptionType.Name);
-            return;
+            failureType = exceptionType.FullName ?? exceptionType.Name;
+            HandlerFailed(logger, failureType);
+            reason = "processing-failed";
+            result = RespireStreamWorkerResult.Nack;
         }
 
-        if (result == RespireStreamWorkerResult.Ack && !_handlers.IsCancellationRequested)
+        if (_handlers.IsCancellationRequested) return;
+        if (result == RespireStreamWorkerResult.Ack)
             // ConsumeAsync treats acknowledgement cancellation as expected only after
             // readers stop. StopAsync and Dispose must therefore cancel readers first.
             await client.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.Ack, [stream],
                 [group, consumer, delivery.Entry.Id.Value, delivery.Attempt], _handlers.Token).ConfigureAwait(false);
+        else if (result == RespireStreamWorkerResult.DeadLetter)
+        {
+            if (options.DeadLetterStream is null)
+                throw new InvalidOperationException("DeadLetter completion requires a configured dead-letter stream.");
+            await DeadLetterAsync(delivery, consumer, "explicit", "").ConfigureAwait(false);
+        }
+        else if (options.DeliveryLimit is { } deliveryLimit && delivery.Attempt >= deliveryLimit)
+            await DeadLetterAsync(delivery, consumer, reason, failureType).ConfigureAwait(false);
+    }
+
+    private async Task DeadLetterAsync(Delivery delivery, string consumer, string reason, string failureType)
+    {
+        if (_handlers.IsCancellationRequested) return;
+        await client.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.DeadLetter, [stream, options.DeadLetterStream!],
+            [group, consumer, delivery.Entry.Id.Value, delivery.Attempt, reason, failureType],
+            _handlers.Token).ConfigureAwait(false);
     }
 
     public override async Task StopAsync(CancellationToken cancellationToken)
@@ -191,6 +226,6 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
         catch (ObjectDisposedException) { } // Stop/Dispose can be called after the execution task has completed.
     }
 
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Stream handler or serializer failed ({ExceptionType}); delivery remains pending.")]
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Stream handler or serializer failed ({ExceptionType}).")]
     private static partial void HandlerFailed(ILogger logger, string exceptionType);
 }
