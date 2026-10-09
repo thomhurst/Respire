@@ -561,10 +561,17 @@ Guarded cache removal reports its final error after the removal lease is
 revoked or expires and any owned timeout is translated to the caller's `UNLINK` error.
 Lease placement and the removal script borrow the same retry owner. Background
 revocation retains a separate lifetime because it can outlive the caller's lease.
-Distributed-cache GET and refresh, and semaphore renewal, retain their final error
+Distributed-cache GET and refresh, and semaphore acquisition, renewal and release, retain their final error
 boundary until required TTL correction or owner-only release finishes. No final
 measurement is published while that cleanup is pending. If correction replaces the
 original failure, the final measurement describes the exception delivered to the caller.
+
+Semaphore owners start before expiry validation, cancellation checks, connection
+preflight or permit gate waits. Verification includes reply conversion in its owner.
+Capacity mismatch reports the mapped `RespireSemaphoreCapacityMismatchException` once.
+Script retries and failed surrender attempts retain the caller's retry count. Disposal
+and cleanup that outlives the bounded foreground wait report internal failures under
+separate lifetimes. Successful semaphore calls acquire no error-observation lease.
 
 Error observation storage is pooled, and each borrower carries its rental generation.
 Debug builds reject stale borrowers with `InvalidOperationException`; Release builds

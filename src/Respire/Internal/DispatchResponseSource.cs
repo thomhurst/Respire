@@ -8,9 +8,10 @@ namespace Respire.Internal;
 // retry bookkeeping; the caller-facing response source retains final publication rights.
 internal interface IDispatchObservation
 {
+    bool IsOpen(long generation);
     int Attempts(long generation);
     void SetAttempts(long generation, int attempts);
-    void Handled(long generation, Exception error);
+    bool Handled(long generation, Exception error);
 }
 
 internal static class DispatchResponseSource
@@ -111,16 +112,21 @@ internal sealed class DispatchResponseSource<TResult> : IValueTaskSource<TResult
             return generation == _generation && !_closed ? _owner.RetryAttempts : 0;
     }
 
-    void IDispatchObservation.Handled(long generation, Exception error)
+    bool IDispatchObservation.IsOpen(long generation)
+    {
+        lock (_gate) return generation == _generation && !_closed;
+    }
+
+    bool IDispatchObservation.Handled(long generation, Exception error)
     {
         ErrorObservation.Borrower borrower;
         lock (_gate)
         {
-            if (generation != _generation || _closed) return;
+            if (generation != _generation || _closed) return false;
             if (_owner.IsEmpty) _owner = ErrorObservation.StartFailure();
             borrower = _owner.Borrow();
         }
-        try { borrower.RecordHandled(error); }
+        try { return borrower.RecordHandled(error); }
         finally { borrower.Complete(); }
     }
 

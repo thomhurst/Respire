@@ -73,28 +73,41 @@ public sealed class RespireSemaphore
     /// </exception>
     public ValueTask<RespireSemaphorePermitAttempt> TryAcquireAsync(
         TimeSpan? expiry = null, CancellationToken cancellationToken = default)
+        => _client is RespireClient
+            ? DispatchResponseSource<RespireSemaphorePermitAttempt>.Run(
+                (Semaphore: this, Expiry: expiry, Token: cancellationToken),
+                static (state, observation) => state.Semaphore.TryAcquireObservedAsync(state.Expiry, state.Token, observation))
+            : TryAcquireObservedAsync(expiry, cancellationToken, default);
+
+    private ValueTask<RespireSemaphorePermitAttempt> TryAcquireObservedAsync(
+        TimeSpan? expiry, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var milliseconds = ToMilliseconds(expiry, nameof(expiry));
-        return TryAcquireCoreAsync(milliseconds, cancellationToken);
+        return TryAcquireCoreAsync(milliseconds, cancellationToken, observation);
     }
 
     private async ValueTask<RespireSemaphorePermitAttempt> TryAcquireCoreAsync(
-        long milliseconds, CancellationToken cancellationToken)
+        long milliseconds, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         var owner = RespireLock.NewToken();
         var concreteClient = _client as RespireClient;
         // Only a client that can fence gets one; the others still use a tracked execution for its
         // send timestamp.
-        var trackedWire = concreteClient is null
-            ? null
-            : await concreteClient.GetCorrectionTrackingClientAsync(cancellationToken).ConfigureAwait(false);
-        if (concreteClient is not null && milliseconds == 0)
+        RespireClient? trackedWire = null;
+        if (concreteClient is not null)
         {
-            // An uncertain owner-only acquire has no server expiry as a fallback. Require the
-            // identity barrier even without a command timeout or caller cancellation.
-            await concreteClient.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
-            trackedWire = concreteClient;
+            if (milliseconds == 0)
+            {
+                // An uncertain owner-only acquire has no server expiry as a fallback. Require
+                // the identity barrier directly, without first handling a failed optional probe.
+                await concreteClient.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
+                trackedWire = concreteClient;
+            }
+            else
+            {
+                trackedWire = await concreteClient.GetCorrectionTrackingClientAsync(cancellationToken, observation).ConfigureAwait(false);
+            }
         }
         // Sampled after connection preflight: the permit cannot exist before the script is sent,
         // so only the acquisition itself counts against a short expiry.
@@ -116,15 +129,15 @@ public sealed class RespireSemaphore
                 trackedExecution = await concreteClient.StartTrackedScriptExecutionAsync(
                     AcquireScript, [Key], args, cancellationToken,
                     requireReliableCorrectionOrdering: requiresReliableOrdering || milliseconds == 0,
-                    captureSendTimestampOnly: trackedWire is null).ConfigureAwait(false);
+                    captureSendTimestampOnly: trackedWire is null, errorObservation: observation).ConfigureAwait(false);
                 using var response = await concreteClient.ExecuteWithCorrectionAsync(
                     trackedExecution,
                     // Queue one cleanup that retains its acknowledged fence across retries.
                     // The caller waits only the existing bounded foreground cleanup interval.
                     ordering: RespireClient.CorrectionOrdering.OrderedCorrection,
-                    state: (Semaphore: this, Wire: trackedWire, Execution: trackedExecution, Owner: owner),
+                    state: (Semaphore: this, Wire: trackedWire, Execution: trackedExecution, Owner: owner, Observation: observation),
                     correct: static (state, _) => state.Semaphore.CleanupUncertainAcquisitionAsync(
-                        state.Wire, state.Execution, state.Owner)).ConfigureAwait(false);
+                        state.Wire, state.Execution, state.Owner, state.Observation)).ConfigureAwait(false);
                 acquired = response.AsInteger() == 1;
             }
         }
@@ -142,7 +155,7 @@ public sealed class RespireSemaphore
             // Any other error may come from a later command, for example PERSIST rejected by an
             // ACL after ZADD already added this owner. Lua does not roll back earlier writes, so
             // release the owner token; a permit without expiry keeps retrying in the background.
-            await ReleaseAcquiredAsync(owner, retryInBackground: milliseconds == 0).ConfigureAwait(false);
+            await ReleaseAcquiredAsync(owner, retryInBackground: milliseconds == 0, observation).ConfigureAwait(false);
             throw;
         }
         catch
@@ -164,14 +177,14 @@ public sealed class RespireSemaphore
         if (remaining is { } left && left <= TimeSpan.Zero)
         {
             // The finite expiry is the fallback if this release attempt fails.
-            await ReleaseAcquiredAsync(owner, retryInBackground: false).ConfigureAwait(false);
+            await ReleaseAcquiredAsync(owner, retryInBackground: false, observation).ConfigureAwait(false);
             return default;
         }
 
         if (cancellationToken.IsCancellationRequested)
         {
             // A permit without expiry has no server-side fallback, so its release keeps retrying.
-            await ReleaseAcquiredAsync(owner, retryInBackground: milliseconds == 0).ConfigureAwait(false);
+            await ReleaseAcquiredAsync(owner, retryInBackground: milliseconds == 0, observation).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
         }
 
@@ -181,16 +194,17 @@ public sealed class RespireSemaphore
 
     // The acquire reply (success or error) has arrived, so no delayed acquire can follow this
     // release and no fence is needed. The caller waits at most BestEffortCleanupTimeout.
-    private async ValueTask ReleaseAcquiredAsync(RespireLockToken owner, bool retryInBackground)
+    private async ValueTask ReleaseAcquiredAsync(RespireLockToken owner, bool retryInBackground,
+        RespireTelemetry.ErrorObservation observation)
     {
         if (!retryInBackground)
         {
-            await TryReleaseOnceAsync(_client, Key, owner).ConfigureAwait(false);
+            await TryReleaseOnceAsync(_client, Key, owner, observation: observation).ConfigureAwait(false);
             return;
         }
 
         await WaitForCleanupAsync(EnqueueCleanupAsync(_client,
-            cancellationToken => TryReleaseOnceAsync(_client, Key, owner, cancellationToken), null,
+            cancellationToken => TryReleaseOnceAsync(_client, Key, owner, cancellationToken, observation), null,
             ReportAbandoned(_client, "release"))).ConfigureAwait(false);
     }
 
@@ -198,20 +212,22 @@ public sealed class RespireSemaphore
     // cleanup must follow the CLIENT KILL barrier. The caller waits at most
     // BestEffortCleanupTimeout; the rest of the cleanup continues in the background.
     private ValueTask CleanupUncertainAcquisitionAsync(
-        RespireClient? wire, RespireClient.TrackedScriptExecution? execution, RespireLockToken owner)
+        RespireClient? wire, RespireClient.TrackedScriptExecution? execution, RespireLockToken owner,
+        RespireTelemetry.ErrorObservation observation = default)
     {
         if (wire is not null && execution is { ConnectionIdentity.ServerClientId: > 0 })
         {
             var coordinator = wire.Core.Corrections;
             var fence = coordinator.CreateFence(wire, execution.ConnectionIdentity);
             return WaitForCleanupAsync(coordinator.EnqueueFencedAsync(fence,
-                cancellationToken => ReleaseOnceAsync(_client, Key, owner, cancellationToken),
+                cancellationToken => ReleaseOnceAsync(_client, Key, owner, cancellationToken, observation),
                 BestEffortCleanupTimeout, CleanupRetry,
-                (stage, reason) => ReportAbandoned(_client, stage)(reason)));
+                (stage, reason) => ReportAbandoned(_client, stage)(reason),
+                error => RecordCleanupFailure(observation, error)));
         }
         // Untracked implementations cannot establish a physical connection fence.
         return WaitForCleanupAsync(EnqueueCleanupAsync(_client,
-            cancellationToken => TryReleaseOnceAsync(_client, Key, owner, cancellationToken),
+            cancellationToken => TryReleaseOnceAsync(_client, Key, owner, cancellationToken, observation),
             null, ReportAbandoned(_client, "release")));
     }
 
@@ -231,40 +247,61 @@ public sealed class RespireSemaphore
         => _ = await CorrectionCoordinator.WaitAsync(cleanup, BestEffortCleanupTimeout).ConfigureAwait(false);
 
     /// <summary>Sends one owner-checked release bounded by <see cref="BestEffortCleanupTimeout"/>.</summary>
-    internal static async ValueTask<CleanupAttemptResult> TryReleaseOnceAsync(
+    internal static ValueTask<CleanupAttemptResult> TryReleaseOnceAsync(
         IRespireClient client, RespireKey key, RespireLockToken owner,
         CancellationToken cancellationToken = default, RespireTelemetry.ErrorObservation observation = default)
-    {
-        var ownsObservation = observation.IsEmpty && client is RespireClient;
-        if (ownsObservation) observation = RespireTelemetry.ErrorObservation.Rent(force: true);
-        try
-        {
-            return await CorrectionCoordinator.AttemptAsync((client as RespireClient)?.Core,
-                (Client: client, Key: key, Owner: owner, Observation: observation),
-                static async (state, token) =>
-                {
-                    try
-                    {
-                        await ReleaseOnceAsync(state.Client, state.Key, state.Owner, token, state.Observation)
-                            .ConfigureAwait(false);
-                    }
-                    catch (Exception error)
-                    {
-                        state.Observation.Handled(error);
-                        throw;
-                    }
-                }, BestEffortCleanupTimeout, cancellationToken).ConfigureAwait(false);
-        }
-        finally { if (ownsObservation) observation.Dispose(); }
-    }
+        => CorrectionCoordinator.AttemptAsync((client as RespireClient)?.Core,
+            (Client: client, Key: key, Owner: owner, Observation: observation),
+            static (state, token) => ReleaseOnceAsync(state.Client, state.Key, state.Owner, token, state.Observation),
+            BestEffortCleanupTimeout, cancellationToken);
 
     private static async ValueTask ReleaseOnceAsync(
         IRespireClient client, RespireKey key, RespireLockToken owner, CancellationToken cancellationToken,
         RespireTelemetry.ErrorObservation observation = default)
     {
-        using var response = await (client is RespireClient wire && !observation.IsEmpty
-            ? wire.ExecuteScriptBorrowedAsync(ReleaseScript, [key], [owner.Bytes], cancellationToken, observation)
-            : client.Scripts.ExecuteAsync(ReleaseScript, [key], [owner.Bytes], cancellationToken)).ConfigureAwait(false);
+        var internalOwner = client is RespireClient ? DispatchResponseSource<bool>.Start() : null;
+        if (internalOwner is not null)
+        {
+            var detached = internalOwner.Observation;
+            observation = observation.IsEmpty ? detached
+                : new RespireTelemetry.ErrorObservation(new CleanupObservation(observation, detached), 0);
+        }
+        try
+        {
+            using var response = await (client is RespireClient wire
+                ? wire.ExecuteScriptBorrowedAsync(ReleaseScript, [key], [owner.Bytes], cancellationToken, observation)
+                : client.Scripts.ExecuteAsync(ReleaseScript, [key], [owner.Bytes], cancellationToken)).ConfigureAwait(false);
+        }
+        catch (Exception error)
+        {
+            observation.Handled(error);
+            throw;
+        }
+        finally { internalOwner?.CompleteInternal(); }
+    }
+
+    // Cleanup can outlive the bounded foreground wait. Forward to the caller while its
+    // owner is open; detached retries keep their own failure-only internal lifetime.
+    private sealed class CleanupObservation(RespireTelemetry.ErrorObservation caller,
+        RespireTelemetry.ErrorObservation detached) : IDispatchObservation
+    {
+        public bool IsOpen(long generation) => detached.IsOpen;
+        public int Attempts(long generation) => caller.IsOpen ? caller.Attempts : detached.Attempts;
+        public void SetAttempts(long generation, int attempts)
+        {
+            if (caller.IsOpen) caller.SetAttempts(attempts);
+            else detached.SetAttempts(attempts);
+        }
+        public bool Handled(long generation, Exception error)
+            => caller.TryHandled(error) || detached.TryHandled(error);
+    }
+
+    private static void RecordCleanupFailure(RespireTelemetry.ErrorObservation caller, Exception error)
+    {
+        if (caller.TryHandled(error)) return;
+        var owner = DispatchResponseSource<bool>.Start();
+        try { owner.Observation.Handled(error); }
+        finally { owner.CompleteInternal(); }
     }
 
     /// <summary>
@@ -550,15 +587,24 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     /// permission for the key.
     /// </para>
     /// </remarks>
-    public async ValueTask<bool> VerifyStillHeldAsync(CancellationToken cancellationToken = default)
+    public ValueTask<bool> VerifyStillHeldAsync(CancellationToken cancellationToken = default)
+        => _client is RespireClient
+            ? DispatchResponseSource<bool>.Run((Permit: this, Token: cancellationToken),
+                static (state, observation) => state.Permit.VerifyStillHeldCoreAsync(state.Token, observation))
+            : VerifyStillHeldCoreAsync(cancellationToken, default);
+
+    private async ValueTask<bool> VerifyStillHeldCoreAsync(CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation)
     {
         if (IsReleased) return false;
         // Deliberately outside the operation gate, so a stuck renewal cannot block a health check.
         // A concurrent renewal or release cannot disagree with the result: this only ever marks the
         // permit released after Redis reports the owner absent, and an absent owner cannot return
         // because renewal updates existing members only (ZADD XX).
-        using var response = await _client.Scripts.ExecuteAsync(
-            RespireSemaphore.VerifyScript, [Key], [_owner.Bytes], cancellationToken).ConfigureAwait(false);
+        using var response = await (_client is RespireClient wire
+            ? wire.ExecuteScriptBorrowedAsync(RespireSemaphore.VerifyScript, [Key], [_owner.Bytes], cancellationToken, observation)
+            : _client.Scripts.ExecuteAsync(RespireSemaphore.VerifyScript, [Key], [_owner.Bytes], cancellationToken))
+            .ConfigureAwait(false);
         var held = response.AsInteger() == 1;
         if (!held) Set(PermitState.Released);
         return held;
@@ -589,10 +635,16 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     /// </remarks>
     /// <param name="expiry">Expiry of at least one millisecond, truncated to whole milliseconds, or null for owner-only release.</param>
     /// <param name="cancellationToken">Cancels waiting and the Redis command.</param>
-    public async ValueTask<bool> ResetExpiryAsync(TimeSpan? expiry, CancellationToken cancellationToken = default)
+    public ValueTask<bool> ResetExpiryAsync(TimeSpan? expiry, CancellationToken cancellationToken = default)
+        => _client is RespireClient
+            ? DispatchResponseSource<bool>.Run((Permit: this, Expiry: expiry, Token: cancellationToken),
+                static (state, observation) => state.Permit.ResetExpiryCoreAsync(state.Expiry, state.Token, observation))
+            : ResetExpiryCoreAsync(expiry, cancellationToken, default);
+
+    private async ValueTask<bool> ResetExpiryCoreAsync(TimeSpan? expiry, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation)
     {
         var milliseconds = RespireSemaphore.ToMilliseconds(expiry, nameof(expiry));
-        var observation = _client is RespireClient ? RespireTelemetry.ErrorObservation.Rent(force: true) : default;
         var enteredGate = false;
         try
         {
@@ -689,14 +741,8 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
                 ScheduleDisposeReleaseRetry();
             return false;
         }
-        catch (Exception error)
-        {
-            observation.Final(error);
-            throw;
-        }
         finally
         {
-            observation.Dispose();
             if (enteredGate) _operationGate.Release();
         }
     }
@@ -711,9 +757,15 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     /// already expired, or when a verification found it gone. After a failed renewal, this can still
     /// return true if this call removes the permit during cleanup.
     /// </returns>
-    public async ValueTask<bool> ReleaseAsync(CancellationToken cancellationToken = default)
+    public ValueTask<bool> ReleaseAsync(CancellationToken cancellationToken = default)
+        => _client is RespireClient
+            ? DispatchResponseSource<bool>.Run((Permit: this, Token: cancellationToken),
+                static (state, observation) => state.Permit.ReleaseCoreAsync(state.Token, observation))
+            : ReleaseCoreAsync(cancellationToken, default);
+
+    private async ValueTask<bool> ReleaseCoreAsync(CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation)
     {
-        var observation = _client is RespireClient ? RespireTelemetry.ErrorObservation.Rent(force: true) : default;
         var enteredGate = false;
         try
         {
@@ -721,14 +773,8 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
             enteredGate = true;
             return await ReleaseUnderGateAsync(cleanupOnFailure: true, cancellationToken, observation).ConfigureAwait(false);
         }
-        catch (Exception error)
-        {
-            observation.Final(error);
-            throw;
-        }
         finally
         {
-            observation.Dispose();
             if (enteredGate) _operationGate.Release();
         }
     }
@@ -745,6 +791,8 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     /// </remarks>
     public async ValueTask DisposeAsync()
     {
+        var internalOwner = _client is RespireClient ? DispatchResponseSource<bool>.Start() : null;
+        var observation = internalOwner?.Observation ?? default;
         using var timeout = new CancellationTokenSource(DisposeReleaseTimeout);
         var entered = false;
         try
@@ -753,16 +801,18 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
             entered = true;
             // The background retry is the cleanup for a failed disposal release, so skip the extra
             // bounded attempt that ReleaseAsync makes and keep disposal within its one-second bound.
-            _ = await ReleaseUnderGateAsync(cleanupOnFailure: false, timeout.Token).ConfigureAwait(false);
+            _ = await ReleaseUnderGateAsync(cleanupOnFailure: false, timeout.Token, observation).ConfigureAwait(false);
         }
-        catch (Exception)
+        catch (Exception error)
         {
+            observation.Handled(error);
             // Disposal does not throw. A busy gate, timeout or failure hands release to the background retry.
             ScheduleDisposeReleaseRetry();
         }
         finally
         {
             if (entered) _operationGate.Release();
+            internalOwner?.CompleteInternal();
         }
     }
 

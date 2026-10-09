@@ -4595,7 +4595,8 @@ public sealed partial class RespireClient : IRespireClient
     /// command: required whenever the command can time out or be canceled, and opportunistic
     /// otherwise. Returns null when ordering cannot be established without that requirement.
     /// </summary>
-    internal async ValueTask<RespireClient?> GetCorrectionTrackingClientAsync(CancellationToken cancellationToken)
+    internal async ValueTask<RespireClient?> GetCorrectionTrackingClientAsync(CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation = default)
     {
         if (RequiresReliableCorrectionOrdering(cancellationToken))
         {
@@ -4603,10 +4604,10 @@ public sealed partial class RespireClient : IRespireClient
             return this;
         }
 
-        return await TryEnsureReliableCorrectionOrderingAsync().ConfigureAwait(false) ? this : null;
+        return await TryEnsureReliableCorrectionOrderingAsync(observation).ConfigureAwait(false) ? this : null;
     }
 
-    internal async ValueTask<bool> TryEnsureReliableCorrectionOrderingAsync()
+    internal async ValueTask<bool> TryEnsureReliableCorrectionOrderingAsync(RespireTelemetry.ErrorObservation observation = default)
     {
         if (_core.Cluster is not null)
         {
@@ -4628,11 +4629,12 @@ public sealed partial class RespireClient : IRespireClient
             await multiplexer.EnsureReliableCorrectionOrderingAsync().ConfigureAwait(false);
             return true;
         }
-        catch (RespireServerException)
+        catch (RespireServerException error)
         {
             // Normal non-cancellable access remains compatible with ACLs and RESP servers that
             // do not expose CLIENT commands. Its connection-loss guarantee is necessarily
             // best-effort when no server-side identity can be obtained.
+            observation.Handled(error);
             return false;
         }
     }

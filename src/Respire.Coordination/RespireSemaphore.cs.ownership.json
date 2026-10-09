@@ -1,0 +1,59 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.Coordination.RespireSemaphore",
+      "OwnerType": "Respire.Coordination.RespireSemaphore",
+      "Members": ["TryAcquireAsync(TimeSpan?,CancellationToken):ValueTask<RespireSemaphorePermitAttempt>"],
+      "Contract": "Start a failure-only caller owner before cancellation, expiry validation and connection preflight. Borrow it through tracked acquisition, retries, capacity-error translation and required cleanup before final publication."
+    },
+    {
+      "Type": "Respire.Coordination.RespireSemaphorePermitAttempt",
+      "OwnerType": "Respire.Coordination.RespireSemaphorePermitAttempt",
+      "Members": ["DisposeAsync():ValueTask"],
+      "Contract": "Delegate disposal to the permit's internal release owner. An unacquired attempt has no command or error boundary."
+    },
+    {
+      "Type": "Respire.Coordination.RespireSemaphorePermit",
+      "OwnerType": "Respire.Coordination.RespireSemaphorePermit",
+      "Members": [
+        "VerifyStillHeldAsync(CancellationToken):ValueTask<bool>",
+        "ResetExpiryAsync(TimeSpan?,CancellationToken):ValueTask<bool>",
+        "ReleaseAsync(CancellationToken):ValueTask<bool>",
+        "DisposeAsync():ValueTask"
+      ],
+      "Contract": "Verification, renewal and release start failure-only owners before validation or gate waits and publish once after result disposal, surrender cleanup and gate release. Disposal never publishes caller failures; its bounded release and detached retries own internal observations."
+    }
+  ],
+  "Boundaries": [
+    {
+      "Name": "semaphore-acquire", "Role": "borrower",
+      "Member": "Respire.Coordination.RespireSemaphore.TryAcquireCoreAsync(long,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<RespireSemaphorePermitAttempt>",
+      "Owner": "Respire.Coordination.RespireSemaphore.TryAcquireAsync(TimeSpan?,CancellationToken):ValueTask<RespireSemaphorePermitAttempt>",
+      "Contract": "Borrow acquisition ownership through routing, script retries, conversion and bounded owner-token cleanup. Preserve the mapped caller exception."
+    },
+    {
+      "Name": "semaphore-renew", "Role": "borrower",
+      "Member": "Respire.Coordination.RespireSemaphorePermit.ResetExpiryCoreAsync(TimeSpan?,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<bool>",
+      "Owner": "Respire.Coordination.RespireSemaphorePermit.ResetExpiryAsync(TimeSpan?,CancellationToken):ValueTask<bool>",
+      "Contract": "Borrow renewal ownership through validation, gate admission, tracked reply and surrender; preserve cancellation status and retry counts."
+    },
+    {
+      "Name": "semaphore-release", "Role": "borrower",
+      "Member": "Respire.Coordination.RespireSemaphorePermit.ReleaseCoreAsync(CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<bool>",
+      "Owner": "Respire.Coordination.RespireSemaphorePermit.ReleaseAsync(CancellationToken):ValueTask<bool>",
+      "Contract": "Borrow release ownership through gate admission, reply disposal, required cleanup and gate release."
+    },
+    {
+      "Name": "semaphore-cleanup", "Role": "internal",
+      "Member": "Respire.Coordination.RespireSemaphore.ReleaseOnceAsync(IRespireClient,RespireKey,RespireLockToken,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask",
+      "Owner": null,
+      "Contract": "Report failures as handled under the open caller owner. After the bounded foreground wait, use an independent failure-only internal owner so detached cleanup cannot mutate a later caller rental."
+    },
+    {
+      "Name": "semaphore-disposal", "Role": "internal",
+      "Member": "Respire.Coordination.RespireSemaphorePermit.RunDisposeReleaseRetryAsync():Task",
+      "Owner": null,
+      "Contract": "Detached disposal retries have internal lifetimes and never publish a caller-visible final failure."
+    }
+  ]
+}

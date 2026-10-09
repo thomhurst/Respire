@@ -64,6 +64,16 @@ internal static partial class RespireTelemetry
 
         internal bool IsEmpty => _state is null && _dispatch is null;
 
+        internal bool IsOpen
+        {
+            get
+            {
+                if (_dispatch is not null) return _dispatch.IsOpen(_generation);
+                if (_state is null) return false;
+                lock (_state.Gate) return _state.Active && _state.Generation == _generation;
+            }
+        }
+
         internal int Attempts
         {
             get
@@ -89,17 +99,21 @@ internal static partial class RespireTelemetry
             }
         }
         internal void Handled(Exception error)
+            => _ = TryHandled(error);
+
+        internal bool TryHandled(Exception error)
         {
-            if (_dispatch is not null) { _dispatch.Handled(_generation, error); return; }
-            if (_state is null) return;
+            if (_dispatch is not null) return _dispatch.Handled(_generation, error);
+            if (_state is null) return false;
             int attempt;
             lock (_state.Gate)
             {
-                if (!IsActive(_state)) return;
+                if (!IsActive(_state)) return false;
                 attempt = _state.Attempts;
                 _state.Attempts = unchecked(attempt + 1);
             }
             RecordError(error, internallyHandled: true, attempt);
+            return true;
         }
         internal void Final(Exception error)
         {
