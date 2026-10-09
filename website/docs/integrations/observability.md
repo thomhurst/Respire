@@ -618,6 +618,18 @@ until its reply finishes, including a loser that outlives the caller. Each faile
 hedge leg contributes one internal measurement, including a late loser; when both legs
 fail, their internal observations are separate from the race's final caller failure.
 
+Stream read pages count validation, key resolution, command construction, reply parsing,
+and cancellation at the same final boundary. Consumer-group iterators establish ownership
+on their first `MoveNextAsync`, including options and batch-size validation; page dispatch
+borrows that owner until enumeration ends or the iterator is disposed. Page APIs and
+options-based iterators reject null group or consumer arguments before sending a command.
+
+Continuous `ReadAllAsync` reads retain one failure-only owner across pages and recovery.
+Resolving an initial `$` cursor belongs to that owner and fails without recovery. Recovered
+read failures are internal measurements; a later terminal failure carries the total retry
+count and contributes one final measurement after page cleanup. Successful reads and early
+iterator disposal do not rent error observation storage or report a final failure.
+
 Streaming GET counts header or acquisition failure at the command boundary. After a
 stream is returned, its first observed payload failure is counted once; repeated reads of
 the same failed stream do not add measurements. Canceling an individual read counts that
