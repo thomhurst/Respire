@@ -1,11 +1,11 @@
 ---
-title: Standalone circuit breakers
+title: Circuit breakers
 description: Opt-in endpoint admission, bounded recovery probes, and command health outcomes.
 ---
 
-# Standalone circuit breakers
+# Circuit breakers
 
-Set `RespireOptions.CircuitBreaker` to stop new standalone commands from entering an unhealthy
+Set `RespireOptions.CircuitBreaker` to stop new standalone or Redis Cluster commands from entering an unhealthy
 endpoint. The default is `null`: the client creates no circuit registry or per-command permit,
 and retains its existing response sources and queue behavior.
 
@@ -46,7 +46,7 @@ handshakes, and explicit health-check probes retain their existing lifecycle.
 A maintenance handoff can move a command only before its frame is accepted. The old admission
 is released as ignored, and the replacement endpoint requires fresh admission under the
 original command deadline. An open replacement circuit rejects without writing there. The
-registry retains at most 16 endpoint histories unless more entries are needed by current routing
+registry retains at most 16 idle endpoint histories unless more entries are needed by current routing
 or outstanding admissions. Only idle, non-current histories can be evicted; returning to an
 evicted endpoint starts fresh history. DNS changes reuse the configured hostname.
 
@@ -86,7 +86,7 @@ prove that a reply arrived and count as healthy outcomes. Raw error replies and 
 exceptions use the same health policy. Health sampling does not change the exception delivered
 to the caller.
 
-Fire-and-forget dispatch checks circuit admission, but successful queue acceptance is ignored
+Standalone fire-and-forget dispatch checks circuit admission, but successful queue acceptance is ignored
 because its reply is discarded. It therefore cannot close a half-open circuit on its own.
 Fire-and-forget operations that observe a transport failure still report that failure.
 Cache-fenced fire-and-forget commands that already await a reply retain their existing behavior
@@ -104,8 +104,9 @@ every pending. Successful pending results retain their existing ownership.
 A batch can dispatch partially: admitted commands can execute while later entries are rejected,
 including when all half-open slots are occupied. Rejected entries are not retried or replayed.
 Accepted replies remain in FIFO order, including after cancellation releases a permit. Circuit
-admission does not make a pipeline atomic. Circuit-enabled batches stay on their selected
-connection rather than moving individual entries during a maintenance handoff.
+admission does not make a pipeline atomic. Standalone circuit-enabled batches stay on their selected
+connection rather than moving individual entries during a maintenance handoff. Cluster batches
+retain their existing recovery for commands rejected before acceptance; each new target requires admission.
 
 A nonempty transaction acquires one permit for the entire MULTI/EXEC sequence immediately before
 dispatch. Open rejection sends neither MULTI nor its queued commands nor EXEC, and faults all
@@ -125,13 +126,44 @@ Cancellation, validation failure, and undispatched exceptions release recovery c
 Each transaction or batch permit completes even when response conversion fails. These boundaries
 preserve the existing transaction completion, batch failure, and result disposal contracts.
 
+## Redis Cluster
+
+Set `UseCluster = true` alongside `CircuitBreaker` to enable admission on Cluster data nodes.
+Each actual dispatch endpoint has independent history, including primary and replica routes.
+An open node does not reject commands routed to healthy nodes. Circuit rejection does not select
+another replica or bypass the configured `ReadFrom` policy.
+
+Immediate typed, converted, raw, fire-and-forget, batch, and transaction sends require admission
+on their selected node. `MOVED` and `ASK` recovery retain the existing routing rules and acquire
+the target endpoint before sending the command or `ASKING`. Redis redirection replies count as
+healthy responses from the source; a target rejection reports the target's `Endpoint` and
+`RetryAfter`. Commands rejected by retired generations require fresh admission on their replacement.
+Accepted commands are never replayed because another node opens.
+Cluster fire-and-forget calls that await replies to handle routing rejection also contribute
+those reply outcomes to endpoint health.
+
+Live primary, replica, seed, and redirect endpoints retain their circuit histories even in
+clusters with more than 16 nodes. Detached generations keep outstanding permits until completion;
+only idle histories outside current routing can be evicted. New sockets at the same configured
+endpoint share its history. Caller conversion runs after the wire outcome completes, so even a
+converter throwing a Redis-shaped exception cannot change endpoint health or trigger replay.
+
+Queues acquire only at execution. Each Cluster batch command owns its permit, and each transaction
+owns one permit for its entire `MULTI`/`EXEC` sequence. A half-open batch can dispatch partially when
+recovery slots are full; rejected entries complete in original order. Cancellation, timeout, and
+undispatched failure release every permit. Caller cancellation does not count as node failure and
+does not remove accepted FIFO placeholders; their replies still drain. Canceled or failed recovery
+admissions do not reserve capacity forever: later commands can fill the complete recovery batch,
+after the open delay when a submitted transport failure reopened the node.
+
 ## Current scope
 
 This option covers standalone immediate typed, raw, interpolated, fire-and-forget, cache-miss,
 blocking, streamed, batch, and transaction command dispatch.
 
-Configuration with Redis Cluster, Sentinel, or standalone replica endpoints is rejected.
-Topology-specific circuit admission is separate work. This option does not change
+Redis Cluster data dispatch is also supported as described above. Configuration with Sentinel
+or standalone replica endpoints is rejected. Sentinel circuit admission remains separate work.
+This option does not change
 `RespireFailoverGroup` probe/failback behavior. The wider
 [resilience work](https://github.com/thomhurst/Respire/issues/863) remains open for retry and
 telemetry integration.

@@ -4,12 +4,10 @@ title: Failover groups
 
 :::note Endpoint circuit breaker foundation
 
-Standalone and per-node command circuit breaking is under development in
-[#863](https://github.com/thomhurst/Respire/issues/863).
-`RespireCircuitBreakerOptions` and `RespireCircuitOpenException` establish the
-configuration and rejection contract, but no `RespireOptions` property enables
-them yet. Existing failover-group configuration below remains the available
-health-checked switching API.
+[Circuit breakers](circuit-breakers.md) support standalone and Cluster data-node
+command admission through `RespireOptions.CircuitBreaker`. Sentinel admission and
+remaining resilience work stay tracked by [#863](https://github.com/thomhurst/Respire/issues/863).
+Failover-group configuration below remains the health-checked switching API across deployments.
 
 The endpoint foundation retains the most recent `MaximumSampleCount` completed
 outcomes whose age is less than `SamplingWindow`: 1024 outcomes and 30 seconds by
@@ -31,8 +29,8 @@ the delay before recovery starts, not the lifetime of an admitted probe.
 The rejection contract identifies the endpoint and remaining `RetryAfter` delay.
 `RetryAfter` is null when recovery probes fill the slots and their completion
 determines the next admission. This delay is informational; a retry must reacquire
-endpoint admission. Client dispatch, telemetry, and safe
-retry composition remain pending in the native children of #863.
+endpoint admission. Remaining topology, telemetry, and safe retry composition work
+stays tracked by the native children of #863.
 
 :::
 

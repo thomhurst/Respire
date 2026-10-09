@@ -274,6 +274,24 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     // and health mutation. Router callbacks must always run outside this gate.
     internal Lock NodeStateGate => _nodesGate;
 
+    // Circuit trimming may discard idle history, but never a live primary, replica,
+    // redirect target or maintenance destination. Detached generations retain their
+    // outstanding admissions until completion independently of this lookup.
+    internal bool IsCircuitEndpointCurrent(RespireEndpoint endpoint)
+    {
+        lock (_nodesGate)
+        {
+            if (_identities.TryGet(endpoint) is { IsRetired: false } current
+                && RespireEndpointComparer.Instance.Equals(current.ActiveConnectionEndpoint, endpoint)) return true;
+            if (_identities.Replicas.ContainsEndpoint(endpoint)) return true;
+            // Maintenance destinations need not be advertised under the node's original address.
+            foreach (var node in _identities.All)
+                if (!node.IsRetired && RespireEndpointComparer.Instance.Equals(
+                    node.ActiveConnectionEndpoint, endpoint)) return true;
+            return false;
+        }
+    }
+
     internal bool IsNodeObserved(RespireConnectionMultiplexer node)
     {
         lock (_nodesGate)

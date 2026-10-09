@@ -2,7 +2,7 @@ namespace Respire.Internal;
 
 // Created only in opt-in mode. Prefix and cache-bypass views share endpoint state.
 internal sealed class StandaloneCircuitRegistry(RespireCircuitBreakerOptions options,
-    Func<RespireEndpoint>? getCurrentEndpoint = null)
+    Func<RespireEndpoint>? getCurrentEndpoint = null, Func<RespireEndpoint, bool>? isCurrentEndpoint = null)
 {
     internal const int RetainedEndpointLimit = 16;
     private readonly Lock _gate = new();
@@ -52,8 +52,9 @@ internal sealed class StandaloneCircuitRegistry(RespireCircuitBreakerOptions opt
             Entry? oldest = null;
             foreach (var entry in _circuits.Values)
             {
-                if (entry.ActiveAdmissions != 0 || current is { } endpoint
-                    && RespireEndpointComparer.Instance.Equals(entry.Circuit.Endpoint, endpoint)) continue;
+                if (entry.ActiveAdmissions != 0) continue;
+                if (current is { } endpoint && RespireEndpointComparer.Instance.Equals(entry.Circuit.Endpoint, endpoint)
+                    || isCurrentEndpoint?.Invoke(entry.Circuit.Endpoint) == true) continue;
                 if (oldest is null || entry.LastUse < oldest.LastUse) oldest = entry;
             }
             // Active work owns its state until completion; it cannot be evicted to meet a cap.

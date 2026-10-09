@@ -27,9 +27,10 @@ Server and protocol requirements vary by feature; each linked guide describes it
 - [Reconnect policies](guides/reconnect-policy.md), automatic pub/sub resubscription,
   [maintenance notifications and handoffs](fundamentals/connections.md#maintenance-notifications),
   and health-checked [failover groups](guides/failover-groups.md) across deployments.
-- [Opt-in standalone circuit breakers](guides/circuit-breakers.md) reject immediate, batch, and
-  transaction commands during endpoint failures, with bounded half-open probes. Topology
-  integration remains tracked by [the circuit epic](https://github.com/thomhurst/Respire/issues/1255).
+- [Opt-in circuit breakers](guides/circuit-breakers.md) reject standalone and Cluster immediate,
+  batch, and transaction commands during endpoint failures, with independent Cluster data-node
+  histories and bounded half-open probes. Sentinel and remaining resilience integration stay
+  tracked by [the circuit epic](https://github.com/thomhurst/Respire/issues/1255).
 - [Renewable credentials](guides/renewable-credentials.md), independent Sentinel authentication,
   and [Azure Managed Redis](guides/azure-managed-redis.md) / [AWS IAM](guides/aws-iam-credentials.md) adapters.
 

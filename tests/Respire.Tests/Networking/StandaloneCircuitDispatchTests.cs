@@ -972,7 +972,6 @@ public partial class StandaloneCircuitDispatchTests
     {
         foreach (var options in new[]
         {
-            new RespireOptions { Endpoints = [new("localhost")], UseCluster = true },
             new RespireOptions { Endpoints = [new("localhost")], SentinelPrimaryName = "primary" },
             new RespireOptions { Endpoints = [new("localhost")], ReplicaEndpoints = [new("replica")] },
         })
