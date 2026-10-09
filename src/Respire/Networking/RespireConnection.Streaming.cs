@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Protocol;
@@ -81,6 +82,9 @@ internal sealed partial class RespireConnection
         CommandDeadline commandDeadline, DedicatedStreamRoute streamingRoute, int errorAttempts)
         => SendStreamedSetAsync(command, cancellationToken, commandDeadline, streamingRoute, asking, errorAttempts);
 
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
     private async ValueTask<RespValue> SendStreamedSetAsync(
         StreamedSetCommand command, CancellationToken cancellationToken, CommandDeadline deadline,
         DedicatedStreamRoute streamingRoute, ProtocolCommand<RawCommand>? prelude = null, int errorAttempts = 0,
