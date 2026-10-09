@@ -4291,6 +4291,7 @@ internal sealed record RespireConnectionOptions
     internal RespireMaintenanceNotificationMode MaintenanceNotifications { get; init; }
     internal TimeSpan MaintenanceRelaxedTimeout { get; init; } = TimeSpan.FromSeconds(30);
     internal TimeSpan MaintenanceWindowTimeout { get; init; } = TimeSpan.FromSeconds(60);
+    internal FailoverMaintenanceWindows? FailoverMaintenance { get; init; }
 
     /// <summary>
     /// Receives out-of-band frames on connections built from these options (see
