@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Respire.Internal;
 
 namespace Respire.Streaming;
 
@@ -51,26 +53,51 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
     {
         var readOptions = new StreamReadOptions { Count = options.BatchSize, WaitFor = options.ReadWait };
         RespireStreamId? cursor = options.ConsumerName is null ? (RespireStreamId?)null : RespireStreamId.Beginning;
+        var recoveryCursor = RespireStreamId.Beginning;
+        var recoveryClock = Stopwatch.StartNew();
         try
         {
             while (!readers.IsCancellationRequested)
             {
-                var entries = await client.Streams.ReadGroupOnceAsync(stream, group, consumer,
-                    cursor.HasValue ? readOptions with { WaitFor = null } : readOptions,
-                    cursor, readers.Token).ConfigureAwait(false);
+                Delivery[] deliveries;
+                var recoveredBatch = false;
                 if (cursor.HasValue)
                 {
-                    // Visit each owned pending ID once at startup, including a Nack. Moving
-                    // the cursor prevents a failed entry from becoming a hot retry loop.
-                    if (entries.Length == 0) { cursor = null; continue; }
-                    cursor = entries[^1].Id;
+                    var page = await ReadPageAsync(StreamWorkerScripts.Replay,
+                        [group, consumer, options.BatchSize, cursor.Value.Value], readers.Token).ConfigureAwait(false);
+                    // Even a deleted pending entry advances replay without dispatching a handler.
+                    cursor = page.Cursor.CompareTo(RespireStreamId.Beginning) == 0 ? (RespireStreamId?)null : page.Cursor;
+                    deliveries = page.Deliveries;
                 }
-                foreach (var entry in entries)
+                else if (recoveryClock.Elapsed >= options.RecoveryPollInterval)
+                {
+                    var page = await ReadPageAsync(StreamWorkerScripts.Claim,
+                        [group, consumer, (long)Math.Ceiling(options.MinimumIdleTime.TotalMilliseconds),
+                            recoveryCursor.Value, options.BatchSize], readers.Token).ConfigureAwait(false);
+                    recoveryCursor = page.Cursor; // Keep the cursor even when no entries were claimable.
+                    recoveredBatch = true;
+                    deliveries = page.Deliveries;
+                }
+                else
+                {
+                    var remaining = options.RecoveryPollInterval - recoveryClock.Elapsed;
+                    var wait = remaining < options.ReadWait ? remaining : options.ReadWait;
+                    if (wait <= TimeSpan.Zero) continue;
+                    var entries = await client.Streams.ReadGroupOnceAsync(stream, group, consumer,
+                        readOptions with { WaitFor = wait }, cancellationToken: readers.Token).ConfigureAwait(false);
+                    // New group deliveries start at attempt 1 at the server read boundary.
+                    // Never query XPENDING later: a same-name reclaim may already have occurred.
+                    deliveries = entries.Select(static entry => new Delivery(
+                        entry.WithoutAcknowledgement(), 1)).ToArray();
+                }
+                foreach (var delivery in deliveries)
                 {
                     // A batch delivered during shutdown stays pending rather than starting more handlers.
                     if (readers.IsCancellationRequested) break;
-                    await ProcessAsync(entry).ConfigureAwait(false);
+                    await ProcessAsync(delivery, consumer).ConfigureAwait(false);
                 }
+                // Slow recovered handlers must not make another scan due before new reads get a turn.
+                if (recoveredBatch) recoveryClock.Restart();
             }
         }
         catch (OperationCanceledException) when (readers.IsCancellationRequested) { }
@@ -83,14 +110,36 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
         }
     }
 
-    private async Task ProcessAsync(RespireStreamEntry entry)
+    private readonly record struct Delivery(RespireStreamEntry Entry, long Attempt);
+
+    private async Task<(RespireStreamId Cursor, Delivery[] Deliveries)> ReadPageAsync(
+        RespireScript script, RespireValue[] arguments, CancellationToken token)
+    {
+        using var reply = await client.Scripts.ExecuteAsync(script, [stream], arguments, token).ConfigureAwait(false);
+        var rows = reply[1];
+        var deliveries = new Delivery[rows.Count];
+        for (var i = 0; i < deliveries.Length; i++)
+        {
+            var row = rows[i];
+            var values = row[1];
+            var fields = new KeyValuePair<string, byte[]>[values.Count / 2];
+            for (var field = 0; field < fields.Length; field++)
+                fields[field] = new(values[field * 2].AsString(), values[field * 2 + 1].AsBytes());
+            // No unconditional entry.AckAsync is exposed to the handler for scripted deliveries.
+            deliveries[i] = new(new RespireStreamEntry(new(row[0].AsString()), fields),
+                long.Parse(row[2].AsString(), System.Globalization.CultureInfo.InvariantCulture));
+        }
+        return (new(reply[0].AsString()), deliveries);
+    }
+
+    private async Task ProcessAsync(Delivery delivery, string consumer)
     {
         await using var scope = scopeFactory.CreateAsyncScope();
         var handler = scope.ServiceProvider.GetRequiredService<THandler>();
         RespireStreamWorkerResult result;
         try
         {
-            result = await handler.HandleAsync(deserialize(entry), _handlers.Token).ConfigureAwait(false);
+            result = await handler.HandleAsync(deserialize(delivery.Entry), _handlers.Token).ConfigureAwait(false);
             if (result is not (RespireStreamWorkerResult.Ack or RespireStreamWorkerResult.Nack))
                 throw new InvalidOperationException("The stream handler returned an unknown completion result.");
         }
@@ -106,7 +155,8 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
         if (result == RespireStreamWorkerResult.Ack && !_handlers.IsCancellationRequested)
             // ConsumeAsync treats acknowledgement cancellation as expected only after
             // readers stop. StopAsync and Dispose must therefore cancel readers first.
-            await client.Streams.AcknowledgeAsync(stream, group, [entry.Id], _handlers.Token).ConfigureAwait(false);
+            await client.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.Ack, [stream],
+                [group, consumer, delivery.Entry.Id.Value, delivery.Attempt], _handlers.Token).ConfigureAwait(false);
     }
 
     public override async Task StopAsync(CancellationToken cancellationToken)

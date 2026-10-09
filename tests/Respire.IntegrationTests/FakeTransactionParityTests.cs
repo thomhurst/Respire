@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Respire.Internal;
 using Respire.TestSupport;
 using TUnit.Core;
 
@@ -260,6 +261,20 @@ public class FakeTransactionParityTests(RedisTestContainer fixture)
             new([ ["LPUSH", "key", "old"] ], ["LPOP", "key"], true),
             new([ ["ZADD", "key", "1", "member"] ], ["ZPOPMIN", "key"], true),
             new([], ["XADD", "key", "*", "field", "value"], true),
+            new([ ["XADD", "key", "1-0", "field", "value"] ], ["XDEL", "key", "1-0"], true),
+            new([ ["XADD", "key", "1-0", "field", "value"] ], ["XDEL", "key", "2-0"], false),
+            new([], ["XDEL", "key", "1-0"], false),
+            new([ ["XADD", "key", "1-0", "field", "value"], ["XGROUP", "CREATE", "key", "g", "0"],
+                ["XREADGROUP", "GROUP", "g", "old", "STREAMS", "key", ">"] ],
+                ["XAUTOCLAIM", "key", "g", "new", "0", "0-0"], false),
+            // The fake supports only worker scripts, which change the PEL rather than stream contents.
+            new([ ["XADD", "key", "1-0", "field", "value"], ["XGROUP", "CREATE", "key", "g", "0"],
+                ["XREADGROUP", "GROUP", "g", "old", "STREAMS", "key", ">"] ],
+                ["EVAL", StreamWorkerScripts.AckSource, "1", "key", "g", "old", "1-0", "1"], false),
+            new([ ["XADD", "key", "1-0", "field", "value"], ["XGROUP", "CREATE", "key", "g", "0"],
+                ["XREADGROUP", "GROUP", "g", "old", "STREAMS", "key", ">"],
+                ["EVAL", StreamWorkerScripts.AckSource, "1", "key", "g", "old", "1-0", "0"] ],
+                ["EVALSHA", StreamWorkerScripts.Ack.Sha1, "1", "key", "g", "old", "1-0", "1"], false),
             new([], ["XADD", "key", "NOMKSTREAM", "*", "field", "value"], false),
             new([ ["XADD", "key", "*", "field", "value"] ], ["XCFGSET", "key", "IDMP-MAXSIZE", "1"], false),
             new([ ["XADD", "key", "*", "field", "value"] ], ["XCFGSET", "key", "IDMP-MAXSIZE", "100"], false),
@@ -346,7 +361,9 @@ public class FakeTransactionParityTests(RedisTestContainer fixture)
             "HIMPORT PREPARE", "HIMPORT DISCARD", "HIMPORT DISCARDALL",
             "SUBSCRIBE", "UNSUBSCRIBE", "PUBLISH", "XREAD",
             // Group cursor/PEL changes do not invalidate WATCH, unlike XGROUP CREATE ... MKSTREAM.
-            "XREADGROUP", "XACK", "XPENDING", "XINFO",
+            "XREADGROUP", "XACK", "XPENDING", "XINFO", "XAUTOCLAIM",
+            // Only built-in worker scripts are supported; none modifies stream contents.
+            "EVAL", "EVALSHA",
             "SELECT", "CLIENT", "GET", "MGET", "EXISTS", "TYPE", "STRLEN", "TTL",
             "PTTL", "EXPIRETIME", "PEXPIRETIME", "HGET", "HMGET", "HGETALL", "HEXISTS", "HLEN",
             "HKEYS", "HVALS", "HSTRLEN", "SMEMBERS", "SCARD", "SISMEMBER", "SMISMEMBER", "SINTER",

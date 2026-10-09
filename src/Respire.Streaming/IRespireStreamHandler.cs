@@ -11,7 +11,7 @@ public interface IRespireStreamHandler<in TMessage>
 /// <summary>Explicit completion of a stream delivery.</summary>
 public enum RespireStreamWorkerResult
 {
-    /// <summary>Leave the entry pending. This foundation does not automatically retry it.</summary>
+    /// <summary>Leave the entry pending for retry after the configured minimum idle time.</summary>
     Nack = 0,
     /// <summary>Acknowledge the entry after the handler completes successfully.</summary>
     Ack = 1,

@@ -232,7 +232,7 @@ public class FakeTransactionTests
         await using var session = await TestRespSession.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
         foreach (var arguments in new[] { new[] { "HELLO", "3" }, new[] { "SUBSCRIBE", "channel" }, new[] { "UNSUBSCRIBE", "channel" },
             new[] { "PSUBSCRIBE", "*" }, new[] { "PUNSUBSCRIBE" }, new[] { "SSUBSCRIBE", "channel" },
-            new[] { "SUNSUBSCRIBE" }, new[] { "SPUBLISH", "channel", "payload" }, new[] { "EVAL", "return 1", "0" } })
+            new[] { "SUNSUBSCRIBE" }, new[] { "SPUBLISH", "channel", "payload" } })
         {
             using (var multi = await session.CommandAsync("MULTI")) { }
             using (var rejected = await session.CommandAsync(arguments)) await Assert.That(rejected.IsError).IsTrue();
@@ -241,6 +241,29 @@ public class FakeTransactionTests
             using var alive = await session.CommandAsync("PING");
             await Assert.That(alive.AsString()).IsEqualTo("PONG");
         }
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task UnsupportedScriptsFailDuringExecWithoutAbortingOtherCommands(int protocol)
+    {
+        await using var server = new RespireFakeServer();
+        await using var session = await TestRespSession.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        using (var multi = await session.CommandAsync("MULTI")) { }
+        foreach (var command in new[] { "EVAL", "EVALSHA" })
+        {
+            using var queued = await session.CommandAsync(command, "return 1", "0");
+            await Assert.That(queued.AsString()).IsEqualTo("QUEUED");
+        }
+        using (var queued = await session.CommandAsync("SET", "applied", "value")) { }
+        using var executed = await session.CommandAsync("EXEC");
+        await Assert.That(executed.AsArray().Length).IsEqualTo(3);
+        await Assert.That(executed.AsArray()[0].GetErrorMessage()).Contains("supports only the built-in stream worker scripts");
+        await Assert.That(executed.AsArray()[1].GetErrorMessage()).StartsWith("NOSCRIPT");
+        await Assert.That(executed.AsArray()[2].AsString()).IsEqualTo("OK");
+        using var stored = await session.CommandAsync("GET", "applied");
+        await Assert.That(stored.AsString()).IsEqualTo("value");
     }
 
     [Test]
