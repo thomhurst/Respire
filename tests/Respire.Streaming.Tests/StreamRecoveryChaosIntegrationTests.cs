@@ -24,9 +24,10 @@ public class StreamRecoveryChaosIntegrationTests(RedisTestContainer redis)
         var client = root.WithKeyPrefix("{chaos}tenant:");
         var ids = Enumerable.Range(1, 12).Select(index => $"{index}-0").ToArray();
         var poisonIds = ids.Where((_, index) => index % 3 == 0).ToArray();
+        byte[] payload = [0xff, 0, 13, 10];
         for (var index = 0; index < ids.Length; index++)
             await client.Streams.AddAsync("events", new StreamAddOptions { Id = ids[index] },
-                ("kind", index % 3 == 0 ? "poison" : "normal"), ("payload", new byte[] { 0xff, 0, 13, 10 }));
+                ("kind", index % 3 == 0 ? "poison" : "normal"), ("payload", payload));
         await client.Streams.CreateGroupAsync("events", "workers", RespireStreamId.Beginning);
         await client.Streams.CreateGroupAsync("events", "independent", RespireStreamId.Beginning);
         await client.Streams.ReadGroupOnceAsync("events", "independent", "observer", new() { Count = ids.Length });
@@ -56,6 +57,12 @@ public class StreamRecoveryChaosIntegrationTests(RedisTestContainer redis)
         await recovery.StartAsync(deadline.Token);
         try
         {
+            await recovered.BothEntered.Task.WaitAsync(deadline.Token);
+            // Both consumers must overlap before any recovery handler can complete.
+            await Assert.That(Volatile.Read(ref recovered.Active)).IsEqualTo(2);
+            await Assert.That(recovered.MaximumActive).IsEqualTo(2);
+            recovered.ReleaseHandlers.TrySetResult();
+
             while (await client.Streams.CountAsync("dead", deadline.Token) != poisonIds.Length
                 || (await client.Streams.PendingSummaryAsync("events", "workers", deadline.Token)).Count != 0
                 || recovered.Attempts.Count != ids.Length)
@@ -68,13 +75,16 @@ public class StreamRecoveryChaosIntegrationTests(RedisTestContainer redis)
             {
                 await Assert.That(entry.GetString("_respire.attempt")).IsEqualTo("3");
                 await Assert.That(entry.GetString("kind")).IsEqualTo("poison");
-                await Assert.That(entry["payload"].SequenceEqual(new byte[] { 0xff, 0, 13, 10 })).IsTrue();
+                await Assert.That(entry["payload"].SequenceEqual(payload)).IsTrue();
             }
             foreach (var id in ids)
             {
                 await Assert.That(recovered.Attempts[id]).IsGreaterThanOrEqualTo(1);
                 await Assert.That(recovered.Attempts[id] + interrupted.Attempts.GetValueOrDefault(id)).IsLessThanOrEqualTo(3);
             }
+            await Assert.That(recovered.Payloads.Select(delivery => delivery.Id).Distinct()).IsEquivalentTo(ids);
+            foreach (var delivery in interrupted.Payloads.Concat(recovered.Payloads))
+                await Assert.That(delivery.Payload.SequenceEqual(payload)).IsTrue();
             await Assert.That(recovered.MaximumActive).IsLessThanOrEqualTo(2);
             await Assert.That(recovered.Completed.Keys).IsEquivalentTo(ids.Except(poisonIds));
             await Assert.That((await client.Streams.PendingSummaryAsync("events", "independent")).Count).IsEqualTo(ids.Length);
@@ -82,7 +92,11 @@ public class StreamRecoveryChaosIntegrationTests(RedisTestContainer redis)
             await Assert.That(await root.Streams.CountAsync("events")).IsEqualTo(0);
             await Assert.That(await root.Streams.CountAsync("{chaos}tenant:{chaos}tenant:dead")).IsEqualTo(0);
         }
-        finally { await recovery.StopAsync(new CancellationToken(canceled: true)); }
+        finally
+        {
+            recovered.ReleaseHandlers.TrySetResult();
+            await recovery.StopAsync(new CancellationToken(canceled: true));
+        }
     }
 
     private static ServiceProvider CreateWorker(IRespireClient client, ChaosState state)
@@ -101,8 +115,10 @@ public class StreamRecoveryChaosIntegrationTests(RedisTestContainer redis)
         public bool Interrupt { get; init; }
         public ConcurrentDictionary<string, int> Attempts { get; } = new();
         public ConcurrentDictionary<string, bool> Completed { get; } = new();
+        public ConcurrentQueue<(string Id, byte[] Payload)> Payloads { get; } = new();
         public TaskCompletionSource BothEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource BothExited { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleaseHandlers { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public int Active;
         public int MaximumActive;
         public int Exited;
@@ -113,18 +129,20 @@ public class StreamRecoveryChaosIntegrationTests(RedisTestContainer redis)
         public async ValueTask<RespireStreamWorkerResult> HandleAsync(RespireStreamEntry entry, CancellationToken token)
         {
             var invocation = state.Attempts.AddOrUpdate(entry.Id.Value, 1, static (_, count) => count + 1);
+            state.Payloads.Enqueue((entry.Id.Value, entry["payload"]?.ToArray() ?? []));
             var active = Interlocked.Increment(ref state.Active);
             lock (state) state.MaximumActive = Math.Max(state.MaximumActive, active);
             try
             {
+                if (active == 2) state.BothEntered.TrySetResult();
                 if (state.Interrupt)
                 {
-                    if (active == 2) state.BothEntered.TrySetResult();
                     try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
                     catch (OperationCanceledException) when (token.IsCancellationRequested) { }
                     // Even an Ack returned after shutdown cancellation must remain pending.
                     return RespireStreamWorkerResult.Ack;
                 }
+                await state.ReleaseHandlers.Task.WaitAsync(token);
                 if (entry.GetString("kind") == "poison")
                 {
                     if (invocation % 2 == 0) throw new InvalidOperationException("private poison payload");
