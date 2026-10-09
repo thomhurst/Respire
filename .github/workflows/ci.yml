@@ -32,7 +32,7 @@ concurrency:
 
 jobs:
   stackexchange-interop:
-    name: StackExchange value boundary (${{ matrix.framework }})
+    name: StackExchange compatibility (${{ matrix.framework }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -46,10 +46,20 @@ jobs:
       - uses: ./.github/actions/setup-dotnet
       - name: Build compatibility boundary
         run: dotnet build tests/Respire.StackExchangeCompat.Tests -c Release -f ${{ matrix.framework }}
-      - name: Test RESP2 and RESP3 conversion against Redis
+      - name: Verify unsupported-member scaffold
+        if: matrix.framework == 'net10.0'
+        shell: pwsh
+        run: |
+          $assets = Get-Content tests/Respire.StackExchangeCompat.Tests/obj/project.assets.json -Raw | ConvertFrom-Json
+          $package = $assets.libraries.PSObject.Properties | Where-Object Name -Like 'StackExchange.Redis/*'
+          $packageRoot = $assets.packageFolders.PSObject.Properties.Name | Select-Object -First 1
+          $assembly = Join-Path $packageRoot "$($package.Value.path)/lib/net10.0/StackExchange.Redis.dll"
+          ./tools/Generate-StackExchangeCompat.ps1 -AssemblyPath $assembly
+          git diff --exit-code -- 'src/Respire.StackExchangeCompat/*.Unsupported.g.cs'
+      - name: Test RESP2 and RESP3 conversion, cache and DataProtection against Redis
         run: >-
           dotnet run --project tests/Respire.StackExchangeCompat.Tests -c Release
-          -f ${{ matrix.framework }} --no-build -- --minimum-expected-tests 38
+          -f ${{ matrix.framework }} --no-build -- --minimum-expected-tests 116
 
   mapper-native-aot:
     name: Generated mapper Native AOT (${{ matrix.framework }})
