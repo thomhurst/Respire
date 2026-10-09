@@ -507,12 +507,15 @@ internal sealed partial class SubscriptionHub
                             await EnsureShardedRouteAsync(name, cancellationToken, recovering: true, observation,
                                 recoveryAttempts: attempt - 1).ConfigureAwait(false);
                         }
-                        catch (Exception error) when (!cancellationToken.IsCancellationRequested && !_disposed && !core.Disposed)
+                        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
                         {
-                            // Detached recovery owns an internal attempt, separate from activation.
-                            // Redirects already increment this owner before a terminal rejection.
-                            observation.SetAttempts(Math.Max(observation.Attempts, attempt - 1));
-                            observation.Handled(error);
+                            if (ShouldObserveHandled())
+                            {
+                                // Detached recovery owns an internal attempt, separate from activation.
+                                // Redirects already increment this owner before a terminal rejection.
+                                observation.SetAttempts(Math.Max(observation.Attempts, attempt - 1));
+                                observation.Handled(error);
+                            }
                             failure ??= error;
                             lock (_gate)
                                 if (_shardedOwners.TryGetValue(name, out var primary))

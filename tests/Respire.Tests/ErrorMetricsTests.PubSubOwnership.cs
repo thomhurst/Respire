@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text;
 using Respire.Internal;
@@ -94,6 +95,97 @@ public partial class ErrorMetricsTests
                 await Assert.That(items[attempt].Tags["redis.client.operation.retry_attempts"]).IsEqualTo(attempt);
             }
         }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ShardedRecoveryHandlesNonCancellationFailureRacingDisposal(bool disposeHub)
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        await using var server = new FakeRespServer(8, FakeRespServer.OkReply);
+        server.ReplyOverride = (_, command) => command switch
+        {
+            "CLUSTER SLOTS" => Encoding.ASCII.GetBytes(
+                $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{server.Port}\r\n"),
+            "SSUBSCRIBE one" => "*3\r\n$10\r\nssubscribe\r\n$3\r\none\r\n:1\r\n"u8.ToArray(),
+            "SUNSUBSCRIBE one" => "*3\r\n$12\r\nsunsubscribe\r\n$3\r\none\r\n:0\r\n"u8.ToArray(),
+            _ => null,
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1,
+            ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", server.Port)],
+            ReconnectPolicy = new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 },
+        });
+        await using var hub = new SubscriptionHub(client.Core);
+        await using var subscription = await hub.SubscribeAsync(
+            SubscriptionKind.Sharded, ["one"], new(), CancellationToken.None).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var owners = typeof(SubscriptionHub).GetField("_shardedOwners", flags)!.GetValue(hub)!;
+        owners.GetType().GetMethod("Clear")!.Invoke(owners, null);
+        var disposed = typeof(SubscriptionHub).GetField("_disposed", flags)!;
+        var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        server.SuppressReply = command =>
+        {
+            if (command != "SSUBSCRIBE one") return false;
+            waiting.TrySetResult();
+            return true;
+        };
+        using var capture = new Capture(throwOnMeasurement: true);
+        // Await the worker itself: its drained signal completes even when the worker faults.
+        var drained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var recovery = (Task)typeof(SubscriptionHub).GetMethod("RecoverShardedAsync", flags)!.Invoke(hub, [drained])!;
+        try
+        {
+            await waiting.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            // Reproduce the disposal window before hub lifetime cancellation reaches the command.
+            if (disposeHub) disposed.SetValue(hub, true);
+            else client.Core.Disposed = true;
+            var index = server.ReceivedCommands.ToList().LastIndexOf("SSUBSCRIBE one");
+            await server.SendRawAsync("-NOPERM disposal race\r\n"u8.ToArray(), server.ReceivedConnectionIds[index]);
+            await recovery.WaitAsync(TimeSpan.FromSeconds(10));
+            await Assert.That(recovery.IsCompletedSuccessfully).IsTrue();
+            await Assert.That(drained.Task.IsCompletedSuccessfully).IsTrue();
+            await Assert.That(capture.Items).IsEmpty();
+        }
+        finally
+        {
+            disposed.SetValue(hub, false);
+            client.Core.Disposed = false;
+            await hub.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        }
+    }
+
+    [Test]
+    public async Task NotificationCleanupDeadlineReportsInternalFailure()
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        await using var server = new FakeRespServer(8, FakeRespServer.OkReply);
+        var channel = RespireChannel.KeySpacePrefix("one:", 0);
+        server.ReplyOverride = (_, command) => command switch
+        {
+            "CLUSTER SLOTS" => Encoding.ASCII.GetBytes(
+                $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{server.Port}\r\n"),
+            _ when command == $"PSUBSCRIBE {channel}" => Encoding.ASCII.GetBytes(
+                $"*3\r\n$10\r\npsubscribe\r\n${channel.ToString().Length}\r\n{channel}\r\n:1\r\n"),
+            _ => null,
+        };
+        server.SuppressReply = command => command == $"PUNSUBSCRIBE {channel}";
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1,
+            ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", server.Port)],
+            CommandTimeout = null, ConnectTimeout = TimeSpan.FromSeconds(1),
+        });
+        await using var subscription = await client.SubscribeAsync(channel).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        using var capture = new Capture(throwOnMeasurement: true);
+        await subscription.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(server.ReceivedCommands).Contains($"PUNSUBSCRIBE {channel}");
+        await Assert.That(client.Core.Disposed).IsFalse();
+        var item = capture.Items.Single();
+        await Assert.That(item.Tags["redis.client.errors.internal"]).IsEqualTo(true);
+        await Assert.That(item.Tags["redis.client.operation.retry_attempts"]).IsEqualTo(0);
     }
 
     [Test]

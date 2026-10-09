@@ -888,7 +888,7 @@ internal sealed partial class SubscriptionHub
                     catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested) { throw; }
                     catch (Exception error)
                     {
-                        if (!_disposed && !core.Disposed && !_lifetimeCancellation.IsCancellationRequested)
+                        if (ShouldObserveHandled())
                             observation.Handled(error);
                         TryLog(error, static (logger, state) => logger.NotificationTopologyReconciliationFailed(state));
                         // Each failing endpoint gets the policy's full attempt budget. A failure

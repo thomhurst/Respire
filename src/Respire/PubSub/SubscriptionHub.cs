@@ -429,12 +429,15 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
         catch (Exception ex)
         {
             telemetry.Complete(core, operation, error: ex, connection: connection);
-            if (owner is not null && !_disposed && !core.Disposed && !cancellationToken.IsCancellationRequested)
+            if (owner is not null && ShouldObserveHandled())
                 observation.Handled(ex);
             throw;
         }
         finally { owner?.CompleteInternal(); }
     }
+
+    private bool ShouldObserveHandled()
+        => !_disposed && !core.Disposed && !_lifetimeCancellation.IsCancellationRequested;
 
     private ValueTask SendRecoveryControlAsync(RespireConnection connection,
         SubscriptionKind kind, RespireChannel name, CancellationToken cancellationToken)
