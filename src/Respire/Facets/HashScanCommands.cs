@@ -43,10 +43,19 @@ internal sealed partial class HashCommands
     public ValueTask<RespireHashScanPage> ScanFieldsPageAsync(
         RespireKey key, ulong cursor = 0, string? match = null, int? countHint = null, CancellationToken cancellationToken = default)
     {
-        if (cancellationToken.IsCancellationRequested)
-            return ValueTask.FromCanceled<RespireHashScanPage>(cancellationToken);
-        return client.ConvertResponseAsync("HSCAN", ScanFieldsCommand(client, key, cursor, match, countHint), cancellationToken,
-            client, static (RespireClient _, in RespValue reply) => ParseFieldsPage(in reply));
+        var owner = DispatchResponseSource<RespireHashScanPage>.Start();
+        try
+        {
+            if (cancellationToken.IsCancellationRequested)
+                return owner.Attach(ValueTask.FromCanceled<RespireHashScanPage>(cancellationToken));
+            return owner.Attach(client.ConvertResponseAsync("HSCAN", ScanFieldsCommand(client, key, cursor, match, countHint), cancellationToken,
+                client, static (RespireClient _, in RespValue reply) => ParseFieldsPage(in reply), observation: owner.Observation));
+        }
+        catch (Exception error)
+        {
+            owner.Fail(error);
+            throw;
+        }
     }
 
     internal static CmdN ScanFieldsCommand(RespireClient client, RespireKey key, ulong cursor, string? match, int? countHint)

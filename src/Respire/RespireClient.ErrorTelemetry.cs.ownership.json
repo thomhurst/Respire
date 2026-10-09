@@ -1,0 +1,13 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "cursor-page-conversion",
+      "Role": "helper",
+      "Member": "Respire.RespireClient.ConvertCursorPageAsync`3(string,TCommand,ReadAffinity,CancellationToken,TState,ResponseConverter<TState,TResult>,RespireTelemetry.ErrorObservation):ValueTask<TResult>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "A supplied observation borrows the page's owner started before construction; otherwise conversion starts its own owner. Replica cursor affinity, retries, conversion and reply cleanup stay inside that one owner."
+    }
+  ],
+  "NonRoutes": []
+}

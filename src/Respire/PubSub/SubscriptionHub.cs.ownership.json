@@ -1,0 +1,34 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "pubsub-direct-activation",
+      "Role": "helper",
+      "Member": "Respire.Internal.SubscriptionHub.SubscribeAsync(SubscriptionKind,RespireChannel[],RespireSubscriptionOptions,CancellationToken):ValueTask<RespireSubscription>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Start the final dispatch owner before subscription construction, admission or activation; complete after rollback and control-gate cleanup."
+    },
+    {
+      "Name": "pubsub-borrowed-activation",
+      "Role": "borrower",
+      "Member": "Respire.Internal.SubscriptionHub.SubscribeAsync(SubscriptionKind,RespireChannel[],RespireSubscriptionOptions,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<RespireSubscription>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Borrow the caller owner through subscription construction, activation, fan-out and rollback. Detached recovery never borrows a returned activation owner."
+    },
+    {
+      "Name": "pubsub-control",
+      "Role": "borrower",
+      "Member": "Respire.Internal.SubscriptionHub.SendControlAsync(RespireConnection,Verb,string,RespireChannel,CancellationToken,bool,bool,RespireTelemetry.ErrorObservation,bool):ValueTask",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Activation and reconciliation borrow their logical owner through command construction, transport and reply disposal. Unsubscribe and ordinary replay start an independent internal owner and exclude caller or shutdown cancellation. Private cleanup deadlines remain internal failures while the hub is live."
+    },
+    {
+      "Name": "pubsub-ordinary-recovery-control",
+      "Role": "internal",
+      "Member": "Respire.Internal.SubscriptionHub.SendRecoveryControlAsync(RespireConnection,SubscriptionKind,RespireChannel,CancellationToken):ValueTask",
+      "Owner": null,
+      "Contract": "The control helper owns a failure-only internal replay attempt; no nested final publication and no error for subscription shutdown."
+    }
+  ],
+  "NonRoutes": []
+}

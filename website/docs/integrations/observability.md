@@ -389,6 +389,14 @@ transaction commit, and fire-and-forget submission. The counter is not an except
 constructor hook: throwing or inspecting an exception elsewhere does not itself emit
 a measurement. Selection is checked when an error is reported.
 
+Pub/sub activation keeps one final owner through admission, every control reply,
+MOVED/ASK redirects, and rollback. Background sharded recovery and notification
+reconciliation have independent internal owners; their redirects and rejected
+subscriptions are handled errors, not caller failures. Unsubscribe failures that
+cleanup consumes are internal too. Cancellation caused by subscription shutdown
+does not emit an error. These owners acquire error-observation storage only on
+failure, and retain retry counts when collection or a listener is enabled later.
+
 When adding a command route, identify its final observation owner and test both a
 handled retry and the failure delivered to the caller. Delegating routes borrow that
 owner; shared producers, deferred results and payload reads need their own lifetime
@@ -448,8 +456,10 @@ This includes tracked distributed-cache writes and coordination scripts.
 
 Public scripts also retain transport retries across `NOSCRIPT` fallback. Connection
 candidate cancellation reports the failures completed before cancellation. FUNCTION
-fan-outs observe discovery and inconsistent-result failures while retaining each
-target's own failure boundary. Server fan-outs observe topology discovery failures
+fan-outs retain one caller owner through discovery, every primary send, conversion,
+consistency checks, and cleanup. Targets borrow that owner. Even if several targets
+fail, the caller publishes one final failure after every target finishes.
+Server fan-outs observe topology discovery failures
 before per-node work starts. The sequential Cluster `DBSIZE`, `FLUSHDB`, and `FLUSHALL`
 operations retain one owner through discovery, target sends, reply conversion, and
 mutation cleanup. A target borrows that owner, so its failure is not counted again
@@ -460,9 +470,14 @@ disposed-client admission, transport reroutes, Cluster redirects, and cache clea
 The final measurement preserves the completed retry count, including when collection
 is enabled while the operation is pending.
 
-FUNCTION execution retains its owner through missing-function reload, library
-verification, and replica propagation retries. Private reload tasks join before final
-reporting and never publish a nested final failure for a recovered library load.
+FUNCTION routes start their caller owner before argument validation and command
+construction, including span calls and the reusable-library LOAD overload. Execution
+retains that owner through missing-function reload, library verification, replica
+propagation retries, typed conversion, and result disposal. Private reload tasks join
+before final reporting and never publish a nested final failure for a recovered library
+load. Successful function routes rent no error-observation storage; warmed caller
+ownership adds no allocation. Raw `FCALL` and `FCALL_RO` keep their existing failure-only
+owner and completed transport retry count, including when collection starts late.
 
 Pending raw, cached, and fire-and-forget submissions keep their final observation
 boundary even when collection is disabled at dispatch. Enabling the group or attaching
@@ -609,6 +624,18 @@ outcome with the completed result leg's retry count; each leg retains its own re
 until its reply finishes, including a loser that outlives the caller. Each failed discarded
 hedge leg contributes one internal measurement, including a late loser; when both legs
 fail, their internal observations are separate from the race's final caller failure.
+
+Stream read pages count validation, key resolution, command construction, reply parsing,
+and cancellation at the same final boundary. Consumer-group iterators establish ownership
+on their first `MoveNextAsync`, including options and batch-size validation; page dispatch
+borrows that owner until enumeration ends or the iterator is disposed. Page APIs and
+options-based iterators reject null group or consumer arguments before sending a command.
+
+Continuous `ReadAllAsync` reads retain one failure-only owner across pages and recovery.
+Resolving an initial `$` cursor belongs to that owner and fails without recovery. Recovered
+read failures are internal measurements; a later terminal failure carries the total retry
+count and contributes one final measurement after page cleanup. Successful reads and early
+iterator disposal do not rent error observation storage or report a final failure.
 
 Streaming GET counts header or acquisition failure at the command boundary. After a
 stream is returned, its first observed payload failure is counted once; repeated reads of
@@ -820,6 +847,20 @@ the responsibility of each family's entry point.
 Successful inspection and conversion keep a default lease and rent no error
 observation storage.
 
+`ExecuteAsync` and `ExecuteFireAndForgetAsync` retain a caller response owner before
+raw parsing, catalog validation, key-prefix rewriting and Cluster slot validation.
+Raw blocking commands, including ASK redirects and the `ASKING` reply, borrow that
+owner. SORT, multi-key list moves and list/sorted-set pops retain the same boundary
+through construction and typed conversion. MGET, MSETNX and ZINTERCARD also cover
+local multi-key validation. Cluster-wide sends share the caller's retry history
+across targets and complete cache fences and discovery cleanup before publishing a
+final failure. Successful calls rent no error observation storage.
+
+`SendShutdownAsync` starts its caller boundary before option validation and the
+`AllowAdmin` check, retaining ownership until its control socket is released. It
+counts caller-visible preflight and write failures; completion still confirms only
+the local write, and server-side errors remain outside this submission API.
+
 When adding a core public method, update its source-adjacent
 `<source-file>.cs.ownership.json` declaration in the same change. There is no shared
 inventory file to update. The guard treats every public method on a public core
@@ -932,6 +973,26 @@ redirects and connection retries borrow that boundary: a recovered failure is in
 and a failure returned to the caller is counted once with its complete retry count.
 Preflight failures keep their original exception and cancellation behavior. Successful
 calls keep an empty failure-only lease, including synchronous client-cache hits.
+
+Lua script execution starts its caller boundary before script validation and command
+construction. EVALSHA transport retries, redirects and NOSCRIPT fallback share that
+boundary through typed conversion and cleanup. SCRIPT LOAD, EXISTS and FLUSH keep one
+caller boundary across all Cluster primaries and join every target before publishing
+one final failure. Successful script calls rent no error observation storage.
+
+Collection scans (`HSCAN`, `SSCAN`, `ZSCAN`, including `HSCAN NOVALUES`) and standalone
+`SCAN` count validation, cancellation and malformed pages once. Replica-policy pages
+retain their server affinity and final owner through cursor and item parsing and reply
+cleanup. Each page owns its retry history; cancellation between yielded items is a
+separate enumeration failure. Ending an enumeration early does not count as an error.
+
+Resumable Cluster pages and direct Valkey `CLUSTERSCAN` pages retain a failure-only
+owner from checkpoint or argument validation through page construction, response
+cleanup and discovery completion. Capability probes, unsupported-command fallbacks,
+retired connections and redirects borrow that owner. Recovered failures are internal;
+caller-visible failures count once with the full page retry count. Exception identity
+and cancellation token/status are preserved. Successful pages do not rent error lease
+storage from either observation pool.
 
 ## Sentinel primary changes
 

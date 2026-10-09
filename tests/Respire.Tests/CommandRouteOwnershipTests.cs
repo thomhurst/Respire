@@ -529,6 +529,7 @@ public class CommandRouteOwnershipTests
     }
 
     private static readonly string[] RequiredBoundaries = [
+        "blocking-dispatch-owner", "blocking-asking-transport",
         "dispatch-final-inspection", "dispatch-owner-start", "typed-dispatch-owner", "string-dispatch-owner", "bytes-dispatch-owner",
         "dispatch-write-outcome-borrower", "dispatch-discarded-reply-snapshot", "dispatch-cancelled-reply-drain",
         "dispatch-connect-borrower", "dispatch-gathered-admission",
@@ -540,6 +541,7 @@ public class CommandRouteOwnershipTests
         "upload-dispatch-owner", "upload-cluster-borrower", "upload-frame-borrower", "upload-discarded-completion",
         "download-payload-array-read", "download-payload-span-read", "download-payload-byte-read", "download-payload-legacy-read",
         "cache-aside-producer", "deferred-execution", "deferred-inspection", "deferred-awaiter", "transaction-commit",
-        "caller-cleanup", "internal-health-probe", "internal-topology-query"
+        "caller-cleanup", "internal-health-probe", "internal-topology-query",
+        "stream-continuous-read", "stream-iterator-final-inspection", "stream-options-group-iterator", "stream-legacy-group-iterator"
     ];
 }

@@ -7,7 +7,10 @@
         "ScanFieldsAsync(RespireKey,string?,int,CancellationToken):IAsyncEnumerable<string>",
         "ScanFieldsPageAsync(RespireKey,ulong,string?,int?,CancellationToken):ValueTask<RespireHashScanPage>"
       ],
-      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+      "Contract": "Collection enumeration owns setup and between-item cancellation; each page retains its failure-only dispatch owner through replica affinity, parsing and cleanup. The page API owns pre-cancellation before validation and construction. Successful pages rent no ErrorObservation storage.",
+      "Overrides": {
+        "ScanFieldsPageAsync(RespireKey,ulong,string?,int?,CancellationToken):ValueTask<RespireHashScanPage>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult"
+      }
     }
   ],
   "Boundaries": [],

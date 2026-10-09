@@ -80,6 +80,14 @@ internal sealed class DispatchResponseSource<TResult> : IValueTaskSource<TResult
         Pool.Return(this);
     }
 
+    // Detached recovery has no caller-facing failure. Its handled observations are
+    // complete only after the attempt's borrowers and cleanup have finished.
+    internal void CompleteInternal()
+    {
+        Finish(null);
+        Pool.Return(this);
+    }
+
     internal static ValueTask<TResult> Run<TState>(TState state,
         Func<TState, RespireTelemetry.ErrorObservation, ValueTask<TResult>> send)
     {

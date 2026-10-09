@@ -1,0 +1,20 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "pubsub-sharded-route",
+      "Role": "borrower",
+      "Member": "Respire.Internal.SubscriptionHub.EnsureShardedRouteAsync(RespireChannel,CancellationToken,bool,RespireTelemetry.ErrorObservation,int):ValueTask",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Share the activation or recovery owner across MOVED and ASK redirects, ASKING, subscription confirmation and cleanup. Acquire error storage only when a failure occurs."
+    },
+    {
+      "Name": "pubsub-sharded-recovery",
+      "Role": "internal",
+      "Member": "Respire.Internal.SubscriptionHub.RecoverShardedAsync(TaskCompletionSource):Task",
+      "Owner": null,
+      "Contract": "Each detached route attempt owns its handled redirects and terminal SSUBSCRIBE rejection, including the completed recovery count. Return the owner after route cleanup; shutdown is excluded."
+    }
+  ],
+  "NonRoutes": []
+}

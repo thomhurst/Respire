@@ -21,30 +21,23 @@ public sealed partial class RespireClient
         return fence.IsRequired ? CompleteMutationAsync(response, cache!, fence) : response;
     }
 
-    // A supplied observation is transferred: the facet started it before argument preflight.
+    // The facet owns final publication; dispatch borrows its failure-only observation.
     internal ValueTask<RespireResult> ExecuteScriptAsync(
         RespireScript script,
         RespireValue[] tail,
         CancellationToken cancellationToken,
         RespireTelemetry.ErrorObservation observation = default)
     {
+        if (observation.IsEmpty)
+            return DispatchResponseSource<RespireResult>.Run(
+                (Client: this, Script: script, Tail: tail, Token: cancellationToken),
+                static (state, owner) => state.Client.ExecuteScriptAsync(state.Script, state.Tail, state.Token, owner));
         var core = _core;
-        if (observation.IsEmpty) observation = RespireTelemetry.ErrorObservation.Rent(force: true);
-        try
-        {
-            if (core.Disposed) ThrowIfDisposedForCommand(observeErrors: false);
-            var cache = core.ClientCache;
-            var mutationFence = cache is null || script.IsCacheReadOnly ? default : cache.BeginUnknownMutation();
-            var response = ExecuteScriptCoreAsync(script, tail, cancellationToken, mutationFence, observation);
-            return RespireTelemetry.ObserveFinalError(
-                mutationFence.IsRequired ? CompleteMutationAsync(response, cache!, mutationFence) : response, observation);
-        }
-        catch (Exception error)
-        {
-            observation.Final(error);
-            observation.Dispose();
-            throw;
-        }
+        if (core.Disposed) ThrowIfDisposedForCommand(observeErrors: false);
+        var cache = core.ClientCache;
+        var mutationFence = cache is null || script.IsCacheReadOnly ? default : cache.BeginUnknownMutation();
+        var response = ExecuteScriptCoreAsync(script, tail, cancellationToken, mutationFence, observation);
+        return mutationFence.IsRequired ? CompleteMutationAsync(response, cache!, mutationFence) : response;
     }
 
     // Setup owns a new observation until the execution is returned. A supplied observation
@@ -105,9 +98,12 @@ public sealed partial class RespireClient
         CancellationToken cancellationToken,
         RespireCommandFlags flags,
         bool allowReadFrom = true,
-        ReadAffinity? cursorAffinity = null)
+        ReadAffinity? cursorAffinity = null, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
     {
+        if (!observation.IsEmpty)
+            return SendCoreAsync(operation, command, cancellationToken, flags, allowReadFrom,
+                cursorAffinity, observation, observeErrors: false);
         if (flags == RespireCommandFlags.None && cursorAffinity is null && !RespireTelemetry.IsOperationEnabled(operation)
             && TryGetNativeDispatchConnection(operation, in command, out var connection))
             return connection.SendNativeCheckedAsync(in command, cancellationToken, operation);
@@ -255,10 +251,10 @@ public sealed partial class RespireClient
 
     internal ValueTask<TResult> ConvertCursorPageAsync<TCommand, TState, TResult>(
         string operation, TCommand command, ReadAffinity affinity, CancellationToken cancellationToken,
-        TState state, ResponseConverter<TState, TResult> converter)
+        TState state, ResponseConverter<TState, TResult> converter, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
         => ConvertObservedResponseAsync(operation, command, cancellationToken, state, converter, false,
-            _readFrom != RespireReadFrom.Primary && command.ReadKind == ReadCommandKind.CursorRead ? affinity : null);
+            _readFrom != RespireReadFrom.Primary && command.ReadKind == ReadCommandKind.CursorRead ? affinity : null, observation);
 
     internal ValueTask<TResult> ConvertBlockingResponseAsync<TCommand, TState, TResult>(
         string operation, TCommand command, CancellationToken cancellationToken,
@@ -281,23 +277,18 @@ public sealed partial class RespireClient
         RespireScript script, RespireValue[] tail, CancellationToken cancellationToken,
         Func<RespireResult, TResult> convert, RespireTelemetry.ErrorObservation transferred = default)
     {
-        // A transferred observation already covers the facet's argument preflight.
-        using var observation = transferred.IsEmpty ? RespireTelemetry.ErrorObservation.Rent(force: true) : transferred;
-        try
-        {
-            if (_core.Disposed) ThrowIfDisposedForCommand(observeErrors: false);
-            var cache = _core.ClientCache;
-            var fence = cache is null || script.IsCacheReadOnly ? default : cache.BeginUnknownMutation();
-            var response = ExecuteScriptCoreAsync(script, tail, cancellationToken, fence, observation);
-            using var result = await (fence.IsRequired ? CompleteMutationAsync(response, cache!, fence) : response)
-                .ConfigureAwait(false);
-            return convert(result);
-        }
-        catch (Exception error)
-        {
-            observation.Final(error);
-            throw;
-        }
+        if (transferred.IsEmpty)
+            return await DispatchResponseSource<TResult>.Run(
+                (Client: this, Script: script, Tail: tail, Token: cancellationToken, Convert: convert),
+                static (state, owner) => state.Client.ExecuteScriptConvertedAsync(
+                    state.Script, state.Tail, state.Token, state.Convert, owner)).ConfigureAwait(false);
+        if (_core.Disposed) ThrowIfDisposedForCommand(observeErrors: false);
+        var cache = _core.ClientCache;
+        var fence = cache is null || script.IsCacheReadOnly ? default : cache.BeginUnknownMutation();
+        var response = ExecuteScriptCoreAsync(script, tail, cancellationToken, fence, transferred);
+        using var result = await (fence.IsRequired ? CompleteMutationAsync(response, cache!, fence) : response)
+            .ConfigureAwait(false);
+        return convert(result);
     }
 
     internal ValueTask<TResult> ConvertOnConnectionAsync<TCommand, TState, TResult>(

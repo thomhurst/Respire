@@ -6,7 +6,10 @@
       "Members": [
         "MoveManyAsync(RespireKey,RespireKey,long,ListSide,ListSide,ListMoveCountMode,ListMoveOrder,TimeSpan?,CancellationToken):ValueTask<string[]?>"
       ],
-      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner. These migrated entries retain the failure-only dispatch owner through preflight, conversion and cleanup; synchronous construction failure completes its Fail boundary.",
+      "Overrides": {
+        "MoveManyAsync(RespireKey,RespireKey,long,ListSide,ListSide,ListMoveCountMode,ListMoveOrder,TimeSpan?,CancellationToken):ValueTask<string[]?>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult"
+      }
     }
   ],
   "Boundaries": [],

@@ -1,0 +1,27 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "collection-scan-enumeration",
+      "Role": "final",
+      "Member": "Respire.Internal.CollectionScan.EnumerateAsync`1(RespireClient,string,Verb,RespireKey,string?,int,ScanPageParser<T>,CancellationToken,bool):IAsyncEnumerable<T>",
+      "Owner": "Respire.Internal.CollectionScan.EnumerateAsync`1(RespireClient,string,Verb,RespireKey,string?,int,ScanPageParser<T>,CancellationToken,bool):IAsyncEnumerable<T>",
+      "Contract": "Own count validation and key mapping before the first page. Page sends transfer to their dispatch owner. Early enumeration disposal is successful; cancellation between yielded items has its own final boundary."
+    },
+    {
+      "Name": "collection-scan-page",
+      "Role": "helper",
+      "Member": "Respire.Internal.CollectionScan.ReadPageAsync`1(RespireClient,string,Verb,RespireValue,ulong,string?,int,ScanPageParser<T>,ReadAffinity,CancellationToken,bool):ValueTask<(ulongCursor,T[]Page)>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Establish the owner before cancellation and argument construction. Replica affinity, reroutes, cursor and item conversion, and reply disposal borrow the same failure-only owner."
+    },
+    {
+      "Name": "scan-enumerator-cancellation",
+      "Role": "final",
+      "Member": "Respire.Internal.CollectionScan.CheckCancellation(CancellationToken):void",
+      "Owner": "Respire.Internal.CollectionScan.CheckCancellation(CancellationToken):void",
+      "Contract": "Own iterator cancellation outside a pending page. Preserve the original token and rent an error lease only when cancellation throws."
+    }
+  ],
+  "NonRoutes": []
+}

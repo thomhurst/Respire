@@ -35,6 +35,13 @@
       "Member": "Respire.Internal.DispatchResponseSource`1.Fail(Exception):void",
       "Owner": "Respire.Internal.DispatchResponseSource`1.Fail(Exception):void",
       "Contract": "Span-capable facet ownership starts before preflight. Synchronous preflight failure finishes after unwinding; attachment retains ownership through final response inspection and cleanup."
+    },
+    {
+      "Name": "dispatch-internal-completion",
+      "Role": "internal",
+      "Member": "Respire.Internal.DispatchResponseSource`1.CompleteInternal():void",
+      "Owner": null,
+      "Contract": "Return the failure-only owner after internal borrowers and cleanup finish, without publishing a caller-facing failure."
     }
   ],
   "NonRoutes": []

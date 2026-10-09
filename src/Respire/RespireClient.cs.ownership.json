@@ -63,10 +63,25 @@
         "WithReadFrom(RespireReadFrom):IRespireClient",
         "WithoutClientCache():IRespireClient"
       ],
-      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner. These migrated entries retain the failure-only dispatch owner through preflight, conversion and cleanup; synchronous construction failure completes its Fail boundary.",
+      "Overrides": {
+        "ExecuteAsync(RespireCommand,RespireValue[],RespireCommandFlags,CancellationToken):ValueTask<RespireResult>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "ExecuteAsync(RespireCommand,params RespireValue[]):ValueTask<RespireResult>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "ExecuteAsync(RespireCommandInterpolatedStringHandler,RespireCommandFlags,CancellationToken):ValueTask<RespireResult>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "ExecuteFireAndForgetAsync(RespireCommand,RespireValue[],CancellationToken):ValueTask": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "ExecuteFireAndForgetAsync(RespireCommand,params RespireValue[]):ValueTask": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "ExecuteFireAndForgetAsync(RespireCommandInterpolatedStringHandler,CancellationToken):ValueTask": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult"
+      }
     }
   ],
   "Boundaries": [
+    {
+      "Name": "blocking-dispatch-owner",
+      "Role": "helper",
+      "Member": "Respire.RespireClient.SendBlockingAsync`1(string,TCommand,CancellationToken,string?,bool,TimeSpan?,CancellationToken,bool,bool,RespireTelemetry.ErrorObservation):ValueTask<RespValue>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Establish a failure-only owner before blocking preflight unless the caller supplies one. Dedicated dispatch, ASKING, retries, cache fences and connection cleanup borrow the caller's lifetime."
+    },
     {
       "Name": "raw-catalog-dispatch",
       "Role": "final",
@@ -77,14 +92,14 @@
     {
       "Name": "raw-dispatch-helper",
       "Role": "helper",
-      "Member": "Respire.RespireClient.ExecuteRawAsync(string,RespireValue[],RespireCommandFlags,CancellationToken,RespireCacheMutation,bool,ReadCommandKind,bool):ValueTask<RespireResult>",
+      "Member": "Respire.RespireClient.ExecuteRawAsync(string,RespireValue[],RespireCommandFlags,CancellationToken,RespireCacheMutation,bool,ReadCommandKind,bool,RespireTelemetry.ErrorObservation):ValueTask<RespireResult>",
       "Owner": "Respire.RespireClient.ExecuteAsync(RespireCommand,RespireValue[],RespireCommandFlags,CancellationToken):ValueTask<RespireResult>",
       "Contract": "Borrow the enclosing Execute caller owner; raw retry and conversion cannot independently publish that caller failure."
     },
     {
       "Name": "catalog-dispatch-helper",
       "Role": "helper",
-      "Member": "Respire.RespireClient.ExecuteCatalogAsync(RespireCommand,RespireValue[],RespireCommandFlags,CancellationToken,TaskCompletionSource?):ValueTask<RespireResult>",
+      "Member": "Respire.RespireClient.ExecuteCatalogAsync(RespireCommand,RespireValue[],RespireCommandFlags,CancellationToken,TaskCompletionSource?,RespireTelemetry.ErrorObservation):ValueTask<RespireResult>",
       "Owner": "Respire.RespireClient.ExecuteAsync(RespireCommand,RespireValue[],RespireCommandFlags,CancellationToken):ValueTask<RespireResult>",
       "Contract": "Borrow the public catalog caller owner through metadata validation and dispatch."
     },
@@ -98,7 +113,7 @@
     {
       "Name": "interpolated-helper",
       "Role": "helper",
-      "Member": "Respire.RespireClient.ExecuteInterpolatedAsync(RespireCommandInterpolatedStringHandler,RespireCommandFlags,CancellationToken):ValueTask<RespireResult>",
+      "Member": "Respire.RespireClient.ExecuteInterpolatedAsync(RespireCommandInterpolatedStringHandler,RespireCommandFlags,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<RespireResult>",
       "Owner": "Respire.RespireClient.ExecuteAsync(RespireCommandInterpolatedStringHandler,RespireCommandFlags,CancellationToken):ValueTask<RespireResult>",
       "Contract": "Delegate final publication to the public interpolated entry."
     },
@@ -129,6 +144,13 @@
       "Member": "Respire.RespireClient.ConnectAnyAsync(IEnumerable<RespireOptions>,CancellationToken):ValueTask<RespireClient>",
       "Owner": "Respire.RespireClient.ConnectAnyAsync(IEnumerable<RespireOptions>,CancellationToken):ValueTask<RespireClient>",
       "Contract": "Start before enumeration and cancellation. Candidate failures borrow retry history; exhaustion preserves the network wrapper and cancellation retains completed failures."
+    },
+    {
+      "Name": "pubsub-client-activation",
+      "Role": "helper",
+      "Member": "Respire.RespireClient.SubscribeCoreAsync(SubscriptionKind,RespireChannel[],RespireSubscriptionOptions,CancellationToken):ValueTask<RespireSubscription>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Start final ownership before prefix resolution, hub admission, control commands and rollback. Synchronous prefix failures and asynchronous activation share the failure-only dispatch owner."
     }
   ],
   "NonRoutes": []
