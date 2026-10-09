@@ -11,7 +11,7 @@ using TUnit.Core;
 namespace Respire.Caching.Tests;
 
 [NotInParallel]
-public class CacheErrorMetricsTests
+public partial class CacheErrorMetricsTests
 {
     [Test]
     [Arguments(false)]
@@ -150,10 +150,10 @@ public class CacheErrorMetricsTests
 
             // Rent unrelated owners after the foreground owner has returned. A detached
             // NOSCRIPT retry must retain its own live generation through the later EVAL.
-            var owners = Enumerable.Range(0, 32).Select(_ => RespireTelemetry.ErrorObservation.Rent(force: true)).ToArray();
+            var owners = Enumerable.Range(0, 32).Select(_ => DispatchResponseSource<bool>.Start()).ToArray();
             try
             {
-                foreach (var owner in owners) owner.SetAttempts(37);
+                foreach (var owner in owners) owner.Observation.SetAttempts(37);
                 server.SuppressReply = null;
                 index = server.ReceivedCommands.ToList().FindLastIndex(command =>
                     command.StartsWith(correctionPrefix, StringComparison.Ordinal));
@@ -166,10 +166,10 @@ public class CacheErrorMetricsTests
                 await Assert.That(recorded[0]["redis.client.operation.retry_attempts"]).IsEqualTo(0);
                 await Assert.That(recorded[1]["db.response.status_code"]).IsEqualTo("NOPERM");
                 await Assert.That(recorded[1]["redis.client.operation.retry_attempts"]).IsEqualTo(1);
-                await Assert.That(owners.All(owner => owner.Attempts == 37)).IsTrue();
+                await Assert.That(owners.All(owner => owner.Observation.Attempts == 37)).IsTrue();
                 await Assert.That(await client.PingAsync()).IsGreaterThanOrEqualTo(TimeSpan.Zero);
             }
-            finally { foreach (var owner in owners) owner.Dispose(); }
+            finally { foreach (var owner in owners) owner.CompleteInternal(); }
         }
         finally { RespireMetrics.Configure(previous); }
     }

@@ -231,10 +231,16 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
 
     /// <inheritdoc/>
     public async Task<byte[]?> GetAsync(string key, CancellationToken token = default)
+        => await DispatchResponseSource<byte[]?>.Run((Cache: this, Key: key, Token: token),
+            static (state, owner) => state.Cache.GetCoreAsync(state.Key, state.Token, owner)).ConfigureAwait(false);
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private async ValueTask<byte[]?> GetCoreAsync(string key, CancellationToken token,
+        RespireTelemetry.ErrorObservation observation)
     {
         ArgumentNullException.ThrowIfNull(key);
         token.ThrowIfCancellationRequested();
-        using var result = await RunGetScriptAsync(key, returnData: true, token).ConfigureAwait(false);
+        using var result = await RunGetScriptAsync(key, returnData: true, token, observation).ConfigureAwait(false);
         if (result.IsNull)
         {
             return null;
@@ -251,13 +257,18 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         => TryGetAsync(key, destination).AsTask().GetAwaiter().GetResult();
 
     /// <inheritdoc/>
+    public ValueTask<bool> TryGetAsync(string key, IBufferWriter<byte> destination, CancellationToken token = default)
+        => DispatchResponseSource<bool>.Run((Cache: this, Key: key, Destination: destination, Token: token),
+            static (state, owner) => state.Cache.TryGetCoreAsync(state.Key, state.Destination, state.Token, owner));
+
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-    public async ValueTask<bool> TryGetAsync(string key, IBufferWriter<byte> destination, CancellationToken token = default)
+    private async ValueTask<bool> TryGetCoreAsync(string key, IBufferWriter<byte> destination,
+        CancellationToken token, RespireTelemetry.ErrorObservation observation)
     {
         ArgumentNullException.ThrowIfNull(key);
         ArgumentNullException.ThrowIfNull(destination);
         token.ThrowIfCancellationRequested();
-        using var result = await RunGetScriptAsync(key, returnData: true, token).ConfigureAwait(false);
+        using var result = await RunGetScriptAsync(key, returnData: true, token, observation).ConfigureAwait(false);
         if (result.IsNull)
         {
             return false;
@@ -282,8 +293,14 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     /// <inheritdoc/>
     public Task SetAsync(string key, byte[] value, DistributedCacheEntryOptions options, CancellationToken token = default)
     {
-        ArgumentNullException.ThrowIfNull(value);
-        return SetCoreAsync(key, value, options, token).AsTask();
+        var owner = DispatchResponseSource<bool>.Start();
+        try
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(
+                SetCoreAsync(key, value, options, token, owner.Observation)))).AsTask();
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     /// <inheritdoc/>
@@ -292,12 +309,21 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
 
     /// <inheritdoc/>
     public ValueTask SetAsync(string key, ReadOnlySequence<byte> value, DistributedCacheEntryOptions options, CancellationToken token = default)
-        // Coalesce segments for the span-based codec; configured encoding then creates its own
-        // frame array, which remains owned through the send. The two buffers are intentional.
-        => SetCoreAsync(key, value.IsSingleSegment ? value.First : value.ToArray(), options, token);
+    {
+        var owner = DispatchResponseSource<bool>.Start();
+        try
+        {
+            // Coalesce segments for the span-based codec; configured encoding then creates its own
+            // frame array, which remains owned through the send. The two buffers are intentional.
+            return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(
+                SetCoreAsync(key, value.IsSingleSegment ? value.First : value.ToArray(), options, token, owner.Observation))));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
-    private async ValueTask SetCoreAsync(string key, ReadOnlyMemory<byte> value, DistributedCacheEntryOptions options, CancellationToken token)
+    private async ValueTask SetCoreAsync(string key, ReadOnlyMemory<byte> value, DistributedCacheEntryOptions options,
+        CancellationToken token, RespireTelemetry.ErrorObservation observation)
     {
         ArgumentNullException.ThrowIfNull(key);
         ArgumentNullException.ThrowIfNull(options);
@@ -327,32 +353,35 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
             if (trackedWire is not null)
             {
                 var execution = await trackedWire.StartTrackedScriptExecutionAsync(
-                    SetScript, [key], args, token).ConfigureAwait(false);
+                    SetScript, [key], args, token, errorObservation: observation).ConfigureAwait(false);
                 result = await trackedWire.ExecuteWithCorrectionAsync(
                     execution,
                     // TTL correction first uses FIFO ordering and fences only if that pass stalls.
                     // An uncertain write without a TTL correction still needs an explicit fence.
                     ordering: absoluteExpiration.HasValue
                         ? RespireClient.CorrectionOrdering.OrderedCorrection : RespireClient.CorrectionOrdering.FenceFirst,
-                    state: (Cache: this, Key: key, Deadline: absoluteExpiration.GetValueOrDefault(), Options: options),
+                    state: (Cache: this, Key: key, Deadline: absoluteExpiration.GetValueOrDefault(), Options: options, Observation: observation),
                     correct: absoluteExpiration.HasValue
                         ? static async (state, identity) =>
                         {
                             try
                             {
-                                await state.Cache.CapDelayedTtlAsync(state.Key, state.Deadline, state.Options, identity)
+                                await state.Cache.CapDelayedTtlAsync(state.Key, state.Deadline, state.Options, identity, state.Observation)
                                     .ConfigureAwait(false);
                             }
                             catch (RespireException correctionFailure) when (
                                 identity.ServerClientId == 0 && correctionFailure is not RespireServerException)
                             {
+                                state.Observation.Handled(correctionFailure);
                             }
                         }
                         : null).ConfigureAwait(false);
             }
             else
             {
-                result = await _client.Scripts.ExecuteAsync(SetScript, [key], args, token).ConfigureAwait(false);
+                result = await (_wireClient is { } wire
+                    ? wire.ExecuteScriptBorrowedAsync(SetScript, [key], args, token, observation)
+                    : _client.Scripts.ExecuteAsync(SetScript, [key], args, token)).ConfigureAwait(false);
             }
 
             result.Dispose();
@@ -372,11 +401,12 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
                 try
                 {
                     await CapDelayedTtlAsync(
-                        key, cancelledDeadline, options).ConfigureAwait(false);
+                        key, cancelledDeadline, options, observation: observation).ConfigureAwait(false);
                 }
                 catch (RespireException correctionFailure) when (
                     correctionFailure is not RespireServerException)
                 {
+                    observation.Handled(correctionFailure);
                 }
             }
 
@@ -385,7 +415,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
 
         if (absoluteExpiration is { } absolute && DateTimeOffset.UtcNow - now >= SendDelayTolerance)
         {
-            await CapDelayedTtlAsync(key, absolute, options).ConfigureAwait(false);
+            await CapDelayedTtlAsync(key, absolute, options, observation: observation).ConfigureAwait(false);
         }
     }
 
@@ -404,7 +434,8 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         string key,
         DateTimeOffset absolute,
         DistributedCacheEntryOptions options,
-        RespireClient.TrackedConnectionIdentity originalConnection = default)
+        RespireClient.TrackedConnectionIdentity originalConnection = default,
+        RespireTelemetry.ErrorObservation observation = default)
         => RunCorrectionAsync(
             CapTtlScript,
             key,
@@ -414,7 +445,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
                 options.SlidingExpiration?.Ticks ?? NotPresent,
                 GetExpirationMilliseconds(DateTimeOffset.UtcNow, absolute, options),
             ],
-            originalConnection);
+            originalConnection, observation);
 
     /// <summary>
     /// Runs a shrink-only correction script. Corrections chase a command whose reply was never
@@ -504,12 +535,13 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         finally { errors?.CompletePass(failure); }
     }
 
-    // Only delayed/cancelled reads allocate this scope. Foreground and outstanding passes
-    // each own a reference; the last completion returns the independent pooled lease.
+    // Only delayed or abandoned operations allocate this scope. Foreground and outstanding
+    // passes each own a reference; the last completion returns the independent failure-only owner.
     private sealed class CorrectionErrors
     {
         private readonly Lock _gate = new();
-        internal readonly RespireTelemetry.ErrorObservation Observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        private readonly DispatchResponseSource<bool> _owner = DispatchResponseSource<bool>.Start();
+        internal RespireTelemetry.ErrorObservation Observation => _owner.Observation;
         private int _owners = 1;
         private bool _foregroundEnded;
         private List<Exception>? _failures;
@@ -559,7 +591,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         {
             bool completed;
             lock (_gate) completed = --_owners == 0;
-            if (completed) Observation.Dispose();
+            if (completed) _owner.CompleteInternal();
         }
     }
 
@@ -568,11 +600,19 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
 
     /// <inheritdoc/>
     public async Task RefreshAsync(string key, CancellationToken token = default)
+        => await DispatchResponseSource.Complete(DispatchResponseSource<bool>.Run(
+            (Cache: this, Key: key, Token: token),
+            static (state, owner) => state.Cache.RefreshCoreAsync(state.Key, state.Token, owner))).ConfigureAwait(false);
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private async ValueTask<bool> RefreshCoreAsync(string key, CancellationToken token,
+        RespireTelemetry.ErrorObservation observation)
     {
         ArgumentNullException.ThrowIfNull(key);
         token.ThrowIfCancellationRequested();
-        var result = await RunGetScriptAsync(key, returnData: false, token).ConfigureAwait(false);
+        var result = await RunGetScriptAsync(key, returnData: false, token, observation).ConfigureAwait(false);
         result.Dispose();
+        return true;
     }
 
     /// <inheritdoc/>
@@ -580,6 +620,12 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
 
     /// <inheritdoc/>
     public async Task RemoveAsync(string key, CancellationToken token = default)
+        => await DispatchResponseSource.Run((Cache: this, Key: key, Token: token),
+            static (state, owner) => state.Cache.RemoveCoreAsync(state.Key, state.Token, owner)).ConfigureAwait(false);
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+    private async ValueTask RemoveCoreAsync(string key, CancellationToken token,
+        RespireTelemetry.ErrorObservation observation)
     {
         ArgumentNullException.ThrowIfNull(key);
         token.ThrowIfCancellationRequested();
@@ -597,7 +643,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         // through public client APIs; its token-less lease revocation is bounded by expiry.
         if (_wireClient is { } wire)
         {
-            await wire.UnlinkGuardedAsync(key, token).ConfigureAwait(false);
+            await wire.UnlinkGuardedAsync(key, token, observation).ConfigureAwait(false);
         }
         else
         {
@@ -761,20 +807,11 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-    private async ValueTask<RespireResult> RunGetScriptAsync(string key, bool returnData, CancellationToken token)
+    private async ValueTask<RespireResult> RunGetScriptAsync(string key, bool returnData, CancellationToken token,
+        RespireTelemetry.ErrorObservation observation)
     {
-        var observation = _wireClient is null ? default : RespireTelemetry.ErrorObservation.Rent(force: true);
-        try
-        {
-            var trackedWire = await GetTrackedWireAsync(token).ConfigureAwait(false);
-            return await RunGetScriptCoreAsync(key, returnData, token, trackedWire, observation).ConfigureAwait(false);
-        }
-        catch (Exception error)
-        {
-            observation.Final(error);
-            throw;
-        }
-        finally { observation.Dispose(); }
+        var trackedWire = await GetTrackedWireAsync(token).ConfigureAwait(false);
+        return await RunGetScriptCoreAsync(key, returnData, token, trackedWire, observation).ConfigureAwait(false);
     }
 
     private async ValueTask<RespireResult> RunGetScriptCoreAsync(string key, bool returnData, CancellationToken token,
@@ -832,20 +869,19 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         // shape staleness can over-extend. Runs without the caller's token — the entry was
         // already extended, so undoing the over-extension must not be skippable by
         // cancellation.
-        if (DateTimeOffset.UtcNow - now >= SendDelayTolerance && !result.IsNull && result[0].AsInteger() == 1)
+        try
         {
-            try
+            if (DateTimeOffset.UtcNow - now >= SendDelayTolerance && !result.IsNull && result[0].AsInteger() == 1)
             {
                 await CapRefreshedTtlAsync(key, observation: observation).ConfigureAwait(false);
             }
-            catch
-            {
-                result.Dispose();
-                throw;
-            }
+            return result;
         }
-
-        return result;
+        catch
+        {
+            result.Dispose();
+            throw;
+        }
     }
 
     private ValueTask<RespireClient?> GetTrackedWireAsync(CancellationToken cancellationToken)

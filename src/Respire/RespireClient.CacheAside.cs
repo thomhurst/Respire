@@ -16,20 +16,10 @@ public sealed partial class RespireClient
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<T?> GetOrSetAsync<T>(RespireKey key, Func<CancellationToken, ValueTask<T?>> factory,
         TimeSpan ttl, CancellationToken cancellationToken = default)
-    {
-        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
-        try
-        {
-            return RespireTelemetry.ObserveFinalError(
-                GetOrSetCoreAsync(key, factory, ttl, cancellationToken, observation), observation);
-        }
-        catch (Exception error)
-        {
-            observation.Final(error);
-            observation.Dispose();
-            throw;
-        }
-    }
+        => DispatchResponseSource<T?>.Run(
+            (Client: this, Key: key, Factory: factory, Ttl: ttl, Token: cancellationToken),
+            static (state, observation) => state.Client.GetOrSetCoreAsync(
+                state.Key, state.Factory, state.Ttl, state.Token, observation));
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]

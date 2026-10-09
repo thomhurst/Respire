@@ -6,14 +6,14 @@
       "Role": "borrower",
       "Member": "Respire.ClientSideCacheCoordinator.ProduceSharedReadAsync`1(SharedRead<RespValue>,TState,Func<TState,CancellationToken,RespireTelemetry.ErrorObservation,ValueTask<RespValue>>):Task",
       "Owner": "Respire.ClientSideCacheCoordinator.CoalesceReadAsync`1(ClientCacheCommandKey,TState,Func<TState,CancellationToken,RespireTelemetry.ErrorObservation,ValueTask<RespValue>>,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<RespValue>",
-      "Contract": "Producer handles one shared attempt. It cannot publish every waiter final failure; each logical waiter retains separate owner even with one shared exception."
+      "Contract": "Producer retains an independent failure-only owner until response copying and cleanup finish. It cannot publish every waiter final failure; each logical waiter retains a separate owner and copies the producer's completed retry count."
     },
     {
       "Name": "cache-typed-producer",
       "Role": "borrower",
       "Member": "Respire.ClientSideCacheCoordinator.ProduceSharedGetReadAsync`1(SharedRead<GetReadResult>,TState,Func<TState,CancellationToken,RespireTelemetry.ErrorObservation,ValueTask<GetReadResult>>):Task",
       "Owner": "Respire.ClientSideCacheCoordinator.CoalesceGetReadAsync`3(ClientCacheCommandKey,TReadState,Func<TReadState,CancellationToken,RespireTelemetry.ErrorObservation,ValueTask<GetReadResult>>,TState,GetReadConverter<TState,TResult>,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<TResult>",
-      "Contract": "Shared GET producer owns only its borrowed attempt. Typed conversion belongs to each caller after sharing."
+      "Contract": "Shared GET producer retains an independent failure-only owner through publication and response disposal. Completed retry counts survive its return; typed conversion and final failure belong to each waiter."
     },
     {
       "Name": "cache-waiter",

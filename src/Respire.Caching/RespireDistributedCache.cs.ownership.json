@@ -1,0 +1,44 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.Caching.RespireDistributedCache",
+      "OwnerType": "Respire.Caching.RespireDistributedCache",
+      "Members": [
+        "Get(string):byte[]?",
+        "GetAsync(string,CancellationToken):Task<byte[]?>",
+        "TryGet(string,IBufferWriter<byte>):bool",
+        "TryGetAsync(string,IBufferWriter<byte>,CancellationToken):ValueTask<bool>",
+        "Set(string,byte[],DistributedCacheEntryOptions):void",
+        "SetAsync(string,byte[],DistributedCacheEntryOptions,CancellationToken):Task",
+        "Set(string,ReadOnlySequence<byte>,DistributedCacheEntryOptions):void",
+        "SetAsync(string,ReadOnlySequence<byte>,DistributedCacheEntryOptions,CancellationToken):ValueTask",
+        "Refresh(string):void",
+        "RefreshAsync(string,CancellationToken):Task",
+        "Remove(string):void",
+        "RemoveAsync(string,CancellationToken):Task"
+      ],
+      "Contract": "Async entries start a failure-only response owner before argument validation, encoding or correction setup. Sync entries delegate to that owner. Wire scripts, response parsing, payload conversion, TTL correction and cleanup borrow it through final publication.",
+      "Overrides": {
+        "Get(string):byte[]?": "Respire.Caching.RespireDistributedCache.GetAsync(string,CancellationToken):Task<byte[]?>",
+        "TryGet(string,IBufferWriter<byte>):bool": "Respire.Caching.RespireDistributedCache.TryGetAsync(string,IBufferWriter<byte>,CancellationToken):ValueTask<bool>",
+        "Set(string,byte[],DistributedCacheEntryOptions):void": "Respire.Caching.RespireDistributedCache.SetAsync(string,byte[],DistributedCacheEntryOptions,CancellationToken):Task",
+        "Set(string,ReadOnlySequence<byte>,DistributedCacheEntryOptions):void": "Respire.Caching.RespireDistributedCache.SetAsync(string,ReadOnlySequence<byte>,DistributedCacheEntryOptions,CancellationToken):ValueTask",
+        "Refresh(string):void": "Respire.Caching.RespireDistributedCache.RefreshAsync(string,CancellationToken):Task",
+        "Remove(string):void": "Respire.Caching.RespireDistributedCache.RemoveAsync(string,CancellationToken):Task"
+      }
+    }
+  ],
+  "Boundaries": [
+    {
+      "Name": "distributed-cache-correction",
+      "Role": "borrower",
+      "Member": "Respire.Caching.RespireDistributedCache.RunCorrectionAsync(RespireScript,string,Func<RespireValue[]>,RespireClient.TrackedConnectionIdentity,RespireTelemetry.ErrorObservation):ValueTask",
+      "Owner": "Respire.Caching.RespireDistributedCache.RunGetScriptAsync(string,bool,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<RespireResult>",
+      "Contract": "Foreground TTL corrections copy completed retries into the caller; detached passes retain an independent failure-only owner until the last pass finishes. Only swallowed failures are internal. Publication follows foreground cleanup. SET uses the same correction boundary."
+    }
+  ],
+  "NonRoutes": [
+    { "Member": "Respire.Caching.RespireDistributedCache.DisposeAsync():ValueTask", "Reason": "Releases an optional owned client; its disposal route owns any final error." },
+    { "Member": "Respire.Caching.RespireDistributedCache.Dispose():void", "Reason": "Releases an optional owned client; its disposal route owns any final error." }
+  ]
+}

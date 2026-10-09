@@ -233,7 +233,7 @@ internal sealed partial class ClientSideCacheCoordinator
         lock (_sharedReadLock)
         {
             shared.CompletedAttempts = shared.Observation.Attempts;
-            shared.Observation.Dispose();
+            shared.ErrorOwner.CompleteInternal();
             shared.Finished = true;
             RemoveSharedRead(shared);
             _activeSharedReads.Remove(shared);
@@ -337,7 +337,8 @@ internal sealed partial class ClientSideCacheCoordinator
     {
         internal readonly ClientCacheCommandKey Identity = identity;
         internal readonly CancellationTokenSource Cancellation = new();
-        internal readonly RespireTelemetry.ErrorObservation Observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        internal readonly DispatchResponseSource<bool> ErrorOwner = DispatchResponseSource<bool>.Start();
+        internal RespireTelemetry.ErrorObservation Observation => ErrorOwner.Observation;
         internal int CompletedAttempts;
         internal int Waiters;
         internal bool Finished;

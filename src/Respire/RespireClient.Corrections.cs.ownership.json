@@ -1,0 +1,13 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "cache-correction-owner",
+      "Role": "helper",
+      "Member": "Respire.RespireClient.ExecuteWithCorrectionAsync`2(ITrackedCorrectionExecution<TResult>,CorrectionOrdering,TState,Func<TState,TrackedConnectionIdentity,ValueTask>?,Action?):ValueTask<TResult>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Borrow the tracked execution owner when present; otherwise start a failure-only response owner before ordering validation. Hold final publication through dependent correction and cleanup."
+    }
+  ],
+  "NonRoutes": []
+}
