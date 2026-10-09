@@ -8,6 +8,24 @@ namespace Respire.VectorData.Tests;
 
 public class ValidationTests
 {
+    [Test, Arguments("%"), Arguments("a"), Arguments("_w")]
+    public void MalformedSearchNamesHaveStoreDiagnostics(string encoded)
+    {
+        var read = () => RespireVectorDataOperations.DecodeName(encoded, "SearchAsync", "movies");
+        var error = read.Should().Throw<VectorStoreException>().Which;
+        error.InnerException.Should().Match<Exception>(cause => cause is FormatException || cause is ArgumentException);
+        error.CollectionName.Should().Be("movies");
+        error.OperationName.Should().Be("SearchAsync");
+        error.VectorStoreSystemName.Should().Be("redis");
+    }
+
+    [Test, Arguments("id:1"), Arguments("映画:a:b")]
+    public void EncodedSearchNamesRoundTrip(string name)
+    {
+        var encoded = RespireVectorStore.EncodeName(name);
+        RespireVectorDataOperations.DecodeName(encoded, "SearchAsync", "movies").Should().Be(name);
+    }
+
     [Test, Arguments(null), Arguments(""), Arguments("invalid"), Arguments("NaN"), Arguments("Infinity")]
     public void InvalidSearchScoresHaveStoreDiagnostics(string? score)
     {

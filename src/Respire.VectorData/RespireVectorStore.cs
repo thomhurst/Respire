@@ -68,7 +68,8 @@ public sealed class RespireVectorStore : VectorStore
         foreach (var name in indexes)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (name.StartsWith(prefix, StringComparison.Ordinal)) yield return DecodeName(name[prefix.Length..]);
+            if (name.StartsWith(prefix, StringComparison.Ordinal))
+                yield return RespireVectorDataOperations.DecodeName(name[prefix.Length..], nameof(ListCollectionNamesAsync));
         }
     }
 

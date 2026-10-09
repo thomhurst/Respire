@@ -6,6 +6,18 @@ namespace Respire.VectorData;
 
 internal static class RespireVectorDataOperations
 {
+    internal static string DecodeName(string encoded, string operationName, string? collectionName = null)
+    {
+        try
+        {
+            return RespireVectorStore.DecodeName(encoded);
+        }
+        catch (Exception error) when (error is FormatException or ArgumentException)
+        {
+            throw CreateException(error, operationName, collectionName);
+        }
+    }
+
     internal static double ReadSearchScore(RespireSearchDocument document, string prefix, string collectionName)
     {
         if (!document.Id.StartsWith(prefix, StringComparison.Ordinal))

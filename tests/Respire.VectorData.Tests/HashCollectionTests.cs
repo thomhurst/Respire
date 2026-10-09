@@ -2,6 +2,7 @@ using FluentAssertions;
 using Microsoft.Extensions.VectorData;
 using Respire.IntegrationTests;
 using Respire.Samples.VectorData;
+using Respire.Search;
 using Respire.VectorData;
 using TUnit.Core;
 
@@ -13,6 +14,27 @@ namespace Respire.VectorData.Tests;
 [ClassDataSource<ModernRedisTestContainer>(Shared = SharedType.PerTestSession)]
 public class HashCollectionTests(ModernRedisTestContainer fixture)
 {
+    [Test, Arguments(2, "%"), Arguments(3, "%"), Arguments(2, "_w"), Arguments(3, "_w")]
+    public async Task MalformedCollectionNamesHaveStoreDiagnostics(int protocol, string encodedName)
+    {
+        await using var client = await Connect(protocol);
+        using var store = Store(client);
+        var index = store.IndexName("movies");
+        index = index[..(index.LastIndexOf(':') + 1)] + encodedName;
+        await client.Search.CreateIndexAsync(index, new() { Prefixes = [index + ":"], Fields = [new("title", RespireSearchFieldType.Text)] });
+        try
+        {
+            Func<Task> list = () => Collect(store.ListCollectionNamesAsync());
+            var error = (await list.Should().ThrowAsync<VectorStoreException>()).Which;
+            error.InnerException.Should().Match<Exception>(cause => cause is FormatException || cause is ArgumentException);
+            error.OperationName.Should().Be("ListCollectionNamesAsync");
+            error.CollectionName.Should().BeNull();
+            error.VectorStoreSystemName.Should().Be("redis");
+            await client.PingAsync();
+        }
+        finally { await client.Search.DropIndexAsync(index); }
+    }
+
     [Test, Arguments(2), Arguments(3)]
     public async Task LifecycleAndStoreNamespaces(int protocol)
     {

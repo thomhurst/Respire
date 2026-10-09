@@ -212,7 +212,7 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
         {
             var score = RespireVectorDataOperations.ReadSearchScore(document, _prefix, Name);
             if (options?.ScoreThreshold is { } threshold && score > threshold) continue;
-            var key = RespireVectorStore.DecodeName(document.Id[_prefix.Length..]);
+            var key = RespireVectorDataOperations.DecodeName(document.Id[_prefix.Length..], nameof(SearchAsync), Name);
             hits.Add((key, score));
         }
         const int batchSize = 32;
