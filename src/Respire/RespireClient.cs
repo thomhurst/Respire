@@ -4364,8 +4364,11 @@ public sealed partial class RespireClient : IRespireClient
                     CircuitAdmission admission = default;
                     try
                     {
-                        connection.ThrowIfRetired();
-                        if (core.Circuits is not null) admission = AcquireCircuit(connection, cancellationToken);
+                        if (core.Circuits is not null)
+                        {
+                            connection.ThrowIfRetired();
+                            admission = AcquireCircuit(connection, cancellationToken);
+                        }
                         response = await (sendAsking
                             ? ClusterRouter.SendBlockingAskingUncheckedAsync(connection, in command, cancellationToken,
                                 observation.IsEmpty ? errorAttempts : observation.Attempts, pinToConnection: core.Circuits is not null)
@@ -4457,7 +4460,8 @@ public sealed partial class RespireClient : IRespireClient
                         acquiringRedirectPool || connection is null, slot, noRedirect, callerCancellationToken);
                     if (connection is not null && !returned)
                     {
-                        await pool.DiscardAsync(connection).ConfigureAwait(false);
+                        if (ex is RespireCircuitOpenException) pool.Return(connection);
+                        else await pool.DiscardAsync(connection).ConfigureAwait(false);
                     }
 
                     if (timeoutError is not null) throw timeoutError;

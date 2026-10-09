@@ -367,12 +367,15 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 if (discovery is not null) await discovery.BeforeCandidateAsync(endpoint, cancellationToken).ConfigureAwait(false);
                 try
                 {
-                    await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+                    // Candidate scheduling and failure accounting belong to this seed loop.
+                    await EnsureRouteNodeConnectedAsync(node, cancellationToken, discovery: null).ConfigureAwait(false);
                     SetSeed(node);
                     _ = await TryLoadSlotsAsync(node, cancellationToken).ConfigureAwait(false);
                     return;
                 }
-                catch (Exception ex) when (CanRetryConnectionFailure(ex, cancellationToken))
+                catch (Exception ex) when (CanRetryConnectionFailure(ex, cancellationToken)
+                    || ex is RespireCircuitOpenException && !cancellationToken.IsCancellationRequested
+                        && discovery?.Exhaustion is null && Volatile.Read(ref _disposed) == 0)
                 {
                     lastError = ex;
                     discovery?.FailedNode(node, ex);

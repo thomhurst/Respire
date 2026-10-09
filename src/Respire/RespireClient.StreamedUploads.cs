@@ -341,7 +341,8 @@ public sealed partial class RespireClient
                         acquiringRedirectPool || connection is null, slot, noRedirect);
                     if (connection is not null && !returned)
                     {
-                        await pool.DiscardAsync(connection).ConfigureAwait(false);
+                        if (ex is RespireCircuitOpenException) pool.Return(connection);
+                        else await pool.DiscardAsync(connection).ConfigureAwait(false);
                     }
 
                     if (timeoutError is not null) throw timeoutError;

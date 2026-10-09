@@ -405,6 +405,88 @@ public class ClusterCircuitDispatchTests
     }
 
     [Test]
+    public async Task InitialSeedFailureOpensCircuitAndStopsFurtherConnects()
+    {
+        await using var server = Server();
+        var attempts = 0;
+        await using var client = RespireClient.Create(Options(server) with
+        {
+            ReconnectPolicy = new() { MaxAttempts = 1, InitialDelay = TimeSpan.Zero },
+            TestingStreamFactory = (_, _, _) =>
+            {
+                Interlocked.Increment(ref attempts);
+                throw new IOException("Injected initial seed failure.");
+            },
+        });
+        await Assert.That(await Failure(() => Send(client, "string", "first"))).IsTypeOf<RespireConnectionException>();
+        await Assert.That(Circuit(client, server).Snapshot().State).IsEqualTo(EndpointCircuitState.Open);
+        var previousAttempts = attempts;
+        var error = await Failure(() => Send(client, "string", "rejected"));
+        await Assert.That(error).IsTypeOf<RespireConnectionException>();
+        await Assert.That(error.InnerException).IsTypeOf<RespireCircuitOpenException>();
+        await Assert.That(attempts).IsEqualTo(previousAttempts);
+    }
+
+    [Test]
+    public async Task InitialSeedDiscoverySkipsOpenSeedAndUsesHealthySeed()
+    {
+        await using var openSeed = Server();
+        await using var healthySeed = Server();
+        await using var client = RespireClient.Create(Options(openSeed) with
+        {
+            Endpoints = [Endpoint(openSeed), Endpoint(healthySeed)],
+        });
+        Open(client, openSeed);
+        await Assert.That(await client.GetStringAsync("healthy")).IsEqualTo("value");
+        await Assert.That(openSeed.CommandsSeen).IsEqualTo(0);
+        await Assert.That(healthySeed.ReceivedCommands.Contains("GET healthy")).IsTrue();
+    }
+
+    [Test]
+    [Arguments("blocking")]
+    [Arguments("upload")]
+    public async Task CircuitOpeningDuringDedicatedConnectReturnsUntouchedLease(string shape)
+    {
+        await using var server = Server();
+        RespireClient? client = null;
+        var attempts = 0;
+        var openDuringConnect = false;
+        await using var ownedClient = client = await RespireClient.ConnectAsync(Options(server) with
+        {
+            TestingStreamFactory = async (host, port, cancellationToken) =>
+            {
+                Interlocked.Increment(ref attempts);
+                var socket = new System.Net.Sockets.Socket(System.Net.Sockets.SocketType.Stream,
+                    System.Net.Sockets.ProtocolType.Tcp);
+                try
+                {
+                    await socket.ConnectAsync(host, port, cancellationToken);
+                    if (openDuringConnect) Open(client!, server);
+                    return new System.Net.Sockets.NetworkStream(socket, ownsSocket: true);
+                }
+                catch { socket.Dispose(); throw; }
+            },
+        });
+        await client.GetStringAsync("warm");
+        var pool = await client.Core.Cluster!.GetReadDedicatedPoolAsync(ClusterHash.GetSlot("rejected"),
+            RespireReadFrom.Primary, default, null);
+        openDuringConnect = true;
+        await Assert.That(await Failure(() => Send(client, shape, "rejected"))).IsTypeOf<RespireCircuitOpenException>();
+        await Assert.That(pool.CaptureRetirementState().Borrowed).IsEqualTo(0);
+        await Assert.That(server.ReceivedCommands.Any(command => command.Contains("rejected"))).IsFalse();
+        openDuringConnect = false;
+        var previousAttempts = attempts;
+        var connection = await pool.RentAsync(default,
+            kind: shape == "upload" ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary);
+        try
+        {
+            await Assert.That(connection.IsConnected).IsTrue();
+            await Assert.That(attempts).IsEqualTo(previousAttempts);
+        }
+        finally { pool.Return(connection); }
+    }
+
+    [Test]
     [Arguments("blocking")]
     [Arguments("upload")]
     public async Task DedicatedConnectFailureOpensHealthyMultiplexedEndpoint(string shape)

@@ -60,6 +60,9 @@ internal static class DedicatedLeaseAcquisition
                 route.ThrowIfDisposed();
                 try
                 {
+                    // A stale selection must reselect before consulting the old endpoint's history.
+                    if (circuits is not null)
+                        ObjectDisposedException.ThrowIf(pool.IsStopping || !pool.IsMovingPublicationCurrent, pool);
                     var admission = circuits?.Acquire(pool.Endpoint, cancellationToken) ?? default;
                     try
                     {
@@ -71,8 +74,9 @@ internal static class DedicatedLeaseAcquisition
                     catch (Exception error) { admission.ConnectionFailed(error, cancellationToken); throw; }
                     finally { admission.Dispose(); }
                 }
-                catch (Exception error) when (!cancellationToken.IsCancellationRequested && pool.IsStopping
-                    && DedicatedConnectionPool.IsRetirementFailure(error)
+                catch (Exception error) when (!cancellationToken.IsCancellationRequested
+                    && (pool.IsStopping || circuits is not null && !pool.IsMovingPublicationCurrent)
+                    && (DedicatedConnectionPool.IsRetirementFailure(error) || error is RespireCircuitOpenException)
                     && route.CanRetry(retirements, cancellationToken))
                 {
                     route.RecordRetirement(error, retirements++);
