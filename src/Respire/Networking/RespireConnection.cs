@@ -1004,6 +1004,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         public void Dispose() => _ownedGate?.Exit();
     }
 
+    /// <summary>Captures the original timeout budget for an ordered pipeline's admission.</summary>
+    internal CommandDeadline CreateCommandDeadline() => CommandDeadline.After(_commandTimeoutMilliseconds);
+
     /// <summary>Admits a fitting pipeline under one gate before waking the persistent sender.</summary>
     internal bool TryEnqueueMany<TCommand>(IReadOnlyList<TCommand> commands,
         ValueTask<RespValue>[] sends, RespireTelemetry.ErrorObservation[] observations,
@@ -2126,7 +2129,6 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         // Only the persistent FlushLoopAsync sender calls this method, including TLS writes.
         Volatile.Write(ref _flushProgress.SentBytes, _flushProgress.SentBytes + bytes);
         Volatile.Write(ref _flushProgress.LastWriteTimestamp, Environment.TickCount64);
-        WriteCompletedForTesting?.Invoke(bytes);
         if (Volatile.Read(ref _flushProgress.GatheredWriteDeadlineTimestamp) != 0)
         {
             // Copied sends ahead of queued borrowed memory also advance the ownership watchdog.
@@ -2138,9 +2140,6 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             }
         }
     }
-
-    // Count completed transport writes, rather than inferring send boundaries from TCP reads.
-    internal Action<int>? WriteCompletedForTesting { get; set; }
 
     /// <summary>Captures the sole outstanding frame on an exclusively rented connection.</summary>
     internal RespireTimeoutDiagnostics CaptureDedicatedTimeoutDiagnostics()

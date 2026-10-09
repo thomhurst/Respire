@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Infrastructure;
@@ -98,23 +98,34 @@ public class StandaloneBatchFlushTests
     [Arguments(1)]
     [Arguments(32)]
     [Arguments(100)]
-    public async Task IdleBatchUsesOneSocketWrite(int count)
+    public async Task IdleBatchUsesOneTransportWrite(int count)
     {
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray());
-        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
-        var connection = client.Core.Multiplexer.GetConnection();
-        var writes = new ConcurrentQueue<int>();
-        var written = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        connection.WriteCompletedForTesting = bytes => { writes.Enqueue(bytes); written.TrySetResult(); };
+        CountingStream? transport = null;
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1,
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            TestingStreamFactory = async (host, port, token) =>
+            {
+                var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+                try
+                {
+                    await socket.ConnectAsync(host, port, token);
+                    return transport = new CountingStream(new NetworkStream(socket, ownsSocket: true));
+                }
+                catch { socket.Dispose(); throw; }
+            },
+        });
         using var batch = client.CreateBatch();
         var pending = new RespirePending<long>[count];
         for (var index = 0; index < count; index++) pending[index] = batch.Increment($"counter:{index}");
 
         // Explicit pool dispatch exercises the inline flush wake-up that split idle batches.
         await Task.Run(async () => await batch.ExecuteAsync());
-        await written.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await transport!.Written.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-        await Assert.That(writes.Count).IsEqualTo(1);
+        await Assert.That(transport.WriteCount).IsEqualTo(1);
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(
             Enumerable.Range(0, count).Select(index => $"INCR counter:{index}"), CollectionOrdering.Matching);
         foreach (var result in pending) await Assert.That(result.Result).IsEqualTo(1);
@@ -134,6 +145,74 @@ public class StandaloneBatchFlushTests
         await batch.ExecuteAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(
             Enumerable.Range(0, 100).Select(index => $"INCR counter:{index}"), CollectionOrdering.Matching);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task StalledBoundedRingBatchRetainsOriginalTimeout(bool durability)
+    {
+        await using var server = new FakeRespServer(2, ":1\r\n"u8.ToArray())
+        {
+            SuppressReply = command => command.StartsWith("INCR ", StringComparison.Ordinal),
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, MaxInflightCommands = 2,
+            CommandTimeout = TimeSpan.FromMilliseconds(500),
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+        });
+        using var batch = client.CreateBatch();
+        var pending = new RespirePending<long>[100];
+        for (var index = 0; index < pending.Length; index++) pending[index] = batch.Increment($"counter:{index}");
+
+        // A restarted timeout for each of the 98 capacity waiters takes about 49 seconds.
+        Task execution = durability
+            ? batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.Zero).AsTask()
+            : batch.ExecuteAsync().AsTask();
+        await Assert.That(async () => await execution.WaitAsync(TimeSpan.FromSeconds(3)))
+            .ThrowsExactly<RespireTimeoutException>();
+        foreach (var result in pending)
+        {
+            await Assert.That(result.IsCompleted).IsTrue();
+            await Assert.That(result.Error).IsTypeOf<RespireTimeoutException>();
+        }
+        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("INCR ", StringComparison.Ordinal)))
+            .IsEqualTo(2);
+        await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("WAIT", StringComparison.Ordinal)))
+            .IsFalse();
+    }
+
+    [Test]
+    public async Task CancellationDuringBoundedRingAdmissionCompletesEveryPending()
+    {
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray())
+        {
+            SuppressReply = command => command != "INCR after",
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, MaxInflightCommands = 2,
+            CommandTimeout = null,
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+        });
+        using var cancellation = new CancellationTokenSource();
+        using var batch = client.CreateBatch();
+        var pending = new RespirePending<long>[100];
+        for (var index = 0; index < pending.Length; index++) pending[index] = batch.Increment($"counter:{index}");
+        var execution = batch.TryExecuteAsync(cancellation.Token);
+        await WaitForCommandsAsync(server, 2).WaitAsync(TimeSpan.FromSeconds(5));
+        cancellation.Cancel();
+        var result = await execution.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(result.Failures.Count).IsEqualTo(pending.Length);
+        foreach (var operation in pending) await Assert.That(operation.IsCompleted).IsTrue();
+        await Assert.That(server.CommandsSeen).IsEqualTo(2);
+
+        // Late replies release the occupied slots without borrowing the next command's reply.
+        await server.SendRawAsync(":1\r\n:1\r\n"u8.ToArray());
+        await Assert.That(await client.IncrementAsync("after")).IsEqualTo(1);
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(
+            new[] { "INCR counter:0", "INCR counter:1", "INCR after" }, CollectionOrdering.Matching);
     }
 
     [Test]
@@ -184,5 +263,37 @@ public class StandaloneBatchFlushTests
     private static async Task WaitForCommandsAsync(FakeRespServer server, int count)
     {
         while (server.CommandsSeen < count) await Task.Delay(1);
+    }
+
+    // The existing transport factory keeps write instrumentation outside production code.
+    private sealed class CountingStream(Stream inner) : Stream
+    {
+        private int _writeCount;
+        internal int WriteCount => Volatile.Read(ref _writeCount);
+        internal TaskCompletionSource Written { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override bool CanRead => inner.CanRead;
+        public override bool CanSeek => inner.CanSeek;
+        public override bool CanWrite => inner.CanWrite;
+        public override long Length => inner.Length;
+        public override long Position { get => inner.Position; set => inner.Position = value; }
+        public override void Flush() => inner.Flush();
+        public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+            => inner.ReadAsync(buffer, cancellationToken);
+        public override long Seek(long offset, SeekOrigin origin) => inner.Seek(offset, origin);
+        public override void SetLength(long value) => inner.SetLength(value);
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            await inner.WriteAsync(buffer, cancellationToken);
+            Interlocked.Increment(ref _writeCount);
+            Written.TrySetResult();
+        }
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) inner.Dispose();
+            base.Dispose(disposing);
+        }
+        public override ValueTask DisposeAsync() => inner.DisposeAsync();
     }
 }

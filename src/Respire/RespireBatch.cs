@@ -396,9 +396,12 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             if (!connection.TryEnqueueMany(_ops, sends, observations, cancellationToken))
             {
                 // Await admission, not replies, so a full ring or credential fence cannot
-                // reverse this batch's queue order. Already admitted frames keep draining.
+                // reverse this batch's queue order. The response thread frees ring slots
+                // without awaiting these reply tasks. Capture the original budget once;
+                // capacity waits must not restart the timeout for every later command.
+                var deadline = connection.CreateCommandDeadline();
                 for (var i = 0; i < _ops.Count; i++)
-                    sends[i] = await _ops[i].StartOrderedSendAsync(connection, cancellationToken, observations[i]).ConfigureAwait(false);
+                    sends[i] = await _ops[i].StartOrderedSendAsync(connection, cancellationToken, observations[i], deadline).ConfigureAwait(false);
             }
             for (var i = 0; i < _ops.Count; i++)
                 _ = await _ops[i].CompleteSendAsync(_client, sends[i]).ConfigureAwait(false);
@@ -672,7 +675,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, bool deferFlush);
 
         public abstract ValueTask<ValueTask<RespValue>> StartOrderedSendAsync(RespireConnection connection,
-            CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation);
+            CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, CommandDeadline deadline);
 
         public abstract ValueTask<Exception?> CompleteSendAsync(RespireClient client, ValueTask<RespValue> reply);
 
@@ -820,12 +823,12 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
         public override async ValueTask<ValueTask<RespValue>> StartOrderedSendAsync(RespireConnection connection,
-            CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+            CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, CommandDeadline deadline)
         {
             try
             {
                 return await connection.EnqueuePinnedAsync(new MutationCommand<TCommand>(command, MutationFence),
-                    cancellationToken, Operation, observation, pinToConnection: false).ConfigureAwait(false);
+                    cancellationToken, Operation, observation, pinToConnection: false, deadline: deadline).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
