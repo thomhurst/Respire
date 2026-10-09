@@ -270,6 +270,8 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
     {
         if (!Enum.IsDefined(field.Type) || field.Type == RespireSearchFieldType.Vector || field.Vector is not null || field.Alias is not null || field.Options is { Count: > 0 })
             throw new ArgumentException("Scalar fields require a supported scalar type without aliases, vector schemas or raw options.", nameof(field));
+        if (field.Type == RespireSearchFieldType.GeoShape && field.Sortable)
+            throw new ArgumentException("GEOSHAPE fields do not support SORTABLE.", nameof(field));
         if (field.Type != RespireSearchFieldType.Text && (field.Weight is not null || field.NoStem || field.Phonetic is not null))
             throw new ArgumentException("Weight, stemming and phonetic options require a text field.", nameof(field));
         if (field.Weight is { } weight && (!double.IsFinite(weight) || weight < 0))

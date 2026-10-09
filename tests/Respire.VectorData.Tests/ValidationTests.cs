@@ -90,6 +90,31 @@ public class ValidationTests
     }
 
     [Test]
+    public async Task SortableGeoShapeFailsBeforeCollectionIo()
+    {
+        await using var client = Client();
+        using var store = new RespireVectorStore(client);
+        store.RegisterMapper(new ScalarMapper(new("shape", RespireSearchFieldType.GeoShape, Sortable: true)));
+        var create = () => store.GetHashCollection<Movie>("movies");
+        create.Should().Throw<ArgumentException>().WithMessage("*GEOSHAPE*SORTABLE*").Which.ParamName.Should().Be("field");
+    }
+
+    [Test]
+    [Arguments(RespireSearchFieldType.GeoShape, false)]
+    [Arguments(RespireSearchFieldType.Text, true)]
+    [Arguments(RespireSearchFieldType.Tag, true)]
+    [Arguments(RespireSearchFieldType.Numeric, true)]
+    [Arguments(RespireSearchFieldType.Geo, true)]
+    public async Task SupportedScalarSortOptionsPassBeforeCollectionIo(RespireSearchFieldType type, bool sortable)
+    {
+        await using var client = Client();
+        using var store = new RespireVectorStore(client);
+        store.RegisterMapper(new ScalarMapper(new("scalar", type, Sortable: sortable)));
+        using var collection = store.GetHashCollection<Movie>("movies");
+        collection.Name.Should().Be("movies");
+    }
+
+    [Test]
     public async Task UnsupportedKeysAndDefinitionsFailBeforeCollectionIo()
     {
         await using var client = Client();
