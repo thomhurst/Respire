@@ -189,7 +189,7 @@ FIFO response placeholder. A failed recovery probe reopens only that endpoint's 
 Scan cursor pages, WATCH state, import sessions, and durability acknowledgements keep their connection affinity.
 They cannot move to another primary to bypass circuit rejection or retirement.
 
-Configuration with configured standalone replica endpoints is rejected. This option does not change
+Configuration with standalone replica endpoints is rejected. This option does not change
 `RespireFailoverGroup` probe/failback behavior. The wider
 [resilience work](https://github.com/thomhurst/Respire/issues/863) remains open for retry and
 telemetry integration.

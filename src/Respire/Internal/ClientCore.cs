@@ -77,11 +77,6 @@ internal sealed class ClientCore : IAsyncDisposable
     {
         _ownedPools = new(_hubGate);
         Options = options;
-        Circuits = options.CircuitBreaker is { } circuitOptions
-            ? new(circuitOptions, () => Multiplexer.ActiveConnectionEndpoint,
-                endpoint => Cluster is { } cluster
-                    ? cluster.IsCircuitEndpointCurrent(endpoint)
-                    : Sentinel is not null && ReadRouter.IsCurrentReplicaEndpoint(endpoint)) : null;
         HedgedReads = options.HedgedReads is { } hedging ? new(hedging.MaximumExtraLoadPercent) : null;
         Logger = options.CreateLogger("Respire.RespireClient");
         var endpoint = options.PrimaryEndpoint;
@@ -100,6 +95,11 @@ internal sealed class ClientCore : IAsyncDisposable
         _multiplexer = RespireConnectionMultiplexer.Create(
             endpoint.Host, endpoint.Port, options.Connections, connectionOptions, Logger);
         ReadRouter = new ReadEndpointRouter(this);
+        Circuits = options.CircuitBreaker is { } circuitOptions
+            ? new(circuitOptions, () => Multiplexer.ActiveConnectionEndpoint,
+                endpoint => Cluster is { } cluster
+                    ? cluster.IsCircuitEndpointCurrent(endpoint)
+                    : Sentinel is not null && ReadRouter.IsCurrentReplicaEndpoint(endpoint)) : null;
         _dedicatedPool = CreateStandaloneDedicatedPool(_multiplexer.CaptureMovingPublication());
         _ownedPools.Add(_dedicatedPool);
         Cluster = options.UseCluster

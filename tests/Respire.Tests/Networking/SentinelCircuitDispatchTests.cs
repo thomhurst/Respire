@@ -43,7 +43,8 @@ public sealed class SentinelCircuitDispatchTests
         // Once discovery removes replicas, their idle histories become eligible for trimming.
         Array.Fill(ports, replica.Port);
         await client.Core.ReadRouter.RefreshNowAsync(default);
-        registry.Acquire(new("history", 2000), default).Dispose();
+        // Reuse a live endpoint so no new history masks a missing membership invalidation.
+        registry.Acquire(new("127.0.0.1", primary.Port), default).Dispose();
         await Assert.That(registry.CountForTests).IsEqualTo(StandaloneCircuitRegistry.RetainedEndpointLimit);
         await Assert.That(ReferenceEquals(registry.GetForTests(new("127.0.0.1", replica.Port)), circuit)).IsTrue();
     }
