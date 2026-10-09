@@ -7,9 +7,24 @@
         "ExecuteAndWaitForAofAsync(bool,int,TimeSpan,CancellationToken):ValueTask<RespireAofAcknowledgement>",
         "ExecuteAndWaitForReplicationAsync(int,TimeSpan,CancellationToken):ValueTask<long>"
       ],
-      "Contract": "Queue methods own synchronous validation and serialization. Execute/commit owns transport and cleanup; each pending result owns its later caller inspection and conversion. Never consume a pending result to observe errors."
+      "Contract": "Start ownership before argument validation and acknowledgement construction. Release the dedicated connection and cache fence before final publication. Successful sends use each pending default failure-only lease; transparent retries retain the pending owner."
     }
   ],
-  "Boundaries": [],
+  "Boundaries": [
+    {
+      "Name": "durability-aof",
+      "Role": "final",
+      "Member": "Respire.RespireBatch.ExecuteAndWaitForAofAsync(bool,int,TimeSpan,CancellationToken):ValueTask<RespireAofAcknowledgement>",
+      "Owner": "Respire.RespireBatch.ExecuteAndWaitForAofAsync(bool,int,TimeSpan,CancellationToken):ValueTask<RespireAofAcknowledgement>",
+      "Contract": "Start ownership before argument validation and acknowledgement construction. Release the dedicated connection and cache fence before final publication. Successful sends use each pending default failure-only lease; transparent retries retain the pending owner."
+    },
+    {
+      "Name": "durability-replication",
+      "Role": "final",
+      "Member": "Respire.RespireBatch.ExecuteAndWaitForReplicationAsync(int,TimeSpan,CancellationToken):ValueTask<long>",
+      "Owner": "Respire.RespireBatch.ExecuteAndWaitForReplicationAsync(int,TimeSpan,CancellationToken):ValueTask<long>",
+      "Contract": "Start ownership before argument validation and acknowledgement construction. Release the dedicated connection and cache fence before final publication. Successful sends use each pending default failure-only lease; transparent retries retain the pending owner."
+    }
+  ],
   "NonRoutes": []
 }

@@ -151,6 +151,13 @@
       "Member": "Respire.RespireClient.SubscribeCoreAsync(SubscriptionKind,RespireChannel[],RespireSubscriptionOptions,CancellationToken):ValueTask<RespireSubscription>",
       "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
       "Contract": "Start final ownership before prefix resolution, hub admission, control commands and rollback. Synchronous prefix failures and asynchronous activation share the failure-only dispatch owner."
+    },
+    {
+      "Name": "watched-transaction-setup",
+      "Role": "final",
+      "Member": "Respire.RespireClient.CreateTransactionAsync(ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<RespireWatchedTransaction>",
+      "Owner": "Respire.RespireClient.CreateTransactionAsync(ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<RespireWatchedTransaction>",
+      "Contract": "Begin the failure-only owner before disposal/cancellation checks and key routing. WATCH borrows this owner through reply inspection and failed dedicated-connection cleanup."
     }
   ],
   "NonRoutes": []

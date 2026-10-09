@@ -80,7 +80,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         catch (Exception error)
         {
             // No queued command owns an observation until setup succeeds.
-            RespireTelemetry.RecordError(error, internallyHandled: false);
+            ErrorObservation.FinishFinal(default, error);
             throw;
         }
     }
@@ -393,7 +393,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         {
             for (var i = 0; i < _ops.Count; i++)
             {
-                observations[i] = RespireTelemetry.ErrorObservation.Rent(force: true);
+                observations[i] = _ops[i].Observation;
             }
             var circuits = _client.Core.Circuits;
             // Circuit-enabled queues acquire and observe each permit independently.
@@ -411,7 +411,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         finally
         {
             ArrayPool<ValueTask<RespValue>>.Shared.Return(sends, clearArray: true);
-            CompleteObservations(_ops, observations);
+            ArrayPool<RespireTelemetry.ErrorObservation>.Shared.Return(observations, clearArray: true);
         }
     }
 
@@ -460,6 +460,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         foreach (var operation in _ops)
         {
             operation.Fail(error);
+            operation.AllowErrorInspection();
         }
     }
 
@@ -471,11 +472,9 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
     {
         RespireConnection connection;
         RespireConnection? continuationConnection;
-        // Shared read selection precedes each command's deferred owner. Keep its failures once,
-        // then copy the completed count into every member without sharing a live pooled handle.
-        var selectionObservation = _client.GetBatchReadFromPolicy() != RespireReadFrom.Primary
-            ? RespireTelemetry.ErrorObservation.Rent(force: true) : default;
-        var selectionAttempts = 0;
+        // Read selection borrows the first pending's existing owner. Copy the completed
+        // selection count to the other members before any command starts its own retries.
+        var selectionObservation = operations[0].Observation;
         try
         {
             if (slot is null && operations.Exists(static operation => operation.Operation is "FLUSHDB" or "FLUSHALL"))
@@ -487,17 +486,13 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         {
             foreach (var operation in operations)
             {
-                operation.AddErrorAttempts(selectionObservation.Attempts);
+                operation.Observation.SetAttempts(selectionObservation.Attempts);
                 operation.Fail(ex);
             }
 
             return;
         }
-        finally
-        {
-            selectionAttempts = selectionObservation.Attempts;
-            selectionObservation.Dispose();
-        }
+        var selectionAttempts = selectionObservation.Attempts;
 
         var sends = new ValueTask<RespValue>[operations.Count];
         var observations = ArrayPool<RespireTelemetry.ErrorObservation>.Shared.Rent(operations.Count);
@@ -506,7 +501,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             // Start every send in queue order before awaiting responses to retain pipelining.
             for (var i = 0; i < operations.Count; i++)
             {
-                observations[i] = RespireTelemetry.ErrorObservation.Rent(force: true);
+                observations[i] = operations[i].Observation;
                 if (selectionAttempts != 0) observations[i].SetAttempts(selectionAttempts);
                 try
                 {
@@ -527,19 +522,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
                     .ConfigureAwait(false);
             }
         }
-        finally { CompleteObservations(operations, observations); }
-    }
-
-    // Leases belong to an execution, not to every queued command object's layout.
-    // Keep them alive through all replies and recovery, then copy immutable attempt counts.
-    private static void CompleteObservations(IReadOnlyList<Op> operations,
-        RespireTelemetry.ErrorObservation[] observations)
-    {
-        for (var i = 0; i < operations.Count; i++)
-        {
-            operations[i].AddErrorAttempts(observations[i].DisposeAndGetAttempts());
-        }
-        ArrayPool<RespireTelemetry.ErrorObservation>.Shared.Return(observations, clearArray: true);
+        finally { ArrayPool<RespireTelemetry.ErrorObservation>.Shared.Return(observations, clearArray: true); }
     }
 
     private async ValueTask<(RespireConnection Connection, RespireConnection? Continuation)> AcquireGroupConnectionsAsync(
@@ -605,6 +588,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
     {
         // Native response ownership may outlive caller cancellation. Complete only the
         // logical fence before reporting; clear the owner to avoid completing it twice.
+        // Fence completion takes priority over publication, including if cleanup throws.
         cache?.CompleteMutation(in fence);
         cache = null;
         return CollectFailures(_ops);
@@ -623,6 +607,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
 
         if (failureCount == 0)
         {
+            if (reportErrors) foreach (var operation in operations) operation.ReportError();
             return null;
         }
 
@@ -631,9 +616,9 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         for (var i = 0; i < operations.Count; i++)
         {
             var operation = operations[i];
+            if (reportErrors) operation.ReportError();
             if (operation.Error is { } error)
             {
-                if (reportErrors) operation.ReportError();
                 failures[failureIndex++] = new RespireBatchFailure(
                     i, operation.Operation, error);
             }
@@ -706,7 +691,8 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
 
         public abstract void Fail(Exception error);
         public abstract bool ReportError();
-        public abstract void AddErrorAttempts(int attempts);
+        public abstract void AllowErrorInspection();
+        public abstract RespireTelemetry.ErrorObservation Observation { get; }
     }
 
     private sealed class Op<TCommand, T>(
@@ -732,7 +718,8 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
 
         public override void Fail(Exception error) => pending.Fail(error);
         public override bool ReportError() => pending.ReportError();
-        public override void AddErrorAttempts(int attempts) => pending.AddErrorAttempts(attempts);
+        public override void AllowErrorInspection() => pending.AllowErrorInspection();
+        public override RespireTelemetry.ErrorObservation Observation => pending.Observation;
 
         public override bool TryGetClusterSlot(out int slot) => command.TryGetClusterSlot(out slot);
 

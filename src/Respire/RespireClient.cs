@@ -1578,8 +1578,16 @@ public sealed partial class RespireClient : IRespireClient
     public ValueTask<RespireWatchedTransaction> CreateTransactionAsync(
         RespireKey[] watchKeys, CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(watchKeys);
-        return CreateTransactionAsync(watchKeys.AsSpan(), cancellationToken);
+        try
+        {
+            ArgumentNullException.ThrowIfNull(watchKeys);
+            return CreateTransactionAsync(watchKeys.AsSpan(), cancellationToken);
+        }
+        catch (ArgumentNullException error) when (watchKeys is null)
+        {
+            ErrorObservation.FinishFinal(default, error);
+            throw;
+        }
     }
 
     /// <inheritdoc cref="CreateTransactionAsync(RespireKey[], CancellationToken)"/>
@@ -1590,14 +1598,14 @@ public sealed partial class RespireClient : IRespireClient
     public ValueTask<RespireWatchedTransaction> CreateTransactionAsync(
         ReadOnlySpan<RespireKey> watchKeys, CancellationToken cancellationToken)
     {
-        if (watchKeys.Length == 0)
-        {
-            return new ValueTask<RespireWatchedTransaction>(new RespireWatchedTransaction(this));
-        }
-
-        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        var owner = DispatchResponseSource<RespireWatchedTransaction>.Start();
+        var observation = owner.Observation;
         try
         {
+            ObjectDisposedException.ThrowIf(_core.Disposed, this);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (watchKeys.Length == 0)
+                return owner.Attach(new ValueTask<RespireWatchedTransaction>(new RespireWatchedTransaction(this)));
             // Resolve and own keys before the first await so routing and WATCH use the same bytes.
             var keys = MapKeys(watchKeys);
             int? slot = null;
@@ -1608,12 +1616,11 @@ public sealed partial class RespireClient : IRespireClient
                     RespireTransactionBase.ValidateClusterSlot(keySlot, ref slot);
             }
             // The asynchronous setup takes ownership only after preflight succeeds.
-            return CreateWatchedTransactionAsync(keys, slot, cancellationToken, observation);
+            return owner.Attach(CreateWatchedTransactionAsync(keys, slot, cancellationToken, observation));
         }
         catch (Exception error)
         {
-            observation.Final(error);
-            observation.Dispose();
+            owner.Fail(error);
             throw;
         }
     }
@@ -1622,7 +1629,6 @@ public sealed partial class RespireClient : IRespireClient
         RespireValue[] watchKeys, int? slot, CancellationToken cancellationToken,
         RespireTelemetry.ErrorObservation observation)
     {
-        using var ownedObservation = observation;
         try
         {
             ObjectDisposedException.ThrowIf(_core.Disposed, this);

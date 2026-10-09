@@ -9,10 +9,14 @@ namespace Respire.Internal;
 internal static class ErrorObservation
 {
     private static readonly ObjectPool<Observation, PoolPolicy> Pool = new(32);
+    // Allocation measurements cannot detect reuse of warmed pooled observations.
+    // Tests opt in; normal rentals never update a shared diagnostic counter.
+    internal static Action? RentalObserverForTests;
 
     internal static FinalOwner StartFailure(int retryAttempts = 0)
     {
         var observation = Pool.Rent();
+        Volatile.Read(ref RentalObserverForTests)?.Invoke();
         lock (observation.Gate)
         {
             observation.Generation = unchecked(observation.Generation + 1);
