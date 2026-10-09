@@ -1,22 +1,26 @@
 using System.Buffers.Binary;
+using System.Globalization;
 using System.Linq.Expressions;
 using System.Runtime.CompilerServices;
+using System.Text;
 using Microsoft.Extensions.VectorData;
 using Respire.Search;
 
 namespace Respire.VectorData;
 
-/// <summary>String-keyed Redis hash records and unfiltered FLOAT32 KNN search.</summary>
+/// <summary>String-keyed Redis hash records, expression filters and FLOAT32 KNN search.</summary>
 public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollection<string, TRecord> where TRecord : class
 {
     // One script replaces the complete hash atomically, including absent optional fields.
     private static readonly RespireScript Replace = RespireScript.Create("redis.call('DEL',KEYS[1]); for i=1,#ARGV,2 do redis.call('HSET',KEYS[1],ARGV[i],ARGV[i+1]); end; return 1");
+    private static readonly UTF8Encoding FilterUtf8 = new(false, true);
     private readonly IRespireClient _client;
     private readonly string _index;
     private readonly string _prefix;
     private readonly RespireVectorDataHashMapper<TRecord> _mapper;
     private readonly RespireVectorDataVectorField[] _vectors;
     private readonly RespireSearchField[] _fields;
+    private readonly RespireVectorDataFilterField[] _filterFields;
     private volatile bool _disposed;
 
     internal RespireVectorStoreCollection(IRespireClient client, string name, string index, string prefix, RespireVectorDataHashMapper<TRecord> mapper)
@@ -54,6 +58,21 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
             ValidateScalarField(field);
             if (!names.Add(field.Identifier)) throw new ArgumentException("Schema field names must be unique.", nameof(mapper));
             fields.Add(field);
+        }
+        _filterFields = mapper.FilterFields.ToArray();
+        foreach (var filter in _filterFields)
+        {
+            ArgumentNullException.ThrowIfNull(filter);
+            ValidateFieldName(filter.StorageName);
+            ArgumentException.ThrowIfNullOrWhiteSpace(filter.PropertyName);
+            if (!Enum.IsDefined(filter.Kind) || !names.Add(filter.StorageName) || !properties.Add(filter.PropertyName))
+                throw new ArgumentException("Filter fields require unique schema/property names and a supported kind.", nameof(mapper));
+            var tag = filter.Kind is RespireVectorDataFilterKind.String or RespireVectorDataFilterKind.StringCollection;
+            fields.Add(new(filter.StorageName, tag ? RespireSearchFieldType.Tag : RespireSearchFieldType.Numeric)
+            {
+                CaseSensitive = tag,
+                Options = ["INDEXMISSING"],
+            });
         }
         _fields = fields.ToArray();
     }
@@ -158,6 +177,7 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
         {
             if (fields.TryGetValue(vector.StorageName, out var bytes)) ValidateVector(vector, bytes);
         }
+        ValidateFilterValues(fields);
         var args = new RespireValue[checked(fields.Count * 2)];
         var i = 0;
         foreach (var field in fields)
@@ -181,8 +201,22 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
     }
 
     /// <inheritdoc />
-    public override IAsyncEnumerable<TRecord> GetAsync(Expression<Func<TRecord, bool>> filter, int top, FilteredRecordRetrievalOptions<TRecord>? options = null, CancellationToken cancellationToken = default)
-        => throw new NotSupportedException("Expression filters are not supported by the initial hash connector.");
+    public override async IAsyncEnumerable<TRecord> GetAsync(Expression<Func<TRecord, bool>> filter, int top, FilteredRecordRetrievalOptions<TRecord>? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        cancellationToken.ThrowIfCancellationRequested();
+        if (top <= 0) throw new ArgumentOutOfRangeException(nameof(top));
+        var skip = options?.Skip ?? 0;
+        if (skip < 0) throw new ArgumentOutOfRangeException(nameof(options));
+        if (options?.OrderBy is not null) throw new NotSupportedException("Filtered retrieval ordering is unsupported.");
+        var query = new RespireSearchQuery(new RespireVectorDataFilter<TRecord>(_filterFields).Translate(filter),
+            new() { Dialect = 2, NoContent = true, Limit = (skip, top) });
+        var result = await RespireVectorDataOperations.ExecuteAsync(
+            _client.Search.SearchAsync(_index, query, cancellationToken), nameof(GetAsync), Name).ConfigureAwait(false);
+        var keys = result.Documents.Select(document => SearchKey(document.Id, nameof(GetAsync))).ToArray();
+        await foreach (var record in GetAsync(keys, new RecordRetrievalOptions { IncludeVectors = options?.IncludeVectors ?? false }, cancellationToken).ConfigureAwait(false))
+            yield return record;
+    }
 
     /// <inheritdoc />
     /// <remarks>Retrieves hashes in concurrent batches of up to 32 after searching; this is not a transactional snapshot.
@@ -194,7 +228,7 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
         ArgumentNullException.ThrowIfNull(searchValue);
         cancellationToken.ThrowIfCancellationRequested();
         if (top <= 0) throw new ArgumentOutOfRangeException(nameof(top));
-        if (options?.Filter is not null) throw new NotSupportedException("Expression filters are not supported by the initial hash connector.");
+        var filter = options?.Filter is { } expression ? new RespireVectorDataFilter<TRecord>(_filterFields).Translate(expression) : (RespireSearchExpression?)null;
         var skip = options?.Skip ?? 0;
         if (skip < 0) throw new ArgumentOutOfRangeException(nameof(options));
         if (options?.ScoreThreshold is { } scoreThreshold && !double.IsFinite(scoreThreshold)) throw new ArgumentOutOfRangeException(nameof(options));
@@ -208,7 +242,7 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
         };
         var bytes = RespireVectorDataFloat32.Encode(values.Span);
         ValidateVector(vector, bytes);
-        var request = new RespireVectorSearchRequest(vector.StorageName, bytes, checked(skip + top));
+        var request = new RespireVectorSearchRequest(vector.StorageName, bytes, checked(skip + top)) { Filter = filter };
         var queryOptions = new RespireSearchQueryOptions { Limit = (skip, top), ReturnFields = ["vector_score"] };
         var result = await RespireVectorDataOperations.ExecuteAsync(
             _client.Search.VectorSearchAsync(_index, request, queryOptions, cancellationToken), nameof(SearchAsync), Name).ConfigureAwait(false);
@@ -256,6 +290,35 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(key);
         return _prefix + RespireVectorStore.EncodeName(key);
+    }
+
+    private string SearchKey(string id, string operation)
+    {
+        if (!id.StartsWith(_prefix, StringComparison.Ordinal)) throw new VectorStoreException("Search returned a document outside the collection.", new InvalidOperationException("Unexpected document prefix."))
+        { OperationName = operation, CollectionName = Name, VectorStoreSystemName = "redis" };
+        return RespireVectorDataOperations.DecodeName(id[_prefix.Length..], operation, Name);
+    }
+
+    private void ValidateFilterValues(IReadOnlyDictionary<string, ReadOnlyMemory<byte>> fields)
+    {
+        foreach (var filter in _filterFields)
+        {
+            if (!fields.TryGetValue(filter.StorageName, out var bytes)) continue;
+            var text = FilterUtf8.GetString(bytes.Span);
+            if (filter.Kind is RespireVectorDataFilterKind.String or RespireVectorDataFilterKind.StringCollection)
+            {
+                if (filter.Kind == RespireVectorDataFilterKind.StringCollection && text.Length == 0) continue;
+                var tokens = filter.Kind == RespireVectorDataFilterKind.String ? new[] { text } : text.Split(',');
+                foreach (var token in tokens)
+                {
+                    if (RespireVectorDataFilterEncoding.EncodeTag(RespireVectorDataFilterEncoding.DecodeTag(token)) != token)
+                        throw new ArgumentException($"Filter field '{filter.StorageName}' requires canonical encoded TAG values.", nameof(fields));
+                }
+            }
+            else if (filter.Kind == RespireVectorDataFilterKind.Boolean ? text is not "0" and not "1"
+                : !double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value) || !double.IsFinite(value))
+                throw new ArgumentException($"Filter field '{filter.StorageName}' requires a finite invariant number or Boolean 0/1.", nameof(fields));
+        }
     }
 
     private static void ValidateVector(RespireVectorDataVectorField field, ReadOnlyMemory<byte> vector)

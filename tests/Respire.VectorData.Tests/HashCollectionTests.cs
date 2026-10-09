@@ -224,8 +224,8 @@ public class HashCollectionTests(ModernRedisTestContainer fixture)
         await threshold.Should().ThrowAsync<ArgumentOutOfRangeException>();
         Func<Task> overflow = () => Collect(collection.SearchAsync(new float[] { 1, 0 }, 1, new() { Skip = int.MaxValue }));
         await overflow.Should().ThrowAsync<OverflowException>();
-        var filteredGet = () => collection.GetAsync(movie => movie.Id == "a", 1);
-        filteredGet.Should().Throw<NotSupportedException>();
+        Func<Task> filteredGet = () => Collect(collection.GetAsync(movie => movie.Id == "a", 1));
+        await filteredGet.Should().ThrowAsync<NotSupportedException>();
     }
 
     [Test, Arguments(2), Arguments(3)]

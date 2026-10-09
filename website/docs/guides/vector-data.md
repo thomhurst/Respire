@@ -5,7 +5,7 @@ description: Store typed vector records in Redis hashes through an explicit AOT-
 
 # Microsoft.Extensions.VectorData
 
-`Respire.VectorData` implements `VectorStore` and string-keyed `VectorStoreCollection<string,TRecord>` from `Microsoft.Extensions.VectorData.Abstractions` 10.10.0 using Redis Query Engine hashes. It supports collection lifecycle, record CRUD, sequential batch operations and unfiltered FLOAT32 KNN search. Use an unprefixed Respire client; Search commands reject client key prefixes. This connector supports standalone Redis Query Engine, included in standalone Redis 8. Redis Cluster is unsupported: collection deletion scans one node and cannot remove unindexed hashes across all shards, even when a search coordinator is available.
+`Respire.VectorData` implements `VectorStore` and string-keyed `VectorStoreCollection<string,TRecord>` from `Microsoft.Extensions.VectorData.Abstractions` 10.10.0 using Redis Query Engine hashes. It supports collection lifecycle, record CRUD, sequential batch operations, expression filters, filtered retrieval and FLOAT32 KNN search. Use an unprefixed Respire client; Search commands reject client key prefixes. This connector supports standalone Redis Query Engine, included in standalone Redis 8. Redis Cluster is unsupported: collection deletion scans one node and cannot remove unindexed hashes across all shards, even when a search coordinator is available.
 
 ```bash
 dotnet add package Respire.VectorData
@@ -45,7 +45,39 @@ Upsert replaces a complete record atomically in one Lua script. Optional fields 
 
 Search accepts `float[]`, `Memory<float>` or `ReadOnlyMemory<float>`. It returns Redis's distance unchanged: lower scores are better. `Skip` and `top` select a page from the nearest `Skip + top` candidates. `ScoreThreshold` is a maximum distance applied after that page is selected; filtered hits are not replaced, so fewer than `top` records can be returned. Set `VectorProperty` to a direct mapped property expression when multiple vectors are declared. Records deleted between search and retrieval are omitted without refilling the page; this is not a transactional snapshot. Search indexing can lag writes. Malformed search scores or documents outside the collection become `VectorStoreException` with an `InvalidOperationException` cause and collection/operation metadata.
 
-This first connector supports hashes and explicit typed mappings. JSON storage, expression filters, filtered retrieval, hybrid search, embedding generation, dynamic dictionaries and non-string keys are unsupported. Unsupported filters and inputs throw; they are never silently ignored. Server and transport failures become `VectorStoreException` with the original Respire exception as their cause and collection/operation metadata. Cancellation stays `OperationCanceledException`. [The connector epic](https://github.com/thomhurst/Respire/issues/887) retains the remaining features and full official conformance suite. Tests include named lifecycle and basic-model contracts adapted from [the upstream conformance tests at the package source revision](https://github.com/dotnet/extensions/tree/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests). Passing this subset does not establish complete upstream conformance.
+This connector supports hashes and explicit typed mappings. JSON storage, hybrid search, embedding generation, dynamic dictionaries and non-string keys are unsupported. Unsupported filters and inputs throw; they are never silently ignored. Server and transport failures become `VectorStoreException` with the original Respire exception as their cause and collection/operation metadata. Cancellation stays `OperationCanceledException`. [The connector epic](https://github.com/thomhurst/Respire/issues/887) retains the remaining features and full official conformance suite. Tests include named lifecycle, basic-model and supported filter contracts adapted from [the upstream conformance tests at the package source revision](https://github.com/dotnet/extensions/tree/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests). Passing this subset does not establish complete upstream conformance; the complete suite remains required by [the final conformance child](https://github.com/thomhurst/Respire/issues/1262).
+
+## Expression filters
+
+Declare `FilterFields` on your mapper with explicit CLR property names, unique hash storage names and `RespireVectorDataFilterKind` values. These add their own schema fields; do not repeat their storage names in `DataFields`. Existing indexes must be recreated when adding filter fields. Filtering requires Redis Query Engine 2.10 or later (included in Redis 8) for `INDEXMISSING`.
+
+The sample `MovieMapper` declares ordinal string filters for `Title` and `Tag`, stored in `filter_title` and `filter_tag`. Write string fields with `RespireVectorDataFilterEncoding.EncodeTag` and collections with `EncodeTags`, then encode the returned text as UTF-8 hash bytes. Decode with `DecodeTag` in `Read`, or keep separate original fields as the sample does. Encoding preserves case, empty strings, whitespace, separators and Unicode, and prevents values from introducing query syntax. Raw TAG fields are unsuitable for exact CLR string semantics because Redis splits separators and trims whitespace. The connector validates canonical encoded filter tokens before upsert.
+
+Write Boolean filter fields as invariant `0` or `1` and numeric fields using `RespireVectorDataFilterEncoding.EncodeNumber`. This preserves the exact double representation, including lossless promotion of `float` values; formatting a float directly can change its indexed boundary. Write every nonnullable scalar property. Omit fields for null scalar values; explicit null hash bytes are unsupported. Missing fields represent null, while encoded empty strings remain present. String collections support nonnull string elements; an omitted or empty collection has no membership matches. Record mapping remains explicit and does not use runtime reflection.
+
+```csharp
+var title = "Arrival";
+await foreach (var hit in movies.SearchAsync(new float[] { 1, 0 }, top: 10,
+    new() { Filter = movie => movie.Title == title && movie.Tag != null }))
+    Console.WriteLine(hit.Record.Title);
+
+await foreach (var movie in movies.GetAsync(movie => movie.Title == title, top: 10,
+    new() { Skip = 0, IncludeVectors = true }))
+    Console.WriteLine(movie.Title);
+```
+
+Supported operators:
+
+- Direct mapped string properties: ordinal `==` and `!=`, including null.
+- Mapped `byte`, `sbyte`, `short`, `ushort`, `int`, `uint`, `float`, `double` and nullable forms: `==`, `!=`, `<`, `<=`, `>`, `>=`. Bounds preserve exclusive/inclusive semantics. Values must be finite. Missing nullable fields fail relational comparisons and match inequality against nonnull values.
+- Boolean properties and nullable Boolean equality: `==`, `!=`, direct Boolean predicates and `!`.
+- Boolean combinations: `&&`, `||`, parentheses, `!` and constant `true`/`false`.
+- Mapped `string[]` and `List<string>`: `Contains(value)` and `Any(element => values.Contains(element))`. Inline/captured arrays and supported `List<T>` values can also contain a mapped scalar property. `Enumerable.Contains` and array-backed `MemoryExtensions.Contains` are supported, including an explicit null comparer.
+- Literal constants, initialized arrays, `Array.Empty<T>()`, captured locals and field chains (including static fields). Captured nullable `.Value` is supported and throws when null. Expressions are visited without compilation; captured fields are read from metadata already rooted by the expression.
+
+Unsupported expressions throw `NotSupportedException` before a request: unregistered or nested record properties, property getters for captured values, arbitrary method calls, arithmetic, property-to-property comparisons, custom comparers, string substring/prefix matching, collection equality, `long`, `ulong`, `decimal`, enums, dates and conversions that change numeric semantics. Nullable record `.Value` access is unsupported; compare the nullable property directly. Only nullable lifting, small-integer promotion and lossless promotion to double are accepted as conversions.
+
+Filters apply before KNN selects the nearest `Skip + top` candidates and work with the selected `VectorProperty`. Filtered retrieval uses `Skip`/`top` without vector ranking; result order is unspecified and `OrderBy` is unsupported. Vector inclusion, cancellation and records deleted between searching and hash retrieval behave as described above.
 
 ## Exception behavior
 

@@ -63,8 +63,8 @@ Server and protocol requirements vary by feature; each linked guide describes it
 
 ### Caching, integration, and testing
 
-- [VectorData hash collections](guides/vector-data.md) with explicit AOT-friendly mapping and KNN search.
-  Expression filters, JSON storage, hybrid search and full upstream conformance remain tracked by
+- [VectorData hash collections](guides/vector-data.md) with explicit AOT-friendly mapping, expression filters,
+  filtered retrieval and KNN search. JSON storage, hybrid search and full upstream conformance remain tracked by
   [the VectorData connector epic](https://github.com/thomhurst/Respire/issues/887).
 
 - Bounded RESP3 [server-assisted client-side caching](fundamentals/client-side-caching.md),

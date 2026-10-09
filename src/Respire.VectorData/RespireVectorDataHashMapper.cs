@@ -10,6 +10,12 @@ public abstract class RespireVectorDataHashMapper<TRecord> where TRecord : class
     /// <summary>Indexed scalar fields. Unindexed hash fields may also be written by the mapper.</summary>
     public virtual IReadOnlyList<RespireSearchField> DataFields => [];
 
+    /// <summary>Explicit CLR property mappings for filters. These declare additional indexed hash fields.</summary>
+    /// <remarks>Write strings using <see cref="RespireVectorDataFilterEncoding.EncodeTag"/>, string collections
+    /// using <see cref="RespireVectorDataFilterEncoding.EncodeTags"/>, booleans as 0/1, and finite numbers
+    /// using invariant culture. Omit null values. Existing collections require recreation to add these fields.</remarks>
+    public virtual IReadOnlyList<RespireVectorDataFilterField> FilterFields => [];
+
     /// <summary>Indexed FLOAT32 vector fields, with explicit CLR property names for vector selection.</summary>
     public abstract IReadOnlyList<RespireVectorDataVectorField> VectorFields { get; }
 
