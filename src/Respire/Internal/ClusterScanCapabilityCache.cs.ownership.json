@@ -1,0 +1,13 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "cluster-scan-capability-probe",
+      "Role": "borrower",
+      "Member": "Respire.Internal.ClusterScanCapabilityCache.SupportsAsync(RespireClient,RespireConnection,string,ProbeRound,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<bool>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Probe transport, metadata parsing and reply disposal borrow the enclosing scan page owner. Unavailable metadata is handled internally; caller-visible transport and cancellation failures remain the page owner's final error."
+    }
+  ],
+  "NonRoutes": []
+}

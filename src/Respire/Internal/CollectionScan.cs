@@ -20,33 +20,70 @@ internal static class CollectionScan
         [EnumeratorCancellation] CancellationToken cancellationToken,
         bool noValues = false)
     {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(countHint);
-
-        var wireKey = client.Key(in key);
+        RespireValue wireKey;
+        try
+        {
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(countHint);
+            wireKey = client.Key(in key);
+        }
+        catch (Exception error)
+        {
+            ErrorObservation.FinishFinal(default, error);
+            throw;
+        }
         ulong cursor = 0;
         // Every page of this enumeration returns to the server that issued its cursor.
         var affinity = new ReadAffinity();
         do
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var args = Arguments(wireKey, cursor, match, countHint, noValues);
-            var result = await client.ConvertCursorPageAsync(operation, new CmdN(verb, args), affinity,
-                cancellationToken, (Operation: operation, Parser: parsePage),
-                static ((string Operation, ScanPageParser<T> Parser) state, in RespValue reply) =>
-                {
-                    var elements = ParsePage(in reply, state.Operation, out var nextCursor);
-                    return (Cursor: nextCursor, Page: state.Parser(in elements[1]));
-                }).ConfigureAwait(false);
+            var result = await ReadPageAsync(client, operation, verb, wireKey, cursor, match,
+                countHint, parsePage, affinity, cancellationToken, noValues).ConfigureAwait(false);
             cursor = result.Cursor;
             var page = result.Page;
 
             foreach (var item in page)
             {
-                cancellationToken.ThrowIfCancellationRequested();
+                CheckCancellation(cancellationToken);
                 yield return item;
             }
         }
         while (cursor != 0);
+    }
+
+    private static ValueTask<(ulong Cursor, T[] Page)> ReadPageAsync<T>(
+        RespireClient client, string operation, Verb verb, RespireValue key, ulong cursor,
+        string? match, int countHint, ScanPageParser<T> parsePage, ReadAffinity affinity,
+        CancellationToken cancellationToken, bool noValues)
+    {
+        var owner = DispatchResponseSource<(ulong Cursor, T[] Page)>.Start();
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var args = Arguments(key, cursor, match, countHint, noValues);
+            return owner.Attach(client.ConvertCursorPageAsync(operation, new CmdN(verb, args), affinity,
+                cancellationToken, (Operation: operation, Parser: parsePage),
+                static ((string Operation, ScanPageParser<T> Parser) state, in RespValue reply) =>
+                {
+                    var elements = ParsePage(in reply, state.Operation, out var nextCursor);
+                    return (Cursor: nextCursor, Page: state.Parser(in elements[1]));
+                }, owner.Observation));
+        }
+        catch (Exception error)
+        {
+            owner.Fail(error);
+            throw;
+        }
+    }
+
+    // Iterator cancellation can happen after the page owner has completed, between yielded items.
+    internal static void CheckCancellation(CancellationToken cancellationToken)
+    {
+        try { cancellationToken.ThrowIfCancellationRequested(); }
+        catch (Exception error)
+        {
+            ErrorObservation.FinishFinal(default, error);
+            throw;
+        }
     }
 
     internal static ReadOnlySpan<RespValue> ParsePage(in RespValue reply, string operation, out ulong cursor)
@@ -55,6 +92,7 @@ internal static class CollectionScan
             throw new RespireProtocolException($"{operation} must return an unsigned cursor and an item array.");
         var parts = reply.AsArray();
         if (parts.Length != 2
+            || parts[1].Type != RespDataType.Array
             || !ulong.TryParse(parts[0].AsString(), NumberStyles.None, CultureInfo.InvariantCulture, out cursor))
             throw new RespireProtocolException($"{operation} must return an unsigned cursor and an item array.");
         return parts;

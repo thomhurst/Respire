@@ -8,20 +8,27 @@ namespace Respire;
 
 internal sealed partial class KeyCommands
 {
-    private sealed class ScanRecovery
+    private sealed class ScanRecovery(RespireTelemetry.ErrorObservation observation)
     {
         internal int Rejections;
         internal ClusterRouter.DiscoveryRound? Discovery;
         internal ClusterScanCapabilityCache.ProbeRound Capabilities { get; } = new();
-        internal RespireTelemetry.ErrorObservation Observation { get; } = RespireTelemetry.ErrorObservation.Rent(force: true);
+        internal RespireTelemetry.ErrorObservation Observation { get; } = observation;
     }
 
-    public async ValueTask<RespireClusterScanPage> ScanClusterPageAsync(
+    public ValueTask<RespireClusterScanPage> ScanClusterPageAsync(
         RespireClusterScanCursor cursor, string? match = null, RespireKeyType? type = null,
         int countHint = 250, CancellationToken cancellationToken = default)
+        => DispatchResponseSource<RespireClusterScanPage>.Run(
+            (Commands: this, Cursor: cursor, Match: match, Type: type, Count: countHint, Token: cancellationToken),
+            static (state, observation) => state.Commands.ScanClusterPageBorrowedAsync(
+                state.Cursor, state.Match, state.Type, state.Count, state.Token, observation));
+
+    private async ValueTask<RespireClusterScanPage> ScanClusterPageBorrowedAsync(
+        RespireClusterScanCursor cursor, string? match, RespireKeyType? type,
+        int countHint, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
-        var recovery = new ScanRecovery();
-        using var observation = recovery.Observation;
+        var recovery = new ScanRecovery(observation);
         try
         {
             while (true)
@@ -46,7 +53,6 @@ internal sealed partial class KeyCommands
             // from INFO/SCAN after successful selection do not invalidate discovery telemetry.
             if (recovery.Discovery is { } discovery)
                 discovery.RecordCommandFailure(error, discovery.HasPendingFailure, cancellationToken);
-            observation.Final(error);
             throw;
         }
         finally { recovery.Discovery?.Finish(); }

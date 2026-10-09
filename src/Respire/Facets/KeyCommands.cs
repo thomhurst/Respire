@@ -507,14 +507,21 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
         int countHint = 250,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(countHint);
-        var typeToken = FormatKeyType(type);
-
-        // A key-prefixed view scans inside its prefix and returns keys with the prefix stripped,
-        // so results round-trip through the same view's commands. The prefix is glob-escaped —
-        // a prefix like "tenant:*:" must match itself literally, never act as a wildcard.
+        string? typeToken;
+        RespireValue? effectiveMatch;
         var prefix = client.KeyPrefix;
-        var effectiveMatch = ScanMatch(prefix, match);
+        try
+        {
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(countHint);
+            typeToken = FormatKeyType(type);
+            // A prefixed scan matches the literal prefix and returns keys that round-trip through this view.
+            effectiveMatch = ScanMatch(prefix, match);
+        }
+        catch (Exception error)
+        {
+            ErrorObservation.FinishFinal(default, error);
+            throw;
+        }
 
         if (client.Core.Cluster is not null)
         {
@@ -522,6 +529,7 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
             var migrationDelayMs = 50;
             do
             {
+                CollectionScan.CheckCancellation(cancellationToken);
                 var page = await ScanClusterPageAsync(checkpoint, match, type, countHint, cancellationToken).ConfigureAwait(false);
                 foreach (var key in page.Keys) yield return key;
                 checkpoint = page.Cursor;
@@ -551,6 +559,7 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
             var affinity = new ReadAffinity();
             do
             {
+                CollectionScan.CheckCancellation(token);
                 var args = (effectiveMatch, typeToken) switch
                 {
                     (null, null) => new RespireValue[] { cursor, "COUNT", countHint },
@@ -562,7 +571,7 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
                 var result = await client.ConvertCursorPageAsync("SCAN", command, affinity, token, prefix,
                     static (KeyPrefix? prefix, in RespValue reply) =>
                     {
-                        var elements = reply.AsArray();
+                        var elements = CollectionScan.ParsePage(in reply, "SCAN", out _);
                         string[] page;
                         int pageCount;
                         if (prefix is null)

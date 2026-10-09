@@ -248,10 +248,10 @@ public sealed partial class RespireClient
 
     internal ValueTask<TResult> ConvertCursorPageAsync<TCommand, TState, TResult>(
         string operation, TCommand command, ReadAffinity affinity, CancellationToken cancellationToken,
-        TState state, ResponseConverter<TState, TResult> converter)
+        TState state, ResponseConverter<TState, TResult> converter, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
         => ConvertObservedResponseAsync(operation, command, cancellationToken, state, converter, false,
-            _readFrom != RespireReadFrom.Primary && command.ReadKind == ReadCommandKind.CursorRead ? affinity : null);
+            _readFrom != RespireReadFrom.Primary && command.ReadKind == ReadCommandKind.CursorRead ? affinity : null, observation);
 
     internal ValueTask<TResult> ConvertBlockingResponseAsync<TCommand, TState, TResult>(
         string operation, TCommand command, CancellationToken cancellationToken,
