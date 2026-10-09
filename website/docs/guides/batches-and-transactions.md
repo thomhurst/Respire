@@ -61,6 +61,12 @@ foreach (var failure in result.Failures)
 
 `result.ThrowIfAnyFailed()` remains available when inspection code later chooses to rethrow.
 
+On an idle standalone connection, a batch that fits `MaxInflightCommands` is admitted together
+and sent in one flush. Socket backpressure can require multiple writes to finish that flush.
+When capacity is already occupied, the batch exceeds the ring capacity, or connection maintenance
+holds admission, commands wait for admission in queue order and may use multiple flushes.
+Batch completion reuses pooled response awaitables instead of allocating a task for every command.
+
 ## The same facets as the client
 
 Batches and transactions expose the client's facets — `Strings`, `Keys`, `Hashes`, `Lists`, `Sets`, `SortedSets`, `Bitmaps`, `HyperLogLog`, `Geo`, `Scripts`, `Functions`, and the non-blocking `Streams` subset. Except for `Scripts`, commands have matching names minus the `Async` suffix and the same parameter shapes. The missing suffix signals that each call only queues work. Deferred scripts use `Evaluate` rather than mirroring the client's `ExecuteAsync` variants. The return type is `RespirePending<T>` instead of `ValueTask<T>`, and there is no `CancellationToken` because `ExecuteAsync` / `CommitAsync` owns cancellation.

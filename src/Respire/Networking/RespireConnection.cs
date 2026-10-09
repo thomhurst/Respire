@@ -970,12 +970,68 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         string? commandName = null,
         bool pinToConnection = false,
         string? preferredZone = null,
-        RespireTelemetry.ErrorObservation observation = default, CommandDeadline commandDeadline = default)
+        RespireTelemetry.ErrorObservation observation = default, CommandDeadline commandDeadline = default,
+        bool deferFlush = false)
         where TCommand : struct, IRespCommand
         => SendCoreAsync(
             in command, discardRepliesBefore: 0, throwOnError: false, cancellationToken,
             commandName, armCommandDeadline, pinToConnection: pinToConnection,
-            streamingRoute: DedicatedStreamRoute.None, preferredZone: preferredZone, observation: observation, commandDeadline: commandDeadline);
+            streamingRoute: DedicatedStreamRoute.None, preferredZone: preferredZone, observation: observation, commandDeadline: commandDeadline,
+            deferFlush: deferFlush);
+
+    internal interface IBatchCommand
+    {
+        ValueTask<RespValue> StartSend(RespireConnection connection, CancellationToken cancellationToken,
+            RespireTelemetry.ErrorObservation observation, bool deferFlush);
+    }
+
+    // A default Lock.Scope is not disposable on the net8.0 polyfill. Own only gates
+    // entered here; batch admission already holds its outer gate on this thread.
+    private readonly struct WriteGateScope : IDisposable
+    {
+        private readonly Lock? _ownedGate;
+
+        internal WriteGateScope(Lock gate)
+        {
+            if (gate.IsHeldByCurrentThread) _ownedGate = null;
+            else
+            {
+                gate.Enter();
+                _ownedGate = gate;
+            }
+        }
+
+        public void Dispose() => _ownedGate?.Exit();
+    }
+
+    /// <summary>Admits a fitting pipeline under one gate before waking the persistent sender.</summary>
+    internal bool TryEnqueueMany<TCommand>(IReadOnlyList<TCommand> commands,
+        ValueTask<RespValue>[] sends, RespireTelemetry.ErrorObservation[] observations,
+        CancellationToken cancellationToken) where TCommand : IBatchCommand
+    {
+        var startedBatch = false;
+        lock (_writeGate)
+        {
+            // Capacity and maintenance fences need ordered asynchronous admission instead.
+            if (_dead || _retired || _streamingActive || _credentialRenewalPending
+                || !_inflight.HasCapacity(commands.Count)) return false;
+            startedBatch = _activeBuffer.Count == 0 && _inflight.Count == 0;
+            for (var index = 0; index < commands.Count; index++)
+            {
+                try
+                {
+                    sends[index] = commands[index].StartSend(this, cancellationToken, observations[index], deferFlush: true);
+                }
+                catch (Exception error)
+                {
+                    // A serialization/admission failure must not suppress other commands.
+                    sends[index] = ValueTask.FromException<RespValue>(error);
+                }
+            }
+        }
+        ScheduleFlush(startedBatch);
+        return true;
+    }
 
     /// <summary>Waits for admission on this exact connection, then returns the separately awaitable reply.
     /// Exclusive pipelines use this boundary to retain order across capacity and credential-renewal waits.</summary>
@@ -983,22 +1039,44 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
     internal async ValueTask<ValueTask<RespValue>> EnqueuePinnedAsync<TCommand>(
-        TCommand command, CancellationToken cancellationToken, string commandName)
+        TCommand command, CancellationToken cancellationToken, string commandName,
+        RespireTelemetry.ErrorObservation observation = default, bool pinToConnection = true,
+        CommandDeadline deadline = default)
         where TCommand : struct, IRespCommand
     {
         if (cancellationToken.IsCancellationRequested)
             throw new RespireCommandNotSubmittedException(new OperationCanceledException(cancellationToken));
         if (command is IStreamingRespCommand)
             throw new NotSupportedException("Ordered admission does not support streaming command payloads.");
-        var deadline = CommandDeadline.After(_commandTimeoutMilliseconds);
+        if (!deadline.IsSet) deadline = CommandDeadline.After(_commandTimeoutMilliseconds);
         var source = _sourcePool.Rent(throwOnError: false, commandName);
+        source.ErrorAttempts = observation.Attempts;
         bool enqueued;
         bool startedBatch;
         try { enqueued = TryEnqueue(in command, source, deadline, out startedBatch); }
+        catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, deadline, out var target, out var rerouted, preferredZone: null))
+        {
+            ReclaimUnpublished(source);
+            observation.Handled(error);
+            return await target.EnqueuePinnedAsync(command, cancellationToken, commandName, observation,
+                pinToConnection, rerouted).ConfigureAwait(false);
+        }
         catch { ReclaimUnpublished(source); throw; }
         if (!enqueued)
-            startedBatch = await WaitForInflightCapacityAsync(command, source, discardRepliesBefore: 0,
-                cancellationToken, commandDeadline: deadline).ConfigureAwait(false);
+        {
+            try
+            {
+                startedBatch = await WaitForInflightCapacityAsync(command, source, discardRepliesBefore: 0,
+                    cancellationToken, commandDeadline: deadline).ConfigureAwait(false);
+            }
+            catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, deadline, out var target, out var rerouted, preferredZone: null))
+            {
+                // The capacity wait already reclaimed its unpublished source.
+                observation.Handled(error);
+                return await target.EnqueuePinnedAsync(command, cancellationToken, commandName, observation,
+                    pinToConnection, rerouted).ConfigureAwait(false);
+            }
+        }
         source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
         ScheduleFlush(startedBatch);
         return ObserveScriptingReply(source.Task, in command, commandName, cancellationToken, deadline);
@@ -1613,7 +1691,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         bool allowStreamingConnectionReroute = true,
         DedicatedStreamRoute streamingRoute = default,
         string? preferredZone = null, RespireTelemetry.ErrorObservation observation = default, int errorAttempts = 0,
-        CommandWriteObservation? writeObservation = null)
+        CommandWriteObservation? writeObservation = null, bool deferFlush = false)
         where TCommand : struct, IRespCommand
     {
         if (!commandDeadline.IsSet && armCommandDeadline) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
@@ -1654,7 +1732,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         if (enqueued)
         {
             source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
-            ScheduleFlush(startedBatch);
+            if (!deferFlush) ScheduleFlush(startedBatch);
             return ObserveScriptingReply(source.Task, in command, commandName, cancellationToken, commandDeadline);
         }
 
@@ -1884,7 +1962,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             writer.Complete();
             var frame = scratch.WrittenMemory.Span;
 
-            lock (_writeGate)
+            using (new WriteGateScope(_writeGate))
             {
                 ThrowIfRetired(IsMaintenanceDrainBarrier<TCommand>());
                 if (_dead)
@@ -1969,7 +2047,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     {
         startedBatch = false;
         writeTask = null;
-        lock (_writeGate)
+        using (new WriteGateScope(_writeGate))
         {
             ThrowIfRetired(IsMaintenanceDrainBarrier<TCommand>());
             if (_dead)
@@ -2048,6 +2126,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         // Only the persistent FlushLoopAsync sender calls this method, including TLS writes.
         Volatile.Write(ref _flushProgress.SentBytes, _flushProgress.SentBytes + bytes);
         Volatile.Write(ref _flushProgress.LastWriteTimestamp, Environment.TickCount64);
+        WriteCompletedForTesting?.Invoke(bytes);
         if (Volatile.Read(ref _flushProgress.GatheredWriteDeadlineTimestamp) != 0)
         {
             // Copied sends ahead of queued borrowed memory also advance the ownership watchdog.
@@ -2059,6 +2138,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             }
         }
     }
+
+    // Count completed transport writes, rather than inferring send boundaries from TCP reads.
+    internal Action<int>? WriteCompletedForTesting { get; set; }
 
     /// <summary>Captures the sole outstanding frame on an exclusively rented connection.</summary>
     internal RespireTimeoutDiagnostics CaptureDedicatedTimeoutDiagnostics()
