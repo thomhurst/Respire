@@ -75,6 +75,18 @@ public sealed class RespirePending<T> : IDispatchObservation
         finally { ExitObservationGate(); }
     }
 
+    void IDispatchObservation.Retry(long generation)
+    {
+        EnterObservationGate();
+        try
+        {
+            if ((Volatile.Read(ref _state) & ObservationClosed) != 0) return;
+            if (_failure is RetryObservation retry) retry.Owner.RecordRetry();
+            else if (_errorAttempts < int.MaxValue) _errorAttempts++;
+        }
+        finally { ExitObservationGate(); }
+    }
+
     bool IDispatchObservation.Handled(long generation, Exception error)
     {
         ErrorObservation.Borrower borrower;
@@ -159,6 +171,7 @@ public sealed class RespirePending<T> : IDispatchObservation
             else _failure = error;
         }
         finally { ExitObservationGate(); }
+        // Execution owns terminal transitions and calls ReportError only after Fail returns.
         SetStatus(RespirePendingStatus.Faulted);
     }
 

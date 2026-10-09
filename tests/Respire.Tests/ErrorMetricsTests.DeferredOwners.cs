@@ -11,6 +11,49 @@ public partial class ErrorMetricsTests
 {
     [Test]
     [MatrixDataSource]
+    public async Task DeferredObservationRetainsConcurrentRetriesWithoutDuplicateErrors([Matrix(false, true)] bool enabled)
+    {
+        using var configuration = new MetricConfigurationScope(new()
+            { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
+        using var capture = new Capture();
+        var pending = new RespirePending<int>();
+        var observation = pending.Observation;
+        var error = new RespireServerException("WRONGTYPE private-key");
+
+        Parallel.For(0, 64, _ => observation.Retry());
+        await Assert.That(observation.Attempts).IsEqualTo(64);
+        await Assert.That(capture.Items.Count).IsEqualTo(0);
+        await Assert.That(observation.TryHandled(error)).IsTrue();
+        Parallel.For(0, 64, _ => observation.Retry());
+        await Assert.That(observation.Attempts).IsEqualTo(129);
+        await Assert.That(capture.Items.Count).IsEqualTo(enabled ? 1 : 0);
+
+        Parallel.For(0, 128, index =>
+        {
+            if (index % 2 == 0) observation.Retry();
+            else if (!observation.TryHandled(error)) throw new InvalidOperationException();
+        });
+        await Assert.That(observation.Attempts).IsEqualTo(257);
+        await Assert.That(capture.Items.Count).IsEqualTo(enabled ? 65 : 0);
+
+        observation.SetAttempts(int.MaxValue);
+        observation.Retry();
+        await Assert.That(observation.Attempts).IsEqualTo(int.MaxValue);
+        pending.Fail(error);
+        await Assert.That(pending.ReportError()).IsTrue();
+        observation.Retry();
+        await Assert.That(observation.Attempts).IsEqualTo(int.MaxValue);
+        await Assert.That(capture.Items.Count).IsEqualTo(enabled ? 66 : 0);
+        if (enabled)
+        {
+            var measurements = capture.Items.ToArray();
+            await Assert.That(measurements[0].Tags["redis.client.operation.retry_attempts"]).IsEqualTo(64);
+            await Assert.That(measurements[^1].Tags["redis.client.operation.retry_attempts"]).IsEqualTo(int.MaxValue);
+        }
+    }
+
+    [Test]
+    [MatrixDataSource]
     public async Task DeferredObservationIgnoresExternalPendingMonitor([Matrix(false, true)] bool enabled)
     {
         using var configuration = new MetricConfigurationScope(new()
