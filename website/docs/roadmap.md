@@ -83,8 +83,9 @@ Server and protocol requirements vary by feature; each linked guide describes it
 The [StackExchange.Redis migration boundary](./guides/stackexchange-interop)
 provides binary-safe value conversion, a native raw-command bridge, and the limited
 multiplexer/database/batch adapter required by the official distributed cache and
-DataProtection packages. It also supports the hash/list command facet inventoried
-for Hangfire.Redis.StackExchange, including deferred batch reads and writes.
+DataProtection packages. It also supports the hash/list/key/string/set/sorted-set
+command facets inventoried for Hangfire.Redis.StackExchange, including deferred
+batch reads/writes and cursor-based scans.
 The adapter also provides endpoint discovery, physical server INFO/TIME/ROLE,
 atomic token locks, and literal callback subscriptions used by RedisStorage.
 General StackExchange.Redis interface parity and SignalR/Hangfire

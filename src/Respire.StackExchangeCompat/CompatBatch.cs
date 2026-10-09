@@ -15,7 +15,9 @@ internal sealed class CompatBatch(CompatDatabase database) : CompatDatabaseAsync
     {
         if (command.Name is not ("HGET" or "HMGET" or "HGETALL" or "HLEN" or "HSET" or "HSETNX" or "HDEL"
             or "LLEN" or "LINDEX" or "LRANGE" or "LPUSH" or "LPUSHX" or "RPUSH" or "RPUSHX"
-            or "LREM" or "LTRIM" or "RPOPLPUSH" or "PEXPIRE" or "PEXPIREAT" or "PERSIST"))
+            or "LREM" or "LTRIM" or "RPOPLPUSH" or "PEXPIRE" or "PEXPIREAT" or "PERSIST"
+            or "EXISTS" or "PTTL" or "GET" or "MGET" or "INCRBY" or "DECRBY" or "SADD" or "SREM" or "SMEMBERS" or "SCARD"
+            or "ZADD" or "ZREM" or "ZCOUNT" or "ZRANGE" or "ZREVRANGE" or "ZRANGEBYSCORE" or "ZREVRANGEBYSCORE" or "ZSCAN"))
             throw Compatibility.Unsupported($"IBatch {command.Name}");
         if ((flags & ~CommandFlags.DemandMaster) != 0) throw Compatibility.Unsupported($"IBatch CommandFlags {flags}");
         var queued = new QueuedCommand<T>(command, arguments, convert, DatabaseOwner.Owner.QueuedShutdown);

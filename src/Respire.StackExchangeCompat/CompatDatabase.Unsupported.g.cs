@@ -35,14 +35,8 @@ partial class CompatDatabase
     public global::System.Boolean KeyCopy(global::StackExchange.Redis.RedisKey @sourceKey, global::StackExchange.Redis.RedisKey @destinationKey, global::System.Int32 @destinationDatabase, global::System.Boolean @replace, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("KeyCopy");
     /// <inheritdoc />
-    public global::System.Boolean KeyExists(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("KeyExists");
-    /// <inheritdoc />
     public global::System.Boolean KeyMove(global::StackExchange.Redis.RedisKey @key, global::System.Int32 @database, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("KeyMove");
-    /// <inheritdoc />
-    public global::System.Boolean KeyPersist(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("KeyPersist");
     /// <inheritdoc />
     public global::System.Boolean KeyRename(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisKey @newKey, global::StackExchange.Redis.When @when, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("KeyRename");
@@ -50,29 +44,11 @@ partial class CompatDatabase
     public global::System.Boolean KeyTouch(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("KeyTouch");
     /// <inheritdoc />
-    public global::System.Boolean SetAdd(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @value, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SetAdd");
-    /// <inheritdoc />
     public global::System.Boolean SetContains(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @value, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SetContains");
     /// <inheritdoc />
     public global::System.Boolean SetMove(global::StackExchange.Redis.RedisKey @source, global::StackExchange.Redis.RedisKey @destination, global::StackExchange.Redis.RedisValue @value, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SetMove");
-    /// <inheritdoc />
-    public global::System.Boolean SetRemove(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @value, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SetRemove");
-    /// <inheritdoc />
-    public global::System.Boolean SortedSetAdd(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @member, global::System.Double @score, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SortedSetAdd");
-    /// <inheritdoc />
-    public global::System.Boolean SortedSetAdd(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @member, global::System.Double @score, global::StackExchange.Redis.SortedSetWhen @when, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SortedSetAdd");
-    /// <inheritdoc />
-    public global::System.Boolean SortedSetAdd(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @member, global::System.Double @score, global::StackExchange.Redis.When @when, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SortedSetAdd");
-    /// <inheritdoc />
-    public global::System.Boolean SortedSetRemove(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @member, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SortedSetRemove");
     /// <inheritdoc />
     public global::System.Boolean SortedSetUpdate(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @member, global::System.Double @score, global::StackExchange.Redis.SortedSetWhen @when, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SortedSetUpdate");
@@ -188,9 +164,6 @@ partial class CompatDatabase
     public global::System.Int64 HyperLogLogLength(global::StackExchange.Redis.RedisKey[] @keys, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("HyperLogLogLength");
     /// <inheritdoc />
-    public global::System.Int64 KeyExists(global::StackExchange.Redis.RedisKey[] @keys, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("KeyExists");
-    /// <inheritdoc />
     public global::System.Int64 KeyTouch(global::StackExchange.Redis.RedisKey[] @keys, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("KeyTouch");
     /// <inheritdoc />
@@ -202,9 +175,6 @@ partial class CompatDatabase
     /// <inheritdoc />
     public global::System.Int64 ListPosition(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @element, global::System.Int64 @rank, global::System.Int64 @maxLength, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("ListPosition");
-    /// <inheritdoc />
-    public global::System.Int64 SetAdd(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue[] @values, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SetAdd");
     /// <inheritdoc />
     public global::System.Int64 SetCombineAndStore(global::StackExchange.Redis.SetOperation @operation, global::StackExchange.Redis.RedisKey @destination, global::StackExchange.Redis.RedisKey @first, global::StackExchange.Redis.RedisKey @second, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SetCombineAndStore");
@@ -218,23 +188,8 @@ partial class CompatDatabase
     public global::System.Int64 SetIntersectionLength(global::StackExchange.Redis.RedisKey[] @keys, global::System.Int64 @limit, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SetIntersectionLength");
     /// <inheritdoc />
-    public global::System.Int64 SetLength(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SetLength");
-    /// <inheritdoc />
-    public global::System.Int64 SetRemove(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue[] @values, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SetRemove");
-    /// <inheritdoc />
     public global::System.Int64 SortAndStore(global::StackExchange.Redis.RedisKey @destination, global::StackExchange.Redis.RedisKey @key, global::System.Int64 @skip, global::System.Int64 @take, global::StackExchange.Redis.Order @order, global::StackExchange.Redis.SortType @sortType, global::StackExchange.Redis.RedisValue @by, global::StackExchange.Redis.RedisValue[] @get, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SortAndStore");
-    /// <inheritdoc />
-    public global::System.Int64 SortedSetAdd(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.SortedSetEntry[] @values, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SortedSetAdd");
-    /// <inheritdoc />
-    public global::System.Int64 SortedSetAdd(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.SortedSetEntry[] @values, global::StackExchange.Redis.SortedSetWhen @when, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SortedSetAdd");
-    /// <inheritdoc />
-    public global::System.Int64 SortedSetAdd(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.SortedSetEntry[] @values, global::StackExchange.Redis.When @when, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SortedSetAdd");
     /// <inheritdoc />
     public global::System.Int64 SortedSetCombineAndStore(global::StackExchange.Redis.SetOperation @operation, global::StackExchange.Redis.RedisKey @destination, global::StackExchange.Redis.RedisKey @first, global::StackExchange.Redis.RedisKey @second, global::StackExchange.Redis.Aggregate @aggregate, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SortedSetCombineAndStore");
@@ -245,17 +200,11 @@ partial class CompatDatabase
     public global::System.Int64 SortedSetIntersectionLength(global::StackExchange.Redis.RedisKey[] @keys, global::System.Int64 @limit, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SortedSetIntersectionLength");
     /// <inheritdoc />
-    public global::System.Int64 SortedSetLength(global::StackExchange.Redis.RedisKey @key, global::System.Double @min, global::System.Double @max, global::StackExchange.Redis.Exclude @exclude, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SortedSetLength");
-    /// <inheritdoc />
     public global::System.Int64 SortedSetLengthByValue(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @min, global::StackExchange.Redis.RedisValue @max, global::StackExchange.Redis.Exclude @exclude, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SortedSetLengthByValue");
     /// <inheritdoc />
     public global::System.Int64 SortedSetRangeAndStore(global::StackExchange.Redis.RedisKey @sourceKey, global::StackExchange.Redis.RedisKey @destinationKey, global::StackExchange.Redis.RedisValue @start, global::StackExchange.Redis.RedisValue @stop, global::StackExchange.Redis.SortedSetOrder @sortedSetOrder, global::StackExchange.Redis.Exclude @exclude, global::StackExchange.Redis.Order @order, global::System.Int64 @skip, global::System.Nullable<global::System.Int64> @take, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SortedSetRangeAndStore");
-    /// <inheritdoc />
-    public global::System.Int64 SortedSetRemove(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue[] @members, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SortedSetRemove");
     /// <inheritdoc />
     public global::System.Int64 SortedSetRemoveRangeByRank(global::StackExchange.Redis.RedisKey @key, global::System.Int64 @start, global::System.Int64 @stop, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SortedSetRemoveRangeByRank");
@@ -319,12 +268,6 @@ partial class CompatDatabase
     /// <inheritdoc />
     public global::System.Int64 StringBitPosition(global::StackExchange.Redis.RedisKey @key, global::System.Boolean @bit, global::System.Int64 @start, global::System.Int64 @end, global::StackExchange.Redis.StringIndexType @indexType, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("StringBitPosition");
-    /// <inheritdoc />
-    public global::System.Int64 StringDecrement(global::StackExchange.Redis.RedisKey @key, global::System.Int64 @value, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("StringDecrement");
-    /// <inheritdoc />
-    public global::System.Int64 StringIncrement(global::StackExchange.Redis.RedisKey @key, global::System.Int64 @value, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("StringIncrement");
     /// <inheritdoc />
     public global::System.Int64 StringLength(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("StringLength");
@@ -569,9 +512,6 @@ partial class CompatDatabase
     public global::StackExchange.Redis.RedisValue StreamAdd(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @streamField, global::StackExchange.Redis.RedisValue @streamValue, global::System.Nullable<global::StackExchange.Redis.RedisValue> @messageId, global::System.Nullable<global::System.Int64> @maxLength, global::System.Boolean @useApproximateMaxLength, global::System.Nullable<global::System.Int64> @limit, global::StackExchange.Redis.StreamTrimMode @trimMode, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("StreamAdd");
     /// <inheritdoc />
-    public global::StackExchange.Redis.RedisValue StringGet(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("StringGet");
-    /// <inheritdoc />
     public global::StackExchange.Redis.RedisValue StringGetDelete(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("StringGetDelete");
     /// <inheritdoc />
@@ -641,9 +581,6 @@ partial class CompatDatabase
     public global::StackExchange.Redis.RedisValue[] SetCombine(global::StackExchange.Redis.SetOperation @operation, global::StackExchange.Redis.RedisKey[] @keys, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SetCombine");
     /// <inheritdoc />
-    public global::StackExchange.Redis.RedisValue[] SetMembers(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SetMembers");
-    /// <inheritdoc />
     public global::StackExchange.Redis.RedisValue[] SetPop(global::StackExchange.Redis.RedisKey @key, global::System.Int64 @count, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SetPop");
     /// <inheritdoc />
@@ -659,12 +596,6 @@ partial class CompatDatabase
     public global::StackExchange.Redis.RedisValue[] SortedSetRandomMembers(global::StackExchange.Redis.RedisKey @key, global::System.Int64 @count, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SortedSetRandomMembers");
     /// <inheritdoc />
-    public global::StackExchange.Redis.RedisValue[] SortedSetRangeByRank(global::StackExchange.Redis.RedisKey @key, global::System.Int64 @start, global::System.Int64 @stop, global::StackExchange.Redis.Order @order, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SortedSetRangeByRank");
-    /// <inheritdoc />
-    public global::StackExchange.Redis.RedisValue[] SortedSetRangeByScore(global::StackExchange.Redis.RedisKey @key, global::System.Double @start, global::System.Double @stop, global::StackExchange.Redis.Exclude @exclude, global::StackExchange.Redis.Order @order, global::System.Int64 @skip, global::System.Int64 @take, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SortedSetRangeByScore");
-    /// <inheritdoc />
     public global::StackExchange.Redis.RedisValue[] SortedSetRangeByValue(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @min, global::StackExchange.Redis.RedisValue @max, global::StackExchange.Redis.Exclude @exclude, global::System.Int64 @skip, global::System.Int64 @take, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SortedSetRangeByValue");
     /// <inheritdoc />
@@ -673,9 +604,6 @@ partial class CompatDatabase
     /// <inheritdoc />
     public global::StackExchange.Redis.RedisValue[] StreamClaimIdsOnly(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @consumerGroup, global::StackExchange.Redis.RedisValue @claimingConsumer, global::System.Int64 @minIdleTimeInMs, global::StackExchange.Redis.RedisValue[] @messageIds, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("StreamClaimIdsOnly");
-    /// <inheritdoc />
-    public global::StackExchange.Redis.RedisValue[] StringGet(global::StackExchange.Redis.RedisKey[] @keys, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("StringGet");
     /// <inheritdoc />
     public global::StackExchange.Redis.RedisValue[] VectorSetRandomMembers(global::StackExchange.Redis.RedisKey @key, global::System.Int64 @count, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("VectorSetRandomMembers");
@@ -700,12 +628,6 @@ partial class CompatDatabase
     /// <inheritdoc />
     public global::StackExchange.Redis.SortedSetEntry[] SortedSetRandomMembersWithScores(global::StackExchange.Redis.RedisKey @key, global::System.Int64 @count, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SortedSetRandomMembersWithScores");
-    /// <inheritdoc />
-    public global::StackExchange.Redis.SortedSetEntry[] SortedSetRangeByRankWithScores(global::StackExchange.Redis.RedisKey @key, global::System.Int64 @start, global::System.Int64 @stop, global::StackExchange.Redis.Order @order, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SortedSetRangeByRankWithScores");
-    /// <inheritdoc />
-    public global::StackExchange.Redis.SortedSetEntry[] SortedSetRangeByScoreWithScores(global::StackExchange.Redis.RedisKey @key, global::System.Double @start, global::System.Double @stop, global::StackExchange.Redis.Exclude @exclude, global::StackExchange.Redis.Order @order, global::System.Int64 @skip, global::System.Int64 @take, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SortedSetRangeByScoreWithScores");
     /// <inheritdoc />
     public global::StackExchange.Redis.SortedSetPopResult SortedSetPop(global::StackExchange.Redis.RedisKey[] @keys, global::System.Int64 @count, global::StackExchange.Redis.Order @order, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SortedSetPop");
@@ -785,12 +707,6 @@ partial class CompatDatabase
     public global::System.Collections.Generic.IEnumerable<global::StackExchange.Redis.RedisValue> VectorSetRangeEnumerate(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @start, global::StackExchange.Redis.RedisValue @end, global::System.Int64 @count, global::StackExchange.Redis.Exclude @exclude, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("VectorSetRangeEnumerate");
     /// <inheritdoc />
-    public global::System.Collections.Generic.IEnumerable<global::StackExchange.Redis.SortedSetEntry> SortedSetScan(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @pattern, global::System.Int32 @pageSize, global::System.Int64 @cursor, global::System.Int32 @pageOffset, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SortedSetScan");
-    /// <inheritdoc />
-    public global::System.Collections.Generic.IEnumerable<global::StackExchange.Redis.SortedSetEntry> SortedSetScan(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @pattern, global::System.Int32 @pageSize, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SortedSetScan");
-    /// <inheritdoc />
     public global::System.Nullable<global::StackExchange.Redis.GeoPosition> GeoPosition(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @member, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("GeoPosition");
     /// <inheritdoc />
@@ -838,9 +754,6 @@ partial class CompatDatabase
     /// <inheritdoc />
     public global::System.Nullable<global::System.TimeSpan> KeyIdleTime(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("KeyIdleTime");
-    /// <inheritdoc />
-    public global::System.Nullable<global::System.TimeSpan> KeyTimeToLive(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("KeyTimeToLive");
     /// <inheritdoc />
     public global::System.String GeoHash(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @member, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("GeoHash");
