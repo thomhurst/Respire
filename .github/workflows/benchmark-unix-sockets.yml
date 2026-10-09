@@ -35,7 +35,7 @@ jobs:
           echo "REDIS_CONTAINER=$container_name" >> "$GITHUB_ENV"
           echo "RESPIRE_UNIX_SOCKET=$socket_dir/redis.sock" >> "$GITHUB_ENV"
           docker run --detach --name "$container_name" --network host \
-            --mount "type=bind,source=$socket_dir,target=/sockets" redis:7.4.11-alpine \
+            --mount "type=bind,source=$socket_dir,target=/sockets" mirror.gcr.io/library/redis:7.4.11-alpine \
             redis-server --bind 127.0.0.1 --unixsocket /sockets/redis.sock --unixsocketperm 777
           for attempt in $(seq 1 30); do
             if docker exec "$container_name" redis-cli -s /sockets/redis.sock ping | grep -q PONG; then exit 0; fi

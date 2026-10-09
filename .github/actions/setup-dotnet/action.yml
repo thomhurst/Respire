@@ -1,9 +1,14 @@
 name: Set up .NET
-description: Installs the .NET SDKs the repository builds with and restores the NuGet package cache.
+description: >-
+  Routes Docker Hub pulls through a mirror, installs the .NET SDKs the repository builds with and
+  restores the NuGet package cache.
 
 runs:
   using: composite
   steps:
+    # Most jobs that set up .NET also pull Redis or Valkey images through Testcontainers or Aspire.
+    - uses: ./.github/actions/docker-hub-mirror
+
     - name: Setup .NET SDKs
       uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
       with:

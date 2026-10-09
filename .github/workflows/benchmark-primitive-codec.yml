@@ -19,7 +19,7 @@ jobs:
     timeout-minutes: 20
     services:
       redis:
-        image: redis:8.10
+        image: mirror.gcr.io/library/redis:8.10
         ports: ['6379:6379']
         options: >-
           --health-cmd "redis-cli ping"

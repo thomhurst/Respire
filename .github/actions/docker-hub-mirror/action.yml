@@ -1,0 +1,30 @@
+name: Use Docker Hub mirror
+description: >-
+  Routes Docker Hub pulls on GitHub-hosted Linux runners through mirror.gcr.io, so Testcontainers,
+  Aspire and docker run do not hit the unauthenticated Docker Hub pull rate limit shared by the
+  runner pool. The daemon falls back to Docker Hub when the mirror does not hold an image.
+
+runs:
+  using: composite
+  steps:
+    # registry-mirrors is a live-reloadable daemon option: SIGHUP applies it without restarting
+    # dockerd, so service containers that the job already started keep running.
+    - name: Configure Docker Hub mirror
+      if: runner.os == 'Linux' && runner.environment == 'github-hosted'
+      shell: bash
+      run: |
+        config=/etc/docker/daemon.json
+        current='{}'
+        if [ -s "$config" ]; then current=$(sudo cat "$config"); fi
+        echo "$current" \
+          | jq '."registry-mirrors" = ((."registry-mirrors" // []) + ["https://mirror.gcr.io"] | unique)' \
+          | sudo tee "$config" > /dev/null
+        sudo kill -HUP "$(pidof dockerd)"
+        for _ in $(seq 1 10); do
+          if docker info --format '{{json .RegistryConfig.Mirrors}}' | grep -q mirror.gcr.io; then
+            echo "Docker Hub pulls use mirror.gcr.io"
+            exit 0
+          fi
+          sleep 1
+        done
+        echo "::warning::Docker did not report mirror.gcr.io; pulls go straight to Docker Hub"

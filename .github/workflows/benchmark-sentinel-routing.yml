@@ -42,7 +42,7 @@ jobs:
         baseline: ${{ fromJSON(needs.select.outputs.modes) }}
     services:
       redis:
-        image: redis:8.10@sha256:2c2dff791878316e3b083188be0d578423b24813cdda5de0e80ea4f7b3e6bfd6
+        image: mirror.gcr.io/library/redis:8.10@sha256:2c2dff791878316e3b083188be0d578423b24813cdda5de0e80ea4f7b3e6bfd6
         ports: [6379:6379, 26379:26379]
         options: >-
           --health-cmd "redis-cli ping"
