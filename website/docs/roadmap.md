@@ -26,7 +26,8 @@ Server and protocol requirements vary by feature; each linked guide describes it
   and [availability-zone affinity](fundamentals/connections.md#availability-zone-affinity).
 - [Reconnect policies](guides/reconnect-policy.md), automatic pub/sub resubscription,
   [maintenance notifications and handoffs](fundamentals/connections.md#maintenance-notifications),
-  and health-checked [failover groups](guides/failover-groups.md) across deployments.
+  and health-checked [failover groups](guides/failover-groups.md) across deployments, with
+  member-local maintenance handoffs and bounded pauses in health failure counting.
 - [Opt-in circuit breakers](guides/circuit-breakers.md) reject standalone and Cluster immediate,
   batch, and transaction commands during endpoint failures, with independent Cluster data-node
   histories and bounded half-open probes. Sentinel and remaining resilience integration stay

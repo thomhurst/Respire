@@ -289,6 +289,9 @@ public sealed record RespireOptions
     /// <summary>Maximum maintenance window when its completion notification is lost.</summary>
     public TimeSpan MaintenanceWindowTimeout { get; init; } = TimeSpan.FromSeconds(60);
 
+    // Shared by all data transports of one failover candidate, including replacements.
+    internal FailoverMaintenanceWindows? FailoverMaintenance { get; init; }
+
     /// <summary>Timeout for the initial TCP connect (per connection).</summary>
     public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(10);
 
@@ -612,6 +615,7 @@ public sealed record RespireOptions
         => ToTransportConnectionOptions() with
         {
             MaintenanceNotifications = enableMaintenanceNotifications ? MaintenanceNotifications : RespireMaintenanceNotificationMode.Disabled,
+            FailoverMaintenance = enableMaintenanceNotifications ? FailoverMaintenance : null,
             ClientName = ClientName,
             Database = Database,
             RequireClusterDatabaseSupport = UseCluster && Database != 0,

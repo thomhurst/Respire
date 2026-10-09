@@ -3,6 +3,7 @@ using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Respire.Commands;
 using Respire.Internal;
+using Respire.Networking;
 using Respire.Protocol;
 
 namespace Respire;
@@ -230,7 +231,10 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
             {
                 if (candidate is null) throw new ArgumentException("Failover candidates cannot contain null entries.", nameof(candidates));
                 ArgumentNullException.ThrowIfNull(candidate.Options);
-                var snapshot = candidate.Options.ValidateAndSnapshot();
+                var snapshot = candidate.Options.ValidateAndSnapshot() with
+                {
+                    FailoverMaintenance = new FailoverMaintenanceWindows(),
+                };
                 if (snapshot.ReconnectPolicy is { MaxAttempts: not null })
                 {
                     throw new RespireConfigurationException(
@@ -398,6 +402,8 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         var outcome = CircuitOutcome.Ignored;
         try
         {
+            // Maintenance keeps the existing health decision; it cannot establish initial health.
+            if (candidate.IsHealthy && candidate.HasMaintenanceWindow) return;
             if (!candidate.TryAcquireProbe(out permit)) return;
             var observation = owner.Observation;
             cancellationToken.ThrowIfCancellationRequested();
@@ -428,6 +434,9 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
             catch (Exception error)
             {
                 observation.Handled(error);
+                // A push can arrive after this probe starts. Its caller-imposed timeout must
+                // not turn an announced member-local handoff into a deployment failure.
+                if (candidate.IsHealthy && candidate.HasMaintenanceWindow) return;
                 outcome = candidate.MarkFailed(error, _clock.GetUtcNow(), _options, openCircuit: permit.ProbeSlot >= 0);
                 // Start the open period before synchronous observers can delay completion.
                 // Complete clears the permit, so the finally guard remains safe for earlier exceptions.
@@ -689,6 +698,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         private string? _lastErrorType;
 
         public RespireClient Client { get; } = client;
+        public bool HasMaintenanceWindow => Client.Core.Options.FailoverMaintenance?.IsActive == true;
         public string? SentinelPrimaryName { get; } = sentinelPrimaryName;
         public bool IsSentinel => Client.Core.Sentinel is not null;
         /// <summary>Configured standalone endpoint or Cluster seeds; empty for a Sentinel candidate.</summary>

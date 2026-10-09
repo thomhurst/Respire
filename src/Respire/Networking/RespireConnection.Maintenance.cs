@@ -221,6 +221,7 @@ internal sealed partial class RespireConnection
                 Volatile.Write(ref _maintenanceState, state);
             }
             state.Apply(notification, Environment.TickCount64);
+            _maintenanceOptions!.FailoverMaintenance?.Observe(state);
         }
         if (notification.Kind == "MOVING")
         {
