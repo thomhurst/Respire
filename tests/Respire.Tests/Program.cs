@@ -10,7 +10,8 @@ internal static class Program
     public static Task<int> Main(string[] args)
     {
         // Enter probes after module initialization, before the runner changes pool capacity.
-        var probeResult = ConnectionMetricCleanupTests.RunIsolatedQueuedSelectionProbe()
+        var probeResult = StandaloneCircuitAllocationTests.RunIsolatedAllocationProbe()
+            ?? ConnectionMetricCleanupTests.RunIsolatedQueuedSelectionProbe()
             ?? AsyncFlushSignalTests.RunIsolatedAllocationProbe();
         // TUnit 1.72.16 supplies this helper; keep the centrally pinned package and entry point in sync.
         return probeResult is { } exitCode

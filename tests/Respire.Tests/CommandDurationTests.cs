@@ -199,18 +199,31 @@ public class CommandDurationTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task CustomConversionFailureKeepsSuccessfulDuration(bool throwFromListener)
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task CustomConversionFailureKeepsSuccessfulDuration(bool throwFromListener, bool circuitEnabled)
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Command });
         await using var server = new FakeRespServer(":42\r\n"u8.ToArray());
-        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
+            Protocol = RespProtocol.Resp2, ThreadPoolMonitoring = false,
+            CircuitBreaker = circuitEnabled ? new() : null,
+        });
         using var capture = new DurationCapture(throwFromListener);
         var expected = new InvalidOperationException("custom conversion failed");
-        var pending = client.ConvertResponseAsync<Respire.Commands.Cmd1, InvalidOperationException, int>("STRLEN",
-            new Respire.Commands.Cmd1(Respire.Commands.Verbs.StrLen, "key"), default, expected,
-            static (InvalidOperationException error, in RespValue _) => throw error);
+        var pending = client.ConvertResponseAsync<Respire.Commands.Cmd1,
+            (InvalidOperationException Error, DurationCapture Capture), int>("STRLEN",
+            new Respire.Commands.Cmd1(Respire.Commands.Verbs.StrLen, "key"), default, (expected, capture),
+            static ((InvalidOperationException Error, DurationCapture Capture) state, in RespValue _) =>
+            {
+                if (state.Capture.Items.IsEmpty)
+                    throw new InvalidOperationException("Duration must complete before user conversion.");
+                throw state.Error;
+            });
         var actual = await Assert.That(async () => await pending).ThrowsExactly<InvalidOperationException>();
         await Assert.That(actual).IsSameReferenceAs(expected);
         await Assert.That(capture.Items.Single().Tags.ContainsKey("error.type")).IsFalse();

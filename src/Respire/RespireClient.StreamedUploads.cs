@@ -113,10 +113,29 @@ public sealed partial class RespireClient
                     }
                     try
                     {
-                        response = await connection.SendCheckedAsync(in command, cancellationToken, commandName: operation,
-                            commandDeadline: commandDeadline, allowStreamingConnectionReroute: false,
-                            streamingRoute: new DedicatedStreamRoute(core, pool, connection),
-                            observation: observation).ConfigureAwait(false);
+                        var route = new DedicatedStreamRoute(core, pool, connection);
+                        if (core.Circuits is not null)
+                        {
+                            // A handoff can invalidate the rented lease before admission. Retry
+                            // before an open source circuit rejects the replacement's upload.
+                            connection.ThrowIfRetired();
+                            if (!route.IsCurrent()) throw new RespireConnectionRetiredException(connection.Host, connection.Port);
+                        }
+                        var admission = core.Circuits is not null ? AcquireCircuit(connection, cancellationToken) : default;
+                        try
+                        {
+                            response = await connection.SendCheckedAsync(in command, cancellationToken, commandName: operation,
+                                commandDeadline: commandDeadline, allowStreamingConnectionReroute: false,
+                                streamingRoute: route,
+                                observation: observation).ConfigureAwait(false);
+                            admission.Success();
+                        }
+                        catch (Exception error)
+                        {
+                            admission.Failed(error, cancellationToken);
+                            throw;
+                        }
+                        finally { admission.Dispose(); }
                         break;
                     }
                     catch (RespireConnectionRetiredException error) when (attempt < ClusterRouter.RedirectLimit
@@ -153,7 +172,8 @@ public sealed partial class RespireClient
                 telemetry.Complete(core, operation, null, timeoutError ?? ex, connection);
                 if (connection is not null && !returned)
                 {
-                    await pool!.DiscardAsync(connection).ConfigureAwait(false);
+                    if (ex is RespireCircuitOpenException) pool!.Return(connection);
+                    else await pool!.DiscardAsync(connection).ConfigureAwait(false);
                 }
 
                 if (timeoutError is not null) throw timeoutError;

@@ -38,6 +38,7 @@ internal sealed class ClientCore : IAsyncDisposable
         }
     }
     public readonly RespireOptions Options;
+    internal readonly StandaloneCircuitRegistry? Circuits;
     internal readonly HedgedReadBudget? HedgedReads;
     public readonly ILogger? Logger;
     private CorrectionCoordinator? _corrections;
@@ -76,6 +77,8 @@ internal sealed class ClientCore : IAsyncDisposable
     {
         _ownedPools = new(_hubGate);
         Options = options;
+        Circuits = options.CircuitBreaker is { } circuitOptions
+            ? new(circuitOptions, () => Multiplexer.ActiveConnectionEndpoint) : null;
         HedgedReads = options.HedgedReads is { } hedging ? new(hedging.MaximumExtraLoadPercent) : null;
         Logger = options.CreateLogger("Respire.RespireClient");
         var endpoint = options.PrimaryEndpoint;
