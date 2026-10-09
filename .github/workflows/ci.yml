@@ -79,6 +79,29 @@ jobs:
           python -B -m unittest discover -s scripts/benchmarks -p '*Tests.py'
           python scripts/workflows/BenchmarkWorkflowPolicy.py
 
+  observability-sample:
+    name: Prometheus dashboard smoke (${{ matrix.framework }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: [net8.0, net10.0]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-dotnet
+      - name: Export measurements and evaluate pinned dashboard queries
+        shell: pwsh
+        run: >-
+          & samples/Respire.Samples.Observability/Smoke.ps1
+          -Framework '${{ matrix.framework }}'
+          -OutputDirectory '${{ runner.temp }}/observability'
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: observability-${{ matrix.framework }}
+          path: ${{ runner.temp }}/observability
+
   aspire-integration:
     name: Aspire Redis and Valkey integration
     runs-on: ubuntu-latest

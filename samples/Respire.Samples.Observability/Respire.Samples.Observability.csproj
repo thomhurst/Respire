@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <ItemGroup>
+    <ProjectReference Include="../../src/Respire/Respire.csproj" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+    <PackageReference Include="OpenTelemetry.Exporter.Prometheus.AspNetCore" />
+  </ItemGroup>
+</Project>
