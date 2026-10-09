@@ -229,19 +229,34 @@ public sealed partial class RespireClient
         where TCommand : struct, IRespCommand
     {
         var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        ClientSideCacheCoordinator.MutationFence mutationFence = default;
         ValueTask<RespValue> response;
         try
         {
             response = SendCoreAsync(operation, command, cancellationToken, RespireCommandFlags.None,
-                allowReadFrom: true, cursorAffinity: cursorAffinity, observation: observation, observeErrors: false);
+                allowReadFrom: true, cursorAffinity: cursorAffinity, out mutationFence,
+                observation: observation, observeErrors: false, deferMutationCompletion: true);
+            if (mutationFence.IsRequired)
+            {
+                // Conversion decides the logical outcome; a successful raw reply alone
+                // must not retire the caller's fence or suppress failure reinvalidation.
+                var converted = PooledResponseSource<TState, TResult>.Create(response, state, converter,
+                    transferOwnership, observeErrors: false);
+                return CompleteObservedMutationAsync(converted, _core.ClientCache!, mutationFence, observation);
+            }
         }
         catch (Exception error)
         {
+            if (mutationFence.IsRequired)
+            {
+                try { _core.ClientCache!.CompleteMutation(in mutationFence); }
+                catch (Exception) { /* Preserve the dispatch or converter failure. */ }
+            }
             observation.Final(error);
             observation.Dispose();
             throw;
         }
-        // Create owns the lease from this point, including synchronous conversion failures.
+        // Create owns the observation, including synchronous conversion failures.
         return PooledResponseSource<TState, TResult>.Create(response, state, converter, transferOwnership, observation);
     }
 

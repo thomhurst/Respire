@@ -99,6 +99,123 @@ public class StandaloneCircuitDispatchTests
     }
 
     [Test]
+    [Arguments(false, false, false)]
+    [Arguments(false, false, true)]
+    [Arguments(false, true, false)]
+    [Arguments(false, true, true)]
+    [Arguments(true, false, false)]
+    [Arguments(true, false, true)]
+    [Arguments(true, true, false)]
+    [Arguments(true, true, true)]
+    public async Task ConvertedMutationKeepsItsFenceThroughUserConversion(bool observed, bool enabled, bool fails)
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        var errors = 0L;
+        using var errorListener = new MeterListener();
+        errorListener.InstrumentPublished = static (instrument, meter) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "redis.client.errors")
+                meter.EnableMeasurementEvents(instrument);
+        };
+        errorListener.SetMeasurementEventCallback<long>((_, value, _, _) => Interlocked.Add(ref errors, value));
+        errorListener.Start();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => observed && source.Name == "Respire",
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+        };
+        ActivitySource.AddActivityListener(listener);
+        await using var server = Server();
+        await using var client = await RespireClient.ConnectAsync(Options(server) with
+        {
+            Protocol = RespProtocol.Resp3, ClientSideCache = new(),
+            CircuitBreaker = enabled ? Options(server).CircuitBreaker : null,
+        });
+        await client.GetStringAsync("warm");
+        var cache = client.Core.ClientCache!;
+        RespireKey key = "key";
+        var read = cache.BeginRead(in key);
+        var activeDuringConversion = -1;
+        var conversionError = new InvalidOperationException("conversion failed");
+        try
+        {
+            var command = new CatalogCommand(RespireCommands.String.SET, ["key", "new"]);
+            var error = await CaptureConversion();
+            await Assert.That(error).IsSameReferenceAs(fails ? conversionError : null);
+            await Assert.That(activeDuringConversion).IsEqualTo(1);
+            await Assert.That(read.State.Generation).IsEqualTo(read.Generation + (fails ? 2 : 1));
+            await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(0);
+            await Assert.That(server.ReceivedCommands.Count(command => command == "SET key new")).IsEqualTo(1);
+            await Assert.That(Interlocked.Read(ref errors)).IsEqualTo(fails ? 1L : 0L);
+
+            async Task<Exception?> CaptureConversion()
+            {
+                try
+                {
+                    await Assert.That(await client.ConvertResponseAsync("SET", in command, default, 0,
+                        (int _, in RespValue response) =>
+                        {
+                            activeDuringConversion = cache.InspectForTests().ActiveMutationCount;
+                            if (fails) throw conversionError;
+                            return ResponseReader.Ok(in response);
+                        })).IsTrue();
+                    return null;
+                }
+                catch (Exception error) { return error; }
+            }
+        }
+        finally { cache.CompleteRead(in read, default, allowInsert: false); }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CancelledObservedMutationKeepsItsFenceUntilItsNativeReplyDrains(bool enabled)
+    {
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "Respire",
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+        };
+        ActivitySource.AddActivityListener(listener);
+        await using var server = Server();
+        await using var client = await RespireClient.ConnectAsync(Options(server) with
+        {
+            Protocol = RespProtocol.Resp3, ClientSideCache = new(), CommandTimeout = TimeSpan.FromSeconds(10),
+            CircuitBreaker = enabled ? Options(server).CircuitBreaker : null,
+        });
+        await client.GetStringAsync("warm");
+        server.SuppressReply = command => command == "SET key new";
+        var cache = client.Core.ClientCache!;
+        RespireKey key = "key";
+        var read = cache.BeginRead(in key);
+        var conversions = 0;
+        using var cancellation = new CancellationTokenSource();
+        try
+        {
+            var command = new CatalogCommand(RespireCommands.String.SET, ["key", "new"]);
+            var pending = client.ConvertResponseAsync("SET", in command, cancellation.Token, 0,
+                (int _, in RespValue response) =>
+                {
+                    conversions++;
+                    return ResponseReader.Ok(in response);
+                }).AsTask();
+            await Received(server, "SET key new");
+            cancellation.Cancel();
+            await Assert.That(await Failure(async () => await pending)).IsTypeOf<OperationCanceledException>();
+            await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(1);
+            await Assert.That(read.State.Generation).IsEqualTo(read.Generation + 1);
+            await server.SendRawAsync(FakeRespServer.OkReply, server.ReceivedConnectionIds[^1]);
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            while (cache.InspectForTests().ActiveMutationCount != 0) await Task.Delay(1, deadline.Token);
+            await Assert.That(read.State.Generation).IsEqualTo(read.Generation + 2);
+            await Assert.That(conversions).IsEqualTo(0);
+            await Assert.That(server.ReceivedCommands.Count(command => command == "SET key new")).IsEqualTo(1);
+        }
+        finally { cache.CompleteRead(in read, default, allowInsert: false); }
+    }
+
+    [Test]
     public async Task SelectionFailureOpensCircuitWithoutDispatchingACommand()
     {
         await using var server = Server();
