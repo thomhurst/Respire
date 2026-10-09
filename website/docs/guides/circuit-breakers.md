@@ -102,11 +102,13 @@ returns failures in original queue order; `ExecuteAsync` throws the first failur
 every pending. Successful pending results retain their existing ownership.
 
 A batch can dispatch partially: admitted commands can execute while later entries are rejected,
-including when all half-open slots are occupied. Rejected entries are not retried or replayed.
+including when all half-open slots are occupied. Entries rejected by circuit admission are not retried or replayed.
 Accepted replies remain in FIFO order, including after cancellation releases a permit. Circuit
 admission does not make a pipeline atomic. Standalone circuit-enabled batches stay on their selected
 connection rather than moving individual entries during a maintenance handoff. Cluster batches
 retain their existing recovery for commands rejected before acceptance; each new target requires admission.
+Sentinel generation changes are different: a never-accepted ordinary entry can select the current validated primary
+and acquire fresh admission, as described below.
 
 A nonempty transaction acquires one permit for the entire MULTI/EXEC sequence immediately before
 dispatch. Open rejection sends neither MULTI nor its queued commands nor EXEC, and faults all
@@ -184,7 +186,7 @@ entries, and unwatched transactions can select the current validated primary and
 fresh endpoint admission. Accepted commands are never replayed. Cancellation completes an
 admitted probe as ignored, releases recovery capacity, and retains the accepted frame's
 FIFO response placeholder. A failed recovery probe reopens only that endpoint's circuit.
-WATCH state, import sessions, and durability acknowledgements keep their connection affinity.
+Scan cursor pages, WATCH state, import sessions, and durability acknowledgements keep their connection affinity.
 They cannot move to another primary to bypass circuit rejection or retirement.
 
 Configuration with configured standalone replica endpoints is rejected. This option does not change

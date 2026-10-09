@@ -2792,7 +2792,9 @@ public sealed partial class RespireClient : IRespireClient
                 affinity is null && CursorCommandMetadata.IsCursorContinuation(in command),
                 cancellationToken).ConfigureAwait(false)
             : await _core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken).ConfigureAwait(false);
-        return await SendOnConnectionAsync(operation, connection, command, cancellationToken, observation: observation).ConfigureAwait(false);
+        return await SendOnConnectionAsync(operation, connection, command, cancellationToken,
+            allowStreamingConnectionReroute: readKind != ReadCommandKind.CursorRead,
+            observation: observation).ConfigureAwait(false);
     }
 
     /// <summary>

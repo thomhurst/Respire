@@ -33,7 +33,8 @@ internal static class QueuedCircuitDispatch
                 admission.Success();
                 return reply;
             }
-            catch (RespireConnectionRetiredException error) when (!withoutResponseTimeout && client?.Core.Sentinel is not null
+            catch (RespireConnectionRetiredException error) when (!withoutResponseTimeout
+                && command.ReadKind != ReadCommandKind.CursorRead && client?.Core.Sentinel is not null
                 && client.TryRerouteCircuit(connection, deadline, out var target, out var rerouted, preferredZone: null))
             {
                 observation.Handled(error);

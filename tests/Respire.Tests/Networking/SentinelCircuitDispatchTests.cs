@@ -14,6 +14,95 @@ namespace Respire.Tests.Networking;
 public sealed class SentinelCircuitDispatchTests
 {
     [Test]
+    [Arguments(RespireReadFrom.Replica, "string")]
+    [Arguments(RespireReadFrom.Replica, "bytes")]
+    [Arguments(RespireReadFrom.Replica, "converted")]
+    [Arguments(RespireReadFrom.ReplicaPreferred, "string")]
+    [Arguments(RespireReadFrom.ReplicaPreferred, "bytes")]
+    [Arguments(RespireReadFrom.ReplicaPreferred, "converted")]
+    public async Task PreparedReplicaReadsRespectAdmissionAndCompleteRecovery(RespireReadFrom policy, string shape)
+    {
+        if (Environment.GetEnvironmentVariable("TUNIT_DISABLE_HTML_REPORTER") == "true")
+            await Assert.That(RespireTelemetry.IsOperationEnabled("GET")).IsFalse();
+        await using var primary = Primary();
+        await using var replica = Primary();
+        var dataReply = replica.ReplyOverride!;
+        replica.ReplyOverride = (id, command) => command == "ROLE"
+            ? "*5\r\n+slave\r\n+127.0.0.1\r\n:6379\r\n+connected\r\n:0\r\n"u8.ToArray()
+            : dataReply(id, command);
+        await using var sentinel = Sentinel(() => primary.Port, replica.Port);
+        await using var client = await Connect(sentinel);
+        await client.Core.ReadRouter.RefreshNowAsync(default);
+        var view = (RespireClient)client.WithReadFrom(policy);
+        await Send(view, shape, "warm");
+        await Assert.That(client.Core.ReadRouter.TryAcquireReadyConnection(policy, default)!.Port).IsEqualTo(replica.Port);
+        var (circuit, clock) = Prepare(client, replica);
+        Open(client, replica);
+
+        var error = await Failure(() => Send(view, shape, "never"));
+        await Assert.That(error).IsTypeOf<RespireCircuitOpenException>();
+        await Assert.That(((RespireCircuitOpenException)error).Endpoint).IsEqualTo(new RespireEndpoint("127.0.0.1", replica.Port));
+        await Assert.That(replica.ReceivedCommands.Contains("GET never")).IsFalse();
+        await Assert.That(replica.ReceivedCommands.Contains("STRLEN never")).IsFalse();
+        await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("GET ") || command.StartsWith("STRLEN "))).IsFalse();
+
+        clock.Advance();
+        await Send(view, shape, "first");
+        await Assert.That(circuit.Snapshot().SuccessfulProbes).IsEqualTo(1);
+        await Send(view, shape, "second");
+        await Assert.That(circuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Closed);
+        await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments("raw")]
+    [Arguments("typed")]
+    [Arguments("queued")]
+    public async Task CursorRetirementAfterSelectionDoesNotReroute(string shape)
+    {
+        await using var first = Primary();
+        await using var second = Primary();
+        var port = first.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        await using var client = await Connect(sentinel);
+        var view = (RespireClient)client.WithReadFrom(RespireReadFrom.PrimaryPreferred);
+        await using var enumerator = view.Keys.ScanAsync().GetAsyncEnumerator();
+        if (shape == "typed") await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
+        else { using var page = await view.ExecuteAsync(RespireCommands.Key.SCAN, ["0"]); }
+
+        var issuingConnection = client.Core.Multiplexer.GetConnection();
+        var (circuit, _) = Prepare(client, first);
+        using var clock = new AdmissionGateClock();
+        CircuitClock(circuit) = clock;
+        clock.Arm();
+        var pending = Task.Run(async () =>
+        {
+            if (shape == "typed") await enumerator.MoveNextAsync();
+            else if (shape == "queued")
+            {
+                var command = new CatalogCommand(RespireCommands.Key.SCAN, ["7"]);
+                using var page = await QueuedCircuitDispatch.SendAsync(client.Core.Circuits!, issuingConnection,
+                    command, "SCAN", default, default, client: client);
+            }
+            else { using var page = await view.ExecuteAsync(RespireCommands.Key.SCAN, ["7"]); }
+        });
+        try
+        {
+            // Pause admission after selection of the cursor's issuing connection.
+            await clock.Selected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Volatile.Write(ref port, second.Port);
+            await client.Core.Sentinel!.GetGenerationAsync(default, forceDiscovery: true);
+        }
+        finally { clock.Release(); }
+
+        await Assert.That(await Failure(async () => await pending)).IsTypeOf<RespireConnectionRetiredException>();
+        await Assert.That(first.ReceivedCommands.Any(command => command.StartsWith("SCAN 7"))).IsFalse();
+        await Assert.That(second.ReceivedCommands.Any(command => command.StartsWith("SCAN "))).IsFalse();
+        await Assert.That(circuit.Snapshot().FailureCount).IsEqualTo(0);
+        await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(0);
+    }
+
+    [Test]
     [Arguments("string")]
     [Arguments("bytes")]
     [Arguments("converted")]
@@ -270,13 +359,15 @@ public sealed class SentinelCircuitDispatchTests
             "GET canceled" => "+QUEUED\r\n"u8.ToArray(),
             "GET healthy" => "$7\r\nhealthy\r\n"u8.ToArray(),
             "EXEC" => "*1\r\n$7\r\nhealthy\r\n"u8.ToArray(),
+            _ when command.StartsWith("SCAN 0") => "*2\r\n$1\r\n7\r\n*1\r\n$5\r\nfirst\r\n"u8.ToArray(),
+            _ when command.StartsWith("SCAN 7") => "*2\r\n$1\r\n0\r\n*1\r\n$6\r\nsecond\r\n"u8.ToArray(),
             _ when command.StartsWith("GET ") => Bulk(command[4..]),
             _ when command.StartsWith("STRLEN ") => ":5\r\n"u8.ToArray(),
             _ => null,
         },
     };
 
-    private static FakeRespServer Sentinel(Func<int> port)
+    private static FakeRespServer Sentinel(Func<int> port, int? replicaPort = null)
     {
         var epochs = new Dictionary<int, int>();
         byte[] Configuration()
@@ -293,6 +384,8 @@ public sealed class SentinelCircuitDispatchTests
             {
                 "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster" => Encoding.ASCII.GetBytes($"*2\r\n+127.0.0.1\r\n+{port()}\r\n"),
                 "SENTINEL MASTER mymaster" => Configuration(),
+                "SENTINEL REPLICAS mymaster" when replicaPort is { } replica => Encoding.ASCII.GetBytes(
+                    $"*1\r\n*6\r\n+ip\r\n+127.0.0.1\r\n+port\r\n+{replica}\r\n+flags\r\n+slave\r\n"),
                 "SUBSCRIBE +switch-master" => "*3\r\n+subscribe\r\n+switch-master\r\n:1\r\n"u8.ToArray(),
                 "SUBSCRIBE +sdown" => "*3\r\n+subscribe\r\n+sdown\r\n:2\r\n"u8.ToArray(),
                 "SUBSCRIBE +odown" => "*3\r\n+subscribe\r\n+odown\r\n:3\r\n"u8.ToArray(),
@@ -321,6 +414,25 @@ public sealed class SentinelCircuitDispatchTests
         public override long GetTimestamp() => Interlocked.Read(ref _timestamp);
         public override long TimestampFrequency => TimeProvider.System.TimestampFrequency;
         internal void Advance() => Interlocked.Add(ref _timestamp, 60 * TimestampFrequency);
+    }
+    private sealed class AdmissionGateClock : TimeProvider, IDisposable
+    {
+        private readonly ManualResetEventSlim _release = new();
+        private int _armed;
+        internal TaskCompletionSource Selected { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal void Arm() => Volatile.Write(ref _armed, 1);
+        internal void Release() => _release.Set();
+        public override long GetTimestamp()
+        {
+            if (Interlocked.Exchange(ref _armed, 0) == 1)
+            {
+                Selected.TrySetResult();
+                if (!_release.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("Cursor admission gate was not released.");
+            }
+            return TimeProvider.System.GetTimestamp();
+        }
+        public override long TimestampFrequency => TimeProvider.System.TimestampFrequency;
+        public void Dispose() => _release.Dispose();
     }
     private readonly struct ThrowingCommand : IRespCommand
     {
