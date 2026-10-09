@@ -7,9 +7,9 @@ using Respire.Search;
 
 namespace Respire.VectorData;
 
-/// <summary>A hash-backed VectorData store with explicit AOT-safe record mappings.</summary>
+/// <summary>A hash- or JSON-backed VectorData store with explicit AOT-safe record mappings.</summary>
 /// <remarks>The caller owns the client. This connector supports standalone Redis Query Engine with an unprefixed client.
-/// Redis Cluster is unsupported: collection deletion scans one node and cannot remove all unindexed hashes across shards.</remarks>
+/// Redis Cluster is unsupported: collection deletion scans one node and cannot remove all unindexed records across shards.</remarks>
 public sealed class RespireVectorStore : VectorStore
 {
     private static readonly UTF8Encoding Utf8 = new(false, true);
@@ -27,31 +27,46 @@ public sealed class RespireVectorStore : VectorStore
         _namespace = "respire:vector:" + EncodeName(keyNamespace) + ":";
     }
 
-    /// <summary>Registers one immutable mapping per record type. Existing collection definitions cannot replace it.</summary>
+    /// <summary>Registers an immutable hash mapping, preserving the original registration signature for compiled consumers.</summary>
     public void RegisterMapper<TRecord>(RespireVectorDataHashMapper<TRecord> mapper) where TRecord : class
+        => RegisterMapper((RespireVectorDataMapper<TRecord>)mapper);
+
+    /// <summary>Registers one immutable mapping per record type. Existing collection definitions cannot replace it.</summary>
+    public void RegisterMapper<TRecord>(RespireVectorDataMapper<TRecord> mapper) where TRecord : class
     {
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(mapper);
+        if (mapper is not RespireVectorDataHashMapper<TRecord> and not RespireVectorDataJsonMapper<TRecord>)
+            throw new ArgumentException("Use a hash or JSON mapper.", nameof(mapper));
         if (!_mappers.TryAdd(typeof(TRecord), mapper)) throw new InvalidOperationException("A mapper is already registered for this record type.");
     }
 
     /// <inheritdoc />
-    [RequiresDynamicCode("The VectorStore abstraction requires dynamic code. Use GetHashCollection for explicit AOT-safe mapping.")]
-    [RequiresUnreferencedCode("The VectorStore abstraction requires unreferenced code. Use GetHashCollection for explicit AOT-safe mapping.")]
+    [RequiresDynamicCode("The VectorStore abstraction requires dynamic code. Use GetHashCollection or GetJsonCollection for explicit AOT-safe mapping.")]
+    [RequiresUnreferencedCode("The VectorStore abstraction requires unreferenced code. Use GetHashCollection or GetJsonCollection for explicit AOT-safe mapping.")]
     public override VectorStoreCollection<TKey, TRecord> GetCollection<TKey, TRecord>(string name, VectorStoreCollectionDefinition? definition = null)
     {
         ThrowIfDisposed();
-        if (typeof(TKey) != typeof(string)) throw new NotSupportedException("Hash collections support string keys.");
+        if (typeof(TKey) != typeof(string)) throw new NotSupportedException("Collections support string keys.");
         if (definition is not null) throw new NotSupportedException("Register an explicit mapper; reflection-based collection definitions are not supported.");
-        return (VectorStoreCollection<TKey, TRecord>)(object)GetHashCollection<TRecord>(name);
+        return (VectorStoreCollection<TKey, TRecord>)(object)CreateCollection<TRecord>(name);
     }
 
     /// <summary>Gets a string-keyed hash collection using its registered mapper without reflection or dynamic code.</summary>
     public RespireVectorStoreCollection<TRecord> GetHashCollection<TRecord>(string name) where TRecord : class
+        => CreateCollection<TRecord>(name, json: false);
+
+    /// <summary>Gets a JSON collection using its registered generated metadata without reflection or dynamic code.</summary>
+    public RespireVectorStoreCollection<TRecord> GetJsonCollection<TRecord>(string name) where TRecord : class
+        => CreateCollection<TRecord>(name, json: true);
+
+    private RespireVectorStoreCollection<TRecord> CreateCollection<TRecord>(string name, bool? json = null) where TRecord : class
     {
         ThrowIfDisposed();
         if (!_mappers.TryGetValue(typeof(TRecord), out var mapper)) throw new InvalidOperationException("Register a mapper for this record type before creating a collection.");
-        return new(_client, name, IndexName(name), DocumentPrefix(name), (RespireVectorDataHashMapper<TRecord>)mapper);
+        if (json is { } requested && requested != (mapper is RespireVectorDataJsonMapper<TRecord>))
+            throw new InvalidOperationException("The registered mapper uses a different storage kind.");
+        return new(_client, name, IndexName(name), DocumentPrefix(name), (RespireVectorDataMapper<TRecord>)mapper);
     }
 
     /// <inheritdoc />

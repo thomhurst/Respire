@@ -65,6 +65,27 @@ public class ValidationTests
     private static RespireClient Client() => RespireClient.Create("redis://127.0.0.1:1");
 
     [Test]
+    public async Task HashMapperRegistrationRetainsOriginalBinarySignature()
+    {
+        await using var client = Client();
+        using var store = new RespireVectorStore(client);
+        var overload = typeof(RespireVectorStore).GetMethods().Single(method =>
+            method.Name == nameof(RespireVectorStore.RegisterMapper) &&
+            method.GetParameters() is [{ ParameterType: var parameterType }] &&
+            parameterType.IsGenericType &&
+            parameterType.GetGenericTypeDefinition() == typeof(RespireVectorDataHashMapper<>));
+        var register = overload.MakeGenericMethod(typeof(Movie))
+            .CreateDelegate<Action<RespireVectorDataHashMapper<Movie>>>(store);
+
+        register(new MovieMapper());
+        using var collection = store.GetHashCollection<Movie>("movies");
+        collection.Name.Should().Be("movies");
+
+        var registerAgain = () => store.RegisterMapper((RespireVectorDataMapper<Movie>)new MovieMapper());
+        registerAgain.Should().Throw<InvalidOperationException>().WithMessage("*already registered*");
+    }
+
+    [Test]
     public async Task NullRecordKeyUsesUpstreamParameterName()
     {
         await using var client = Client();

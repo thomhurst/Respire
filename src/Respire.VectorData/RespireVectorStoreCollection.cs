@@ -4,37 +4,45 @@ using System.Linq.Expressions;
 using System.Runtime.CompilerServices;
 using System.Text;
 using Microsoft.Extensions.VectorData;
+using Respire.Json;
 using Respire.Search;
 
 namespace Respire.VectorData;
 
-/// <summary>String-keyed Redis hash records, expression filters and FLOAT32 KNN search.</summary>
+/// <summary>String-keyed Redis hash or JSON records and FLOAT32 KNN search.</summary>
 public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollection<string, TRecord> where TRecord : class
 {
     // One script replaces the complete hash atomically, including absent optional fields.
     private static readonly RespireScript Replace = RespireScript.Create("redis.call('DEL',KEYS[1]); for i=1,#ARGV,2 do redis.call('HSET',KEYS[1],ARGV[i],ARGV[i+1]); end; return 1");
     private static readonly UTF8Encoding FilterUtf8 = new(false, true);
+    // JSON.SET replaces the root without deleting first, so a server rejection preserves the previous record.
+    private static readonly RespireScript ReplaceJson = RespireScript.Create("redis.call('JSON.SET',KEYS[1],'$',ARGV[1]); redis.call('PERSIST',KEYS[1]); return 1");
     private readonly IRespireClient _client;
     private readonly string _index;
     private readonly string _prefix;
-    private readonly RespireVectorDataHashMapper<TRecord> _mapper;
+    private readonly RespireVectorDataMapper<TRecord> _mapper;
+    private readonly RespireVectorDataJsonMapper<TRecord>? _jsonMapper;
+    private readonly string[][] _vectorPaths;
     private readonly RespireVectorDataVectorField[] _vectors;
     private readonly RespireSearchField[] _fields;
     private readonly RespireVectorDataFilterField[] _filterFields;
     private volatile bool _disposed;
 
-    internal RespireVectorStoreCollection(IRespireClient client, string name, string index, string prefix, RespireVectorDataHashMapper<TRecord> mapper)
+    internal RespireVectorStoreCollection(IRespireClient client, string name, string index, string prefix, RespireVectorDataMapper<TRecord> mapper)
     {
         _client = client;
         Name = name;
         _index = index;
         _prefix = prefix;
         _mapper = mapper;
+        _jsonMapper = mapper as RespireVectorDataJsonMapper<TRecord>;
         _vectors = mapper.VectorFields.ToArray();
+        _vectorPaths = new string[_vectors.Length][];
         if (_vectors.Length == 0) throw new ArgumentException("At least one vector field is required.", nameof(mapper));
         var names = new HashSet<string>(StringComparer.Ordinal);
         var properties = new HashSet<string>(StringComparer.Ordinal);
         var fields = new List<RespireSearchField>();
+        var paths = new HashSet<string>(StringComparer.Ordinal);
         foreach (var vector in _vectors)
         {
             ArgumentNullException.ThrowIfNull(vector);
@@ -46,7 +54,15 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
                 throw new ArgumentException("Unknown vector algorithm or distance metric.", nameof(mapper));
             if (!names.Add(vector.StorageName) || !properties.Add(vector.PropertyName))
                 throw new ArgumentException("Vector field/property names must be unique.", nameof(mapper));
-            fields.Add(new(vector.StorageName, RespireSearchFieldType.Vector)
+            var identifier = vector.StorageName;
+            if (_jsonMapper is not null)
+            {
+                identifier = vector.JsonPath ?? "$." + vector.StorageName;
+                _vectorPaths[fields.Count] = RespireVectorDataJsonPaths.Parse(identifier);
+                RespireVectorDataJsonPaths.ValidateMetadata(_jsonMapper.JsonTypeInfo, _vectorPaths[fields.Count]);
+                if (!paths.Add(identifier)) throw new ArgumentException("JSON schema paths must be unique.", nameof(mapper));
+            }
+            fields.Add(new(identifier, RespireSearchFieldType.Vector, Alias: _jsonMapper is null ? null : vector.StorageName)
             {
                 Vector = new(vector.Algorithm, RespireSearchVectorType.Float32, vector.Dimensions, vector.DistanceMetric),
             });
@@ -54,12 +70,18 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
         foreach (var field in mapper.DataFields)
         {
             ArgumentNullException.ThrowIfNull(field);
-            ValidateFieldName(field.Identifier);
-            ValidateScalarField(field);
-            if (!names.Add(field.Identifier)) throw new ArgumentException("Schema field names must be unique.", nameof(mapper));
+            if (_jsonMapper is null) ValidateFieldName(field.Identifier);
+            else
+            {
+                RespireVectorDataJsonPaths.ValidateMetadata(_jsonMapper.JsonTypeInfo, RespireVectorDataJsonPaths.Parse(field.Identifier));
+                ValidateFieldName(field.Alias ?? throw new ArgumentException("JSON scalar fields require a query alias.", nameof(mapper)));
+                if (!paths.Add(field.Identifier)) throw new ArgumentException("JSON schema paths must be unique.", nameof(mapper));
+            }
+            ValidateScalarField(field, allowAlias: _jsonMapper is not null);
+            if (!names.Add(field.Alias ?? field.Identifier)) throw new ArgumentException("Schema field names must be unique.", nameof(mapper));
             fields.Add(field);
         }
-        _filterFields = mapper.FilterFields.ToArray();
+        _filterFields = mapper is RespireVectorDataHashMapper<TRecord> hashMapper ? hashMapper.FilterFields.ToArray() : [];
         foreach (var filter in _filterFields)
         {
             ArgumentNullException.ThrowIfNull(filter);
@@ -94,7 +116,7 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
     {
         if (await CollectionExistsAsync(cancellationToken).ConfigureAwait(false)) return;
         await RespireVectorDataOperations.ExecuteAsync(
-            _client.Search.CreateIndexAsync(_index, new() { Prefixes = [_prefix], Fields = _fields }, cancellationToken),
+            _client.Search.CreateIndexAsync(_index, new() { Source = _jsonMapper is null ? RespireSearchSource.Hash : RespireSearchSource.Json, Prefixes = [_prefix], Fields = _fields }, cancellationToken),
             nameof(EnsureCollectionExistsAsync), Name, "Index already exists").ConfigureAwait(false);
     }
 
@@ -114,6 +136,14 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
     {
         ThrowIfDisposed();
         cancellationToken.ThrowIfCancellationRequested();
+        if (_jsonMapper is not null)
+        {
+            using var json = await RespireVectorDataOperations.ExecuteAsync(
+                _client.Json.Commands.GetAsync(RecordKey(key), ["."], cancellationToken), nameof(GetAsync), Name).ConfigureAwait(false);
+            if (json.IsNull) return null;
+            if (options?.IncludeVectors == true) RespireVectorDataJsonPaths.ValidateVectors(json.AsBytes(), _vectors, _vectorPaths, _jsonMapper.JsonTypeInfo.Options.MaxDepth);
+            return _jsonMapper.Read(json.AsSpan(), options?.IncludeVectors == true, _vectorPaths);
+        }
         using var result = await RespireVectorDataOperations.ExecuteAsync(
             _client.ExecuteAsync(RespireCommands.Hash.HGETALL, [RecordKey(key)], cancellationToken: cancellationToken),
             nameof(GetAsync), Name).ConfigureAwait(false);
@@ -126,7 +156,7 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
             if (options?.IncludeVectors != true) fields.Remove(vector.StorageName);
             else if (fields.TryGetValue(vector.StorageName, out var bytes)) ValidateVector(vector, bytes);
         }
-        return _mapper.Read(key, fields);
+        return ((RespireVectorDataHashMapper<TRecord>)_mapper).Read(key, fields);
     }
 
     /// <inheritdoc />
@@ -171,7 +201,15 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
         ArgumentNullException.ThrowIfNull(record);
         cancellationToken.ThrowIfCancellationRequested();
         var key = RecordKey(_mapper.GetKey(record));
-        var fields = _mapper.Write(record);
+        if (_jsonMapper is not null)
+        {
+            var json = _jsonMapper.Write(record);
+            RespireVectorDataJsonPaths.ValidateVectors(json, _vectors, _vectorPaths, _jsonMapper.JsonTypeInfo.Options.MaxDepth);
+            using var replaced = await RespireVectorDataOperations.ExecuteAsync(
+                _client.Scripts.ExecuteAsync(ReplaceJson, [key], [json], cancellationToken), nameof(UpsertAsync), Name).ConfigureAwait(false);
+            return;
+        }
+        var fields = ((RespireVectorDataHashMapper<TRecord>)_mapper).Write(record);
         if (fields.Count == 0) throw new ArgumentException("At least one hash field is required.", nameof(record));
         foreach (var vector in _vectors)
         {
@@ -206,6 +244,7 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
         ThrowIfDisposed();
         cancellationToken.ThrowIfCancellationRequested();
         if (top <= 0) throw new ArgumentOutOfRangeException(nameof(top));
+        if (_jsonMapper is not null) throw new NotSupportedException("Expression filters and filtered retrieval are unsupported for JSON storage.");
         var skip = options?.Skip ?? 0;
         if (skip < 0) throw new ArgumentOutOfRangeException(nameof(options));
         if (options?.OrderBy is not null) throw new NotSupportedException("Filtered retrieval ordering is unsupported.");
@@ -219,8 +258,8 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
     }
 
     /// <inheritdoc />
-    /// <remarks>Retrieves hashes in concurrent batches of up to 32 after searching; this is not a transactional snapshot.
-    /// ScoreThreshold filters the selected Skip/top page without replacing hits. Hashes deleted before retrieval are
+    /// <remarks>Retrieves records in concurrent batches of up to 32 after searching; this is not a transactional snapshot.
+    /// ScoreThreshold filters the selected Skip/top page without replacing hits. Records deleted before retrieval are
     /// omitted, so either condition can return fewer than top records.</remarks>
     public override async IAsyncEnumerable<VectorSearchResult<TRecord>> SearchAsync<TInput>(TInput searchValue, int top, VectorSearchOptions<TRecord>? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
@@ -228,6 +267,8 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
         ArgumentNullException.ThrowIfNull(searchValue);
         cancellationToken.ThrowIfCancellationRequested();
         if (top <= 0) throw new ArgumentOutOfRangeException(nameof(top));
+        if (_jsonMapper is not null && options?.Filter is not null)
+            throw new NotSupportedException("Expression filters and filtered retrieval are unsupported for JSON storage.");
         var filter = options?.Filter is { } expression ? new RespireVectorDataFilter<TRecord>(_filterFields).Translate(expression) : (RespireSearchExpression?)null;
         var skip = options?.Skip ?? 0;
         if (skip < 0) throw new ArgumentOutOfRangeException(nameof(options));
@@ -277,13 +318,25 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
     {
         if (property is null)
         {
-            if (_vectors.Length != 1) throw new InvalidOperationException("Select a vector property when the model has multiple vectors.");
+            if (_vectors.Length != 1) throw new InvalidOperationException($"The '{typeof(TRecord).Name}' type has multiple vector properties, please specify your chosen property via options.");
             return _vectors[0];
         }
         var body = property.Body is UnaryExpression { NodeType: ExpressionType.Convert } conversion ? conversion.Operand : property.Body;
-        if (body is MemberExpression { Expression: ParameterExpression } member && member.Expression == property.Parameters[0])
-            return _vectors.FirstOrDefault(v => v.PropertyName == member.Member.Name) ?? throw new ArgumentException("The selected property is not a mapped vector.", nameof(property));
-        throw new ArgumentException("Select a direct mapped vector property.", nameof(property));
+        if (body is MemberExpression { Expression: ParameterExpression } direct && direct.Expression == property.Parameters[0])
+            return _vectors.FirstOrDefault(v => v.PropertyName == direct.Member.Name) ?? throw new ArgumentException("The selected property is not a mapped vector.", nameof(property));
+        if (_jsonMapper is null) throw new ArgumentException("Select a direct mapped vector property.", nameof(property));
+        var members = new Stack<string>();
+        while (body is MemberExpression member)
+        {
+            members.Push(member.Member.Name);
+            body = member.Expression;
+        }
+        if (body == property.Parameters[0] && members.Count > 0)
+        {
+            var name = string.Join('.', members);
+            return _vectors.FirstOrDefault(v => v.PropertyName == name) ?? throw new ArgumentException("The selected property is not a mapped vector.", nameof(property));
+        }
+        throw new ArgumentException("Select a mapped vector property; JSON mappings also support nested member paths.", nameof(property));
     }
 
     private string RecordKey(string key)
@@ -334,10 +387,10 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
         if (name == "vector_score" || name.Any(c => !char.IsAsciiLetterOrDigit(c) && c != '_')) throw new ArgumentException("Schema names must contain only ASCII letters, digits and underscores and cannot be vector_score.", nameof(name));
     }
 
-    private static void ValidateScalarField(RespireSearchField field)
+    private static void ValidateScalarField(RespireSearchField field, bool allowAlias = false)
     {
-        if (!Enum.IsDefined(field.Type) || field.Type == RespireSearchFieldType.Vector || field.Vector is not null || field.Alias is not null || field.Options is { Count: > 0 })
-            throw new ArgumentException("Scalar fields require a supported scalar type without aliases, vector schemas or raw options.", nameof(field));
+        if (!Enum.IsDefined(field.Type) || field.Type == RespireSearchFieldType.Vector || field.Vector is not null || (!allowAlias && field.Alias is not null) || field.Options is { Count: > 0 })
+            throw new ArgumentException("Scalar fields require a supported scalar type without vector schemas or raw options; aliases require JSON storage.", nameof(field));
         if (field.Type == RespireSearchFieldType.GeoShape && field.Sortable)
             throw new ArgumentException("GEOSHAPE fields do not support SORTABLE.", nameof(field));
         if (field.Type != RespireSearchFieldType.Text && (field.Weight is not null || field.NoStem || field.Phonetic is not null))
