@@ -8,7 +8,7 @@ description: Reuse StackExchange.Redis values and run the official distributed c
 Prefer Respire's native typed APIs for normal application code. Install
 `Respire.StackExchangeCompat` when migrating code that still passes `RedisKey`,
 `RedisValue`, or consumes `RedisResult`. The package uses the repository's pinned
-StackExchange.Redis version, currently 3.3.1, and targets .NET 8 and .NET 10.
+StackExchange.Redis version, currently 3.4.0, and targets .NET 8 and .NET 10.
 
 ```csharp
 using Respire;
@@ -79,7 +79,7 @@ framing while `Type` remains `RespDataType.Null` for every null reply.
 Error elements, bulk errors, verbatim strings, push replies, attributes, and
 other unsupported shapes are rejected with `NotSupportedException` and native
 API guidance when presented to the converter. Public
-[`RedisResult` factories](https://github.com/StackExchange/StackExchange.Redis/blob/3.3.1/src/StackExchange.Redis/RedisResult.cs)
+[`RedisResult` factories](https://github.com/StackExchange/StackExchange.Redis/blob/3.4.0/src/StackExchange.Redis/RedisResult.cs)
 cannot faithfully construct their full semantics. Errors are never converted
 into successful values. Native connection handling consumes attributes and
 routes push messages before command results reach this boundary; this bridge
@@ -97,7 +97,7 @@ conversion failures. It never disposes the caller's client.
 `Microsoft.Extensions.Caching.StackExchangeRedis` and
 `Microsoft.AspNetCore.DataProtection.StackExchangeRedis`. Acceptance tests use
 the pinned 10.0.12 packages on both .NET 8 and .NET 10, with StackExchange.Redis
-3.3.1 and RESP2/RESP3. Prefer the native `Respire.Caching` and
+3.4.0 and RESP2/RESP3. Prefer the native `Respire.Caching` and
 `Respire.DataProtection` packages when their interfaces fit your application.
 
 ```csharp
