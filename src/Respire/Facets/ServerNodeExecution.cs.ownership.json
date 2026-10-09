@@ -4,16 +4,23 @@
     {
       "Name": "fan-out",
       "Role": "final",
-      "Member": "Respire.ServerCommands.FanOutAsync`2(string,TCommand,CancellationToken,ResponseConverter<ServerCommands,T>):ValueTask<RespireServerResult<T>[]>",
-      "Owner": "Respire.ServerCommands.FanOutAsync`2(string,TCommand,CancellationToken,ResponseConverter<ServerCommands,T>):ValueTask<RespireServerResult<T>[]>",
+      "Member": "Respire.ServerCommands.FanOutAsync`2(string,TCommand,CancellationToken,ResponseConverter<ServerCommands,T>,RespireTelemetry.ErrorObservation):ValueTask<RespireServerResult<T>[]>",
+      "Owner": "Respire.ServerCommands.FanOutAsync`2(string,TCommand,CancellationToken,ResponseConverter<ServerCommands,T>,RespireTelemetry.ErrorObservation):ValueTask<RespireServerResult<T>[]>",
       "Contract": "Keep public fan-out ownership through endpoint discovery, all target outcomes and cleanup. Public facet validation remains in its enclosing declared owner."
     },
     {
       "Name": "fan-out-target",
-      "Role": "borrower",
+      "Role": "final",
       "Member": "Respire.ServerCommands.ExecuteOnNodeAsync`2(RespireEndpoint,string,TCommand,ResponseConverter<ServerCommands,T>,SemaphoreSlim,CancellationToken):Task<RespireServerResult<T>>",
-      "Owner": "Respire.ServerCommands.FanOutAsync`2(string,TCommand,CancellationToken,ResponseConverter<ServerCommands,T>):ValueTask<RespireServerResult<T>[]>",
-      "Contract": "Each target keeps its per-node returned failure through converter and pool cleanup. Parent aggregates outcomes; do not publish the same node failure as both target and parent."
+      "Owner": "Respire.ServerCommands.ExecuteOnNodeAsync`2(RespireEndpoint,string,TCommand,ResponseConverter<ServerCommands,T>,SemaphoreSlim,CancellationToken):Task<RespireServerResult<T>>",
+      "Contract": "Each returned endpoint failure has an independent failure-only owner through capacity waits, conversion and pool cleanup. The parent returns the error result without publishing the node failure again."
+    },
+    {
+      "Name": "fan-out-target-borrowed-send",
+      "Role": "borrower",
+      "Member": "Respire.ServerCommands.ExecuteOnNodeBorrowedAsync`2(RespireEndpoint,string,TCommand,ResponseConverter<ServerCommands,T>,SemaphoreSlim,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<T>",
+      "Owner": "Respire.ServerCommands.ExecuteOnNodeAsync`2(RespireEndpoint,string,TCommand,ResponseConverter<ServerCommands,T>,SemaphoreSlim,CancellationToken):Task<RespireServerResult<T>>",
+      "Contract": "Borrow the endpoint owner through capacity admission, physical send, conversion, ReleaseServerPoolAsync and semaphore release."
     }
   ],
   "NonRoutes": [

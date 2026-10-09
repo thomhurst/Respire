@@ -71,35 +71,18 @@ public sealed partial class RespireClient : IRespireClient
     /// (see <see cref="RespireOptions.Parse"/>).
     /// </summary>
     public static ValueTask<RespireClient> ConnectAsync(string connectionString, CancellationToken cancellationToken = default)
-    {
-        RespireOptions options;
-        try
-        {
-            options = RespireOptions.Parse(connectionString);
-        }
-        catch (Exception error)
-        {
-            RespireTelemetry.RecordError(error, internallyHandled: false);
-            throw;
-        }
-
-        // Structured connection setup owns its final failure; observe only parsing here.
-        return ConnectAsync(options, cancellationToken);
-    }
+        => DispatchResponseSource<RespireClient>.Run((ConnectionString: connectionString, Token: cancellationToken),
+            static (state, observation) => ConnectBorrowedAsync(RespireOptions.Parse(state.ConnectionString), state.Token));
 
     /// <summary>Connects eagerly using structured client options.</summary>
-    public static async ValueTask<RespireClient> ConnectAsync(RespireOptions options, CancellationToken cancellationToken = default)
+    public static ValueTask<RespireClient> ConnectAsync(RespireOptions options, CancellationToken cancellationToken = default)
+        => DispatchResponseSource<RespireClient>.Run((Options: options, Token: cancellationToken),
+            static (state, observation) => ConnectBorrowedAsync(state.Options, state.Token));
+
+    private static async ValueTask<RespireClient> ConnectBorrowedAsync(RespireOptions options, CancellationToken cancellationToken)
     {
-        try
-        {
-            options = (options ?? throw new ArgumentNullException(nameof(options))).ValidateAndSnapshot();
-            return await ConnectPrimaryAsync(options, cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception error)
-        {
-            RespireTelemetry.RecordError(error, internallyHandled: false);
-            throw;
-        }
+        options = (options ?? throw new ArgumentNullException(nameof(options))).ValidateAndSnapshot();
+        return await ConnectPrimaryAsync(options, cancellationToken).ConfigureAwait(false);
     }
 
     private static async ValueTask<RespireClient> ConnectPrimaryAsync(
@@ -129,63 +112,59 @@ public sealed partial class RespireClient : IRespireClient
     /// <exception cref="RespireConnectionException">
     /// Thrown with an aggregate inner exception when every candidate fails to connect.
     /// </exception>
-    public static async ValueTask<RespireClient> ConnectAnyAsync(
+    public static ValueTask<RespireClient> ConnectAnyAsync(
+        IEnumerable<RespireOptions> candidates, CancellationToken cancellationToken = default)
+        => DispatchResponseSource<RespireClient>.Run((Candidates: candidates, Token: cancellationToken),
+            static (state, observation) => ConnectAnyBorrowedAsync(state.Candidates, state.Token, observation));
+
+    private static async ValueTask<RespireClient> ConnectAnyBorrowedAsync(
         IEnumerable<RespireOptions> candidates,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
-        var retryAttempts = 0;
-        try
+        ArgumentNullException.ThrowIfNull(candidates);
+
+        List<Exception>? failures = null;
+        List<string>? failureMessages = null;
+        var candidateIndex = 0;
+        foreach (var candidate in candidates)
         {
-            ArgumentNullException.ThrowIfNull(candidates);
-
-            List<Exception>? failures = null;
-            List<string>? failureMessages = null;
-            var candidateIndex = 0;
-            foreach (var candidate in candidates)
+            cancellationToken.ThrowIfCancellationRequested();
+            candidateIndex++;
+            if (candidate is null)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                candidateIndex++;
-                if (candidate is null)
-                {
-                    throw new ArgumentException("Connection candidates cannot contain null entries.", nameof(candidates));
-                }
-
-                try
-                {
-                    return await ConnectPrimaryAsync(candidate.ValidateAndSnapshot(), cancellationToken).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    RespireTelemetry.RecordError(ex, internallyHandled: true, retryAttempts++);
-                    (failures ??= []).Add(ex);
-                    (failureMessages ??= []).Add(
-                        $"{candidateIndex}. {FormatCandidateEndpoints(candidate)}: {ex.GetType().Name}: {ex.Message}");
-                }
+                throw new ArgumentException("Connection candidates cannot contain null entries.", nameof(candidates));
             }
 
-            if (candidateIndex == 0)
+            try
             {
-                throw new RespireConnectionException("No Redis connection candidates were provided.");
+                return await ConnectPrimaryAsync(candidate.ValidateAndSnapshot(), cancellationToken).ConfigureAwait(false);
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                observation.Handled(ex);
+                (failures ??= []).Add(ex);
+                (failureMessages ??= []).Add(
+                    $"{candidateIndex}. {FormatCandidateEndpoints(candidate)}: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
 
-            // Exhaustion publishes the last failed connection attempt. Preflight, iteration,
-            // and cancellation failures instead follow every completed failed candidate.
-            retryAttempts = candidateIndex - 1;
-            throw new RespireConnectionException(
-                "Unable to connect to any Redis endpoint candidate. Attempts:" +
-                Environment.NewLine +
-                string.Join(Environment.NewLine, failureMessages!),
-                new AggregateException("All Redis connection candidates failed.", failures!));
-        }
-        catch (Exception error)
+        if (candidateIndex == 0)
         {
-            RespireTelemetry.RecordError(error, internallyHandled: false, retryAttempts);
-            throw;
+            throw new RespireConnectionException("No Redis connection candidates were provided.");
         }
+
+        // Exhaustion publishes the last failed connection attempt. Preflight, iteration,
+        // and cancellation failures instead follow every completed failed candidate.
+        observation.SetAttempts(candidateIndex - 1);
+        throw new RespireConnectionException(
+            "Unable to connect to any Redis endpoint candidate. Attempts:" +
+            Environment.NewLine +
+            string.Join(Environment.NewLine, failureMessages!),
+            new AggregateException("All Redis connection candidates failed.", failures!));
     }
 
     private static string FormatCandidateEndpoints(RespireOptions options)

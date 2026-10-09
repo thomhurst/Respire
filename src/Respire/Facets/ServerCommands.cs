@@ -190,14 +190,30 @@ internal sealed partial class ServerCommands(RespireClient client) : IServerComm
 {
     private static readonly ReadCommandKind DbSizeReadKind = CommandReadMetadata.Get("DBSIZE").Kind;
     public ValueTask<string> InfoAsync(string? section = null, CancellationToken cancellationToken = default)
-        => section is null
-            ? client.StringAsync("INFO", new Cmd(Verbs.Info), cancellationToken)
-            : client.StringAsync("INFO", new Cmd1(Verbs.Info, section), cancellationToken);
+    {
+        var owner = DispatchResponseSource<string>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            return owner.Attach(section is null
+            ? client.StringAsync("INFO", new Cmd(Verbs.Info), cancellationToken, observation: observation)
+            : client.StringAsync("INFO", new Cmd1(Verbs.Info, section), cancellationToken, observation: observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
 
     public ValueTask<long> DatabaseSizeAsync(CancellationToken cancellationToken = default)
-        => client.Core.Cluster is null
-            ? client.IntegerAsync("DBSIZE", new RawCommand(RespCommands.DbSize, DbSizeReadKind), cancellationToken)
-            : DatabaseSizeClusterAsync(cancellationToken);
+    {
+        var owner = DispatchResponseSource<long>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            return owner.Attach(client.Core.Cluster is null
+            ? client.IntegerAsync("DBSIZE", new RawCommand(RespCommands.DbSize, DbSizeReadKind), cancellationToken, observation: observation)
+            : DatabaseSizeClusterAsync(cancellationToken, observation: observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
 
     public ValueTask FlushDatabaseAsync(CancellationToken cancellationToken = default)
         => FlushDatabaseAsync(ServerFlushMode.Default, cancellationToken);
@@ -206,55 +222,105 @@ internal sealed partial class ServerCommands(RespireClient client) : IServerComm
         => FlushAllAsync(ServerFlushMode.Default, cancellationToken);
 
     public ValueTask<RespireServerClientInfo[]> ClientsAsync(CancellationToken cancellationToken = default)
-        => ConvertAsync(
+    {
+        var owner = DispatchResponseSource<RespireServerClientInfo[]>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            return owner.Attach(ConvertAsync(
             "CLIENT LIST", new Cmd(Verbs.ClientList), cancellationToken,
-            static (ServerCommands _, in RespValue value) => ParseClientList(in value));
+            static (ServerCommands _, in RespValue value) => ParseClientList(in value), observation: observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
 
     public ValueTask<bool> KillClientAsync(
         long clientId,
         bool skipMe = true,
         CancellationToken cancellationToken = default)
     {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(clientId);
-        return client.FlagAsync(
-            "CLIENT KILL",
-            new Cmd4(Verbs.ClientKill, "ID", clientId, "SKIPME", skipMe ? "yes" : "no"),
-            cancellationToken);
+        var owner = DispatchResponseSource<bool>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(clientId);
+            return owner.Attach(client.FlagAsync(
+                "CLIENT KILL",
+                new Cmd4(Verbs.ClientKill, "ID", clientId, "SKIPME", skipMe ? "yes" : "no"),
+                cancellationToken, observation: observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     public ValueTask<RespireSlowLogEntry[]> SlowLogAsync(
         long? count = null,
         CancellationToken cancellationToken = default)
     {
-        if (count is < 0)
+        var owner = DispatchResponseSource<RespireSlowLogEntry[]>.Start();
+        var observation = owner.Observation;
+        try
         {
-            throw new ArgumentOutOfRangeException(nameof(count));
-        }
+            if (count is < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(count));
+            }
 
-        return count is { } limit
-            ? ConvertAsync(
-                "SLOWLOG GET", new Cmd1(Verbs.SlowLogGet, limit), cancellationToken,
-                static (ServerCommands _, in RespValue value) => ParseSlowLog(in value))
-            : ConvertAsync(
-                "SLOWLOG GET", new Cmd(Verbs.SlowLogGet), cancellationToken,
-                static (ServerCommands _, in RespValue value) => ParseSlowLog(in value));
+            return owner.Attach(count is { } limit
+                ? ConvertAsync(
+                    "SLOWLOG GET", new Cmd1(Verbs.SlowLogGet, limit), cancellationToken,
+                    static (ServerCommands _, in RespValue value) => ParseSlowLog(in value), observation: observation)
+                : ConvertAsync(
+                    "SLOWLOG GET", new Cmd(Verbs.SlowLogGet), cancellationToken,
+                    static (ServerCommands _, in RespValue value) => ParseSlowLog(in value), observation: observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     public ValueTask ResetSlowLogAsync(CancellationToken cancellationToken = default)
-        => client.OkAsync("SLOWLOG RESET", new Cmd(Verbs.SlowLogReset), cancellationToken);
+    {
+        var owner = DispatchResponseSource<bool>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            return DispatchResponseSource.Complete(owner.Attach(client.OkResultAsync("SLOWLOG RESET", new Cmd(Verbs.SlowLogReset), cancellationToken, observation: observation)));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
 
     public ValueTask<RespireLatencySample[]> LatestLatencyAsync(CancellationToken cancellationToken = default)
-        => ConvertAsync(
+    {
+        var owner = DispatchResponseSource<RespireLatencySample[]>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            return owner.Attach(ConvertAsync(
             "LATENCY LATEST", new Cmd(Verbs.LatencyLatest), cancellationToken,
-            static (ServerCommands _, in RespValue value) => ParseLatencyLatest(in value));
+            static (ServerCommands _, in RespValue value) => ParseLatencyLatest(in value), observation: observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
 
     public ValueTask<long> ResetLatencyAsync(CancellationToken cancellationToken = default)
-        => client.IntegerAsync("LATENCY RESET", new Cmd(Verbs.LatencyReset), cancellationToken);
+    {
+        var owner = DispatchResponseSource<long>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            return owner.Attach(client.IntegerAsync("LATENCY RESET", new Cmd(Verbs.LatencyReset), cancellationToken, observation: observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
 
     public ValueTask<long> ResetLatencyAsync(string eventName, CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(eventName);
-        return client.IntegerAsync("LATENCY RESET", new Cmd1(Verbs.LatencyReset, eventName), cancellationToken);
+        var owner = DispatchResponseSource<long>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(eventName);
+            return owner.Attach(client.IntegerAsync("LATENCY RESET", new Cmd1(Verbs.LatencyReset, eventName), cancellationToken, observation: observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     public ValueTask<long?> MemoryUsageAsync(
@@ -262,106 +328,141 @@ internal sealed partial class ServerCommands(RespireClient client) : IServerComm
         long? samples = null,
         CancellationToken cancellationToken = default)
     {
-        if (samples is < 0)
+        var owner = DispatchResponseSource<long?>.Start();
+        var observation = owner.Observation;
+        try
         {
-            throw new ArgumentOutOfRangeException(nameof(samples));
-        }
+            if (samples is < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(samples));
+            }
 
-        return samples is { } sampleCount
-            ? client.IntegerOrNullAsync(
-                "MEMORY USAGE",
-                new Cmd3(Verbs.MemoryUsage, client.Key(in key), "SAMPLES", sampleCount),
-                cancellationToken)
-            : client.IntegerOrNullAsync(
-                "MEMORY USAGE",
-                new Cmd1(Verbs.MemoryUsage, client.Key(in key)),
-                cancellationToken);
+            return owner.Attach(samples is { } sampleCount
+                ? client.IntegerOrNullAsync(
+                    "MEMORY USAGE",
+                    new Cmd3(Verbs.MemoryUsage, client.Key(in key), "SAMPLES", sampleCount),
+                    cancellationToken, observation: observation)
+                : client.IntegerOrNullAsync(
+                    "MEMORY USAGE",
+                    new Cmd1(Verbs.MemoryUsage, client.Key(in key)),
+                    cancellationToken, observation: observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     public ValueTask<RespireMemoryStats> MemoryStatsAsync(CancellationToken cancellationToken = default)
-        => ConvertAsync(
-            "MEMORY STATS", new Cmd(Verbs.MemoryStats), cancellationToken,
-            static (ServerCommands _, in RespValue value) => new RespireMemoryStats(ParseMemoryMap(value.AsArray())));
-
-    public ValueTask<RespireServerRole> RoleAsync(CancellationToken cancellationToken = default)
-        => ConvertAsync(
-            "ROLE", new Cmd(Verbs.Role), cancellationToken,
-            static (ServerCommands _, in RespValue value) => ParseRole(in value));
-
-    public ValueTask<DateTimeOffset> LastSaveAsync(CancellationToken cancellationToken = default)
-        => ConvertAsync(
-            "LASTSAVE", new Cmd(Verbs.LastSave), cancellationToken,
-            static (ServerCommands _, in RespValue value) => FromUnixTimeSeconds(ReadInt64(in value)));
-
-    public ValueTask<long> CommandCountAsync(CancellationToken cancellationToken = default)
-        => client.IntegerAsync("COMMAND COUNT", new Cmd(Verbs.CommandCount), cancellationToken);
-
-    public ValueTask<string[]> CommandListAsync(CancellationToken cancellationToken = default)
-        => client.StringArrayAsync("COMMAND LIST", new Cmd(Verbs.CommandList), cancellationToken);
-
-    private async ValueTask<long> DatabaseSizeClusterAsync(CancellationToken cancellationToken)
     {
-        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        var owner = DispatchResponseSource<RespireMemoryStats>.Start();
+        var observation = owner.Observation;
         try
         {
-            var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(cancellationToken, discovery: null).ConfigureAwait(false);
-            long total = 0;
-            foreach (var connection in connections)
-            {
-                using var reply = await client.SendToClusterTargetAsync(
-                        "DBSIZE", connection, new RawCommand(RespCommands.DbSize, DbSizeReadKind), cancellationToken,
-                        observeErrors: false, observation: observation)
-                    .ConfigureAwait(false);
-                total = checked(total + ResponseReader.Integer(in reply));
-            }
-            return total;
+            return owner.Attach(ConvertAsync(
+            "MEMORY STATS", new Cmd(Verbs.MemoryStats), cancellationToken,
+            static (ServerCommands _, in RespValue value) => new RespireMemoryStats(ParseMemoryMap(value.AsArray())), observation: observation));
         }
-        catch (Exception error)
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    public ValueTask<RespireServerRole> RoleAsync(CancellationToken cancellationToken = default)
+    {
+        var owner = DispatchResponseSource<RespireServerRole>.Start();
+        var observation = owner.Observation;
+        try
         {
-            observation.Final(error);
-            throw;
+            return owner.Attach(ConvertAsync(
+            "ROLE", new Cmd(Verbs.Role), cancellationToken,
+            static (ServerCommands _, in RespValue value) => ParseRole(in value), observation: observation));
         }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    public ValueTask<DateTimeOffset> LastSaveAsync(CancellationToken cancellationToken = default)
+    {
+        var owner = DispatchResponseSource<DateTimeOffset>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            return owner.Attach(ConvertAsync(
+            "LASTSAVE", new Cmd(Verbs.LastSave), cancellationToken,
+            static (ServerCommands _, in RespValue value) => FromUnixTimeSeconds(ReadInt64(in value)), observation: observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    public ValueTask<long> CommandCountAsync(CancellationToken cancellationToken = default)
+    {
+        var owner = DispatchResponseSource<long>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            return owner.Attach(client.IntegerAsync("COMMAND COUNT", new Cmd(Verbs.CommandCount), cancellationToken, observation: observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    public ValueTask<string[]> CommandListAsync(CancellationToken cancellationToken = default)
+    {
+        var owner = DispatchResponseSource<string[]>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            return owner.Attach(client.StringArrayAsync("COMMAND LIST", new Cmd(Verbs.CommandList), cancellationToken, observation: observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private async ValueTask<long> DatabaseSizeClusterAsync(CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
+    {
+
+        var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(cancellationToken, discovery: null).ConfigureAwait(false);
+        long total = 0;
+        foreach (var connection in connections)
+        {
+            using var reply = await client.SendToClusterTargetAsync(
+                    "DBSIZE", connection, new RawCommand(RespCommands.DbSize, DbSizeReadKind), cancellationToken,
+                    observeErrors: false, observation: observation)
+                .ConfigureAwait(false);
+            total = checked(total + ResponseReader.Integer(in reply));
+        }
+        return total;
     }
 
     private async ValueTask FlushClusterAsync(
         string operation,
         Cmd command,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
     {
         // This sequential fan-out has one public result. Its targets borrow the owner
         // through conversion, and final reporting follows the mutation fence cleanup.
-        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+
+        var cache = client.Core.ClientCache;
+        var mutationFence = cache is null ? default : cache.BeginUnknownMutation();
         try
         {
-            var cache = client.Core.ClientCache;
-            var mutationFence = cache is null ? default : cache.BeginUnknownMutation();
-            try
+            var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(cancellationToken, discovery: null)
+                .ConfigureAwait(false);
+            foreach (var connection in connections)
             {
-                var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(cancellationToken, discovery: null)
+                using var reply = await client.SendToClusterTargetAsync(
+                        operation, connection, new MutationCommand<Cmd>(command, mutationFence), cancellationToken,
+                        observeErrors: false, observation: observation)
                     .ConfigureAwait(false);
-                foreach (var connection in connections)
-                {
-                    using var reply = await client.SendToClusterTargetAsync(
-                            operation, connection, new MutationCommand<Cmd>(command, mutationFence), cancellationToken,
-                            observeErrors: false, observation: observation)
-                        .ConfigureAwait(false);
-                    ResponseReader.ExpectOk(in reply);
-                }
-            }
-            finally
-            {
-                if (mutationFence.IsRequired) cache!.CompleteMutation(in mutationFence);
+                ResponseReader.ExpectOk(in reply);
             }
         }
-        catch (Exception error)
+        finally
         {
-            observation.Final(error);
-            throw;
+            if (mutationFence.IsRequired) cache!.CompleteMutation(in mutationFence);
         }
     }
 
     public ValueTask<DateTimeOffset> TimeAsync(CancellationToken cancellationToken = default)
-        => ConvertAsync(
+    {
+        var owner = DispatchResponseSource<DateTimeOffset>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            return owner.Attach(ConvertAsync(
             "TIME", new RawCommand(RespCommands.Time), cancellationToken,
             static (ServerCommands _, in RespValue value) =>
             {
@@ -369,24 +470,43 @@ internal sealed partial class ServerCommands(RespireClient client) : IServerComm
                 var seconds = parts.Length > 0 ? ReadInt64(in parts[0]) : 0;
                 var microseconds = parts.Length > 1 ? ReadInt64(in parts[1]) : 0;
                 return FromUnixTimeSeconds(seconds).Add(FromMicroseconds(microseconds));
-            });
+            }, observation: observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
 
     public ValueTask<Dictionary<string, string>> ConfigAsync(string pattern, CancellationToken cancellationToken = default)
-        => client.StringMapAsync("CONFIG GET", new Cmd1(Verbs.ConfigGet, pattern), cancellationToken);
+    {
+        var owner = DispatchResponseSource<Dictionary<string, string>>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            return owner.Attach(client.StringMapAsync("CONFIG GET", new Cmd1(Verbs.ConfigGet, pattern), cancellationToken, observation: observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
 
     public ValueTask SetConfigAsync(string name, RespireValue value, CancellationToken cancellationToken = default)
     {
-        EnsureAdminAllowed("CONFIG SET");
-        return client.OkAsync("CONFIG SET", new Cmd2(Verbs.ConfigSet, name, value), cancellationToken);
+        var owner = DispatchResponseSource<bool>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            EnsureAdminAllowed("CONFIG SET");
+            return DispatchResponseSource.Complete(owner.Attach(client.OkResultAsync("CONFIG SET", new Cmd2(Verbs.ConfigSet, name, value), cancellationToken, observation: observation)));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     private ValueTask<TResult> ConvertAsync<TCommand, TResult>(
         string operation,
         TCommand command,
         CancellationToken cancellationToken,
-        ResponseConverter<ServerCommands, TResult> converter)
+        ResponseConverter<ServerCommands, TResult> converter, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
-        => client.ConvertResponseAsync(operation, command, cancellationToken, this, converter);
+        => observation.IsEmpty
+            ? client.ConvertResponseAsync(operation, command, cancellationToken, this, converter)
+            : client.ConvertUnobservedResponseAsync(operation, command, cancellationToken, this, converter, observation);
 
     internal static RespireServerClientInfo[] ParseClientList(in RespValue value)
     {

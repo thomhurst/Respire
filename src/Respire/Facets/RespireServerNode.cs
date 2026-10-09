@@ -43,25 +43,51 @@ public sealed partial class RespireServerNode
     /// <summary>Generates an owned hexadecimal password. Bits must be 1 through 1024; default is 256. Redis: ACL GENPASS.</summary>
     public ValueTask<string> AclGeneratePasswordAsync(int? bits = null, CancellationToken cancellationToken = default)
     {
+        var owner = DispatchResponseSource<string>.Start();
+        var observation = owner.Observation;
         try
         {
             if (bits is < 1 or > 1024) throw new ArgumentOutOfRangeException(nameof(bits));
-            return ExecuteAsync("ACL GENPASS", bits is { } count ? [count] : [], ServerDiagnosticsParser.Text, cancellationToken);
+            return owner.Attach(ExecuteAsync("ACL GENPASS", bits is { } count ? [count] : [], ServerDiagnosticsParser.Text, cancellationToken, observation: observation));
         }
-        catch (Exception error) { RecordPreflightFailure(error); throw; }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     /// <summary>Lists owned binary ACL usernames. Redis: ACL USERS.</summary>
     public ValueTask<byte[][]> AclUsersAsync(CancellationToken cancellationToken = default)
-        => ExecuteAsync("ACL USERS", [], AclParser.ByteStrings, cancellationToken);
+    {
+        var owner = DispatchResponseSource<byte[][]>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            return owner.Attach(ExecuteAsync("ACL USERS", [], AclParser.ByteStrings, cancellationToken, observation: observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
 
     /// <summary>Replaces ACL state from the configured aclfile. Requires AllowAdmin. Redis: ACL LOAD.</summary>
     public ValueTask AclLoadAsync(CancellationToken cancellationToken = default)
-        => MutationAsync("ACL LOAD", [], cancellationToken);
+    {
+        var owner = DispatchResponseSource<bool>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("ACL LOAD", [], cancellationToken, observation: observation))));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
 
     /// <summary>Writes current ACL state to the configured aclfile. Requires AllowAdmin. Redis: ACL SAVE.</summary>
     public ValueTask AclSaveAsync(CancellationToken cancellationToken = default)
-        => MutationAsync("ACL SAVE", [], cancellationToken);
+    {
+        var owner = DispatchResponseSource<bool>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("ACL SAVE", [], cancellationToken, observation: observation))));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
 
     /// <summary>Writes SHUTDOWN to a dedicated control socket. Requires AllowAdmin.</summary>
     /// <remarks>Completion confirms only the local socket write, not server acceptance or shutdown. Redis sends no
@@ -69,6 +95,8 @@ public sealed partial class RespireServerNode
     /// Cancellation or transport failure after submission has an ambiguous outcome. The request is never replayed.</remarks>
     public ValueTask SendShutdownAsync(RespireShutdownOptions? options = null, CancellationToken cancellationToken = default)
     {
+        var owner = DispatchResponseSource<bool>.Start();
+        var observation = owner.Observation;
         try
         {
             options ??= new();
@@ -82,18 +110,28 @@ public sealed partial class RespireServerNode
             }
             if (options.Now) arguments.Add("NOW");
             if (options.Force) arguments.Add("FORCE");
-            return ShutdownWriteAsync(arguments.ToArray(), cancellationToken);
+            return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(ShutdownWriteAsync(arguments.ToArray(), cancellationToken, observation: observation))));
         }
-        catch (Exception error) { RecordPreflightFailure(error); throw; }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     /// <summary>Aborts an in-progress shutdown and awaits OK. Requires AllowAdmin and Redis 7.0 or later.</summary>
     public ValueTask AbortShutdownAsync(CancellationToken cancellationToken = default)
-        => MutationAsync("SHUTDOWN", ["ABORT"], cancellationToken, NodeCallKind.ControlMutation);
+    {
+        var owner = DispatchResponseSource<bool>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("SHUTDOWN", ["ABORT"], cancellationToken, NodeCallKind.ControlMutation, observation: observation))));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
 
     /// <summary>Starts coordinated FAILOVER. Requires AllowAdmin and Redis 6.2 or later.</summary>
     public ValueTask FailoverAsync(RespireFailoverOptions? options = null, CancellationToken cancellationToken = default)
     {
+        var owner = DispatchResponseSource<bool>.Start();
+        var observation = owner.Observation;
         try
         {
             options ??= new();
@@ -107,57 +145,81 @@ public sealed partial class RespireServerNode
                 if (options.Force) arguments.Add("FORCE");
             }
             if (options.Timeout is { } timeout) { arguments.Add("TIMEOUT"); arguments.Add(Milliseconds(timeout, nameof(options))); }
-            return MutationAsync("FAILOVER", arguments.ToArray(), cancellationToken);
+            return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("FAILOVER", arguments.ToArray(), cancellationToken, observation: observation))));
         }
-        catch (Exception error) { RecordPreflightFailure(error); throw; }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     /// <summary>Aborts coordinated FAILOVER. Requires AllowAdmin. Aborting can leave inconsistent replication state.</summary>
     public ValueTask AbortFailoverAsync(CancellationToken cancellationToken = default)
-        => MutationAsync("FAILOVER", ["ABORT"], cancellationToken);
+    {
+        var owner = DispatchResponseSource<bool>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("FAILOVER", ["ABORT"], cancellationToken, observation: observation))));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
 
     /// <summary>Configures replication from a TCP primary. Requires AllowAdmin. Redis: REPLICAOF host port.</summary>
     public ValueTask ReplicaOfAsync(RespireEndpoint primary, CancellationToken cancellationToken = default)
     {
+        var owner = DispatchResponseSource<bool>.Start();
+        var observation = owner.Observation;
         try
         {
             ValidateEndpoint(primary, allowUnixSocket: false);
-            return MutationAsync("REPLICAOF", [primary.Host, primary.Port], cancellationToken);
+            return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("REPLICAOF", [primary.Host, primary.Port], cancellationToken, observation: observation))));
         }
-        catch (Exception error) { RecordPreflightFailure(error); throw; }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     /// <summary>Promotes this node to a primary. Requires AllowAdmin. Redis: REPLICAOF NO ONE.</summary>
     public ValueTask PromoteToPrimaryAsync(CancellationToken cancellationToken = default)
-        => MutationAsync("REPLICAOF", ["NO", "ONE"], cancellationToken);
+    {
+        var owner = DispatchResponseSource<bool>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("REPLICAOF", ["NO", "ONE"], cancellationToken, observation: observation))));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
 
     /// <summary>Swaps two database contents. Requires AllowAdmin. Redis: SWAPDB.</summary>
     public ValueTask SwapDatabasesAsync(int first, int second, CancellationToken cancellationToken = default)
     {
+        var owner = DispatchResponseSource<bool>.Start();
+        var observation = owner.Observation;
         try
         {
             ArgumentOutOfRangeException.ThrowIfNegative(first);
             ArgumentOutOfRangeException.ThrowIfNegative(second);
-            return MutationAsync("SWAPDB", [first, second], cancellationToken);
+            return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("SWAPDB", [first, second], cancellationToken, observation: observation))));
         }
-        catch (Exception error) { RecordPreflightFailure(error); throw; }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     /// <summary>Loads a module from a server-side path. Requires AllowAdmin. Redis: MODULE LOAD.</summary>
     public ValueTask ModuleLoadAsync(string path, ReadOnlySpan<RespireValue> arguments, CancellationToken cancellationToken = default)
     {
+        var owner = DispatchResponseSource<bool>.Start();
+        var observation = owner.Observation;
         try
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(path);
-            return MutationAsync("MODULE LOAD", Prepend(path, arguments), cancellationToken);
+            return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("MODULE LOAD", Prepend(path, arguments), cancellationToken, observation: observation))));
         }
-        catch (Exception error) { RecordPreflightFailure(error); throw; }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     /// <summary>Loads a module with CONFIG pairs and ARGS. Requires AllowAdmin and Redis 7.0 or later. Redis: MODULE LOADEX.</summary>
     public ValueTask ModuleLoadExtendedAsync(string path, ReadOnlySpan<KeyValuePair<string, RespireValue>> configuration,
         ReadOnlySpan<RespireValue> arguments, CancellationToken cancellationToken = default)
     {
+        var owner = DispatchResponseSource<bool>.Start();
+        var observation = owner.Observation;
         try
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(path);
@@ -168,41 +230,55 @@ public sealed partial class RespireServerNode
                 tokens.Add("CONFIG"); tokens.Add(pair.Key); tokens.Add(Snapshot(pair.Value, nameof(configuration)));
             }
             if (!arguments.IsEmpty) { tokens.Add("ARGS"); foreach (var argument in arguments) tokens.Add(Snapshot(argument, nameof(arguments))); }
-            return MutationAsync("MODULE LOADEX", tokens.ToArray(), cancellationToken);
+            return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("MODULE LOADEX", tokens.ToArray(), cancellationToken, observation: observation))));
         }
-        catch (Exception error) { RecordPreflightFailure(error); throw; }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     /// <summary>Unloads a named module. Requires AllowAdmin. Redis: MODULE UNLOAD.</summary>
     public ValueTask ModuleUnloadAsync(string name, CancellationToken cancellationToken = default)
     {
+        var owner = DispatchResponseSource<bool>.Start();
+        var observation = owner.Observation;
         try
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(name);
-            return MutationAsync("MODULE UNLOAD", [name], cancellationToken);
+            return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("MODULE UNLOAD", [name], cancellationToken, observation: observation))));
         }
-        catch (Exception error) { RecordPreflightFailure(error); throw; }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     /// <summary>Returns owned allocator diagnostic text. Redis: MEMORY MALLOC-STATS.</summary>
     public ValueTask<string> MemoryMallocStatsAsync(CancellationToken cancellationToken = default)
-        => ExecuteAsync("MEMORY MALLOC-STATS", [], ServerDiagnosticsParser.Text, cancellationToken);
+    {
+        var owner = DispatchResponseSource<string>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            return owner.Attach(ExecuteAsync("MEMORY MALLOC-STATS", [], ServerDiagnosticsParser.Text, cancellationToken, observation: observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
 
     /// <summary>Returns an owned ASCII latency graph for an existing event. Redis: LATENCY GRAPH.</summary>
     public ValueTask<string> LatencyGraphAsync(string eventName, CancellationToken cancellationToken = default)
     {
+        var owner = DispatchResponseSource<string>.Start();
+        var observation = owner.Observation;
         try
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(eventName);
-            return ExecuteAsync("LATENCY GRAPH", [eventName], ServerDiagnosticsParser.Text, cancellationToken);
+            return owner.Attach(ExecuteAsync("LATENCY GRAPH", [eventName], ServerDiagnosticsParser.Text, cancellationToken, observation: observation));
         }
-        catch (Exception error) { RecordPreflightFailure(error); throw; }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     /// <summary>Extracts owned physical binary keys and flags from a command invocation. Redis 7.0 or later.</summary>
     public ValueTask<RespireCommandKeyFlags[]> CommandGetKeysAndFlagsAsync(RespireCommand command,
         ReadOnlySpan<RespireValue> arguments, CancellationToken cancellationToken = default)
     {
+        var owner = DispatchResponseSource<RespireCommandKeyFlags[]>.Start();
+        var observation = owner.Observation;
         try
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(command.Name, nameof(command));
@@ -210,44 +286,114 @@ public sealed partial class RespireServerNode
             var tokens = new RespireValue[words.Length + arguments.Length];
             for (var index = 0; index < words.Length; index++) tokens[index] = words[index];
             for (var index = 0; index < arguments.Length; index++) tokens[words.Length + index] = Snapshot(arguments[index], nameof(arguments));
-            return ExecuteAsync("COMMAND GETKEYSANDFLAGS", tokens, ServerNodeParser.KeysAndFlags, cancellationToken);
+            return owner.Attach(ExecuteAsync("COMMAND GETKEYSANDFLAGS", tokens, ServerNodeParser.KeysAndFlags, cancellationToken, observation: observation));
         }
-        catch (Exception error) { RecordPreflightFailure(error); throw; }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     /// <summary>Kills a read-only BUSY script on an independent control connection. Requires AllowAdmin. Redis: SCRIPT KILL.</summary>
     /// <remarks>Redis rejects killing a script that has written data. Server errors, including NOTBUSY and UNKILLABLE, propagate.</remarks>
     public ValueTask ScriptKillAsync(CancellationToken cancellationToken = default)
-        => MutationAsync("SCRIPT KILL", [], cancellationToken, NodeCallKind.ControlMutation);
+    {
+        var owner = DispatchResponseSource<bool>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("SCRIPT KILL", [], cancellationToken, NodeCallKind.ControlMutation, observation: observation))));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
 
     /// <summary>Kills a read-only BUSY function on an independent control connection. Requires AllowAdmin and Redis 7.0 or later.</summary>
     public ValueTask FunctionKillAsync(CancellationToken cancellationToken = default)
-        => MutationAsync("FUNCTION KILL", [], cancellationToken, NodeCallKind.ControlMutation);
+    {
+        var owner = DispatchResponseSource<bool>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("FUNCTION KILL", [], cancellationToken, NodeCallKind.ControlMutation, observation: observation))));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
 
     /// <summary>Starts an incremental backup. Requires AllowAdmin and Redis 8.10 or later. Redis: BACKUP START.</summary>
-    public ValueTask BackupStartAsync(CancellationToken cancellationToken = default) => MutationAsync("BACKUP START", [], cancellationToken);
+    public ValueTask BackupStartAsync(CancellationToken cancellationToken = default)
+    {
+        var owner = DispatchResponseSource<bool>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("BACKUP START", [], cancellationToken, observation: observation))));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
     /// <summary>Seals an incremental backup. Requires AllowAdmin and Redis 8.10 or later. Redis: BACKUP SEAL.</summary>
-    public ValueTask BackupSealAsync(CancellationToken cancellationToken = default) => MutationAsync("BACKUP SEAL", [], cancellationToken);
+    public ValueTask BackupSealAsync(CancellationToken cancellationToken = default)
+    {
+        var owner = DispatchResponseSource<bool>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("BACKUP SEAL", [], cancellationToken, observation: observation))));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
     /// <summary>Aborts an incremental backup. Requires AllowAdmin and Redis 8.10 or later. Redis: BACKUP ABORT.</summary>
-    public ValueTask BackupAbortAsync(CancellationToken cancellationToken = default) => MutationAsync("BACKUP ABORT", [], cancellationToken);
+    public ValueTask BackupAbortAsync(CancellationToken cancellationToken = default)
+    {
+        var owner = DispatchResponseSource<bool>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("BACKUP ABORT", [], cancellationToken, observation: observation))));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
     /// <summary>Deletes backup artifacts. Requires AllowAdmin and Redis 8.10 or later. Redis: BACKUP CLEANUP.</summary>
-    public ValueTask BackupCleanupAsync(CancellationToken cancellationToken = default) => MutationAsync("BACKUP CLEANUP", [], cancellationToken);
+    public ValueTask BackupCleanupAsync(CancellationToken cancellationToken = default)
+    {
+        var owner = DispatchResponseSource<bool>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(MutationAsync("BACKUP CLEANUP", [], cancellationToken, observation: observation))));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
     /// <summary>Returns owned backup state. Redis 8.10 or later. Redis: BACKUP STATUS.</summary>
     public ValueTask<RespireBackupStatus> BackupStatusAsync(CancellationToken cancellationToken = default)
-        => ExecuteAsync("BACKUP STATUS", [], ServerNodeParser.BackupStatus, cancellationToken);
+    {
+        var owner = DispatchResponseSource<RespireBackupStatus>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            return owner.Attach(ExecuteAsync("BACKUP STATUS", [], ServerNodeParser.BackupStatus, cancellationToken, observation: observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
     /// <summary>Lists owned immutable backup file paths. Redis 8.10 or later. Redis: BACKUP LIST.</summary>
     public ValueTask<string[]> BackupListAsync(CancellationToken cancellationToken = default)
-        => ExecuteAsync("BACKUP LIST", [], AclParser.Strings, cancellationToken);
+    {
+        var owner = DispatchResponseSource<string[]>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            return owner.Attach(ExecuteAsync("BACKUP LIST", [], AclParser.Strings, cancellationToken, observation: observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
 
     /// <summary>Returns physical binary keys matching a pattern. Redis: KEYS.</summary>
     /// <remarks>Debugging only: KEYS scans the entire database and blocks the server. Use IKeyCommands.ScanAsync for production iteration.</remarks>
     public ValueTask<byte[][]> KeysAsync(RespireValue pattern, CancellationToken cancellationToken = default)
     {
+        var owner = DispatchResponseSource<byte[][]>.Start();
+        var observation = owner.Observation;
         try
         {
-            return ExecuteAsync("KEYS", [Snapshot(pattern, nameof(pattern))], AclParser.ByteStrings, cancellationToken);
+            return owner.Attach(ExecuteAsync("KEYS", [Snapshot(pattern, nameof(pattern))], AclParser.ByteStrings, cancellationToken, observation: observation));
         }
-        catch (Exception error) { RecordPreflightFailure(error); throw; }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     /// <summary>Migrates physical source keys to a TCP destination. Requires AllowAdmin. Redis: MIGRATE.</summary>
@@ -260,6 +406,8 @@ public sealed partial class RespireServerNode
     public ValueTask<RespireMigrateResult> MigrateAsync(RespireEndpoint destination, ReadOnlySpan<RespireKey> keys,
         int database, TimeSpan timeout, RespireMigrateOptions? options = null, CancellationToken cancellationToken = default)
     {
+        var owner = DispatchResponseSource<RespireMigrateResult>.Start();
+        var observation = owner.Observation;
         try
         {
             ValidateEndpoint(destination, allowUnixSocket: false);
@@ -282,10 +430,10 @@ public sealed partial class RespireServerNode
             }
             tokens.Add("KEYS");
             foreach (var key in keys) tokens.Add(key.AsValue().Snapshot());
-            return ExecuteAsync("MIGRATE", tokens.ToArray(), ServerNodeParser.Migration, cancellationToken, NodeCallKind.Mutation,
-                commandTimeout: options.CommandTimeout);
+            return owner.Attach(ExecuteAsync("MIGRATE", tokens.ToArray(), ServerNodeParser.Migration, cancellationToken, NodeCallKind.Mutation,
+                commandTimeout: options.CommandTimeout, observation: observation));
         }
-        catch (Exception error) { RecordPreflightFailure(error); throw; }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     private delegate T ReplyParser<T>(in RespValue reply);
@@ -294,7 +442,7 @@ public sealed partial class RespireServerNode
 
     private ValueTask<T> ExecuteAsync<T>(string operation, RespireValue[] arguments, ReplyParser<T> parser,
         CancellationToken cancellationToken, NodeCallKind callKind = NodeCallKind.Read,
-        TimeSpan? commandTimeout = null)
+        TimeSpan? commandTimeout = null, RespireTelemetry.ErrorObservation observation = default)
         => WithNodeConnectionAsync(operation, callKind,
             (Client: _client, Operation: operation, Arguments: arguments, Parser: parser, ReadOnly: callKind == NodeCallKind.Read),
             static async (connection, state, token, fence, observation) =>
@@ -303,14 +451,19 @@ public sealed partial class RespireServerNode
                 using var reply = await state.Client.SendOnPinnedConnectionAsync(state.Operation, connection,
                     new MutationCommand<ReadOnlyCommand<CmdN>>(command, fence), token, observation).ConfigureAwait(false);
                 return state.Parser(in reply);
-            }, cancellationToken, commandTimeout);
+            }, cancellationToken, commandTimeout, observation: observation);
 
     private async ValueTask<T> WithNodeConnectionAsync<TState, T>(string operation, NodeCallKind callKind,
         TState state, Func<RespireConnection, TState, CancellationToken, ClientSideCacheCoordinator.MutationFence,
             RespireTelemetry.ErrorObservation, ValueTask<T>> execute,
-        CancellationToken cancellationToken, TimeSpan? commandTimeout = null)
+        CancellationToken cancellationToken, TimeSpan? commandTimeout = null, RespireTelemetry.ErrorObservation observation = default)
     {
-        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        if (observation.IsEmpty)
+            return await DispatchResponseSource<T>.Run(
+                (Node: this, Operation: operation, Kind: callKind, State: state, Execute: execute,
+                    Token: cancellationToken, Timeout: commandTimeout),
+                static (call, owner) => call.Node.WithNodeConnectionAsync(call.Operation, call.Kind,
+                    call.State, call.Execute, call.Token, call.Timeout, owner)).ConfigureAwait(false);
         try
         {
             var mutation = callKind is NodeCallKind.Mutation or NodeCallKind.ControlMutation;
@@ -344,20 +497,19 @@ public sealed partial class RespireServerNode
     }
 
     private async ValueTask MutationAsync(string operation, RespireValue[] arguments, CancellationToken cancellationToken,
-        NodeCallKind callKind = NodeCallKind.Mutation)
-        => _ = await ExecuteAsync(operation, arguments, ServerNodeParser.Ok, cancellationToken, callKind).ConfigureAwait(false);
+        NodeCallKind callKind = NodeCallKind.Mutation, RespireTelemetry.ErrorObservation observation = default)
+        => _ = await ExecuteAsync(operation, arguments, ServerNodeParser.Ok, cancellationToken, callKind, observation: observation).ConfigureAwait(false);
 
-    private async ValueTask ShutdownWriteAsync(RespireValue[] arguments, CancellationToken cancellationToken)
+    private async ValueTask ShutdownWriteAsync(RespireValue[] arguments, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
         => _ = await WithNodeConnectionAsync("SHUTDOWN", NodeCallKind.ControlMutation, arguments,
             static async (connection, tokens, token, fence, observation) =>
             {
                 await connection.SendFireAndForgetAsync(new MutationCommand<CmdN>(new CmdN(new Verb(-1, "SHUTDOWN"), tokens), fence),
                     token, "SHUTDOWN", observation: observation).ConfigureAwait(false);
                 return true;
-            }, cancellationToken).ConfigureAwait(false);
+            }, cancellationToken, observation: observation).ConfigureAwait(false);
 
-    // Public node methods validate and build arguments before WithNodeConnectionAsync starts
-    // its owner. That helper is asynchronous, so synchronous failures here are preflight only.
+    // Migration route families still report their synchronous preflight independently.
     private static void RecordPreflightFailure(Exception error) => RespireTelemetry.RecordError(error, internallyHandled: false);
 
     private static RespireValue Snapshot(RespireValue value, string name)
