@@ -63,6 +63,44 @@ error. The typed command has no fallback. The coordination fixed-window limiter
 already uses its own atomic Lua fallback, caches unsupported-command results for
 five minutes across its partitions, and then probes again to detect server upgrades.
 
+## Longest common subsequence
+
+Redis 7.0+ `LCS` compares the values stored at two keys. `Strings.LcsAsync` returns
+the subsequence as text, and `Strings.LcsLengthAsync` returns its total byte length.
+Use `Strings.LcsIndexAsync` for typed contiguous match ranges:
+
+```csharp
+RespireLcsIndexResult result = await redis.Strings.LcsIndexAsync(
+    "before", "after", new RespireLcsOptions
+    {
+        MinimumMatchLength = 4,
+        IncludeMatchLength = true,
+    }, cancellationToken);
+
+foreach (RespireLcsMatch match in result.Matches)
+{
+    Console.WriteLine($"{match.FirstRange.Start}-{match.FirstRange.End}: " +
+        $"{match.SecondRange.Start}-{match.SecondRange.End} ({match.Length} bytes)");
+}
+```
+
+Ranges contain zero-based, inclusive **byte offsets**, including for UTF-8 values.
+Matches retain Redis order: the last match comes first. `MinimumMatchLength` sends
+`MINMATCHLEN` and must be nonnegative; null omits the filter. `IncludeMatchLength`
+sends `WITHMATCHLEN`; otherwise each match's `Length` is null. The result's `Length`
+is the total subsequence length before filtering, even when every match is filtered
+out. Missing keys or values with no common subsequence return empty matches and zero.
+
+Batches and transactions expose `Strings.LcsIndex` with the same options and result.
+Both keys receive the client view's prefix. Cluster clients require both resolved
+keys to share a slot and reject a mismatch before sending or enqueueing the command.
+The immediate method accepts a cancellation token; deferred commands use the token
+passed to `ExecuteAsync` or `CommitAsync`.
+
+For example, `ohmytext` and `mynewtext` have total length 6, with ranges `4-7` /
+`5-8` and `2-3` / `0-1`. Filtering at 4 bytes returns only the first range pair,
+while retaining total length 6. See the [Redis LCS reference](https://redis.io/docs/latest/commands/lcs/).
+
 ## Read and write
 
 ```csharp
