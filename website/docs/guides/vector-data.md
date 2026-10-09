@@ -56,6 +56,16 @@ The sample `MovieMapper` declares ordinal string filters for `Title` and `Tag`, 
 Write Boolean filter fields as invariant `0` or `1` and numeric fields using `RespireVectorDataFilterEncoding.EncodeNumber`. This preserves the exact double representation, including lossless promotion of `float` values; formatting a float directly can change its indexed boundary. Write every nonnullable scalar property. Omit fields for null scalar values; explicit null hash bytes are unsupported. Missing fields represent null, while encoded empty strings remain present. String collections support nonnull string elements; an omitted or empty collection has no membership matches. Record mapping remains explicit and does not use runtime reflection.
 
 ```csharp
+using Respire;
+using Respire.VectorData;
+using Respire.Samples.VectorData; // Movie and MovieMapper from the runnable sample.
+
+await using var client = await RespireClient.ConnectAsync("redis://localhost:6379");
+using var store = new RespireVectorStore(client, "my-application");
+store.RegisterMapper(new MovieMapper());
+using var movies = store.GetHashCollection<Movie>("movies");
+await movies.EnsureCollectionExistsAsync();
+
 var title = "Arrival";
 await foreach (var hit in movies.SearchAsync(new float[] { 1, 0 }, top: 10,
     new() { Filter = movie => movie.Title == title && movie.Tag != null }))
