@@ -80,6 +80,36 @@ public partial class ErrorMetricsTests
 
     [Test]
     [MatrixDataSource]
+    public async Task UploadCleanupRecordsAlreadyCompletedPooledErrorReplyOnce(
+        [Matrix(false, true)] bool throwOnError, [Matrix(0, 3)] int attempts)
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        using var capture = new Capture(throwOnMeasurement: true);
+        var pool = new PendingResponsePool(1);
+        var source = pool.Rent(throwOnError, "SET");
+        source.ErrorAttempts = attempts;
+        var reply = RespValue.Error("NOPERM private-payload"u8.ToArray());
+        source.TrySetResult(in reply);
+        source.ReleaseRef();
+
+        // Consuming this completed reply releases the last reference and resets its metadata.
+        await RespireConnection.ObserveStreamedSetResponseAsync(source);
+        await Assert.That(source.CommandName).IsNull();
+        var item = capture.Items.Single();
+        await Assert.That((bool)item.Tags["redis.client.errors.internal"]!).IsTrue();
+        await Assert.That(item.Tags["db.response.status_code"]).IsEqualTo("NOPERM");
+        await Assert.That(item.Tags["redis.client.operation.retry_attempts"]).IsEqualTo(attempts);
+
+        var recycled = pool.Rent();
+        await Assert.That(ReferenceEquals(recycled, source)).IsTrue();
+        await Assert.That(recycled.ErrorAttempts).IsEqualTo(0);
+        recycled.TrySetResult(RespValue.Integer(1));
+        recycled.ReleaseRef();
+        using var response = await recycled.Task;
+    }
+
+    [Test]
+    [MatrixDataSource]
     public async Task PayloadReadCancellationKeepsLaterFailureIdentityAndAttempts(
         [Matrix(false, true)] bool legacyRead, [Matrix(0, 3)] int attempts)
     {
