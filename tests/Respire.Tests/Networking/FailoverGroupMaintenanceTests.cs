@@ -101,6 +101,33 @@ public class FailoverGroupMaintenanceTests
     }
 
     [Test]
+    [Arguments("MIGRATING", "MIGRATED")]
+    [Arguments("FAILING_OVER", "FAILED_OVER")]
+    public async Task MaintenanceCompletedDuringProbeDoesNotCountFailure(string start, string finish)
+    {
+        await using var server = Server();
+        await using var group = await RespireFailoverGroup.ConnectAsync([Candidate(server)], ManualOptions());
+        var connection = ((RespireClient)group.ActiveClient).Core.Multiplexer.GetConnection();
+        var replies = server.ReplyOverride!;
+        server.ReplyOverride = (id, command) => command == "PING"
+            ? [.. Start(start), .. Finish(finish), .. "-ERR unavailable\r\n"u8.ToArray()]
+            : replies(id, command);
+
+        // Both pushes precede the error on the wire, so the window closes before the probe fails.
+        await group.ForTests.ProbeAsync(0);
+        await Assert.That(connection.HasMaintenanceWindow).IsFalse();
+        await Assert.That(group.GetEndpointStatuses()[0].ConsecutiveFailures).IsEqualTo(0);
+        await Assert.That(group.GetEndpointStatuses()[0].IsHealthy).IsTrue();
+        await Assert.That(group.ForTests.Circuit(0).State).IsEqualTo(EndpointCircuitState.Closed);
+
+        // A subsequent failure that does not overlap maintenance must still open the circuit.
+        server.ReplyOverride = (id, command) => command == "PING" ? "-ERR unavailable\r\n"u8.ToArray() : replies(id, command);
+        await group.ForTests.ProbeAsync(0);
+        await Assert.That(group.GetEndpointStatuses()[0].ConsecutiveFailures).IsEqualTo(1);
+        await Assert.That(group.GetEndpointStatuses()[0].IsHealthy).IsFalse();
+    }
+
+    [Test]
     public async Task MaintenanceWindowSurvivesSocketLossButExpires()
     {
         await using var server = Server();

@@ -290,6 +290,7 @@ public sealed record RespireOptions
     public TimeSpan MaintenanceWindowTimeout { get; init; } = TimeSpan.FromSeconds(60);
 
     // Shared by all data transports of one failover candidate, including replacements.
+    // RespireFailoverGroup replaces this value with its own tracker when it snapshots each member.
     internal FailoverMaintenanceWindows? FailoverMaintenance { get; init; }
 
     /// <summary>Timeout for the initial TCP connect (per connection).</summary>

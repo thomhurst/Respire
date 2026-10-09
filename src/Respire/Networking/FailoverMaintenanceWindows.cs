@@ -7,6 +7,7 @@ internal sealed class FailoverMaintenanceWindows
     private readonly Lock _gate = new();
     private readonly List<MaintenanceTimeoutState> _states = [];
     private long _overflowUntil;
+    private long _generation;
 
     internal void Observe(MaintenanceTimeoutState state)
     {
@@ -14,12 +15,17 @@ internal sealed class FailoverMaintenanceWindows
         lock (_gate)
         {
             Prune(now);
-            if (_states.Contains(state) || state.GetWindow(now) is not { } window) return;
+            if (state.GetWindow(now) is not { } window) return;
+            // Retain overlap history even after completion or expiry removes the active window.
+            _generation++;
+            if (_states.Contains(state)) return;
             if (_states.Count < MaximumStates) _states.Add(state);
             // At capacity, retain only a finite expiry rather than another socket's state.
             else _overflowUntil = Math.Max(_overflowUntil, window.Expires);
         }
     }
+
+    internal long Generation { get { lock (_gate) return _generation; } }
 
     internal bool IsActive
     {
