@@ -3355,7 +3355,7 @@ public partial class ErrorMetricsTests
         else if (outcome == 3) error = await Assert.That(Execute).Throws<RespireException>();
         else { await Execute(); error = null; }
         var items = capture.Items.ToArray();
-        var expectedMeasurements = outcome switch { 6 => 0, 5 => 2, _ => 1 };
+        var expectedMeasurements = outcome == 6 ? 0 : 1;
         await Assert.That(items.Length).IsEqualTo(expectedMeasurements);
         foreach (var item in items)
         {

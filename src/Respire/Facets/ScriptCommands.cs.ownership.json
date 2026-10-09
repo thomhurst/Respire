@@ -17,7 +17,29 @@
       "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
     }
   ],
-  "Boundaries": [],
+  "Boundaries": [
+    {
+      "Member": "Respire.ScriptCommands.ExecuteConvertedAsync`1(RespireScript,RespireKey[]?,RespireValue[]?,CancellationToken,Func<RespireResult,TResult>):ValueTask<TResult>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Start the caller response owner before script validation and command construction. Borrow retry observation through typed conversion and result disposal; successful calls keep the failure-only lease empty.",
+      "Name": "script-typed-conversion",
+      "Role": "helper"
+    },
+    {
+      "Member": "Respire.ScriptCommands.SendToPrimariesAsync`2(ClusterRouter,string,TCommand,ResponseConverter<ScriptCommands,TResult>,CancellationToken,RespireTelemetry.ErrorObservation,Action<TResult[]>?):ValueTask<TResult[]>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Borrow the SCRIPT caller owner across discovery and every primary. Join all replies and cleanup before consistency validation and one caller final publication.",
+      "Name": "script-primary-fan-out",
+      "Role": "borrower"
+    },
+    {
+      "Member": "Respire.ScriptCommands.SendAndConvertAsync`2(string,RespireConnection,TCommand,ResponseConverter<ScriptCommands,TResult>,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<TResult>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Borrow the enclosing SCRIPT caller owner for target transport retries, reply conversion and disposal. Never publish an independent final target failure.",
+      "Name": "script-primary-conversion",
+      "Role": "borrower"
+    }
+  ],
   "NonRoutes": [
     {
       "Member": "Respire.RespireScript.Create(string):RespireScript",
