@@ -30,6 +30,13 @@
   ],
   "Boundaries": [
     {
+      "Name": "distributed-cache-wrapped-removal",
+      "Role": "borrower",
+      "Member": "Respire.Caching.RespireDistributedCache.UnlinkWrappedGuardedAsync(string,CancellationToken,RespireTelemetry.ErrorObservation):Task",
+      "Owner": "Respire.Caching.RespireDistributedCache.RemoveAsync(string,CancellationToken):Task",
+      "Contract": "Placement, deletion and revocation borrow an independent operation owner through async decorators. Copy retries after cleanup; retain ownership for abandoned commands and report swallowed or late failures internally. Only the cache caller publishes the propagated final failure."
+    },
+    {
       "Name": "distributed-cache-correction",
       "Role": "borrower",
       "Member": "Respire.Caching.RespireDistributedCache.RunCorrectionAsync(RespireScript,string,Func<RespireValue[]>,RespireClient.TrackedConnectionIdentity,RespireTelemetry.ErrorObservation):ValueTask",

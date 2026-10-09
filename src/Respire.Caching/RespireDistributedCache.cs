@@ -381,7 +381,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
             {
                 result = await (_wireClient is { } wire
                     ? wire.ExecuteScriptBorrowedAsync(SetScript, [key], args, token, observation)
-                    : _client.Scripts.ExecuteAsync(SetScript, [key], args, token)).ConfigureAwait(false);
+                    : ExecuteWrappedScriptAsync(SetScript, [key], args, token, observation)).ConfigureAwait(false);
             }
 
             result.Dispose();
@@ -524,7 +524,8 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
             {
                 using var result = await (_wireClient is { } client && errors is not null
                     ? client.ExecuteScriptBorrowedAsync(script, [key], args, CancellationToken.None, errors.Observation)
-                    : _client.Scripts.ExecuteAsync(script, [key], args, CancellationToken.None)).ConfigureAwait(false);
+                    : ExecuteWrappedScriptAsync(script, [key], args, CancellationToken.None,
+                        errors?.Observation ?? default)).ConfigureAwait(false);
             }
         }
         catch (Exception error)
@@ -535,7 +536,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         finally { errors?.CompletePass(failure); }
     }
 
-    // Only delayed or abandoned operations allocate this scope. Foreground and outstanding
+    // Delayed corrections and interface-based removals allocate this scope. Foreground and outstanding
     // passes each own a reference; the last completion returns the independent failure-only owner.
     private sealed class CorrectionErrors
     {
@@ -647,26 +648,39 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         }
         else
         {
-            await UnlinkWrappedGuardedAsync(key, token).ConfigureAwait(false);
+            await UnlinkWrappedGuardedAsync(key, token, observation).ConfigureAwait(false);
         }
     }
 
-    private async Task UnlinkWrappedGuardedAsync(string key, CancellationToken cancellationToken)
+    private async Task UnlinkWrappedGuardedAsync(string key, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation)
     {
         using var timeoutSource = CommandTimeoutCancellation.Create(
             cancellationToken,
             WrappedRemovalTimeout);
+        var errors = new CorrectionErrors(observation.Attempts);
+        Exception? failure = null;
         try
         {
-            await UnlinkWrappedLeasedAsync(key, timeoutSource.Token).ConfigureAwait(false);
+            await UnlinkWrappedLeasedAsync(key, timeoutSource.Token, errors).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested)
         {
+            // The cache owner publishes the normalized timeout; suppress the underlying
+            // cancellation as the propagated foreground failure, rather than a retry.
+            failure = error;
             throw new RespireTimeoutException("UNLINK", WrappedRemovalTimeout);
         }
+        catch (Exception error)
+        {
+            failure = error;
+            throw;
+        }
+        finally { errors.CompleteForeground(observation, failure); }
     }
 
-    private async Task UnlinkWrappedLeasedAsync(string key, CancellationToken cancellationToken)
+    private async Task UnlinkWrappedLeasedAsync(string key, CancellationToken cancellationToken,
+        CorrectionErrors errors)
     {
         var leaseTtl = WrappedRemovalMinimumLeaseTtl;
         while (true)
@@ -677,11 +691,10 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
             // If this wait is abandoned, only an unused expiring lease can land late; the
             // deletion script is not sent until placement is confirmed.
             var placementStart = Stopwatch.GetTimestamp();
-            await _client.SetAsync(
-                    lease,
-                    (RespireValue)1,
-                    leaseTtl,
-                    cancellationToken: cancellationToken)
+            await ExecuteWrappedCommandAsync(
+                    (Client: _client, Lease: lease, Ttl: leaseTtl, Token: cancellationToken), errors,
+                    static state => state.Client.SetAsync(state.Lease, (RespireValue)1, state.Ttl,
+                        cancellationToken: state.Token))
                 .AsTask()
                 .WaitAsync(cancellationToken)
                 .ConfigureAwait(false);
@@ -703,10 +716,11 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
             Task<RespireResult>? removal = null;
             try
             {
-                removal = _client.Scripts.ExecuteAsync(
-                        RespireClient.LeasedUnlinkScript,
-                        [key, lease],
-                        cancellationToken: cancellationToken)
+                removal = ExecuteWrappedCommandAsync(
+                        (Client: _client, Key: key, Lease: lease, Token: cancellationToken), errors,
+                        static state => state.Client.Scripts.ExecuteAsync(
+                            RespireClient.LeasedUnlinkScript, [state.Key, state.Lease],
+                            cancellationToken: state.Token))
                     .AsTask();
                 using var result = await removal.WaitAsync(cancellationToken).ConfigureAwait(false);
                 if (result.AsInteger() == 1)
@@ -725,7 +739,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
                     _ = ObserveWrappedRemovalAsync(removal);
                 }
 
-                await MakeWrappedRemovalHarmlessAsync(lease, leaseStart, leaseTtl).ConfigureAwait(false);
+                await MakeWrappedRemovalHarmlessAsync(lease, leaseStart, leaseTtl, errors).ConfigureAwait(false);
                 throw;
             }
         }
@@ -748,7 +762,8 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     private async Task MakeWrappedRemovalHarmlessAsync(
         RespireKey lease,
         long leaseStart,
-        TimeSpan leaseTtl)
+        TimeSpan leaseTtl,
+        CorrectionErrors errors)
     {
         var remaining = leaseTtl - Stopwatch.GetElapsedTime(leaseStart);
         if (remaining > TimeSpan.Zero)
@@ -756,7 +771,8 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
             Task<long>? revoke = null;
             try
             {
-                revoke = _client.Keys.UnlinkAsync(lease).AsTask();
+                revoke = ExecuteWrappedCommandAsync((Client: _client, Lease: lease), errors,
+                    static state => state.Client.Keys.UnlinkAsync(state.Lease)).AsTask();
                 await revoke.WaitAsync(remaining).ConfigureAwait(false);
                 return;
             }
@@ -806,6 +822,25 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         }
     }
 
+    private ValueTask<RespireResult> ExecuteWrappedScriptAsync(RespireScript script,
+        RespireKey[] keys, RespireValue[] args, CancellationToken token,
+        RespireTelemetry.ErrorObservation observation)
+        => DispatchResponseSource.InvokeDecorated(
+            (Client: _client, Script: script, Keys: keys, Args: args, Token: token), observation,
+            static state => state.Client.Scripts.ExecuteAsync(state.Script, state.Keys, state.Args, state.Token));
+
+    // A bounded removal wait can leave its command running. Retain the independent owner
+    // until that command finishes, then report its failure internally if foreground ended.
+    private static async ValueTask<TResult> ExecuteWrappedCommandAsync<TState, TResult>(
+        TState state, CorrectionErrors errors, Func<TState, ValueTask<TResult>> send)
+    {
+        errors.StartPass();
+        Exception? failure = null;
+        try { return await DispatchResponseSource.InvokeDecorated(state, errors.Observation, send).ConfigureAwait(false); }
+        catch (Exception error) { failure = error; throw; }
+        finally { errors.CompletePass(failure); }
+    }
+
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<RespireResult> RunGetScriptAsync(string key, bool returnData, CancellationToken token,
         RespireTelemetry.ErrorObservation observation)
@@ -837,8 +872,8 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
             }
             else
             {
-                result = await _client.Scripts.ExecuteAsync(
-                    GetAndRefreshScript, [key], args, token).ConfigureAwait(false);
+                result = await ExecuteWrappedScriptAsync(
+                    GetAndRefreshScript, [key], args, token, observation).ConfigureAwait(false);
             }
         }
         catch (Exception ex) when (

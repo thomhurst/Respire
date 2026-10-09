@@ -206,6 +206,12 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         ReadOnlySpan<RespireValue> args,
         CancellationToken cancellationToken = default)
     {
+        var borrowed = DispatchResponseSource.DecoratedObservation;
+        if (borrowed.IsOpen)
+        {
+            ArgumentNullException.ThrowIfNull(script);
+            return client.ExecuteScriptAsync(script, client.BuildScriptTailFromSpans(keys, args), cancellationToken, borrowed);
+        }
         var owner = DispatchResponseSource<RespireResult>.Start();
         try
         {

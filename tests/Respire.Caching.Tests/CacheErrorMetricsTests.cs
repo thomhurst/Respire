@@ -84,9 +84,11 @@ public partial class CacheErrorMetricsTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task DetachedCorrectionRetainsItsLeaseAndReportsHandledFailures(bool refresh)
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task DetachedCorrectionRetainsItsLeaseAndReportsHandledFailures(bool refresh, bool decorated)
     {
         var previous = RespireMetrics.Configuration;
         RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Resiliency });
@@ -119,7 +121,13 @@ public partial class CacheErrorMetricsTests
                 Protocol = RespProtocol.Resp2, Connections = 1,
                 Endpoints = [new("127.0.0.1", server.Port)], CommandTimeout = TimeSpan.FromSeconds(5),
             });
-            await using var cache = new RespireDistributedCache(client)
+            IRespireClient cacheClient = decorated
+                ? new RespireDistributedCacheTests.ScriptInterceptingClient(client, async (_, send) =>
+                {
+                    await Task.Yield();
+                    return await send().ConfigureAwait(false);
+                }) : client;
+            await using var cache = new RespireDistributedCache(cacheClient)
             {
                 CorrectionWaitBound = TimeSpan.FromMilliseconds(50),
             };

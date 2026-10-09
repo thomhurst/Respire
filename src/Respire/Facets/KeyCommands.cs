@@ -193,6 +193,8 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
 
     public ValueTask<long> UnlinkAsync(params ReadOnlySpan<RespireKey> keys)
     {
+        var borrowed = DispatchResponseSource.DecoratedObservation;
+        if (borrowed.IsOpen) return UnlinkBorrowedAsync(keys, borrowed);
         var owner = DispatchResponseSource<long>.Start();
         try { return owner.Attach(UnlinkBorrowedAsync(keys, owner.Observation)); }
         catch (Exception error) { owner.Fail(error); throw; }
@@ -203,6 +205,8 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
 
     public ValueTask<long> UnlinkAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
     {
+        var borrowed = DispatchResponseSource.DecoratedObservation;
+        if (borrowed.IsOpen) return UnlinkBorrowedAsync(keys, cancellationToken, borrowed);
         var owner = DispatchResponseSource<long>.Start();
         try { return owner.Attach(UnlinkBorrowedAsync(keys, cancellationToken, owner.Observation)); }
         catch (Exception error) { owner.Fail(error); throw; }

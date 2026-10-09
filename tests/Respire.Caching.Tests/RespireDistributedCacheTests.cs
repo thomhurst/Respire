@@ -1380,7 +1380,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     /// (called with the 1-based call number and the real send). Deliberately not a
     /// RespireClient, so the cache degrades to the single-send correction path.
     /// </summary>
-    private sealed class ScriptInterceptingClient(
+    internal sealed class ScriptInterceptingClient(
         RespireClient inner,
         Func<int, Func<ValueTask<RespireResult>>, ValueTask<RespireResult>> onScript,
         IKeyCommands? keys = null,

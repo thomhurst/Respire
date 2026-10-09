@@ -536,6 +536,7 @@ public class CommandRouteOwnershipTests
     private static readonly string[] RequiredBoundaries = [
         "semaphore-acquire", "semaphore-renew", "semaphore-release", "semaphore-cleanup", "semaphore-disposal",
         "cache-get-owner", "cache-mget-owner", "cache-hash-partial-read", "cache-correction-owner", "distributed-cache-correction", "cache-removal-owner",
+        "distributed-cache-wrapped-removal", "decorated-dispatch-borrower",
         "blocking-dispatch-owner", "blocking-asking-transport",
         "dispatch-final-inspection", "dispatch-owner-start", "typed-dispatch-owner", "string-dispatch-owner", "bytes-dispatch-owner",
         "dispatch-write-outcome-borrower", "dispatch-discarded-reply-snapshot", "dispatch-cancelled-reply-drain",
