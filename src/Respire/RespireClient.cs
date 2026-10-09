@@ -3700,8 +3700,7 @@ public sealed partial class RespireClient : IRespireClient
         bool allowStreamingConnectionReroute = true,
         bool pinToConnection = false, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
-        => _core.Circuits is not null && !_snapshotPrefixedBinaryKeys && !pinToConnection
-            && operation is not ("MULTI" or "WATCH")
+        => UsesCircuitResponsePath(operation, pinToConnection)
             ? SendCircuitResponseAsync(operation, connection, command, cancellationToken, sendAsking,
                 commandDeadline, allowStreamingConnectionReroute, observation)
             : SendOnConnectionUncheckedAsync(operation, connection, command, cancellationToken, sendAsking,
@@ -4091,8 +4090,7 @@ public sealed partial class RespireClient : IRespireClient
             storedProcedureName: storedProcedureName);
         // The circuit retry owns the final endpoint, including rejection before dispatch.
         // Transfer telemetry with the command instead of completing against the source.
-        if (core.Circuits is not null && !_snapshotPrefixedBinaryKeys && !pinToConnection
-            && operation is not ("MULTI" or "WATCH"))
+        if (UsesCircuitResponsePath(operation, pinToConnection))
             return await SendCircuitResponseAsync(operation, connection, command, cancellationToken, sendAsking,
                 commandDeadline, allowStreamingConnectionReroute, observation, telemetry, storedProcedureName)
                 .ConfigureAwait(false);
