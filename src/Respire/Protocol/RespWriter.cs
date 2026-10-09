@@ -1,7 +1,6 @@
 using System.Buffers;
 using System.Buffers.Binary;
 using System.Buffers.Text;
-using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -259,31 +258,43 @@ internal ref struct RespWriter
     /// <summary>Writes an integer as a bulk string ("$3\r\n123\r\n") — how Redis expects numeric arguments.</summary>
     public void WriteBulkInteger(long value)
     {
-        // Unsigned subtraction handles Int64.MinValue without signed overflow.
-        var magnitude = value < 0 ? unchecked(0UL - (ulong)value) : (ulong)value;
-        var length = (BitOperations.Log2(magnitude | 1) * 1233 >> 12) + 1;
-        if (magnitude >= PowersOfTen[length]) length++;
-        if (value < 0) length++;
-        WriteBulkStringHeader(length);
-        var payload = GetSpan(length + 2);
-        Utf8Formatter.TryFormat(value, payload[..length], out _);
-        payload[length] = RespConstants.CarriageReturn;
-        payload[length + 1] = RespConstants.LineFeed;
-        _position += length + 2;
-    }
+        if ((ulong)value <= 9)
+        {
+            var singleDigit = GetSpan(7);
+            "$1\r\n0\r\n"u8.CopyTo(singleDigit);
+            singleDigit[4] = (byte)('0' + value);
+            _position += 7;
+            return;
+        }
 
-    // 1233/4096 approximates log10(2) from below. For a 64-bit magnitude the estimate
-    // can be at most one decimal digit short; one power-of-ten comparison corrects it.
-    // A cached array also avoids net8.0's per-access RuntimeFieldHandle allocation
-    // from the generic RuntimeHelpers.CreateSpan<ulong> emitted for an RVA span.
-    private static readonly ulong[] PowersOfTen =
-    [
-        1, 10, 100, 1_000, 10_000, 100_000, 1_000_000, 10_000_000,
-        100_000_000, 1_000_000_000, 10_000_000_000, 100_000_000_000,
-        1_000_000_000_000, 10_000_000_000_000, 100_000_000_000_000,
-        1_000_000_000_000_000, 10_000_000_000_000_000, 100_000_000_000_000_000,
-        1_000_000_000_000_000_000, 10_000_000_000_000_000_000,
-    ];
+        // The sign counts toward the payload length. Select its header width
+        // without counting decimal digits, then format the value only once.
+        var headerLength = value is > -100_000_000 and < 1_000_000_000 ? 4 : 5;
+        var span = GetSpan(headerLength + 20 + 2);
+        if (!Utf8Formatter.TryFormat(value, span[headerLength..], out var length))
+            throw new InvalidOperationException("The write buffer cannot hold the integer payload.");
+        span[0] = RespConstants.BulkStringPrefix;
+        if (headerLength == 4)
+        {
+            span[1] = (byte)('0' + length);
+        }
+        else if (length == 20)
+        {
+            span[1] = (byte)'2';
+            span[2] = (byte)'0';
+        }
+        else
+        {
+            span[1] = (byte)'1';
+            span[2] = (byte)('0' + length - 10);
+        }
+        span[headerLength - 2] = RespConstants.CarriageReturn;
+        span[headerLength - 1] = RespConstants.LineFeed;
+        var frameLength = headerLength + length + 2;
+        span[frameLength - 2] = RespConstants.CarriageReturn;
+        span[frameLength - 1] = RespConstants.LineFeed;
+        _position += frameLength;
+    }
 
     /// <summary>Appends pre-encoded RESP bytes (e.g. a pre-compiled command prefix) verbatim.</summary>
     public void WriteRaw(scoped ReadOnlySpan<byte> preEncoded)
