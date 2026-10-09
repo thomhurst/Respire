@@ -13,6 +13,8 @@ internal abstract partial class CompatDatabaseAsync : IDatabaseAsync
     protected CompatDatabase DatabaseOwner { get; set; } = null!;
     public int Database => DatabaseOwner.Number;
     public IConnectionMultiplexer Multiplexer => DatabaseOwner.Owner;
+    public ITransactionAsync CreateTransaction(object? asyncState) => this is CompatDatabase database
+        ? database.CreateTransaction(asyncState) : throw Compatibility.Unsupported("CreateTransaction on a deferred queue");
     protected abstract Task<T> Send<T>(RespireCommand command, RedisValue[] arguments, CommandFlags flags, Func<RedisResult, T> convert);
 
     protected static RedisValue Key(RedisKey key)

@@ -311,9 +311,6 @@ partial class CompatDatabase
     public global::StackExchange.Redis.HashEntry[] HashRandomFieldsWithValues(global::StackExchange.Redis.RedisKey @key, global::System.Int64 @count, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("HashRandomFieldsWithValues");
     /// <inheritdoc />
-    public new global::StackExchange.Redis.ITransaction CreateTransaction(global::System.Object @asyncState)
-        => throw Compatibility.Unsupported("CreateTransaction");
-    /// <inheritdoc />
     public global::StackExchange.Redis.LCSMatchResult StringLongestCommonSubsequenceWithMatches(global::StackExchange.Redis.RedisKey @first, global::StackExchange.Redis.RedisKey @second, global::System.Int64 @minLength, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("StringLongestCommonSubsequenceWithMatches");
     /// <inheritdoc />

@@ -8,9 +8,6 @@ partial class CompatDatabaseAsync
     public global::System.Boolean IsConnected(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("IsConnected");
     /// <inheritdoc />
-    public global::StackExchange.Redis.ITransactionAsync CreateTransaction(global::System.Object @asyncState)
-        => throw Compatibility.Unsupported("CreateTransaction");
-    /// <inheritdoc />
     public global::System.Collections.Generic.IAsyncEnumerable<global::StackExchange.Redis.HashEntry> HashScanAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @pattern, global::System.Int32 @pageSize, global::System.Int64 @cursor, global::System.Int32 @pageOffset, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("HashScanAsync");
     /// <inheritdoc />

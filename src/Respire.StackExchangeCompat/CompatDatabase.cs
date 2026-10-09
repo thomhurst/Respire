@@ -83,6 +83,7 @@ internal sealed partial class CompatDatabase : CompatDatabaseAsync, IDatabase
     internal RespireBatch CreateNativeBatch() => _client.WithReadFrom(RespireReadFrom.Primary).CreateBatch();
     internal void DisposeDispatch() => _dispatch.Dispose();
     public IBatch CreateBatch(object? asyncState) => asyncState is null ? new CompatBatch(this) : throw Compatibility.Unsupported("asyncState");
+    public new ITransaction CreateTransaction(object? asyncState) => asyncState is null ? new CompatTransaction(this) : throw Compatibility.Unsupported("asyncState");
     public RedisValue HashGet(RedisKey key, RedisValue hashField, CommandFlags flags) => Wait(HashGetAsync(key, hashField, flags));
     public RedisValue[] HashGet(RedisKey key, RedisValue[] hashFields, CommandFlags flags) => Wait(HashGetAsync(key, hashFields, flags));
     public Lease<byte>? HashGetLease(RedisKey key, RedisValue hashField, CommandFlags flags) => Wait(HashGetLeaseAsync(key, hashField, flags));

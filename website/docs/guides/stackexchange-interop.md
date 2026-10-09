@@ -93,7 +93,7 @@ conversion failures. It never disposes the caller's client.
 ## Official distributed cache and DataProtection adapter
 
 `RespireConnectionMultiplexer` implements the limited `IConnectionMultiplexer`,
-`IDatabase`, `IDatabaseAsync`, and `IBatch` surface required by
+`IDatabase`, `IDatabaseAsync`, `IBatch`, and `ITransaction` surface required by
 `Microsoft.Extensions.Caching.StackExchangeRedis` and
 `Microsoft.AspNetCore.DataProtection.StackExchangeRedis`. Acceptance tests use
 the pinned 10.0.12 packages on both .NET 8 and .NET 10, with StackExchange.Redis
@@ -239,13 +239,79 @@ remain usable. Disposing a native view retains that view's native ownership
 behavior; use the owning root client when transferring ownership.
 
 Profiling registration, library-name suffixes, events, unlisted subscriber/server APIs,
-transactions, non-null `asyncState`, and all unlisted commands are explicitly
+non-null `asyncState`, and all unlisted commands are explicitly
 unsupported. Unsupported members throw `NotSupportedException` with native
 API guidance rather than returning fabricated success. This adapter does not
 provide general StackExchange.Redis parity. SignalR and Hangfire acceptance
 remain pending under [#889](https://github.com/thomhurst/Respire/issues/889).
 Floating-point and bounded/expiring string increment overloads, conditional
 sorted-set additions, and lexicographic sorted-set ranges remain unsupported.
+
+### Transactions and conditions
+
+`IDatabase.CreateTransaction()` and `IDatabaseAsync.CreateTransaction()` return a
+deferred `ITransaction`/`ITransactionAsync`. Transactions support the listed
+hash/list/key/string/set/sorted-set asynchronous commands, except cursor scans,
+plus literal `PublishAsync`. They copy binary arguments when queued, preserve
+command order, and execute through native `MULTI`/`EXEC`. Publish is part of that
+same transaction, including the notifications used by Hangfire. Lock operations,
+scripts, scans, synchronous command calls, and nested transactions remain unsupported.
+
+Result-bearing `Execute` and `ExecuteAsync`, and queued commands, accept only
+`None` and `DemandMaster`. Replica routing, `NoRedirect`, `FireAndForget`, and
+other flags throw before consuming the pending queue. `IBatch.Execute()` on a
+transaction starts execution without returning its commit result; queued tasks
+still receive their results or errors. Non-null `asyncState` is unsupported.
+
+Each Execute takes the current commands and conditions. New work can be queued
+for a later Execute, and overlapping executions on one transaction run in order.
+An empty Execute sends PING and returns true after its reply, without replaying
+earlier commands. Repeat Execute
+after false has the same queue-consumption behavior as StackExchange.Redis:
+the aborted tasks stay canceled, and neither commands nor conditions are retried.
+Queue a fresh attempt explicitly when a retry is needed.
+
+`AddCondition` snapshots its key and value bytes. Execution WATCHes every condition
+key before reading conditions through an uncached primary view. All conditions
+are evaluated, including after a failed condition, and each returned
+`ConditionResult.WasSatisfied` reports its own check. A false check discards the
+transaction without running commands. A mutation between WATCH and EXEC returns
+false and cancels every queued task, while already satisfied ConditionResults stay
+true. `WasWatchConflict` distinguishes that Redis abort from a failed check.
+The native same-slot restriction applies to watched and queued keys in Cluster.
+
+The condition inventory is pinned to
+[StackExchange.Redis 3.3.1 Condition.cs](https://github.com/StackExchange/StackExchange.Redis/blob/3.3.1/src/StackExchange.Redis/Condition.cs),
+and the private shapes are also validated by tests against the repository's 3.4.0 pin:
+
+| Condition family | Supported factories |
+| --- | --- |
+| Existence | `KeyExists`, `KeyNotExists`, `HashExists`, `HashNotExists`, `SetContains`, `SetNotContains`, `SortedSetContains`, `SortedSetNotContains` |
+| Equality | `StringEqual`, `StringNotEqual`, `HashEqual`, `HashNotEqual`, `SortedSetEqual`, `SortedSetNotEqual`; null string/hash values retain upstream existence semantics |
+| List index | `ListIndexEqual`, `ListIndexNotEqual`, `ListIndexExists`, `ListIndexNotExists`; signed indexes and null comparisons |
+| Length | `HashLength`, `StringLength`, `ListLength`, `SetLength`, `SortedSetLength`, and `StreamLength` with `Equal`, `LessThan`, and `GreaterThan` suffixes |
+| Score-range length | The three bounded `SortedSetLength` condition overloads, with inclusive minimum/maximum scores and infinity bounds |
+
+`SortedSetContainsStarting`/`SortedSetNotContainsStarting` and all
+`SortedSetScoreExists`/`SortedSetScoreNotExists` overloads are unsupported.
+Unknown private condition shapes throw actionable `NotSupportedException`
+at AddCondition, with guidance to use native WATCH. The public Condition API
+has no visitor and ConditionResult has no factory or setter, so the bridge uses
+explicitly audited private fields and accessors. It preserves supported fields
+for trimming and never parses `Condition.ToString()`, which would lose binary data.
+
+Redis errors while checking conditions count as unsatisfied conditions, matching
+upstream. Runtime command errors inside EXEC fault only that command's task;
+other tasks retain their results and Execute returns true. Redis queue errors
+discard the entire transaction, fault all its tasks, and fail Execute. Local
+queue-construction failures also discard the entire queue rather than committing
+a subset. Native server exception types and messages are preserved.
+
+Closing the adapter cancels unexecuted transaction tasks. Default close drains
+admitted executions, including their condition checks; `Close(false)` cancels
+started execution and settles every task. A canceled accepted transaction may
+still run on Redis. Native results are disposed after conversion, watched leases
+are released on every outcome, and borrowed clients remain caller-owned.
 
 ### Server discovery, locks, and storage subscriptions
 
@@ -317,9 +383,19 @@ score counts, rank/score ranges with scores, and scans. Tests cover this facet
 on both frameworks and protocols, compare score bounds/order against
 StackExchange.Redis on the same Redis server, and verify scan resume and
 deferred page execution.
-These facets do not establish full Hangfire compatibility. Remaining command
-facets, transactions and conditions, and official upstream
-suite acceptance are tracked by [#1269](https://github.com/thomhurst/Respire/issues/1269).
+The transaction inventory additionally covers `RedisConnection`, `RedisFetchedJob`,
+and `RedisWriteOnlyTransaction`, including synchronous Execute, repeat Execute
+after an abort, and queued notifications. Focused tests also invoke the pinned
+Hangfire package's write transaction Commit, fetch/requeue/remove operations,
+and server announcement/removal with `UseTransactions = true`.
+Transaction tests run on .NET 8 and
+.NET 10 with RESP2/RESP3 against real Redis, covering atomic visibility, binary
+snapshots, conditions, deterministic WATCH races, discarded commands, runtime
+errors and ACL queue errors. Wire and lifetime controls cover active cancellation,
+close during condition evaluation, retained tasks, and abandoned task collection.
+These facets do not establish full Hangfire compatibility. Combined official
+upstream suite acceptance remains tracked by
+[#1269](https://github.com/thomhurst/Respire/issues/1269).
 
 The server/lock inventory additionally checks `RedisStorage` discovery and
 dashboard `InfoRaw`, `RedisConnection.GetUtcDateTime` (`IServer.Time`),
