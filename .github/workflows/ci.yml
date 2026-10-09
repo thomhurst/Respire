@@ -88,8 +88,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-dotnet
-      - name: Build Aspire test host
-        run: dotnet build tests/Aspire.Respire.IntegrationTests -c Release
+      - name: Build .NET 10 Aspire sample and test host
+        run: |
+          dotnet build samples/Respire.Samples.Aspire.AppHost -c Release -f net10.0
+          dotnet build tests/Aspire.Respire.IntegrationTests -c Release -f net10.0
       - name: Verify injected clients and HTTP caches
         run: >-
           dotnet run --project tests/Aspire.Respire.IntegrationTests -c Release --no-build --

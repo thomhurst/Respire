@@ -70,6 +70,8 @@ Server and protocol requirements vary by feature; each linked guide describes it
 - An [in-memory testing server](guides/in-memory-testing.md) with controlled expiry and faults,
   [Redis/Valkey container fixtures](guides/testing-containers.md), and a
   [shared test sample](guides/testing-sample.md) for .NET 8 and .NET 10.
+- A [.NET Aspire AppHost and HTTP sample](integrations/aspire-sample.md) using the public
+  client integration, Redis/Valkey references, cache backends, health checks, and dashboard telemetry.
 
 ## Planned work
 
