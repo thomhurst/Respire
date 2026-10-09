@@ -588,6 +588,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
     {
         // Native response ownership may outlive caller cancellation. Complete only the
         // logical fence before reporting; clear the owner to avoid completing it twice.
+        // Fence completion takes priority over publication, including if cleanup throws.
         cache?.CompleteMutation(in fence);
         cache = null;
         return CollectFailures(_ops);

@@ -11,6 +11,49 @@ public partial class ErrorMetricsTests
 {
     [Test]
     [MatrixDataSource]
+    public async Task DeferredObservationIgnoresExternalPendingMonitor([Matrix(false, true)] bool enabled)
+    {
+        using var configuration = new MetricConfigurationScope(new()
+            { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
+        using var capture = new Capture();
+        var pending = new RespirePending<int>();
+        var observation = pending.Observation;
+        var error = new RespireServerException("WRONGTYPE private-key");
+        using var completed = new ManualResetEventSlim();
+        Task worker;
+        bool completedWhileLocked;
+        lock (pending)
+        {
+            worker = Task.Run(() =>
+            {
+                try
+                {
+                    observation.SetAttempts(2);
+                    pending.Fail(error);
+                    if (!observation.TryHandled(error)) throw new InvalidOperationException();
+                    pending.AddErrorAttempts(1);
+                    _ = observation.Attempts;
+                    _ = pending.ReportError();
+                }
+                finally { completed.Set(); }
+            });
+            completedWhileLocked = completed.Wait(TimeSpan.FromSeconds(5));
+        }
+        await worker;
+        await Assert.That(completedWhileLocked).IsTrue();
+        await Assert.That(observation.Attempts).IsEqualTo(4);
+        await Assert.That(pending.Error).IsSameReferenceAs(error);
+        _ = pending.ReportError();
+        await Assert.That(capture.Items.Count).IsEqualTo(enabled ? 2 : 0);
+        if (enabled)
+        {
+            var final = capture.Items.Single(item => !(bool)item.Tags["redis.client.errors.internal"]!);
+            await Assert.That(final.Tags["redis.client.operation.retry_attempts"]).IsEqualTo(4);
+        }
+    }
+
+    [Test]
+    [MatrixDataSource]
     public async Task DeferredObservationRejectsHandledErrorsAfterPublication(
         [Matrix(false, true)] bool enabled, [Matrix(false, true)] bool faulted)
     {

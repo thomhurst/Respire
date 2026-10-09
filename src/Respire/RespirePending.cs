@@ -32,6 +32,7 @@ public sealed class RespirePending<T> : IDispatchObservation
     private const int AbortRecorded = 16;
     private const int ErrorInspectionAllowed = 32;
     private const int ObservationClosed = 64;
+    private const int ObservationGate = 128;
     private int _state;
     private T? _value;
     // Keep the successful pending layout unchanged. A retry replaces this existing error
@@ -54,7 +55,9 @@ public sealed class RespirePending<T> : IDispatchObservation
 
     int IDispatchObservation.Attempts(long generation)
     {
-        lock (this) return ErrorAttempts;
+        EnterObservationGate();
+        try { return ErrorAttempts; }
+        finally { ExitObservationGate(); }
     }
 
     bool IDispatchObservation.IsOpen(long generation)
@@ -62,24 +65,28 @@ public sealed class RespirePending<T> : IDispatchObservation
 
     void IDispatchObservation.SetAttempts(long generation, int attempts)
     {
-        lock (this)
+        EnterObservationGate();
+        try
         {
             if ((Volatile.Read(ref _state) & ObservationClosed) != 0) return;
             _errorAttempts = Math.Max(0, attempts);
             if (_failure is RetryObservation retry) retry.Owner.SetRetryAttempts(_errorAttempts);
         }
+        finally { ExitObservationGate(); }
     }
 
     bool IDispatchObservation.Handled(long generation, Exception error)
     {
         ErrorObservation.Borrower borrower;
-        lock (this)
+        EnterObservationGate();
+        try
         {
             if ((Volatile.Read(ref _state) & ObservationClosed) != 0) return false;
             if (_failure is not RetryObservation)
                 _failure = new RetryObservation(ErrorObservation.StartFailure(_errorAttempts), (Exception?)_failure);
             borrower = ((RetryObservation)_failure).Owner.Borrow();
         }
+        finally { ExitObservationGate(); }
         try { return borrower.RecordHandled(error); }
         finally { borrower.Complete(); }
     }
@@ -145,11 +152,13 @@ public sealed class RespirePending<T> : IDispatchObservation
 
     internal void Fail(Exception error)
     {
-        lock (this)
+        EnterObservationGate();
+        try
         {
             if (_failure is RetryObservation retry) retry.Error = error;
             else _failure = error;
         }
+        finally { ExitObservationGate(); }
         SetStatus(RespirePendingStatus.Faulted);
     }
 
@@ -157,17 +166,14 @@ public sealed class RespirePending<T> : IDispatchObservation
     // Reading Result again, or creating its summary, must not repeat this boundary.
     internal bool ReportError()
     {
-        var faulted = Status == RespirePendingStatus.Faulted;
-        if (!faulted && _failure is null)
-        {
-            Interlocked.Or(ref _state, ObservationClosed);
-            return false;
-        }
         ErrorObservation.FinalOwner owner;
         int attempts;
         Exception? error;
-        lock (this)
+        bool faulted;
+        EnterObservationGate();
+        try
         {
+            faulted = Status == RespirePendingStatus.Faulted;
             attempts = _errorAttempts = ErrorAttempts;
             var failure = Failure;
             owner = _failure is RetryObservation retry ? retry.Owner : default;
@@ -175,6 +181,7 @@ public sealed class RespirePending<T> : IDispatchObservation
             Interlocked.Or(ref _state, ObservationClosed);
             error = faulted && (Interlocked.Or(ref _state, ErrorRecorded) & ErrorRecorded) == 0 ? failure : null;
         }
+        finally { ExitObservationGate(); }
         ErrorObservation.FinishFinal(owner, error, retryAttempts: attempts);
         return faulted;
     }
@@ -190,13 +197,33 @@ public sealed class RespirePending<T> : IDispatchObservation
 
     internal void AddErrorAttempts(int attempts)
     {
-        lock (this)
+        EnterObservationGate();
+        try
         {
             if ((Volatile.Read(ref _state) & ObservationClosed) != 0) return;
             _errorAttempts = ErrorAttempts + attempts;
             if (_failure is RetryObservation retry) retry.Owner.SetRetryAttempts(_errorAttempts);
         }
+        finally { ExitObservationGate(); }
     }
+
+    // Serialize only observation state with a bit in existing storage. Public callers can
+    // hold the pending's monitor without interfering; no gate field or success allocation
+    // is needed. Never run telemetry callbacks while holding this non-reentrant gate.
+    private void EnterObservationGate()
+    {
+        var spinner = new SpinWait();
+        while (true)
+        {
+            var state = Volatile.Read(ref _state);
+            if ((state & ObservationGate) == 0
+                && Interlocked.CompareExchange(ref _state, state | ObservationGate, state) == state)
+                return;
+            spinner.SpinOnce();
+        }
+    }
+
+    private void ExitObservationGate() => Interlocked.And(ref _state, ~ObservationGate);
 
     internal void Abort() => SetStatus(RespirePendingStatus.Aborted);
 
