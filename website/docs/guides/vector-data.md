@@ -126,14 +126,36 @@ Collections implement `IKeywordHybridSearchable<TRecord>` for Redis Query Engine
 
 Declare `TextFields` on either mapper to bind CLR property names to existing indexed TEXT fields in `DataFields`. Each binding must name a unique CLR property and a unique field; JSON bindings use the query alias and may use dotted CLR paths. Fields with `NoIndex` cannot serve as hybrid text fields. The sample hash mapper binds `Title` to `title`; the JSON mapper binds `Details.Title` to the `title` alias. This metadata avoids property-name guessing and runtime reflection.
 
+<!-- doc-test-declaration -->
 ```csharp
-public override IReadOnlyList<RespireVectorDataTextField> TextFields =>
-    [new(nameof(Movie.Title), "title")];
+using Respire.Search;
+using Respire.VectorData;
+using Respire.Samples.VectorData; // Movie from the runnable sample.
+
+public abstract class MovieTextMapper : RespireVectorDataHashMapper<Movie>
+{
+    public override IReadOnlyList<RespireSearchField> DataFields =>
+        [new("title", RespireSearchFieldType.Text)];
+
+    public override IReadOnlyList<RespireVectorDataTextField> TextFields =>
+        [new(nameof(Movie.Title), "title")];
+}
 ```
 
 Pass an already generated FLOAT32 vector and one or more nonblank keywords. Keywords are escaped quoted terms or phrases, joined with OR within the selected text field. They cannot inject native query syntax. Select `AdditionalProperty` when multiple text bindings exist, and `VectorProperty` when multiple vectors exist. Hash expression filters apply before ranking to both text and vector legs; JSON expression filters remain unsupported.
 
 ```csharp
+using Microsoft.Extensions.VectorData;
+using Respire;
+using Respire.VectorData;
+using Respire.Samples.VectorData; // Movie and MovieMapper from the runnable sample.
+
+await using var client = await RespireClient.ConnectAsync("redis://localhost:6379");
+using var store = new RespireVectorStore(client, "my-application");
+store.RegisterMapper(new MovieMapper());
+using var collection = store.GetHashCollection<Movie>("movies");
+await collection.EnsureCollectionExistsAsync();
+
 IKeywordHybridSearchable<Movie> hybrid = collection;
 await foreach (var hit in hybrid.HybridSearchAsync(
     new float[] { 1, 0 }, ["science", "space travel"], top: 5,
