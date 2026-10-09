@@ -58,6 +58,10 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
 
     internal RespireClient TrackingClient { get; }
     internal int ObservationCount { get { lock (_gate) return _observations.Count; } }
+    internal bool HasPendingRetirementCleanup
+    {
+        get { lock (_gate) return _retiredObservations.Count != 0 || !_retirementDrains.IsIdle; }
+    }
 
     private HybridCache CreateContext(Observation? observation, IDistributedCache distributed)
         => _factory(new LocalServiceProvider(_services, new LocalMemoryCache(this, observation),
@@ -438,6 +442,8 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
         private int _count;
         private TaskCompletionSource<Exception?>? _completion;
         private Exception? _failure;
+
+        internal bool IsIdle => _count == 0;
 
         internal bool IsDrainingCurrentContext
         {
