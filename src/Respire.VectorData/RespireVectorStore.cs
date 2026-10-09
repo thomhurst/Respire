@@ -8,7 +8,8 @@ using Respire.Search;
 namespace Respire.VectorData;
 
 /// <summary>A hash-backed VectorData store with explicit AOT-safe record mappings.</summary>
-/// <remarks>The caller owns the client. Search requires an unprefixed client and a Redis Query Engine server/coordinator.</remarks>
+/// <remarks>The caller owns the client. This connector supports standalone Redis Query Engine with an unprefixed client.
+/// Redis Cluster is unsupported: collection deletion scans one node and cannot remove all unindexed hashes across shards.</remarks>
 public sealed class RespireVectorStore : VectorStore
 {
     private static readonly UTF8Encoding Utf8 = new(false, true);

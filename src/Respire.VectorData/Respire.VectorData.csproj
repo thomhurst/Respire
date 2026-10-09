@@ -6,6 +6,7 @@
     <PackageTags>$(PackageTags);vector;ai;redisearch</PackageTags>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="Respire.VectorData.Tests" />
     <ProjectReference Include="../Respire.Search/Respire.Search.csproj" />
     <PackageReference Include="Microsoft.Extensions.VectorData.Abstractions" />
   </ItemGroup>

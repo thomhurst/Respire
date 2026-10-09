@@ -8,6 +8,41 @@ namespace Respire.VectorData.Tests;
 
 public class ValidationTests
 {
+    [Test, Arguments(null), Arguments(""), Arguments("invalid"), Arguments("NaN"), Arguments("Infinity")]
+    public void InvalidSearchScoresHaveStoreDiagnostics(string? score)
+    {
+        var document = new RespireSearchDocument("movies:key", new Dictionary<string, string?> { ["vector_score"] = score });
+        var read = () => RespireVectorDataOperations.ReadSearchScore(document, "movies:", "movies");
+        var error = read.Should().Throw<VectorStoreException>().Which;
+        error.InnerException.Should().BeOfType<InvalidOperationException>();
+        error.CollectionName.Should().Be("movies");
+        error.OperationName.Should().Be("SearchAsync");
+        error.VectorStoreSystemName.Should().Be("redis");
+    }
+
+    [Test]
+    public void MissingSearchScoreHasStoreDiagnostics()
+    {
+        var document = new RespireSearchDocument("movies:key", new Dictionary<string, string?>());
+        var read = () => RespireVectorDataOperations.ReadSearchScore(document, "movies:", "movies");
+        read.Should().Throw<VectorStoreException>().WithInnerException<InvalidOperationException>();
+    }
+
+    [Test]
+    public void SearchDocumentOutsideCollectionHasStoreDiagnostics()
+    {
+        var document = new RespireSearchDocument("other:key", new Dictionary<string, string?> { ["vector_score"] = "0.5" });
+        var read = () => RespireVectorDataOperations.ReadSearchScore(document, "movies:", "movies");
+        read.Should().Throw<VectorStoreException>().WithInnerException<InvalidOperationException>();
+    }
+
+    [Test]
+    public void SearchScoreUsesInvariantCulture()
+    {
+        var document = new RespireSearchDocument("movies:key", new Dictionary<string, string?> { ["vector_score"] = "1.25e-2" });
+        RespireVectorDataOperations.ReadSearchScore(document, "movies:", "movies").Should().Be(0.0125);
+    }
+
     // A lazy, unreachable client proves validation does not require server dispatch.
     private static RespireClient Client() => RespireClient.Create("redis://127.0.0.1:1");
 

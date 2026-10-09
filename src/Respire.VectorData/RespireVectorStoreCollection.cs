@@ -1,5 +1,4 @@
 using System.Buffers.Binary;
-using System.Globalization;
 using System.Linq.Expressions;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.VectorData;
@@ -110,6 +109,7 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
     }
 
     /// <inheritdoc />
+    /// <remarks>Reads records sequentially. A failure ends enumeration after any records already yielded.</remarks>
     public override async IAsyncEnumerable<TRecord> GetAsync(IEnumerable<string> keys, RecordRetrievalOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
@@ -134,6 +134,7 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
         => _ = await RespireVectorDataOperations.ExecuteAsync(_client.Keys.DeleteAsync([RecordKey(key)], cancellationToken), nameof(DeleteAsync), Name).ConfigureAwait(false);
 
     /// <inheritdoc />
+    /// <remarks>Deletes records sequentially without a transaction. A failure leaves earlier deletions applied.</remarks>
     public override async Task DeleteAsync(IEnumerable<string> keys, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
@@ -168,6 +169,7 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
     }
 
     /// <inheritdoc />
+    /// <remarks>Upserts records sequentially without a transaction. A failure leaves earlier upserts applied.</remarks>
     public override async Task UpsertAsync(IEnumerable<TRecord> records, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
@@ -208,9 +210,7 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
         var hits = new List<(string Key, double Score)>();
         foreach (var document in result.Documents)
         {
-            if (!document.Id.StartsWith(_prefix, StringComparison.Ordinal)) throw new InvalidOperationException("Search returned a document outside this collection.");
-            var score = double.Parse(document.Fields["vector_score"]!, CultureInfo.InvariantCulture);
-            if (!double.IsFinite(score)) throw new InvalidOperationException("Search returned a non-finite distance.");
+            var score = RespireVectorDataOperations.ReadSearchScore(document, _prefix, Name);
             if (options?.ScoreThreshold is { } threshold && score > threshold) continue;
             var key = RespireVectorStore.DecodeName(document.Id[_prefix.Length..]);
             hits.Add((key, score));

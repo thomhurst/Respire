@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.Extensions.VectorData;
 using Respire.Search;
 
@@ -5,6 +6,17 @@ namespace Respire.VectorData;
 
 internal static class RespireVectorDataOperations
 {
+    internal static double ReadSearchScore(RespireSearchDocument document, string prefix, string collectionName)
+    {
+        if (!document.Id.StartsWith(prefix, StringComparison.Ordinal))
+            throw CreateException(new InvalidOperationException("Search returned a document outside this collection."), "SearchAsync", collectionName);
+        if (!document.Fields.TryGetValue("vector_score", out var value)
+            || !double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var score)
+            || !double.IsFinite(score))
+            throw CreateException(new InvalidOperationException("Search returned a missing, invalid or non-finite vector distance."), "SearchAsync", collectionName);
+        return score;
+    }
+
     internal static async Task DeleteCollectionAsync(IRespireClient client, string index, string prefix, string collectionName, CancellationToken cancellationToken)
     {
         const string operationName = "EnsureCollectionDeletedAsync";
@@ -50,7 +62,7 @@ internal static class RespireVectorDataOperations
         }
     }
 
-    private static VectorStoreException CreateException(RespireException error, string operationName, string? collectionName)
+    private static VectorStoreException CreateException(Exception error, string operationName, string? collectionName)
         => new(error.Message, error)
         {
             VectorStoreSystemName = "redis",
