@@ -13,7 +13,7 @@ dotnet add package Respire.VectorData
 
 ## Explicit mapping
 
-Derive from `RespireVectorDataHashMapper<TRecord>`. Implement `GetKey`, `Write` and `Read`, and declare vector fields and any indexed scalar fields. Mapping uses your code directly, so immutable records work without reflection, attribute scanning or runtime serialization. Mappers must be thread-safe. The runnable [VectorData sample](https://github.com/thomhurst/Respire/tree/main/samples/Respire.Samples.VectorData) includes a complete `MovieMapper` that writes UTF-8 text and little-endian vector bytes.
+Derive from `RespireVectorDataHashMapper<TRecord>`. Implement `GetKey`, `Write` and `Read`, and declare vector fields and any indexed scalar fields. Mapping uses your code directly, so immutable records work without reflection, attribute scanning or runtime serialization. Mappers must be thread-safe. Custom TAG separators must be printable ASCII characters (U+0020 through U+007E); invalid separators fail when constructing the collection, before any Redis request. Omitting the separator retains Redis's default comma. The runnable [VectorData sample](https://github.com/thomhurst/Respire/tree/main/samples/Respire.Samples.VectorData) includes a complete `MovieMapper` that writes UTF-8 text and little-endian vector bytes.
 
 ```csharp
 using Microsoft.Extensions.VectorData;
@@ -46,6 +46,10 @@ Upsert replaces a complete record atomically in one Lua script. Optional fields 
 Search accepts `float[]`, `Memory<float>` or `ReadOnlyMemory<float>`. It returns Redis's distance unchanged: lower scores are better. `Skip` and `top` select a page from the nearest `Skip + top` candidates. `ScoreThreshold` is a maximum distance applied after that page is selected; filtered hits are not replaced, so fewer than `top` records can be returned. Set `VectorProperty` to a direct mapped property expression when multiple vectors are declared. Records deleted between search and retrieval are omitted without refilling the page; this is not a transactional snapshot. Search indexing can lag writes. Malformed search scores or documents outside the collection become `VectorStoreException` with an `InvalidOperationException` cause and collection/operation metadata.
 
 This first connector supports hashes and explicit typed mappings. JSON storage, expression filters, filtered retrieval, hybrid search, embedding generation, dynamic dictionaries and non-string keys are unsupported. Unsupported filters and inputs throw; they are never silently ignored. Server and transport failures become `VectorStoreException` with the original Respire exception as their cause and collection/operation metadata. Cancellation stays `OperationCanceledException`. [The connector epic](https://github.com/thomhurst/Respire/issues/887) retains the remaining features and full official conformance suite. Tests include named lifecycle and basic-model contracts adapted from [the upstream conformance tests at the package source revision](https://github.com/dotnet/extensions/tree/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests). Passing this subset does not establish complete upstream conformance.
+
+## Exception behavior
+
+The exception contract distinguishes database failures from application validation. Mapper exceptions and vector/schema validation errors propagate unchanged, including `ArgumentException`. An incomplete `HGETALL` field/value pair throws `InvalidOperationException`. The search and collection-name decoding failures described above are wrapped with operation metadata. Cancellation stays `OperationCanceledException`.
 
 ## NativeAOT
 

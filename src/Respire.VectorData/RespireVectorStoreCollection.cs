@@ -89,6 +89,8 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
     }
 
     /// <inheritdoc />
+    /// <remarks>Server and transport failures are wrapped in VectorStoreException. Mapper and vector validation errors
+    /// propagate unchanged. An incomplete HGETALL field/value pair throws InvalidOperationException.</remarks>
     public override async Task<TRecord?> GetAsync(string key, RecordRetrievalOptions? options = null, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
@@ -183,6 +185,9 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
         => throw new NotSupportedException("Expression filters are not supported by the initial hash connector.");
 
     /// <inheritdoc />
+    /// <remarks>Retrieves hashes in concurrent batches of up to 32 after searching; this is not a transactional snapshot.
+    /// ScoreThreshold filters the selected Skip/top page without replacing hits. Hashes deleted before retrieval are
+    /// omitted, so either condition can return fewer than top records.</remarks>
     public override async IAsyncEnumerable<VectorSearchResult<TRecord>> SearchAsync<TInput>(TInput searchValue, int top, VectorSearchOptions<TRecord>? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
@@ -280,6 +285,8 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
             throw new ArgumentException("Unknown phonetic matcher.", nameof(field));
         if (field.Type != RespireSearchFieldType.Tag && (field.Separator is not null || field.CaseSensitive))
             throw new ArgumentException("Separator and case options require a tag field.", nameof(field));
+        if (field.Separator is < ' ' or > '~')
+            throw new ArgumentException("TAG separators must be printable ASCII characters.", nameof(field));
     }
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);

@@ -117,6 +117,33 @@ public class ValidationTests
         create.Should().Throw<ArgumentException>().WithMessage("*GEOSHAPE*SORTABLE*").Which.ParamName.Should().Be("field");
     }
 
+    [Test, Arguments(0), Arguments(31), Arguments(127), Arguments(128), Arguments(233), Arguments(0xD800), Arguments(0xFFFF)]
+    public async Task InvalidTagSeparatorsFailBeforeCollectionIo(int separator)
+    {
+        await using var client = Client();
+        using var store = new RespireVectorStore(client);
+        store.RegisterMapper(new ScalarMapper(new("tags", RespireSearchFieldType.Tag) { Separator = (char)separator }));
+        var create = () => store.GetHashCollection<Movie>("movies");
+        create.Should().Throw<ArgumentException>().WithMessage("*TAG*printable ASCII*").Which.ParamName.Should().Be("field");
+    }
+
+    [Test]
+    public async Task PrintableAsciiAndDefaultTagSeparatorsPassBeforeCollectionIo()
+    {
+        await using var client = Client();
+        for (var separator = 32; separator <= 126; separator++)
+        {
+            using var store = new RespireVectorStore(client);
+            store.RegisterMapper(new ScalarMapper(new("tags", RespireSearchFieldType.Tag) { Separator = (char)separator }));
+            using var collection = store.GetHashCollection<Movie>("movies");
+            collection.Name.Should().Be("movies");
+        }
+        using var defaultStore = new RespireVectorStore(client);
+        defaultStore.RegisterMapper(new ScalarMapper(new("tags", RespireSearchFieldType.Tag)));
+        using var defaultCollection = defaultStore.GetHashCollection<Movie>("movies");
+        defaultCollection.Name.Should().Be("movies");
+    }
+
     [Test]
     [Arguments(RespireSearchFieldType.GeoShape, false)]
     [Arguments(RespireSearchFieldType.Text, true)]
