@@ -60,6 +60,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             while (!readers.IsCancellationRequested)
             {
                 Delivery[] deliveries;
+                var recoveredBatch = false;
                 if (cursor.HasValue)
                 {
                     var page = await ReadPageAsync(StreamWorkerScripts.Replay,
@@ -74,7 +75,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                         [group, consumer, (long)Math.Ceiling(options.MinimumIdleTime.TotalMilliseconds),
                             recoveryCursor.Value, options.BatchSize], readers.Token).ConfigureAwait(false);
                     recoveryCursor = page.Cursor; // Keep the cursor even when no entries were claimable.
-                    recoveryClock.Restart();
+                    recoveredBatch = true;
                     deliveries = page.Deliveries;
                 }
                 else
@@ -95,6 +96,8 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                     if (readers.IsCancellationRequested) break;
                     await ProcessAsync(delivery, consumer).ConfigureAwait(false);
                 }
+                // Slow recovered handlers must not make another scan due before new reads get a turn.
+                if (recoveredBatch) recoveryClock.Restart();
             }
         }
         catch (OperationCanceledException) when (readers.IsCancellationRequested) { }

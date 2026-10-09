@@ -455,6 +455,42 @@ public class StreamWorkerTests
     }
 
     [Test]
+    public async Task SlowRecoveredBatchGivesNewMessagesAReadTurn()
+    {
+        var release = NewSignal();
+        var clock = new RespireFakeClock();
+        var state = new State { Handle = async (entry, token) =>
+        {
+            if (entry.GetString("payload") == "2") return RespireStreamWorkerResult.Ack;
+            await release.Task.WaitAsync(token);
+            return RespireStreamWorkerResult.Nack;
+        } };
+        var pollInterval = TimeSpan.FromMilliseconds(20);
+        await using var fixture = await Fixture.CreateAsync(clock: clock, state: state, options: new()
+        {
+            BatchSize = 1, MinimumIdleTime = TimeSpan.FromSeconds(1), RecoveryPollInterval = pollInterval,
+        });
+        await fixture.AddAsync(0);
+        await fixture.AddAsync(1);
+        await fixture.View.Streams.CreateGroupAsync("events", "workers", RespireStreamId.Beginning);
+        await fixture.View.Streams.ReadGroupOnceAsync("events", "workers", "abandoned", new() { Count = 2 });
+        clock.Advance(TimeSpan.FromSeconds(1));
+        try
+        {
+            await fixture.StartAsync();
+            var recovered = await state.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
+            await Assert.That(recovered.GetString("payload")).IsEqualTo("0");
+            await fixture.AddAsync(2);
+            // Make the recovered handler outlast the polling interval while another pending entry remains eligible.
+            await Task.Delay(pollInterval * 3);
+            release.TrySetResult();
+            var fresh = await state.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
+            await Assert.That(fresh.GetString("payload")).IsEqualTo("2");
+        }
+        finally { release.TrySetResult(); }
+    }
+
+    [Test]
     [Arguments(false, false)]
     [Arguments(true, false)]
     [Arguments(false, true)]
