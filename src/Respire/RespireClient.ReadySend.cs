@@ -97,14 +97,22 @@ public sealed partial class RespireClient
         {
             TResult result;
             try { result = await response.ConfigureAwait(false); }
-            catch (Exception error)
+            catch
             {
-                cache.CompleteMutation(in fence, false);
-                observation.Final(error);
+                try { cache.CompleteMutation(in fence, false); }
+                catch (Exception)
+                {
+                    // Cleanup cannot replace the response failure or turn cancellation into a fault.
+                }
                 throw;
             }
             cache.CompleteMutation(in fence, true);
             return result;
+        }
+        catch (Exception error)
+        {
+            observation.Final(error);
+            throw;
         }
         finally { observation.Dispose(); }
     }
