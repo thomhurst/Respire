@@ -659,7 +659,7 @@ internal sealed partial class SubscriptionHub
             {
                 var timeout = new CancellationTokenSource(core.Options.CommandTimeout ?? core.Options.ConnectTimeout);
                 var ack = SendControlAsync(connection, UnsubscribeVerb(kind), UnsubscribeOperation(kind), name,
-                    timeout.Token, instrument: true).AsTask();
+                    timeout.Token, instrument: true, observeDeadlineCancellation: true).AsTask();
                 cleanupAcks.Add((other, connection, kind, name, timeout, ack));
             }
             if (node.Connection is { } nodeConnection) close.Add(nodeConnection);
@@ -777,7 +777,8 @@ internal sealed partial class SubscriptionHub
             var acks = new Task[released.Count];
             for (var index = 0; index < released.Count; index++)
                 acks[index] = SendControlAsync(connection, UnsubscribeVerb(subscription.Kind),
-                    UnsubscribeOperation(subscription.Kind), released[index], timeout.Token, instrument: true).AsTask();
+                    UnsubscribeOperation(subscription.Kind), released[index], timeout.Token, instrument: true,
+                    observeDeadlineCancellation: true).AsTask();
             try { await Task.WhenAll(acks).ConfigureAwait(false); }
             catch (Exception error) when (error is RespireException or OperationCanceledException)
             {
@@ -865,10 +866,12 @@ internal sealed partial class SubscriptionHub
                 {
                     // Reconcile each subscription independently so one failing endpoint cannot
                     // keep every other subscription on the previous topology.
-                    var failingEndpoint = new StrongBox<RespireEndpoint?>();
-                    using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+                    var owner = DispatchResponseSource<bool>.Start();
+                    var observation = owner.Observation;
+                    StrongBox<RespireEndpoint?>? failingEndpoint = null;
                     try
                     {
+                        failingEndpoint = new();
                         if (!await ReconcileNotificationSubscriptionAsync(
                                 subscription, version, endpoints, authoritative, failingEndpoint,
                                 _lifetimeCancellation.Token, observation).ConfigureAwait(false))
@@ -886,7 +889,8 @@ internal sealed partial class SubscriptionHub
                     catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested) { throw; }
                     catch (Exception error)
                     {
-                        observation.Handled(error);
+                        if (ShouldObserveHandled())
+                            observation.Handled(error);
                         TryLog(error, static (logger, state) => logger.NotificationTopologyReconciliationFailed(state));
                         // Each failing endpoint gets the policy's full attempt budget. A failure
                         // against a different endpoint, such as a newer topology replacing an
@@ -899,15 +903,16 @@ internal sealed partial class SubscriptionHub
                             // pass does, so the state is still present. Guard it anyway.
                             if (!_clusterNotifications.Subscriptions.TryGetValue(subscription, out var state)) continue;
                             subscriptionAttempt = state.FailedAttempts != 0
-                                && state.FailingEndpoint == failingEndpoint.Value ? state.FailedAttempts + 1 : 1;
+                                && state.FailingEndpoint == failingEndpoint?.Value ? state.FailedAttempts + 1 : 1;
                             state.FailedAttempts = subscriptionAttempt;
-                            state.FailingEndpoint = failingEndpoint.Value;
+                            state.FailingEndpoint = failingEndpoint?.Value;
                             state.RetryingOutage = !ContainsServerRejection(error);
                         }
-                        (failures ??= []).Add((subscription, failingEndpoint.Value, error, subscriptionAttempt));
+                        (failures ??= []).Add((subscription, failingEndpoint?.Value, error, subscriptionAttempt));
                     }
                     finally
                     {
+                        owner.CompleteInternal();
                         lock (_gate)
                             if (version == _clusterNotifications.TopologyVersion)
                                 _clusterNotifications.ReconciliationHasExaminedSubscriptions = true;

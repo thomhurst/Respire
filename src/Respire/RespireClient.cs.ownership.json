@@ -129,6 +129,13 @@
       "Member": "Respire.RespireClient.ConnectAnyAsync(IEnumerable<RespireOptions>,CancellationToken):ValueTask<RespireClient>",
       "Owner": "Respire.RespireClient.ConnectAnyAsync(IEnumerable<RespireOptions>,CancellationToken):ValueTask<RespireClient>",
       "Contract": "Start before enumeration and cancellation. Candidate failures borrow retry history; exhaustion preserves the network wrapper and cancellation retains completed failures."
+    },
+    {
+      "Name": "pubsub-client-activation",
+      "Role": "helper",
+      "Member": "Respire.RespireClient.SubscribeCoreAsync(SubscriptionKind,RespireChannel[],RespireSubscriptionOptions,CancellationToken):ValueTask<RespireSubscription>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Start final ownership before prefix resolution, hub admission, control commands and rollback. Synchronous prefix failures and asynchronous activation share the failure-only dispatch owner."
     }
   ],
   "NonRoutes": []

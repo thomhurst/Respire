@@ -389,6 +389,14 @@ transaction commit, and fire-and-forget submission. The counter is not an except
 constructor hook: throwing or inspecting an exception elsewhere does not itself emit
 a measurement. Selection is checked when an error is reported.
 
+Pub/sub activation keeps one final owner through admission, every control reply,
+MOVED/ASK redirects, and rollback. Background sharded recovery and notification
+reconciliation have independent internal owners; their redirects and rejected
+subscriptions are handled errors, not caller failures. Unsubscribe failures that
+cleanup consumes are internal too. Cancellation caused by subscription shutdown
+does not emit an error. These owners acquire error-observation storage only on
+failure, and retain retry counts when collection or a listener is enabled later.
+
 When adding a command route, identify its final observation owner and test both a
 handled retry and the failure delivered to the caller. Delegating routes borrow that
 owner; shared producers, deferred results and payload reads need their own lifetime
