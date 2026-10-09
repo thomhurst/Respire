@@ -37,26 +37,30 @@ public sealed partial class RespireServerNode
     public ValueTask<string> ClusterMigrationImportAsync(ReadOnlySpan<RespireClusterSlotRange> ranges,
         CancellationToken cancellationToken = default)
     {
-        if (ranges.IsEmpty) throw new ArgumentException("At least one slot range is required.", nameof(ranges));
-        // Redis 8.4/8.10 slotRangeArrayNormalizeAndValidate rejects 16384 ranges before merging them.
-        if (ranges.Length >= 16384) throw new ArgumentOutOfRangeException(nameof(ranges), "Redis accepts fewer than 16384 ranges.");
-        var ordered = ranges.ToArray();
-        Array.Sort(ordered, static (left, right) => left.Start.CompareTo(right.Start));
-        var arguments = new RespireValue[checked(ranges.Length * 2)];
-        var previousEnd = -1;
-        for (var index = 0; index < ranges.Length; index++)
+        try
         {
-            var range = ordered[index];
-            if (range.Start < 0 || range.End > 16383 || range.End < range.Start)
-                throw new ArgumentOutOfRangeException(nameof(ranges), "Slot ranges must be within 0 through 16383 with start <= end.");
-            if (range.Start <= previousEnd)
-                throw new ArgumentException("Slot ranges must be non-overlapping.", nameof(ranges));
-            previousEnd = range.End;
-            arguments[index * 2] = range.Start;
-            arguments[index * 2 + 1] = range.End;
+            if (ranges.IsEmpty) throw new ArgumentException("At least one slot range is required.", nameof(ranges));
+            // Redis 8.4/8.10 slotRangeArrayNormalizeAndValidate rejects 16384 ranges before merging them.
+            if (ranges.Length >= 16384) throw new ArgumentOutOfRangeException(nameof(ranges), "Redis accepts fewer than 16384 ranges.");
+            var ordered = ranges.ToArray();
+            Array.Sort(ordered, static (left, right) => left.Start.CompareTo(right.Start));
+            var arguments = new RespireValue[checked(ranges.Length * 2)];
+            var previousEnd = -1;
+            for (var index = 0; index < ranges.Length; index++)
+            {
+                var range = ordered[index];
+                if (range.Start < 0 || range.End > 16383 || range.End < range.Start)
+                    throw new ArgumentOutOfRangeException(nameof(ranges), "Slot ranges must be within 0 through 16383 with start <= end.");
+                if (range.Start <= previousEnd)
+                    throw new ArgumentException("Slot ranges must be non-overlapping.", nameof(ranges));
+                previousEnd = range.End;
+                arguments[index * 2] = range.Start;
+                arguments[index * 2 + 1] = range.End;
+            }
+            return ExecuteAsync("CLUSTER MIGRATION IMPORT", arguments, ClusterMigrationParser.TaskId,
+                cancellationToken, NodeCallKind.Mutation);
         }
-        return ExecuteAsync("CLUSTER MIGRATION IMPORT", arguments, ClusterMigrationParser.TaskId,
-            cancellationToken, NodeCallKind.Mutation);
+        catch (Exception error) { RecordPreflightFailure(error); throw; }
     }
 
     /// <summary>Cancels one task on this node and returns the number cancelled. Requires AllowAdmin and Redis 8.4+.</summary>
@@ -64,9 +68,13 @@ public sealed partial class RespireServerNode
     /// This operation never redirects or replays, and does not roll back an already completed migration.</remarks>
     public ValueTask<long> ClusterMigrationCancelAsync(string taskId, CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(taskId);
-        return ExecuteAsync("CLUSTER MIGRATION CANCEL", ["ID", taskId], ServerDiagnosticsParser.NonnegativeInteger,
-            cancellationToken, NodeCallKind.Mutation);
+        try
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(taskId);
+            return ExecuteAsync("CLUSTER MIGRATION CANCEL", ["ID", taskId], ServerDiagnosticsParser.NonnegativeInteger,
+                cancellationToken, NodeCallKind.Mutation);
+        }
+        catch (Exception error) { RecordPreflightFailure(error); throw; }
     }
 
     /// <summary>Cancels all tasks on this node. Requires AllowAdmin and Redis 8.4+. Source cancellation alone does not stop destination retries.</summary>
@@ -80,18 +88,28 @@ public sealed partial class RespireServerNode
     public ValueTask<RespireClusterMigrationTask[]> ClusterMigrationStatusAsync(
         RespireClusterMigrationStatusScope scope = RespireClusterMigrationStatusScope.All,
         CancellationToken cancellationToken = default)
-        => ExecuteAsync("CLUSTER MIGRATION STATUS", scope switch
+    {
+        try
         {
-            RespireClusterMigrationStatusScope.Default => [],
-            RespireClusterMigrationStatusScope.All => ["ALL"],
-            _ => throw new ArgumentOutOfRangeException(nameof(scope)),
-        }, ClusterMigrationParser.Tasks, cancellationToken);
+            return ExecuteAsync("CLUSTER MIGRATION STATUS", scope switch
+            {
+                RespireClusterMigrationStatusScope.Default => [],
+                RespireClusterMigrationStatusScope.All => ["ALL"],
+                _ => throw new ArgumentOutOfRangeException(nameof(scope)),
+            }, ClusterMigrationParser.Tasks, cancellationToken);
+        }
+        catch (Exception error) { RecordPreflightFailure(error); throw; }
+    }
 
     /// <summary>Reads one owned migration task at this node, or an empty array when absent. Requires Redis 8.4+.</summary>
     public ValueTask<RespireClusterMigrationTask[]> ClusterMigrationStatusAsync(string taskId,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(taskId);
-        return ExecuteAsync("CLUSTER MIGRATION STATUS", ["ID", taskId], ClusterMigrationParser.Tasks, cancellationToken);
+        try
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(taskId);
+            return ExecuteAsync("CLUSTER MIGRATION STATUS", ["ID", taskId], ClusterMigrationParser.Tasks, cancellationToken);
+        }
+        catch (Exception error) { RecordPreflightFailure(error); throw; }
     }
 }

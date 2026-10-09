@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Respire.Commands;
+using Respire.Internal;
 using Respire.Protocol;
 
 namespace Respire;
@@ -339,30 +340,45 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
     private async ValueTask<(RespireClient.TrackedLockExecution Execution, bool Fenced)> StartReleaseExecutionAsync(
         RespireKey key, RespireLockToken token, CancellationToken cancellationToken)
     {
-        if (client.RequiresReliableCorrectionOrdering(cancellationToken))
+        // The release owner covers the capability probe and its fallback. A returned execution
+        // takes ownership; a startup failure is final here, before the caller wraps it.
+        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        try
         {
-            try
+            if (client.RequiresReliableCorrectionOrdering(cancellationToken))
             {
-                await client.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
-                return (await client.StartLockExecutionAsync(
-                        key, token, milliseconds: null, requireIdentity: true, allowUnfencedFallback: true, cancellationToken)
-                    .ConfigureAwait(false), true);
+                try
+                {
+                    await client.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
+                    return (await client.StartLockExecutionAsync(
+                            key, token, milliseconds: null, requireIdentity: true, allowUnfencedFallback: true,
+                            cancellationToken, observation)
+                        .ConfigureAwait(false), true);
+                }
+                catch (RespireServerException error) when (
+                    Infrastructure.RespireConnectionMultiplexer.IsDefinitiveCorrectionOrderingFailure(error))
+                {
+                    // ACLs or servers that deny CLIENT ID or CLIENT KILL keep the compatible release.
+                    // Other server errors propagate. An uncertain outcome still fails closed, and a
+                    // latent compare-and-delete cannot match another owner's token. Operators are told
+                    // once that the fence is unavailable. A cluster redirect or replacement target
+                    // that denies them later gets the same fallback inside the routing loop.
+                    observation.Handled(error);
+                    client.LogUnfencedLockReleaseOnce(error);
+                }
             }
-            catch (RespireServerException error) when (
-                Infrastructure.RespireConnectionMultiplexer.IsDefinitiveCorrectionOrderingFailure(error))
-            {
-                // ACLs or servers that deny CLIENT ID or CLIENT KILL keep the compatible release.
-                // Other server errors propagate. An uncertain outcome still fails closed, and a
-                // latent compare-and-delete cannot match another owner's token. Operators are told
-                // once that the fence is unavailable. A cluster redirect or replacement target
-                // that denies them later gets the same fallback inside the routing loop.
-                client.LogUnfencedLockReleaseOnce(error);
-            }
-        }
 
-        return (await client.StartLockExecutionAsync(
-                key, token, milliseconds: null, requireIdentity: false, allowUnfencedFallback: false, cancellationToken)
-            .ConfigureAwait(false), false);
+            return (await client.StartLockExecutionAsync(
+                    key, token, milliseconds: null, requireIdentity: false, allowUnfencedFallback: false,
+                    cancellationToken, observation)
+                .ConfigureAwait(false), false);
+        }
+        catch (Exception error)
+        {
+            observation.Final(error);
+            observation.Dispose();
+            throw;
+        }
     }
 
     // Transport proof that an attempt was never enqueued: cancellation or a command timeout while

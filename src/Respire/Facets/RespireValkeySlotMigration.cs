@@ -25,34 +25,38 @@ public sealed partial class RespireServerNode
     public ValueTask ClusterMigrateSlotsAsync(ReadOnlySpan<RespireValkeySlotMigrationGroup> groups,
         CancellationToken cancellationToken = default)
     {
-        if (groups.IsEmpty) throw new ArgumentException("At least one migration group is required.", nameof(groups));
-        var arguments = new List<RespireValue>();
-        var ranges = new List<RespireClusterSlotRange>();
-        foreach (var group in groups)
+        try
         {
-            ArgumentNullException.ThrowIfNull(group, nameof(groups));
-            ArgumentException.ThrowIfNullOrWhiteSpace(group.TargetNodeId, nameof(groups));
-            if (group.TargetNodeId.Any(char.IsWhiteSpace))
-                throw new ArgumentException("A target node ID cannot contain whitespace.", nameof(groups));
-            if (group.Slots is null || group.Slots.Count == 0)
-                throw new ArgumentException("Each migration group requires slot ranges.", nameof(groups));
-            arguments.Add("SLOTSRANGE");
-            foreach (var range in group.Slots)
+            if (groups.IsEmpty) throw new ArgumentException("At least one migration group is required.", nameof(groups));
+            var arguments = new List<RespireValue>();
+            var ranges = new List<RespireClusterSlotRange>();
+            foreach (var group in groups)
             {
-                if (range.Start < 0 || range.End >= 16384 || range.End < range.Start)
-                    throw new ArgumentOutOfRangeException(nameof(groups), "Slot ranges must be inclusive and within 0 through 16383.");
-                ranges.Add(range);
-                arguments.Add(range.Start);
-                arguments.Add(range.End);
+                ArgumentNullException.ThrowIfNull(group, nameof(groups));
+                ArgumentException.ThrowIfNullOrWhiteSpace(group.TargetNodeId, nameof(groups));
+                if (group.TargetNodeId.Any(char.IsWhiteSpace))
+                    throw new ArgumentException("A target node ID cannot contain whitespace.", nameof(groups));
+                if (group.Slots is null || group.Slots.Count == 0)
+                    throw new ArgumentException("Each migration group requires slot ranges.", nameof(groups));
+                arguments.Add("SLOTSRANGE");
+                foreach (var range in group.Slots)
+                {
+                    if (range.Start < 0 || range.End >= 16384 || range.End < range.Start)
+                        throw new ArgumentOutOfRangeException(nameof(groups), "Slot ranges must be inclusive and within 0 through 16383.");
+                    ranges.Add(range);
+                    arguments.Add(range.Start);
+                    arguments.Add(range.End);
+                }
+                arguments.Add("NODE");
+                arguments.Add(group.TargetNodeId);
             }
-            arguments.Add("NODE");
-            arguments.Add(group.TargetNodeId);
+            ranges.Sort(static (left, right) => left.Start.CompareTo(right.Start));
+            for (var index = 1; index < ranges.Count; index++)
+                if (ranges[index].Start <= ranges[index - 1].End)
+                    throw new ArgumentException("Migration slot ranges cannot overlap, including across groups.", nameof(groups));
+            return MutationAsync("CLUSTER MIGRATESLOTS", arguments.ToArray(), cancellationToken);
         }
-        ranges.Sort(static (left, right) => left.Start.CompareTo(right.Start));
-        for (var index = 1; index < ranges.Count; index++)
-            if (ranges[index].Start <= ranges[index - 1].End)
-                throw new ArgumentException("Migration slot ranges cannot overlap, including across groups.", nameof(groups));
-        return MutationAsync("CLUSTER MIGRATESLOTS", arguments.ToArray(), cancellationToken);
+        catch (Exception error) { RecordPreflightFailure(error); throw; }
     }
 
     /// <summary>Gets owned active and recent Valkey 9+ migration snapshots from this node.</summary>
@@ -71,14 +75,18 @@ public sealed partial class RespireServerNode
     public ValueTask ClusterFlushSlotAsync(int slot, ServerFlushMode mode = ServerFlushMode.Default,
         CancellationToken cancellationToken = default)
     {
-        if ((uint)slot >= 16384) throw new ArgumentOutOfRangeException(nameof(slot));
-        RespireValue[] arguments = mode switch
+        try
         {
-            ServerFlushMode.Default => [slot],
-            ServerFlushMode.Sync => [slot, "SYNC"],
-            ServerFlushMode.Async => [slot, "ASYNC"],
-            _ => throw new ArgumentOutOfRangeException(nameof(mode)),
-        };
-        return MutationAsync("CLUSTER FLUSHSLOT", arguments, cancellationToken);
+            if ((uint)slot >= 16384) throw new ArgumentOutOfRangeException(nameof(slot));
+            RespireValue[] arguments = mode switch
+            {
+                ServerFlushMode.Default => [slot],
+                ServerFlushMode.Sync => [slot, "SYNC"],
+                ServerFlushMode.Async => [slot, "ASYNC"],
+                _ => throw new ArgumentOutOfRangeException(nameof(mode)),
+            };
+            return MutationAsync("CLUSTER FLUSHSLOT", arguments, cancellationToken);
+        }
+        catch (Exception error) { RecordPreflightFailure(error); throw; }
     }
 }

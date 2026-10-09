@@ -21,16 +21,18 @@ public sealed partial class RespireClient
         return fence.IsRequired ? CompleteMutationAsync(response, cache!, fence) : response;
     }
 
+    // A supplied observation is transferred: the facet started it before argument preflight.
     internal ValueTask<RespireResult> ExecuteScriptAsync(
         RespireScript script,
         RespireValue[] tail,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation = default)
     {
         var core = _core;
-        if (core.Disposed) ThrowIfDisposedForCommand();
-        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        if (observation.IsEmpty) observation = RespireTelemetry.ErrorObservation.Rent(force: true);
         try
         {
+            if (core.Disposed) ThrowIfDisposedForCommand(observeErrors: false);
             var cache = core.ClientCache;
             var mutationFence = cache is null || script.IsCacheReadOnly ? default : cache.BeginUnknownMutation();
             var response = ExecuteScriptCoreAsync(script, tail, cancellationToken, mutationFence, observation);
@@ -75,17 +77,21 @@ public sealed partial class RespireClient
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    // A supplied owner is borrowed on failure, so its caller can classify a fallback as handled.
+    // On success the returned execution owns either lease.
     internal async ValueTask<TrackedLockExecution> StartLockExecutionAsync(
         RespireKey key, RespireLockToken token, long? milliseconds, bool requireIdentity,
-        bool allowUnfencedFallback, CancellationToken cancellationToken)
+        bool allowUnfencedFallback, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation callerObservation = default)
     {
-        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        var ownsObservation = callerObservation.IsEmpty;
+        var observation = ownsObservation ? RespireTelemetry.ErrorObservation.Rent(force: true) : callerObservation;
         try
         {
             return await StartLockExecutionCoreAsync(key, token, milliseconds, requireIdentity,
                 allowUnfencedFallback, cancellationToken, observation).ConfigureAwait(false);
         }
-        catch (Exception error)
+        catch (Exception error) when (ownsObservation)
         {
             observation.Final(error);
             observation.Dispose();
@@ -261,9 +267,10 @@ public sealed partial class RespireClient
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     internal async ValueTask<TResult> ExecuteScriptConvertedAsync<TResult>(
         RespireScript script, RespireValue[] tail, CancellationToken cancellationToken,
-        Func<RespireResult, TResult> convert)
+        Func<RespireResult, TResult> convert, RespireTelemetry.ErrorObservation transferred = default)
     {
-        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        // A transferred observation already covers the facet's argument preflight.
+        using var observation = transferred.IsEmpty ? RespireTelemetry.ErrorObservation.Rent(force: true) : transferred;
         try
         {
             if (_core.Disposed) ThrowIfDisposedForCommand(observeErrors: false);

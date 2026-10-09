@@ -43,8 +43,12 @@ public sealed partial class RespireServerNode
     /// <summary>Generates an owned hexadecimal password. Bits must be 1 through 1024; default is 256. Redis: ACL GENPASS.</summary>
     public ValueTask<string> AclGeneratePasswordAsync(int? bits = null, CancellationToken cancellationToken = default)
     {
-        if (bits is < 1 or > 1024) throw new ArgumentOutOfRangeException(nameof(bits));
-        return ExecuteAsync("ACL GENPASS", bits is { } count ? [count] : [], ServerDiagnosticsParser.Text, cancellationToken);
+        try
+        {
+            if (bits is < 1 or > 1024) throw new ArgumentOutOfRangeException(nameof(bits));
+            return ExecuteAsync("ACL GENPASS", bits is { } count ? [count] : [], ServerDiagnosticsParser.Text, cancellationToken);
+        }
+        catch (Exception error) { RecordPreflightFailure(error); throw; }
     }
 
     /// <summary>Lists owned binary ACL usernames. Redis: ACL USERS.</summary>
@@ -65,18 +69,22 @@ public sealed partial class RespireServerNode
     /// Cancellation or transport failure after submission has an ambiguous outcome. The request is never replayed.</remarks>
     public ValueTask SendShutdownAsync(RespireShutdownOptions? options = null, CancellationToken cancellationToken = default)
     {
-        options ??= new();
-        var arguments = new List<RespireValue>(3);
-        switch (options.SaveMode)
+        try
         {
-            case RespireShutdownSaveMode.Default: break;
-            case RespireShutdownSaveMode.Save: arguments.Add("SAVE"); break;
-            case RespireShutdownSaveMode.NoSave: arguments.Add("NOSAVE"); break;
-            default: throw new ArgumentOutOfRangeException(nameof(options));
+            options ??= new();
+            var arguments = new List<RespireValue>(3);
+            switch (options.SaveMode)
+            {
+                case RespireShutdownSaveMode.Default: break;
+                case RespireShutdownSaveMode.Save: arguments.Add("SAVE"); break;
+                case RespireShutdownSaveMode.NoSave: arguments.Add("NOSAVE"); break;
+                default: throw new ArgumentOutOfRangeException(nameof(options));
+            }
+            if (options.Now) arguments.Add("NOW");
+            if (options.Force) arguments.Add("FORCE");
+            return ShutdownWriteAsync(arguments.ToArray(), cancellationToken);
         }
-        if (options.Now) arguments.Add("NOW");
-        if (options.Force) arguments.Add("FORCE");
-        return ShutdownWriteAsync(arguments.ToArray(), cancellationToken);
+        catch (Exception error) { RecordPreflightFailure(error); throw; }
     }
 
     /// <summary>Aborts an in-progress shutdown and awaits OK. Requires AllowAdmin and Redis 7.0 or later.</summary>
@@ -86,18 +94,22 @@ public sealed partial class RespireServerNode
     /// <summary>Starts coordinated FAILOVER. Requires AllowAdmin and Redis 6.2 or later.</summary>
     public ValueTask FailoverAsync(RespireFailoverOptions? options = null, CancellationToken cancellationToken = default)
     {
-        options ??= new();
-        if (options.Force && (options.Target is null || options.Timeout is null))
-            throw new ArgumentException("Forced failover requires Target and Timeout.", nameof(options));
-        var arguments = new List<RespireValue>(6);
-        if (options.Target is { } target)
+        try
         {
-            ValidateEndpoint(target, allowUnixSocket: false);
-            arguments.Add("TO"); arguments.Add(target.Host); arguments.Add(target.Port);
-            if (options.Force) arguments.Add("FORCE");
+            options ??= new();
+            if (options.Force && (options.Target is null || options.Timeout is null))
+                throw new ArgumentException("Forced failover requires Target and Timeout.", nameof(options));
+            var arguments = new List<RespireValue>(6);
+            if (options.Target is { } target)
+            {
+                ValidateEndpoint(target, allowUnixSocket: false);
+                arguments.Add("TO"); arguments.Add(target.Host); arguments.Add(target.Port);
+                if (options.Force) arguments.Add("FORCE");
+            }
+            if (options.Timeout is { } timeout) { arguments.Add("TIMEOUT"); arguments.Add(Milliseconds(timeout, nameof(options))); }
+            return MutationAsync("FAILOVER", arguments.ToArray(), cancellationToken);
         }
-        if (options.Timeout is { } timeout) { arguments.Add("TIMEOUT"); arguments.Add(Milliseconds(timeout, nameof(options))); }
-        return MutationAsync("FAILOVER", arguments.ToArray(), cancellationToken);
+        catch (Exception error) { RecordPreflightFailure(error); throw; }
     }
 
     /// <summary>Aborts coordinated FAILOVER. Requires AllowAdmin. Aborting can leave inconsistent replication state.</summary>
@@ -107,8 +119,12 @@ public sealed partial class RespireServerNode
     /// <summary>Configures replication from a TCP primary. Requires AllowAdmin. Redis: REPLICAOF host port.</summary>
     public ValueTask ReplicaOfAsync(RespireEndpoint primary, CancellationToken cancellationToken = default)
     {
-        ValidateEndpoint(primary, allowUnixSocket: false);
-        return MutationAsync("REPLICAOF", [primary.Host, primary.Port], cancellationToken);
+        try
+        {
+            ValidateEndpoint(primary, allowUnixSocket: false);
+            return MutationAsync("REPLICAOF", [primary.Host, primary.Port], cancellationToken);
+        }
+        catch (Exception error) { RecordPreflightFailure(error); throw; }
     }
 
     /// <summary>Promotes this node to a primary. Requires AllowAdmin. Redis: REPLICAOF NO ONE.</summary>
@@ -118,38 +134,54 @@ public sealed partial class RespireServerNode
     /// <summary>Swaps two database contents. Requires AllowAdmin. Redis: SWAPDB.</summary>
     public ValueTask SwapDatabasesAsync(int first, int second, CancellationToken cancellationToken = default)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(first);
-        ArgumentOutOfRangeException.ThrowIfNegative(second);
-        return MutationAsync("SWAPDB", [first, second], cancellationToken);
+        try
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(first);
+            ArgumentOutOfRangeException.ThrowIfNegative(second);
+            return MutationAsync("SWAPDB", [first, second], cancellationToken);
+        }
+        catch (Exception error) { RecordPreflightFailure(error); throw; }
     }
 
     /// <summary>Loads a module from a server-side path. Requires AllowAdmin. Redis: MODULE LOAD.</summary>
     public ValueTask ModuleLoadAsync(string path, ReadOnlySpan<RespireValue> arguments, CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(path);
-        return MutationAsync("MODULE LOAD", Prepend(path, arguments), cancellationToken);
+        try
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(path);
+            return MutationAsync("MODULE LOAD", Prepend(path, arguments), cancellationToken);
+        }
+        catch (Exception error) { RecordPreflightFailure(error); throw; }
     }
 
     /// <summary>Loads a module with CONFIG pairs and ARGS. Requires AllowAdmin and Redis 7.0 or later. Redis: MODULE LOADEX.</summary>
     public ValueTask ModuleLoadExtendedAsync(string path, ReadOnlySpan<KeyValuePair<string, RespireValue>> configuration,
         ReadOnlySpan<RespireValue> arguments, CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(path);
-        var tokens = new List<RespireValue>(1 + configuration.Length * 3 + arguments.Length + 1) { path };
-        foreach (var pair in configuration)
+        try
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(pair.Key, nameof(configuration));
-            tokens.Add("CONFIG"); tokens.Add(pair.Key); tokens.Add(Snapshot(pair.Value, nameof(configuration)));
+            ArgumentException.ThrowIfNullOrWhiteSpace(path);
+            var tokens = new List<RespireValue>(1 + configuration.Length * 3 + arguments.Length + 1) { path };
+            foreach (var pair in configuration)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(pair.Key, nameof(configuration));
+                tokens.Add("CONFIG"); tokens.Add(pair.Key); tokens.Add(Snapshot(pair.Value, nameof(configuration)));
+            }
+            if (!arguments.IsEmpty) { tokens.Add("ARGS"); foreach (var argument in arguments) tokens.Add(Snapshot(argument, nameof(arguments))); }
+            return MutationAsync("MODULE LOADEX", tokens.ToArray(), cancellationToken);
         }
-        if (!arguments.IsEmpty) { tokens.Add("ARGS"); foreach (var argument in arguments) tokens.Add(Snapshot(argument, nameof(arguments))); }
-        return MutationAsync("MODULE LOADEX", tokens.ToArray(), cancellationToken);
+        catch (Exception error) { RecordPreflightFailure(error); throw; }
     }
 
     /// <summary>Unloads a named module. Requires AllowAdmin. Redis: MODULE UNLOAD.</summary>
     public ValueTask ModuleUnloadAsync(string name, CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        return MutationAsync("MODULE UNLOAD", [name], cancellationToken);
+        try
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(name);
+            return MutationAsync("MODULE UNLOAD", [name], cancellationToken);
+        }
+        catch (Exception error) { RecordPreflightFailure(error); throw; }
     }
 
     /// <summary>Returns owned allocator diagnostic text. Redis: MEMORY MALLOC-STATS.</summary>
@@ -159,20 +191,28 @@ public sealed partial class RespireServerNode
     /// <summary>Returns an owned ASCII latency graph for an existing event. Redis: LATENCY GRAPH.</summary>
     public ValueTask<string> LatencyGraphAsync(string eventName, CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(eventName);
-        return ExecuteAsync("LATENCY GRAPH", [eventName], ServerDiagnosticsParser.Text, cancellationToken);
+        try
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(eventName);
+            return ExecuteAsync("LATENCY GRAPH", [eventName], ServerDiagnosticsParser.Text, cancellationToken);
+        }
+        catch (Exception error) { RecordPreflightFailure(error); throw; }
     }
 
     /// <summary>Extracts owned physical binary keys and flags from a command invocation. Redis 7.0 or later.</summary>
     public ValueTask<RespireCommandKeyFlags[]> CommandGetKeysAndFlagsAsync(RespireCommand command,
         ReadOnlySpan<RespireValue> arguments, CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(command.Name, nameof(command));
-        var words = command.Name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        var tokens = new RespireValue[words.Length + arguments.Length];
-        for (var index = 0; index < words.Length; index++) tokens[index] = words[index];
-        for (var index = 0; index < arguments.Length; index++) tokens[words.Length + index] = Snapshot(arguments[index], nameof(arguments));
-        return ExecuteAsync("COMMAND GETKEYSANDFLAGS", tokens, ServerNodeParser.KeysAndFlags, cancellationToken);
+        try
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(command.Name, nameof(command));
+            var words = command.Name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var tokens = new RespireValue[words.Length + arguments.Length];
+            for (var index = 0; index < words.Length; index++) tokens[index] = words[index];
+            for (var index = 0; index < arguments.Length; index++) tokens[words.Length + index] = Snapshot(arguments[index], nameof(arguments));
+            return ExecuteAsync("COMMAND GETKEYSANDFLAGS", tokens, ServerNodeParser.KeysAndFlags, cancellationToken);
+        }
+        catch (Exception error) { RecordPreflightFailure(error); throw; }
     }
 
     /// <summary>Kills a read-only BUSY script on an independent control connection. Requires AllowAdmin. Redis: SCRIPT KILL.</summary>
@@ -202,7 +242,13 @@ public sealed partial class RespireServerNode
     /// <summary>Returns physical binary keys matching a pattern. Redis: KEYS.</summary>
     /// <remarks>Debugging only: KEYS scans the entire database and blocks the server. Use IKeyCommands.ScanAsync for production iteration.</remarks>
     public ValueTask<byte[][]> KeysAsync(RespireValue pattern, CancellationToken cancellationToken = default)
-        => ExecuteAsync("KEYS", [Snapshot(pattern, nameof(pattern))], AclParser.ByteStrings, cancellationToken);
+    {
+        try
+        {
+            return ExecuteAsync("KEYS", [Snapshot(pattern, nameof(pattern))], AclParser.ByteStrings, cancellationToken);
+        }
+        catch (Exception error) { RecordPreflightFailure(error); throw; }
+    }
 
     /// <summary>Migrates physical source keys to a TCP destination. Requires AllowAdmin. Redis: MIGRATE.</summary>
     /// <remarks>Keys are snapshotted before I/O. Timeout is the positive server-side maximum idle transfer time,
@@ -214,28 +260,32 @@ public sealed partial class RespireServerNode
     public ValueTask<RespireMigrateResult> MigrateAsync(RespireEndpoint destination, ReadOnlySpan<RespireKey> keys,
         int database, TimeSpan timeout, RespireMigrateOptions? options = null, CancellationToken cancellationToken = default)
     {
-        ValidateEndpoint(destination, allowUnixSocket: false);
-        ArgumentOutOfRangeException.ThrowIfNegative(database);
-        if (keys.IsEmpty) throw new ArgumentException("At least one key is required.", nameof(keys));
-        options ??= new();
-        if (options.CommandTimeout is { } commandTimeout && commandTimeout < TimeSpan.FromMilliseconds(1))
-            throw new ArgumentOutOfRangeException(nameof(options), "MIGRATE CommandTimeout must be at least one millisecond.");
-        if (options.Username is not null && options.Password is null)
-            throw new ArgumentException("Destination username requires a password.", nameof(options));
-        var tokens = new List<RespireValue>(keys.Length + 12)
-            { destination.Host, destination.Port, "", database, Milliseconds(timeout, nameof(timeout)) };
-        if (options.Copy) tokens.Add("COPY");
-        if (options.Replace) tokens.Add("REPLACE");
-        if (options.Password is { } password)
+        try
         {
-            tokens.Add(options.Username is null ? "AUTH" : "AUTH2");
-            if (options.Username is { } username) tokens.Add(username);
-            tokens.Add(password);
+            ValidateEndpoint(destination, allowUnixSocket: false);
+            ArgumentOutOfRangeException.ThrowIfNegative(database);
+            if (keys.IsEmpty) throw new ArgumentException("At least one key is required.", nameof(keys));
+            options ??= new();
+            if (options.CommandTimeout is { } commandTimeout && commandTimeout < TimeSpan.FromMilliseconds(1))
+                throw new ArgumentOutOfRangeException(nameof(options), "MIGRATE CommandTimeout must be at least one millisecond.");
+            if (options.Username is not null && options.Password is null)
+                throw new ArgumentException("Destination username requires a password.", nameof(options));
+            var tokens = new List<RespireValue>(keys.Length + 12)
+                { destination.Host, destination.Port, "", database, Milliseconds(timeout, nameof(timeout)) };
+            if (options.Copy) tokens.Add("COPY");
+            if (options.Replace) tokens.Add("REPLACE");
+            if (options.Password is { } password)
+            {
+                tokens.Add(options.Username is null ? "AUTH" : "AUTH2");
+                if (options.Username is { } username) tokens.Add(username);
+                tokens.Add(password);
+            }
+            tokens.Add("KEYS");
+            foreach (var key in keys) tokens.Add(key.AsValue().Snapshot());
+            return ExecuteAsync("MIGRATE", tokens.ToArray(), ServerNodeParser.Migration, cancellationToken, NodeCallKind.Mutation,
+                commandTimeout: options.CommandTimeout);
         }
-        tokens.Add("KEYS");
-        foreach (var key in keys) tokens.Add(key.AsValue().Snapshot());
-        return ExecuteAsync("MIGRATE", tokens.ToArray(), ServerNodeParser.Migration, cancellationToken, NodeCallKind.Mutation,
-            commandTimeout: options.CommandTimeout);
+        catch (Exception error) { RecordPreflightFailure(error); throw; }
     }
 
     private delegate T ReplyParser<T>(in RespValue reply);
@@ -305,6 +355,10 @@ public sealed partial class RespireServerNode
                     token, "SHUTDOWN", observation: observation).ConfigureAwait(false);
                 return true;
             }, cancellationToken).ConfigureAwait(false);
+
+    // Public node methods validate and build arguments before WithNodeConnectionAsync starts
+    // its owner. That helper is asynchronous, so synchronous failures here are preflight only.
+    private static void RecordPreflightFailure(Exception error) => RespireTelemetry.RecordError(error, internallyHandled: false);
 
     private static RespireValue Snapshot(RespireValue value, string name)
     {

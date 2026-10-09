@@ -61,7 +61,7 @@ public sealed partial class RespireClient
         var observation = execution.ErrorObservation;
         if (observation.IsEmpty) observation = RespireTelemetry.ErrorObservation.Rent(force: true);
         return RespireTelemetry.ObserveFinalError(
-            ExecuteWithCorrectionCoreAsync(execution, ordering, state, correct, onOutcomeUncertain), observation);
+            ExecuteWithCorrectionCoreAsync(execution, ordering, state, correct, onOutcomeUncertain, observation), observation);
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
@@ -70,7 +70,8 @@ public sealed partial class RespireClient
         CorrectionOrdering ordering,
         TState state,
         Func<TState, TrackedConnectionIdentity, ValueTask>? correct,
-        Action? onOutcomeUncertain)
+        Action? onOutcomeUncertain,
+        RespireTelemetry.ErrorObservation observation)
     {
         try
         {
@@ -89,7 +90,7 @@ public sealed partial class RespireClient
                     await FenceCorrectionConnectionAsync(identity).ConfigureAwait(false);
                 else if (ordering == CorrectionOrdering.BestEffortLockFence
                     && error is OperationCanceledException or RespireTimeoutException or RespireConnectionException)
-                    await TryFenceLockConnectionAsync(identity, "lock release").ConfigureAwait(false);
+                    await TryFenceLockConnectionAsync(identity, "lock release", observation).ConfigureAwait(false);
             }
 
             if (correct is not null)

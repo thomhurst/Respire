@@ -33,7 +33,14 @@ internal sealed partial class KeyCommands
         string? match = null, RespireKeyType? type = null, int countHint = 250, int? slot = null,
         CancellationToken cancellationToken = default)
     {
-        var command = CreateValkeyClusterScanCommand(client, cursor, match, type, countHint, slot, cancellationToken);
+        ValkeyClusterScanCommand command;
+        // Construction includes disposal, cancellation and topology checks before the send owns errors.
+        try { command = CreateValkeyClusterScanCommand(client, cursor, match, type, countHint, slot, cancellationToken); }
+        catch (Exception error)
+        {
+            RespireTelemetry.RecordError(error, internallyHandled: false);
+            throw;
+        }
         return await client.ConvertResponseAsync("CLUSTERSCAN", in command, cancellationToken,
             (Prefix: client.EncodedKeyPrefix, Match: match),
             static ((KeyPrefix? Prefix, string? Match) state, in RespValue reply) =>
