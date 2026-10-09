@@ -47,6 +47,8 @@ internal static class QueuedCircuitDispatch
         try
         {
             var reply = await connection.EnqueuePinnedAsync(command, cancellationToken, operation).ConfigureAwait(false);
+            // ObserveAsync starts eagerly and owns reply completion even before the caller
+            // awaits its returned result. Connection failure/cancellation also completes it.
             var guarded = ObserveAsync(reply, admission, cancellationToken);
             transferred = true;
             return guarded;

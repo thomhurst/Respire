@@ -12,6 +12,90 @@ namespace Respire.Tests.Networking;
 public partial class StandaloneCircuitDispatchTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task QueueSelectionFailureOpensCircuitBeforeDispatch(bool transactional)
+    {
+        await using var server = QueueServer();
+        await using var client = await RespireClient.ConnectAsync(Options(server) with
+        {
+            ReconnectPolicy = new() { InitialDelay = TimeSpan.FromMinutes(1), MaxDelay = TimeSpan.FromMinutes(1) },
+        });
+        var (circuit, clock) = await Prepare(client, server);
+        var connection = client.Core.Multiplexer.GetConnection();
+        server.CloseConnections();
+        await connection.Closed.WaitAsync(TimeSpan.FromSeconds(5));
+        var commands = server.CommandsSeen;
+        await Assert.That(await Execute()).IsTypeOf<RespireConnectionException>();
+        await Assert.That(circuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Open);
+        await Assert.That(await Execute()).IsTypeOf<RespireCircuitOpenException>();
+        clock.Advance(TimeSpan.FromMinutes(1));
+        await Assert.That(await Execute()).IsTypeOf<RespireConnectionException>();
+        await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(0);
+        await Assert.That(circuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Open);
+        await Assert.That(server.CommandsSeen).IsEqualTo(commands);
+
+        async Task<Exception> Execute()
+        {
+            using var batch = client.CreateBatch();
+            await using var transaction = client.CreateTransaction();
+            IRespireCommandQueue queue = transactional ? transaction : batch;
+            var pending = queue.Strings.GetString("never");
+            var error = await Failure(async () =>
+            {
+                if (transactional) await transaction.CommitAsync();
+                else await batch.ExecuteAsync();
+            });
+            await Assert.That(pending.Error).IsSameReferenceAs(error);
+            return error;
+        }
+    }
+
+    [Test]
+    public async Task WatchSetupRejectsOpenCircuitAndCompletesHalfOpenProbe()
+    {
+        await using var server = QueueServer();
+        await using var client = await RespireClient.ConnectAsync(Options(server));
+        var (circuit, clock) = await Prepare(client, server);
+        Open(client, server);
+        await Assert.That(await Failure(async () =>
+        {
+            await using var rejected = await client.CreateTransactionAsync(["watched"]);
+        })).IsTypeOf<RespireCircuitOpenException>();
+        await Assert.That(server.ReceivedCommands.Contains("WATCH watched")).IsFalse();
+        clock.Advance(TimeSpan.FromMinutes(1));
+        await using var accepted = await client.CreateTransactionAsync(["watched"]);
+        await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(0);
+        await Assert.That(circuit.Snapshot().SuccessfulProbes).IsEqualTo(1);
+        await Assert.That(server.ReceivedCommands.Count(command => command == "WATCH watched")).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task QueuedReplyReleasesProbeBeforeCallerConsumesResult()
+    {
+        await using var server = QueueServer();
+        await using var client = await RespireClient.ConnectAsync(Options(server));
+        var (circuit, clock) = await Prepare(client, server);
+        Open(client, server);
+        clock.Advance(TimeSpan.FromMinutes(1));
+        server.SuppressReply = command => command == "GET probe";
+        var reply = await QueuedCircuitDispatch.EnqueueAsync(client.Core.Circuits!,
+            client.Core.Multiplexer.GetConnection(), new Cmd1(Verbs.Get, "probe"), "GET", default);
+        await Received(server, "GET probe");
+        await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(1);
+        await server.SendRawAsync(Bulk("probe"));
+        var deadline = Stopwatch.StartNew();
+        while (circuit.Snapshot().ActiveProbes != 0)
+        {
+            if (deadline.Elapsed > TimeSpan.FromSeconds(5)) throw new TimeoutException("Reply observer did not release its probe.");
+            await Task.Yield();
+        }
+        await Assert.That(circuit.Snapshot().SuccessfulProbes).IsEqualTo(1);
+        using var response = await reply;
+        await Assert.That(ResponseReader.StringOrNull(in response)).IsEqualTo("probe");
+    }
+
+    [Test]
     [Arguments("batch")]
     [Arguments("transaction")]
     [Arguments("watched")]

@@ -118,8 +118,8 @@ lease. A WATCH abort or ordinary Redis error still demonstrates a healthy reply.
 Hash import batches admit their entries in connection order. Rejection before dispatch preserves
 the import session and its prepared fieldsets. Durability batches also guard each write and the
 subsequent WAIT or WAITAOF separately. A failed write prevents the acknowledgement; a rejected
-acknowledgement cannot undo writes that already completed. Empty durability batches still require
-admission for their acknowledgement command.
+acknowledgement cannot undo writes that already completed. Empty durability batches are rejected
+by validation before any acknowledgement command is sent.
 
 Cancellation, validation failure, and undispatched exceptions release recovery capacity as ignored.
 Each transaction or batch permit completes even when response conversion fails. These boundaries

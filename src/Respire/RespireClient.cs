@@ -1618,8 +1618,13 @@ public sealed partial class RespireClient : IRespireClient
             try
             {
                 var command = new CmdN(Verbs.Watch, watchKeys);
-                using var reply = await SendOnConnectionAsync("WATCH", connection,
-                    new ProtocolCommand<CmdN>(command), cancellationToken, observation: observation).ConfigureAwait(false);
+                // WATCH owns this dedicated socket; circuit admission must not reroute it.
+                using var reply = _core.Circuits is not null
+                    ? await SendCircuitResponseAsync("WATCH", connection, new ProtocolCommand<CmdN>(command),
+                        cancellationToken, sendAsking: false, commandDeadline: default,
+                        allowStreamingConnectionReroute: false, observation: observation).ConfigureAwait(false)
+                    : await SendOnConnectionAsync("WATCH", connection,
+                        new ProtocolCommand<CmdN>(command), cancellationToken, observation: observation).ConfigureAwait(false);
                 if (_core.ClientCache is { } cache)
                 {
                     // Tracking pushes use other sockets and may lag writes processed before WATCH.
@@ -4481,6 +4486,10 @@ public sealed partial class RespireClient : IRespireClient
             return cluster.TryAcquireReadyConnection(slot, cancellationToken);
 
         var multiplexer = _core.Multiplexer;
+        // Queues must report lost standalone availability even before dispatch can acquire
+        // a permit. Use the immediate selection guard once initial connection setup is done.
+        if (_core.Circuits is not null && multiplexer.IsInitialized)
+            return GetCircuitConnectionSlow(multiplexer, cancellationToken);
         if (_core.Sentinel is { } sentinel)
         {
             if (sentinel.Current is not { IsRetired: false } generation) return null;
