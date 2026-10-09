@@ -8,7 +8,7 @@ namespace Respire.StackExchangeCompat;
 
 public sealed partial class RespireConnectionMultiplexer
 {
-    private readonly Dictionary<RespireEndpoint, CompatServer> _servers = [];
+    private readonly Dictionary<RespireEndpoint, CompatServer> _servers = new(RespireEndpointComparer.Instance);
     private CompatSubscriber? _subscriber;
 
     internal CompatDatabase DefaultDatabase => (CompatDatabase)GetDatabase();
