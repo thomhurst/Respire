@@ -1,0 +1,12 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "dispatch-cancelled-reply-drain",
+      "Role": "internal",
+      "Member": "Respire.Networking.CompletionScheduler.Add(PendingResponse,in RespValue):void",
+      "Contract": "Discarded replies after caller cancellation use the native source's immutable retry snapshot. Record them internally, release payload and receive reference, and preserve FIFO ordering without borrowing a completed caller owner."
+    }
+  ],
+  "NonRoutes": []
+}

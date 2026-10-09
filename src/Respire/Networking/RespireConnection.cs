@@ -1059,7 +1059,14 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         string? preferredZone = null,
         bool pinToConnection = false, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
-        => SendCoreAsync(
+        => observation.IsEmpty
+            ? DispatchResponseSource<RespValue>.Run(
+                (Connection: this, Command: command, Token: cancellationToken, Name: commandName,
+                    Deadline: commandDeadline, Reroute: allowStreamingConnectionReroute, Route: streamingRoute,
+                    Zone: preferredZone, Pinned: pinToConnection),
+                static (state, owner) => state.Connection.SendCheckedAsync(state.Command, state.Token,
+                    state.Name, state.Deadline, state.Reroute, state.Route, state.Zone, state.Pinned, owner))
+            : SendCoreAsync(
             in command, discardRepliesBefore: 0, throwOnError: true, cancellationToken, commandName,
             pinToConnection: pinToConnection,
             commandDeadline: commandDeadline, allowStreamingConnectionReroute: allowStreamingConnectionReroute,
@@ -1080,30 +1087,24 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         RespireTelemetry.ErrorObservation observation = default, RespireTelemetry.OperationStart durationStarted = default, bool pinToConnection = false)
         where TCommand : struct, IRespCommand
     {
+        if (observation.IsEmpty)
+            return DispatchResponseSource<TResult>.Run(
+                (Connection: this, Command: command, State: state, Converter: converter, Transfer: transferOwnership,
+                    Token: cancellationToken, Name: commandName, Deadline: commandDeadline,
+                    Attempts: errorAttempts, Duration: durationStarted, Pinned: pinToConnection),
+                static (state, owner) =>
+                {
+                    owner.SetAttempts(state.Attempts);
+                    return state.Connection.SendConvertedAsync(state.Command, state.State, state.Converter, state.Transfer,
+                        state.Token, state.Name, state.Deadline, state.Attempts, owner, state.Duration, state.Pinned);
+                });
         if (ScriptingEngineInfo.IsScriptingCommand(commandName))
         {
             // Script capability checks use the raw reply path. Retain one owner around
             // both that path and conversion, just as the native converted source does.
-            if (!observation.IsEmpty)
-                return ConvertBorrowedScriptingReplyAsync(
-                    SendCheckedAsync(in command, cancellationToken, commandName, commandDeadline,
-                        observation: observation, pinToConnection: pinToConnection), state, converter, transferOwnership);
-            var scriptingObservation = RespireTelemetry.ErrorObservation.Rent(force: true);
-            scriptingObservation.SetAttempts(errorAttempts);
-            ValueTask<RespValue> response;
-            try
-            {
-                response = SendCheckedAsync(in command, cancellationToken, commandName, commandDeadline,
-                    observation: scriptingObservation, pinToConnection: pinToConnection);
-            }
-            catch (Exception error)
-            {
-                scriptingObservation.Final(error);
-                scriptingObservation.Dispose();
-                throw;
-            }
-            return PooledResponseSource<TState, TResult>.Create(
-                response, state, converter, transferOwnership, scriptingObservation);
+            return ConvertBorrowedScriptingReplyAsync(
+                SendCheckedAsync(in command, cancellationToken, commandName, commandDeadline,
+                    observation: observation, pinToConnection: pinToConnection), state, converter, transferOwnership);
         }
         if (!commandDeadline.IsSet) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
         var duration = new RespireTelemetry.DurationObservation(this, durationStarted);
@@ -1178,6 +1179,16 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         RespireTelemetry.ErrorObservation observation = default, RespireTelemetry.OperationStart durationStarted = default, bool pinToConnection = false)
         where TCommand : struct, IRespCommand
     {
+        if (observation.IsEmpty)
+            return DispatchResponseSource<string?>.Run(
+                (Connection: this, Command: command, Token: cancellationToken, Name: commandName,
+                    Deadline: commandDeadline, Attempts: errorAttempts, Duration: durationStarted, Pinned: pinToConnection),
+                static (state, owner) =>
+                {
+                    owner.SetAttempts(state.Attempts);
+                    return state.Connection.SendStringAsync(state.Command, state.Token, state.Name, state.Deadline,
+                        state.Attempts, owner, state.Duration, state.Pinned);
+                });
         if (!commandDeadline.IsSet) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
         var duration = new RespireTelemetry.DurationObservation(this, durationStarted);
         var source = StringPendingResponseSource.Rent(commandName, (observation.IsEmpty ? errorAttempts : observation.Attempts),
@@ -1689,6 +1700,16 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         RespireTelemetry.ErrorObservation observation = default, int errorAttempts = 0, bool pinToConnection = false)
         where TCommand : struct, IRespCommand
     {
+        if (observation.IsEmpty)
+            return DispatchResponseSource.Run(
+                (Connection: this, Command: command, Token: cancellationToken, Name: commandName,
+                    Deadline: capacityDeadline, Zone: preferredZone, Attempts: errorAttempts, Pinned: pinToConnection),
+                static (state, owner) =>
+                {
+                    owner.SetAttempts(state.Attempts);
+                    return state.Connection.SendFireAndForgetAsync(state.Command, state.Token, state.Name,
+                        state.Deadline, state.Zone, owner, state.Attempts, state.Pinned);
+                });
         cancellationToken.ThrowIfCancellationRequested();
         bool enqueued;
         bool startedBatch;

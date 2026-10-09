@@ -45,6 +45,8 @@ internal static class ErrorObservation
         internal FinalOwner(Lease lease) => _lease = lease;
 
         internal bool IsEmpty => _lease is null;
+        internal int RetryAttempts => _lease?.RetryAttempts ?? 0;
+        internal void SetRetryAttempts(int retryAttempts) => _lease?.SetRetryAttempts(retryAttempts);
 
         internal Borrower Borrow() => new(_lease?.Borrow());
         internal bool RecordHandled(Exception error) => _lease?.RecordHandled(error) ?? false;
@@ -74,6 +76,21 @@ internal static class ErrorObservation
     internal sealed class Lease(Observation observation, long generation)
     {
         private bool _completed;
+
+        internal int RetryAttempts
+        {
+            get
+            {
+                lock (observation.Gate)
+                    return observation.Generation == generation && !_completed ? observation.RetryAttempts : 0;
+            }
+        }
+
+        internal void SetRetryAttempts(int retryAttempts)
+        {
+            lock (observation.Gate)
+                if (IsOpen) observation.RetryAttempts = Math.Max(0, retryAttempts);
+        }
 
         internal Lease? Borrow()
         {

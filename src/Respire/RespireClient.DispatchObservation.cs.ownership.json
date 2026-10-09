@@ -1,0 +1,27 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "typed-dispatch-owner",
+      "Role": "helper",
+      "Member": "Respire.RespireClient.ConvertResponseAsync`3(string,in TCommand,CancellationToken,TState,ResponseConverter<TState,TResult>,bool):ValueTask<TResult>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Start ownership before disposal, route selection, command validation and cache fences. Native conversion, primary/replica/cluster ready sends and transparent retries borrow this owner."
+    },
+    {
+      "Name": "string-dispatch-owner",
+      "Role": "helper",
+      "Member": "Respire.RespireClient.StringOrNullAsync`1(string,in TCommand,CancellationToken):ValueTask<string?>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Own string dispatch before preflight through response consumption; every ready route shares the same failure-only lease."
+    },
+    {
+      "Name": "bytes-dispatch-owner",
+      "Role": "helper",
+      "Member": "Respire.RespireClient.BytesOrNullAsync`1(string,in TCommand,CancellationToken):ValueTask<byte[]?>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Own byte dispatch before preflight through response consumption; copied discarded-reply metadata outlives caller ownership."
+    }
+  ],
+  "NonRoutes": []
+}

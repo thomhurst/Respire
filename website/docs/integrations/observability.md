@@ -790,13 +790,14 @@ Exceptions and cancellation tokens retain their original identity and status.
 
 Native raw, typed, string and byte response sources support explicit error
 observation through response inspection, conversion, cleanup and caller reference
-release. Raw native inspection and failure-only owner transfer are opt-in. Existing
-typed, string and byte dispatch keeps its categorized-error publication and copied
-retry counts. Dispatch integration in [#1308](https://github.com/thomhurst/Respire/issues/1308)
-will select the failure-only final owner for each public route, including transparent
-retries. Borrowed inspection must disable final publication. This infrastructure change
-preserves existing discarded-reply metrics; it does not claim complete coverage of
-dispatch preflight, reroutes or facet validation.
+release. Core raw sends and typed, string and byte dispatch establish a logical
+response owner before disposal checks, route selection and cancellation handling.
+Primary, replica and Cluster ready sends borrow that owner. Retired-connection
+handoffs, capacity waits, MOVED/ASK retries and Sentinel replacement share its retry
+history. The final error is published once after response inspection, conversion
+and cleanup. Borrowed native inspection disables independent final publication.
+This covers core dispatch boundaries; command-family argument construction remains
+the responsibility of each family's entry point.
 Successful inspection and conversion keep a default lease and rent no error
 observation storage.
 
@@ -881,8 +882,9 @@ so concurrent retry events may arrive out of order while retaining their exact c
 
 Borrow before final publication or completion of that lease. `Borrow` on a closed lease
 returns an empty borrower, whose `RecordHandled` returns `false`; it cannot recover the
-completed operation's retry history. Existing dispatch retains its categorized-error
-observation until its final boundary. Native response sources also retain a copied retry
+completed operation's retry history. Core dispatch acquires a shared failure-only
+lease at its first handled failure and retains it until final caller inspection.
+Native response sources also retain a copied retry
 count independently, so replies discarded after caller completion still record internal
 errors without borrowing a closed or reused final owner.
 

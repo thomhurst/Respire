@@ -1,0 +1,20 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "dispatch-final-inspection",
+      "Role": "final",
+      "Member": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Retain the logical dispatch owner through underlying native inspection, user conversion and cleanup. Rent ErrorObservation only at the first handled or final failure. Preserve the underlying ValueTask status, continuation flags and original exception."
+    },
+    {
+      "Name": "dispatch-owner-start",
+      "Role": "helper",
+      "Member": "Respire.Internal.DispatchResponseSource`1.Run`1(TState,Func<TState,RespireTelemetry.ErrorObservation,ValueTask<TResult>>):ValueTask<TResult>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Establish the response owner before invoking dispatch preflight. Synchronous failures complete the same owner after dispatch unwinds; pending operations transfer final inspection to GetResult."
+    }
+  ],
+  "NonRoutes": []
+}

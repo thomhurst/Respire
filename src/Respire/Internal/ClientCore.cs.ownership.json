@@ -1,0 +1,13 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "dispatch-connect-borrower",
+      "Role": "borrower",
+      "Member": "Respire.Internal.ClientCore.EnsureConnectedAsync(CancellationToken,bool):ValueTask",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Core dispatch establishes ownership before lazy connection or Sentinel generation selection. Acquisition failures unwind to the enclosing response owner; physical establishment and background recovery retain their separate internal observation boundaries."
+    }
+  ],
+  "NonRoutes": []
+}
