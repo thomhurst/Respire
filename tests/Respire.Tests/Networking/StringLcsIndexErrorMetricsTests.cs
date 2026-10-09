@@ -9,6 +9,67 @@ namespace Respire.Tests.Networking;
 public class StringLcsIndexErrorMetricsTests
 {
     [Test]
+    public async Task TransactionSlotFailure_IsObservedOnceWithoutDispatchOrChangingQueue()
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        await using var server = new FakeRespServer("*0\r\n"u8.ToArray());
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
+        });
+        await using var transaction = client.CreateTransaction();
+        _ = transaction.Strings.LcsIndex("{a}:first", "{a}:second");
+        using var capture = new ErrorCapture();
+        await Assert.That(() => transaction.Strings.LcsIndex("{b}:first", "{b}:second"))
+            .ThrowsExactly<InvalidOperationException>();
+        _ = transaction.Strings.LcsIndex("{a}:third", "{a}:fourth");
+        await Assert.That(transaction.Count).IsEqualTo(2);
+        await Assert.That(capture.Items.Count).IsEqualTo(1);
+        var tags = capture.Items.Single();
+        await Assert.That(tags["error.type"]).IsEqualTo(typeof(InvalidOperationException).FullName);
+        await Assert.That((bool)tags["redis.client.errors.internal"]!).IsFalse();
+        await Assert.That(tags["redis.client.operation.retry_attempts"]).IsEqualTo(0);
+        await Assert.That(server.ReceivedCommands.Where(command => command != "CLUSTER SLOTS")).IsEmpty();
+    }
+
+    [Test]
+    [MatrixDataSource]
+    public async Task CompletedQueueFailure_IsObservedOnceBeforeDispatch(
+        [Matrix("batch", "transaction")] string mode, [Matrix(false, true)] bool disposed)
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        await using var server = new FakeRespServer("*0\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        using var capture = new ErrorCapture();
+        if (mode == "batch")
+        {
+            using var batch = client.CreateBatch();
+            if (disposed) batch.Dispose();
+            else await batch.ExecuteAsync();
+            if (disposed) await Assert.That(() => batch.Strings.LcsIndex("first", "second"))
+                .ThrowsExactly<ObjectDisposedException>();
+            else await Assert.That(() => batch.Strings.LcsIndex("first", "second"))
+                .ThrowsExactly<InvalidOperationException>();
+        }
+        else
+        {
+            await using var transaction = client.CreateTransaction();
+            if (disposed) await transaction.DisposeAsync();
+            else await transaction.CommitAsync();
+            await Assert.That(() => transaction.Strings.LcsIndex("first", "second"))
+                .ThrowsExactly<InvalidOperationException>();
+        }
+        await Assert.That(capture.Items.Count).IsEqualTo(1);
+        var tags = capture.Items.Single();
+        await Assert.That(tags["error.type"]).IsEqualTo(mode == "batch" && disposed
+            ? typeof(ObjectDisposedException).FullName : typeof(InvalidOperationException).FullName);
+        await Assert.That((bool)tags["redis.client.errors.internal"]!).IsFalse();
+        await Assert.That(tags["redis.client.operation.retry_attempts"]).IsEqualTo(0);
+        await Assert.That(server.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
     [MatrixDataSource]
     public async Task ConstructionFailure_IsObservedOnceBeforeDispatch(
         [Matrix("immediate", "batch", "transaction")] string mode, [Matrix(false, true)] bool crossSlot)

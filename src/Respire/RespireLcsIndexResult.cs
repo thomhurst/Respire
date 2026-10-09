@@ -12,6 +12,7 @@ public readonly record struct RespireLcsRange(long Start, long End);
 public readonly record struct RespireLcsMatch(RespireLcsRange FirstRange, RespireLcsRange SecondRange, long? Length);
 
 /// <summary>Owned LCS IDX matches in server order (last match first), and the total subsequence length before filtering.</summary>
+/// <remarks>Matches is an owned mutable array. Equality compares Matches by reference and Length by value.</remarks>
 public readonly record struct RespireLcsIndexResult(
     [param: SuppressMessage("Performance", "CA1819:Properties should not return arrays",
         Justification = "Response DTO owns its match array without copying on access.")]

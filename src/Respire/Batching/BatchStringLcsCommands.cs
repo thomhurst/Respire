@@ -1,4 +1,5 @@
 using Respire.Commands;
+using Respire.Internal;
 
 namespace Respire;
 
@@ -14,7 +15,18 @@ internal sealed partial class BatchStringCommands
 {
     public RespirePending<RespireLcsIndexResult> LcsIndex(RespireKey firstKey, RespireKey secondKey,
         RespireLcsOptions? options = null)
-        => sink.Add<CmdN, RespireLcsIndexResult>("LCS",
-            StringCommands.LcsIndexCommand(sink.Client, firstKey, secondKey, options), firstKey, secondKey,
-            static (c, v) => StringCommands.ParseLcsIndex(in v));
+    {
+        // Construction observes its own failures; only enqueue failures belong to this catch.
+        var command = StringCommands.LcsIndexCommand(sink.Client, firstKey, secondKey, options);
+        try
+        {
+            return sink.Add<CmdN, RespireLcsIndexResult>("LCS", command, firstKey, secondKey,
+                static (c, v) => StringCommands.ParseLcsIndex(in v));
+        }
+        catch (Exception error)
+        {
+            RespireTelemetry.RecordError(error, internallyHandled: false);
+            throw;
+        }
+    }
 }
