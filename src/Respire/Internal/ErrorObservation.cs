@@ -10,17 +10,32 @@ internal static class ErrorObservation
 {
     private static readonly ObjectPool<Observation, PoolPolicy> Pool = new(32);
 
-    internal static FinalOwner StartFailure()
+    internal static FinalOwner StartFailure(int retryAttempts = 0)
     {
         var observation = Pool.Rent();
         lock (observation.Gate)
         {
             observation.Generation = unchecked(observation.Generation + 1);
             observation.References = 1;
-            observation.RetryAttempts = 0;
+            observation.RetryAttempts = retryAttempts;
             observation.FinalPublished = false;
             return new(new Lease(observation, observation.Generation));
         }
+    }
+
+    // Called only after the final response owner has finished its cleanup. A supplied
+    // owner transfers its completion right here; borrowed routes disable publication.
+    internal static void FinishFinal(FinalOwner owner, Exception? error, bool observeErrors = true, int retryAttempts = 0)
+    {
+        try
+        {
+            if (error is not null && observeErrors)
+            {
+                if (owner.IsEmpty) owner = StartFailure(retryAttempts);
+                owner.PublishFinal(error);
+            }
+        }
+        finally { owner.Complete(); }
     }
 
     // Copies share one lease and completion right. Borrow creates a distinct completion right.
@@ -28,6 +43,8 @@ internal static class ErrorObservation
     {
         private readonly Lease? _lease;
         internal FinalOwner(Lease lease) => _lease = lease;
+
+        internal bool IsEmpty => _lease is null;
 
         internal Borrower Borrow() => new(_lease?.Borrow());
         internal bool RecordHandled(Exception error) => _lease?.RecordHandled(error) ?? false;
@@ -62,6 +79,8 @@ internal static class ErrorObservation
         {
             lock (observation.Gate)
             {
+                // Borrow before final publication or completion. Closed leases return an
+                // empty borrower; retry history cannot be recovered after this boundary.
                 if (!IsOpen || observation.References == int.MaxValue) return null;
                 var lease = new Lease(observation, generation);
                 observation.References++;

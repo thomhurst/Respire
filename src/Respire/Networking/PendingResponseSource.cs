@@ -55,8 +55,8 @@ internal abstract partial class PendingResponse
     /// <summary>Command label used in timeout errors; null when the source carries none.</summary>
     internal virtual string? CommandName => null;
 
-    // Copy before admission; both owners retain this value until the FIFO reply drains.
-    // Never retain the caller's pooled observation after its final boundary completes.
+    // Copy before admission; retain until the FIFO reply drains, independently of
+    // the caller's final observation, which may already have returned to its pool.
     internal int ErrorAttempts { get; set; }
 
     /// <summary>Completion state captured by the deadline sweep for its epoch-checked CAS.</summary>
@@ -194,6 +194,14 @@ internal abstract partial class PendingResponse
         _cancellationRegistration.Dispose();
         _cancellationRegistration = default;
         ReleaseRef();
+    }
+
+    protected void CompleteCallerInspection(ErrorObservation.FinalOwner observation, Exception? failure, bool observeErrors)
+    {
+        var errorAttempts = ErrorAttempts;
+        try { ReleaseCallerRef(); }
+        catch (Exception error) { failure = error; throw; }
+        finally { ErrorObservation.FinishFinal(observation, failure, observeErrors, errorAttempts); }
     }
 
     /// <summary>Returns source to its pool after caller and receive loop both release it.</summary>
@@ -467,6 +475,8 @@ internal sealed class PendingResponseSource : PendingResponse, IValueTaskSource<
     private ManualResetValueTaskSourceCore<RespValue> _core = new() { RunContinuationsAsynchronously = false };
     private readonly PendingResponsePool? _pool;
     private bool _throwOnError;
+    private bool _observeErrors;
+    private ErrorObservation.FinalOwner _observation;
     private string? _commandName;
 
     internal PendingResponseSource()
@@ -479,10 +489,13 @@ internal sealed class PendingResponseSource : PendingResponse, IValueTaskSource<
 
     internal override string? CommandName => _commandName;
 
-    internal void Configure(bool throwOnError, string? commandName)
+    internal void Configure(bool throwOnError, string? commandName, bool observeErrors = false,
+        ErrorObservation.FinalOwner observation = default)
     {
         _throwOnError = throwOnError;
         _commandName = commandName;
+        _observeErrors = observeErrors;
+        _observation = observation;
     }
 
     protected override void SetResultCore(in RespValue result) => _core.SetResult(result);
@@ -491,6 +504,10 @@ internal sealed class PendingResponseSource : PendingResponse, IValueTaskSource<
 
     RespValue IValueTaskSource<RespValue>.GetResult(short token)
     {
+        var observation = _observation;
+        var observeErrors = _observeErrors;
+        _observation = default;
+        Exception? failure = null;
         try
         {
             var response = _core.GetResult(token);
@@ -503,9 +520,10 @@ internal sealed class PendingResponseSource : PendingResponse, IValueTaskSource<
             response.Dispose();
             throw error;
         }
+        catch (Exception error) { failure = error; throw; }
         finally
         {
-            ReleaseCallerRef();
+            CompleteCallerInspection(observation, failure, observeErrors);
         }
     }
 
@@ -532,6 +550,8 @@ internal sealed class PendingResponseSource : PendingResponse, IValueTaskSource<
     private void ResetForPool()
     {
         _throwOnError = false;
+        _observeErrors = false;
+        _observation = default;
         _commandName = null;
         _core.Reset();
     }
@@ -565,6 +585,7 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
     private bool _transferOwnership;
     private string? _commandName;
     private bool _observeErrors;
+    private ErrorObservation.FinalOwner _observation;
     private RespireTelemetry.DurationObservation _duration;
 
     private ConvertedPendingResponseSource()
@@ -580,7 +601,8 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
         ResponseConverter<TState, TResult> converter,
         bool transferOwnership,
         string? commandName, int errorAttempts = 0, bool observeErrors = true,
-        RespireTelemetry.DurationObservation duration = default)
+        RespireTelemetry.DurationObservation duration = default,
+        ErrorObservation.FinalOwner observation = default)
     {
         var source = Pool.Rent();
 
@@ -589,6 +611,7 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
         source._transferOwnership = transferOwnership;
         source._commandName = commandName;
         source._observeErrors = observeErrors;
+        source._observation = observation;
         source._duration = duration;
         source.PrepareForUse();
         source.ErrorAttempts = errorAttempts;
@@ -611,10 +634,17 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
 
     TResult IValueTaskSource<TResult>.GetResult(short token)
     {
+        var observation = _observation;
+        var observeErrors = _observeErrors;
+        Exception? failure = null;
         try
         {
-            _core.GetResult(token);
-            if (_response.IsError) throw ResponseReader.ServerError(in _response, _commandName);
+            try
+            {
+                _core.GetResult(token);
+                if (_response.IsError) throw ResponseReader.ServerError(in _response, _commandName);
+            }
+            catch (Exception error) { _duration.Complete(_commandName, error); throw; }
             // Telemetry ends at the response, before user conversion and its failures.
             _duration.Complete(_commandName);
 
@@ -626,17 +656,15 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
 
             return result;
         }
-        catch (Exception error)
-        {
-            // Successful response completion already consumes duration before conversion.
-            _duration.Complete(_commandName, error);
-            if (_observeErrors) RespireTelemetry.RecordError(error, internallyHandled: false, ErrorAttempts);
-            throw;
-        }
+        catch (Exception error) { failure = error; throw; }
         finally
         {
-            ClearResponse();
-            ReleaseCallerRef();
+            try { ClearResponse(); }
+            catch (Exception error) { failure = error; throw; }
+            finally
+            {
+                CompleteCallerInspection(observation, failure, observeErrors);
+            }
         }
     }
 
@@ -663,6 +691,8 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
         _converter = null;
         _hasResponse = false;
         _transferOwnership = false;
+        _observation = default;
+        _observeErrors = false;
         _duration = default;
         // The receive loop still needs the operation when a canceled caller finishes first.
         // Clear it only after both references are released and the source returns to its pool.
@@ -703,6 +733,7 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
     private bool _hasDirectResult;
     private string? _commandName;
     private bool _observeErrors;
+    private ErrorObservation.FinalOwner _observation;
     private RespireTelemetry.DurationObservation _duration;
 
     private StringPendingResponseSource()
@@ -714,12 +745,13 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
     internal override string? CommandName => _commandName;
 
     public static StringPendingResponseSource Rent(string? commandName, int errorAttempts = 0, bool observeErrors = true,
-        RespireTelemetry.DurationObservation duration = default)
+        RespireTelemetry.DurationObservation duration = default, ErrorObservation.FinalOwner observation = default)
     {
         var source = Pool.Rent();
 
         source._commandName = commandName;
         source._observeErrors = observeErrors;
+        source._observation = observation;
         source._duration = duration;
         source.PrepareForUse();
         source.ErrorAttempts = errorAttempts;
@@ -760,11 +792,18 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
 
     string? IValueTaskSource<string?>.GetResult(short token)
     {
+        var observation = _observation;
+        var observeErrors = _observeErrors;
+        Exception? failure = null;
         try
         {
-            _core.GetResult(token);
-            if (!_hasDirectResult && _response.IsError)
-                throw ResponseReader.ServerError(in _response, _commandName);
+            try
+            {
+                _core.GetResult(token);
+                if (!_hasDirectResult && _response.IsError)
+                    throw ResponseReader.ServerError(in _response, _commandName);
+            }
+            catch (Exception error) { _duration.Complete(_commandName, error); throw; }
             _duration.Complete(_commandName);
             if (_hasDirectResult)
             {
@@ -773,16 +812,15 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
 
             return ResponseReader.StringOrNull(in _response);
         }
-        catch (Exception error)
-        {
-            _duration.Complete(_commandName, error);
-            if (_observeErrors) RespireTelemetry.RecordError(error, internallyHandled: false, ErrorAttempts);
-            throw;
-        }
+        catch (Exception error) { failure = error; throw; }
         finally
         {
-            Clear();
-            ReleaseCallerRef();
+            try { Clear(); }
+            catch (Exception error) { failure = error; throw; }
+            finally
+            {
+                CompleteCallerInspection(observation, failure, observeErrors);
+            }
         }
     }
 
@@ -808,7 +846,9 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
         _directResult = null;
         _hasResponse = false;
         _hasDirectResult = false;
-        _commandName = null;
+        _observeErrors = false;
+        _observation = default;
+        // Keep the operation until the receive reference releases a canceled reply.
     }
 
     private readonly struct PoolPolicy : IPooledObjectPolicy<StringPendingResponseSource>
@@ -818,6 +858,7 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
         public bool TryReset(StringPendingResponseSource source)
         {
             source.Clear();
+            source._commandName = null;
             source._duration = default;
             source._core.Reset();
             return true;
@@ -834,10 +875,11 @@ internal sealed class PendingResponsePool
         => _pool = new(new PendingResponseSource.PoolPolicy(this), maxPoolSize);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public PendingResponseSource Rent(bool throwOnError = false, string? commandName = null)
+    public PendingResponseSource Rent(bool throwOnError = false, string? commandName = null,
+        bool observeErrors = false, ErrorObservation.FinalOwner observation = default)
     {
         var source = _pool.Rent();
-        source.Configure(throwOnError, commandName);
+        source.Configure(throwOnError, commandName, observeErrors, observation);
         source.PrepareForUse();
         return source;
     }

@@ -725,6 +725,25 @@ Command-family integration is tracked in
 [#1023](https://github.com/thomhurst/Respire/issues/1023); the leases and the test-only
 route-owner guard do not enable error metrics for every command path.
 
+Pooled response conversion now counts caller-visible converter failures in
+`redis.client.errors` after disposing any response that was not transferred to
+the caller. This applies to both immediate replies and pending conversions.
+Input failures remain the responsibility of the underlying send unless the
+conversion receives its final owner's lease, which also preserves retry counts.
+Exceptions and cancellation tokens retain their original identity and status.
+
+Native raw, typed, string and byte response sources support explicit error
+observation through response inspection, conversion, cleanup and caller reference
+release. Raw native inspection and failure-only owner transfer are opt-in. Existing
+typed, string and byte dispatch keeps its categorized-error publication and copied
+retry counts. Dispatch integration in [#1308](https://github.com/thomhurst/Respire/issues/1308)
+will select the failure-only final owner for each public route, including transparent
+retries. Borrowed inspection must disable final publication. This infrastructure change
+preserves existing discarded-reply metrics; it does not claim complete coverage of
+dispatch preflight, reroutes or facet validation.
+Successful inspection and conversion keep a default lease and rent no error
+observation storage.
+
 When adding a core public method, update its source-adjacent
 `<source-file>.cs.ownership.json` declaration in the same change. There is no shared
 inventory file to update. The guard treats every public method on a public core
@@ -803,6 +822,13 @@ record handled retries with `RecordHandled`, and complete their own lease. They 
 publish a final caller failure. Every handled retry increments the shared count once;
 the final failure captures the total count. Exporters run outside the ownership gate,
 so concurrent retry events may arrive out of order while retaining their exact counts.
+
+Borrow before final publication or completion of that lease. `Borrow` on a closed lease
+returns an empty borrower, whose `RecordHandled` returns `false`; it cannot recover the
+completed operation's retry history. Existing dispatch retains its categorized-error
+observation until its final boundary. Native response sources also retain a copied retry
+count independently, so replies discarded after caller completion still record internal
+errors without borrowing a closed or reused final owner.
 
 Copying an owner or borrower value shares its existing completion right; it does not
 create another reference. Repeated completion is harmless, including after the pooled

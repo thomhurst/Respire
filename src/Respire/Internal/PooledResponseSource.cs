@@ -25,25 +25,45 @@ internal sealed class PooledResponseSource<TState, TResult> : IValueTaskSource<T
     private ResponseConverter<TState, TResult>? _converter;
     private TState _state = default!;
     private bool _transferOwnership;
-    private RespireTelemetry.ErrorObservation _observation;
+    private bool _observeErrors;
+    private ErrorObservation.FinalOwner _observation;
+    private RespireTelemetry.ErrorObservation _legacyObservation;
 
     private PooledResponseSource() => _complete = Complete;
 
     // Incomplete inputs must publish successful replies on an owner that can safely run
     // caller code inline, outside receive-loop continuations and locks (CompletionScheduler
     // for network replies). Faults/cancellation may originate on any owner and are dispatched.
+    // TODO(#1308): Remove the legacy observation overload after dispatch migrates to FinalOwner.
     public static ValueTask<TResult> Create(
         ValueTask<RespValue> responseTask,
         TState state,
         ResponseConverter<TState, TResult> converter,
         bool transferOwnership = false,
-        RespireTelemetry.ErrorObservation observation = default)
+        RespireTelemetry.ErrorObservation observation = default,
+        bool observeErrors = true)
+        => CreateCore(responseTask, state, converter, transferOwnership, default, observeErrors, observation);
+
+    public static ValueTask<TResult> Create(
+        ValueTask<RespValue> responseTask,
+        TState state,
+        ResponseConverter<TState, TResult> converter,
+        ErrorObservation.FinalOwner observation,
+        bool transferOwnership = false,
+        bool observeErrors = true)
+        => CreateCore(responseTask, state, converter, transferOwnership, observation, observeErrors, default);
+
+    private static ValueTask<TResult> CreateCore(
+        ValueTask<RespValue> responseTask, TState state, ResponseConverter<TState, TResult> converter,
+        bool transferOwnership, ErrorObservation.FinalOwner observation, bool observeErrors,
+        RespireTelemetry.ErrorObservation legacyObservation)
     {
         if (responseTask.IsCompletedSuccessfully)
         {
             var response = default(RespValue);
-            var converted = false;
             var received = false;
+            var converted = false;
+            Exception? failure = null;
             try
             {
                 response = responseTask.Result;
@@ -52,19 +72,28 @@ internal sealed class PooledResponseSource<TState, TResult> : IValueTaskSource<T
                 converted = true;
                 return new ValueTask<TResult>(result);
             }
-            catch (Exception error)
-            {
-                if (!observation.IsEmpty) observation.Final(error);
-                else if (received) RespireTelemetry.RecordError(error, internallyHandled: false);
-                throw;
-            }
+            catch (Exception error) { failure = error; throw; }
             finally
             {
-                if (!transferOwnership || !converted)
+                try
                 {
-                    response.Dispose();
+                    if (!transferOwnership || !converted) response.Dispose();
                 }
-                observation.Dispose();
+                catch (Exception cleanupError)
+                {
+                    if (failure is null)
+                    {
+                        failure = cleanupError;
+                        throw;
+                    }
+                }
+                finally
+                {
+                    // An ordinary raw send owns its failures. A transferred final lease
+                    // instead owns both raw inspection and this caller's conversion.
+                    FinishObservation(observation, legacyObservation, failure,
+                        observeErrors && (received || !observation.IsEmpty || !legacyObservation.IsEmpty));
+                }
             }
         }
 
@@ -75,6 +104,8 @@ internal sealed class PooledResponseSource<TState, TResult> : IValueTaskSource<T
         source._converter = converter;
         source._transferOwnership = transferOwnership;
         source._observation = observation;
+        source._legacyObservation = legacyObservation;
+        source._observeErrors = observeErrors;
         responseTask.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(source._complete);
         return new ValueTask<TResult>(source, source._core.Version);
     }
@@ -86,12 +117,16 @@ internal sealed class PooledResponseSource<TState, TResult> : IValueTaskSource<T
         var converter = _converter!;
         var transferOwnership = _transferOwnership;
         var observation = _observation;
+        var legacyObservation = _legacyObservation;
+        var observeErrors = _observeErrors;
 
         _responseTask = default;
         _state = default!;
         _converter = null;
         _transferOwnership = false;
         _observation = default;
+        _legacyObservation = default;
+        _observeErrors = false;
 
         var response = default(RespValue);
         var converted = false;
@@ -107,21 +142,19 @@ internal sealed class PooledResponseSource<TState, TResult> : IValueTaskSource<T
         }
         catch (Exception exception)
         {
-            // A supplied lease owns both transport and conversion. Without a lease, the
-            // send already owns its failures and only successful replies add conversion errors.
-            if (observation.IsEmpty && received) RespireTelemetry.RecordError(exception, internallyHandled: false);
             error = exception;
         }
         finally
         {
-            if (!transferOwnership || !converted)
+            try
             {
-                response.Dispose();
+                if (!transferOwnership || !converted) response.Dispose();
             }
+            catch (Exception cleanupError) { error ??= cleanupError; }
         }
 
-        if (error is not null) observation.Final(error);
-        observation.Dispose();
+        FinishObservation(observation, legacyObservation, error,
+            observeErrors && (received || !observation.IsEmpty || !legacyObservation.IsEmpty));
 
         // Publishing can run the caller inline, returning this instance to the pool and
         // renting it again. Finish cleanup first and never catch a caller's exception here.
@@ -137,6 +170,24 @@ internal sealed class PooledResponseSource<TState, TResult> : IValueTaskSource<T
         {
             _core.SetException(error);
         }
+    }
+
+    // TODO(#1308): Remove the legacy branch when dispatch migrates to FinalOwner.
+    // Existing dispatch owns categorized retry history through its legacy lease. Keep
+    // that contract until dispatch migrates to the independent failure-only owner.
+    private static void FinishObservation(ErrorObservation.FinalOwner observation,
+        RespireTelemetry.ErrorObservation legacyObservation, Exception? error, bool observeErrors)
+    {
+        if (legacyObservation.IsEmpty)
+        {
+            ErrorObservation.FinishFinal(observation, error, observeErrors);
+            return;
+        }
+        try
+        {
+            if (error is not null && observeErrors) legacyObservation.Final(error);
+        }
+        finally { legacyObservation.Dispose(); }
     }
 
     TResult IValueTaskSource<TResult>.GetResult(short token)
