@@ -14,6 +14,10 @@ public sealed class MovieMapper : RespireVectorDataHashMapper<Movie>
     public override IReadOnlyList<RespireSearchField> DataFields { get; } =
         [new("title", RespireSearchFieldType.Text), new("tag", RespireSearchFieldType.Tag)];
 
+    public override IReadOnlyList<RespireVectorDataFilterField> FilterFields { get; } =
+        [new(nameof(Movie.Title), "filter_title", RespireVectorDataFilterKind.String),
+         new(nameof(Movie.Tag), "filter_tag", RespireVectorDataFilterKind.String)];
+
     public override string GetKey(Movie record) => record.Id;
 
     public override IReadOnlyDictionary<string, ReadOnlyMemory<byte>> Write(Movie record)
@@ -21,9 +25,14 @@ public sealed class MovieMapper : RespireVectorDataHashMapper<Movie>
         var fields = new Dictionary<string, ReadOnlyMemory<byte>>
         {
             ["title"] = Encoding.UTF8.GetBytes(record.Title),
+            ["filter_title"] = Encoding.UTF8.GetBytes(RespireVectorDataFilterEncoding.EncodeTag(record.Title)),
             ["embedding"] = RespireVectorDataFloat32.Encode(record.Vector.Span),
         };
-        if (record.Tag is not null) fields.Add("tag", Encoding.UTF8.GetBytes(record.Tag));
+        if (record.Tag is not null)
+        {
+            fields.Add("tag", Encoding.UTF8.GetBytes(record.Tag));
+            fields.Add("filter_tag", Encoding.UTF8.GetBytes(RespireVectorDataFilterEncoding.EncodeTag(record.Tag)));
+        }
         return fields;
     }
 
