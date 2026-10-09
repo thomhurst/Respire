@@ -32,7 +32,7 @@ concurrency:
 
 jobs:
   stackexchange-interop:
-    name: StackExchange value boundary (${{ matrix.framework }})
+    name: StackExchange compatibility (${{ matrix.framework }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -46,10 +46,10 @@ jobs:
       - uses: ./.github/actions/setup-dotnet
       - name: Build compatibility boundary
         run: dotnet build tests/Respire.StackExchangeCompat.Tests -c Release -f ${{ matrix.framework }}
-      - name: Test RESP2 and RESP3 conversion against Redis
+      - name: Test RESP2 and RESP3 conversion, cache and DataProtection against Redis
         run: >-
           dotnet run --project tests/Respire.StackExchangeCompat.Tests -c Release
-          -f ${{ matrix.framework }} --no-build -- --minimum-expected-tests 38
+          -f ${{ matrix.framework }} --no-build -- --minimum-expected-tests 102
 
   mapper-native-aot:
     name: Generated mapper Native AOT (${{ matrix.framework }})

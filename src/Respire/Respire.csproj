@@ -22,6 +22,8 @@
     <!-- Linked FakeRespServer uses internal RespParser for raw wire ordering and socket identity. -->
     <InternalsVisibleTo Include="Respire.FusionCache.Tests" />
     <InternalsVisibleTo Include="Respire.StackExchangeCompat.Tests" />
+    <!-- Validate adapter database/connection configuration without exposing native internals publicly. -->
+    <InternalsVisibleTo Include="Respire.StackExchangeCompat" />
     <!-- The key repository retains an owned binary list key. -->
     <InternalsVisibleTo Include="Respire.DataProtection" />
     <InternalsVisibleTo Include="Respire.Tests" />
