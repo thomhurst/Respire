@@ -13,7 +13,9 @@ concurrency:
 
 jobs:
   compare:
-    if: github.event.label.name == 'run-connection-contention-benchmarks'
+    if: >-
+      github.event.label.name == 'run-connection-contention-benchmarks' ||
+      github.event.label.name == 'run-connection-contention-improvement-benchmarks'
     uses: ./.github/workflows/benchmark-compare.yml
     with:
       event-base-sha: ${{ github.event.pull_request.base.sha }}
@@ -23,13 +25,16 @@ jobs:
       filter: '*ConnectionContentionBenchmarks*'
       expected-case-count: 2
       expected-methods: GetPipeline,ConcurrentGetPipelines
-      # PR #1152 validates the cache-line optimization in #973. Later networking
-      # changes still produce comparisons without requiring a new speedup.
-      improvement-methods: ${{ github.event.pull_request.number == 1152 && 'GetPipeline,ConcurrentGetPipelines' || '' }}
+      # Explicit improvement comparisons require separated intervals for both public
+      # workloads. Ordinary comparisons still report measurements without a speedup claim.
+      improvement-methods: ${{ (github.event.label.name == 'run-connection-contention-improvement-benchmarks' || github.event.pull_request.number == 1152) && 'GetPipeline,ConcurrentGetPipelines' || '' }}
       artifact-prefix: connection-contention-comparison
 
   process-cpu:
-    if: ${{ !cancelled() && github.event.label.name == 'run-connection-contention-benchmarks' }}
+    if: >-
+      !cancelled() &&
+      (github.event.label.name == 'run-connection-contention-benchmarks' ||
+      github.event.label.name == 'run-connection-contention-improvement-benchmarks')
     needs: compare
     runs-on: ubuntu-latest
     timeout-minutes: 5

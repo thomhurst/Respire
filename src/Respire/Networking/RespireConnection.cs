@@ -1823,9 +1823,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         Debug.Assert(!ReferenceEquals(source, InflightRing.DiscardSentinel) || !command.GetMutationFence().IsRequired,
             "A mutation command requires an owned native response, even when its reply is discarded.");
         ThrowIfRetired(IsMaintenanceDrainBarrier<TCommand>());
-        // Racy pre-check; the authoritative one runs under the gate below. This keeps the
-        // ring-full retry loop from re-serializing the frame on every attempt.
-        if (_inflight.Capacity - _inflight.Count < discardRepliesBefore + 1)
+        // Racy cached pre-check; the authoritative one runs under the gate below. This keeps
+        // retries from re-serializing full-ring frames without reading the consumer head
+        // on every command that fits the producer's cached capacity.
+        if (!_inflight.HasCapacitySnapshot(discardRepliesBefore + 1))
         {
             return false;
         }

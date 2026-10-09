@@ -9,6 +9,53 @@ namespace Respire.Tests.Networking;
 
 public class InflightRingOrderingTests
 {
+#if DEBUG
+    [Test]
+    public async Task CapacityHintAvoidsConsumerHeadWhileCachedCapacitySuffices()
+    {
+        var ring = new InflightRing(8);
+        var source = new PendingResponseSource();
+        await Assert.That(ring.TryEnqueue(source)).IsTrue();
+        for (var i = 0; i < 100; i++)
+            await Assert.That(ring.HasCapacitySnapshot(7)).IsTrue();
+        await Assert.That(ring.CapacitySnapshotHeadReadsForTests).IsEqualTo(0);
+        // Positive control: insufficient cached capacity really reads the consumer head.
+        await Assert.That(ring.HasCapacitySnapshot(8)).IsFalse();
+        await Assert.That(ring.CapacitySnapshotHeadReadsForTests).IsEqualTo(1);
+    }
+#endif
+
+    [Test]
+    public async Task CapacityHintObservesReleasedSlotsWithoutPublishingProducerCache()
+    {
+        var ring = new InflightRing(8);
+        var source = new PendingResponseSource();
+        for (var i = 0; i < 8; i++)
+            await Assert.That(ring.TryEnqueue(source, i + 1)).IsTrue();
+        await Assert.That(ring.HasCapacitySnapshot(1)).IsFalse();
+        for (var i = 0; i < 3; i++)
+            await Assert.That(ring.TryDequeue(out _)).IsTrue();
+
+        // Many callers may inspect capacity before taking the write gate. Their hints
+        // must observe released slots without becoming writers of the producer's cache.
+        Parallel.For(0, 100, _ =>
+        {
+            if (!ring.HasCapacitySnapshot(3) || ring.HasCapacitySnapshot(4))
+                throw new InvalidOperationException("The capacity hint lost a released slot or invented capacity.");
+        });
+        var positions = typeof(InflightRing).GetField("_positions", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(ring)!;
+        var cachedHead = (long)positions.GetType().GetField("CachedHead", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(positions)!;
+        await Assert.That(cachedHead).IsEqualTo(0L);
+        await Assert.That(ring.HasCapacity(3)).IsTrue();
+        await Assert.That(ring.TryEnqueue(source, 9)).IsTrue();
+        await Assert.That(ring.TryEnqueue(source, 10)).IsTrue();
+        await Assert.That(ring.TryEnqueue(source, 11)).IsTrue();
+        await Assert.That(ring.HasCapacitySnapshot(1)).IsFalse();
+        await Assert.That(ring.Count).IsEqualTo(8);
+    }
+
     [Test]
     [Arguments("Tail", "Head")]
     [Arguments("Tail", "CompletedWriteEnd")]
@@ -44,7 +91,7 @@ public class InflightRingOrderingTests
             var spin = new SpinWait();
             for (var i = 0; i < count; i++)
             {
-                while (!(i % 3 == 0
+                while (!ring.HasCapacitySnapshot(1) || !(i % 3 == 0
                     ? ring.TryEnqueueDiscard(i % 2 == 0 ? "SET" : null, i + 1, i % 17)
                     : ring.TryEnqueue(sources[i % sources.Length], i + 1)))
                 {
