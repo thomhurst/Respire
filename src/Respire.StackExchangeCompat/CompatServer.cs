@@ -1,4 +1,6 @@
 using System.Net;
+using System.Net.Sockets;
+using System.Security.Authentication;
 using StackExchange.Redis;
 
 #pragma warning disable SER308
@@ -15,7 +17,11 @@ internal sealed partial class CompatServer(RespireConnectionMultiplexer owner, R
         get
         {
             try { owner.Wait(owner.Run(async token => { await client.Core.EnsureConnectedAsync(token).ConfigureAwait(false); return true; })); }
-            catch (RespireConnectionException) { return false; }
+            catch (Exception error) when (error is RespireConnectionException or SocketException
+                or AuthenticationException or IOException or RespireTimeoutException or TimeoutException)
+            {
+                return false;
+            }
             return client.IsConnected;
         }
     }
