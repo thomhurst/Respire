@@ -1,4 +1,6 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Networking;
@@ -49,6 +51,77 @@ public partial class StandaloneCircuitDispatchTests
             await Assert.That(pending.Error).IsSameReferenceAs(error);
             return error;
         }
+    }
+
+    [Test]
+    [Arguments("disabled")]
+    [Arguments("closed")]
+    [Arguments("half-open")]
+    [Arguments("open")]
+    [Arguments("server-error")]
+    public async Task WatchSetupPreservesActivityAndDuration(string state)
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Command });
+        var activities = new ConcurrentQueue<Activity>();
+        var durations = new ConcurrentQueue<Dictionary<string, object?>>();
+        using var activityListener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "Respire",
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+            ActivityStopped = activity =>
+            {
+                if (activity.OperationName == "WATCH") activities.Enqueue(activity);
+            },
+        };
+        ActivitySource.AddActivityListener(activityListener);
+        using var meterListener = new MeterListener();
+        meterListener.InstrumentPublished = static (instrument, listener) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.operation.duration")
+                listener.EnableMeasurementEvents(instrument);
+        };
+        meterListener.SetMeasurementEventCallback<double>((_, _, tags, _) =>
+        {
+            var values = tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value);
+            if (Equals(values["db.operation.name"], "WATCH")) durations.Enqueue(values);
+        });
+        meterListener.Start();
+        await using var server = QueueServer();
+        await using var client = await RespireClient.ConnectAsync(Options(server) with
+        {
+            CircuitBreaker = state == "disabled" ? null : Options(server).CircuitBreaker,
+        });
+        if (state != "disabled")
+        {
+            var (_, clock) = await Prepare(client, server);
+            if (state is "open" or "half-open") Open(client, server);
+            if (state == "half-open") clock.Advance(TimeSpan.FromMinutes(1));
+        }
+        if (state == "server-error")
+            server.ReplyOverride = (_, command) => command == "WATCH watched" ? "-ERR injected WATCH failure\r\n"u8.ToArray() : null;
+
+        Exception? error = null;
+        try { await using var transaction = await client.CreateTransactionAsync(["watched"]); }
+        catch (Exception failure) { error = failure; }
+
+        var expectedError = state switch
+        {
+            "open" => typeof(RespireCircuitOpenException),
+            "server-error" => typeof(RespireServerException),
+            _ => null,
+        };
+        await Assert.That(error?.GetType()).IsEqualTo(expectedError);
+        await Assert.That(activities.Count).IsEqualTo(1);
+        await Assert.That(durations.Count).IsEqualTo(1);
+        var activity = activities.Single();
+        var duration = durations.Single();
+        await Assert.That(activity.GetTagItem("server.port")).IsEqualTo(server.Port);
+        await Assert.That(duration["server.port"]).IsEqualTo(server.Port);
+        await Assert.That(activity.Status).IsEqualTo(expectedError is null ? ActivityStatusCode.Unset : ActivityStatusCode.Error);
+        var expectedErrorTag = state == "server-error" ? "ERR" : expectedError?.FullName;
+        await Assert.That(activity.GetTagItem("error.type")).IsEqualTo(expectedErrorTag);
+        await Assert.That(duration.GetValueOrDefault("error.type")).IsEqualTo(expectedErrorTag);
+        await Assert.That(server.ReceivedCommands.Count(command => command == "WATCH watched")).IsEqualTo(state == "open" ? 0 : 1);
     }
 
     [Test]

@@ -1619,12 +1619,9 @@ public sealed partial class RespireClient : IRespireClient
             {
                 var command = new CmdN(Verbs.Watch, watchKeys);
                 // WATCH owns this dedicated socket; circuit admission must not reroute it.
-                using var reply = _core.Circuits is not null
-                    ? await SendCircuitResponseAsync("WATCH", connection, new ProtocolCommand<CmdN>(command),
-                        cancellationToken, sendAsking: false, commandDeadline: default,
-                        allowStreamingConnectionReroute: false, observation: observation).ConfigureAwait(false)
-                    : await SendOnConnectionAsync("WATCH", connection,
-                        new ProtocolCommand<CmdN>(command), cancellationToken, observation: observation).ConfigureAwait(false);
+                using var reply = await SendOnConnectionAsync("WATCH", connection,
+                    new ProtocolCommand<CmdN>(command), cancellationToken,
+                    allowStreamingConnectionReroute: _core.Circuits is null, observation: observation).ConfigureAwait(false);
                 if (_core.ClientCache is { } cache)
                 {
                     // Tracking pushes use other sockets and may lag writes processed before WATCH.

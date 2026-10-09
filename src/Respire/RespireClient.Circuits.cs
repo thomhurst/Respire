@@ -15,7 +15,7 @@ public sealed partial class RespireClient
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private bool UsesCircuitResponsePath(string operation, bool pinToConnection)
         => _core.Circuits is not null && !_snapshotPrefixedBinaryKeys && !pinToConnection
-            && operation is not ("MULTI" or "WATCH");
+            && operation != "MULTI";
 
     private CommandDeadline CreateCircuitDeadline(CommandDeadline deadline = default)
         => deadline.IsSet || _core.Options.CommandTimeout is not { } timeout
