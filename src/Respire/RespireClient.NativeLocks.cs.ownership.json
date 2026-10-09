@@ -1,0 +1,20 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Member": "Respire.RespireClient.ExecuteLockAsync(RespireKey,RespireLockToken,long?,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<bool>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Borrow the facet caller owner across native capability fallbacks, script retries, result conversion and cache mutation cleanup.",
+      "Name": "native-lock-dispatch",
+      "Role": "borrower"
+    },
+    {
+      "Member": "Respire.RespireClient.TrackedLockExecution.CompleteResponseAsync(ValueTask<bool>):ValueTask<bool>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Direct tracked callers transfer their failure-only response source here. Facet and managed callers retain the outer owner and consume a borrowed response after correction cleanup.",
+      "Name": "native-lock-tracked-completion",
+      "Role": "helper"
+    }
+  ],
+  "NonRoutes": []
+}

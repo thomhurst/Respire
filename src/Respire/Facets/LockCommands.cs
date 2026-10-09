@@ -117,20 +117,47 @@ public static class LockCommandExtensions
     /// Acquires a managed lock and, when requested, starts renewal owned by the returned lock
     /// handle. Disposing the attempt stops renewal and releases the lock.
     /// </summary>
-    public static async ValueTask<RespireLockAttempt> AcquireAsync(
+    public static ValueTask<RespireLockAttempt> AcquireAsync(
         this ILockCommands locks,
         RespireKey key,
         TimeSpan expiry,
         bool keepAlive,
         CancellationToken cancellationToken = default)
+        => locks is not null and not LockCommands
+            ? AcquireWrappedAsync(locks, key, expiry, keepAlive, cancellationToken)
+            : DispatchResponseSource<RespireLockAttempt>.Run(
+                (Locks: locks, Key: key, Expiry: expiry, KeepAlive: keepAlive, Token: cancellationToken),
+                static (state, owner) => AcquireBorrowedAsync(state.Locks!, state.Key, state.Expiry, state.KeepAlive, state.Token, owner));
+
+    private static async ValueTask<RespireLockAttempt> AcquireWrappedAsync(
+        ILockCommands locks, RespireKey key, TimeSpan expiry, bool keepAlive, CancellationToken cancellationToken)
+    {
+        // A public implementation may forward to a native caller boundary. Let acquisition
+        // retain its own final publisher; only keep-alive startup belongs to this extension.
+        var attempt = await locks.AcquireAsync(key, expiry, cancellationToken).ConfigureAwait(false);
+        if (!keepAlive || !attempt.Acquired) return attempt;
+        return await DispatchResponseSource<RespireLockAttempt>.Run(attempt,
+            static (attempt, owner) => StartKeepAliveBorrowedAsync(attempt, owner)).ConfigureAwait(false);
+    }
+
+    private static async ValueTask<RespireLockAttempt> AcquireBorrowedAsync(
+        ILockCommands locks, RespireKey key, TimeSpan expiry, bool keepAlive,
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         ArgumentNullException.ThrowIfNull(locks);
-        var attempt = await locks.AcquireAsync(key, expiry, cancellationToken).ConfigureAwait(false);
+        var attempt = await ((LockCommands)locks).AcquireBorrowedAsync(key, expiry, cancellationToken, observation)
+            .ConfigureAwait(false);
         if (!keepAlive || !attempt.Acquired)
         {
             return attempt;
         }
 
+        return await StartKeepAliveBorrowedAsync(attempt, observation).ConfigureAwait(false);
+    }
+
+    private static async ValueTask<RespireLockAttempt> StartKeepAliveBorrowedAsync(
+        RespireLockAttempt attempt, RespireTelemetry.ErrorObservation observation)
+    {
         try
         {
             attempt.Lock.StartOwnedKeepAlive();
@@ -138,7 +165,7 @@ public static class LockCommandExtensions
         }
         catch
         {
-            await attempt.DisposeAsync().ConfigureAwait(false);
+            await attempt.Lock.DisposeBorrowedAsync(observation).ConfigureAwait(false);
             throw;
         }
     }
@@ -190,15 +217,20 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
         return 0
         """);
 
-    public async ValueTask<RespireLockAttempt> AcquireAsync(
+    public ValueTask<RespireLockAttempt> AcquireAsync(
         RespireKey key,
         TimeSpan expiry,
         CancellationToken cancellationToken = default)
+        => DispatchResponseSource<RespireLockAttempt>.Run((Locks: this, Key: key, Expiry: expiry, Token: cancellationToken),
+            static (state, owner) => state.Locks.AcquireBorrowedAsync(state.Key, state.Expiry, state.Token, owner));
+
+    internal async ValueTask<RespireLockAttempt> AcquireBorrowedAsync(
+        RespireKey key, TimeSpan expiry, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         var normalizedExpiry = TimeSpan.FromTicks(ValidateExpiry(expiry) * TimeSpan.TicksPerMillisecond);
         var token = RespireLock.NewToken();
         var acquiredTimestamp = Stopwatch.GetTimestamp();
-        var mutex = await TryTakeAsync(key, token, normalizedExpiry, cancellationToken).ConfigureAwait(false)
+        var mutex = await TryTakeBorrowedAsync(key, token, normalizedExpiry, cancellationToken, observation).ConfigureAwait(false)
             ? new RespireLock(this, key, token, normalizedExpiry, acquiredTimestamp)
             : null;
         return new RespireLockAttempt(mutex);
@@ -211,12 +243,19 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
         CancellationToken cancellationToken = default)
         => AcquireAsync(key, expiry, wait, DefaultRetryInterval, cancellationToken);
 
-    public async ValueTask<RespireLockAttempt> AcquireAsync(
+    public ValueTask<RespireLockAttempt> AcquireAsync(
         RespireKey key,
         TimeSpan expiry,
         TimeSpan wait,
         TimeSpan retryEvery,
         CancellationToken cancellationToken = default)
+        => DispatchResponseSource<RespireLockAttempt>.Run(
+            (Locks: this, Key: key, Expiry: expiry, Wait: wait, Retry: retryEvery, Token: cancellationToken),
+            static (state, owner) => state.Locks.AcquireBorrowedAsync(state.Key, state.Expiry, state.Wait, state.Retry, state.Token, owner));
+
+    private async ValueTask<RespireLockAttempt> AcquireBorrowedAsync(
+        RespireKey key, TimeSpan expiry, TimeSpan wait, TimeSpan retryEvery,
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         if (wait < TimeSpan.Zero)
         {
@@ -234,7 +273,7 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
         var start = Stopwatch.GetTimestamp();
         while (true)
         {
-            var acquired = await AcquireAsync(key, expiry, cancellationToken).ConfigureAwait(false);
+            var acquired = await AcquireBorrowedAsync(key, expiry, cancellationToken, observation).ConfigureAwait(false);
             if (acquired.Acquired)
             {
                 return acquired;
@@ -253,62 +292,85 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
         }
     }
 
-    public async ValueTask<RespireLock> AcquireOrThrowAsync(
+    public ValueTask<RespireLock> AcquireOrThrowAsync(
         RespireKey key,
         TimeSpan expiry,
         TimeSpan wait,
         CancellationToken cancellationToken = default)
-        => (await AcquireAsync(key, expiry, wait, DefaultRetryInterval, cancellationToken).ConfigureAwait(false)).Lock;
+        => AcquireOrThrowAsync(key, expiry, wait, DefaultRetryInterval, cancellationToken);
 
-    public async ValueTask<RespireLock> AcquireOrThrowAsync(
+    public ValueTask<RespireLock> AcquireOrThrowAsync(
         RespireKey key,
         TimeSpan expiry,
         CancellationToken cancellationToken = default)
-        => (await AcquireAsync(key, expiry, cancellationToken).ConfigureAwait(false)).Lock;
+        => DispatchResponseSource<RespireLock>.Run((Locks: this, Key: key, Expiry: expiry, Token: cancellationToken),
+            static async (state, owner) => (await state.Locks.AcquireBorrowedAsync(
+                state.Key, state.Expiry, state.Token, owner).ConfigureAwait(false)).Lock);
 
-    public async ValueTask<RespireLock> AcquireOrThrowAsync(
+    public ValueTask<RespireLock> AcquireOrThrowAsync(
         RespireKey key,
         TimeSpan expiry,
         TimeSpan wait,
         TimeSpan retryEvery,
         CancellationToken cancellationToken = default)
-        => (await AcquireAsync(key, expiry, wait, retryEvery, cancellationToken).ConfigureAwait(false)).Lock;
+        => DispatchResponseSource<RespireLock>.Run(
+            (Locks: this, Key: key, Expiry: expiry, Wait: wait, Retry: retryEvery, Token: cancellationToken),
+            static async (state, owner) => (await state.Locks.AcquireBorrowedAsync(
+                state.Key, state.Expiry, state.Wait, state.Retry, state.Token, owner).ConfigureAwait(false)).Lock);
 
     public ValueTask<bool> TryTakeAsync(
         RespireKey key,
         RespireLockToken token,
         TimeSpan expiry,
         CancellationToken cancellationToken = default)
+        => DispatchResponseSource<bool>.Run((Locks: this, Key: key, Token: token, Expiry: expiry, Cancellation: cancellationToken),
+            static (state, owner) => state.Locks.TryTakeBorrowedAsync(state.Key, state.Token, state.Expiry, state.Cancellation, owner));
+
+    private ValueTask<bool> TryTakeBorrowedAsync(
+        RespireKey key, RespireLockToken token, TimeSpan expiry, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation)
     {
         ValidateToken(token);
         var milliseconds = ValidateExpiry(expiry);
         return client.OkOrNullAsync(
             "SET",
             new LockTakeCommand(client.Key(in key), token.AsValue(), milliseconds),
-            cancellationToken);
+            cancellationToken, observation);
     }
 
     public ValueTask<bool> ReleaseAsync(
         RespireKey key,
         RespireLockToken token,
         CancellationToken cancellationToken = default)
+        => DispatchResponseSource<bool>.Run((Locks: this, Key: key, Token: token, Cancellation: cancellationToken),
+            static (state, owner) => state.Locks.ReleaseBorrowedAsync(state.Key, state.Token, state.Cancellation, owner));
+
+    private ValueTask<bool> ReleaseBorrowedAsync(
+        RespireKey key, RespireLockToken token, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         ValidateToken(token);
-        return client.ExecuteLockAsync(key, token, null, cancellationToken);
+        return client.ExecuteLockAsync(key, token, null, cancellationToken, observation);
     }
 
-    async ValueTask<bool> IManagedLockCommands.ReleaseManagedAsync(
+    ValueTask<bool> IManagedLockCommands.ReleaseManagedAsync(
         RespireKey key,
         RespireLockToken token,
         Action onOutcomeUncertain,
         CancellationToken cancellationToken)
+        => DispatchResponseSource<bool>.Run(
+            (Locks: this, Key: key, Token: token, Uncertain: onOutcomeUncertain, Cancellation: cancellationToken),
+            static (state, owner) => state.Locks.ReleaseManagedBorrowedAsync(state.Key, state.Token, state.Uncertain, state.Cancellation, owner));
+
+    internal async ValueTask<bool> ReleaseManagedBorrowedAsync(
+        RespireKey key, RespireLockToken token, Action onOutcomeUncertain,
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         ValidateToken(token);
         RespireClient.TrackedLockExecution execution;
         bool fenced;
         try
         {
-            (execution, fenced) = await StartReleaseExecutionAsync(key, token, cancellationToken)
+            (execution, fenced) = await StartReleaseExecutionAsync(key, token, cancellationToken, observation)
                 .ConfigureAwait(false);
         }
         catch (Exception error)
@@ -338,47 +400,35 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
     /// Returns whether the execution is fenceable.
     /// </summary>
     private async ValueTask<(RespireClient.TrackedLockExecution Execution, bool Fenced)> StartReleaseExecutionAsync(
-        RespireKey key, RespireLockToken token, CancellationToken cancellationToken)
+        RespireKey key, RespireLockToken token, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
-        // The release owner covers the capability probe and its fallback. A returned execution
-        // takes ownership; a startup failure is final here, before the caller wraps it.
-        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
-        try
+        if (client.RequiresReliableCorrectionOrdering(cancellationToken))
         {
-            if (client.RequiresReliableCorrectionOrdering(cancellationToken))
+            try
             {
-                try
-                {
-                    await client.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
-                    return (await client.StartLockExecutionAsync(
-                            key, token, milliseconds: null, requireIdentity: true, allowUnfencedFallback: true,
-                            cancellationToken, observation)
-                        .ConfigureAwait(false), true);
-                }
-                catch (RespireServerException error) when (
-                    Infrastructure.RespireConnectionMultiplexer.IsDefinitiveCorrectionOrderingFailure(error))
-                {
-                    // ACLs or servers that deny CLIENT ID or CLIENT KILL keep the compatible release.
-                    // Other server errors propagate. An uncertain outcome still fails closed, and a
-                    // latent compare-and-delete cannot match another owner's token. Operators are told
-                    // once that the fence is unavailable. A cluster redirect or replacement target
-                    // that denies them later gets the same fallback inside the routing loop.
-                    observation.Handled(error);
-                    client.LogUnfencedLockReleaseOnce(error);
-                }
+                await client.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
+                return (await client.StartLockExecutionAsync(
+                        key, token, milliseconds: null, requireIdentity: true, allowUnfencedFallback: true,
+                        cancellationToken, observation)
+                    .ConfigureAwait(false), true);
             }
+            catch (RespireServerException error) when (
+                Infrastructure.RespireConnectionMultiplexer.IsDefinitiveCorrectionOrderingFailure(error))
+            {
+                // ACLs or servers that deny CLIENT ID or CLIENT KILL keep the compatible release.
+                // Other server errors propagate. An uncertain outcome still fails closed, and a
+                // latent compare-and-delete cannot match another owner's token. Operators are told
+                // once that the fence is unavailable. A cluster redirect or replacement target
+                // that denies them later gets the same fallback inside the routing loop.
+                observation.Handled(error);
+                client.LogUnfencedLockReleaseOnce(error);
+            }
+        }
 
-            return (await client.StartLockExecutionAsync(
-                    key, token, milliseconds: null, requireIdentity: false, allowUnfencedFallback: false,
-                    cancellationToken, observation)
-                .ConfigureAwait(false), false);
-        }
-        catch (Exception error)
-        {
-            observation.Final(error);
-            observation.Dispose();
-            throw;
-        }
+        return (await client.StartLockExecutionAsync(
+                key, token, milliseconds: null, requireIdentity: false, allowUnfencedFallback: false,
+                cancellationToken, observation)
+            .ConfigureAwait(false), false);
     }
 
     // Transport proof that an attempt was never enqueued: cancellation or a command timeout while
@@ -392,24 +442,37 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
         RespireLockToken token,
         TimeSpan newDuration,
         CancellationToken cancellationToken = default)
+        => DispatchResponseSource<bool>.Run((Locks: this, Key: key, Token: token, Duration: newDuration, Cancellation: cancellationToken),
+            static (state, owner) => state.Locks.ResetExpiryBorrowedAsync(state.Key, state.Token, state.Duration, state.Cancellation, owner));
+
+    private ValueTask<bool> ResetExpiryBorrowedAsync(
+        RespireKey key, RespireLockToken token, TimeSpan newDuration, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation)
     {
         ValidateToken(token);
         var milliseconds = ValidateExpiry(newDuration, nameof(newDuration));
-        return client.ExecuteLockAsync(key, token, milliseconds, cancellationToken);
+        return client.ExecuteLockAsync(key, token, milliseconds, cancellationToken, observation);
     }
 
-    async ValueTask<bool> IManagedLockCommands.ExtendManagedAsync(
+    ValueTask<bool> IManagedLockCommands.ExtendManagedAsync(
         RespireKey key,
         RespireLockToken token,
         TimeSpan expiry,
         Action? onOutcomeUncertain,
         CancellationToken cancellationToken)
+        => DispatchResponseSource<bool>.Run(
+            (Locks: this, Key: key, Token: token, Expiry: expiry, Uncertain: onOutcomeUncertain, Cancellation: cancellationToken),
+            static (state, owner) => state.Locks.ExtendManagedBorrowedAsync(state.Key, state.Token, state.Expiry, state.Uncertain, state.Cancellation, owner));
+
+    internal async ValueTask<bool> ExtendManagedBorrowedAsync(
+        RespireKey key, RespireLockToken token, TimeSpan expiry, Action? onOutcomeUncertain,
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         ValidateToken(token);
         var milliseconds = ValidateExpiry(expiry);
         await client.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
         var execution = await client.StartLockExecutionAsync(
-                key, token, milliseconds, requireIdentity: true, allowUnfencedFallback: false, cancellationToken)
+                key, token, milliseconds, requireIdentity: true, allowUnfencedFallback: false, cancellationToken, observation)
             .ConfigureAwait(false);
         return await client.ExecuteWithCorrectionAsync(execution, RespireClient.CorrectionOrdering.FenceFirst,
             onOutcomeUncertain: onOutcomeUncertain).ConfigureAwait(false);
@@ -417,11 +480,16 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
 
     // Reply payloads are pooled; the returned token must own its bytes.
     public ValueTask<RespireLockToken?> GetOwnerTokenAsync(RespireKey key, CancellationToken cancellationToken = default)
+        => DispatchResponseSource<RespireLockToken?>.Run((Locks: this, Key: key, Token: cancellationToken),
+            static (state, owner) => state.Locks.GetOwnerTokenBorrowedAsync(state.Key, state.Token, owner));
+
+    internal ValueTask<RespireLockToken?> GetOwnerTokenBorrowedAsync(
+        RespireKey key, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         => client.ConvertResponseAsync<Cmd1, LockCommands, RespireLockToken?>(
             "GET", new Cmd1(Verbs.Get, client.Key(in key)), cancellationToken, this,
             static (LockCommands _, in RespValue value) => value.IsNull
                 ? (RespireLockToken?)null
-                : RespireLockToken.FromOwnedBytes(value.AsSpan().ToArray()));
+                : RespireLockToken.FromOwnedBytes(value.AsSpan().ToArray()), observation: observation);
 
     private static void ValidateToken(RespireLockToken token)
     {
