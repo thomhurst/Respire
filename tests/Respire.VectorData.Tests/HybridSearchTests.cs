@@ -1,5 +1,6 @@
 // Adapted hybrid contracts from dotnet/extensions HybridSearchTests.cs at
 // 02107c65bab30aad9e35b5133ed643eaa77bccd8, licensed under MIT.
+using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Extensions.VectorData;
 using Respire.IntegrationTests;
@@ -37,26 +38,43 @@ public class HybridSearchTests(HybridRedisVersions fixture)
         try
         {
             await collection.EnsureCollectionExistsAsync();
-            Movie[] records = [new("1", "Apples are a healthy and nourishing snack", new float[] { 1, 0 }, "allowed"),
-                new("2", "Oranges are tangy and contain vitamin c", new float[] { 1, 0 }, "allowed"),
+            // Distinct distances keep vector ranks stable across the separate score-comparison queries.
+            Movie[] records = [new("1", "Apples are a healthy and nourishing snack", new float[] { 1.2f, 0 }, "allowed"),
+                new("2", "Oranges are tangy and contain vitamin c", new float[] { 1.1f, 0 }, "allowed"),
                 new("3", "Grapes are healthy sweet and juicy", new float[] { 1, 0 }, "excluded")];
             await collection.UpsertAsync(records);
             await WaitForIndex(collection, 3);
             var hybrid = (IKeywordHybridSearchable<Movie>)collection;
             collection.GetService(typeof(IKeywordHybridSearchable<Movie>)).Should().BeSameAs(collection);
+            var query = new RespireHybridSearchQuery(RespireSearchQueryBuilder.TextField("title", "Grapes"), "embedding",
+                RespireVectorDataFloat32.Encode(new float[] { 1, 0 }), 20, 3) { RrfWindow = 20, LoadFields = ["__key", "__score"] };
             var all = await Collect(hybrid.HybridSearchAsync(new float[] { 1, 0 }, ["Grapes"], 3));
+            if (all.Count != records.Length)
+            {
+                // Preserve the failed assertion while capturing a subsequent server probe for diagnosis.
+                try
+                {
+                    var probe = await client.Search.HybridSearchAsync(store.IndexName(collection.Name), query);
+                    Console.WriteLine($"Hybrid probe: total={probe.Total}, keys={string.Join(", ", probe.Documents.Select(document => document.Id))}, warnings={string.Join(", ", probe.Warnings)}");
+                    var info = await client.Search.GetIndexInfoAsync(store.IndexName(collection.Name));
+                    Console.WriteLine($"Index probe: {JsonSerializer.Serialize(info.Properties)}");
+                }
+                catch (Exception error)
+                {
+                    Console.WriteLine($"Hybrid failure diagnostics failed: {error}");
+                }
+            }
             all.Should().HaveCount(3);
             all[0].Record.Id.Should().Be("3");
             all.Select(hit => hit.Score!.Value).Should().BeInDescendingOrder();
             all.Should().OnlyContain(hit => hit.Record.Vector.IsEmpty);
-            var raw = await client.Search.HybridSearchAsync(store.IndexName(collection.Name), new(RespireSearchQueryBuilder.TextField("title", "Grapes"), "embedding",
-                RespireVectorDataFloat32.Encode(new float[] { 1, 0 }), 20, 3) { RrfWindow = 20, LoadFields = ["__key", "__score"] });
+            var raw = await client.Search.HybridSearchAsync(store.IndexName(collection.Name), query);
             all.Select(hit => hit.Score).Should().Equal(raw.Documents.Select(document => document.Score));
             var top = await Collect(hybrid.HybridSearchAsync(new float[] { 1, 0 }, ["Oranges"], 1));
             top.Should().ContainSingle().Which.Record.Id.Should().Be("2");
             var page = await Collect(hybrid.HybridSearchAsync(new float[] { 1, 0 }, ["healthy"], 3, new() { Skip = 2, IncludeVectors = true }));
             page.Should().ContainSingle().Which.Record.Id.Should().Be("2");
-            page[0].Record.Vector.ToArray().Should().Equal(1, 0);
+            page[0].Record.Vector.ToArray().Should().Equal(1.1f, 0);
             var filtered = await Collect(hybrid.HybridSearchAsync(new float[] { 1, 0 }, ["Grapes"], 3, new() { Filter = movie => movie.Tag == "allowed" }));
             filtered.Should().HaveCount(2).And.OnlyContain(hit => hit.Record.Tag == "allowed");
             var mismatch = await Collect(hybrid.HybridSearchAsync(new float[] { 1, 0 }, ["Oranges"], 3, new() { Filter = movie => movie.Title == "Apples are a healthy and nourishing snack" }));
