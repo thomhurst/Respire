@@ -18,16 +18,38 @@
         "RestoreAsync(ReadOnlyMemory<byte>,FunctionRestorePolicy,CancellationToken):ValueTask<bool>",
         "StatsAsync(CancellationToken):ValueTask<RespireFunctionStats>"
       ],
-      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner.",
-      "Overrides": {
-        "ExecuteIntegerAsync(RespireFunction,RespireKey[]?,RespireValue[]?,CancellationToken):ValueTask<long>": "Respire.IFunctionCommands.ExecuteIntegerAsync(RespireFunction,RespireKey[]?,RespireValue[]?,CancellationToken):ValueTask<long>",
-        "ExecuteAsync(RespireFunction,RespireKey[]?,RespireValue[]?,CancellationToken):ValueTask<RespireResult>": "Respire.IFunctionCommands.ExecuteAsync(RespireFunction,RespireKey[]?,RespireValue[]?,CancellationToken):ValueTask<RespireResult>",
-        "LoadAsync(RespireFunctionLibrary,CancellationToken):ValueTask<string>": "Respire.IFunctionCommands.LoadAsync(RespireFunctionLibrary,CancellationToken):ValueTask<string>",
-        "ExecuteStringAsync(RespireFunction,RespireKey[]?,RespireValue[]?,CancellationToken):ValueTask<string?>": "Respire.IFunctionCommands.ExecuteStringAsync(RespireFunction,RespireKey[]?,RespireValue[]?,CancellationToken):ValueTask<string?>",
-        "ExecuteAsync`1(RespireFunction,RespireKey[]?,RespireValue[]?,CancellationToken):ValueTask<T?>": "Respire.IFunctionCommands.ExecuteAsync`1(RespireFunction,RespireKey[]?,RespireValue[]?,CancellationToken):ValueTask<T?>"
-      }
+      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
     }
   ],
-  "Boundaries": [],
+  "Boundaries": [
+    {
+      "Member": "Respire.FunctionCommands.ExecuteWithLibraryAsync(RespireFunction,BatchScriptCommand,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<RespireResult>",
+      "Role": "borrower",
+      "Contract": "Borrow the caller owner through FCALL retries, library verification, all reload targets, result construction and mutation cleanup. Typed callers retain their owner through scalar conversion and result disposal.",
+      "Name": "function-execution",
+      "Owner": "Respire.FunctionCommands.ExecuteSpanAsync(RespireFunction,ReadOnlySpan<RespireKey>,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<RespireResult>"
+    },
+    {
+      "Member": "Respire.FunctionCommands.MutateAsync`2(string,TCommand,ResponseConverter<FunctionCommands,T>,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<T>",
+      "Role": "borrower",
+      "Contract": "Borrow the public FUNCTION owner through discovery, every primary target, conversion, consistency checks and cleanup. Join all targets before publishing one caller failure.",
+      "Name": "function-mutation-fan-out",
+      "Owner": "Respire.FunctionCommands.LoadAsync(string,bool,CancellationToken):ValueTask<string>"
+    },
+    {
+      "Member": "Respire.FunctionCommands.SendAndConvertAsync`2(RespireConnection,string,TCommand,ResponseConverter<FunctionCommands,T>,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<T>",
+      "Role": "borrower",
+      "Contract": "Borrow the mutation or execution caller owner; never rent or publish an independent final target observation.",
+      "Name": "function-target",
+      "Owner": "Respire.FunctionCommands.LoadAsync(string,bool,CancellationToken):ValueTask<string>"
+    },
+    {
+      "Member": "Respire.FunctionCommands.QueryAsync`2(string,TCommand,CancellationToken,ResponseConverter<FunctionCommands,T>,RespireTelemetry.ErrorObservation):ValueTask<T>",
+      "Role": "borrower",
+      "Contract": "Borrow the public query owner through native reply inspection, typed conversion and cleanup.",
+      "Name": "function-query",
+      "Owner": "Respire.FunctionCommands.ListAsync(string?,bool,CancellationToken):ValueTask<RespireFunctionLibraryInfo[]>"
+    }
+  ],
   "NonRoutes": []
 }

@@ -456,8 +456,10 @@ This includes tracked distributed-cache writes and coordination scripts.
 
 Public scripts also retain transport retries across `NOSCRIPT` fallback. Connection
 candidate cancellation reports the failures completed before cancellation. FUNCTION
-fan-outs observe discovery and inconsistent-result failures while retaining each
-target's own failure boundary. Server fan-outs observe topology discovery failures
+fan-outs retain one caller owner through discovery, every primary send, conversion,
+consistency checks, and cleanup. Targets borrow that owner. Even if several targets
+fail, the caller publishes one final failure after every target finishes.
+Server fan-outs observe topology discovery failures
 before per-node work starts. The sequential Cluster `DBSIZE`, `FLUSHDB`, and `FLUSHALL`
 operations retain one owner through discovery, target sends, reply conversion, and
 mutation cleanup. A target borrows that owner, so its failure is not counted again
@@ -468,9 +470,14 @@ disposed-client admission, transport reroutes, Cluster redirects, and cache clea
 The final measurement preserves the completed retry count, including when collection
 is enabled while the operation is pending.
 
-FUNCTION execution retains its owner through missing-function reload, library
-verification, and replica propagation retries. Private reload tasks join before final
-reporting and never publish a nested final failure for a recovered library load.
+FUNCTION routes start their caller owner before argument validation and command
+construction, including span calls and the reusable-library LOAD overload. Execution
+retains that owner through missing-function reload, library verification, replica
+propagation retries, typed conversion, and result disposal. Private reload tasks join
+before final reporting and never publish a nested final failure for a recovered library
+load. Successful function routes rent no error-observation storage; warmed caller
+ownership adds no allocation. Raw `FCALL` and `FCALL_RO` keep their existing failure-only
+owner and completed transport retry count, including when collection starts late.
 
 Pending raw, cached, and fire-and-forget submissions keep their final observation
 boundary even when collection is disabled at dispatch. Enabling the group or attaching

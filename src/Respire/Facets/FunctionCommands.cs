@@ -86,64 +86,51 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
         => ExecuteConvertedCoreAsync(function, keys, args, cancellationToken,
             static result => result.IsNull ? null : result.AsString());
 
+    public ValueTask<RespireResult> ExecuteAsync(RespireFunction function, RespireKey[]? keys = null,
+        RespireValue[]? args = null, CancellationToken cancellationToken = default)
+        => ExecuteSpanAsync(function, keys.AsSpan(), args.AsSpan(), cancellationToken);
+
+    private ValueTask<TResult> ExecuteConvertedCoreAsync<TResult>(RespireFunction function,
+        RespireKey[]? keys, RespireValue[]? args, CancellationToken cancellationToken,
+        Func<RespireResult, TResult> convert)
+        => DispatchResponseSource<TResult>.Run(
+            (Commands: this, Function: function, Keys: keys, Args: args, Token: cancellationToken, Convert: convert),
+            static (state, observation) => state.Commands.ExecuteConvertedBorrowedAsync(state.Function,
+                state.Keys, state.Args, state.Token, state.Convert, observation));
+
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
-    private async ValueTask<TResult> ExecuteConvertedCoreAsync<TResult>(RespireFunction function,
+    private async ValueTask<TResult> ExecuteConvertedBorrowedAsync<TResult>(RespireFunction function,
         RespireKey[]? keys, RespireValue[]? args, CancellationToken cancellationToken,
-        Func<RespireResult, TResult> convert)
+        Func<RespireResult, TResult> convert, RespireTelemetry.ErrorObservation observation)
     {
-        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
-        try
-        {
-            var command = CallCommand(client, function, keys.AsSpan(), args.AsSpan());
-            using var result = await ExecuteWithLibraryAsync(function, command, cancellationToken, observation)
-                .ConfigureAwait(false);
-            return convert(result);
-        }
-        catch (Exception error)
-        {
-            observation.Final(error);
-            throw;
-        }
+        var command = CallCommand(client, function, keys.AsSpan(), args.AsSpan());
+        using var result = await ExecuteWithLibraryAsync(function, command, cancellationToken, observation)
+            .ConfigureAwait(false);
+        return convert(result);
     }
 
     public ValueTask<RespireResult> ExecuteSpanAsync(RespireFunction function, ReadOnlySpan<RespireKey> keys,
         ReadOnlySpan<RespireValue> args, CancellationToken cancellationToken = default)
     {
-        BatchScriptCommand command;
+        var owner = DispatchResponseSource<RespireResult>.Start();
         try
         {
-            command = CallCommand(client, function, keys, args);
+            var command = CallCommand(client, function, keys, args);
+            return owner.Attach(ExecuteWithLibraryAsync(function, command, cancellationToken, owner.Observation));
         }
         catch (Exception error)
         {
-            // Spans are consumed synchronously; retain the preflight exception timing.
-            // The async owner starts only after command construction succeeds.
-            RespireTelemetry.RecordError(error, internallyHandled: false);
+            // Spans and preflight failures remain synchronous, inside the caller owner.
+            owner.Fail(error);
             throw;
         }
-        return ExecuteCoreAsync(function, command, cancellationToken);
     }
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
-    private async ValueTask<RespireResult> ExecuteCoreAsync(RespireFunction function, BatchScriptCommand command, CancellationToken cancellationToken)
-    {
-        // Retain attempts through library recovery even if selection changes while FCALL waits.
-        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
-        try
-        {
-            return await ExecuteWithLibraryAsync(function, command, cancellationToken, observation).ConfigureAwait(false);
-        }
-        catch (Exception error)
-        {
-            observation.Final(error);
-            throw;
-        }
-    }
-
     private async ValueTask<RespireResult> ExecuteWithLibraryAsync(RespireFunction function, BatchScriptCommand command,
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
@@ -286,29 +273,51 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
     }
 
     public ValueTask<string> LoadAsync(string source, bool replace = false, CancellationToken cancellationToken = default)
-        => MutateAsync("FUNCTION LOAD", LoadCommand(source, replace),
-            static (FunctionCommands _, in RespValue value) => ResponseReader.String(in value), cancellationToken);
+        => DispatchResponseSource<string>.Run((Commands: this, Source: source, Replace: replace, Token: cancellationToken),
+            static (state, observation) => state.Commands.MutateAsync("FUNCTION LOAD", LoadCommand(state.Source, state.Replace),
+                static (FunctionCommands _, in RespValue value) => ResponseReader.String(in value), state.Token, observation));
+    public ValueTask<string> LoadAsync(RespireFunctionLibrary library, CancellationToken cancellationToken = default)
+        => DispatchResponseSource<string>.Run((Commands: this, Library: library, Token: cancellationToken),
+            static (state, observation) =>
+            {
+                ArgumentNullException.ThrowIfNull(state.Library);
+                return state.Commands.MutateAsync("FUNCTION LOAD", LoadCommand(state.Library.Source, state.Library.Replace),
+                    static (FunctionCommands _, in RespValue value) => ResponseReader.String(in value), state.Token, observation);
+            });
     public ValueTask<RespireFunctionLibraryInfo[]> ListAsync(string? libraryPattern = null, bool withCode = false, CancellationToken cancellationToken = default)
-        => client.ConvertResponseAsync("FUNCTION LIST", ListCommand(libraryPattern, withCode), cancellationToken, this,
-            static (FunctionCommands _, in RespValue value) => FunctionResponseReader.Libraries(in value));
+        => DispatchResponseSource<RespireFunctionLibraryInfo[]>.Run(
+            (Commands: this, Pattern: libraryPattern, WithCode: withCode, Token: cancellationToken),
+            static (state, observation) => state.Commands.QueryAsync("FUNCTION LIST",
+                ListCommand(state.Pattern, state.WithCode), state.Token,
+                static (FunctionCommands _, in RespValue value) => FunctionResponseReader.Libraries(in value), observation: observation));
     public ValueTask<bool> DeleteAsync(string libraryName, CancellationToken cancellationToken = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(libraryName);
-        return MutateAsync("FUNCTION DELETE", new Cmd1(FunctionVerbs.Delete, libraryName),
-            static (FunctionCommands _, in RespValue value) => ResponseReader.Ok(in value), cancellationToken);
-    }
+        => DispatchResponseSource<bool>.Run((Commands: this, Name: libraryName, Token: cancellationToken),
+            static (state, observation) =>
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(state.Name);
+                return state.Commands.MutateAsync("FUNCTION DELETE", new Cmd1(FunctionVerbs.Delete, state.Name),
+                    static (FunctionCommands _, in RespValue value) => ResponseReader.Ok(in value), state.Token, observation);
+            });
     public ValueTask<bool> FlushAsync(FunctionFlushMode mode = FunctionFlushMode.Default, CancellationToken cancellationToken = default)
-        => MutateAsync("FUNCTION FLUSH", FlushCommand(mode),
-            static (FunctionCommands _, in RespValue value) => ResponseReader.Ok(in value), cancellationToken);
+        => DispatchResponseSource<bool>.Run((Commands: this, Mode: mode, Token: cancellationToken),
+            static (state, observation) => state.Commands.MutateAsync("FUNCTION FLUSH", FlushCommand(state.Mode),
+                static (FunctionCommands _, in RespValue value) => ResponseReader.Ok(in value), state.Token, observation));
     public ValueTask<byte[]> DumpAsync(CancellationToken cancellationToken = default)
-        => client.ConvertResponseAsync("FUNCTION DUMP", new Cmd(FunctionVerbs.Dump), cancellationToken, this,
-            static (FunctionCommands _, in RespValue value) => value.AsSpan().ToArray());
+        => DispatchResponseSource<byte[]>.Run((Commands: this, Token: cancellationToken),
+            static (state, observation) => state.Commands.QueryAsync("FUNCTION DUMP", new Cmd(FunctionVerbs.Dump),
+                state.Token, static (FunctionCommands _, in RespValue value) => value.AsSpan().ToArray(), observation: observation));
     public ValueTask<bool> RestoreAsync(ReadOnlyMemory<byte> payload, FunctionRestorePolicy policy = FunctionRestorePolicy.Append, CancellationToken cancellationToken = default)
-        => MutateAsync("FUNCTION RESTORE", RestoreCommand(payload, policy),
-            static (FunctionCommands _, in RespValue value) => ResponseReader.Ok(in value), cancellationToken);
+        => DispatchResponseSource<bool>.Run((Commands: this, Payload: payload, Policy: policy, Token: cancellationToken),
+            static (state, observation) => state.Commands.MutateAsync("FUNCTION RESTORE", RestoreCommand(state.Payload, state.Policy),
+                static (FunctionCommands _, in RespValue value) => ResponseReader.Ok(in value), state.Token, observation));
     public ValueTask<RespireFunctionStats> StatsAsync(CancellationToken cancellationToken = default)
-        => client.ConvertResponseAsync("FUNCTION STATS", new Cmd(FunctionVerbs.Stats), cancellationToken, this,
-            static (FunctionCommands _, in RespValue value) => FunctionResponseReader.Stats(in value));
+        => DispatchResponseSource<RespireFunctionStats>.Run((Commands: this, Token: cancellationToken),
+            static (state, observation) => state.Commands.QueryAsync("FUNCTION STATS", new Cmd(FunctionVerbs.Stats),
+                state.Token, static (FunctionCommands _, in RespValue value) => FunctionResponseReader.Stats(in value), observation: observation));
+
+    private ValueTask<T> QueryAsync<TCommand, T>(string operation, TCommand command, CancellationToken cancellationToken,
+        ResponseConverter<FunctionCommands, T> convert, RespireTelemetry.ErrorObservation observation) where TCommand : struct, IRespCommand
+        => client.ConvertResponseAsync(operation, command, cancellationToken, this, convert, observation: observation);
 
     internal static CmdN LoadCommand(string source, bool replace)
     {
@@ -338,59 +347,38 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
             _ => throw new ArgumentOutOfRangeException(nameof(policy))
         }]);
 
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
     private async ValueTask<T> MutateAsync<TCommand, T>(string operation, TCommand command,
-        ResponseConverter<FunctionCommands, T> convert, CancellationToken cancellationToken) where TCommand : struct, IRespCommand
+        ResponseConverter<FunctionCommands, T> convert, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation) where TCommand : struct, IRespCommand
     {
         if (client.Core.Cluster is not { } cluster)
-            return await client.ConvertResponseAsync(operation, command, cancellationToken, this, convert).ConfigureAwait(false);
-        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
-        var targetsReportedFailure = false;
-        try
-        {
-            var connections = await cluster.GetMasterConnectionsAsync(cancellationToken, discovery: null).ConfigureAwait(false);
-            if (connections.Length == 0) throw new RespireConnectionException($"{operation} did not reach any Redis Cluster primary.");
-            var tasks = new Task<T>[connections.Length];
-            for (var i = 0; i < tasks.Length; i++) tasks[i] = SendAndConvertAsync(connections[i], operation, command, convert,
-                cancellationToken).AsTask();
-            T[] results;
-            try { results = await Task.WhenAll(tasks).ConfigureAwait(false); }
-            catch
-            {
-                // Every target owns its transport and conversion failure. WhenAll joins them
-                // before propagation; the fan-out must not count their aggregate a second time.
-                targetsReportedFailure = true;
-                throw;
-            }
-            if (results.Any(result => !EqualityComparer<T>.Default.Equals(results[0], result)))
-                throw new RespireProtocolException($"{operation} returned inconsistent results across primaries.");
-            return results[0];
-        }
-        catch (Exception error)
-        {
-            if (!targetsReportedFailure) observation.Final(error);
-            throw;
-        }
+            return await client.ConvertResponseAsync(operation, command, cancellationToken, this, convert,
+                observation: observation).ConfigureAwait(false);
+        var connections = await cluster.GetMasterConnectionsAsync(cancellationToken, discovery: null).ConfigureAwait(false);
+        if (connections.Length == 0) throw new RespireConnectionException($"{operation} did not reach any Redis Cluster primary.");
+        var tasks = new Task<T>[connections.Length];
+        for (var i = 0; i < tasks.Length; i++) tasks[i] = SendAndConvertAsync(connections[i], operation, command, convert,
+            cancellationToken, observation).AsTask();
+        // Every target borrows the caller owner. Join all sends, conversions and cleanup
+        // before propagating the single exception that reaches the caller.
+        var results = await Task.WhenAll(tasks).ConfigureAwait(false);
+        if (results.Any(result => !EqualityComparer<T>.Default.Equals(results[0], result)))
+            throw new RespireProtocolException($"{operation} returned inconsistent results across primaries.");
+        return results[0];
     }
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
     private async ValueTask<T> SendAndConvertAsync<TCommand, T>(RespireConnection connection, string operation,
         TCommand command, ResponseConverter<FunctionCommands, T> convert, CancellationToken cancellationToken,
-        RespireTelemetry.ErrorObservation observation = default) where TCommand : struct, IRespCommand
+        RespireTelemetry.ErrorObservation observation) where TCommand : struct, IRespCommand
     {
-        // Public mutations own transport and conversion. Private library recovery borrows
-        // its execution owner's lease and reports only after that correction scope finishes.
-        var ownsObservation = observation.IsEmpty;
-        if (observation.IsEmpty) observation = RespireTelemetry.ErrorObservation.Rent(force: true);
-        try
-        {
-            using var reply = await client.SendToClusterTargetAsync(operation, connection, command, cancellationToken,
-                observeErrors: false, observation: observation).ConfigureAwait(false);
-            return convert(this, in reply);
-        }
-        catch (Exception error)
-        {
-            if (ownsObservation) observation.Final(error);
-            throw;
-        }
-        finally { if (ownsObservation) observation.Dispose(); }
+        using var reply = await client.SendToClusterTargetAsync(operation, connection, command, cancellationToken,
+            observeErrors: false, observation: observation).ConfigureAwait(false);
+        return convert(this, in reply);
     }
     private async ValueTask<bool> EnsureLibraryAsync(RespireFunctionLibrary library, string functionName,
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
