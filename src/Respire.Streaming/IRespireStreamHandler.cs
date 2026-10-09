@@ -16,5 +16,7 @@ public enum RespireStreamWorkerResult
     /// <summary>Acknowledge the entry after the handler completes successfully.</summary>
     Ack = 1,
     /// <summary>Atomically append the original entry to the configured dead-letter stream and acknowledge this attempt.</summary>
+    /// <remarks>Requires <see cref="RespireStreamWorkerOptions.DeadLetterStream"/>. Without a destination,
+    /// the worker logs a handler failure and leaves this delivery pending for retry, like Nack.</remarks>
     DeadLetter = 2,
 }

@@ -4,6 +4,9 @@ namespace Respire.Internal;
 // pretending to interpret arbitrary Lua. Redis executes each script atomically.
 internal static class StreamWorkerScripts
 {
+    // Keep the Lua guard below in sync. Leave ample stack space for metadata and command arguments.
+    internal const int MaximumDeadLetterFields = 1024;
+
     internal const string ReplaySource = """
         local page = redis.call('XREADGROUP', 'GROUP', ARGV[1], ARGV[2], 'COUNT', ARGV[3], 'STREAMS', KEYS[1], ARGV[4])
         local entries = {}
@@ -53,7 +56,11 @@ internal static class StreamWorkerScripts
         local pending = redis.call('XPENDING', KEYS[1], ARGV[1], ARGV[3], ARGV[3], 1)
         if #pending ~= 1 or pending[1][2] ~= ARGV[2] or tostring(pending[1][4]) ~= ARGV[4] then return 0 end
         local entries = redis.call('XRANGE', KEYS[1], ARGV[3], ARGV[3])
-        if #entries ~= 1 then return 0 end
+        -- The body can be deleted while its fenced delivery is still pending.
+        if #entries ~= 1 then return redis.call('XACK', KEYS[1], ARGV[1], ARGV[3]) end
+        if #entries[1][2] > 2048 then
+            return redis.error_reply('ERR dead-letter entries support at most 1024 field/value pairs')
+        end
         local targetType = redis.call('TYPE', KEYS[2]).ok
         if targetType ~= 'none' and targetType ~= 'stream' then
             return redis.error_reply('WRONGTYPE dead-letter key is not a stream')

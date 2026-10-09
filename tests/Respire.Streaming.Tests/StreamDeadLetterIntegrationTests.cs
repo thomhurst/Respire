@@ -67,6 +67,62 @@ public class StreamDeadLetterIntegrationTests(RedisTestContainer redis)
             ["g", owner, "1-0", attempt, "explicit", new string('x', 300)]);
 
     [Test]
+    [Arguments(1024)]
+    [Arguments(1025)]
+    [Arguments(10000)]
+    public async Task WideEntryCompletionHasExplicitLimitWithoutPartialWrites(int fieldCount)
+    {
+        await using var real = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var server = new RespireFakeServer();
+        await using var fake = await RespireClient.ConnectAsync(server.CreateOptions());
+        foreach (var client in new[] { real, fake })
+        {
+            var fields = Enumerable.Range(0, fieldCount).Select(index => ($"field-{index}", (RespireValue)$"value-{index}")).ToArray();
+            await client.Streams.AddAsync("s", new StreamAddOptions { Id = "1-0" }, fields);
+            await client.Streams.CreateGroupAsync("s", "g", RespireStreamId.Beginning);
+            await client.Streams.ReadGroupOnceAsync("s", "g", "owner");
+            if (fieldCount > 1024)
+            {
+                var error = await Assert.That(async () => await CompleteAsync(client, "owner", 1)).Throws<RespireServerException>();
+                await Assert.That(error!.Message).Contains("dead-letter entries support at most 1024 field/value pairs");
+                await Assert.That((await client.Streams.PendingSummaryAsync("s", "g")).Count).IsEqualTo(1);
+                await Assert.That(await client.Streams.CountAsync("dlq")).IsEqualTo(0);
+            }
+            else
+            {
+                await Assert.That(await CompleteAsync(client, "owner", 1)).IsEqualTo(1);
+                var entry = (await client.Streams.ReadAsync("dlq")).Single();
+                await Assert.That(entry.Fields.Count).IsEqualTo(fieldCount + 5);
+                for (var index = 0; index < fieldCount; index++)
+                    await Assert.That(entry.GetString($"field-{index}")).IsEqualTo($"value-{index}");
+                await Assert.That((await client.Streams.PendingSummaryAsync("s", "g")).Count).IsEqualTo(0);
+            }
+            await Assert.That(await client.Streams.CountAsync("s")).IsEqualTo(1);
+        }
+    }
+
+    [Test]
+    public async Task DeletedSourceCompletionAcknowledgesOnlyTheFencedAttempt()
+    {
+        await using var real = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await using var server = new RespireFakeServer();
+        await using var fake = await RespireClient.ConnectAsync(server.CreateOptions());
+        foreach (var client in new[] { real, fake })
+        {
+            await client.Streams.AddAsync("s", new StreamAddOptions { Id = "1-0" }, ("payload", "body"));
+            await client.Streams.CreateGroupAsync("s", "g", RespireStreamId.Beginning);
+            await client.Streams.ReadGroupOnceAsync("s", "g", "owner");
+            using (await client.ExecuteAsync("XDEL", ["s", "1-0"])) { }
+            await Assert.That(await CompleteAsync(client, "old", 1)).IsEqualTo(0);
+            await Assert.That(await CompleteAsync(client, "owner", 2)).IsEqualTo(0);
+            await Assert.That((await client.Streams.PendingSummaryAsync("s", "g")).Count).IsEqualTo(1);
+            await Assert.That(await CompleteAsync(client, "owner", 1)).IsEqualTo(1);
+            await Assert.That((await client.Streams.PendingSummaryAsync("s", "g")).Count).IsEqualTo(0);
+            await Assert.That(await client.Streams.CountAsync("dlq")).IsEqualTo(0);
+        }
+    }
+
+    [Test]
     [Arguments(2)]
     [Arguments(3)]
     public async Task WrongTypeDeadLetterDoesNotAcknowledgeOrMutate(int protocol)
@@ -90,14 +146,19 @@ public class StreamDeadLetterIntegrationTests(RedisTestContainer redis)
     }
 
     [Test]
-    [Arguments("xadd")]
-    [Arguments("xack")]
-    public async Task AclPreflightRejectsBothMutationsBeforeDeadLetterWrite(string deniedCommand)
+    [Arguments("xadd", false)]
+    [Arguments("xack", false)]
+    [Arguments("xack", true)]
+    public async Task AclPreflightRejectsBothMutationsBeforeDeadLetterWrite(string deniedCommand, bool deletedSource)
     {
         await using var admin = await RespireClient.ConnectAsync(redis.ConnectionString);
         await admin.Streams.AddAsync("s", new StreamAddOptions { Id = "1-0" }, ("payload", "body"));
         await admin.Streams.CreateGroupAsync("s", "g", RespireStreamId.Beginning);
         await admin.Streams.ReadGroupOnceAsync("s", "g", "owner");
+        if (deletedSource)
+        {
+            using var deleted = await admin.ExecuteAsync("XDEL", ["s", "1-0"]);
+        }
         var username = "dlq-" + Guid.NewGuid().ToString("N");
         using (await admin.ExecuteAsync("ACL SETUSER", [username, "on", ">dlq-test-password", "~*", "+@all", "-" + deniedCommand])) { }
         try

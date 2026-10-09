@@ -156,10 +156,22 @@ and must share a Redis Cluster slot even on standalone Redis. For example, use s
 `"{orders}:tenant:"` and use logical keys `"events"` and `"dead"`. Keys are validated before
 group creation. The prefix is applied once by each command, including atomic completion.
 
+Enabling `DeadLetterStream` limits each source entry to **1,024 field/value pairs**, excluding
+the five metadata pairs added during completion. Validate this limit in producers before
+appending entries. The worker rejects a larger delivery before invoking its handler or
+serializer, faults with an explicit size-limit error, and leaves the source pending without
+writing a dead-letter record. Lua completion also checks the limit before expanding arguments
+or mutating either stream. Resolve an oversized entry manually before restarting the worker;
+restarting alone does not make it supported. Workers without `DeadLetterStream` have no such limit.
+
 Return `RespireStreamWorkerResult.DeadLetter` to complete a delivery explicitly. This requires
-`DeadLetterStream` but does not require a delivery limit. A limit of three permits processing
-on attempts one, two and three. A Nack, handler exception, serializer exception or unknown
-result on the third attempt is dead-lettered. An Ack still completes normally at that limit.
+`DeadLetterStream` but does not require a delivery limit. Returning `DeadLetter` without configuring a destination is
+treated as a handler failure: the worker logs the exception type, leaves the delivery pending
+for retry, and continues processing other entries.
+
+A limit of three permits processing on attempts one, two and three. A Nack, handler exception,
+serializer exception or unknown result on the third attempt is dead-lettered.
+An Ack still completes normally at that limit.
 Counts come from Redis: the initial delivery counts as one, and startup replay and each
 idle recovery increment the count. Prefetched entries also count as deliveries even if
 shutdown prevents their handlers from starting. If the final permitted attempt is abandoned,
@@ -186,8 +198,11 @@ One Lua operation checks the current pending owner and attempt, reads the origin
 appends the dead-letter entry and acknowledges the source delivery. A stale processor cannot
 complete a newer attempt, including another attempt under the same consumer name. Source
 entries are not deleted, so other groups keep their independent deliveries. Scripts isolate
-operations but do not roll back earlier writes after an error. The worker therefore verifies
-destination type and both `XADD` and `XACK` ACL permissions before any mutation; all source
+operations but do not roll back earlier writes after an error. If external deletion or trimming
+has already removed the source body, completion acknowledges only the fenced pending delivery
+without creating a dead-letter record; stale owners and attempts still cannot acknowledge it.
+For entries with a body, the worker verifies destination type and both `XADD` and `XACK`
+ACL permissions before any mutation; all source
 and group checks also precede the append. A rejected write or unexecuted operation leaves
 the source pending. A lost reply or cancellation after execution remains uncertain: either
 both mutations committed or neither did. There is no fallback acknowledgement or blind

@@ -11,6 +11,42 @@ namespace Respire.Streaming.Tests;
 public partial class StreamWorkerTests
 {
     [Test]
+    public async Task DeadLetterWithoutDestinationLogsFailureAndContinuesProcessing()
+    {
+        var state = new State
+        {
+            Handle = (entry, _) => ValueTask.FromResult(entry.GetString("payload") == "0"
+                ? RespireStreamWorkerResult.DeadLetter : RespireStreamWorkerResult.Ack),
+        };
+        await using var fixture = await Fixture.CreateAsync(state: state);
+        await fixture.AddAsync(0);
+        await fixture.AddAsync(1);
+        await fixture.StartAsync();
+        await UntilAsync(() => Task.FromResult(state.ScopeIds.Count == 2 && state.WarningCount == 1));
+        await fixture.StopAsync();
+        await Assert.That(fixture.Service.ExecuteTask!.IsCompletedSuccessfully).IsTrue();
+        await Assert.That((await fixture.View.Streams.PendingSummaryAsync("events", "workers")).Count).IsEqualTo(1);
+        await Assert.That(state.Warnings.Single().Fields.Single(pair => pair.Key == "ExceptionType").Value)
+            .IsEqualTo(typeof(InvalidOperationException).FullName);
+    }
+
+    [Test]
+    public async Task OversizedDeliveryFailsBeforeHandlerAndLeavesSourcePending()
+    {
+        await using var fixture = await Fixture.CreateAsync(options: new() { DeadLetterStream = "dlq" },
+            keyPrefix: "{worker}tenant:");
+        var fields = Enumerable.Range(0, 1025).Select(index => ($"field-{index}", (RespireValue)"body")).ToArray();
+        await fixture.View.Streams.AddAsync("events", fields);
+        await fixture.StartAsync();
+        var error = await Assert.That(async () => await fixture.Service.ExecuteTask!.WaitAsync(Deadline))
+            .Throws<InvalidOperationException>();
+        await Assert.That(error!.Message).Contains("at most 1024 field/value pairs");
+        await Assert.That(fixture.State.ScopeIds.Count).IsEqualTo(0);
+        await Assert.That((await fixture.View.Streams.PendingSummaryAsync("events", "workers")).Count).IsEqualTo(1);
+        await Assert.That(await fixture.View.Streams.CountAsync("dlq")).IsEqualTo(0);
+    }
+
+    [Test]
     [Arguments("explicit", 1)]
     [Arguments("nack", 3)]
     [Arguments("throw", 3)]

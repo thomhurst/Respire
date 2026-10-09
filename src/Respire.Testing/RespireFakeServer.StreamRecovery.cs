@@ -140,9 +140,16 @@ public sealed partial class RespireFakeServer
             return FakeReply.Error("NOGROUP No such consumer group");
         var id = StreamId(args[7]);
         if (!group.Pending.TryGetValue(id, out var pending)
-            || !pending.Consumer.AsSpan().SequenceEqual(args[6]) || pending.DeliveryCount != Integer(args[8])
-            || !source.Entries.TryGetValue(id, out var originalFields))
+            || !pending.Consumer.AsSpan().SequenceEqual(args[6]) || pending.DeliveryCount != Integer(args[8]))
             return FakeReply.Integer(0);
+        if (!source.Entries.TryGetValue(id, out var originalFields))
+        {
+            group.Pending.Remove(id);
+            TouchWatchedKey(args[3]);
+            return FakeReply.Integer(1);
+        }
+        if (originalFields.Length / 2 > StreamWorkerScripts.MaximumDeadLetterFields)
+            return FakeReply.Error("ERR dead-letter entries support at most 1024 field/value pairs");
         var target = Find(args[4]);
         if (target is not null && target.Stream is null)
             return FakeReply.Error("WRONGTYPE dead-letter key is not a stream");

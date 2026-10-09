@@ -24,6 +24,8 @@ public sealed record RespireStreamWorkerOptions
     public TimeSpan RecoveryPollInterval { get; init; } = TimeSpan.FromSeconds(5);
 
     /// <summary>Logical stream key for atomic dead-letter completion. Must share the source's resolved Cluster slot.</summary>
+    /// <remarks>Enabling dead-letter completion limits each source entry to 1024 field/value pairs.
+    /// A larger delivery faults the worker before invoking its handler and remains pending without a dead-letter write.</remarks>
     public string? DeadLetterStream { get; init; }
 
     /// <summary>Maximum delivery attempts before unsuccessful processing is dead-lettered. Null retries without a limit.</summary>

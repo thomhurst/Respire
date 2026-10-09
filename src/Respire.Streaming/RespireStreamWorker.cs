@@ -143,6 +143,8 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
 
     private async Task ProcessAsync(Delivery delivery, string consumer)
     {
+        if (options.DeadLetterStream is not null && delivery.Entry.Fields.Count > StreamWorkerScripts.MaximumDeadLetterFields)
+            throw new InvalidOperationException("Dead-letter-enabled workers support at most 1024 field/value pairs per entry.");
         if (options.DeliveryLimit is { } limit && delivery.Attempt > limit)
         {
             await DeadLetterAsync(delivery, consumer, "delivery-limit", "").ConfigureAwait(false);
@@ -158,6 +160,8 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             result = await handler.HandleAsync(deserialize(delivery.Entry), _handlers.Token).ConfigureAwait(false);
             if (result is not (RespireStreamWorkerResult.Ack or RespireStreamWorkerResult.Nack or RespireStreamWorkerResult.DeadLetter))
                 throw new InvalidOperationException("The stream handler returned an unknown completion result.");
+            if (result == RespireStreamWorkerResult.DeadLetter && options.DeadLetterStream is null)
+                throw new InvalidOperationException("DeadLetter completion requires a configured dead-letter stream.");
         }
         catch (OperationCanceledException) when (_handlers.IsCancellationRequested) { return; }
         catch (Exception error)
@@ -177,11 +181,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             await client.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.Ack, [stream],
                 [group, consumer, delivery.Entry.Id.Value, delivery.Attempt], _handlers.Token).ConfigureAwait(false);
         else if (result == RespireStreamWorkerResult.DeadLetter)
-        {
-            if (options.DeadLetterStream is null)
-                throw new InvalidOperationException("DeadLetter completion requires a configured dead-letter stream.");
             await DeadLetterAsync(delivery, consumer, "explicit", "").ConfigureAwait(false);
-        }
         else if (options.DeliveryLimit is { } deliveryLimit && delivery.Attempt >= deliveryLimit)
             await DeadLetterAsync(delivery, consumer, reason, failureType).ConfigureAwait(false);
     }
