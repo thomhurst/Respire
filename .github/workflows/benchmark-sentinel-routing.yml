@@ -59,14 +59,24 @@ jobs:
       EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       PRE_STRATEGY_BASELINE: ${{ matrix.baseline == 'pre-strategy' }}
     steps:
-      # Route Docker Hub pulls through mirror.gcr.io; see .github/actions/docker-hub-mirror.
-      - name: Use Docker Hub mirror
-        if: runner.os == 'Linux'
+      # Load infrastructure from the workflow revision, independently of benchmark source revisions.
+      - name: Checkout Docker mirror action
+        id: docker-mirror-checkout
+        if: runner.os == 'Linux' && runner.environment == 'github-hosted'
         continue-on-error: true
-        run: |
-          sudo cat /etc/docker/daemon.json 2>/dev/null | jq -s '(.[0] // {}) | ."registry-mirrors" = ["https://mirror.gcr.io"]' > "$RUNNER_TEMP/daemon.json"
-          sudo install -m 644 "$RUNNER_TEMP/daemon.json" /etc/docker/daemon.json
-          sudo kill -HUP "$(pidof dockerd)"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: docker-mirror
+          sparse-checkout: .github/actions/docker-hub-mirror
+          persist-credentials: false
+      - name: Use Docker Hub mirror
+        if: runner.os == 'Linux' && runner.environment == 'github-hosted' && steps.docker-mirror-checkout.outcome == 'success'
+        uses: ./docker-mirror/.github/actions/docker-hub-mirror
+      - name: Warn if Docker mirror action could not be loaded
+        if: steps.docker-mirror-checkout.outcome == 'failure'
+        shell: bash
+        run: echo '::warning::Could not load Docker mirror action; pulls go straight to Docker Hub'
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: |
