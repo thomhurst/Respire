@@ -35,7 +35,7 @@ public class AsyncFlushSignalTests
     [Arguments(true)]
     public async Task ConcurrentPublicationAndRearmingDrainEveryPublishedItem(bool preferInline)
     {
-        const int producers = 8;
+        const int producers = 50;
         const int perProducer = 1_000;
         var signal = new AsyncFlushSignal();
         var gate = new object();
@@ -72,6 +72,89 @@ public class AsyncFlushSignalTests
         await Task.WhenAll(writers).WaitAsync(deadline.Token);
         await Assert.That(drained).IsEqualTo(producers * perProducer);
         await Assert.That(observed.All(item => item)).IsTrue();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task PublicationWithoutWriteGateIsObservedAfterCoalescedSignals(bool preferInline)
+    {
+        const int publications = 10_000;
+        var signal = new AsyncFlushSignal();
+        var published = 0;
+        var observed = 0;
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var writer = Task.Run(() =>
+        {
+            for (var i = 1; i <= publications; i++)
+            {
+                // Race the consumer's initial wake with publication and a second signal.
+                // No write gate or caller-supplied full fence publishes this value.
+                signal.Signal(preferInline);
+                Volatile.Write(ref published, i);
+                signal.Signal(preferInline);
+                var spin = new SpinWait();
+                while (Volatile.Read(ref observed) != i)
+                {
+                    deadline.Token.ThrowIfCancellationRequested();
+                    spin.SpinOnce(sleep1Threshold: -1);
+                }
+            }
+        });
+        try
+        {
+            while (Volatile.Read(ref observed) < publications)
+            {
+                await signal.WaitAsync().AsTask().WaitAsync(deadline.Token);
+                Volatile.Write(ref observed, Volatile.Read(ref published));
+            }
+            await writer.WaitAsync(deadline.Token);
+        }
+        finally
+        {
+            deadline.Cancel();
+            await writer;
+        }
+        await Assert.That(observed).IsEqualTo(publications);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ConcurrentSignalsCoalesceWhileParkedWaiterIsResuming(bool preferInline)
+    {
+        var signal = new AsyncFlushSignal();
+        var pending = signal.WaitAsync();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resumed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        pending.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(() =>
+        {
+            try
+            {
+                entered.TrySetResult();
+                if (!release.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("Waiter was not released.");
+                pending.ConfigureAwait(false).GetAwaiter().GetResult();
+                resumed.TrySetResult();
+            }
+            catch (Exception error) { resumed.TrySetException(error); }
+        });
+        var wake = Task.Run(() => signal.Signal(preferInline));
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Task.WhenAll(Enumerable.Range(0, 50).Select(_ => Task.Run(() => signal.Signal(preferInline))));
+        }
+        finally
+        {
+            release.Set();
+            await Task.WhenAll(wake, resumed.Task).WaitAsync(TimeSpan.FromSeconds(5));
+        }
+
+        var next = signal.WaitAsync();
+        await Assert.That(next.IsCompleted).IsFalse();
+        signal.Signal(preferInline);
+        await next.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
     }
 
     [Test]

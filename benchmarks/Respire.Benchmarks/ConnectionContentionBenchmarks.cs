@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Text.Json;
 using BenchmarkDotNet.Attributes;
 using DotNet.Testcontainers.Containers;
 using Testcontainers.Redis;
@@ -40,6 +42,35 @@ public class ConnectionContentionBenchmarks
         if (await GetPipeline() != PipelineLength * "benchmark-value".Length
             || await ConcurrentGetPipelines() != Concurrency * PipelineLength * "benchmark-value".Length)
             throw new InvalidOperationException("GET pipelines lost replies.");
+        await ReportConcurrentProcessCpuAsync();
+    }
+
+    private async Task ReportConcurrentProcessCpuAsync()
+    {
+        // Keep CPU instrumentation outside BDN's timed methods. Both pinned revisions run
+        // this same bounded c=50 workload, including all client background threads but not Redis.
+        var warmup = Stopwatch.StartNew();
+        while (warmup.Elapsed < TimeSpan.FromSeconds(2)) await ConcurrentGetPipelines();
+
+        using var process = Process.GetCurrentProcess();
+        process.Refresh();
+        var cpuAt = process.TotalProcessorTime;
+        var startedAt = Stopwatch.GetTimestamp();
+        long operations = 0;
+        do
+        {
+            if (await ConcurrentGetPipelines() != Concurrency * PipelineLength * "benchmark-value".Length)
+                throw new InvalidOperationException("CPU stress lost replies.");
+            operations += Concurrency * PipelineLength;
+        } while (Stopwatch.GetElapsedTime(startedAt) < TimeSpan.FromSeconds(5));
+
+        process.Refresh();
+        var cpuMilliseconds = (process.TotalProcessorTime - cpuAt).TotalMilliseconds;
+        var elapsedSeconds = Stopwatch.GetElapsedTime(startedAt).TotalSeconds;
+        Console.WriteLine("CONNECTION_CONTENTION_CPU " + JsonSerializer.Serialize(new
+        {
+            concurrency = Concurrency, operations, cpuMilliseconds, elapsedSeconds,
+        }));
     }
 
     [Benchmark(OperationsPerInvoke = PipelineLength)]

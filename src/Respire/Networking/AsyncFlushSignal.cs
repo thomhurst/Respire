@@ -57,6 +57,18 @@ internal sealed class AsyncFlushSignal : IValueTaskSource, IThreadPoolWorkItem
     /// </param>
     public void Signal(bool preferInline = false)
     {
+        // Publish preceding work before checking whether an existing signal covers it.
+        // A release (including leaving the write gate) followed by an acquire read does
+        // not prevent store/load reordering. The full fence keeps this read after the
+        // publication, even for callers that publish without the write gate.
+        Interlocked.MemoryBarrier();
+        // The consumer drains authoritative work after consuming a signal. An existing
+        // signal covers this publication too, so busy producers need not write its cache line.
+        if (Volatile.Read(ref _state) == Signaled)
+        {
+            return;
+        }
+
         if (Interlocked.Exchange(ref _state, Signaled) != Waiting)
         {
             return;
