@@ -531,12 +531,25 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
             {
                 CollectionScan.CheckCancellation(cancellationToken);
                 var page = await ScanClusterPageAsync(checkpoint, match, type, countHint, cancellationToken).ConfigureAwait(false);
-                foreach (var key in page.Keys) yield return key;
+                foreach (var key in page.Keys)
+                {
+                    CollectionScan.CheckCancellation(cancellationToken);
+                    yield return key;
+                }
                 checkpoint = page.Cursor;
                 if (page.WaitingOnMigration)
                 {
-                    await Task.Delay(TimeSpan.FromMilliseconds(migrationDelayMs), scanTimeProvider ?? TimeProvider.System,
-                        cancellationToken).ConfigureAwait(false);
+                    // The page owner has completed; the migration wait is a separate enumeration boundary.
+                    try
+                    {
+                        await Task.Delay(TimeSpan.FromMilliseconds(migrationDelayMs), scanTimeProvider ?? TimeProvider.System,
+                            cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (Exception error)
+                    {
+                        ErrorObservation.FinishFinal(default, error);
+                        throw;
+                    }
                     migrationDelayMs = Math.Min(migrationDelayMs * 2, 250);
                 }
                 else migrationDelayMs = 50;
@@ -593,6 +606,7 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
 
                 for (var index = 0; index < result.Count; index++)
                 {
+                    CollectionScan.CheckCancellation(token);
                     yield return result.Page[index];
                 }
             }

@@ -56,9 +56,8 @@ public partial class ErrorMetricsTests
         var handled = items.Where(item => (bool)item.Tags["redis.client.errors.internal"]!).ToArray();
         var final = items.Where(item => !(bool)item.Tags["redis.client.errors.internal"]!).ToArray();
         await Assert.That(handled.Length).IsEqualTo(outcome == "cancellation" ? 0 : 1);
-        // A pre-cancelled cursor ends enumeration before it submits any command.
-        await Assert.That(final.Length).IsEqualTo(outcome == "success"
-            || outcome == "cancellation" && shape == "cursor" ? 0 : 1);
+        // Pre-cancelled cursors submit no command but still report their caller-visible cancellation once.
+        await Assert.That(final.Length).IsEqualTo(outcome == "success" ? 0 : 1);
         if (handled.Length != 0)
         {
             await Assert.That(handled[0].Tags["redis.client.errors.category"]).IsEqualTo("network");

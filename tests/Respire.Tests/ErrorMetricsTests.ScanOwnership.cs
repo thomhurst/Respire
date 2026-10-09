@@ -103,16 +103,18 @@ public partial class ErrorMetricsTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task CollectionScanCancellationBetweenItemsCountsOnce(bool abandon)
+    [MatrixDataSource]
+    public async Task CollectionScanCancellationBetweenItemsCountsOnce(
+        [Matrix(false, true)] bool abandon, [Matrix("keys", "set")] string route)
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
         await using var server = new FakeRespServer("*2\r\n$1\r\n0\r\n*2\r\n$3\r\none\r\n$3\r\ntwo\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var capture = new Capture(throwOnMeasurement: true);
         using var cancellation = new CancellationTokenSource();
-        var enumerator = client.Sets.ScanAsync("key", cancellationToken: cancellation.Token).GetAsyncEnumerator();
+        var entries = route == "keys" ? client.Keys.ScanAsync(cancellationToken: cancellation.Token)
+            : client.Sets.ScanAsync("key", cancellationToken: cancellation.Token);
+        var enumerator = entries.GetAsyncEnumerator();
         try
         {
             await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
@@ -125,6 +127,7 @@ public partial class ErrorMetricsTests
         }
         finally { await enumerator.DisposeAsync(); }
         await Assert.That(capture.Items.Count).IsEqualTo(abandon ? 0 : 1);
-        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("SSCAN ", StringComparison.Ordinal))).IsEqualTo(1);
+        var verb = route == "keys" ? "SCAN " : "SSCAN ";
+        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith(verb, StringComparison.Ordinal))).IsEqualTo(1);
     }
 }
