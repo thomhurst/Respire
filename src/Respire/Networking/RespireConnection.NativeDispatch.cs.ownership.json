@@ -6,14 +6,14 @@
       "Role": "helper",
       "Member": "Respire.Networking.RespireConnection.SendNativeCheckedAsync`1(in TCommand,CancellationToken,string):ValueTask<RespValue>",
       "Owner": "Respire.Networking.PendingResponseSource.IValueTaskSource<RespValue>.GetResult(short):RespValue",
-      "Contract": "Immediate admission transfers final ownership directly to the native raw response. Capacity waits and retirement fallback reclaim the unpublished source and retain the logical dispatch owner. Pre-admission failures complete the native source exceptionally and release its unpublished receive reference; native caller inspection publishes after cleanup. No cache fence, scripted response, route retry, or outer cleanup is bypassed."
+      "Contract": "Immediate admission transfers final ownership directly to the native raw response. Capacity waits and retirement fallback reclaim the unpublished source and retain the logical dispatch owner. Pre-admission failures reclaim both unpublished references before final publication and synchronous rethrow. No cache fence, scripted response, route retry, or outer cleanup is bypassed."
     },
     {
       "Name": "native-string-admission",
       "Role": "helper",
       "Member": "Respire.Networking.RespireConnection.SendNativeStringAsync`1(in TCommand,CancellationToken,string):ValueTask<string?>",
       "Owner": "Respire.Networking.StringPendingResponseSource.IValueTaskSource<string?>.GetResult(short):string?",
-      "Contract": "Immediate admission returns the original string source and its native cancellation, status and continuation behavior. The source owns final inspection through response cleanup and caller release, independently of metric selection at admission."
+      "Contract": "Immediate admission returns the original string source and its native cancellation, status and continuation behavior. Uninstrumented admission failures reclaim both unpublished references and rethrow synchronously. Captured instrumented admission failures complete the source exceptionally and release its unpublished receive reference, preserving asynchronous caller inspection. The source owns final inspection through response cleanup and caller release, independently of metric selection at admission."
     },
     {
       "Name": "native-bytes-admission",
