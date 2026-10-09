@@ -23,6 +23,8 @@ builder.Services.AddRespireStreamWorker<OrderHandler>("orders", "fulfillment", n
 {
     ConsumerCount = 4,
     BatchSize = 8,
+    MinimumIdleTime = TimeSpan.FromMinutes(2),
+    RecoveryPollInterval = TimeSpan.FromSeconds(5),
 });
 await builder.Build().RunAsync();
 
@@ -43,8 +45,8 @@ Set `ConsumerName` to a stable name for a particular host slot when its next pro
 resume its own pending deliveries. Each reader appends its zero-based index to that name.
 Active hosts and registrations sharing a group must use different names; keep the same
 consumer count across restarts to retain all reader identities. Reducing `ConsumerCount`
-strands pending entries owned by the removed reader indexes; an external recovery process
-must claim those entries.
+leaves pending entries owned by the removed reader indexes; idle recovery claims those entries
+after the visibility timeout.
 Handlers are registered as scoped services unless already registered. A new asynchronous
 DI scope is created for each entry and disposed after handling and acknowledgement finish.
 Avoid registering a handler as a singleton when it depends on scoped services.
@@ -95,7 +97,8 @@ use Respire's dedicated blocking connection path.
 
 Return `Ack` only after successful processing. `Nack`, a serializer or handler exception,
 an unknown result, or handler cancellation leaves the entry pending. The worker continues
-reading new entries. A warning reports the exception type for handler/serializer failures
+reading new entries and retries pending entries after the visibility timeout. A warning
+reports the exception type for handler/serializer failures
 without including exception messages or payloads. DI activation, scope disposal, read and
 acknowledgement failures fault the background service and follow the application's `HostOptions`
 background-service failure policy. Handler activation failures, including transient dependency
@@ -114,34 +117,68 @@ interrupt handling or acknowledgement.
 
 ## Pending messages and reliability
 
-This package currently provides the hosted consumer foundation. A configured stable
+The worker automatically recovers idle pending entries, including abandoned consumers,
+Nacks, handler failures and deliveries interrupted by shutdown. `MinimumIdleTime` is the
+visibility timeout, defaulting to one minute. `RecoveryPollInterval` defaults to five seconds.
+Both settings must be positive and at most `Int32.MaxValue` milliseconds; fractional
+milliseconds round up on the server. Set the visibility timeout above normal processing
+time, including time spent waiting behind earlier entries in a prefetched batch. There is
+no lease extension: a long-running handler can overlap a recovery attempt. Handlers must
+be idempotent and consumer identities must be unique among active hosts and registrations.
+
+Each existing reader runs at most one `XAUTOCLAIM` page per polling interval and fetches
+at most `BatchSize` recovered entries with their fields. Delivery counts increase on each
+claim. The scan examines at most ten times `BatchSize` pending IDs per page. Its cursor
+survives empty batches and deleted pending IDs and resets only at the end of the scan.
+A full scan can therefore take several polling intervals. Recovery does not create another
+queue or increase handler concurrency or the number of prefetched entries. The blocking
+new-entry wait is capped by the next recovery poll; recovery pauses while that reader handles
+its current batch. `Nack` leaves the entry pending rather than making it immediately claimable.
+
+A configured stable
 `ConsumerName` replays that consumer's own pending IDs once at startup, in bounded pages,
 before reading new entries. A Nack during this replay remains pending and is not retried in
-a hot loop. Other consumers' pending entries are not claimed. Default random identities
-cannot resume a previous process's pending entries and accumulate consumer metadata across
-restarts; use stable host-slot identities and an external recovery/cleanup process as needed.
+a hot loop; normal idle recovery retries it later. Random identities recover previous
+processes' deliveries after the visibility timeout but accumulate consumer metadata across
+restarts. Remove unused consumers only after their pending deliveries have been recovered.
 
-The worker does **not automatically retry pending entries while running**, recover abandoned
-random identities, apply a delivery limit or move messages to a dead-letter stream.
 Inspect pending entries with `client.Streams.PendingSummaryAsync` and `PendingAsync`.
-Plan a separate recovery process before using this foundation for durable production jobs.
+There is no delivery limit or dead-letter stream yet. A persistent failure is retried until
+the application succeeds or an operator intervenes.
 
 [Redis consumer groups retain deliveries until acknowledgement](https://redis.io/docs/latest/commands/xreadgroup/).
 An application operation can finish before its acknowledgement is lost, so handlers must
-be idempotent. This foundation does not fence acknowledgement against an external process
-claiming the same entry. Coordinate external claim/recovery with the worker rather than
-assuming it provides exactly-once processing.
+be idempotent. Replay and recovery capture delivery counts inside the same atomic Lua
+operation that delivers the entries; new-entry deliveries carry their initial attempt of one.
+Acknowledgement atomically checks both the pending owner and that attempt before `XACK`.
+A stale handler cannot acknowledge a different owner's delivery or a later attempt under
+the same consumer name. Return `Ack` from the handler to use this fence. Worker entries do
+not expose an unconditional `entry.AckAsync()` completion path.
+
+Cancellation and transport failures do not trigger fallback acknowledgement. If an
+acknowledgement reply is lost, its result is uncertain: an executed acknowledgement may
+already have removed the pending entry, while an unexecuted one leaves it recoverable.
+The worker faults on that infrastructure failure and does not blindly repeat completion.
+Configure the host failure policy and restart strategy for that case.
+
+Idle recovery requires Redis 6.2 or a compatible server with `XAUTOCLAIM`, `EVAL`, `EVALSHA`,
+`XPENDING` and the usual consumer-group commands available to its ACL user. Redis 7 or later
+also removes deleted pending IDs while scanning. Startup replay and acknowledgement need
+Lua even when no idle entries exist. External tools must not reset delivery counters with
+`XCLAIM RETRYCOUNT`, rewind the group with `XGROUP SETID`, recreate a live group, or otherwise
+reuse an attempt token. Consumer-name uniqueness remains required even with attempt fencing.
 
 The remaining reliable worker features are tracked independently:
-[idle recovery and atomic dead-letter completion (#1230)](https://github.com/thomhurst/Respire/issues/1230),
+[delivery limits and atomic dead-letter completion (#1230)](https://github.com/thomhurst/Respire/issues/1230),
 [capability-aware CLAIM/XNACK/XACKDEL (#1231)](https://github.com/thomhurst/Respire/issues/1231),
 [worker metrics and tracing (#1232)](https://github.com/thomhurst/Respire/issues/1232), and
 [producer retry deduplication (#892)](https://github.com/thomhurst/Respire/issues/892).
 The full feature remains open in [#891](https://github.com/thomhurst/Respire/issues/891).
 
 Use `RespireFakeServer` from `Respire.Testing` with its `CreateOptions()` client to test handlers
-without Docker. It supports this worker's group creation, blocking reads, acknowledgement,
-pending inspection and group metadata. Default fake consumer registration matches Redis 7.0.
+without Docker. It supports this worker's group creation, blocking reads, `XAUTOCLAIM`,
+`XDEL`, the exact built-in atomic worker scripts, pending inspection and group metadata.
+It does not interpret arbitrary Lua. Default fake consumer registration matches Redis 7.0.
 Use `new RespireFakeServer(clock: null, createConsumersOnEmptyReads: true)` to model Redis 7.2
 or later registering consumers on empty new-entry reads. Compatibility tests against real
 Redis remain necessary.

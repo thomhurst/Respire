@@ -5,6 +5,8 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Respire.Streaming;
 using Respire.Testing;
+using Respire.Internal;
+using System.Text;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -289,7 +291,7 @@ public class StreamWorkerTests
     public async Task AckFailureFaultsWorkerAndRetainsDelivery()
     {
         await using var fixture = await Fixture.CreateAsync();
-        using var fault = fixture.Server.InjectFault("XACK", RespireFakeFault.Loading());
+        using var fault = fixture.Server.InjectFault("EVALSHA", RespireFakeFault.Loading());
         await fixture.AddAsync(0);
         await fixture.StartAsync();
         await Assert.That(async () => await fixture.Service.ExecuteTask!.WaitAsync(Deadline))
@@ -313,7 +315,7 @@ public class StreamWorkerTests
             return RespireStreamWorkerResult.Ack;
         } };
         await using var fixture = await Fixture.CreateAsync(state: state, options: new() { ConsumerCount = 2 });
-        using var fault = fixture.Server.InjectFault("XACK", RespireFakeFault.Loading());
+        using var fault = fixture.Server.InjectFault("EVALSHA", RespireFakeFault.Loading());
         await fixture.AddAsync(0);
         await fixture.AddAsync(1);
         try
@@ -424,6 +426,199 @@ public class StreamWorkerTests
 
     private static TaskCompletionSource NewSignal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    [Test]
+    [Arguments("nack")]
+    [Arguments("throw")]
+    public async Task IdleRecoveryRetriesFailedDeliveriesWithoutAnotherQueue(string failure)
+    {
+        var calls = 0;
+        var state = new State { Handle = (_, _) =>
+        {
+            if (Interlocked.Increment(ref calls) == 1)
+                return failure == "throw" ? throw new InvalidOperationException("failed")
+                    : ValueTask.FromResult(RespireStreamWorkerResult.Nack);
+            return ValueTask.FromResult(RespireStreamWorkerResult.Ack);
+        } };
+        await using var fixture = await Fixture.CreateAsync(prefix: true, state: state, options: new()
+        {
+            MinimumIdleTime = TimeSpan.FromMilliseconds(200), RecoveryPollInterval = TimeSpan.FromMilliseconds(20),
+        });
+        await fixture.AddAsync(0);
+        await fixture.StartAsync();
+        await state.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
+        await Task.Delay(50);
+        await Assert.That(calls).IsEqualTo(1);
+        await state.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
+        await UntilAsync(async () => (await fixture.View.Streams.PendingSummaryAsync("events", "workers")).Count == 0);
+        await Assert.That(calls).IsEqualTo(2);
+        await Assert.That(state.Peak).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task StaleHandlerCannotAckChangedOwnerOrSameConsumerAttempt(bool sameConsumer, bool replay)
+    {
+        var release = NewSignal();
+        var state = new State { Handle = async (_, _) => { await release.Task; return RespireStreamWorkerResult.Ack; } };
+        await using var fixture = await Fixture.CreateAsync(state: state, options: new()
+        {
+            ConsumerName = "stable", RecoveryPollInterval = TimeSpan.FromMinutes(1),
+        });
+        await fixture.AddAsync(0);
+        await fixture.View.Streams.CreateGroupAsync("events", "workers", RespireStreamId.Beginning);
+        if (replay) await fixture.View.Streams.ReadGroupOnceAsync("events", "workers", "stable-0");
+        try
+        {
+            await fixture.StartAsync();
+            var entry = await state.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
+            var nextOwner = sameConsumer ? "stable-0" : "competitor";
+            using var claim = await fixture.View.Scripts.ExecuteAsync(StreamWorkerScripts.Claim, ["events"],
+                ["workers", nextOwner, 0, "0-0", 1]);
+            var attempt = (await fixture.View.Streams.PendingAsync("events", "workers")).Single().DeliveryCount;
+            await Assert.That(attempt).IsEqualTo(replay ? 3L : 2L);
+            release.TrySetResult();
+            await fixture.StopAsync();
+            var pending = (await fixture.View.Streams.PendingAsync("events", "workers")).Single();
+            await Assert.That(pending.Consumer).IsEqualTo(nextOwner);
+            await Assert.That(pending.DeliveryCount).IsEqualTo(attempt);
+            await Assert.That(await fixture.View.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.Ack, ["events"],
+                ["workers", nextOwner, entry.Id.Value, attempt])).IsEqualTo(1);
+        }
+        finally { release.TrySetResult(); }
+    }
+
+    [Test]
+    public async Task ReplayCapturesAttemptBeforeItsReplyCanBeDelayedAndReclaimed()
+    {
+        var gate = new RespireFakeGate();
+        await using var fixture = await Fixture.CreateAsync(options: new() { ConsumerName = "stable" });
+        await fixture.AddAsync(0);
+        await fixture.View.Streams.CreateGroupAsync("events", "workers", RespireStreamId.Beginning);
+        await fixture.View.Streams.ReadGroupOnceAsync("events", "workers", "stable-0");
+        using var fault = fixture.Server.InjectFault("EVAL", RespireFakeFault.Pause(gate, afterExecution: true),
+            firstArgument: Encoding.UTF8.GetBytes(StreamWorkerScripts.ReplaySource));
+        try
+        {
+            await fixture.StartAsync();
+            await fault.Matched.WaitAsync(Deadline);
+            // Use an independent connection: the paused reply retains FIFO ownership.
+            await using var competitor = await RespireClient.ConnectAsync(fixture.Server.CreateOptions());
+            using var claim = await competitor.Scripts.ExecuteAsync(StreamWorkerScripts.Claim, ["events"],
+                ["workers", "stable-0", 0, "0-0", 1]);
+            gate.Release();
+            await fixture.State.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
+            await fixture.StopAsync();
+            await Assert.That((await fixture.View.Streams.PendingAsync("events", "workers")).Single().DeliveryCount).IsEqualTo(3);
+        }
+        finally { gate.Release(); }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task LostAcknowledgementReplyDoesNotRepeatCompletion(bool afterExecution)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        using var fault = fixture.Server.InjectFault("EVAL", RespireFakeFault.Disconnect(afterExecution),
+            firstArgument: Encoding.UTF8.GetBytes(StreamWorkerScripts.AckSource));
+        await fixture.AddAsync(0);
+        await fixture.StartAsync();
+        await Assert.That(async () => await fixture.Service.ExecuteTask!.WaitAsync(Deadline)).Throws<Exception>();
+        await Assert.That(fault.ExecutionCount).IsEqualTo(afterExecution ? 1L : 0L);
+        await using var control = await RespireClient.ConnectAsync(fixture.Server.CreateOptions());
+        await Assert.That((await control.Streams.PendingSummaryAsync("events", "workers")).Count)
+            .IsEqualTo(afterExecution ? 0L : 1L);
+        await Assert.That(fixture.State.DisposedScopes).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments(0, 1)]
+    [Arguments(-1, 1)]
+    [Arguments(1, 0)]
+    [Arguments(1, -1)]
+    [Arguments(long.MaxValue, 1)]
+    [Arguments(1, long.MaxValue)]
+    public async Task InvalidRecoveryOptionsFailDuringRegistration(long idleTicks, long pollTicks)
+        => await Assert.That(() => new ServiceCollection().AddRespireStreamWorker<EntryHandler>("events", "workers", new()
+        {
+            MinimumIdleTime = TimeSpan.FromTicks(idleTicks), RecoveryPollInterval = TimeSpan.FromTicks(pollTicks),
+        })).Throws<ArgumentOutOfRangeException>();
+
+    [Test]
+    public async Task WorkerKeepsRecoveryCursorAcrossEmptyBoundedPages()
+    {
+        var clock = new RespireFakeClock();
+        await using var fixture = await Fixture.CreateAsync(clock: clock, options: new()
+        {
+            MinimumIdleTime = TimeSpan.FromSeconds(1), RecoveryPollInterval = TimeSpan.FromMilliseconds(20),
+        });
+        for (var i = 1; i <= 22; i++)
+            await fixture.View.Streams.AddAsync("events", new StreamAddOptions { Id = $"{i}-0" }, ("payload", i));
+        await fixture.View.Streams.CreateGroupAsync("events", "workers", RespireStreamId.Beginning);
+        await fixture.View.Streams.ReadGroupOnceAsync("events", "workers", "abandoned", new() { Count = 22 });
+        clock.Advance(TimeSpan.FromSeconds(1));
+        // Keep the first two scan pages fresh. Only the last entry can be recovered.
+        await fixture.View.Streams.ReadGroupOnceAsync("events", "workers", "abandoned", new() { Count = 21 }, RespireStreamId.Beginning);
+        await fixture.StartAsync();
+        var entry = await fixture.State.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
+        await Assert.That(entry.Id).IsEqualTo((RespireStreamId)"22-0");
+        await fixture.StopAsync();
+        await Assert.That(fixture.State.ScopeIds.Count).IsEqualTo(1);
+        await Assert.That((await fixture.View.Streams.PendingSummaryAsync("events", "workers")).Count).IsEqualTo(21);
+    }
+
+    [Test]
+    public async Task StartupReplayAdvancesPastDeletedPendingBody()
+    {
+        await using var fixture = await Fixture.CreateAsync(options: new() { ConsumerName = "stable" });
+        for (var i = 1; i <= 2; i++)
+            await fixture.View.Streams.AddAsync("events", new StreamAddOptions { Id = $"{i}-0" }, ("payload", i));
+        await fixture.View.Streams.CreateGroupAsync("events", "workers", RespireStreamId.Beginning);
+        await fixture.View.Streams.ReadGroupOnceAsync("events", "workers", "stable-0", new() { Count = 2 });
+        await fixture.View.Streams.RemoveAsync("events", ["1-0"]);
+        await fixture.StartAsync();
+        var entry = await fixture.State.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
+        await Assert.That(entry.Id).IsEqualTo((RespireStreamId)"2-0");
+        await fixture.StopAsync();
+        await Assert.That(fixture.State.ScopeIds.Count).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task LostReadReplyLeavesAbandonedDeliveryRecoverable()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        using var fault = fixture.Server.InjectFault("XREADGROUP", RespireFakeFault.Disconnect(afterExecution: true));
+        await fixture.AddAsync(0);
+        await fixture.StartAsync();
+        await Assert.That(async () => await fixture.Service.ExecuteTask!.WaitAsync(Deadline)).Throws<Exception>();
+        await using var control = await RespireClient.ConnectAsync(fixture.Server.CreateOptions());
+        await Assert.That((await control.Streams.PendingSummaryAsync("events", "workers")).Count).IsEqualTo(1);
+        var state = new State();
+        var services = new ServiceCollection().AddSingleton(state).AddScoped<ScopeProbe>()
+            .AddSingleton<IRespireClient>(control).AddLogging();
+        services.AddRespireStreamWorker<EntryHandler>("events", "workers", new()
+        {
+            MinimumIdleTime = TimeSpan.FromMilliseconds(20), RecoveryPollInterval = TimeSpan.FromMilliseconds(10),
+        });
+        await using var provider = services.BuildServiceProvider();
+        var worker = provider.GetServices<IHostedService>().Single();
+        await worker.StartAsync(CancellationToken.None);
+        try
+        {
+            var entry = await state.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
+            await Assert.That(entry.GetString("payload")).IsEqualTo("0");
+            await UntilAsync(async () => (await control.Streams.PendingSummaryAsync("events", "workers")).Count == 0);
+        }
+        finally
+        {
+            using var deadline = new CancellationTokenSource(Deadline);
+            await worker.StopAsync(deadline.Token);
+        }
+    }
+
     private static async Task UntilAsync(Func<Task<bool>> condition)
     {
         using var deadline = new CancellationTokenSource(Deadline);
@@ -512,9 +707,9 @@ public class StreamWorkerTests
 
         public static async Task<Fixture> CreateAsync(int protocol = 3, bool prefix = false, State? state = null,
             RespireStreamWorkerOptions? options = null, int registrations = 1, bool typed = false,
-            bool deserializeFailure = false)
+            bool deserializeFailure = false, TimeProvider? clock = null)
         {
-            var server = new RespireFakeServer();
+            var server = new RespireFakeServer(clock);
             var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
             var view = prefix ? client.WithKeyPrefix("tenant:") : client;
             state ??= new State();
