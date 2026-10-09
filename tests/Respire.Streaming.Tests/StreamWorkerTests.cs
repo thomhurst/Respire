@@ -13,7 +13,7 @@ using TUnit.Core;
 
 namespace Respire.Streaming.Tests;
 
-public class StreamWorkerTests
+public partial class StreamWorkerTests
 {
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(10);
 
@@ -743,11 +743,12 @@ public class StreamWorkerTests
 
         public static async Task<Fixture> CreateAsync(int protocol = 3, bool prefix = false, State? state = null,
             RespireStreamWorkerOptions? options = null, int registrations = 1, bool typed = false,
-            bool deserializeFailure = false, TimeProvider? clock = null)
+            bool deserializeFailure = false, TimeProvider? clock = null, string? keyPrefix = null)
         {
             var server = new RespireFakeServer(clock);
             var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
-            var view = prefix ? client.WithKeyPrefix("tenant:") : client;
+            var view = keyPrefix is not null ? client.WithKeyPrefix(keyPrefix)
+                : prefix ? client.WithKeyPrefix("tenant:") : client;
             state ??= new State();
             var collection = new ServiceCollection().AddSingleton(state).AddScoped<ScopeProbe>()
                 .AddSingleton<IRespireClient>(view);

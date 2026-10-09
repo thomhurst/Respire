@@ -6,7 +6,8 @@ namespace Respire.Testing;
 
 public sealed partial class RespireFakeServer
 {
-    private static readonly RespireScript[] WorkerScripts = [StreamWorkerScripts.Replay, StreamWorkerScripts.Claim, StreamWorkerScripts.Ack];
+    private static readonly RespireScript[] WorkerScripts =
+        [StreamWorkerScripts.Replay, StreamWorkerScripts.Claim, StreamWorkerScripts.Ack, StreamWorkerScripts.DeadLetter];
     private readonly HashSet<string> _workerScriptCache = new(StringComparer.Ordinal);
 
     private FakeReply StreamDelete(byte[][] args)
@@ -72,6 +73,12 @@ public sealed partial class RespireFakeServer
         var script = WorkerScripts.SingleOrDefault(candidate => (sha ? candidate.Sha1 : candidate.Source) == source);
         if (sha && !_workerScriptCache.Contains(source)) return FakeReply.Error("NOSCRIPT No matching script. Please use EVAL.");
         if (script is null) return FakeReply.Error("ERR fake server supports only the built-in stream worker scripts");
+        if (script == StreamWorkerScripts.DeadLetter)
+        {
+            if (Integer(args[2]) != 2 || args.Length != 11) return Syntax("EVAL");
+            if (!sha) _workerScriptCache.Add(script.Sha1);
+            return StreamDeadLetter(args);
+        }
         if (Integer(args[2]) != 1) return Syntax("EVAL");
         if (!sha) _workerScriptCache.Add(script.Sha1);
         var expected = script == StreamWorkerScripts.Claim ? 9 : 8;
@@ -122,5 +129,40 @@ public sealed partial class RespireFakeServer
                 FakeReply.Text(group.Pending[id].DeliveryCount.ToString(CultureInfo.InvariantCulture))]);
         }).ToArray();
         return FakeReply.Array([parts[0], FakeReply.Array(rows)]);
+    }
+
+    private FakeReply StreamDeadLetter(byte[][] args)
+    {
+        if (args[3].AsSpan().SequenceEqual(args[4]))
+            return FakeReply.Error("ERR source and dead-letter keys must differ");
+        var source = Find(args[3])?.Stream;
+        if (source is null || !source.Groups.TryGetValue(args[5], out var group))
+            return FakeReply.Error("NOGROUP No such consumer group");
+        var id = StreamId(args[7]);
+        if (!group.Pending.TryGetValue(id, out var pending)
+            || !pending.Consumer.AsSpan().SequenceEqual(args[6]) || pending.DeliveryCount != Integer(args[8]))
+            return FakeReply.Integer(0);
+        if (!source.Entries.TryGetValue(id, out var originalFields))
+        {
+            group.Pending.Remove(id);
+            TouchWatchedKey(args[3]);
+            return FakeReply.Integer(1);
+        }
+        if (originalFields.Length / 2 > StreamWorkerScripts.MaximumDeadLetterFields)
+            return FakeReply.Error("ERR dead-letter entries support at most 1024 field/value pairs");
+        var target = Find(args[4]);
+        if (target is not null && target.Stream is null)
+            return FakeReply.Error("WRONGTYPE dead-letter key is not a stream");
+        byte[][] fields =
+        [
+            "_respire.source_id"u8.ToArray(), args[7], "_respire.group"u8.ToArray(), args[5][..Math.Min(256, args[5].Length)],
+            "_respire.attempt"u8.ToArray(), args[8], "_respire.reason"u8.ToArray(), args[9][..Math.Min(64, args[9].Length)],
+            "_respire.exception_type"u8.ToArray(), args[10][..Math.Min(256, args[10].Length)], .. originalFields,
+        ];
+        var added = StreamAdd(["XADD"u8.ToArray(), args[4], "*"u8.ToArray(), .. fields]);
+        if (added.Prefix == '-') return added;
+        group.Pending.Remove(id);
+        TouchWatchedKey(args[3]);
+        return FakeReply.Integer(1);
     }
 }
