@@ -211,9 +211,11 @@ public class ClusterCircuitDispatchTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task AskingStreamCapacityWaitReacquiresMaintenanceDestination(bool replacementOpen)
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task AskingCapacityWaitReacquiresMaintenanceDestination(bool replacementOpen, bool tracked)
     {
         await using var source = Server();
         await using var target = Server();
@@ -221,19 +223,23 @@ public class ClusterCircuitDispatchTests
         await using var client = await RespireClient.ConnectAsync(Options(source) with
         {
             Protocol = RespProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
-            MaxInflightCommands = 2, CommandTimeout = TimeSpan.FromSeconds(10),
+            MaxInflightCommands = tracked ? 4 : 2, CommandTimeout = TimeSpan.FromSeconds(10),
+            ClientSideCache = tracked ? new() : null,
         });
         await client.GetStringAsync("warm");
         var router = client.Core.Cluster!;
         var targetNode = router.GetMultiplexer(Endpoint(target));
         router.SetSlotOwner(ClusterHash.GetSlot("hold"), targetNode);
+        if (tracked) router.SetSlotOwner(ClusterHash.GetSlot("hold2"), targetNode);
         await client.GetStringAsync("hold");
         var original = targetNode.GetConnection();
-        target.SuppressReply = command => command == "GET hold";
-        var held = client.GetStringAsync("hold").AsTask();
+        target.SuppressReply = command => command.StartsWith("GET hold", StringComparison.Ordinal);
+        var held = client.WithoutClientCache().GetStringAsync("hold").AsTask();
+        var heldSecond = tracked ? client.WithoutClientCache().GetStringAsync("hold2").AsTask() : null;
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (target.ReceivedCommands.Count(command => command == "GET hold") < 2)
             await Task.Delay(1, timeout.Token);
+        if (tracked) await Received(target, "GET hold2");
         var circuit = Circuit(client, target);
         var clock = new Clock();
         CircuitClock(circuit) = clock;
@@ -243,7 +249,9 @@ public class ClusterCircuitDispatchTests
         source.ReplyOverride = (_, command) => command == "GET streamed"
             ? Encoding.ASCII.GetBytes($"-ASK {ClusterHash.GetSlot("streamed")} 127.0.0.1:{target.Port}\r\n")
             : command == "CLUSTER SLOTS" ? Slots(source.Port) : Reply(command);
-        var pending = client.Strings.GetStreamAsync("streamed").AsTask();
+        var pendingStream = tracked ? null : client.Strings.GetStreamAsync("streamed").AsTask();
+        var pendingRead = tracked ? client.GetStringAsync("streamed").AsTask() : null;
+        var pending = (Task?)pendingRead ?? pendingStream!;
         while (circuit.Snapshot().ActiveProbes != 1) await Task.Delay(1, timeout.Token);
         var announcement = targetNode.CaptureMovingAnnouncement(0, original,
             new MaintenanceNotification("MOVING", 1, 10, Endpoint(replacement)));
@@ -254,15 +262,19 @@ public class ClusterCircuitDispatchTests
         {
             if (replacementOpen)
             {
-                var error = await Failure(async () => { await using var stream = await pending; });
+                var error = await Failure(async () => await pending);
                 await Assert.That(error).IsTypeOf<RespireCircuitOpenException>();
                 await Assert.That(((RespireCircuitOpenException)error).Endpoint).IsEqualTo(Endpoint(replacement));
             }
             else
             {
-                await using var stream = await pending;
-                using var reader = new StreamReader(stream!);
-                await Assert.That(await reader.ReadToEndAsync()).IsEqualTo("value");
+                if (tracked) await Assert.That(await pendingRead!).IsEqualTo("value");
+                else
+                {
+                    await using var stream = await pendingStream!;
+                    using var reader = new StreamReader(stream!);
+                    await Assert.That(await reader.ReadToEndAsync()).IsEqualTo("value");
+                }
             }
             await Assert.That(target.ReceivedCommands.Contains("GET streamed")).IsFalse();
             await Assert.That(replacement.ReceivedCommands.Contains("GET streamed")).IsEqualTo(!replacementOpen);
@@ -273,7 +285,9 @@ public class ClusterCircuitDispatchTests
         finally
         {
             await target.SendRawAsync(Bulk, target.ReceivedConnectionIds[^1]);
+            if (tracked) await target.SendRawAsync(Bulk, target.ReceivedConnectionIds[^1]);
             await held;
+            if (tracked) await heldSecond!;
         }
     }
 
@@ -351,6 +365,109 @@ public class ClusterCircuitDispatchTests
         await Assert.That(await second).IsEqualTo("value");
         await Assert.That(circuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Closed);
         await Assert.That(server.ReceivedCommands.Count(command => command == "GET probe")).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task TrackedAskingCapacityWaitUsesOriginalDeadline()
+    {
+        await using var server = Server();
+        await using var client = await RespireClient.ConnectAsync(Options(server) with
+        {
+            MaxInflightCommands = 4, CommandTimeout = TimeSpan.FromSeconds(10),
+        });
+        await client.GetStringAsync("warm");
+        var connection = await client.Core.Cluster!.GetConnectionAsync(null, default, null);
+        server.SuppressReply = command => command.StartsWith("GET hold", StringComparison.Ordinal);
+        var held = connection.SendAsync(new Cmd1(Verbs.Get, "hold")).AsTask();
+        var heldSecond = connection.SendAsync(new Cmd1(Verbs.Get, "hold2")).AsTask();
+        await Received(server, "GET hold");
+        await Received(server, "GET hold2");
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        try
+        {
+            var command = new Cmd1(Verbs.Get, "deadline");
+            var error = await Failure(async () =>
+            {
+                using var response = await ClusterRouter.SendTrackedAskingAsync(connection, in command,
+                    deadline.Token, "GET", pinToConnection: true, commandDeadline: CommandDeadline.After(50));
+            });
+            await Assert.That(error).IsTypeOf<RespireTimeoutException>();
+            await Assert.That(server.ReceivedCommands.Contains("ASKING")).IsFalse();
+            await Assert.That(server.ReceivedCommands.Contains("GET deadline")).IsFalse();
+        }
+        finally
+        {
+            await server.SendRawAsync(Bulk, server.ReceivedConnectionIds[^1]);
+            await server.SendRawAsync(Bulk, server.ReceivedConnectionIds[^1]);
+            using var response = await held;
+            using var secondResponse = await heldSecond;
+        }
+    }
+
+    [Test]
+    [Arguments("blocking")]
+    [Arguments("upload")]
+    public async Task DedicatedConnectFailureOpensHealthyMultiplexedEndpoint(string shape)
+    {
+        await using var server = Server();
+        var failConnect = false;
+        var failedAttempts = 0;
+        await using var client = await RespireClient.ConnectAsync(Options(server) with
+        {
+            ReconnectPolicy = new() { MaxAttempts = 1, InitialDelay = TimeSpan.Zero },
+            TestingStreamFactory = async (host, port, cancellationToken) =>
+            {
+                if (failConnect)
+                {
+                    Interlocked.Increment(ref failedAttempts);
+                    throw new IOException("Injected dedicated connect failure.");
+                }
+                var socket = new System.Net.Sockets.Socket(System.Net.Sockets.SocketType.Stream,
+                    System.Net.Sockets.ProtocolType.Tcp);
+                try
+                {
+                    await socket.ConnectAsync(host, port, cancellationToken);
+                    return new System.Net.Sockets.NetworkStream(socket, ownsSocket: true);
+                }
+                catch { socket.Dispose(); throw; }
+            },
+        });
+        await client.GetStringAsync("warm");
+        failConnect = true;
+        await Failure(() => Send(client, shape, "failed"));
+        await Assert.That(Circuit(client, server).Snapshot().State).IsEqualTo(EndpointCircuitState.Open);
+        await Assert.That(client.Core.Cluster!.GetMultiplexer(Endpoint(server)).IsConnected).IsTrue();
+        var attempts = failedAttempts;
+        var error = await Failure(() => Send(client, shape, "rejected"));
+        await Assert.That(error).IsTypeOf<RespireCircuitOpenException>();
+        await Assert.That(failedAttempts).IsEqualTo(attempts);
+        await Assert.That(server.ReceivedCommands.Any(command => command.Contains("failed") || command.Contains("rejected"))).IsFalse();
+    }
+
+    [Test]
+    public async Task SlotDiscoverySkipsOpenUnrelatedMasterAndUsesHealthyMaster()
+    {
+        await using var source = Server();
+        await using var unrelated = Server();
+        await using var healthy = Server();
+        await using var client = await RespireClient.ConnectAsync(Options(source));
+        await client.GetStringAsync("warm");
+        var router = client.Core.Cluster!;
+        var failedOwner = router.GetMultiplexer(Endpoint(source));
+        var openNode = router.GetMultiplexer(Endpoint(unrelated));
+        var healthyNode = router.GetMultiplexer(Endpoint(healthy));
+        router.SetSlotOwner(1, openNode);
+        router.SetSlotOwner(2, healthyNode);
+        Open(client, unrelated);
+        var method = typeof(ClusterRouter).GetMethod("TryRefreshSlotThroughKnownMastersAsync",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var result = (ValueTask<RespireConnectionMultiplexer?>)method.Invoke(router,
+            [0, failedOwner, CancellationToken.None, null, false])!;
+        var owner = await result;
+        await Assert.That(owner).IsSameReferenceAs(healthyNode);
+        await Assert.That(healthy.ReceivedCommands.Contains("CLUSTER SLOTS")).IsTrue();
+        await Assert.That(unrelated.ReceivedCommands.Count).IsEqualTo(0);
+        await Assert.That(Circuit(client, unrelated).Snapshot().State).IsEqualTo(EndpointCircuitState.Open);
     }
 
     [Test]

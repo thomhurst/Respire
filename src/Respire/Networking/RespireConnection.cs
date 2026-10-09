@@ -1509,7 +1509,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         in TCommand command,
         CancellationToken cancellationToken = default,
         string commandName = "(command)",
-        string? preferredZone = null, RespireTelemetry.ErrorObservation observation = default)
+        string? preferredZone = null, RespireTelemetry.ErrorObservation observation = default,
+        bool pinToConnection = false, CommandDeadline commandDeadline = default)
         where TFirstPrefix : struct, IRespCommand
         where TSecondPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
@@ -1527,7 +1528,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             repliesBeforeFinal: 2,
             firstQueueReply: 0,
             cancellationToken,
-            commandName, preferredZone: preferredZone, observation: observation);
+            commandName, preferredZone: preferredZone, observation: observation,
+            pinToConnection: pinToConnection, commandDeadline: commandDeadline);
     }
 
     private ValueTask<RespValue> SendMultiReplyCoreAsync<TCommand>(

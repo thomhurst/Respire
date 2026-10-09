@@ -933,7 +933,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         DedicatedConnectionPool pool, DedicatedRoute route, CancellationToken cancellationToken, DiscoveryRound? discovery,
         bool reuseIdle = true, DedicatedLeaseKind kind = DedicatedLeaseKind.Ordinary, string? preferredZone = null)
         => DedicatedLeaseAcquisition.RentAsync(pool, new DedicatedLeaseRoute(this, route, discovery, preferredZone),
-            cancellationToken, reuseIdle, kind, preferredZone);
+            cancellationToken, reuseIdle, kind, preferredZone, _circuits);
 
     private struct DedicatedLeaseRoute(ClusterRouter owner, DedicatedRoute route, DiscoveryRound? discovery,
         string? preferredZone) : IDedicatedLeaseRoute
@@ -1337,16 +1337,19 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         in TCommand command,
         CancellationToken cancellationToken,
         string commandName = "(command)", string? preferredZone = null,
-        RespireTelemetry.ErrorObservation observation = default)
+        RespireTelemetry.ErrorObservation observation = default,
+        bool pinToConnection = false, CommandDeadline commandDeadline = default)
         where TCommand : struct, Respire.Protocol.IRespCommand
     {
         if (command is StreamedSetCommand)
             // Streamed SET is a write; CLIENT CACHING only applies to a subsequent read.
-            return SendAskingAsync(connection, in command, cancellationToken, commandName, observation: observation);
+            return SendAskingAsync(connection, in command, cancellationToken, commandName,
+                commandDeadline, pinToConnection: pinToConnection, observation: observation);
 
         var caching = new ClientCachingCommand();
         return connection.SendValidatedPrefixedAsync(
-            in Asking, in caching, in command, cancellationToken, commandName, preferredZone, observation);
+            in Asking, in caching, in command, cancellationToken, commandName, preferredZone, observation,
+            pinToConnection, commandDeadline);
     }
 
     internal static ValueTask<Stream?> SendAskingBulkStreamAsync<TCommand>(
@@ -1546,7 +1549,10 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             if (!complete) discovery?.FailedNode(node, new RespireConnectionException("Cluster candidate did not provide a complete topology."));
             return complete;
         }
-        catch (Exception error) when (CanRetryDiscoveryFailure(error, cancellationToken, discovery))
+        // Rejection of an unrelated topology source must not reject the selected data endpoint.
+        catch (Exception error) when (CanRetryDiscoveryFailure(error, cancellationToken, discovery)
+            || error is RespireCircuitOpenException && !cancellationToken.IsCancellationRequested
+                && discovery?.Exhaustion is null && Volatile.Read(ref _disposed) == 0)
         {
             discovery?.FailedNode(node, error);
             return false;
@@ -1942,8 +1948,15 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         var category = readOnly
             ? $"Respire.Cluster.Replica.{endpoint.Host}:{endpoint.Port}"
             : $"Respire.Cluster.{endpoint.Host}:{endpoint.Port}";
-        return RespireConnectionMultiplexer.Create(
+        var node = RespireConnectionMultiplexer.Create(
             endpoint.Host, endpoint.Port, _options.Connections, connectionOptions, _options.CreateLogger(category));
+        if (_circuits is { } circuits)
+        {
+            // Includes lazy ASK identities that do not yet own slots or topology observers.
+            circuits.InvalidateMembership();
+            node.SlotStateChanged += (_, _) => circuits.InvalidateMembership();
+        }
+        return node;
     }
 
     private void ObserveNode(RespireConnectionMultiplexer node)
@@ -2091,6 +2104,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             ImmutableCollectionsMarshal.AsImmutableArray(_replicas), _masterSlotCounts, _hasCompleteTopology != 0);
         _dirtyTopologyPages = 0;
         Volatile.Write(ref _topology, snapshot);
+        _circuits?.InvalidateMembership();
     }
 
     private void AddSlot(RespireConnectionMultiplexer node, int count = 1)

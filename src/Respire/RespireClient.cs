@@ -2585,10 +2585,12 @@ public sealed partial class RespireClient : IRespireClient
             if (optIn)
             {
                 return ClusterRouter.SendTrackedAskingAsync(
-                    connection, in command, cancellationToken, operation, preferredZone, observation);
+                    connection, in command, cancellationToken, operation, preferredZone, observation,
+                    pinToConnection, commandDeadline);
             }
             return ClusterRouter.SendAskingAsync(
-                connection, in command, cancellationToken, operation, preferredZone: preferredZone, observation: observation);
+                connection, in command, cancellationToken, operation, commandDeadline,
+                preferredZone: preferredZone, observation: observation, pinToConnection: pinToConnection);
         }
 
         if (!optIn)
