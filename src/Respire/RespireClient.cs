@@ -4495,12 +4495,22 @@ public sealed partial class RespireClient : IRespireClient
             if (sentinel.Current is not { IsRetired: false } generation) return null;
             multiplexer = generation.Multiplexer;
         }
+        return TryAcquireReadyConnection(multiplexer, cancellationToken);
+    }
+
+    private RespireConnection? TryAcquireReadyConnection(
+        RespireConnectionMultiplexer multiplexer, CancellationToken cancellationToken)
+    {
         // Queues use the same current endpoint and availability guard as immediate sends.
-        if (_core.Circuits is not null && multiplexer.IsInitialized)
-            return GetCircuitConnectionSlow(multiplexer, cancellationToken);
-        if (multiplexer is not { IsConnected: true }) return null;
-        try { return multiplexer.GetConnection(); }
-        catch (Exception error) when (error is RespireConnectionException or RespireConnectionRetiredException)
+        try
+        {
+            if (_core.Circuits is not null && multiplexer.IsInitialized)
+                return GetCircuitConnectionSlow(multiplexer, cancellationToken);
+            if (multiplexer is not { IsConnected: true }) return null;
+            return multiplexer.GetConnection();
+        }
+        catch (Exception error) when (error is RespireConnectionRetiredException
+            || _core.Circuits is null && error is RespireConnectionException)
         {
             // Retirement can race the ready snapshot. The common cold path selects its replacement.
             return null;

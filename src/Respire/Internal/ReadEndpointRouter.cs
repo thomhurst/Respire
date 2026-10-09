@@ -84,6 +84,9 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
 
     internal bool IsConnected => _entries.Values.Any(static entry => entry.IsConnected);
 
+    internal bool IsCurrentReplicaEndpoint(RespireEndpoint endpoint)
+        => ContainsEndpoint(Volatile.Read(ref _replicas), endpoint);
+
     internal (RespireEndpoint Endpoint, RespireConnection? Connection)[] CaptureHealthConnections()
         => Volatile.Read(ref _replicas).Select(endpoint =>
             (endpoint, _entries.TryGetValue(endpoint, out var entry) ? entry.GetExistingHealthConnection() : null)).ToArray();
@@ -101,6 +104,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             if (_disposed != 0) return;
             Volatile.Write(ref _readyReplica, null);
             Interlocked.Exchange(ref _replicas, endpoints);
+            core.Circuits?.InvalidateMembership();
         }
         var retained = endpoints.ToHashSet(RespireEndpointComparer.Instance);
         foreach (var pair in _entries)

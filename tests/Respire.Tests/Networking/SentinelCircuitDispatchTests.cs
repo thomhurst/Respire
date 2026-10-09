@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using System.Text;
 using Respire.Commands;
+using Respire.Infrastructure;
 using Respire.Internal;
 using Respire.Networking;
 using Respire.Protocol;
@@ -13,6 +14,62 @@ namespace Respire.Tests.Networking;
 [NotInParallel]
 public sealed class SentinelCircuitDispatchTests
 {
+    [Test]
+    public async Task ActiveReplicaHistoriesSurviveTheIdleEndpointLimit()
+    {
+        await using var primary = Primary();
+        await using var replica = Primary();
+        var ports = Enumerable.Range(20000, StandaloneCircuitRegistry.RetainedEndpointLimit - 1)
+            .Prepend(replica.Port).ToArray();
+        await using var sentinel = Sentinel(() => primary.Port, ports);
+        await using var client = await Connect(sentinel);
+        await client.Core.ReadRouter.RefreshNowAsync(default);
+        var (circuit, _) = Prepare(client, replica);
+        Open(client, replica);
+        var registry = client.Core.Circuits!;
+        registry.Acquire(new("127.0.0.1", primary.Port), default).Dispose();
+        foreach (var port in ports.Skip(1))
+            registry.Acquire(new("127.0.0.1", port), default).Dispose();
+        for (var i = 0; i < 64; i++) registry.Acquire(new("history", 1000 + i), default).Dispose();
+
+        await Assert.That(ReferenceEquals(registry.GetForTests(new("127.0.0.1", replica.Port)), circuit)).IsTrue();
+        await Assert.That(() => registry.Acquire(new("127.0.0.1", replica.Port), default))
+            .Throws<RespireCircuitOpenException>();
+        await Assert.That(registry.CountForTests).IsEqualTo(ports.Length + 1);
+
+        // Once discovery removes replicas, their idle histories become eligible for trimming.
+        Array.Fill(ports, replica.Port);
+        await client.Core.ReadRouter.RefreshNowAsync(default);
+        registry.Acquire(new("history", 2000), default).Dispose();
+        await Assert.That(registry.CountForTests).IsEqualTo(StandaloneCircuitRegistry.RetainedEndpointLimit);
+        await Assert.That(ReferenceEquals(registry.GetForTests(new("127.0.0.1", replica.Port)), circuit)).IsTrue();
+    }
+
+    [Test]
+    [Arguments("batch")]
+    [Arguments("transaction")]
+    public async Task RetiredQueueSelectionDoesNotRecordEndpointFailure(string shape)
+    {
+        await using var first = Primary();
+        await using var second = Primary();
+        var port = first.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        await using var client = await Connect(sentinel);
+        var (circuit, _) = Prepare(client, first);
+        var generation = client.Core.Sentinel!.Current!;
+        Volatile.Write(ref port, second.Port);
+        await Assert.That(generation.TryRetire()).IsTrue();
+
+        // Reproduce selection after the ready snapshot, before a replacement is published.
+        await Assert.That(() => SelectCircuitConnection(client, generation.Multiplexer, default))
+            .Throws<RespireConnectionRetiredException>();
+        await Assert.That(SelectReadyConnection(client, generation.Multiplexer, default)).IsNull();
+        await Assert.That(circuit.Snapshot().FailureCount).IsEqualTo(0);
+        await Send(client, shape, "healthy");
+        await Assert.That(client.Core.Sentinel.Current!.Endpoint.Port).IsEqualTo(second.Port);
+        await Assert.That(circuit.Snapshot().FailureCount).IsEqualTo(0);
+    }
+
     [Test]
     [Arguments(RespireReadFrom.Replica, "string")]
     [Arguments(RespireReadFrom.Replica, "bytes")]
@@ -367,7 +424,7 @@ public sealed class SentinelCircuitDispatchTests
         },
     };
 
-    private static FakeRespServer Sentinel(Func<int> port, int? replicaPort = null)
+    private static FakeRespServer Sentinel(Func<int> port, params int[] replicaPorts)
     {
         var epochs = new Dictionary<int, int>();
         byte[] Configuration()
@@ -384,8 +441,9 @@ public sealed class SentinelCircuitDispatchTests
             {
                 "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster" => Encoding.ASCII.GetBytes($"*2\r\n+127.0.0.1\r\n+{port()}\r\n"),
                 "SENTINEL MASTER mymaster" => Configuration(),
-                "SENTINEL REPLICAS mymaster" when replicaPort is { } replica => Encoding.ASCII.GetBytes(
-                    $"*1\r\n*6\r\n+ip\r\n+127.0.0.1\r\n+port\r\n+{replica}\r\n+flags\r\n+slave\r\n"),
+                "SENTINEL REPLICAS mymaster" => Encoding.ASCII.GetBytes(
+                    $"*{replicaPorts.Length}\r\n" + string.Concat(replicaPorts.Select(replica =>
+                        $"*6\r\n+ip\r\n+127.0.0.1\r\n+port\r\n+{replica}\r\n+flags\r\n+slave\r\n"))),
                 "SUBSCRIBE +switch-master" => "*3\r\n+subscribe\r\n+switch-master\r\n:1\r\n"u8.ToArray(),
                 "SUBSCRIBE +sdown" => "*3\r\n+subscribe\r\n+sdown\r\n:2\r\n"u8.ToArray(),
                 "SUBSCRIBE +odown" => "*3\r\n+subscribe\r\n+odown\r\n:3\r\n"u8.ToArray(),
@@ -408,6 +466,12 @@ public sealed class SentinelCircuitDispatchTests
     }
     [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_clock")]
     private static extern ref TimeProvider CircuitClock(EndpointCircuitBreaker circuit);
+    [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "GetCircuitConnectionSlow")]
+    private static extern RespireConnection SelectCircuitConnection(RespireClient client,
+        RespireConnectionMultiplexer multiplexer, CancellationToken cancellationToken);
+    [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "TryAcquireReadyConnection")]
+    private static extern RespireConnection? SelectReadyConnection(RespireClient client,
+        RespireConnectionMultiplexer multiplexer, CancellationToken cancellationToken);
     private sealed class Clock : TimeProvider
     {
         private long _timestamp = TimeProvider.System.GetTimestamp();

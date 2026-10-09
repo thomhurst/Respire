@@ -79,7 +79,9 @@ internal sealed class ClientCore : IAsyncDisposable
         Options = options;
         Circuits = options.CircuitBreaker is { } circuitOptions
             ? new(circuitOptions, () => Multiplexer.ActiveConnectionEndpoint,
-                options.UseCluster ? endpoint => Cluster!.IsCircuitEndpointCurrent(endpoint) : null) : null;
+                endpoint => Cluster is { } cluster
+                    ? cluster.IsCircuitEndpointCurrent(endpoint)
+                    : Sentinel is not null && ReadRouter.IsCurrentReplicaEndpoint(endpoint)) : null;
         HedgedReads = options.HedgedReads is { } hedging ? new(hedging.MaximumExtraLoadPercent) : null;
         Logger = options.CreateLogger("Respire.RespireClient");
         var endpoint = options.PrimaryEndpoint;

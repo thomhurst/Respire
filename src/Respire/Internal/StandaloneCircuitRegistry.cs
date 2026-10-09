@@ -7,7 +7,7 @@ internal sealed class StandaloneCircuitRegistry(RespireCircuitBreakerOptions opt
     internal const int RetainedEndpointLimit = 16;
     private readonly Lock _gate = new();
     // Ordinary standalone clients reuse their configured host (not each resolved IP).
-    // Retain current and in-flight endpoint state; trim only idle maintenance history.
+    // Retain current routing endpoints and in-flight state; trim only idle history.
     private readonly Dictionary<RespireEndpoint, Entry> _circuits = new(RespireEndpointComparer.Instance);
     private long _lastUse;
     private long _membershipVersion;

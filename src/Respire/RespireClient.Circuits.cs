@@ -73,6 +73,10 @@ public sealed partial class RespireClient
                     cancellationToken.ThrowIfCancellationRequested();
                     continue;
                 }
+                // A retired Sentinel generation is a stale route, not endpoint health evidence.
+                // Ready queue selection catches retirement and enters validated discovery.
+                if (multiplexer.Options.Generation is SentinelRouter.Generation { IsRetired: true })
+                    throw new RespireConnectionRetiredException(multiplexer.Host, multiplexer.Port);
                 // A handoff can publish after selection observes the dead source. Retry that
                 // stale selection before rejecting or recording availability for either endpoint.
                 if (!ReferenceEquals(routing.Publication, multiplexer.MovingPublication))
