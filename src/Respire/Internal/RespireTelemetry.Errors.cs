@@ -103,7 +103,7 @@ internal static partial class RespireTelemetry
             {
                 if (_dispatch is not null) return _dispatch.IsOpen(_generation);
                 if (_state is null) return false;
-                lock (_state.Gate) return _state.Active && _state.Generation == _generation;
+                lock (_state.Gate) return _state.Active && _state.Generation == _generation && !_state.Final;
             }
         }
 
