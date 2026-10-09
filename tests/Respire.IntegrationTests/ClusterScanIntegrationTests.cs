@@ -181,9 +181,12 @@ public class ClusterScanIntegrationTests
                     while (!(await cluster.CommandAsync(node, "CLUSTER", "INFO")).Contains("cluster_state:ok", StringComparison.Ordinal))
                         await Task.Delay(100, ready.Token);
                 }
+                // Start every replication link before waiting, so initial synchronization runs
+                // concurrently rather than consuming the shared deadline once per replica.
+                for (var replica = 3; replica < 6; replica++)
+                    await cluster.CommandAsync(replica, "CLUSTER", "REPLICATE", cluster._ids[replica - 3]);
                 for (var replica = 3; replica < 6; replica++)
                 {
-                    await cluster.CommandAsync(replica, "CLUSTER", "REPLICATE", cluster._ids[replica - 3]);
                     while (true)
                     {
                         var replication = await cluster.CommandAsync(replica, "INFO", "replication");
