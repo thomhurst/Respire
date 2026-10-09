@@ -29,6 +29,7 @@ Benchmark concurrency groups must include `github.event.label.name` alongside th
 | Workflow | Label |
 | --- | --- |
 | `benchmark-aggregate-parsing.yml` | `run-aggregate-benchmarks` |
+| `benchmark-aggregate-recovery.yml` | `run-aggregate-recovery-benchmarks` |
 | `benchmark-byte-get.yml` | `run-byte-get-benchmarks` |
 | `benchmark-cache-aside.yml` | `run-cache-aside-benchmarks` |
 | `benchmark-cache-classification.yml` | `run-cache-classification-benchmarks` |

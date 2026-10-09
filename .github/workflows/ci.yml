@@ -93,9 +93,7 @@ jobs:
         run: python -m pip install --disable-pip-version-check PyYAML==6.0.3
       - name: Verify policy and rejection controls
         run: |
-          python scripts/workflows/BenchmarkWorkflowPolicyTests.py
-          python scripts/workflows/BenchmarkRetentionTests.py
-          python scripts/workflows/BenchmarkProfileTests.py
+          python -B -m unittest discover -s scripts/workflows -p '*Tests.py'
           python -B -m unittest discover -s scripts/benchmarks -p '*Tests.py'
           python scripts/workflows/BenchmarkWorkflowPolicy.py
 
