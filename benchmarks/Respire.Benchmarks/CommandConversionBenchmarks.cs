@@ -4,7 +4,7 @@ using Testcontainers.Redis;
 
 namespace Respire.Benchmarks;
 
-/// <summary>Public integer conversion with Cmd1/Cmd3, singly and eight commands in flight.</summary>
+/// <summary>Typed and raw public integer conversion, singly and eight commands in flight.</summary>
 [MemoryDiagnoser]
 public class CommandConversionBenchmarks
 {
@@ -12,6 +12,7 @@ public class CommandConversionBenchmarks
     private RespireClient _client = null!;
     private readonly RespireKey _key = "conversion:integer";
     private readonly RespireValue _value = "benchmark-value";
+    private RespireValue[] _rawLengthArguments = null!;
     private long _offset = 0;
 
     [GlobalSetup]
@@ -32,14 +33,38 @@ public class CommandConversionBenchmarks
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
         if (!await _client.SetAsync(_key, _value)) throw new InvalidOperationException("Seed SET failed.");
+        _rawLengthArguments = [_key.ToString()];
         var expected = "benchmark-value".Length;
         if (await SmallLength() != expected || await LargeSetRange() != expected
-            || await SmallLengthPipeline() != 8 * expected || await LargeSetRangePipeline() != 8 * expected)
+            || await SmallLengthPipeline() != 8 * expected || await LargeSetRangePipeline() != 8 * expected
+            || await RawLength() != expected || await RawLengthPipeline() != 8 * expected)
             throw new InvalidOperationException("Conversion fixture did not preserve all replies.");
     }
 
     [Benchmark] public ValueTask<long> SmallLength() => _client.Strings.LengthAsync(_key);
     [Benchmark] public ValueTask<long> LargeSetRange() => _client.Strings.SetRangeAsync(_key, _offset, _value);
+
+    [Benchmark]
+    public async ValueTask<long> RawLength()
+    {
+        using var reply = await _client.ExecuteAsync(RespireCommands.String.STRLEN, _rawLengthArguments);
+        return reply.AsInteger();
+    }
+
+    [Benchmark(OperationsPerInvoke = 8)]
+    public async ValueTask<long> RawLengthPipeline()
+    {
+        var first = RawLength();
+        var second = RawLength();
+        var third = RawLength();
+        var fourth = RawLength();
+        var fifth = RawLength();
+        var sixth = RawLength();
+        var seventh = RawLength();
+        var eighth = RawLength();
+        return await first + await second + await third + await fourth
+            + await fifth + await sixth + await seventh + await eighth;
+    }
 
     [Benchmark(OperationsPerInvoke = 8)]
     public async ValueTask<long> SmallLengthPipeline()

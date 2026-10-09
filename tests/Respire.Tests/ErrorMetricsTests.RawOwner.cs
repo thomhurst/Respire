@@ -157,6 +157,52 @@ public partial class ErrorMetricsTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
+    public async Task BlockingAskingCapacityFailureHasOneFinalOwner(bool enabled)
+    {
+        using var configuration = new MetricConfigurationScope(new()
+            { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
+        await using var target = new FakeRespServer(4, FakeRespServer.OkReply);
+        var slot = ClusterHash.GetSlot("key");
+        await using var seed = new FakeRespServer(4, Encoding.ASCII.GetBytes($"-ASK {slot} 127.0.0.1:{target.Port}\r\n"))
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "CLUSTER SLOTS" => "*0\r\n"u8.ToArray(),
+                "PING" => FakeRespServer.PongReply,
+                _ => null,
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            MaxInflightCommands = 1, Endpoints = [new("127.0.0.1", seed.Port)],
+        });
+        using var capture = new Capture(throwOnMeasurement: true);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var error = await Assert.That(async () =>
+        {
+            using var result = await client.ExecuteAsync("BLPOP", ["key", 1], cancellationToken: deadline.Token);
+        }).ThrowsExactly<InvalidOperationException>();
+        await Assert.That(error!.Message).IsEqualTo(
+            "A validated prefixed command needs 2 in-flight slots, but this connection allows 1.");
+        await Assert.That(target.ReceivedCommands.Any(command => command == "ASKING"
+            || command.StartsWith("BLPOP ", StringComparison.Ordinal))).IsFalse();
+        var items = capture.Items.ToArray();
+        await Assert.That(items.Length).IsEqualTo(enabled ? 2 : 0);
+        if (enabled)
+        {
+            await Assert.That((bool)items[0].Tags["redis.client.errors.internal"]!).IsTrue();
+            await Assert.That(items[0].Tags["db.response.status_code"]).IsEqualTo("ASK");
+            await Assert.That((bool)items[1].Tags["redis.client.errors.internal"]!).IsFalse();
+            await Assert.That(items[1].Tags["redis.client.operation.retry_attempts"]).IsEqualTo(1);
+        }
+        using var reply = await client.ExecuteAsync("PING", [], cancellationToken: deadline.Token);
+        await Assert.That(capture.Items.Count).IsEqualTo(enabled ? 2 : 0);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
     public async Task ShutdownPreflightCountsOneFinalError(bool invalidOptions)
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
