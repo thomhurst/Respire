@@ -38,7 +38,16 @@ foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
             retrieved++;
         }
         if (retrieved != 1) throw new InvalidOperationException("Filtered retrieval smoke failed.");
-        Console.WriteLine($"VectorData hash, filtered retrieval and filtered KNN smoke passed ({protocol}).");
+        var hybridCount = 0;
+        await foreach (var result in collection.HybridSearchAsync(new float[] { 1, 0 }, ["Arrival"], 1,
+            new() { AdditionalProperty = movie => movie.Title, Filter = movie => movie.Title == title, IncludeVectors = true }, deadline.Token))
+        {
+            if (result.Record.Id != "1" || result.Score is not > 0 || result.Record.Vector.Length != 2)
+                throw new InvalidOperationException("Hash hybrid smoke failed.");
+            hybridCount++;
+        }
+        if (hybridCount != 1) throw new InvalidOperationException("Hash hybrid smoke failed.");
+        Console.WriteLine($"VectorData hash, filtered retrieval, filtered KNN and hybrid smoke passed ({protocol}).");
     }
     finally { await collection.EnsureCollectionDeletedAsync(CancellationToken.None); }
 
@@ -67,6 +76,15 @@ foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
             if (found) break;
             await Task.Delay(20, deadline.Token);
         }
+        var jsonHybridCount = 0;
+        await foreach (var result in jsonCollection.HybridSearchAsync(new float[] { 0, 1 }, ["Arrival"], 1,
+            new() { AdditionalProperty = movie => movie.Details.Title, VectorProperty = movie => movie.AlternateVector }, deadline.Token))
+        {
+            if (result.Record.Id != "1" || result.Score is not > 0 || result.Record.AlternateVector is not null)
+                throw new InvalidOperationException("JSON hybrid smoke failed.");
+            jsonHybridCount++;
+        }
+        if (jsonHybridCount != 1) throw new InvalidOperationException("JSON hybrid smoke failed.");
         await jsonCollection.UpsertAsync(new JsonMovie("1", new("Updated"), [0, 1]), deadline.Token);
         var updated = await jsonCollection.GetAsync("1", new() { IncludeVectors = true }, deadline.Token);
         if (updated?.Details.Title != "Updated" || updated.Details.Tag is not null || updated.AlternateVector is not null)
@@ -74,7 +92,7 @@ foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
         await jsonCollection.DeleteAsync("1", deadline.Token);
         if (await jsonCollection.GetAsync("1", cancellationToken: deadline.Token) is not null)
             throw new InvalidOperationException("JSON deletion smoke failed.");
-        Console.WriteLine($"VectorData JSON and KNN smoke passed ({protocol}).");
+        Console.WriteLine($"VectorData JSON, KNN and hybrid smoke passed ({protocol}).");
     }
     finally { await jsonCollection.EnsureCollectionDeletedAsync(CancellationToken.None); }
 }

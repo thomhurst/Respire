@@ -5,7 +5,7 @@ description: Store typed vector records in Redis hashes or JSON through explicit
 
 # Microsoft.Extensions.VectorData
 
-`Respire.VectorData` implements `VectorStore` and string-keyed `VectorStoreCollection<string,TRecord>` from `Microsoft.Extensions.VectorData.Abstractions` 10.10.0 using Redis Query Engine hashes or RedisJSON documents. Both storage kinds support collection lifecycle, record CRUD, sequential batch operations and FLOAT32 KNN search. Hash collections also support expression filters and filtered retrieval. Use an unprefixed Respire client; Search commands reject client key prefixes. This connector supports standalone Redis Query Engine, included in standalone Redis 8. Redis Cluster is unsupported: collection deletion scans one node and cannot remove unindexed records across all shards, even when a search coordinator is available.
+`Respire.VectorData` implements `VectorStore` and string-keyed `VectorStoreCollection<string,TRecord>` from `Microsoft.Extensions.VectorData.Abstractions` 10.10.0 using Redis Query Engine hashes or RedisJSON documents. Both storage kinds support collection lifecycle, record CRUD, sequential batch operations, FLOAT32 KNN search and hybrid text/vector search. Hash collections also support expression filters and filtered retrieval. Use an unprefixed Respire client; Search commands reject client key prefixes. This connector supports standalone Redis Query Engine, included in standalone Redis 8; hybrid search requires the `FT.HYBRID` capability introduced in Redis 8.4. Redis Cluster is unsupported: collection deletion scans one node and cannot remove unindexed records across all shards, even when a search coordinator is available.
 
 ```bash
 dotnet add package Respire.VectorData
@@ -76,7 +76,7 @@ JSON upsert uses a single script that replaces the entire root with `JSON.SET` a
 
 Search accepts `float[]`, `Memory<float>` or `ReadOnlyMemory<float>`. It returns Redis's distance unchanged: lower scores are better. `Skip` and `top` select a page from the nearest `Skip + top` candidates. `ScoreThreshold` is a maximum distance applied after that page is selected; filtered hits are not replaced, so fewer than `top` records can be returned. Set `VectorProperty` to a mapped property expression when multiple vectors are declared; JSON mappings also accept nested member paths. Records deleted between search and retrieval are omitted without refilling the page; this is not a transactional snapshot. Search indexing can lag writes. Malformed search scores or documents outside the collection become `VectorStoreException` with an `InvalidOperationException` cause and collection/operation metadata.
 
-This connector supports hashes, JSON, and explicit typed mappings. Hybrid search, embedding generation, dynamic dictionaries and non-string keys are unsupported. Expression filters and filtered retrieval currently support hashes only; JSON requests with filters throw before I/O. Unsupported filters and inputs are never silently ignored. Server and transport failures become `VectorStoreException` with the original Respire exception as their cause and collection/operation metadata. Cancellation stays `OperationCanceledException`. [The connector epic](https://github.com/thomhurst/Respire/issues/887) retains the remaining features and full official conformance suite. Tests include lifecycle, basic-model, multivector and supported hash-filter contracts adapted from [the upstream conformance tests at the package source revision](https://github.com/dotnet/extensions/tree/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests), with the supported JSON contracts tested on RESP2 and RESP3. Passing this subset does not establish complete upstream conformance; the complete suite remains required by [the final conformance child](https://github.com/thomhurst/Respire/issues/1262).
+This connector supports hashes, JSON, explicit typed mappings and capability-aware hybrid search. Embedding generation, dynamic dictionaries and non-string keys are unsupported. Expression filters and filtered retrieval currently support hashes only; JSON requests with filters throw before I/O. Unsupported filters and inputs are never silently ignored. Server and transport failures become `VectorStoreException` with the original Respire exception as their cause and collection/operation metadata. Cancellation stays `OperationCanceledException`. [The connector epic](https://github.com/thomhurst/Respire/issues/887) retains the remaining features and full official conformance suite. Tests include lifecycle, basic-model, multivector, hybrid and supported hash-filter contracts adapted from [the upstream conformance tests at the package source revision](https://github.com/dotnet/extensions/tree/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests), with the supported JSON contracts tested on RESP2 and RESP3. Passing this subset does not establish complete upstream conformance; the complete suite remains required by [the final conformance child](https://github.com/thomhurst/Respire/issues/1262).
 
 ## Expression filters
 
@@ -119,6 +119,33 @@ Supported operators:
 Unsupported expressions throw `NotSupportedException` before a request: unregistered or nested record properties, property getters for captured values, arbitrary method calls, arithmetic, property-to-property comparisons, custom comparers, string substring/prefix matching, collection equality, `long`, `ulong`, `decimal`, enums, dates and conversions that change numeric semantics. Nullable record `.Value` access is unsupported; compare the nullable property directly. Only nullable lifting, small-integer promotion and lossless promotion to double are accepted as conversions.
 
 Filters apply before KNN selects the nearest `Skip + top` candidates and work with the selected `VectorProperty`. Filtered retrieval uses `Skip`/`top` without vector ranking; result order is unspecified and `OrderBy` is unsupported. Vector inclusion, cancellation and records deleted between searching and hash retrieval behave as described above.
+
+## Hybrid search
+
+Collections implement `IKeywordHybridSearchable<TRecord>` for Redis Query Engine [`FT.HYBRID`](https://redis.io/docs/latest/commands/ft.hybrid/), available in Redis Open Source 8.4 or later with Redis Search. The connector checks the server's command table with `COMMAND INFO FT.HYBRID` when hybrid execution fails. A missing command throws `NotSupportedException` naming the required capability; Redis version strings alone do not establish support. When an ACL or proxy denies capability inspection, only an unknown-command error naming `FT.HYBRID` produces that diagnostic. Permission, index and query errors retain their database failure diagnostics. There is no client-side rank fusion fallback.
+
+Declare `TextFields` on either mapper to bind CLR property names to existing indexed TEXT fields in `DataFields`. Each binding must name a unique CLR property and a unique field; JSON bindings use the query alias and may use dotted CLR paths. Fields with `NoIndex` cannot serve as hybrid text fields. The sample hash mapper binds `Title` to `title`; the JSON mapper binds `Details.Title` to the `title` alias. This metadata avoids property-name guessing and runtime reflection.
+
+```csharp
+public override IReadOnlyList<RespireVectorDataTextField> TextFields =>
+    [new(nameof(Movie.Title), "title")];
+```
+
+Pass an already generated FLOAT32 vector and one or more nonblank keywords. Keywords are escaped quoted terms or phrases, joined with OR within the selected text field. They cannot inject native query syntax. Select `AdditionalProperty` when multiple text bindings exist, and `VectorProperty` when multiple vectors exist. Hash expression filters apply before ranking to both text and vector legs; JSON expression filters remain unsupported.
+
+```csharp
+IKeywordHybridSearchable<Movie> hybrid = collection;
+await foreach (var hit in hybrid.HybridSearchAsync(
+    new float[] { 1, 0 }, ["science", "space travel"], top: 5,
+    new() { AdditionalProperty = movie => movie.Title, Filter = movie => movie.Tag == "science" }))
+{
+    Console.WriteLine($"{hit.Record.Id}: {hit.Score}");
+}
+```
+
+Redis fuses the text and vector rankings using reciprocal rank fusion (RRF), with constant 60 and a window of `Math.Max(20, Skip + top)`. The vector candidate count uses the same window. Returned scores are the unmodified server fusion scores, where higher is better. `ScoreThreshold` is a minimum fusion score applied after selecting the `Skip`/`top` page; it does not refill the page. These scores differ from KNN vector distances, where lower is better. Increasing the requested window can change fusion ranking. Text matches and vector matches form a union, so a vector-only match can still appear when no keyword matches.
+
+`IncludeVectors`, cancellation, batched retrieval and records removed between search and retrieval behave as for KNN search. Tests cover the applicable pinned upstream hybrid contracts, text selection, multi-keyword ranking, hash filters, JSON nested text and selected vectors, scores and paging on real Redis 8.4 and 8.10 using RESP2 and RESP3, plus the missing capability on Redis 8.2.
 
 ## Exception behavior
 
