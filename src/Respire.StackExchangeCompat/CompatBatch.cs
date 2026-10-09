@@ -40,7 +40,11 @@ internal sealed class CompatBatch(CompatDatabase database) : CompatDatabaseAsync
         try
         {
             using var batch = DatabaseOwner.CreateNativeBatch();
-            foreach (var command in commands) command.Enqueue(batch);
+            foreach (var command in commands)
+            {
+                try { command.Enqueue(batch); }
+                catch (Exception error) { command.Fail(error); }
+            }
             await batch.TryExecuteAsync(cancellationToken).ConfigureAwait(false);
             foreach (var command in commands) command.Complete();
         }
