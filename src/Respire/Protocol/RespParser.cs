@@ -236,7 +236,7 @@ internal static class RespParser
 
         if (payloadLength == -1)
         {
-            value = RespValue.Null;
+            value = RespValue.NullFromWire(type);
             pos = headerEnd;
             return RespParseStatus.Done;
         }
@@ -454,7 +454,7 @@ internal static class RespParser
 
         if (declaredCount == -1)
         {
-            value = RespValue.Null;
+            value = RespValue.NullFromWire(type);
             cursor = pos;
             return RespParseStatus.Done;
         }

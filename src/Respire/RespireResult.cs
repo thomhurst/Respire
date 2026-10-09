@@ -66,6 +66,18 @@ public readonly struct RespireResult : IDisposable, IReadOnlyList<RespireResult>
     /// <summary>Whether the server returned RESP null.</summary>
     public bool IsNull => Value.IsNull;
 
+    /// <summary>The original null framing type, or null for a non-null reply.</summary>
+    /// <remarks>Distinguishes RESP2 null bulk strings and arrays from RESP3 null.
+    /// <see cref="Type"/> continues to return <see cref="RespDataType.Null"/> for all null replies.</remarks>
+    public RespDataType? NullWireType
+    {
+        get
+        {
+            var value = Value;
+            return value.IsNull ? value.NullWireType : null;
+        }
+    }
+
     /// <summary>True for a RESP error element (top-level errors throw instead).</summary>
     public bool IsError => Value.IsError;
 

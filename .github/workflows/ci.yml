@@ -31,6 +31,26 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  stackexchange-interop:
+    name: StackExchange value boundary (${{ matrix.framework }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: [net8.0, net10.0]
+    env:
+      TUNIT_DISABLE_HTML_REPORTER: 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-dotnet
+      - name: Build compatibility boundary
+        run: dotnet build tests/Respire.StackExchangeCompat.Tests -c Release -f ${{ matrix.framework }}
+      - name: Test RESP2 and RESP3 conversion against Redis
+        run: >-
+          dotnet run --project tests/Respire.StackExchangeCompat.Tests -c Release
+          -f ${{ matrix.framework }} --no-build -- --minimum-expected-tests 38
+
   mapper-native-aot:
     name: Generated mapper Native AOT (${{ matrix.framework }})
     runs-on: ubuntu-latest
