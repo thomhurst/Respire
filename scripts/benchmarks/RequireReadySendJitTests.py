@@ -10,7 +10,7 @@ def listing(method):
 class RequireReadySendJitTests(unittest.TestCase):
     def setUp(self):
         self.baseline = ''.join(listing(method) for method in (
-            'ConvertResponseAsync', 'StringOrNullAsync', 'BytesOrNullAsync'))
+            'ConvertResponseCoreAsync', 'StringOrNullCoreAsync', 'BytesOrNullCoreAsync'))
         self.candidate = self.baseline + listing('SendOnReadyPrimaryAsync')
 
     def test_pre_strategy_dispatch_does_not_require_the_unused_strategy_helper(self):
@@ -23,13 +23,15 @@ class RequireReadySendJitTests(unittest.TestCase):
 
     def test_missing_typed_dispatch_is_rejected_for_both_sources(self):
         for candidate, log in ((False, self.baseline), (True, self.candidate)):
-            for method in ('ConvertResponseAsync', 'StringOrNullAsync', 'BytesOrNullAsync'):
+            for method in ('ConvertResponseCoreAsync', 'StringOrNullCoreAsync', 'BytesOrNullCoreAsync'):
                 with self.subTest(candidate=candidate, method=method):
                     with self.assertRaisesRegex(ValueError, method):
                         require_dispatch_evidence(log.replace(listing(method), ''), candidate=candidate)
 
     def test_unrelated_listing_or_plain_method_reference_is_not_evidence(self):
-        for log in ('', listing('ConnectAsync'), 'ConvertResponseAsync StringOrNullAsync BytesOrNullAsync',
+        for log in ('', listing('ConnectAsync'), 'ConvertResponseCoreAsync StringOrNullCoreAsync BytesOrNullCoreAsync',
+                    ''.join(listing(method) for method in
+                            ('ConvertResponseAsync', 'StringOrNullAsync', 'BytesOrNullAsync')),
                     self.baseline.replace('Respire.RespireClient:', 'Other.Client:')):
             with self.subTest(log=log):
                 with self.assertRaises(ValueError):

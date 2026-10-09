@@ -1,9 +1,11 @@
 """Restore pre-strategy dispatch in an isolated benchmark checkout, failing on drift.
 
-ReadySendStrategy.patch contains only the production dispatch change from
-445869b2f3284ee82c7fcf40537eb4f498b104e2 and its later readonly-core comment.
-Apply it in reverse to keep the baseline's runtime, dependencies, transport,
-test infrastructure, and other code identical to the merge's first parent.
+ReadySendStrategy.patch restores direct primary dispatch from before
+445869b2f3284ee82c7fcf40537eb4f498b104e2, rebased onto current production code.
+Later replica, cluster, circuit, telemetry and mutation ownership helpers move
+into RespireClient.cs unchanged. Apply the patch in reverse to keep the
+baseline's runtime, dependencies, transport and other code identical to the
+merge's first parent.
 """
 
 import hashlib
@@ -39,7 +41,9 @@ def prepare(checkout: Path, evidence: Path) -> None:
             'ReadySendStrategy.patch no longer matches the baseline. In a separate clean checkout '
             'of the new baseline, manually restore only the pre-strategy dispatch from '
             '445869b2f3284ee82c7fcf40537eb4f498b104e2^ and remove the strategy file, preserving '
-            'unrelated changes. Save git diff --binary -R for the two production paths as the '
+            'unrelated changes. Move still-required helpers from the strategy file into '
+            'RespireClient.cs unchanged; restore direct sends only on the ordinary primary route. '
+            'Save git diff --binary -R for the two production paths as the '
             'replacement patch. Build and validate both frameworks and inspect the recorded '
             'source hashes before accepting that regenerated control; do not copy an entire historical client file.'
         ) from error

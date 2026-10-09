@@ -2,9 +2,9 @@
 
 
 def require_dispatch_evidence(log: str, *, candidate: bool) -> None:
-    # Pre-strategy typed dispatch lives in these entry points. The strategy
-    # candidate retains them and adds its constrained generic send helper.
-    methods = ['ConvertResponseAsync', 'StringOrNullAsync', 'BytesOrNullAsync']
+    # Observation entry points now wrap these cores. Require the cores that
+    # actually choose and dispatch the typed reply, not only wrapper listings.
+    methods = ['ConvertResponseCoreAsync', 'StringOrNullCoreAsync', 'BytesOrNullCoreAsync']
     if candidate:
         methods.append('SendOnReadyPrimaryAsync')
     for method in methods:
