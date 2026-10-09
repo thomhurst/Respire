@@ -152,6 +152,61 @@ public partial class ErrorMetricsTests
     }
 
     [Test]
+    [MatrixDataSource]
+    public async Task SuccessfulDeferredExecutionRentsNoErrorObservation(
+        [Matrix(false, true)] bool transaction, [Matrix(false, true)] bool enabled,
+        [Matrix(2, 3)] int protocol)
+    {
+        using var configuration = new MetricConfigurationScope(new()
+            { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
+        using var capture = new Capture();
+        await using var server = new FakeRespServer(8, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "HELLO 3" => "%1\r\n+proto\r\n:3\r\n"u8.ToArray(),
+                "INCR counter" or "GET key" when transaction => "+QUEUED\r\n"u8.ToArray(),
+                "INCR counter" => ":42\r\n"u8.ToArray(),
+                "GET key" => "$5\r\nvalue\r\n"u8.ToArray(),
+                "EXEC" => "*2\r\n:42\r\n$5\r\nvalue\r\n"u8.ToArray(),
+                _ => null,
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = (RespProtocol)protocol, Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
+        });
+        await ExecuteAsync();
+        var before = RentalCounts();
+        await ExecuteAsync();
+        await Assert.That(RentalCounts()).IsEqualTo(before);
+        await Assert.That(capture.Items).IsEmpty();
+
+        // These controls detect rentals even when both pools return warmed storage.
+        using (RespireTelemetry.ErrorObservation.Rent(force: true)) { }
+        await Assert.That(RentalCounts().Legacy).IsEqualTo(before.Legacy + 1);
+        var owner = ErrorObservation.StartFailure();
+        owner.Complete();
+        await Assert.That(RentalCounts().Failure).IsEqualTo(before.Failure + 1);
+
+        static (long Legacy, long Failure) RentalCounts() =>
+            (RespireTelemetry.ErrorObservation.RentalCountForTests, ErrorObservation.RentalCountForTests);
+
+        async Task ExecuteAsync()
+        {
+            using var batch = transaction ? null : client.CreateBatch();
+            await using var multi = transaction ? client.CreateTransaction() : null;
+            var increment = transaction ? multi!.Increment("counter") : batch!.Increment("counter");
+            var get = transaction ? multi!.GetString("key") : batch!.GetString("key");
+            if (transaction) await multi!.CommitAsync();
+            else await batch!.ExecuteAsync();
+            await Assert.That(increment.Result).IsEqualTo(42L);
+            await Assert.That(get.GetAwaiter().GetResult()).IsEqualTo("value");
+        }
+    }
+
+    [Test]
     public async Task DeferredSuccessAddsNoObservationAllocation()
     {
         var pending = new RespirePending<int>();

@@ -286,9 +286,13 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
         var mutationFence = default(ClientSideCacheCoordinator.MutationFence);
         try
         {
-            cancellationToken.ThrowIfCancellationRequested();
             if (_ops.Count == 0 && (!validateEmptyWatch || _watchConnection is null))
             {
+                // Nonempty commits use SendAsync's before-submission classification.
+                // Empty imports must preserve their fieldsets on cancellation too.
+                if (ConnectionPolicy.IsImportSession && cancellationToken.IsCancellationRequested)
+                    throw new RespireCommandNotSubmittedException(new OperationCanceledException(cancellationToken));
+                cancellationToken.ThrowIfCancellationRequested();
                 if (core.Sentinel is not null)
                 {
                     telemetry = RespireTelemetry.StartBatchOperation(

@@ -449,16 +449,31 @@ public class HashImportTests
     }
 
     [Test]
-    public async Task PreCanceledBatchPreservesPreparedFieldsets()
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task PreCanceledQueuePreservesPreparedFieldsets(bool transaction, bool empty)
     {
         await using var server = new RespireFakeServer();
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
-        using var batch = session.CreateBatch();
-        var unsent = batch.Hashes.Import("unsent", "schema", "value");
-        await Assert.That(async () => await batch.ExecuteAsync(new(true))).Throws<OperationCanceledException>();
-        await Assert.That(unsent.Status).IsEqualTo(RespirePendingStatus.Faulted);
+        using var batch = transaction ? null : session.CreateBatch();
+        await using var multi = transaction ? session.CreateTransaction() : null;
+        RespirePending<bool>? unsent = null;
+        if (!empty)
+            unsent = transaction
+                ? multi!.Hashes.Import("unsent", "schema", "value")
+                : batch!.Hashes.Import("unsent", "schema", "value");
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var error = await Assert.That(async () =>
+        {
+            if (transaction) await multi!.CommitAsync(cancellation.Token);
+            else await batch!.ExecuteAsync(cancellation.Token);
+        }).Throws<OperationCanceledException>();
+        await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
+        if (unsent is not null) await Assert.That(unsent.Status).IsEqualTo(RespirePendingStatus.Faulted);
         await Assert.That(await client.ExistsAsync("unsent")).IsFalse();
         await session.SetAsync("later", "schema", "retained");
         await Assert.That(await client.Hashes.GetStringAsync("later", "field")).IsEqualTo("retained");
