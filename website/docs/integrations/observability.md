@@ -970,6 +970,20 @@ boundary through typed conversion and cleanup. SCRIPT LOAD, EXISTS and FLUSH kee
 caller boundary across all Cluster primaries and join every target before publishing
 one final failure. Successful script calls rent no error observation storage.
 
+Collection scans (`HSCAN`, `SSCAN`, `ZSCAN`, including `HSCAN NOVALUES`) and standalone
+`SCAN` count validation, cancellation and malformed pages once. Replica-policy pages
+retain their server affinity and final owner through cursor and item parsing and reply
+cleanup. Each page owns its retry history; cancellation between yielded items is a
+separate enumeration failure. Ending an enumeration early does not count as an error.
+
+Resumable Cluster pages and direct Valkey `CLUSTERSCAN` pages retain a failure-only
+owner from checkpoint or argument validation through page construction, response
+cleanup and discovery completion. Capability probes, unsupported-command fallbacks,
+retired connections and redirects borrow that owner. Recovered failures are internal;
+caller-visible failures count once with the full page retry count. Exception identity
+and cancellation token/status are preserved. Successful pages do not rent error lease
+storage from either observation pool.
+
 ## Sentinel primary changes
 
 Sentinel batch, durability-batch, and transaction acquisition failures still emit an error

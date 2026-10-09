@@ -507,14 +507,21 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
         int countHint = 250,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(countHint);
-        var typeToken = FormatKeyType(type);
-
-        // A key-prefixed view scans inside its prefix and returns keys with the prefix stripped,
-        // so results round-trip through the same view's commands. The prefix is glob-escaped —
-        // a prefix like "tenant:*:" must match itself literally, never act as a wildcard.
+        string? typeToken;
+        RespireValue? effectiveMatch;
         var prefix = client.KeyPrefix;
-        var effectiveMatch = ScanMatch(prefix, match);
+        try
+        {
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(countHint);
+            typeToken = FormatKeyType(type);
+            // A prefixed scan matches the literal prefix and returns keys that round-trip through this view.
+            effectiveMatch = ScanMatch(prefix, match);
+        }
+        catch (Exception error)
+        {
+            ErrorObservation.FinishFinal(default, error);
+            throw;
+        }
 
         if (client.Core.Cluster is not null)
         {
@@ -522,13 +529,27 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
             var migrationDelayMs = 50;
             do
             {
+                CollectionScan.CheckCancellation(cancellationToken);
                 var page = await ScanClusterPageAsync(checkpoint, match, type, countHint, cancellationToken).ConfigureAwait(false);
-                foreach (var key in page.Keys) yield return key;
+                foreach (var key in page.Keys)
+                {
+                    CollectionScan.CheckCancellation(cancellationToken);
+                    yield return key;
+                }
                 checkpoint = page.Cursor;
                 if (page.WaitingOnMigration)
                 {
-                    await Task.Delay(TimeSpan.FromMilliseconds(migrationDelayMs), scanTimeProvider ?? TimeProvider.System,
-                        cancellationToken).ConfigureAwait(false);
+                    // The page owner has completed; the migration wait is a separate enumeration boundary.
+                    try
+                    {
+                        await Task.Delay(TimeSpan.FromMilliseconds(migrationDelayMs), scanTimeProvider ?? TimeProvider.System,
+                            cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (Exception error)
+                    {
+                        ErrorObservation.FinishFinal(default, error);
+                        throw;
+                    }
                     migrationDelayMs = Math.Min(migrationDelayMs * 2, 250);
                 }
                 else migrationDelayMs = 50;
@@ -551,6 +572,7 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
             var affinity = new ReadAffinity();
             do
             {
+                CollectionScan.CheckCancellation(token);
                 var args = (effectiveMatch, typeToken) switch
                 {
                     (null, null) => new RespireValue[] { cursor, "COUNT", countHint },
@@ -562,7 +584,7 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
                 var result = await client.ConvertCursorPageAsync("SCAN", command, affinity, token, prefix,
                     static (KeyPrefix? prefix, in RespValue reply) =>
                     {
-                        var elements = reply.AsArray();
+                        var elements = CollectionScan.ParsePage(in reply, "SCAN", out _);
                         string[] page;
                         int pageCount;
                         if (prefix is null)
@@ -584,6 +606,7 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
 
                 for (var index = 0; index < result.Count; index++)
                 {
+                    CollectionScan.CheckCancellation(token);
                     yield return result.Page[index];
                 }
             }

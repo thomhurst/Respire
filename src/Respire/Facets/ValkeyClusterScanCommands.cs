@@ -29,22 +29,23 @@ public partial interface IKeyCommands
 
 internal sealed partial class KeyCommands
 {
-    public async ValueTask<RespireValkeyClusterScanPage> ScanValkeyClusterPageAsync(string cursor = "0",
+    public ValueTask<RespireValkeyClusterScanPage> ScanValkeyClusterPageAsync(string cursor = "0",
         string? match = null, RespireKeyType? type = null, int countHint = 250, int? slot = null,
         CancellationToken cancellationToken = default)
+        => DispatchResponseSource<RespireValkeyClusterScanPage>.Run(
+            (Commands: this, Cursor: cursor, Match: match, Type: type, Count: countHint, Slot: slot, Token: cancellationToken),
+            static (state, observation) => state.Commands.ScanValkeyClusterPageBorrowedAsync(
+                state.Cursor, state.Match, state.Type, state.Count, state.Slot, state.Token, observation));
+
+    private async ValueTask<RespireValkeyClusterScanPage> ScanValkeyClusterPageBorrowedAsync(
+        string cursor, string? match, RespireKeyType? type, int countHint, int? slot,
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
-        ValkeyClusterScanCommand command;
-        // Construction includes disposal, cancellation and topology checks before the send owns errors.
-        try { command = CreateValkeyClusterScanCommand(client, cursor, match, type, countHint, slot, cancellationToken); }
-        catch (Exception error)
-        {
-            RespireTelemetry.RecordError(error, internallyHandled: false);
-            throw;
-        }
+        var command = CreateValkeyClusterScanCommand(client, cursor, match, type, countHint, slot, cancellationToken);
         return await client.ConvertResponseAsync("CLUSTERSCAN", in command, cancellationToken,
             (Prefix: client.EncodedKeyPrefix, Match: match),
             static ((KeyPrefix? Prefix, string? Match) state, in RespValue reply) =>
-                ValkeyClusterScanParser.ParseWithPrefix(in reply, state.Prefix, state.Match)).ConfigureAwait(false);
+                ValkeyClusterScanParser.ParseWithPrefix(in reply, state.Prefix, state.Match), observation: observation).ConfigureAwait(false);
     }
 
     internal static ValkeyClusterScanCommand CreateValkeyClusterScanCommand(RespireClient client,

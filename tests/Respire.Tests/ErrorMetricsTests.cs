@@ -4098,13 +4098,15 @@ public partial class ErrorMetricsTests
     }
 
     [Test]
-    [Arguments("SCAN")]
-    [Arguments("HSCAN")]
-    [Arguments("SSCAN")]
-    [Arguments("ZSCAN")]
-    public async Task StandaloneReplicaScansObserveTheirFinalError(string operation)
+    [MatrixDataSource]
+    public async Task StandaloneReplicaScansObserveTheirFinalError(
+        [Matrix("SCAN", "HSCAN", "SSCAN", "ZSCAN")] string operation,
+        [Matrix(RespireReadFrom.Replica, RespireReadFrom.ReplicaPreferred)] RespireReadFrom policy,
+        [Matrix("server", "cursor", "items")] string failure,
+        [Matrix(false, true)] bool commandMetrics)
     {
-        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency
+            | (commandMetrics ? RespireMetricGroups.Command : RespireMetricGroups.None) });
         await using var primary = new FakeRespServer(FakeRespServer.OkReply);
         var pages = 0;
         await using var replica = new FakeRespServer(FakeRespServer.OkReply)
@@ -4116,16 +4118,21 @@ public partial class ErrorMetricsTests
                 if (!command.StartsWith(operation + " ", StringComparison.Ordinal)) return null;
                 return Interlocked.Increment(ref pages) == 1
                     ? "*2\r\n$1\r\n7\r\n*0\r\n"u8.ToArray()
-                    : "-WRONGTYPE private-key\r\n"u8.ToArray();
+                    : failure switch
+                    {
+                        "cursor" => "*2\r\n$3\r\nbad\r\n*0\r\n"u8.ToArray(),
+                        "items" => "*2\r\n$1\r\n0\r\n:1\r\n"u8.ToArray(),
+                        _ => "-WRONGTYPE private-key\r\n"u8.ToArray(),
+                    };
             },
         };
         await using var owner = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, ReadFrom = RespireReadFrom.Replica,
+            Protocol = RespProtocol.Resp2, Connections = 1, ReadFrom = policy,
             Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
         });
         var client = owner.WithKeyPrefix("tenant:");
-        using var capture = new Capture(throwOnMeasurement: true);
+        using var capture = new Capture(throwOnMeasurement: true, commandMetrics: commandMetrics);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         Task Enumerate() => operation switch
         {
@@ -4138,10 +4145,11 @@ public partial class ErrorMetricsTests
         {
             await foreach (var entry in entries) { }
         }
-        var error = await Assert.That(Enumerate).Throws<RespireServerException>();
-        await Assert.That(error!.Code).IsEqualTo("WRONGTYPE");
+        var error = await Assert.That(Enumerate).Throws<Exception>();
+        if (failure == "server") await Assert.That(((RespireServerException)error!).Code).IsEqualTo("WRONGTYPE");
         await Assert.That(capture.Items.Count).IsEqualTo(1);
         var item = capture.Items.Single();
+        await Assert.That(item.Tags["error.type"]).IsEqualTo(error!.GetType().FullName);
         await Assert.That((bool)item.Tags["redis.client.errors.internal"]!).IsFalse();
         await Assert.That(item.Tags["redis.client.operation.retry_attempts"]).IsEqualTo(0);
         var commands = replica.ReceivedCommands;
