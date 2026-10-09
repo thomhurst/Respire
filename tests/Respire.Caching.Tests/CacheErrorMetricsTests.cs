@@ -361,8 +361,6 @@ public partial class CacheErrorMetricsTests
         {
             var written = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var correcting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            var replacementRead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            var replacementCorrection = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             await using var server = new FakeRespServer(32, FakeRespServer.OkReply)
             {
                 ReplyOverride = (_, command) => command == "CLIENT ID" ? ":123\r\n"u8.ToArray()
@@ -420,6 +418,8 @@ public partial class CacheErrorMetricsTests
             var readConnection = server.ReceivedConnectionIds[readIndex];
             cancellation.Cancel();
             await correcting.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var replacementIdentifying = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var replacementCorrecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var correctionIndex = server.ReceivedCommands.ToList().FindLastIndex(command =>
                 command.StartsWith("CLIENT KILL ", StringComparison.Ordinal));
             var correctionConnection = server.ReceivedConnectionIds[correctionIndex];
@@ -430,24 +430,36 @@ public partial class CacheErrorMetricsTests
             }
             finally
             {
-                server.SuppressReply = null;
+                // Park the replacement handshake beyond the bounded foreground wait.
+                // An acknowledged fence allows its idempotent correction to finish later.
+                server.SuppressReply = command =>
+                {
+                    if (replace || command != "CLIENT ID") return false;
+                    replacementIdentifying.TrySetResult();
+                    return true;
+                };
                 server.ReplyOverride = (connection, command) =>
                 {
-                    if (command.StartsWith("EVAL ", StringComparison.Ordinal) && connection != readConnection)
-                        replacementCorrection.TrySetResult();
-                    return command.StartsWith("EVAL", StringComparison.Ordinal)
-                        ? ":0\r\n"u8.ToArray() : command == "CLIENT ID" ? ":123\r\n"u8.ToArray() : null;
+                    if (command == "CLIENT ID") return ":123\r\n"u8.ToArray();
+                    if (!command.StartsWith("EVAL ", StringComparison.Ordinal)) return null;
+                    if (connection != readConnection) replacementCorrecting.TrySetResult();
+                    return ":0\r\n"u8.ToArray();
                 };
-                // Hold the replacement past the foreground bound to exercise a detached pass.
-                if (!replace) server.ReadGate = replacementRead.Task;
                 await server.SendRawAsync(replace ? "-NOPERM correction rejected\r\n"u8.ToArray() : ":0\r\n"u8.ToArray(), correctionConnection);
             }
-            try
+            if (replace) await Assert.That(async () => await response).Throws<RespireServerException>();
+            else await Assert.That(async () => await response).Throws<OperationCanceledException>();
+            if (!replace)
             {
-                if (replace) await Assert.That(async () => await response).Throws<RespireServerException>();
-                else await Assert.That(async () => await response).Throws<OperationCanceledException>();
+                await replacementIdentifying.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                await Assert.That(replacementCorrecting.Task.IsCompleted).IsFalse();
+                var identityIndex = server.ReceivedCommands.ToList().FindLastIndex(command => command == "CLIENT ID");
+                server.SuppressReply = null;
+                await server.SendRawAsync(":123\r\n"u8.ToArray(), server.ReceivedConnectionIds[identityIndex]);
+                await replacementCorrecting.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                // A round trip on the replacement drains its correction reply before teardown.
+                await client.PingAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
             }
-            finally { replacementRead.TrySetResult(); }
             var final = finals.Single();
             await Assert.That(final["error.type"]).IsEqualTo(replace
                 ? typeof(RespireServerException).FullName : typeof(OperationCanceledException).FullName);
@@ -460,8 +472,6 @@ public partial class CacheErrorMetricsTests
                 await Assert.That(retry["redis.client.operation.retry_attempts"]).IsEqualTo(0);
                 // The cancelled read remains ahead of the first correction in the old FIFO.
                 // Closing that socket faults the correction; its replacement must execute it.
-                // A bounded foreground wait can finish before the replacement reaches the server.
-                await replacementCorrection.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 var arguments = server.ReceivedArguments;
                 var correctionIndices = Enumerable.Range(correctionStart, arguments.Count - correctionStart)
                     .Where(index => arguments[index].Length > 1
