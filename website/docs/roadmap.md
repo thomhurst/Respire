@@ -38,6 +38,8 @@ Server and protocol requirements vary by feature; each linked guide describes it
 - Typed string, key, collection, stream, bitmap, HyperLogLog, geo, script, and server facets;
   an audited [command catalog and raw/interpolated execution](guides/raw-commands.md), plus
   [source-generated custom commands](guides/generated-commands.md).
+- [Typed LCS index matches](commands/strings-and-keys.md#longest-common-subsequence), with
+  inclusive byte ranges, match-length filtering, and batch/transaction parity.
 - [Blocking queues](guides/blocking-queues.md) and [streamed string transfers](commands/strings-and-keys.md)
   use dedicated connections where needed to keep multiplexed traffic moving.
 - [Hosted stream consumers](guides/stream-workers.md) support bounded concurrency, scoped typed handlers,

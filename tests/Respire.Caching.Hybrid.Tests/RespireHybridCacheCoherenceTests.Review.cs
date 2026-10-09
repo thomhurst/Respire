@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Caching.Hybrid;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
@@ -543,6 +544,8 @@ public partial class RespireHybridCacheCoherenceTests
         await cache.RemoveByTagAsync("tag-" + key);
         await Assert.That(codec.Encodes).IsEqualTo(1);
         await cache.GetOrCreateAsync(key, _ => ValueTask.FromResult("payload"), LongLived);
+        // Factory completion can precede the background L2 write; wait for its payload in Redis.
+        await UntilAsync(async () => await provider.GetRequiredService<IDistributedCache>().GetAsync(key) is not null);
         await Assert.That(codec.Encodes).IsEqualTo(2);
         await using var reader = BuildProvider(false);
         await Assert.That(await ReadAsync(reader.GetRequiredService<HybridCache>(), key)).IsEqualTo("payload");

@@ -302,8 +302,7 @@ public partial interface IStringCommands
         CancellationToken cancellationToken);
 
     /// <summary>
-    /// Returns the longest common subsequence. Use <see cref="RespireCommands.String.LCS"/> directly
-    /// for the IDX range-reporting shape. Redis: LCS.
+    /// Returns the longest common subsequence. Use <see cref="LcsIndexAsync"/> for match ranges. Redis: LCS.
     /// </summary>
     ValueTask<string> LcsAsync(
         RespireKey firstKey, RespireKey secondKey, CancellationToken cancellationToken = default);

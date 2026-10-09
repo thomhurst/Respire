@@ -363,6 +363,9 @@ public partial class RespireHybridCacheCoherenceTests
             await Assert.That((await source.Server.PubSubSubscriberCountsAsync([channel]))[0].Subscribers).IsEqualTo(1);
             if (synchronous) provider.Dispose();
             else await provider.DisposeAsync();
+            // Disposal closes the owned PubSub socket. Redis may process that disconnect
+            // after a NUMSUB query on the independent, externally registered client.
+            await UntilAsync(async () => (await source.Server.PubSubSubscriberCountsAsync([channel]))[0].Subscribers == 0);
             await Assert.That((await source.Server.PubSubSubscriberCountsAsync([channel]))[0].Subscribers).IsEqualTo(0);
             using var pong = await source.ExecuteAsync("PING");
             await Assert.That(pong.AsString()).IsEqualTo("PONG");
