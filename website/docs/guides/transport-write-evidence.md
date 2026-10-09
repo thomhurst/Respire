@@ -17,7 +17,11 @@ The source evidence is [the per-attempt owner and observation](https://github.co
 
 Gathered SET uses a separate ownership barrier. Array-backed payloads of at least 8 KiB take `GatheredSetCommand`'s borrowed path. Its `GatheredSetWriteLease` has a pool retention capacity of 4,096 leases; that capacity is not an active-operation limit. One logical operation and every accepted write retain references. The response's `finally` waits for `FinishOperation`, and the sender releases each accepted write only after its send returns. Abort releases queued writes. Consuming the barrier's result returns the lease to the pool. The lease fields do not directly store the payload, but accepted write-buffer descriptors hold the caller array until write ownership ends. Cancellation, a deadline, a failed reply or a captured write outcome must not release that array early. See [the gathered command and lease](https://github.com/thomhurst/Respire/blob/622972d400b96d111b18272ba011fd3edb6958f4/src/Respire/Commands/GatheredSetCommand.cs) and [the sender](https://github.com/thomhurst/Respire/blob/622972d400b96d111b18272ba011fd3edb6958f4/src/Respire/Networking/RespireConnection.GatheredSet.cs).
 
-## Pinned comparison after streaming pooling
+## Evidence audit: 2026-10-09
+
+The comparison, disposition and tables below are a point-in-time audit of the pinned run. A later audit can supersede this dated evidence without replacing the ownership and retention guidance above.
+
+### Pinned comparison after streaming pooling
 
 [Run 37977384030](https://github.com/thomhurst/Respire/actions/runs/37977384030) measures the material streaming state-machine pooling change from [PR #1374](https://github.com/thomhurst/Respire/pull/1374). Baseline A and B both use `780041a82086e48bf73cde8c66cccbe14b98415b`. The measured candidate is immutable PR merge `5568c1f41bd1b1fed21a891b11d09b80edbd8793`, with PR head `408bd7b09df539c32d2b04ba0627649c3a6367f1`. The workflow verifies both merge parents. Its run metadata head is the PR head; it is not the measured merge revision.
 
@@ -27,7 +31,7 @@ Each mode has 22 cases, two Dry validation phases and three measured phases. Eve
 
 The fixture uses public PING, pipelined PING, small SET, a 5 MiB array-backed SET, streamed 256 KiB SET with instant/delayed sources, server errors and 32/100-command standalone batches. Internal selection and raw pipeline rows are also included. Batch latency/allocation is per whole batch, pipeline rows are per command, and other command rows are per operation. The large array SET exercises the gathered sender introduced by #1217, which is already present in both controls. The gathered command, gathered sender, write-outcome owner and streaming implementations have no diff between the measured candidate merge and audited main `622972d400b96d111b18272ba011fd3edb6958f4`. This includes current-main gathered-path evidence without claiming a benchmark of every later main change, TLS, Windows or net8.0. The existing gathered outcome test covers both socket and copying transports; the performance fixture measures ordinary Linux sockets.
 
-## Audit disposition
+### Audit disposition
 
 **The evidence audit is complete; aggregate transport performance acceptance remains unmet.** Issues [#1214](https://github.com/thomhurst/Respire/issues/1214) and [#862](https://github.com/thomhurst/Respire/issues/862) remain open. No unchanged benchmark was rerun.
 
@@ -45,11 +49,11 @@ The old foundation comparison (run 37766977918) used a different baseline, fixtu
 
 All retention samples keep the 5 MiB caller payload and two 256 KiB source arrays (5,767,168 bytes) referenced, including after disposal. POH is 8,184 bytes before connect and 24,528 after connect/churn/dispose, with zero POH fragmentation. Managed/process ranges overlap controls in some groups and differ in others; none isolates transport or opt-in observation bytes. Global setup also owns both a public client and an internal multiplexer, so the connection parameter is not a count of all process resources. The ordinary fixture never calls an opt-in attempt owner. Whole-process GC, working-set/private memory and process CPU include unrelated runtime/driver state. They establish neither complete reclamation nor a finite global observation count/time bound. The source ownership limits above are the retention disposition; no isolated byte measurement is claimed.
 
-## Complete case and launch evidence
+### Complete case and launch evidence
 
 The tables preserve every applicable allocation row and latency interval, control drift and both launches. Raw artifacts additionally contain each iteration, native GC diagnostic, phase logs and disassembly.
 
-### Error metrics disabled
+#### Error metrics disabled
 
 validation-baseline: 22 cases, 22 successful exits, 88 retention samples; validation-candidate: 22 cases, 22 successful exits, 88 retention samples; baseline-a: 22 cases, 44 successful exits, 176 retention samples; candidate: 22 cases, 44 successful exits, 176 retention samples; baseline-b: 22 cases, 44 successful exits, 176 retention samples.
 
@@ -138,7 +142,7 @@ Full-GC process ranges below retain 5,767,168 bytes of caller arrays in every sa
 
 POH fragmentation is zero in every sample. Phase CPU user/system seconds and utilization: baseline-a: 776.87 687.11 152%; candidate: 771.73 664.05 153%; baseline-b: 758.12 651.71 152%.
 
-### Error metrics enabled
+#### Error metrics enabled
 
 validation-baseline: 22 cases, 22 successful exits, 88 retention samples; validation-candidate: 22 cases, 22 successful exits, 88 retention samples; baseline-a: 22 cases, 44 successful exits, 176 retention samples; candidate: 22 cases, 44 successful exits, 176 retention samples; baseline-b: 22 cases, 44 successful exits, 176 retention samples.
 
