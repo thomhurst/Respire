@@ -1,10 +1,10 @@
 param(
-    [string]$AssemblyPath = "$env:USERPROFILE/.nuget/packages/stackexchange.redis/3.3.1/lib/net10.0/StackExchange.Redis.dll"
+    [string]$AssemblyPath = "$env:USERPROFILE/.nuget/packages/stackexchange.redis/3.4.0/lib/net10.0/StackExchange.Redis.dll"
 )
 
 $ErrorActionPreference = 'Stop'
 $packageRoot = Split-Path (Split-Path (Split-Path (Split-Path (Split-Path $AssemblyPath))))
-[void][Reflection.Assembly]::LoadFrom((Join-Path $packageRoot 'respite/3.3.1/lib/net10.0/RESPite.dll'))
+[void][Reflection.Assembly]::LoadFrom((Join-Path $packageRoot 'respite/3.4.0/lib/net10.0/RESPite.dll'))
 $assembly = [Reflection.Assembly]::LoadFrom((Resolve-Path $AssemblyPath))
 function Format-Type([Type]$type) {
     if ($type.IsGenericParameter) { return $type.Name }

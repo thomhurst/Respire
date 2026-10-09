@@ -16,8 +16,9 @@ The boundary also includes a limited database adapter for the official distribut
 and DataProtection integrations. General interface parity, SignalR, and Hangfire acceptance
 remain pending under [#889](https://github.com/thomhurst/Respire/issues/889).
 
-Comparisons describe StackExchange.Redis 3.3.1, the version used by Respire's comparison
-benchmarks. Recheck the StackExchange.Redis claims on this page when that version changes.
+The published comparison benchmarks and feature table below describe StackExchange.Redis
+3.3.1. The repository now pins 3.4.0; changing the dependency does not update those measurements.
+Recheck these claims against the version used by your application.
 The upstream [configuration](https://github.com/StackExchange/StackExchange.Redis/blob/3.3.1/docs/Configuration.md)
 and [failover/retry documentation](https://github.com/StackExchange/StackExchange.Redis/blob/3.3.1/docs/Failover.md)
 describe its RESP3 defaults, smart client handoffs, connection groups, and retry categories.
