@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Networking;
@@ -363,18 +364,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             }
             else
             {
-                var tasks = new Task<Exception?>[_ops.Count];
-                var observations = ArrayPool<RespireTelemetry.ErrorObservation>.Shared.Rent(_ops.Count);
-                try
-                {
-                    for (var i = 0; i < _ops.Count; i++)
-                    {
-                        observations[i] = RespireTelemetry.ErrorObservation.Rent(force: true);
-                        tasks[i] = _ops[i].RunAsync(_client, connection, cancellationToken, observations[i]);
-                    }
-                    await Task.WhenAll(tasks).ConfigureAwait(false);
-                }
-                finally { CompleteObservations(_ops, observations); }
+                await RunStandaloneBatchAsync(connection, cancellationToken).ConfigureAwait(false);
             }
 
             var batchFailures = CompleteMutationAndCollectFailures(ref cacheToInvalidate, in mutationFence);
@@ -388,6 +378,41 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             return new RespireBatchResult(_ops.Count, batchFailures);
         }
         finally { cacheToInvalidate?.CompleteMutation(in mutationFence); }
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+#endif
+    private async ValueTask RunStandaloneBatchAsync(RespireConnection connection, CancellationToken cancellationToken)
+    {
+        // Both admission paths include write-gate contention in the original timeout budget.
+        var deadline = connection.CreateCommandDeadline();
+        var sends = ArrayPool<ValueTask<RespValue>>.Shared.Rent(_ops.Count);
+        var observations = ArrayPool<RespireTelemetry.ErrorObservation>.Shared.Rent(_ops.Count);
+        try
+        {
+            for (var i = 0; i < _ops.Count; i++)
+            {
+                observations[i] = RespireTelemetry.ErrorObservation.Rent(force: true);
+            }
+            var circuits = _client.Core.Circuits;
+            // Circuit-enabled queues acquire and observe each permit independently.
+            if (circuits is not null || !connection.TryEnqueueMany(_ops, sends, observations, cancellationToken, deadline))
+            {
+                // Await admission, not replies, so a full ring or credential fence cannot
+                // reverse this batch's queue order. The response thread frees ring slots
+                // without awaiting these reply tasks. Capacity waits share the same budget.
+                for (var i = 0; i < _ops.Count; i++)
+                    sends[i] = await _ops[i].StartOrderedSendAsync(connection, cancellationToken, observations[i], deadline, circuits).ConfigureAwait(false);
+            }
+            for (var i = 0; i < _ops.Count; i++)
+                _ = await _ops[i].CompleteSendAsync(_client, sends[i]).ConfigureAwait(false);
+        }
+        finally
+        {
+            ArrayPool<ValueTask<RespValue>>.Shared.Return(sends, clearArray: true);
+            CompleteObservations(_ops, observations);
+        }
     }
 
     private async Task RunImportBatchAsync(RespireConnection connection, CancellationToken cancellationToken)
@@ -632,7 +657,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         return pending;
     }
 
-    private abstract class Op
+    private abstract class Op : RespireConnection.IBatchCommand
     {
         protected Op(string operation) => Operation = operation;
 
@@ -648,9 +673,15 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
 
         public abstract bool AllowsReadRouting { get; }
 
-        public abstract Task<Exception?> RunAsync(
-            RespireClient client, RespireConnection connection, CancellationToken cancellationToken,
-            RespireTelemetry.ErrorObservation observation);
+        public abstract ValueTask<RespValue> StartSend(RespireConnection connection,
+            CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, bool deferFlush,
+            CommandDeadline deadline);
+
+        public abstract ValueTask<ValueTask<RespValue>> StartOrderedSendAsync(RespireConnection connection,
+            CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, CommandDeadline deadline,
+            StandaloneCircuitRegistry? circuits);
+
+        public abstract ValueTask<Exception?> CompleteSendAsync(RespireClient client, ValueTask<RespValue> reply);
 
         public abstract ValueTask<Task<Exception?>> StartImportAsync(
             RespireClient client, RespireConnection connection, CancellationToken cancellationToken);
@@ -775,7 +806,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
                 var reply = client.Core.Circuits is { } circuits
                     ? await QueuedCircuitDispatch.EnqueueAsync(circuits, connection, bound, Operation, cancellationToken).ConfigureAwait(false)
                     : await connection.EnqueuePinnedAsync(bound, cancellationToken, Operation).ConfigureAwait(false);
-                return CompleteReplyAsync(client, reply);
+                return CompleteSendAsync(client, reply).AsTask();
             }
             catch (Exception ex)
             {
@@ -784,26 +815,41 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             }
         }
 
-        public override Task<Exception?> RunAsync(
-            RespireClient client, RespireConnection connection, CancellationToken cancellationToken,
-            RespireTelemetry.ErrorObservation observation)
+        public override ValueTask<RespValue> StartSend(RespireConnection connection,
+            CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, bool deferFlush,
+            CommandDeadline deadline)
+        {
+            var bound = new MutationCommand<TCommand>(command, MutationFence);
+            return connection.SendAsync(in bound, cancellationToken,
+                commandName: Operation, observation: observation, commandDeadline: deadline, deferFlush: deferFlush);
+        }
+
+#if NET
+        [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+        public override async ValueTask<ValueTask<RespValue>> StartOrderedSendAsync(RespireConnection connection,
+            CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, CommandDeadline deadline,
+            StandaloneCircuitRegistry? circuits)
         {
             try
             {
                 var bound = new MutationCommand<TCommand>(command, MutationFence);
-                var reply = client.Core.Circuits is { } circuits
-                    ? QueuedCircuitDispatch.SendAsync(circuits, connection, bound, Operation, cancellationToken, observation)
-                    : connection.SendAsync(in bound, cancellationToken, commandName: Operation, observation: observation);
-                return CompleteReplyAsync(client, reply);
+                return circuits is not null
+                    ? await QueuedCircuitDispatch.EnqueueAsync(circuits, connection, bound, Operation,
+                        cancellationToken, observation, deadline).ConfigureAwait(false)
+                    : await connection.EnqueuePinnedAsync(bound, cancellationToken, Operation, observation,
+                        pinToConnection: false, deadline: deadline).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
-                pending.Fail(ex);
-                return Task.FromResult<Exception?>(ex);
+                return ValueTask.FromException<RespValue>(ex);
             }
         }
 
-        private async Task<Exception?> CompleteReplyAsync(RespireClient client, ValueTask<RespValue> reply)
+#if NET
+        [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+        public override async ValueTask<Exception?> CompleteSendAsync(RespireClient client, ValueTask<RespValue> reply)
         {
             try
             {

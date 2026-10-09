@@ -93,6 +93,18 @@ public class TransportAcceptanceBenchmarks
     }
 
     [Benchmark]
+    [Arguments(32)]
+    [Arguments(100)]
+    public async Task<long> StandaloneBatch(int count)
+    {
+        using var batch = _client.CreateBatch();
+        var last = batch.Increment("transport-acceptance:batch");
+        for (var index = 1; index < count; index++) _ = batch.Increment("transport-acceptance:batch");
+        await batch.ExecuteAsync();
+        return last.Result;
+    }
+
+    [Benchmark]
     public async Task SmallSet()
     {
         if (!await _client.Strings.SetAsync("transport-acceptance:small", "value"))

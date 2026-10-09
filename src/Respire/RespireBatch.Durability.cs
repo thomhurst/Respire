@@ -1,4 +1,3 @@
-using System.Buffers;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Networking;
@@ -103,18 +102,7 @@ public sealed partial class RespireBatch
                 operation, _ops, static op => op.Operation,
                 connection.Host, connection.Port, core.Options.Database, out telemetryOperation, started);
             cancellationToken.ThrowIfCancellationRequested();
-            var writes = new Task<Exception?>[_ops.Count];
-            var observations = ArrayPool<RespireTelemetry.ErrorObservation>.Shared.Rent(_ops.Count);
-            try
-            {
-                for (var index = 0; index < _ops.Count; index++)
-                {
-                    observations[index] = RespireTelemetry.ErrorObservation.Rent(force: true);
-                    writes[index] = _ops[index].RunAsync(_client, connection, cancellationToken, observations[index]);
-                }
-                await Task.WhenAll(writes).ConfigureAwait(false);
-            }
-            finally { CompleteObservations(_ops, observations); }
+            await RunStandaloneBatchAsync(connection, cancellationToken).ConfigureAwait(false);
             new RespireBatchResult(_ops.Count, CollectFailures(_ops, reportErrors: false)).ThrowIfAnyFailed();
             cancellationToken.ThrowIfCancellationRequested();
 
