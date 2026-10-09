@@ -2649,7 +2649,18 @@ public sealed partial class RespireClient : IRespireClient
         RespireCommandFlags flags, bool allowReadFrom, ReadAffinity? cursorAffinity,
         RespireTelemetry.ErrorObservation observation = default, bool observeErrors = true)
         where TCommand : struct, IRespCommand
+        => SendCoreAsync(operation, in command, cancellationToken, flags, allowReadFrom, cursorAffinity,
+            out _, observation, observeErrors);
+
+    private ValueTask<RespValue> SendCoreAsync<TCommand>(
+        string operation, in TCommand command, CancellationToken cancellationToken,
+        RespireCommandFlags flags, bool allowReadFrom, ReadAffinity? cursorAffinity,
+        out ClientSideCacheCoordinator.MutationFence mutationFence,
+        RespireTelemetry.ErrorObservation observation = default, bool observeErrors = true,
+        bool deferMutationCompletion = false)
+        where TCommand : struct, IRespCommand
     {
+        mutationFence = default;
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         if (command is IStreamingRespCommand)
@@ -2693,10 +2704,15 @@ public sealed partial class RespireClient : IRespireClient
             return ObserveClusterError(QueryAndCacheAsync(operation, command, cache, query, cancellationToken, observation), observeErrors, observation);
         }
 
-        var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
+        mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
         if (!mutationFence.IsRequired)
             return SendRoutedResponseAsync(operation, command, cancellationToken, flags, allowReadFrom, cursorAffinity, readKind,
                 observation, observeErrors);
+        // Typed fallback conversion owns logical completion. Native responses still retain
+        // this fence until FIFO retirement, even when the converter's caller cancels first.
+        if (deferMutationCompletion)
+            return SendRoutedResponseAsync(operation, new MutationCommand<TCommand>(command, mutationFence), cancellationToken,
+                flags, allowReadFrom, cursorAffinity, readKind, observation, observeErrors);
         try
         {
             var bound = new MutationCommand<TCommand>(command, mutationFence);
