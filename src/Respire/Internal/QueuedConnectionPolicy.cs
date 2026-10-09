@@ -46,9 +46,12 @@ internal readonly struct QueuedConnectionPolicy(RespireHashImportSession? import
     public bool RequiresExpiration(Exception error)
         => IsImportSession && RequiresSessionExpiration(error);
 
+    // Not-submitted authentication, reconnect-limit, and protocol errors can describe a
+    // dead connection whose fieldsets and lease must still be discarded.
     internal static bool RequiresSessionExpiration(Exception error)
         => error is not RespireCommandNotSubmittedException
-            && error is not RespireException { IsCommandNotSubmitted: true }
+            && error is not RespireTimeoutException { IsCommandNotSubmitted: true }
+            && error is not RespireCircuitOpenException
             && (RespireException.GetDefinitiveServerError(error) is not { } server || ClusterRouter.IsRedirect(server)
                 || server.Code == RespireErrorCodes.ReadOnly);
 

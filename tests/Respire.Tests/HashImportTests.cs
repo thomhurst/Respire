@@ -1,7 +1,9 @@
 using Respire.Commands;
+using Respire.Internal;
 using Respire.Networking;
 using Respire.Testing;
 using Respire.Tests.Networking;
+using System.Diagnostics;
 using System.Text;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -674,6 +676,97 @@ public class HashImportTests
         await Assert.That(fault.MatchedCount).IsEqualTo(1);
         await Assert.That(await client.Hashes.GetStringAsync("key", "field")).IsEqualTo(afterExecution ? "value" : null);
         await Assert.That(async () => await session.SetAsync("later", "schema", "value")).Throws<ObjectDisposedException>();
+    }
+
+    [Test]
+    [Arguments("authentication")]
+    [Arguments("reconnect-limit")]
+    [Arguments("protocol")]
+    public async Task UnsubmittedDeadConnectionErrorsExpireSessionAndReleaseLease(string failure)
+    {
+        await using var server = new RespireFakeServer();
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+        await using var session = await client.Hashes.CreateImportSessionAsync();
+        await session.PrepareAsync("schema", "field");
+        RespireException error = failure switch
+        {
+            "authentication" => new RespireAuthenticationException("Authentication failed."),
+            "reconnect-limit" => new RespireReconnectLimitException("Recovery exhausted."),
+            _ => new RespireProtocolException("Invalid protocol."),
+        };
+        // ClosedBeforeEnqueue preserves these public exception types and marks the copy.
+        // The current command was not sent, but the connection-local fieldsets are gone.
+        error.IsCommandNotSubmitted = true;
+        await session.Connection.DisposeAsync();
+        await Assert.That(client.Core.DedicatedPool.CaptureRetirementState().Borrowed).IsEqualTo(1);
+
+        await new QueuedConnectionPolicy(session).ExpireAsync(error);
+
+        await Assert.That(client.Core.DedicatedPool.CaptureRetirementState().Borrowed).IsEqualTo(0);
+        await Assert.That(async () => await session.PrepareAsync("schema", "field")).Throws<ObjectDisposedException>();
+    }
+
+    [Test]
+    [NotInParallel]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task QueueProtocolFailureBeforeDispatchExpiresSessionAndReleasesLease(bool transaction, bool circuits)
+    {
+        await using var server = new FakeRespServer(20, FakeRespServer.OkReply);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)],
+            CircuitBreaker = circuits ? new() : null,
+        });
+        await using var session = await client.Hashes.CreateImportSessionAsync();
+        await session.PrepareAsync("schema", "field");
+        using var batch = transaction ? null : session.CreateBatch();
+        await using var multi = transaction ? session.CreateTransaction() : null;
+        IRespireCommandQueue queue = multi ?? (IRespireCommandQueue)batch!;
+        var pending = queue.Hashes.Import("unsent", "schema", "value");
+        var secondPending = queue.Hashes.Import("also-unsent", "schema", "value");
+        server.ReplyOverride = (_, command) => command == "PING" ? "?invalid\r\n"u8.ToArray() : null;
+        var ping = new RawCommand(FakeRespServer.PingFrame);
+        var closed = false;
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "Respire",
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+            ActivityStarted = activity =>
+            {
+                if (closed || activity.GetTagItem("server.port") is not int port || port != server.Port
+                    || !activity.OperationName.StartsWith(transaction ? "MULTI" : "PIPELINE", StringComparison.Ordinal)) return;
+                closed = true;
+                // The queue has entered its session usage but has not dispatched yet.
+                // Complete a real protocol close here so ClosedBeforeEnqueue marks its copy.
+                BreakConnectionAsync().GetAwaiter().GetResult();
+            },
+        };
+        ActivitySource.AddActivityListener(listener);
+        var error = await Assert.That(async () =>
+        {
+            if (multi is not null) await multi.CommitAsync();
+            else await batch!.ExecuteAsync();
+        }).Throws<RespireProtocolException>();
+
+        await Assert.That(closed).IsTrue();
+        await Assert.That(error!.IsCommandNotSubmitted).IsTrue();
+        await Assert.That(pending.Error).IsSameReferenceAs(error);
+        await Assert.That(secondPending.Error is RespireProtocolException { IsCommandNotSubmitted: true }).IsTrue();
+        await Assert.That(client.Core.DedicatedPool.CaptureRetirementState().Borrowed).IsEqualTo(0);
+        await Assert.That(server.ReceivedCommands.Count(command => command == "PING")).IsEqualTo(1);
+        await Assert.That(server.ReceivedCommands.Any(command => command == "MULTI" || command.StartsWith("HIMPORT SET", StringComparison.Ordinal)))
+            .IsFalse();
+        await Assert.That(async () => await session.PrepareAsync("schema", "field")).Throws<ObjectDisposedException>();
+
+        async Task BreakConnectionAsync()
+        {
+            try { using var reply = await session.Connection.SendAsync(ping); }
+            catch (RespireProtocolException) { }
+            await session.Connection.Closed.WaitAsync(TimeSpan.FromSeconds(5));
+        }
     }
 
     [Test]
