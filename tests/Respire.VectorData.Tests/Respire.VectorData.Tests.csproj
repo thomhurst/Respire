@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsTestProject>true</IsTestProject>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="FluentAssertions" />
+    <PackageReference Include="Testcontainers.Redis" />
+    <ProjectReference Include="../../src/Respire.VectorData/Respire.VectorData.csproj" />
+    <Compile Include="../Respire.IntegrationTests/StandaloneRedisTestContainer.cs" Link="StandaloneRedisTestContainer.cs" />
+    <Compile Include="../Respire.IntegrationTests/ModernRedisTestContainer.cs" Link="ModernRedisTestContainer.cs" />
+    <Compile Include="../../samples/Respire.Samples.VectorData/Movie.cs" Link="Movie.cs" />
+  </ItemGroup>
+</Project>
