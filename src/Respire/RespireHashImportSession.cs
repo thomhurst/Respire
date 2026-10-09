@@ -83,7 +83,18 @@ public sealed class RespireHashImportSession : IAsyncDisposable
 
     /// <summary>Defines or replaces a connection-local fieldset with cancellation. Redis: HIMPORT PREPARE.</summary>
     public ValueTask<bool> PrepareAsync(RespireValue name, ReadOnlySpan<RespireValue> fields, CancellationToken cancellationToken)
-        => SendAsync(PrepareOperation, PrepareCommand(name, fields), static value => ResponseReader.Ok(in value), cancellationToken);
+    {
+        var owner = DispatchResponseSource<bool>.Start();
+        try
+        {
+            return owner.Attach(SendAsync(PrepareOperation, PrepareCommand(name, fields), static value => ResponseReader.Ok(in value), cancellationToken, owner.Observation));
+        }
+        catch (Exception error)
+        {
+            owner.Fail(error);
+            throw;
+        }
+    }
 
     /// <summary>Creates or overwrites a hash from values in the prepared field order. Redis: HIMPORT SET.</summary>
     public ValueTask<bool> SetAsync(RespireKey key, RespireValue name, params ReadOnlySpan<RespireValue> values)
@@ -91,15 +102,48 @@ public sealed class RespireHashImportSession : IAsyncDisposable
 
     /// <summary>Creates or overwrites a hash with cancellation. Redis: HIMPORT SET.</summary>
     public ValueTask<bool> SetAsync(RespireKey key, RespireValue name, ReadOnlySpan<RespireValue> values, CancellationToken cancellationToken)
-        => SendAsync(SetOperation, SetCommand(key, name, values), static value => ResponseReader.Ok(in value), cancellationToken);
+    {
+        var owner = DispatchResponseSource<bool>.Start();
+        try
+        {
+            return owner.Attach(SendAsync(SetOperation, SetCommand(key, name, values), static value => ResponseReader.Ok(in value), cancellationToken, owner.Observation));
+        }
+        catch (Exception error)
+        {
+            owner.Fail(error);
+            throw;
+        }
+    }
 
     /// <summary>Removes a fieldset; returns whether it existed. Redis: HIMPORT DISCARD.</summary>
     public ValueTask<bool> DiscardAsync(RespireValue name, CancellationToken cancellationToken = default)
-        => SendAsync(DiscardOperation, DiscardCommand(name), static value => ReadDiscard(in value), cancellationToken);
+    {
+        var owner = DispatchResponseSource<bool>.Start();
+        try
+        {
+            return owner.Attach(SendAsync(DiscardOperation, DiscardCommand(name), static value => ReadDiscard(in value), cancellationToken, owner.Observation));
+        }
+        catch (Exception error)
+        {
+            owner.Fail(error);
+            throw;
+        }
+    }
 
     /// <summary>Removes every fieldset on this session; returns how many existed. Redis: HIMPORT DISCARDALL.</summary>
     public ValueTask<long> DiscardAllAsync(CancellationToken cancellationToken = default)
-        => SendAsync(DiscardAllOperation, DiscardAllCommand(), static value => ReadDiscardAll(in value), cancellationToken);
+    {
+        var owner = DispatchResponseSource<long>.Start();
+        try
+        {
+            return owner.Attach(SendAsync(DiscardAllOperation, DiscardAllCommand(), static value => ReadDiscardAll(in value), cancellationToken, owner.Observation));
+        }
+        catch (Exception error)
+        {
+            owner.Fail(error);
+            throw;
+        }
+    }
 
     internal static bool ReadDiscard(in RespValue value)
     {
@@ -192,36 +236,28 @@ public sealed class RespireHashImportSession : IAsyncDisposable
     }
 
     private async ValueTask<T> SendAsync<T>(string operation, CmdN command,
-        Func<RespValue, T> convert, CancellationToken cancellationToken)
+        Func<RespValue, T> convert, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation)
     {
-        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        cancellationToken.ThrowIfCancellationRequested();
+        using var usage = EnterOperation();
+        var cache = operation == SetOperation ? _client.Core.ClientCache : null;
+        var fence = cache is null ? default : cache.BeforeCommand(operation, in command);
         try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            using var usage = EnterOperation();
-            var cache = operation == SetOperation ? _client.Core.ClientCache : null;
-            var fence = cache is null ? default : cache.BeforeCommand(operation, in command);
-            try
-            {
-                using var response = operation == SetOperation
-                    ? await _client.SendMutationOnConnectionAsync(operation, _connection, command,
-                        fence, cancellationToken, allowStreamingConnectionReroute: false, observation: observation).ConfigureAwait(false)
-                    : await _client.SendOnConnectionAsync(operation, _connection, new ProtocolCommand<CmdN>(command),
-                        cancellationToken, allowStreamingConnectionReroute: false, observation: observation).ConfigureAwait(false);
-                return convert(response);
-            }
-            catch (Exception error)
-            {
-                await ExpireIfUncertainAsync(error).ConfigureAwait(false);
-                throw;
-            }
-            finally { cache?.CompleteMutation(in fence); }
+            using var response = operation == SetOperation
+                ? await _client.SendMutationOnConnectionAsync(operation, _connection, command,
+                    fence, cancellationToken, allowStreamingConnectionReroute: false, observation: observation).ConfigureAwait(false)
+                : await _client.SendOnConnectionAsync(operation, _connection, new ProtocolCommand<CmdN>(command),
+                    cancellationToken, allowStreamingConnectionReroute: false, observation: observation).ConfigureAwait(false);
+            return convert(response);
         }
         catch (Exception error)
         {
-            observation.Final(error);
+            await ExpireIfUncertainAsync(error).ConfigureAwait(false);
             throw;
         }
+        finally { cache?.CompleteMutation(in fence); }
     }
 
     internal Usage EnterOperation()

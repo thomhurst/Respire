@@ -30,6 +30,13 @@
       "Member": "Respire.RespireBatch.ExecuteAsync(CancellationToken):ValueTask<RespireBatchResult>",
       "Owner": "Respire.RespireBatch.ExecuteAsync(CancellationToken):ValueTask<RespireBatchResult>",
       "Contract": "Execute owns dispatch, aggregate replies and cleanup. Queue-time validation belongs to its entry; later pending inspections have independent ownership."
+    },
+    {
+      "Name": "deferred-try-execution",
+      "Role": "final",
+      "Member": "Respire.RespireBatch.TryExecuteAsync(CancellationToken):ValueTask<RespireBatchResult>",
+      "Owner": "Respire.RespireBatch.TryExecuteAsync(CancellationToken):ValueTask<RespireBatchResult>",
+      "Contract": "Setup failures belong to this caller before command ownership. Each queued pending retains a failure-only owner through transport retries, conversion and cache-fence cleanup; execution reports each final pending failure once."
     }
   ],
   "NonRoutes": []

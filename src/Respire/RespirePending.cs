@@ -24,14 +24,62 @@ public enum RespirePendingStatus
 /// the transaction committed — touching it earlier throws immediately instead of deadlocking,
 /// while the synchronous queueing method names make an accidental early await conspicuous.
 /// </summary>
-public sealed class RespirePending<T>
+public sealed class RespirePending<T> : IDispatchObservation
 {
     private const int StatusMask = 3;
     private const int ErrorRecorded = 4;
+    private const int NotReadyRecorded = 8;
+    private const int AbortRecorded = 16;
+    private const int ErrorInspectionAllowed = 32;
+    private const int ObservationClosed = 64;
     private int _state;
     private T? _value;
-    private Exception? _error;
+    // Keep the successful pending layout unchanged. A retry replaces this existing error
+    // slot with failure-only state; terminal publication restores the original exception.
+    private object? _failure;
     private int _errorAttempts;
+
+    internal RespireTelemetry.ErrorObservation Observation => new(this, 0);
+
+    // Read only while holding this pending's gate. Copies passed to transport retain this
+    // single-shot owner; exporters run after releasing the gate.
+    private int ErrorAttempts => _failure is RetryObservation retry ? retry.Owner.RetryAttempts : _errorAttempts;
+    private Exception? Failure => _failure is RetryObservation retry ? retry.Error : (Exception?)_failure;
+
+    private sealed class RetryObservation(ErrorObservation.FinalOwner owner, Exception? error)
+    {
+        internal readonly ErrorObservation.FinalOwner Owner = owner;
+        internal Exception? Error = error;
+    }
+
+    int IDispatchObservation.Attempts(long generation)
+    {
+        lock (this) return ErrorAttempts;
+    }
+
+    void IDispatchObservation.SetAttempts(long generation, int attempts)
+    {
+        lock (this)
+        {
+            if ((Volatile.Read(ref _state) & ObservationClosed) != 0) return;
+            _errorAttempts = Math.Max(0, attempts);
+            if (_failure is RetryObservation retry) retry.Owner.SetRetryAttempts(_errorAttempts);
+        }
+    }
+
+    void IDispatchObservation.Handled(long generation, Exception error)
+    {
+        ErrorObservation.Borrower borrower;
+        lock (this)
+        {
+            if ((Volatile.Read(ref _state) & ObservationClosed) != 0) return;
+            if (_failure is not RetryObservation)
+                _failure = new RetryObservation(ErrorObservation.StartFailure(_errorAttempts), (Exception?)_failure);
+            borrower = ((RetryObservation)_failure).Owner.Borrow();
+        }
+        try { borrower.RecordHandled(error); }
+        finally { borrower.Complete(); }
+    }
 
     internal RespirePending()
     {
@@ -47,7 +95,7 @@ public sealed class RespirePending<T>
     public bool HasResult => Status == RespirePendingStatus.Succeeded;
 
     /// <summary>The command failure when <see cref="Status"/> is <see cref="RespirePendingStatus.Faulted"/>.</summary>
-    public Exception? Error => Status == RespirePendingStatus.Faulted ? _error : null;
+    public Exception? Error => Status == RespirePendingStatus.Faulted ? Failure : null;
 
     /// <summary>Gets a successful result without throwing; returns false for every other state.</summary>
     public bool TryGetResult([MaybeNullWhen(false)] out T value)
@@ -75,12 +123,13 @@ public sealed class RespirePending<T>
                 case RespirePendingStatus.Succeeded:
                     return _value!;
                 case RespirePendingStatus.Faulted:
-                    ExceptionDispatchInfo.Capture(_error!).Throw();
+                    if ((Volatile.Read(ref _state) & ErrorInspectionAllowed) != 0) ReportError();
+                    ExceptionDispatchInfo.Capture(Failure!).Throw();
                     return default!;
                 case RespirePendingStatus.Aborted:
-                    throw new RespireTransactionAbortedException();
+                    throw ObserveInspection(new RespireTransactionAbortedException(), AbortRecorded);
                 default:
-                    throw new RespirePendingNotReadyException();
+                    throw ObserveInspection(new RespirePendingNotReadyException(), NotReadyRecorded);
             }
         }
     }
@@ -93,7 +142,11 @@ public sealed class RespirePending<T>
 
     internal void Fail(Exception error)
     {
-        _error = error;
+        lock (this)
+        {
+            if (_failure is RetryObservation retry) retry.Error = error;
+            else _failure = error;
+        }
         SetStatus(RespirePendingStatus.Faulted);
     }
 
@@ -101,24 +154,59 @@ public sealed class RespirePending<T>
     // Reading Result again, or creating its summary, must not repeat this boundary.
     internal bool ReportError()
     {
-        if (Status != RespirePendingStatus.Faulted) return false;
-        if ((Interlocked.Or(ref _state, ErrorRecorded) & ErrorRecorded) == 0)
+        var faulted = Status == RespirePendingStatus.Faulted;
+        if (!faulted && _failure is null)
         {
-            RespireTelemetry.RecordError(_error!, internallyHandled: false, _errorAttempts);
+            Interlocked.Or(ref _state, ObservationClosed);
+            return false;
         }
-        return true;
+        ErrorObservation.FinalOwner owner;
+        int attempts;
+        Exception? error;
+        lock (this)
+        {
+            attempts = _errorAttempts = ErrorAttempts;
+            var failure = Failure;
+            owner = _failure is RetryObservation retry ? retry.Owner : default;
+            _failure = failure;
+            Interlocked.Or(ref _state, ObservationClosed);
+            error = faulted && (Interlocked.Or(ref _state, ErrorRecorded) & ErrorRecorded) == 0 ? failure : null;
+        }
+        ErrorObservation.FinishFinal(owner, error, retryAttempts: attempts);
+        return faulted;
     }
 
-    internal void AdvanceErrorAttempt() => _errorAttempts++;
+    private TException ObserveInspection<TException>(TException error, int flag) where TException : Exception
+    {
+        if ((Interlocked.Or(ref _state, flag) & flag) == 0)
+            ErrorObservation.FinishFinal(default, error);
+        return error;
+    }
 
-    internal void AddErrorAttempts(int attempts) => _errorAttempts += attempts;
+    internal void AdvanceErrorAttempt() => AddErrorAttempts(1);
+
+    internal void AddErrorAttempts(int attempts)
+    {
+        lock (this)
+        {
+            if ((Volatile.Read(ref _state) & ObservationClosed) != 0) return;
+            _errorAttempts = ErrorAttempts + attempts;
+            if (_failure is RetryObservation retry) retry.Owner.SetRetryAttempts(_errorAttempts);
+        }
+    }
 
     internal void Abort() => SetStatus(RespirePendingStatus.Aborted);
+
+    internal void AllowErrorInspection() => Interlocked.Or(ref _state, ErrorInspectionAllowed);
 
     // The batch owns terminal transitions. Preserve its reported-error flag if it updates
     // the outcome during cleanup; the flag shares existing status storage instead of adding padding.
     private void SetStatus(RespirePendingStatus status)
-        => Volatile.Write(ref _state, (Volatile.Read(ref _state) & ErrorRecorded) | (int)status);
+    {
+        int state;
+        do { state = Volatile.Read(ref _state); }
+        while (Interlocked.CompareExchange(ref _state, (state & ~StatusMask) | (int)status, state) != state);
+    }
 
     /// <summary>Returns the synchronous awaiter for this deferred result.</summary>
     public RespirePendingAwaiter<T> GetAwaiter() => new(this);

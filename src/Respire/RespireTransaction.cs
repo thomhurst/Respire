@@ -262,8 +262,8 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private protected async ValueTask<bool> CommitCoreAsync(CancellationToken cancellationToken, bool validateEmptyWatch = false)
     {
-        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
-        using var importUsage = PrepareCommit(observation);
+        var observation = _ops.Count == 0 ? default : _ops[0].Observation;
+        using var importUsage = PrepareCommit();
         var core = _client.Core;
         var telemetryOperation = "MULTI";
         var sentinelStarted = core.Sentinel is null ? default : RespireTelemetry.CaptureBatchStart("MULTI", _ops, static op => op.Operation);
@@ -286,6 +286,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
         var mutationFence = default(ClientSideCacheCoordinator.MutationFence);
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (_ops.Count == 0 && (!validateEmptyWatch || _watchConnection is null))
             {
                 if (core.Sentinel is not null)
@@ -425,6 +426,13 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             result.Dispose();
             return true;
         }
+        catch (Exception error)
+        {
+            operationError ??= error;
+            foreach (var op in _ops)
+                if (!op.IsCompleted) op.Fail(error);
+            throw;
+        }
         finally
         {
             try
@@ -456,17 +464,15 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             }
             finally
             {
-                if (operationError is not null)
+                var attempts = observation.Attempts;
+                var pendingErrors = false;
+                foreach (var op in _ops)
                 {
-                    var pendingErrors = false;
-                    foreach (var op in _ops)
-                    {
-                        op.AddErrorAttempts(observation.Attempts);
-                        pendingErrors |= op.ReportError();
-                    }
-                    if (!pendingErrors)
-                        RespireTelemetry.RecordError(operationError, internallyHandled: false, observation.Attempts);
+                    op.Observation.SetAttempts(attempts);
+                    pendingErrors |= op.ReportError();
                 }
+                if (operationError is not null && !pendingErrors)
+                    ErrorObservation.FinishFinal(default, operationError, retryAttempts: attempts);
                 if (connection is null && operationError is not null)
                     RespireTelemetry.RecordUnroutedBatchFailure("MULTI", _ops, static op => op.Operation,
                         core.Options.Database, sentinelStarted, operationError);
@@ -688,7 +694,8 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             operation.Fail(error);
         }
 
-        await ReleaseAsync(returnWatchConnection: false).ConfigureAwait(false);
+        try { await ReleaseAsync(returnWatchConnection: false).ConfigureAwait(false); }
+        finally { foreach (var operation in _ops) operation.AllowErrorInspection(); }
     }
 
     // Only watched transactions carry pool ownership; ordinary transactions retain their existing size.
@@ -795,7 +802,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
         _hasClusterSlot = true;
     }
 
-    private RespireHashImportSession.Usage? PrepareCommit(RespireTelemetry.ErrorObservation observation)
+    private RespireHashImportSession.Usage? PrepareCommit()
     {
         RespireHashImportSession.Usage? usage = null;
         try
@@ -810,7 +817,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
         catch (Exception error)
         {
             usage?.Dispose();
-            observation.Final(error);
+            ErrorObservation.FinishFinal(default, error);
             throw;
         }
     }
@@ -832,10 +839,12 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
         public virtual string? ExpectedEngine => null;
 
         public abstract Exception? Complete(RespireClient client, in RespValue element);
+        public abstract bool IsCompleted { get; }
 
         public abstract void Fail(Exception error);
         public abstract bool ReportError();
-        public abstract void AddErrorAttempts(int attempts);
+        public abstract void AllowErrorInspection();
+        public abstract RespireTelemetry.ErrorObservation Observation { get; }
 
         public abstract void Abort();
     }
@@ -844,6 +853,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
     private class TxOp<T>(
         string operation, RespirePending<T> pending, Func<RespireClient, RespValue, T> convert) : TxOp(operation)
     {
+        public override bool IsCompleted => pending.IsCompleted;
         public override Exception? Complete(RespireClient client, in RespValue element)
         {
             if (element.IsError)
@@ -868,7 +878,8 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
 
         public override void Fail(Exception error) => pending.Fail(error);
         public override bool ReportError() => pending.ReportError();
-        public override void AddErrorAttempts(int attempts) => pending.AddErrorAttempts(attempts);
+        public override void AllowErrorInspection() => pending.AllowErrorInspection();
+        public override RespireTelemetry.ErrorObservation Observation => pending.Observation;
 
         public override void Abort() => pending.Abort();
     }

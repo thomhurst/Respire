@@ -1026,6 +1026,20 @@ caller-visible failures count once with the full page retry count. Exception ide
 and cancellation token/status are preserved. Successful pages do not rent error lease
 storage from either observation pool.
 
+Batch execution counts setup rejections before command ownership starts. Each queued
+command then retains a failure-only owner through transparent retries, typed conversion,
+and cleanup. Durability batches release their dedicated connection and client-cache fence
+before publishing a final error, including WAIT/WAITAOF argument and reply failures.
+Transactions retain shared retry history through commit preflight, EXEC replies and
+connection cleanup. WATCH setup and hash-import session calls start ownership before
+key routing, argument validation or command construction. Successful deferred execution
+rents no error observation lease.
+
+Deferred command failures are reported once after execution cleanup. Inspecting a pending
+before execution, after a WATCH abort, or after its queue is discarded counts that lifecycle
+failure once; repeated `Result` or awaiter inspection does not count it again. A later
+execution failure remains a separate boundary from an earlier not-ready inspection.
+
 ## Sentinel primary changes
 
 Sentinel batch, durability-batch, and transaction acquisition failures still emit an error
