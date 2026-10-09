@@ -4,6 +4,20 @@ using OpenTelemetry.Metrics;
 using Respire;
 
 // Run through Smoke.ps1. Every scrape comes from the real OpenTelemetry HTTP exporter.
+if (args[0] == "--verify-only")
+{
+    try
+    {
+        PrometheusCheck.Verify(args[1], args[2], args[3]);
+    }
+    catch (InvalidOperationException error)
+    {
+        File.WriteAllText(Path.Combine(args[1], "verification-error.txt"), error.Message);
+        Console.Error.WriteLine(error.Message);
+        Environment.ExitCode = 1;
+    }
+    return;
+}
 var endpoint = int.Parse(args[0], System.Globalization.CultureInfo.InvariantCulture);
 var dedicatedPoolLabel = $"db_client_connection_pool_name=\"127.0.0.1:{endpoint}/0/dedicated\"";
 var output = Path.GetFullPath(args[1]);
@@ -56,7 +70,7 @@ async Task Exercise(RespireClient client, string prefix)
     await client.PublishAsync(prefix + ":channel", "message", deadline.Token);
     await using var reader = subscription.GetAsyncEnumerator(deadline.Token);
     if (!await reader.MoveNextAsync()) throw new InvalidOperationException("No published message received.");
-    await client.Streams.AddAsync(prefix + ":stream", ("type", "smoke"));
+    await client.Streams.AddAsync(prefix + ":stream", [("type", "smoke")], cancellationToken: deadline.Token);
     var entries = await client.Streams.ReadAsync(prefix + ":stream", cancellationToken: deadline.Token);
     if (entries.Length != 1) throw new InvalidOperationException("Expected one stream entry.");
     entries[0].RecordProcessingStart();

@@ -32,7 +32,13 @@ The same exact dedicated pool must then have a positive idle count and no positi
 an idle shared socket cannot satisfy this check. Disposal produces actual physical closes.
 No synthetic metrics are emitted.
 
-Expected output includes both `PASS` lines. Evidence contains:
+Unsupported families must remain absent from every scrape. Feature-event families must have no
+positive samples; a zero-valued relaxed-timeout gauge is expected. Five corrupted scrape copies
+prove that newly exported unsupported families and positive feature events fail classification.
+The `--verify-only <output> <dashboard> <dedicated-pool-label>` executable mode replays saved scrapes
+without starting Redis or the HTTP exporter.
+
+Expected output includes three `PASS` lines. Evidence contains:
 
 - `default.prom`: connection count/create time and errors, with optional families absent.
 - `busy.prom`: positive pending replies and used state.
@@ -43,7 +49,10 @@ Expected output includes both `PASS` lines. Evidence contains:
   query targets and dispositions (42 verified, 3 require feature events, 2 unsupported).
 - `dashboard-promql-tests.yml`: every distinct supported adapted query evaluated by promtool
   against actual exported series. Constant repeated samples check query/label compatibility,
-  not throughput, error rates, or latency performance. Missing features receive no fake series.
+  not throughput, error rates, or latency performance. Positive exact-pool/service and missing-value
+  controls check selector discrimination. The five exception queries parse/evaluate against empty
+  inputs, so all 47 targets receive syntax coverage. Missing features receive no fake series.
+- `negative-*`: corrupted scrape copies and expected verification failures for classification guards.
 
 See the [observability guide](../../website/docs/integrations/observability.md#prometheus-and-the-published-redis-dashboard)
 for adaptations, optional panels, unavailable measurements, and query scope limits.

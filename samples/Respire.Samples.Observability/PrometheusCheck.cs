@@ -29,6 +29,14 @@ internal static class PrometheusCheck
         var optional = File.ReadAllText(Path.Combine(output, "optional.prom"));
         var closed = File.ReadAllText(Path.Combine(output, "closed.prom"));
         var busy = File.ReadAllText(Path.Combine(output, "busy.prom"));
+        foreach (var scrape in new[] { defaults, busy, optional, closed })
+        {
+            foreach (var metric in UnsupportedMetrics)
+                Require(!Samples(scrape, metric).Any(), "Unsupported dashboard metric is now exported; update its classification: " + metric);
+            foreach (var metric in FeatureMetrics)
+                // Observable gauges can export zero before their feature event occurs.
+                Require(!HasPositive(scrape, metric), "Feature event is now exercised; update its dashboard classification: " + metric);
+        }
         foreach (var family in new[] { "db_client_connection_count", "db_client_connection_create_time_seconds", "redis_client_errors_total" })
             Require(defaults.Contains("# TYPE " + family + " ", StringComparison.Ordinal), "Missing default family: " + family);
         foreach (var family in new[] { "db_client_operation_duration_seconds", "redis_client_csc_requests_total", "redis_client_csc_evictions_total", "redis_client_pubsub_messages_total", "redis_client_stream_lag_seconds", "redis_client_connection_closed_total", "db_client_connection_wait_time_seconds", "db_client_connection_pending_requests" })
@@ -62,7 +70,9 @@ internal static class PrometheusCheck
         Require(optional.Contains("db_operation_name=", StringComparison.Ordinal) && optional.Contains("db_client_connection_pool_name=", StringComparison.Ordinal), "Missing command/pool panel labels.");
         foreach (var family in new[] { "db_client_connection_count", "db_client_connection_pending_requests", "redis_client_connection_relaxed_timeout" })
             Require(optional.Contains("# TYPE " + family + " gauge", StringComparison.Ordinal), "Not a gauge: " + family);
-        Require(!optional.Contains("optional:", StringComparison.Ordinal), "Private key/channel/stream name leaked into export.");
+        foreach (var scrape in new[] { defaults, busy, optional, closed })
+            Require(!scrape.Contains("optional:", StringComparison.Ordinal) && !scrape.Contains("default:", StringComparison.Ordinal),
+                "Private key/channel/stream name leaked into export.");
 
         VerifyDashboard(output, dashboardPath, closed);
     }
@@ -72,6 +82,7 @@ internal static class PrometheusCheck
         var dashboard = JsonNode.Parse(File.ReadAllText(dashboardPath))!;
         var report = new List<object>();
         var verifiedQueries = new List<string>();
+        var parseOnlyQueries = new List<string>();
         var seen = new HashSet<string>();
         foreach (var panel in Panels(dashboard["panels"]!.AsArray()))
         {
@@ -92,13 +103,17 @@ internal static class PrometheusCheck
                     .Select(match => match.Value).Distinct().ToArray();
                 Require(metrics.Length != 0, "Unrecognized dashboard query: " + original);
                 var status = "verified";
+                if (metrics.Any(UnsupportedMetrics.Contains)) status = "unsupported";
+                else if (metrics.Any(FeatureMetrics.Contains)) status = "requires-feature-event";
                 foreach (var metric in metrics)
                 {
                     seen.Add(metric);
-                    if (UnsupportedMetrics.Contains(metric)) status = "unsupported";
-                    else if (FeatureMetrics.Contains(metric)) status = "requires-feature-event";
-                    else Require(Samples(closed, metric).Any(), "Dashboard series missing from real export: " + metric);
+                    if (!UnsupportedMetrics.Contains(metric) && !FeatureMetrics.Contains(metric))
+                        Require(Samples(closed, metric).Any(), "Dashboard series missing from real export: " + metric);
                 }
+                var query = adapted.Replace("$pool_name", ".*", StringComparison.Ordinal)
+                    .Replace("$service_name", "redis", StringComparison.Ordinal)
+                    .Replace("$__rate_interval", "1m", StringComparison.Ordinal);
                 // Every remaining query label is either a selector/group label actually exported or a PromQL keyword.
                 if (status == "verified")
                 {
@@ -106,10 +121,9 @@ internal static class PrometheusCheck
                         .Select(match => match.Value).Where(name => !metrics.Contains(name)).Distinct();
                     foreach (var label in labels)
                         Require(closed.Contains(label + "=", StringComparison.Ordinal), "Dashboard label missing: " + label);
-                    verifiedQueries.Add(adapted.Replace("$pool_name", ".*", StringComparison.Ordinal)
-                        .Replace("$service_name", "redis", StringComparison.Ordinal)
-                        .Replace("$__rate_interval", "1m", StringComparison.Ordinal));
+                    verifiedQueries.Add(query);
                 }
+                else parseOnlyQueries.Add(query);
                 report.Add(new { panel = originalTitle, original, adapted, metrics, status });
             }
             // Do not present aggregate data as a channel/stream/consumer breakdown.
@@ -132,10 +146,10 @@ internal static class PrometheusCheck
         }
         File.WriteAllText(Path.Combine(output, "dashboard-adapted.json"), dashboard.ToJsonString(new() { WriteIndented = true }));
         File.WriteAllText(Path.Combine(output, "dashboard-report.json"), System.Text.Json.JsonSerializer.Serialize(report, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
-        WritePromqlTests(output, closed, verifiedQueries);
+        WritePromqlTests(output, closed, verifiedQueries, parseOnlyQueries);
     }
 
-    private static void WritePromqlTests(string output, string export, IEnumerable<string> queries)
+    private static void WritePromqlTests(string output, string export, IEnumerable<string> queries, IEnumerable<string> parseOnlyQueries)
     {
         // Inputs are real exported series. Constant samples test PromQL shape/labels, not workload rates.
         static string Quote(string value) => System.Text.Json.JsonSerializer.Serialize(value);
@@ -151,6 +165,26 @@ internal static class PrometheusCheck
         {
             yaml.Append("      - expr: ").AppendLine(Quote("count(" + query + ") > bool 0"));
             yaml.AppendLine("        eval_time: 2m\n        exp_samples:\n          - labels: '{}'\n            value: 1");
+        }
+        // Exercise the same regex matchers as the dashboard variables, including values that cannot match.
+        var pool = Regex.Match(Samples(export, "db_client_connection_count").First(), "db_client_connection_pool_name=(\"[^\"]+\")");
+        Require(pool.Success, "No exported pool for selector controls.");
+        var poolValue = System.Text.Json.JsonSerializer.Deserialize<string>(pool.Groups[1].Value)!;
+        string Selector(string service, string poolPattern) => "db_client_connection_count{db_system_name=~"
+            + Quote(service) + ",db_client_connection_pool_name=~" + Quote(poolPattern) + "}";
+        yaml.Append("      - expr: ").AppendLine(Quote("count(" + Selector("redis", Regex.Escape(poolValue)) + ") > bool 0"));
+        yaml.AppendLine("        eval_time: 2m\n        exp_samples:\n          - labels: '{}'\n            value: 1");
+        foreach (var selector in new[] { Selector("__missing_service__", Regex.Escape(poolValue)), Selector("redis", "__missing_pool__") })
+        {
+            yaml.Append("      - expr: ").AppendLine(Quote(selector));
+            yaml.AppendLine("        eval_time: 2m\n        exp_samples: []");
+        }
+        // Empty inputs validate syntax without inventing unsupported measurements or feature events.
+        yaml.AppendLine("  - interval: 15s\n    input_series: []\n    promql_expr_test:");
+        foreach (var query in parseOnlyQueries.Distinct())
+        {
+            yaml.Append("      - expr: ").AppendLine(Quote(query));
+            yaml.AppendLine("        eval_time: 2m\n        exp_samples: []");
         }
         File.WriteAllText(Path.Combine(output, "dashboard-promql-tests.yml"), yaml.ToString());
     }
