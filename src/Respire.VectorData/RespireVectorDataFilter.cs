@@ -190,9 +190,12 @@ internal sealed class RespireVectorDataFilter<TRecord>(IReadOnlyList<RespireVect
         while (expression is UnaryExpression { NodeType: ExpressionType.Convert, Method: null } conversion)
         {
             var target = Nullable.GetUnderlyingType(conversion.Type) ?? conversion.Type;
-            if (target != conversion.Operand.Type
-                && !(target == typeof(double) && NumericType(conversion.Operand.Type))
-                && !(target == typeof(int) && (conversion.Operand.Type == typeof(byte) || conversion.Operand.Type == typeof(sbyte) || conversion.Operand.Type == typeof(short) || conversion.Operand.Type == typeof(ushort))))
+            var nullableSource = Nullable.GetUnderlyingType(conversion.Operand.Type);
+            var source = nullableSource ?? conversion.Operand.Type;
+            if (nullableSource is not null && Nullable.GetUnderlyingType(conversion.Type) is null
+                || target != source
+                && !(target == typeof(double) && NumericType(source))
+                && !(target == typeof(int) && (source == typeof(byte) || source == typeof(sbyte) || source == typeof(short) || source == typeof(ushort))))
                 throw Unsupported(expression, "Only nullable lifting, small-integer promotion and lossless promotion to double are supported.");
             expression = conversion.Operand;
         }

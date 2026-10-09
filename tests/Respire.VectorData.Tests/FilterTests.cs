@@ -47,6 +47,7 @@ public class FilterTests(ModernRedisTestContainer fixture)
     {
         var captured = 8;
         int? nullable = 8;
+        short? small = 9;
         int? missing = null;
         string? nullString = null;
         string[] strings = ["foo", "baz", "unknown"];
@@ -66,6 +67,7 @@ public class FilterTests(ModernRedisTestContainer fixture)
             ("Equal_int_property_with_nonnull_nullable_int_Value", r => r.Int == nullable.Value),
             ("NotEqual_with_int", r => r.Int != 8),
             ("NotEqual_with_string", r => r.String != "foo"),
+            ("Pure_negative_union", r => r.Int != 9 || r.String != "foo"),
             ("NotEqual_with_null_reference_type", r => r.String != null),
             ("NotEqual_with_null_captured", r => r.String != nullString),
             ("Bool", r => r.Bool),
@@ -110,6 +112,14 @@ public class FilterTests(ModernRedisTestContainer fixture)
             ("Nullable_not_null", r => r.Optional != null),
             ("Nullable_boundary", r => r.Optional >= 9),
             ("Nullable_inequality_includes_missing", r => r.Optional != 9),
+            ("Nullable_small_integer_equality", r => r.Short == 9),
+            ("Nullable_small_integer_reversed", r => 9 == r.Short),
+            ("Nullable_small_integer_boundary", r => r.Short >= 9),
+            ("Nullable_small_integer_inequality", r => r.Short != 9),
+            ("Nullable_small_integer_null", r => r.Short == null),
+            ("Nullable_small_integer_to_double", r => r.Short > 8.5),
+            ("Nullable_integer_to_double", r => r.Optional > 8.5),
+            ("Captured_nullable_small_integer", r => r.Optional == small),
             ("Empty_membership", r => Array.Empty<string>().Contains(r.String)),
             ("Double_exact_boundary", r => r.Double == 0.1),
             ("Double_exclusive_boundary", r => r.Double > 0.1),
@@ -150,8 +160,14 @@ public class FilterTests(ModernRedisTestContainer fixture)
         hits[0].Record.OtherVector.ToArray().Should().Equal(3, 0);
         var all = await Collect(collection.GetAsync(r => r.Int > 8, 100));
         var page = await Collect(collection.GetAsync(r => r.Int > 8, 2, new() { Skip = 1, IncludeVectors = true }));
-        page.Select(r => r.Id).Should().Equal(all.Skip(1).Take(2).Select(r => r.Id));
+        // Unsorted Redis LIMIT queries do not promise the same order across requests.
+        page.Should().HaveCount(2);
+        page.Select(r => r.Id).Should().OnlyHaveUniqueItems().And.BeSubsetOf(all.Select(r => r.Id));
         page.Should().OnlyContain(r => !r.Vector.IsEmpty && !r.OtherVector.IsEmpty);
+        var remaining = await Collect(collection.GetAsync(r => r.Int > 8, 100, new() { Skip = 1 }));
+        remaining.Should().HaveCount(all.Count - 1);
+        remaining.Select(r => r.Id).Should().OnlyHaveUniqueItems().And.BeSubsetOf(all.Select(r => r.Id));
+        (await Collect(collection.GetAsync(r => r.Int > 8, 100, new() { Skip = all.Count }))).Should().BeEmpty();
     });
 
     private async Task WithCollection(int protocol, Func<RespireVectorStoreCollection<FilterRecord>, Task> test)
@@ -167,9 +183,9 @@ public class FilterTests(ModernRedisTestContainer fixture)
     private static FilterRecord[] Data() =>
     [
         new("0", 8, "foo", true, ["x", "y"], ["x", "y"], null) { Double = 0.1, Float = 0.1f },
-        new("1", 9, "bar", false, ["a", "b"], ["a", "b"], 9) { Double = 0.2, Float = 0.2f },
-        new("2", 9, "foo", true, ["x"], ["x"], 8) { Double = 0.3, Float = 0.3f },
-        new("3", 10, null, false, ["x", "y", "z"], ["x", "y", "z"], 10) { Double = 0.4, Float = 0.4f },
+        new("1", 9, "bar", false, ["a", "b"], ["a", "b"], 9) { Double = 0.2, Float = 0.2f, Short = 9 },
+        new("2", 9, "foo", true, ["x"], ["x"], 8) { Double = 0.3, Float = 0.3f, Short = 8 },
+        new("3", 10, null, false, ["x", "y", "z"], ["x", "y", "z"], 10) { Double = 0.4, Float = 0.4f, Short = 10 },
         new("4", 11, Special, true, ["y", "z"], ["y", "z"], null) { Double = 0.5, Float = 0.5f },
     ];
 
@@ -177,6 +193,7 @@ public class FilterTests(ModernRedisTestContainer fixture)
     {
         public double Double { get; init; }
         public float Float { get; init; }
+        public short? Short { get; init; }
         public ReadOnlyMemory<float> Vector { get; init; } = new float[] { 1, 0 };
         public ReadOnlyMemory<float> OtherVector { get; init; } = new float[] { int.Parse(Id, CultureInfo.InvariantCulture) + 1, 0 };
     }
@@ -194,7 +211,8 @@ public class FilterTests(ModernRedisTestContainer fixture)
          new(nameof(FilterRecord.StringList), "list", RespireVectorDataFilterKind.StringCollection),
          new(nameof(FilterRecord.Optional), "optional", RespireVectorDataFilterKind.Numeric),
          new(nameof(FilterRecord.Double), "double", RespireVectorDataFilterKind.Numeric),
-         new(nameof(FilterRecord.Float), "float", RespireVectorDataFilterKind.Numeric)];
+         new(nameof(FilterRecord.Float), "float", RespireVectorDataFilterKind.Numeric),
+         new(nameof(FilterRecord.Short), "short", RespireVectorDataFilterKind.Numeric)];
         public override string GetKey(FilterRecord record) => record.Id;
         public override IReadOnlyDictionary<string, ReadOnlyMemory<byte>> Write(FilterRecord record)
         {
@@ -211,6 +229,7 @@ public class FilterTests(ModernRedisTestContainer fixture)
             };
             if (record.String is { } text) fields.Add("text", Bytes(RespireVectorDataFilterEncoding.EncodeTag(text)));
             if (record.Optional is { } number) fields.Add("optional", Bytes(number.ToString(CultureInfo.InvariantCulture)));
+            if (record.Short is { } small) fields.Add("short", Bytes(small.ToString(CultureInfo.InvariantCulture)));
             return fields;
         }
         public override FilterRecord Read(string key, IReadOnlyDictionary<string, ReadOnlyMemory<byte>> fields)
@@ -221,6 +240,7 @@ public class FilterTests(ModernRedisTestContainer fixture)
             {
                 Double = double.Parse(Text(fields["double"]), CultureInfo.InvariantCulture),
                 Float = (float)double.Parse(Text(fields["float"]), CultureInfo.InvariantCulture),
+                Short = fields.TryGetValue("short", out var small) ? short.Parse(Text(small), CultureInfo.InvariantCulture) : null,
                 Vector = fields.TryGetValue("v", out var vector) ? RespireVectorDataFloat32.Decode(vector.Span) : default,
                 OtherVector = fields.TryGetValue("other", out var other) ? RespireVectorDataFloat32.Decode(other.Span) : default,
             };

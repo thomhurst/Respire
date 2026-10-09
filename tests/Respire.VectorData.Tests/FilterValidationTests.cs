@@ -10,6 +10,50 @@ public class FilterValidationTests
     private static string Getter => throw new InvalidOperationException("Getter must never execute");
 
     [Test]
+    public void NullableNumericPromotionsPreserveFieldAndCapturedValues()
+    {
+        short? captured = 1;
+        short? missing = null;
+        Expression<Func<NullableNumericRecord, bool>>[] equalities =
+        [
+            r => r.Byte == 1,
+            r => r.SByte == 1,
+            r => r.Short == 1,
+            r => r.UShort == 1,
+            r => r.Int == 1.0,
+            r => r.UInt == 1.0,
+            r => r.Float == 1.0,
+            r => r.Short == 1.0,
+            r => 1 == r.Short,
+            r => r.Int == captured,
+        ];
+        var fields = new[] { "Byte", "SByte", "Short", "UShort", "Int", "UInt", "Float" }
+            .Select(name => new RespireVectorDataFilterField(name, "number", RespireVectorDataFilterKind.Numeric)).ToArray();
+        foreach (var filter in equalities)
+            new RespireVectorDataFilter<NullableNumericRecord>(fields).Translate(filter).Value.Should().Be("@number:[1 1]", filter.ToString());
+
+        new RespireVectorDataFilter<NullableNumericRecord>(fields).Translate(r => r.Int == missing).Value.Should().Be("ismissing(@number)");
+    }
+
+    [Test]
+    public void NullableNumericNarrowingAndUnwrappingRemainUnsupported()
+    {
+        Expression<Func<FilterRecord, bool>>[] filters =
+        [
+            r => (short?)r.Optional == 9,
+            r => (int)r.Optional! == 9,
+            r => checked((short?)r.Optional) == 9,
+        ];
+        foreach (var filter in filters)
+        {
+            var translate = () => new RespireVectorDataFilter<FilterRecord>(new FilterMapper().FilterFields).Translate(filter);
+            translate.Should().Throw<NotSupportedException>();
+        }
+    }
+
+    private sealed record NullableNumericRecord(byte? Byte, sbyte? SByte, short? Short, ushort? UShort, int? Int, uint? UInt, float? Float);
+
+    [Test]
     public void UnsupportedExpressionsNeverExecuteOrDisappear()
     {
         Expression<Func<FilterRecord, bool>>[] filters =
