@@ -234,7 +234,7 @@ Respire.Networking.PendingResponseSource | readonly struct PoolPolicy(PendingRes
 # Count: Respire.Networking.PendingResponseSource.PoolPolicy | 2
 Respire.Networking.PendingResponseSource.PoolPolicy | method Create() : PendingResponseSource
 Respire.Networking.PendingResponseSource.PoolPolicy | method TryReset(PendingResponseSource) : bool
-# Count: Respire.Networking.RespireConnection | 94
+# Count: Respire.Networking.RespireConnection | 95
 Respire.Networking.RespireConnection | event MovingNotification : Action<Respire.Infrastructure.MovingAnnouncement>?
 Respire.Networking.RespireConnection | event PendingCommandsFailing : Action?
 Respire.Networking.RespireConnection | field LastQueuedMovingSequence : long
@@ -287,7 +287,8 @@ Respire.Networking.RespireConnection | method SendStringAsync`1(in TCommand, Can
 Respire.Networking.RespireConnection | method SendTransactionAsync(ReadOnlyMemory<byte>, int, CancellationToken, TimeSpan?, CancellationToken, bool, CommandDeadline, RespireTransactionBase?, RespireTelemetry.ErrorObservation, ClientSideCacheCoordinator.MutationFence, bool) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendValidatedPrefixedAsync`2(in TPrefix, in TCommand, CancellationToken, string, string?, bool, CommandDeadline, RespireTelemetry.ErrorObservation) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendValidatedPrefixedAsync`3(in TFirstPrefix, in TSecondPrefix, in TCommand, CancellationToken, string, string?, RespireTelemetry.ErrorObservation, bool, CommandDeadline) : ValueTask<RespValue>
-Respire.Networking.RespireConnection | method SendWithoutResponseTimeoutAsync`1(TCommand, CancellationToken, int, bool) : ValueTask<RespValue>
+Respire.Networking.RespireConnection | method SendValidatedPrefixedWithoutResponseTimeoutAsync`2(TPrefix, TCommand, CancellationToken, int, bool, RespireTelemetry.ErrorObservation) : ValueTask<RespValue>
+Respire.Networking.RespireConnection | method SendWithoutResponseTimeoutAsync`1(TCommand, CancellationToken, int, bool, RespireTelemetry.ErrorObservation) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SetLeaseRented(bool) : void
 Respire.Networking.RespireConnection | method StopAcceptingCommands() : void
 Respire.Networking.RespireConnection | method ThrowIfRetired(bool) : void
