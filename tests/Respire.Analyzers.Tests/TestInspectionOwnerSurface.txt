@@ -156,7 +156,7 @@ Respire.Networking.BulkStreamPendingResponseSource | property Task [internal; ge
 Respire.Networking.BytesPendingResponseSource | method IValueTaskSource<byte[]?>.GetResult(short) : byte[]?
 Respire.Networking.BytesPendingResponseSource | method IValueTaskSource<byte[]?>.GetStatus(short) : ValueTaskSourceStatus
 Respire.Networking.BytesPendingResponseSource | method IValueTaskSource<byte[]?>.OnCompleted(Action<object?>, object?, short, ValueTaskSourceOnCompletedFlags) : void
-Respire.Networking.BytesPendingResponseSource | method Rent(string?, int, bool, RespireTelemetry.DurationObservation) : BytesPendingResponseSource
+Respire.Networking.BytesPendingResponseSource | method Rent(string?, int, bool, RespireTelemetry.DurationObservation, ErrorObservation.FinalOwner) : BytesPendingResponseSource
 Respire.Networking.BytesPendingResponseSource | method ResetAndReturn() : void
 Respire.Networking.BytesPendingResponseSource | method SetDirectResult(byte[]?) : void
 Respire.Networking.BytesPendingResponseSource | method SetExceptionCore(Exception) : void
@@ -167,7 +167,7 @@ Respire.Networking.BytesPendingResponseSource | property Task [public; get] : Va
 Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | method IValueTaskSource<TResult>.GetResult(short) : TResult
 Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | method IValueTaskSource<TResult>.GetStatus(short) : ValueTaskSourceStatus
 Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | method IValueTaskSource<TResult>.OnCompleted(Action<object?>, object?, short, ValueTaskSourceOnCompletedFlags) : void
-Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | method Rent(TState, ResponseConverter<TState, TResult>, bool, string?, int, bool, RespireTelemetry.DurationObservation) : ConvertedPendingResponseSource<TState, TResult>
+Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | method Rent(TState, ResponseConverter<TState, TResult>, bool, string?, int, bool, RespireTelemetry.DurationObservation, ErrorObservation.FinalOwner) : ConvertedPendingResponseSource<TState, TResult>
 Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | method ResetAndReturn() : void
 Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | method SetExceptionCore(Exception) : void
 Respire.Networking.ConvertedPendingResponseSource<TState, TResult> | method SetResultCore(in RespValue) : void
@@ -189,9 +189,10 @@ Respire.Networking.MultiReplyPendingResponseSource | method TryReserveResult() :
 Respire.Networking.MultiReplyPendingResponseSource | method TrySetResult(in RespValue) : bool
 Respire.Networking.MultiReplyPendingResponseSource | property CommandName [internal; get] : string?
 Respire.Networking.MultiReplyPendingResponseSource | property Task [internal; get] : ValueTask<RespValue>
-# Count: Respire.Networking.PendingResponse | 26
+# Count: Respire.Networking.PendingResponse | 27
 Respire.Networking.PendingResponse | field WriteEnd : long
 Respire.Networking.PendingResponse | field WriteStart : long
+Respire.Networking.PendingResponse | method CompleteCallerInspection(ErrorObservation.FinalOwner, Exception?, bool) : void
 Respire.Networking.PendingResponse | method CompleteReservedResult(in RespValue) : bool
 # Designated test-inspection factory. New inspection access belongs in its nested view.
 Respire.Networking.PendingResponse | method InspectForTests() : TestInspection
@@ -220,7 +221,7 @@ Respire.Networking.PendingResponse | method BindMutationFence(in ClientSideCache
 Respire.Networking.PendingResponse | method DispatchException(Exception) : void
 # Count: Respire.Networking.PendingResponseSource | 11
 Respire.Networking.PendingResponseSource | constructor PendingResponseSource()
-Respire.Networking.PendingResponseSource | method Configure(bool, string?) : void
+Respire.Networking.PendingResponseSource | method Configure(bool, string?, bool, ErrorObservation.FinalOwner) : void
 Respire.Networking.PendingResponseSource | method IValueTaskSource<RespValue>.GetResult(short) : RespValue
 Respire.Networking.PendingResponseSource | method IValueTaskSource<RespValue>.GetStatus(short) : ValueTaskSourceStatus
 Respire.Networking.PendingResponseSource | method IValueTaskSource<RespValue>.OnCompleted(Action<object?>, object?, short, ValueTaskSourceOnCompletedFlags) : void
@@ -328,7 +329,7 @@ Respire.Networking.RespireConnection.CredentialSequenceLease | method Dispose() 
 Respire.Networking.StringPendingResponseSource | method IValueTaskSource<string?>.GetResult(short) : string?
 Respire.Networking.StringPendingResponseSource | method IValueTaskSource<string?>.GetStatus(short) : ValueTaskSourceStatus
 Respire.Networking.StringPendingResponseSource | method IValueTaskSource<string?>.OnCompleted(Action<object?>, object?, short, ValueTaskSourceOnCompletedFlags) : void
-Respire.Networking.StringPendingResponseSource | method Rent(string?, int, bool, RespireTelemetry.DurationObservation) : StringPendingResponseSource
+Respire.Networking.StringPendingResponseSource | method Rent(string?, int, bool, RespireTelemetry.DurationObservation, ErrorObservation.FinalOwner) : StringPendingResponseSource
 Respire.Networking.StringPendingResponseSource | method ResetAndReturn() : void
 Respire.Networking.StringPendingResponseSource | method SetDirectResult(string?) : void
 Respire.Networking.StringPendingResponseSource | method SetExceptionCore(Exception) : void
