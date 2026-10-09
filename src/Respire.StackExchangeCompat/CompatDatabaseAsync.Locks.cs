@@ -25,7 +25,8 @@ internal abstract partial class CompatDatabaseAsync
             if (channel.IsPattern) throw Compatibility.Unsupported("publishing a pattern channel");
             byte[]? snapshot = channel;
             ArgumentNullException.ThrowIfNull(snapshot, nameof(channel));
-            return Send(RespireCommands.PubSub.PUBLISH, [snapshot.ToArray(), Value(message)], flags, static result => (long)result);
+            var resolved = DatabaseOwner.Client.ResolveChannel(new RespireChannel(snapshot.AsMemory()));
+            return Send(RespireCommands.PubSub.PUBLISH, [resolved.Bytes.ToArray(), Value(message)], flags, static result => (long)result);
         }
         if (this is not CompatDatabase) throw Compatibility.Unsupported("Publish on a batch; use the database directly");
         if (flags is not (CommandFlags.None or CommandFlags.DemandMaster))

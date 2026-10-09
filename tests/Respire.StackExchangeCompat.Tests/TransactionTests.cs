@@ -21,6 +21,78 @@ public class TransactionTests(RedisTestContainer redis)
     [Test]
     [Arguments(2)]
     [Arguments(3)]
+    public async Task TransactionPublicationResolvesPrefixAndSnapshotsBinaryArguments(int protocol)
+    {
+        byte[] prefix = [0x80, 0];
+        await using var connection = RespireConnectionMultiplexer.Create(Options(protocol) with { PubSubPrefix = new RespireKey(prefix) });
+        var subscriber = connection.GetSubscriber();
+        byte[] channelBytes = [0xff, 0, (byte)redis.Database];
+        RedisChannel channel = new(channelBytes.ToArray(), RedisChannel.PatternMode.Literal);
+        byte[] payload = [0xfe, 0, 0x81];
+        var delivered = new TaskCompletionSource<RedisValue>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await subscriber.SubscribeAsync(channel, (actual, value) =>
+        {
+            Assert.Equal(channel, actual);
+            delivered.TrySetResult(value);
+        });
+        var transaction = connection.GetDatabase().CreateTransaction();
+        var published = transaction.PublishAsync(new RedisChannel(channelBytes, RedisChannel.PatternMode.Literal), payload);
+        Assert.False(published.IsCompleted);
+        Assert.False(delivered.Task.IsCompleted);
+        channelBytes.AsSpan().Fill(1);
+        payload.AsSpan().Fill(1);
+        Assert.True(await transaction.ExecuteAsync());
+        Assert.Equal(1, await published);
+        Assert.Equal(new byte[] { 0xfe, 0, 0x81 }, (byte[]?)await delivered.Task.WaitAsync(TimeSpan.FromSeconds(10)));
+        await subscriber.UnsubscribeAsync(channel);
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task PrefixedConditionsReadEverySupportedCommandAndAbortOnMismatch(int protocol)
+    {
+        await using var connection = RespireConnectionMultiplexer.Create(Options(protocol) with { KeyPrefix = "tenant:" });
+        using var control = await ConnectionMultiplexer.ConnectAsync(redis.StackExchangeConnectionString);
+        var expected = control.GetDatabase();
+        await expected.StringSetAsync("tenant:string", "abc");
+        await expected.StringSetAsync("string", "wrong namespace");
+        await expected.HashSetAsync("tenant:hash", "field", "value");
+        await expected.ListRightPushAsync("tenant:list", "entry");
+        await expected.SetAddAsync("tenant:set", "member");
+        await expected.SortedSetAddAsync("tenant:sorted", "member", 1.5);
+        var transaction = connection.GetDatabase().CreateTransaction();
+        var conditions = new[]
+        {
+            Condition.KeyExists("string"), Condition.KeyNotExists("missing"),
+            Condition.StringEqual("string", "abc"), Condition.HashExists("hash", "field"),
+            Condition.HashEqual("hash", "field", "value"), Condition.SetContains("set", "member"),
+            Condition.SortedSetEqual("sorted", "member", 1.5), Condition.ListIndexEqual("list", 0, "entry"),
+            Condition.StringLengthEqual("string", 3), Condition.HashLengthEqual("hash", 1),
+            Condition.ListLengthEqual("list", 1), Condition.SetLengthEqual("set", 1),
+            Condition.SortedSetLengthEqual("sorted", 1), Condition.SortedSetLengthEqual("sorted", 1, 1, 2),
+            Condition.StreamLengthEqual("stream", 0),
+        }.Select(transaction.AddCondition).ToArray();
+        var write = transaction.StringIncrementAsync("counter");
+        Assert.True(await transaction.ExecuteAsync());
+        Assert.All(conditions, static condition => Assert.True(condition.WasSatisfied));
+        Assert.Equal(1, await write);
+        Assert.Equal("1", (string?)await expected.StringGetAsync("tenant:counter"));
+        Assert.False(await expected.KeyExistsAsync("counter"));
+
+        var mismatch = transaction.AddCondition(Condition.StringEqual("string", "wrong namespace"));
+        var wrongType = transaction.AddCondition(Condition.StringEqual("hash", "value"));
+        var canceled = transaction.StringIncrementAsync("counter");
+        Assert.False(await transaction.ExecuteAsync());
+        Assert.False(mismatch.WasSatisfied);
+        Assert.False(wrongType.WasSatisfied);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => canceled);
+        Assert.Equal("1", (string?)await expected.StringGetAsync("tenant:counter"));
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
     public async Task PinnedHangfireWritesAndFetchedJobsUseTransactions(int protocol)
     {
         await using var connection = RespireConnectionMultiplexer.Create(Options(protocol));
@@ -241,10 +313,10 @@ public class TransactionTests(RedisTestContainer redis)
     [Arguments(3)]
     public async Task WatchedMutationAfterConditionReadAbortsAllCommands(int protocol)
     {
-        await using var connection = RespireConnectionMultiplexer.Create(Options(protocol));
+        await using var connection = RespireConnectionMultiplexer.Create(Options(protocol) with { KeyPrefix = "tenant:" });
         using var control = await ConnectionMultiplexer.ConnectAsync(redis.StackExchangeConnectionString);
         var expected = control.GetDatabase();
-        await expected.StringSetAsync("guard", "old");
+        await expected.StringSetAsync("tenant:guard", "old");
         var transaction = connection.GetDatabase().CreateTransaction();
         var condition = transaction.AddCondition(Condition.StringEqual("guard", "old"));
         var pending = transaction.StringIncrementAsync("counter");
@@ -258,7 +330,7 @@ public class TransactionTests(RedisTestContainer redis)
             ActivityStopped = activity =>
             {
                 if ((string?)activity.GetTagItem("db.operation.name") == "GET" && Interlocked.Exchange(ref changed, 1) == 0)
-                    expected.StringSet("guard", "new");
+                    expected.StringSet("tenant:guard", "new");
             },
         };
         ActivitySource.AddActivityListener(listener);
@@ -267,7 +339,7 @@ public class TransactionTests(RedisTestContainer redis)
         Assert.True(condition.WasSatisfied);
         Assert.True(transaction.WasWatchConflict);
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
-        Assert.False(await expected.KeyExistsAsync("counter"));
+        Assert.False(await expected.KeyExistsAsync("tenant:counter"));
         Assert.True(transaction.Execute());
         Assert.False(transaction.WasWatchConflict);
         // The watched lease is released; subsequent conditional transactions remain usable.
