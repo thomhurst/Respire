@@ -25,6 +25,10 @@ internal sealed class InflightRing
     private DiscardedReply[]? _discardedReplies;
     private readonly int _mask;
     private Positions _positions;
+#if DEBUG
+    // Capacity-hint traffic only; diagnostics and exact idle observations are independent.
+    internal int CapacitySnapshotHeadReadsForTests;
+#endif
 
     // The regions need not start on a cache-line boundary: 128 bytes between the
     // producer and consumer counters prevents sharing on 64/128-byte cache lines.
@@ -110,8 +114,27 @@ internal sealed class InflightRing
     {
         var tail = _positions.Tail;
         if (_slots.Length - (tail - _positions.CachedHead) >= count) return true;
-        _positions.CachedHead = Volatile.Read(ref _positions.Head);
-        return _slots.Length - (tail - _positions.CachedHead) >= count;
+        var head = Volatile.Read(ref _positions.Head);
+        // Publish a producer-owned cache snapshot for callers inspecting capacity before
+        // taking the write gate. Only this gate-protected path can advance the cache.
+        Volatile.Write(ref _positions.CachedHead, head);
+        return _slots.Length - (tail - head) >= count;
+    }
+
+    /// <summary>Racy producer hint only. Admission must still call HasCapacity under the write gate.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal bool HasCapacitySnapshot(int count)
+    {
+        // Read the published cache before the tail: its release publication follows the
+        // tail position that made this head possible. Spare cached capacity avoids reading
+        // the consumer's cache line. A stale/full cache must not hide newly released slots.
+        var cachedHead = Volatile.Read(ref _positions.CachedHead);
+        var tail = Volatile.Read(ref _positions.Tail);
+        if (_slots.Length - (tail - cachedHead) >= count) return true;
+#if DEBUG
+        Interlocked.Increment(ref CapacitySnapshotHeadReadsForTests);
+#endif
+        return _slots.Length - (tail - Volatile.Read(ref _positions.Head)) >= count;
     }
 
     internal bool TryDequeue(out PendingResponse source, out string? discardedOperation)

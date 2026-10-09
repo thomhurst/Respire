@@ -761,7 +761,7 @@ public class TimeoutDiagnosticsTests
         var before = GC.GetAllocatedBytesForCurrentThread();
         for (var i = 1; i <= iterations; i++)
         {
-            if (!ring.TryEnqueue(source, 10 + i) || !ring.TryDequeue(out var returned)
+            if (!ring.HasCapacitySnapshot(1) || !ring.TryEnqueue(source, 10 + i) || !ring.TryDequeue(out var returned)
                 || !ReferenceEquals(source, returned))
                 throw new InvalidOperationException("The allocation measurement must exercise a successful ring round trip.");
             if (allocate) GC.KeepAlive(AllocateRingControl());
