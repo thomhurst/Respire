@@ -149,10 +149,15 @@ Both synchronous and asynchronous variants are supported:
 | `HashGet` | One field or an array of fields; missing values remain null |
 | `HashGetLease` | Independent copied lease; null for missing fields, empty lease for empty values; caller disposes the lease |
 | `HashSet` | Entry array, or a field/value with `When.Always` or `When.NotExists`; null field values in the scalar overload delete the field |
+| `HashGetAll`, `HashLength` | Binary field/value entries and original field count; empty array/zero for a missing hash |
+| `HashDelete` | One field or an array of fields; original deletion boolean/count; empty array is a no-op |
 | `KeyExpire` | Relative `TimeSpan?`, absolute local/UTC `DateTime?`, and `ExpireWhen` conditions; null and maximum-value sentinels persist unconditionally |
 | `KeyDelete` | One key or an array of keys; original deletion boolean/count |
 | `ListRange` | Start/stop indexes, including Redis negative indexes |
-| `ListRightPush` | Scalar or array with `When.Always`/`When.Exists`; original list length, including an empty-array length query |
+| `ListLeftPush`, `ListRightPush` | Scalar or array with `When.Always`/`When.Exists`; original list length, including an empty-array length query |
+| `ListLength`, `ListGetByIndex` | Original length and binary indexed value; negative indexes supported, null for a missing index |
+| `ListRemove`, `ListTrim` | Signed removal count and inclusive start/stop indexes, including negative indexes; Redis removal count and trimming behavior |
+| `ListRightPopLeftPush` | Atomic move between lists; original binary value or null when the source is empty |
 | `Wait`, `WaitAll`, `TryWait` | Wait helpers used by the official cache; synchronous timeout follows native `CommandTimeout` |
 
 Individual database commands require native `Connections = 1` (the default).
@@ -181,8 +186,9 @@ translated into StackExchange.Redis exception types.
 
 ### Batch and lifetime behavior
 
-`CreateBatch()` supports deferred `HashSetAsync` and `KeyExpireAsync` with
-`None`/`DemandMaster` flags. No command executes before `Execute()`. Execution
+`CreateBatch()` supports the listed hash/list asynchronous methods and
+`KeyExpireAsync` with `None`/`DemandMaster` flags. No queued command executes
+before `Execute()`; empty hash field arrays remain immediate no-ops. Execution
 uses a native `RespireBatch`, so commands for the same key share an ordered
 pipeline even when a wrapped client has multiple connections. Each call to
 `Execute()` takes the current queue; later calls can send newly queued work,
@@ -206,6 +212,19 @@ provide general StackExchange.Redis parity. SignalR and Hangfire acceptance
 remain pending under [#889](https://github.com/thomhurst/Respire/issues/889).
 
 ### Pinned source inventory and validation
+
+The hash/list facet was inventoried against `Hangfire.Redis.StackExchange`
+1.12.0 at the NuGet package's repository commit
+[`da8e39a33df204900afc30aeb65110f76f081c55`](https://github.com/marcoCasamento/Hangfire.Redis.StackExchange/tree/da8e39a33df204900afc30aeb65110f76f081c55).
+Its `RedisConnection`, `RedisFetchedJob`, `RedisMonitoringApi`,
+`RedisWriteDirectlyToDatabase` and `RedisWriteOnlyTransaction` use hash
+deletion/count/entry reads and list pushes, lengths, indexed reads, removal,
+trimming and atomic moves. Focused tests exercise these contracts against
+real Redis with RESP2/RESP3 on .NET 8 and .NET 10, including binary snapshots,
+database isolation, deferred batch reads/writes, server errors and shutdown.
+This facet does not establish full Hangfire compatibility. Remaining command
+facets, transactions and conditions, server/lock support, and official upstream
+suite acceptance are tracked by [#1269](https://github.com/thomhurst/Respire/issues/1269).
 
 Before implementing this surface, the integration call sites were checked in
 [ASP.NET Core 10.0.12 RedisCache.cs](https://github.com/dotnet/aspnetcore/blob/v10.0.12/src/Caching/StackExchangeRedis/src/RedisCache.cs)

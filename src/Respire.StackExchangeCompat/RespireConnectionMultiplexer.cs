@@ -206,6 +206,6 @@ internal static class Compatibility
 {
     internal static NotSupportedException Unsupported(string member)
         => new($"{member} is not supported by Respire.StackExchangeCompat. "
-            + "This adapter supports the official distributed cache and DataProtection command surface only. "
+            + "This adapter supports only its documented command subset. "
             + "Use native Respire APIs for other operations.");
 }

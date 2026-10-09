@@ -66,6 +66,7 @@ internal sealed partial class CompatDatabase : CompatDatabaseAsync, IDatabase
             if (discardReply)
             {
                 if (typeof(T) == typeof(RedisValue[])) return (T)(object)Array.Empty<RedisValue>();
+                if (typeof(T) == typeof(HashEntry[])) return (T)(object)Array.Empty<HashEntry>();
                 return default(T)!;
             }
             using var result = await pending!.ConfigureAwait(false);
