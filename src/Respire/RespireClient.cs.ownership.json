@@ -84,7 +84,7 @@
     {
       "Name": "catalog-dispatch-helper",
       "Role": "helper",
-      "Member": "Respire.RespireClient.ExecuteCatalogAsync(RespireCommand,RespireValue[],RespireCommandFlags,CancellationToken):ValueTask<RespireResult>",
+      "Member": "Respire.RespireClient.ExecuteCatalogAsync(RespireCommand,RespireValue[],RespireCommandFlags,CancellationToken,TaskCompletionSource?):ValueTask<RespireResult>",
       "Owner": "Respire.RespireClient.ExecuteAsync(RespireCommand,RespireValue[],RespireCommandFlags,CancellationToken):ValueTask<RespireResult>",
       "Contract": "Borrow the public catalog caller owner through metadata validation and dispatch."
     },
