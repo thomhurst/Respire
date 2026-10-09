@@ -48,17 +48,15 @@ public partial class ErrorMetricsTests
     }
 
     [Test]
-    [Arguments("integer")]
-    [Arguments("string")]
-    [Arguments("generic")]
-    [Arguments("load")]
-    [Arguments("exists")]
-    [Arguments("flush")]
-    public async Task ScriptPreflightHasOneFinalOwner(string route)
+    [MatrixDataSource]
+    public async Task ScriptPreflightHasOneFinalOwner(
+        [Matrix("integer", "string", "generic", "load", "exists", "flush")] string route,
+        [Matrix(false, true)] bool disposed)
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        if (disposed) await client.DisposeAsync();
         using var capture = new Capture(throwOnMeasurement: true);
         Exception? failure = null;
         try

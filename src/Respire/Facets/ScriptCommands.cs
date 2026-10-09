@@ -257,8 +257,8 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         var owner = DispatchResponseSource<bool[]>.Start();
         try
         {
-            ObjectDisposedException.ThrowIf(client.Core.Disposed, client);
             var command = new CmdN(Verbs.ScriptExists, MapDigests(sha1s));
+            ObjectDisposedException.ThrowIf(client.Core.Disposed, client);
             return owner.Attach(client.Core.Cluster is { } cluster
                 ? ExistsClusterAsync(cluster, command, cancellationToken, owner.Observation)
                 : client.ConvertResponseAsync("SCRIPT EXISTS", command, cancellationToken, this,
@@ -272,8 +272,8 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         var owner = DispatchResponseSource<bool>.Start();
         try
         {
-            ObjectDisposedException.ThrowIf(client.Core.Disposed, client);
             var command = new Cmd(FlushVerb(mode));
+            ObjectDisposedException.ThrowIf(client.Core.Disposed, client);
             var response = client.Core.Cluster is { } cluster
                 ? FlushClusterAsync(cluster, command, cancellationToken, owner.Observation)
                 : client.ConvertResponseAsync("SCRIPT FLUSH", command, cancellationToken, this,
@@ -327,6 +327,7 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         return results[0];
     }
 
+    // The boolean result lets SCRIPT FLUSH share the caller's generic response owner.
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<bool> FlushClusterAsync(
         ClusterRouter cluster, Cmd command, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
@@ -342,8 +343,8 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         var owner = DispatchResponseSource<string>.Start();
         try
         {
-            ObjectDisposedException.ThrowIf(client.Core.Disposed, client);
             ArgumentNullException.ThrowIfNull(script);
+            ObjectDisposedException.ThrowIf(client.Core.Disposed, client);
             return owner.Attach(client.Core.Cluster is { } cluster
                 ? LoadClusterAsync(cluster, script, cancellationToken, owner.Observation)
                 : LoadSingleAsync(script, cancellationToken, owner.Observation));
