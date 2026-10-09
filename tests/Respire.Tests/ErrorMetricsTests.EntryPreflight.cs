@@ -13,7 +13,8 @@ public partial class ErrorMetricsTests
     [Test]
     [MatrixDataSource]
     public async Task TypedMutationReportsFinalErrorAfterThrowingCompletion(
-        [Matrix("success", "error", "canceled")] string response, [Matrix(false, true)] bool throwOnCompletion)
+        [Matrix("success", "error", "canceled")] string response, [Matrix(false, true)] bool throwOnCompletion,
+        [Matrix(false, true)] bool circuitEnabled)
     {
         using var configuration = new MetricConfigurationScope(new()
             { Groups = RespireMetricGroups.Resiliency | RespireMetricGroups.ClientSideCaching });
@@ -27,6 +28,7 @@ public partial class ErrorMetricsTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespProtocol.Resp3, Connections = 1, ClientSideCache = new(),
+            CircuitBreaker = circuitEnabled ? new() : null,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         using var listener = new MeterListener();

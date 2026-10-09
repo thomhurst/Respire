@@ -132,6 +132,7 @@ public sealed partial class RespireClient
         var attemptStarted = durationStarted with { SuppressRetirement = true };
         var durationOwnedByTransport = false;
         var succeeded = false;
+        Exception? finalError = null;
         // Circuit rejection must release the logical command's mutation fence too.
         try
         {
@@ -171,7 +172,7 @@ public sealed partial class RespireClient
         }
         catch (Exception error)
         {
-            observation.Final(error);
+            finalError = error;
             // Final response sources own completion before user conversion. Undispatched
             // retirement retains the original start for retry or terminal failure here.
             if (!durationOwnedByTransport || error is RespireConnectionRetiredException)
@@ -183,7 +184,23 @@ public sealed partial class RespireClient
         }
         finally
         {
-            if (mutationFence.IsRequired) cache!.CompleteMutation(in mutationFence, succeeded);
+            try
+            {
+                if (mutationFence.IsRequired) cache!.CompleteMutation(in mutationFence, succeeded);
+            }
+            catch (Exception) when (finalError is not null)
+            {
+                // Cleanup cannot replace the response failure or turn cancellation into a fault.
+            }
+            catch (Exception error)
+            {
+                finalError = error;
+                throw;
+            }
+            finally
+            {
+                if (finalError is not null) observation.Final(finalError);
+            }
         }
     }
 
