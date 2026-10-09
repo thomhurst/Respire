@@ -10,6 +10,53 @@ namespace Respire.Tests.Networking;
 public class FailoverGroupMaintenanceTests
 {
     [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task SlotMigrationDoesNotSuppressClusterProbeFailure(bool beforeProbe, bool completedHandoff)
+    {
+        await using var server = Server();
+        var replies = server.ReplyOverride!;
+        server.ReplyOverride = (id, command) => command switch
+        {
+            "CLUSTER SLOTS" => Encoding.ASCII.GetBytes(
+                $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{server.Port}\r\n"),
+            "CLUSTER INFO" => "$18\r\ncluster_state:ok\r\n\r\n"u8.ToArray(),
+            _ => replies(id, command),
+        };
+        var candidate = Candidate(server);
+        candidate = candidate with { Options = candidate.Options with { UseCluster = true } };
+        await using var group = await RespireFailoverGroup.ConnectAsync([candidate], ManualOptions());
+        var client = (RespireClient)group.ActiveClient;
+        var connection = client.Core.Cluster!.GetMultiplexer(new("127.0.0.1", server.Port))!.GetConnection();
+        var tracker = client.Core.Options.FailoverMaintenance!;
+        var clusterReplies = server.ReplyOverride!;
+        byte[] slotMigration = ">3\r\n+SMIGRATING\r\n:2\r\n+0-100\r\n"u8.ToArray();
+        byte[] notifications = completedHandoff
+            ? [.. Start("MIGRATING"), .. slotMigration, .. Finish("MIGRATED")]
+            : slotMigration;
+        server.ReplyOverride = (id, command) => command switch
+        {
+            "PING" when beforeProbe => [.. notifications, .. FakeRespServer.PongReply],
+            "CLUSTER INFO" => beforeProbe ? "-ERR unavailable\r\n"u8.ToArray()
+                : [.. notifications, .. "-ERR unavailable\r\n"u8.ToArray()],
+            _ => clusterReplies(id, command),
+        };
+        // A successful command processes earlier pushes before the next health probe starts.
+        if (beforeProbe) await group.ActiveClient.PingAsync();
+
+        await group.ForTests.ProbeAsync(0);
+
+        // Slot migration still relaxes command deadlines, but cannot hide deployment failure.
+        await Assert.That(connection.HasMaintenanceWindow).IsTrue();
+        await Assert.That(tracker.IsActive).IsFalse();
+        await Assert.That(tracker.Generation).IsEqualTo(completedHandoff ? 1L : 0L);
+        await Assert.That(group.GetEndpointStatuses()[0].ConsecutiveFailures).IsEqualTo(1);
+        await Assert.That(group.GetEndpointStatuses()[0].IsHealthy).IsFalse();
+        await Assert.That(group.ForTests.Circuit(0).State).IsEqualTo(EndpointCircuitState.Open);
+    }
+
+    [Test]
     [Arguments("MIGRATING")]
     [Arguments("FAILING_OVER")]
     public async Task MemberCommandsKeepRelaxedTimeoutDuringMaintenance(string kind)

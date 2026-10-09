@@ -204,6 +204,9 @@ maintenance window is active. A probe that fails after a window starts does not 
 `ConsecutiveFailures`, open the group's circuit, or restart its failback grace period. This
 includes `FAILING_OVER`, `MIGRATING`, and `MOVING`. Maintenance cannot establish initial health
 or recover a candidate that is already unhealthy.
+Cluster slot migrations (`SMIGRATING` and `SMIGRATED`) retain command timeout relaxation but
+do not postpone health probes or suppress their failures. A slot migration cannot extend a
+handoff's probe suppression after the handoff completes.
 
 Windows remain observable after a socket closes or is replaced. `FAILED_OVER` and `MIGRATED`
 end their matching windows; overlapping windows must all finish before probes resume.

@@ -74,6 +74,8 @@ internal sealed partial class RespireConnection
     }
     // Created lazily and only by the receive loop; other threads read the state volatilely.
     private MaintenanceTimeoutState? _maintenanceState;
+    // Slot migrations relax command deadlines but cannot postpone deployment health probes.
+    private MaintenanceTimeoutState? _failoverMaintenanceState;
     private MaintenanceTelemetry? _maintenanceTelemetry;
     private const int MaintenanceInactive = 0;
     // Negotiation sent; pushes parsed before the acknowledgement may be replayed completions.
@@ -220,8 +222,16 @@ internal sealed partial class RespireConnection
                 state = new MaintenanceTimeoutState((long)_maintenanceOptions!.MaintenanceWindowTimeout.TotalMilliseconds);
                 Volatile.Write(ref _maintenanceState, state);
             }
-            var started = state.Apply(notification, Environment.TickCount64);
-            _maintenanceOptions!.FailoverMaintenance?.Observe(state, started);
+            var now = Environment.TickCount64;
+            state.Apply(notification, now);
+            if (_maintenanceOptions!.FailoverMaintenance is { } tracker
+                && notification.Family is "FAILING_OVER" or "MIGRATING" or "MOVING")
+            {
+                // Keep a separate window so overlapping slot migration cannot extend a handoff.
+                var failoverState = _failoverMaintenanceState ??= new MaintenanceTimeoutState(
+                    (long)_maintenanceOptions.MaintenanceWindowTimeout.TotalMilliseconds);
+                tracker.Observe(failoverState, failoverState.Apply(notification, now));
+            }
         }
         if (notification.Kind == "MOVING")
         {
