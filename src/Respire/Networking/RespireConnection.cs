@@ -982,7 +982,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     internal interface IBatchCommand
     {
         ValueTask<RespValue> StartSend(RespireConnection connection, CancellationToken cancellationToken,
-            RespireTelemetry.ErrorObservation observation, bool deferFlush);
+            RespireTelemetry.ErrorObservation observation, bool deferFlush, CommandDeadline deadline);
     }
 
     // A default Lock.Scope is not disposable on the net8.0 polyfill. Own only gates
@@ -1010,7 +1010,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// <summary>Admits a fitting pipeline under one gate before waking the persistent sender.</summary>
     internal bool TryEnqueueMany<TCommand>(IReadOnlyList<TCommand> commands,
         ValueTask<RespValue>[] sends, RespireTelemetry.ErrorObservation[] observations,
-        CancellationToken cancellationToken) where TCommand : IBatchCommand
+        CancellationToken cancellationToken, CommandDeadline deadline) where TCommand : IBatchCommand
     {
         var startedBatch = false;
         lock (_writeGate)
@@ -1023,7 +1023,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             {
                 try
                 {
-                    sends[index] = commands[index].StartSend(this, cancellationToken, observations[index], deferFlush: true);
+                    sends[index] = commands[index].StartSend(this, cancellationToken, observations[index], deferFlush: true,
+                        deadline: deadline);
                 }
                 catch (Exception error)
                 {

@@ -1,4 +1,5 @@
 using System.Net.Sockets;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Infrastructure;
@@ -181,6 +182,80 @@ public class StandaloneBatchFlushTests
             .IsEqualTo(2);
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("WAIT", StringComparison.Ordinal)))
             .IsFalse();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task WriteGateContentionConsumesBatchTimeout(bool boundedRing)
+    {
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray()) { SuppressReply = _ => true };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1,
+            MaxInflightCommands = boundedRing ? 2 : 128,
+            CommandTimeout = TimeSpan.FromSeconds(2),
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+        });
+        using var batch = client.CreateBatch();
+        var pending = new RespirePending<long>[3];
+        for (var index = 0; index < pending.Length; index++) pending[index] = batch.Increment($"counter:{index}");
+        var connection = client.Core.Multiplexer!.GetConnection();
+        var gate = typeof(RespireConnection).GetField("_writeGate", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(connection)!;
+        using var release = new ManualResetEventSlim();
+        var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var holder = new Thread(() =>
+        {
+            gate.GetType().GetMethod("Enter")!.Invoke(gate, null);
+            try
+            {
+                held.SetResult();
+                release.Wait(TimeSpan.FromSeconds(15));
+            }
+            finally { gate.GetType().GetMethod("Exit")!.Invoke(gate, null); }
+        }) { IsBackground = true };
+        var started = new TaskCompletionSource<Task>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var producer = new Thread(() =>
+        {
+            try { started.SetResult(batch.ExecuteAsync().AsTask()); }
+            catch (Exception error) { started.SetException(error); }
+        }) { IsBackground = true };
+        holder.Start();
+        try
+        {
+            await held.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            producer.Start();
+            using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            // Wait until admission actually blocks on the gate before spending its budget.
+            while ((producer.ThreadState & ThreadState.WaitSleepJoin) == 0)
+            {
+                await Assert.That(started.Task.IsCompleted).IsFalse();
+                await Task.Delay(1, guard.Token);
+            }
+            await Task.Delay(TimeSpan.FromMilliseconds(2_100));
+            release.Set();
+            var execution = await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            // An expired budget must not become another full two-second timeout after admission.
+            await Assert.That(async () => await execution.WaitAsync(TimeSpan.FromSeconds(1)))
+                .ThrowsExactly<RespireTimeoutException>();
+            foreach (var result in pending)
+            {
+                await Assert.That(result.IsCompleted).IsTrue();
+                await Assert.That(result.Error).IsTypeOf<RespireTimeoutException>();
+            }
+        }
+        finally
+        {
+            release.Set();
+            holder.Join(TimeSpan.FromSeconds(5));
+            if ((producer.ThreadState & ThreadState.Unstarted) == 0) producer.Join(TimeSpan.FromSeconds(5));
+            if (started.Task.IsCompletedSuccessfully)
+            {
+                try { await started.Task.Result.WaitAsync(TimeSpan.FromSeconds(5)); }
+                catch (RespireTimeoutException) { }
+            }
+        }
     }
 
     [Test]

@@ -292,7 +292,7 @@ Respire.Networking.RespireConnection | method SetLeaseRented(bool) : void
 Respire.Networking.RespireConnection | method StopAcceptingCommands() : void
 Respire.Networking.RespireConnection | method ThrowIfRetired(bool) : void
 Respire.Networking.RespireConnection | method TryAcquireCredentialSequence(CancellationToken, out CredentialSequenceLease) : bool
-Respire.Networking.RespireConnection | method TryEnqueueMany`1(IReadOnlyList<TCommand>, ValueTask<RespValue>[], RespireTelemetry.ErrorObservation[], CancellationToken) : bool
+Respire.Networking.RespireConnection | method TryEnqueueMany`1(IReadOnlyList<TCommand>, ValueTask<RespValue>[], RespireTelemetry.ErrorObservation[], CancellationToken, CommandDeadline) : bool
 Respire.Networking.RespireConnection | method TryReroute(bool, CommandDeadline, out RespireConnection, out CommandDeadline, string?) : bool
 Respire.Networking.RespireConnection | method ValidateBulkResponseSize(long, long) : void
 Respire.Networking.RespireConnection | method ValidateTransactionCapacity(int, bool) : void
@@ -335,7 +335,7 @@ Respire.Networking.RespireConnection | readonly struct CredentialSequenceLease(S
 # Count: Respire.Networking.RespireConnection.CredentialSequenceLease | 1
 Respire.Networking.RespireConnection.CredentialSequenceLease | method Dispose() : void
 # Count: Respire.Networking.RespireConnection.IBatchCommand | 1
-Respire.Networking.RespireConnection.IBatchCommand | method StartSend(RespireConnection, CancellationToken, RespireTelemetry.ErrorObservation, bool) : ValueTask<RespValue>
+Respire.Networking.RespireConnection.IBatchCommand | method StartSend(RespireConnection, CancellationToken, RespireTelemetry.ErrorObservation, bool, CommandDeadline) : ValueTask<RespValue>
 # Count: Respire.Networking.StringPendingResponseSource | 10
 Respire.Networking.StringPendingResponseSource | method IValueTaskSource<string?>.GetResult(short) : string?
 Respire.Networking.StringPendingResponseSource | method IValueTaskSource<string?>.GetStatus(short) : ValueTaskSourceStatus

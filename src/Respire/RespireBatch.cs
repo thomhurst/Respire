@@ -385,6 +385,8 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
 #endif
     private async ValueTask RunStandaloneBatchAsync(RespireConnection connection, CancellationToken cancellationToken)
     {
+        // Both admission paths include write-gate contention in the original timeout budget.
+        var deadline = connection.CreateCommandDeadline();
         var sends = ArrayPool<ValueTask<RespValue>>.Shared.Rent(_ops.Count);
         var observations = ArrayPool<RespireTelemetry.ErrorObservation>.Shared.Rent(_ops.Count);
         try
@@ -393,13 +395,11 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             {
                 observations[i] = RespireTelemetry.ErrorObservation.Rent(force: true);
             }
-            if (!connection.TryEnqueueMany(_ops, sends, observations, cancellationToken))
+            if (!connection.TryEnqueueMany(_ops, sends, observations, cancellationToken, deadline))
             {
                 // Await admission, not replies, so a full ring or credential fence cannot
                 // reverse this batch's queue order. The response thread frees ring slots
-                // without awaiting these reply tasks. Capture the original budget once;
-                // capacity waits must not restart the timeout for every later command.
-                var deadline = connection.CreateCommandDeadline();
+                // without awaiting these reply tasks. Capacity waits share the same budget.
                 for (var i = 0; i < _ops.Count; i++)
                     sends[i] = await _ops[i].StartOrderedSendAsync(connection, cancellationToken, observations[i], deadline).ConfigureAwait(false);
             }
@@ -672,7 +672,8 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         public abstract bool AllowsReadRouting { get; }
 
         public abstract ValueTask<RespValue> StartSend(RespireConnection connection,
-            CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, bool deferFlush);
+            CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, bool deferFlush,
+            CommandDeadline deadline);
 
         public abstract ValueTask<ValueTask<RespValue>> StartOrderedSendAsync(RespireConnection connection,
             CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, CommandDeadline deadline);
@@ -812,11 +813,12 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         }
 
         public override ValueTask<RespValue> StartSend(RespireConnection connection,
-            CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, bool deferFlush)
+            CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, bool deferFlush,
+            CommandDeadline deadline)
         {
             var bound = new MutationCommand<TCommand>(command, MutationFence);
             return connection.SendAsync(in bound, cancellationToken,
-                commandName: Operation, observation: observation, deferFlush: deferFlush);
+                commandName: Operation, observation: observation, commandDeadline: deadline, deferFlush: deferFlush);
         }
 
 #if NET
