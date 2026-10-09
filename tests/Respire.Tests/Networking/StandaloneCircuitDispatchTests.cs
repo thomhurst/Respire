@@ -247,6 +247,19 @@ public class StandaloneCircuitDispatchTests
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Command | RespireMetricGroups.Resiliency });
         var durations = new ConcurrentQueue<Dictionary<string, object?>>();
         var errors = new ConcurrentQueue<Dictionary<string, object?>>();
+        var activities = new ConcurrentQueue<Activity>();
+        using var tracing = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == RespireTelemetry.SourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activity =>
+            {
+                if (activity.OperationName is "GET" or "STRLEN") activities.Enqueue(activity);
+            },
+        };
+        // Traced typed commands use the general response path. Its circuit retry must
+        // retain ownership of both the activity and duration through the handoff.
+        ActivitySource.AddActivityListener(tracing);
         using var listener = new MeterListener();
         listener.InstrumentPublished = static (instrument, meter) =>
         {
@@ -281,6 +294,7 @@ public class StandaloneCircuitDispatchTests
         var targetCircuit = client.Core.Circuits.GetForTests(endpoint);
         durations.Clear();
         errors.Clear();
+        activities.Clear();
         var pending = Dispatch();
         await Assert.That(pending.IsCompleted).IsFalse();
         await source.SendRawAsync(Encoding.UTF8.GetBytes($">4\r\n+MOVING\r\n:1\r\n:10\r\n+127.0.0.1:{target.Port}\r\n"));
@@ -319,6 +333,10 @@ public class StandaloneCircuitDispatchTests
                 await Assert.That(duration.ContainsKey("error.type")).IsEqualTo(targetOpen);
                 if (targetOpen)
                     await Assert.That(duration["error.type"]).IsEqualTo(typeof(RespireCircuitOpenException).FullName);
+                await Assert.That(activities.Count).IsEqualTo(1);
+                var activity = activities.Single();
+                await Assert.That(activity.GetTagItem("server.port")).IsEqualTo(target.Port);
+                await Assert.That(activity.Status).IsEqualTo(targetOpen ? ActivityStatusCode.Error : ActivityStatusCode.Unset);
             }
         }
         finally

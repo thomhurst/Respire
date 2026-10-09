@@ -82,7 +82,8 @@ public sealed partial class RespireClient
     private async ValueTask<RespValue> SendCircuitResponseAsync<TCommand>(
         string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken,
         bool sendAsking, CommandDeadline commandDeadline, bool allowStreamingConnectionReroute,
-        RespireTelemetry.ErrorObservation observation)
+        RespireTelemetry.ErrorObservation observation, RespireTelemetry.OperationScope telemetry = default,
+        string? storedProcedureName = null)
         where TCommand : struct, IRespCommand
     {
         commandDeadline = CreateCircuitDeadline(commandDeadline);
@@ -99,6 +100,7 @@ public sealed partial class RespireClient
                     sendAsking, commandDeadline, allowStreamingConnectionReroute, pinToConnection: true,
                     observation: observation).ConfigureAwait(false);
                 admission.Success();
+                telemetry.Complete(_core, operation, storedProcedureName, connection: connection);
                 return response;
             }
             catch (RespireConnectionRetiredException error) when (allowStreamingConnectionReroute
@@ -107,10 +109,12 @@ public sealed partial class RespireClient
                 observation.Handled(error);
                 connection = target;
                 commandDeadline = rerouted;
+                telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
             }
             catch (Exception error)
             {
                 admission.Failed(error, cancellationToken);
+                telemetry.Complete(_core, operation, storedProcedureName, error, connection);
                 throw;
             }
             finally { admission.Dispose(); }
