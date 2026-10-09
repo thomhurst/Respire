@@ -267,6 +267,16 @@ internal ref struct RespWriter
             return;
         }
 
+        if (_allowGrowth)
+        {
+            // Preserve the bulk-string fallback's 24-byte header reservation.
+            // Reserving the maximum complete integer frame can grow a buffer early.
+            Span<byte> payload = stackalloc byte[20];
+            Utf8Formatter.TryFormat(value, payload, out var payloadLength);
+            WriteBulkString(payload[..payloadLength]);
+            return;
+        }
+
         // The sign counts toward the payload length. Select its header width
         // without counting decimal digits, then format the value only once.
         var headerLength = value is > -100_000_000 and < 1_000_000_000 ? 4 : 5;

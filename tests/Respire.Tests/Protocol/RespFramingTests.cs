@@ -114,6 +114,51 @@ public class RespFramingTests
     }
 
     [Test]
+    [Arguments(1024L, 24)]
+    [Arguments(1024L, 25)]
+    [Arguments(1024L, 26)]
+    [Arguments(-99_999_999L, 24)]
+    [Arguments(-100_000_000L, 24)]
+    [Arguments(999_999_999L, 24)]
+    [Arguments(1_000_000_000L, 24)]
+    [Arguments(long.MinValue, 27)]
+    [Arguments(long.MaxValue, 26)]
+    public async Task GrowingIntegerRetainsNearCapacityBuffer(long value, int remaining)
+    {
+        var text = value.ToString(CultureInfo.InvariantCulture);
+        var expected = Encoding.ASCII.GetBytes($"${text.Length}\r\n{text}\r\n");
+        var buffer = new WriteBuffer(64);
+        try
+        {
+            var capacity = buffer.Capacity;
+            var prefix = new byte[capacity - remaining];
+            Array.Fill(prefix, (byte)0xA5);
+            foreach (var publishPrefix in new[] { false, true })
+            {
+                buffer.Reset();
+                WriteGrowingInteger(buffer, prefix, value, publishPrefix);
+                await Assert.That(buffer.Capacity).IsEqualTo(capacity);
+                await Assert.That(buffer.Count).IsEqualTo(prefix.Length + expected.Length);
+                await Assert.That(buffer.WrittenMemory.Span[..prefix.Length].SequenceEqual(prefix)).IsTrue();
+                await Assert.That(buffer.WrittenMemory.Span[prefix.Length..].SequenceEqual(expected)).IsTrue();
+            }
+        }
+        finally { buffer.Release(); }
+    }
+
+    private static void WriteGrowingInteger(WriteBuffer buffer, byte[] prefix, long value, bool publishPrefix)
+    {
+        if (publishPrefix) buffer.Append(prefix);
+        var published = buffer.Count;
+        var writer = new RespWriter(buffer);
+        if (!publishPrefix) writer.WriteRaw(prefix);
+        writer.WriteBulkInteger(value);
+        if (buffer.Count != published)
+            throw new InvalidOperationException("Integer serialization published an unfinished frame.");
+        writer.Complete();
+    }
+
+    [Test]
     [NotInParallel]
     [Arguments(false)]
     [Arguments(true)]
