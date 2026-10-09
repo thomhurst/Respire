@@ -49,10 +49,12 @@ public sealed partial class RespireClient
         RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
     {
-        var ownsObservation = observation.IsEmpty;
-        if (observation.IsEmpty) observation = RespireTelemetry.ErrorObservation.Rent(force: true);
-        var response = SendStreamedUploadCoreAsync(operation, command, cancellationToken, noRedirect, observation);
-        return ownsObservation ? RespireTelemetry.ObserveFinalError(response, observation) : response;
+        if (observation.IsEmpty)
+            return DispatchResponseSource<RespValue>.Run(
+                (Client: this, Operation: operation, Command: command, Token: cancellationToken, NoRedirect: noRedirect),
+                static (state, owner) => state.Client.SendStreamedUploadCoreAsync(
+                    state.Operation, state.Command, state.Token, state.NoRedirect, owner));
+        return SendStreamedUploadCoreAsync(operation, command, cancellationToken, noRedirect, observation);
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]

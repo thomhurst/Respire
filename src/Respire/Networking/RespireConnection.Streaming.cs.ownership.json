@@ -1,0 +1,19 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "upload-frame-borrower",
+      "Role": "borrower",
+      "Member": "Respire.Networking.RespireConnection.SendStreamedSetAsync(StreamedSetCommand,CancellationToken,CommandDeadline,DedicatedStreamRoute,ProtocolCommand<RawCommand>?,int,CommandWriteObservation?,bool):ValueTask<RespValue>",
+      "Owner": "Respire.RespireClient.SendStreamedUploadAsync`1(string,TCommand,CancellationToken,bool,RespireTelemetry.ErrorObservation):ValueTask<RespValue>",
+      "Contract": "Retain copied attempts across source reads, ASKING, frame admission and cleanup. Never publish the enclosing upload's final error from a borrowed connection route."
+    },
+    {
+      "Name": "upload-discarded-completion",
+      "Role": "internal",
+      "Member": "Respire.Networking.RespireConnection.ObserveStreamedSetResponseAsync(PendingResponseSource):ValueTask",
+      "Contract": "Consume an abandoned response once. An already-completed Redis error is internal with the source's copied retry count; the frame failure remains the upload owner's final error."
+    }
+  ],
+  "NonRoutes": []
+}

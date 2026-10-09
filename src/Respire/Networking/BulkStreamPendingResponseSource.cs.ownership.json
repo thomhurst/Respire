@@ -7,6 +7,34 @@
       "Member": "Respire.Networking.RespBulkPayloadPipe.ProgressTrackingStream.ReadAsync(Memory<byte>,CancellationToken):ValueTask<int>",
       "Owner": "Respire.Networking.RespBulkPayloadPipe.ProgressTrackingStream.ReadAsync(Memory<byte>,CancellationToken):ValueTask<int>",
       "Contract": "Once GET returns a stream, each public payload read is a separate logical caller. Preserve stream cancellation, pipe drain and receive ordering; do not hold GET ownership forever."
+    },
+    {
+      "Name": "download-payload-array-read",
+      "Role": "final",
+      "Member": "Respire.Networking.RespBulkPayloadPipe.ProgressTrackingStream.Read(byte[],int,int):int",
+      "Owner": "Respire.Networking.RespBulkPayloadPipe.ProgressTrackingStream.Read(byte[],int,int):int",
+      "Contract": "A synchronous read owns its observed failure. Repeated reads of a failed payload publish once; invalid arguments do not count."
+    },
+    {
+      "Name": "download-payload-span-read",
+      "Role": "final",
+      "Member": "Respire.Networking.RespBulkPayloadPipe.ProgressTrackingStream.Read(Span<byte>):int",
+      "Owner": "Respire.Networking.RespBulkPayloadPipe.ProgressTrackingStream.Read(Span<byte>):int",
+      "Contract": "Span reads preserve failure identity and acquire observation storage only on failure."
+    },
+    {
+      "Name": "download-payload-byte-read",
+      "Role": "final",
+      "Member": "Respire.Networking.RespBulkPayloadPipe.ProgressTrackingStream.ReadByte():int",
+      "Owner": "Respire.Networking.RespBulkPayloadPipe.ProgressTrackingStream.ReadByte():int",
+      "Contract": "A byte read shares the payload failure publication boundary with all other read overloads."
+    },
+    {
+      "Name": "download-payload-legacy-read",
+      "Role": "final",
+      "Member": "Respire.Networking.RespBulkPayloadPipe.ProgressTrackingStream.ReadAsync(byte[],int,int,CancellationToken):Task<int>",
+      "Owner": "Respire.Networking.RespBulkPayloadPipe.ProgressTrackingStream.ReadAsync(byte[],int,int,CancellationToken):Task<int>",
+      "Contract": "Individual read cancellation preserves its token/status without hiding a later payload failure. Both failures use copied completed header retry attempts."
     }
   ],
   "NonRoutes": []
