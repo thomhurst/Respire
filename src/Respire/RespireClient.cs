@@ -1632,10 +1632,11 @@ public sealed partial class RespireClient : IRespireClient
             }
             catch (Exception error)
             {
-                // Cancellation and I/O failures can leave WATCH state or unread replies on the lease.
                 try
                 {
-                    await pool.DiscardAsync(connection).ConfigureAwait(false);
+                    // Circuit rejection submits no WATCH; cancellation and I/O can leave state or unread replies.
+                    if (error is RespireCircuitOpenException) pool.Return(connection);
+                    else await pool.DiscardAsync(connection).ConfigureAwait(false);
                 }
                 catch (Exception)
                 {

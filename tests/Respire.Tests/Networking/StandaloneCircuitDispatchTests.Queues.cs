@@ -125,6 +125,67 @@ public partial class StandaloneCircuitDispatchTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task WatchCircuitRejectionReturnsDedicatedLease(bool halfOpen)
+    {
+        await using var server = QueueServer();
+        await using var client = await RespireClient.ConnectAsync(Options(server) with
+        {
+            CircuitBreaker = Options(server).CircuitBreaker! with { HalfOpenProbeCount = 1 },
+        });
+        var (circuit, clock) = await Prepare(client, server);
+        var pool = await client.Core.GetDedicatedPoolAsync(default);
+        var connection = await pool.RentAsync(default);
+        pool.Return(connection);
+        Open(client, server);
+        if (halfOpen) clock.Advance(TimeSpan.FromMinutes(1));
+        var admission = halfOpen ? client.Core.Circuits!.Acquire(new("127.0.0.1", server.Port), default) : default;
+        try
+        {
+            var commands = server.CommandsSeen;
+            for (var attempt = 0; attempt < 3; attempt++)
+            {
+                await Assert.That(await Failure(async () =>
+                {
+                    await using var rejected = await client.CreateTransactionAsync(["watched"]);
+                })).IsTypeOf<RespireCircuitOpenException>();
+                await Assert.That(pool.CaptureRetirementState().Borrowed).IsEqualTo(0);
+                var reused = await pool.RentAsync(default);
+                try
+                {
+                    await Assert.That(reused).IsSameReferenceAs(connection);
+                    await Assert.That(reused.IsConnected).IsTrue();
+                }
+                finally { pool.Return(reused); }
+            }
+            await Assert.That(server.CommandsSeen).IsEqualTo(commands);
+            await Assert.That(server.ReceivedCommands.Contains("WATCH watched")).IsFalse();
+            await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(halfOpen ? 1 : 0);
+        }
+        finally { admission.Dispose(); }
+    }
+
+    [Test]
+    public async Task WatchServerErrorDiscardsDedicatedLease()
+    {
+        await using var server = QueueServer();
+        await using var client = await RespireClient.ConnectAsync(Options(server));
+        await Prepare(client, server);
+        var pool = await client.Core.GetDedicatedPoolAsync(default);
+        var connection = await pool.RentAsync(default);
+        pool.Return(connection);
+        server.ReplyOverride = (_, command) => command == "WATCH watched" ? "-ERR injected WATCH failure\r\n"u8.ToArray() : null;
+        await Assert.That(await Failure(async () =>
+        {
+            await using var rejected = await client.CreateTransactionAsync(["watched"]);
+        })).IsTypeOf<RespireServerException>();
+        await Assert.That(connection.IsConnected).IsFalse();
+        await Assert.That(pool.CaptureRetirementState().Borrowed).IsEqualTo(0);
+        await Assert.That(server.ReceivedCommands.Count(command => command == "WATCH watched")).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task WatchSetupRejectsOpenCircuitAndCompletesHalfOpenProbe()
     {
         await using var server = QueueServer();
