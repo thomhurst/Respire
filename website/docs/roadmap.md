@@ -97,8 +97,11 @@ deferred MULTI/EXEC, the inventoried Hangfire notification calls, and documented
 WATCH conditions, including synchronous Execute and repeat execution after aborts.
 The adapter also provides endpoint discovery, physical server INFO/TIME/ROLE,
 atomic token locks, and literal callback subscriptions used by RedisStorage.
-General StackExchange.Redis interface parity and SignalR/Hangfire
-acceptance remain planned under [#889](https://github.com/thomhurst/Respire/issues/889).
+[Pinned Hangfire acceptance](./guides/hangfire-acceptance) exercises 93 upstream
+facts and two real worker lifecycle cases on .NET 8/.NET 10 and RESP2/RESP3,
+with explicit exclusions and limitations. General StackExchange.Redis interface
+parity and combined Microsoft/SignalR/Hangfire acceptance remain planned under
+[#889](https://github.com/thomhurst/Respire/issues/889).
 
 These open epics track remaining work, not release commitments. Follow their linked issues for
 acceptance criteria, dependencies, and current status:

@@ -101,6 +101,22 @@ jobs:
         run: >-
           dotnet run --project tests/Respire.StackExchangeCompat.Tests -c Release
           -f ${{ matrix.framework }} --no-build -- --minimum-expected-tests 116
+      - name: Build pinned Hangfire upstream acceptance
+        run: dotnet build tests/Respire.Hangfire.Acceptance.Tests -c Release -f ${{ matrix.framework }}
+      - name: Test pinned Hangfire suite and worker lifecycle on RESP2 and RESP3
+        shell: bash
+        run: |
+          # 95 cases: 93 ported upstream facts and 2 worker lifecycle cases.
+          for protocol in 2 3; do
+            RESPIRE_TEST_PROTOCOL="$protocol" dotnet run --project tests/Respire.Hangfire.Acceptance.Tests -c Release \
+              -f ${{ matrix.framework }} --no-build -- --minimum-expected-tests 95 --report-trx \
+              --results-directory "TestResults/hangfire/${{ matrix.framework }}/resp$protocol"
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: hangfire-acceptance-${{ matrix.framework }}
+          path: TestResults/hangfire
 
   mapper-native-aot:
     name: Generated mapper Native AOT (${{ matrix.framework }})

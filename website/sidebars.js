@@ -60,6 +60,7 @@ const sidebars = {
         'guides/durability-acknowledgements',
         'guides/raw-commands',
         'guides/stackexchange-interop',
+        'guides/hangfire-acceptance',
         'guides/generated-commands',
         'guides/server-extensions',
         'guides/deferred-raw-commands',

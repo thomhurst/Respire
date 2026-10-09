@@ -393,9 +393,9 @@ Transaction tests run on .NET 8 and
 snapshots, conditions, deterministic WATCH races, discarded commands, runtime
 errors and ACL queue errors. Wire and lifetime controls cover active cancellation,
 close during condition evaluation, retained tasks, and abandoned task collection.
-These facets do not establish full Hangfire compatibility. Combined official
-upstream suite acceptance remains tracked by
-[#1269](https://github.com/thomhurst/Respire/issues/1269).
+The [pinned Hangfire acceptance](./hangfire-acceptance) ports 93 upstream facts
+and adds two real worker lifecycle cases, on both frameworks and protocols.
+It records the exact tests, exclusions, supported scope, and limitations.
 
 The server/lock inventory additionally checks `RedisStorage` discovery and
 dashboard `InfoRaw`, `RedisConnection.GetUtcDateTime` (`IServer.Time`),
@@ -405,7 +405,8 @@ RESP2/RESP3, including physical replica identity, token/TTL wire controls,
 competing acquisitions, stale ownership, Lua errors, and borrowed-client cleanup.
 Tests also construct the pinned 1.12.0 `RedisStorage`, obtain a storage connection,
 read server time, and acquire/release its distributed lock. These focused
-scenarios do not establish combined upstream Hangfire acceptance.
+scenarios supplement the pinned upstream acceptance; they do not establish
+general StackExchange.Redis interface parity.
 
 Before implementing this surface, the integration call sites were checked in
 [ASP.NET Core 10.0.12 RedisCache.cs](https://github.com/dotnet/aspnetcore/blob/v10.0.12/src/Caching/StackExchangeRedis/src/RedisCache.cs)
