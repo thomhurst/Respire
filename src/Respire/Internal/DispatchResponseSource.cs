@@ -147,6 +147,7 @@ internal sealed class DispatchResponseSource<TResult> : IValueTaskSource<TResult
         ValueTaskSourceOnCompletedFlags flags)
     {
         ValidateToken(token);
+        System.Diagnostics.Debug.Assert(_continuation is null);
         _continuation = continuation;
         _continuationState = state;
         var awaiter = _response.ConfigureAwait((flags & ValueTaskSourceOnCompletedFlags.UseSchedulingContext) != 0).GetAwaiter();
@@ -156,6 +157,8 @@ internal sealed class DispatchResponseSource<TResult> : IValueTaskSource<TResult
 
     private void ValidateToken(short token)
     {
+        // Once rented again, the 16-bit ValueTask version is the stale awaiter's
+        // only guard. ValueTask's single-consumption contract still applies at wraparound.
         if (token != _version || _closed)
             throw new InvalidOperationException("The dispatch response has already been consumed.");
     }

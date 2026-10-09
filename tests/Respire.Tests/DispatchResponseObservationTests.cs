@@ -16,6 +16,38 @@ namespace Respire.Tests;
 public class DispatchResponseObservationTests
 {
     [Test]
+    public async Task SynchronousThrowAfterBorrowRejectsLateRetryAfterReuse()
+    {
+        using var configuration = new MetricConfigurationScope();
+        using var capture = new Capture();
+        var state = new PendingState();
+        var failure = new IOException("send failure after borrow");
+        try
+        {
+            _ = DispatchResponseSource<int>.Run(state, (state, observation) =>
+            {
+                state.Observation = observation;
+                observation.Handled(new IOException("retry"));
+                throw failure;
+            });
+        }
+        catch (IOException error)
+        {
+            await Assert.That(ReferenceEquals(error, failure)).IsTrue();
+        }
+        var old = state.Observation;
+        var next = DispatchResponseSource<int>.Run(state, static (state, observation) =>
+        {
+            state.Observation = observation;
+            return new ValueTask<int>(42);
+        });
+        old.Handled(new IOException("late retry"));
+        await Assert.That(state.Observation.Attempts).IsEqualTo(0);
+        await Assert.That(await next).IsEqualTo(42);
+        await Assert.That(capture.Items.ToArray()).IsEquivalentTo(new[] { (true, 0), (false, 1) });
+    }
+
+    [Test]
     public async Task RetryBorrowersShareOneFinalOwnerUntilCallerInspection()
     {
         using var configuration = new MetricConfigurationScope();
@@ -34,7 +66,7 @@ public class DispatchResponseObservationTests
         Exception? actual = null;
         try { _ = await response; } catch (Exception error) { actual = error; }
         await Assert.That(ReferenceEquals(actual, failure)).IsTrue();
-        await Assert.That(capture.Items.Select(item => item.Attempts).ToArray()).IsEquivalentTo(new[] { 1, 2, 2 });
+        await Assert.That(capture.Items.Select(item => item.Attempts).ToArray()).IsEquivalentTo(new[] { 0, 1, 2 });
         await Assert.That(capture.Items.Last().Internal).IsFalse();
         state.Observation.Handled(new IOException("late borrower"));
         state.Observation.Final(failure);

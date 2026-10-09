@@ -74,7 +74,7 @@ public class ErrorObservationTests
             await Assert.That(first.PublishFinal(error)).IsTrue();
             await Assert.That(second.PublishFinal(error)).IsTrue();
             var items = capture.Items.ToArray();
-            await Assert.That(items.Select(item => item.RetryAttempts).ToArray()).IsEquivalentTo(new[] { 1, 2, 3, 3, 0 });
+            await Assert.That(items.Select(item => item.RetryAttempts).ToArray()).IsEquivalentTo(new[] { 0, 1, 2, 3, 0 });
             await Assert.That(items.Count(item => item.Internal)).IsEqualTo(3);
             await Assert.That(items.Count(item => !item.Internal)).IsEqualTo(2);
         }
@@ -95,7 +95,7 @@ public class ErrorObservationTests
             borrower.RecordHandled(new IOException());
             var nested = borrower.Borrow();
             nested.Complete();
-            await Assert.That(capture.Items.Single().RetryAttempts).IsEqualTo(1);
+            await Assert.That(capture.Items.Single().RetryAttempts).IsEqualTo(0);
         }
         finally { borrower.Complete(); other.Complete(); }
     }

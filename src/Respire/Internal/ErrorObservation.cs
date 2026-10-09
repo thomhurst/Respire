@@ -112,8 +112,8 @@ internal static class ErrorObservation
             lock (observation.Gate)
             {
                 if (!IsOpen) return false;
-                if (observation.RetryAttempts < int.MaxValue) observation.RetryAttempts++;
                 retryAttempts = observation.RetryAttempts;
+                if (observation.RetryAttempts < int.MaxValue) observation.RetryAttempts++;
             }
             // Never invoke an exporter while holding the ownership gate. The captured count
             // remains this event's count even if another retry, final inspection or reuse wins.

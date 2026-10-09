@@ -3420,7 +3420,8 @@ public sealed partial class RespireClient : IRespireClient
             if (core.Cluster is { } cluster)
             {
                 await SendFireAndForgetClusterAsync(
-                        operation, cluster, new MutationCommand<TCommand>(command, mutationFence), cancellationToken, storedProcedureName)
+                        operation, cluster, new MutationCommand<TCommand>(command, mutationFence), cancellationToken, storedProcedureName,
+                        observation: observation)
                     .ConfigureAwait(false);
                 return;
             }
@@ -5513,19 +5514,23 @@ public sealed partial class RespireClient : IRespireClient
 
     private async Task RevokeLeaseAsync(Cmd1 command)
     {
+        // Cleanup owns its handled failure. Lend that owner to native reply inspection
+        // so it cannot publish the revocation as a caller-facing command failure.
+        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
         try
         {
             var reply = await SendCoreAsync("UNLINK", command, CancellationToken.None,
                 RespireCommandFlags.None, allowReadFrom: false, cursorAffinity: null,
-                observeErrors: false).ConfigureAwait(false);
+                observation: observation, observeErrors: false).ConfigureAwait(false);
             reply.Dispose();
         }
         catch (Exception error)
         {
             // Revocation is cleanup: its failure is handled by lease expiry, not the caller.
-            RespireTelemetry.RecordError(error, internallyHandled: true);
+            RespireTelemetry.RecordError(error, internallyHandled: true, observation.Attempts);
             throw;
         }
+        finally { observation.Dispose(); }
     }
 
     private static async Task ObserveRevokeAsync(Task revoke)
