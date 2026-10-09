@@ -38,7 +38,9 @@ internal static class DispatchResponseSource
 /// </summary>
 internal sealed class DispatchResponseSource<TResult> : IValueTaskSource<TResult>, IDispatchObservation
 {
-    private static readonly ObjectPool<DispatchResponseSource<TResult>, Policy> Pool = new(4096);
+    // Retained caller responses can outlive native completion across a 50 x 200 burst.
+    internal const int MaxPoolSize = 10000;
+    private static readonly ObjectPool<DispatchResponseSource<TResult>, Policy> Pool = new(MaxPoolSize);
     private readonly Lock _gate = new();
     private readonly Action _continue;
     private Action<object?>? _continuation;
@@ -140,8 +142,10 @@ internal sealed class DispatchResponseSource<TResult> : IValueTaskSource<TResult
     {
         ValidateToken(token);
         if (_response.IsCompletedSuccessfully) return ValueTaskSourceStatus.Succeeded;
+        // Pending replies need no cancellation/fault probes. Completion can race the first check.
+        if (!_response.IsCompleted) return ValueTaskSourceStatus.Pending;
         if (_response.IsCanceled) return ValueTaskSourceStatus.Canceled;
-        return _response.IsFaulted ? ValueTaskSourceStatus.Faulted : ValueTaskSourceStatus.Pending;
+        return _response.IsFaulted ? ValueTaskSourceStatus.Faulted : ValueTaskSourceStatus.Succeeded;
     }
     void IValueTaskSource<TResult>.OnCompleted(Action<object?> continuation, object? state, short token,
         ValueTaskSourceOnCompletedFlags flags)

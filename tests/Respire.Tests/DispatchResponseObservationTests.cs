@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using System.Runtime.CompilerServices;
+using System.Threading.Tasks.Sources;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Networking;
@@ -15,6 +16,56 @@ namespace Respire.Tests;
 [NotInParallel]
 public class DispatchResponseObservationTests
 {
+    [Test]
+    public async Task PendingStatusChecksAvoidRedundantNativeQueries()
+    {
+        var native = new CountedResponseSource();
+        var response = DispatchResponseSource<int>.Run(native, static (source, _) => new(source, 0));
+        await Assert.That(response.IsCompleted).IsFalse();
+        await Assert.That(native.StatusCalls).IsEqualTo(2);
+        native.StatusCalls = 0;
+        native.Status = ValueTaskSourceStatus.Succeeded;
+        await Assert.That(response.IsCompletedSuccessfully).IsTrue();
+        await Assert.That(native.StatusCalls).IsEqualTo(1);
+        await Assert.That(await response).IsEqualTo(42);
+    }
+
+    [Test]
+    public async Task SuccessDuringStatusInspectionIsNotReportedAsFaulted()
+    {
+        var native = new CountedResponseSource { CompleteAfterFirstQuery = true };
+        var response = DispatchResponseSource<int>.Run(native, static (source, _) => new(source, 0));
+        await Assert.That(response.IsCompletedSuccessfully).IsTrue();
+        await Assert.That(await response).IsEqualTo(42);
+    }
+
+    [Test]
+    public async Task WarmConcurrentBurstRetainsEveryDispatchOwner()
+    {
+        var pending = new ValueTask<BurstResult>[10000];
+        for (var index = 0; index < 4; index++) _ = MeasureBurst(pending, false);
+        var measured = AllocationMeasurement.WithoutConcurrentGc(() =>
+            (MeasureBurst(pending, false), MeasureBurst(pending, true)));
+        await Assert.That(measured.Item1).IsEqualTo(0L);
+        await Assert.That(measured.Item2).IsGreaterThan(0L);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long MeasureBurst(ValueTask<BurstResult>[] pending, bool control)
+    {
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        for (var index = 0; index < pending.Length; index++)
+            pending[index] = DispatchResponseSource<BurstResult>.Run(42, static (value, _) => new(new BurstResult(value)));
+        for (var index = 0; index < pending.Length; index++)
+        {
+            if (pending[index].GetAwaiter().GetResult().Value != 42) throw new InvalidOperationException("Unexpected response.");
+            if (control) GC.KeepAlive(new byte[37]);
+        }
+        return GC.GetAllocatedBytesForCurrentThread() - before;
+    }
+
+    private readonly record struct BurstResult(int Value);
+
     [Test]
     public async Task SynchronousThrowAfterBorrowRejectsLateRetryAfterReuse()
     {
@@ -193,7 +244,7 @@ public class DispatchResponseObservationTests
         try
         {
             // Retain every rental so actual reuse is proved independently of pool ordering.
-            for (var index = 0; index <= 4096; index++)
+            for (var index = 0; index <= DispatchResponseSource<RespValue>.MaxPoolSize; index++)
             {
                 var state = new RawPendingState();
                 var response = DispatchResponseSource<RespValue>.Run(state, static (state, observation) =>
@@ -259,6 +310,23 @@ public class DispatchResponseObservationTests
         internal readonly TaskCompletionSource<int> Completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal RespireTelemetry.ErrorObservation Observation;
         internal bool Converted;
+    }
+
+    private sealed class CountedResponseSource : IValueTaskSource<int>
+    {
+        internal ValueTaskSourceStatus Status;
+        internal int StatusCalls;
+        internal bool CompleteAfterFirstQuery;
+        public int GetResult(short token) => 42;
+        public ValueTaskSourceStatus GetStatus(short token)
+        {
+            StatusCalls++;
+            var status = Status;
+            if (CompleteAfterFirstQuery) Status = ValueTaskSourceStatus.Succeeded;
+            return status;
+        }
+        public void OnCompleted(Action<object?> continuation, object? state, short token,
+            ValueTaskSourceOnCompletedFlags flags) => throw new InvalidOperationException("Unexpected continuation registration.");
     }
 
     private sealed class RawPendingState
