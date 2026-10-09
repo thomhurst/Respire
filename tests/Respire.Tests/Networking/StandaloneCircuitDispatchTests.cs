@@ -244,16 +244,19 @@ public class StandaloneCircuitDispatchTests
     [Arguments("cache", true)]
     public async Task MaintenanceHandoffReacquiresAdmissionForActualEndpoint(string shape, bool targetOpen)
     {
-        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Command });
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Command | RespireMetricGroups.Resiliency });
         var durations = new ConcurrentQueue<Dictionary<string, object?>>();
+        var errors = new ConcurrentQueue<Dictionary<string, object?>>();
         using var listener = new MeterListener();
         listener.InstrumentPublished = static (instrument, meter) =>
         {
-            if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.operation.duration")
+            if (instrument.Meter.Name == "Respire" && instrument.Name is "db.client.operation.duration" or "redis.client.errors")
                 meter.EnableMeasurementEvents(instrument);
         };
         listener.SetMeasurementEventCallback<double>((_, _, tags, _) =>
             durations.Enqueue(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value)));
+        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+            errors.Enqueue(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value)));
         listener.Start();
         await using var target = Server();
         await using var source = Server();
@@ -277,6 +280,7 @@ public class StandaloneCircuitDispatchTests
         targetAdmission.Dispose();
         var targetCircuit = client.Core.Circuits.GetForTests(endpoint);
         durations.Clear();
+        errors.Clear();
         var pending = Dispatch();
         await Assert.That(pending.IsCompleted).IsFalse();
         await source.SendRawAsync(Encoding.UTF8.GetBytes($">4\r\n+MOVING\r\n:1\r\n:10\r\n+127.0.0.1:{target.Port}\r\n"));
@@ -294,6 +298,19 @@ public class StandaloneCircuitDispatchTests
             await Assert.That(targetCircuit.Snapshot().State).IsEqualTo(targetOpen ? EndpointCircuitState.Open : EndpointCircuitState.Closed);
             await Assert.That(source.ReceivedCommands.Any(command => command.Contains("routed", StringComparison.Ordinal))).IsFalse();
             await Assert.That(target.ReceivedCommands.Count(command => command.Contains("routed", StringComparison.Ordinal))).IsEqualTo(targetOpen ? 0 : 1);
+            // The circuit retry owns the handled retirement; its transport attempt must
+            // not report it as a final error or lose the logical retry count.
+            var handled = errors.Where(item => (bool)item["redis.client.errors.internal"]!).ToArray();
+            var final = errors.Where(item => !(bool)item["redis.client.errors.internal"]!).ToArray();
+            await Assert.That(handled.Length).IsEqualTo(1);
+            await Assert.That(handled[0]["error.type"]).IsEqualTo(typeof(RespireConnectionRetiredException).FullName);
+            await Assert.That(handled[0]["redis.client.operation.retry_attempts"]).IsEqualTo(0);
+            await Assert.That(final.Length).IsEqualTo(targetOpen ? 1 : 0);
+            if (targetOpen)
+            {
+                await Assert.That(final[0]["error.type"]).IsEqualTo(typeof(RespireCircuitOpenException).FullName);
+                await Assert.That(final[0]["redis.client.operation.retry_attempts"]).IsEqualTo(1);
+            }
             if (shape is "string" or "bytes" or "integer")
             {
                 await Assert.That(durations.Count).IsEqualTo(1);

@@ -75,7 +75,7 @@ public sealed partial class RespireClient
         ValueTask<TResult> Send<TCommand>(RespireConnection connection, string operation,
             in TCommand command, CancellationToken cancellationToken,
             RespireTelemetry.OperationStart durationStarted, CommandDeadline commandDeadline = default,
-            bool pinToConnection = false) where TCommand : struct, IRespCommand;
+            bool pinToConnection = false, RespireTelemetry.ErrorObservation errorObservation = default) where TCommand : struct, IRespCommand;
     }
 
     private readonly struct RawReadySend(RespireClient client, RespireTelemetry.ErrorObservation observation) : IReadySend<RespValue>
@@ -84,7 +84,7 @@ public sealed partial class RespireClient
         public ValueTask<RespValue> Send<TCommand>(RespireConnection connection, string operation,
             in TCommand command, CancellationToken cancellationToken,
             RespireTelemetry.OperationStart durationStarted, CommandDeadline commandDeadline = default,
-            bool pinToConnection = false) where TCommand : struct, IRespCommand
+            bool pinToConnection = false, RespireTelemetry.ErrorObservation errorObservation = default) where TCommand : struct, IRespCommand
             => client.SendOnConnectionAsync(operation, connection, command, cancellationToken,
                 commandDeadline: commandDeadline, pinToConnection: pinToConnection, observation: observation);
     }
@@ -98,9 +98,9 @@ public sealed partial class RespireClient
         public ValueTask<string?> Send<TCommand>(RespireConnection connection, string operation,
             in TCommand command, CancellationToken cancellationToken,
             RespireTelemetry.OperationStart durationStarted, CommandDeadline commandDeadline = default,
-            bool pinToConnection = false) where TCommand : struct, IRespCommand
+            bool pinToConnection = false, RespireTelemetry.ErrorObservation errorObservation = default) where TCommand : struct, IRespCommand
             => connection.SendStringAsync(in command, cancellationToken, operation,
-                commandDeadline: commandDeadline, durationStarted: durationStarted, pinToConnection: pinToConnection);
+                commandDeadline: commandDeadline, durationStarted: durationStarted, pinToConnection: pinToConnection, observation: errorObservation);
 
         public ValueTask<string?> Send<TCommand>(RespireConnection connection, string operation,
             in TCommand command, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation,
@@ -118,9 +118,9 @@ public sealed partial class RespireClient
         public ValueTask<byte[]?> Send<TCommand>(RespireConnection connection, string operation,
             in TCommand command, CancellationToken cancellationToken,
             RespireTelemetry.OperationStart durationStarted, CommandDeadline commandDeadline = default,
-            bool pinToConnection = false) where TCommand : struct, IRespCommand
+            bool pinToConnection = false, RespireTelemetry.ErrorObservation errorObservation = default) where TCommand : struct, IRespCommand
             => connection.SendBytesAsync(in command, cancellationToken, operation,
-                commandDeadline: commandDeadline, durationStarted: durationStarted, pinToConnection: pinToConnection);
+                commandDeadline: commandDeadline, durationStarted: durationStarted, pinToConnection: pinToConnection, observation: errorObservation);
 
         public ValueTask<byte[]?> Send<TCommand>(RespireConnection connection, string operation,
             in TCommand command, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation,
@@ -136,9 +136,9 @@ public sealed partial class RespireClient
         public ValueTask<TResult> Send<TCommand>(RespireConnection connection, string operation,
             in TCommand command, CancellationToken cancellationToken,
             RespireTelemetry.OperationStart durationStarted, CommandDeadline commandDeadline = default,
-            bool pinToConnection = false) where TCommand : struct, IRespCommand
+            bool pinToConnection = false, RespireTelemetry.ErrorObservation errorObservation = default) where TCommand : struct, IRespCommand
             => connection.SendConvertedAsync(in command, state, converter, transferOwnership, cancellationToken, operation,
-                commandDeadline: commandDeadline, durationStarted: durationStarted, pinToConnection: pinToConnection);
+                commandDeadline: commandDeadline, durationStarted: durationStarted, pinToConnection: pinToConnection, observation: errorObservation);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]

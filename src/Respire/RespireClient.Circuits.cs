@@ -48,23 +48,23 @@ public sealed partial class RespireClient
     }
 
     private ValueTask<RespValue> SendBlockingOnConnectionAsync<TCommand>(
-        RespireConnection connection, TCommand command, CancellationToken cancellationToken)
+        RespireConnection connection, TCommand command, CancellationToken cancellationToken, int errorAttempts = 0)
         where TCommand : struct, IRespCommand
         => _core.Circuits is not null
-            ? SendCircuitBlockingAsync(connection, command, cancellationToken)
-            : connection.SendWithoutResponseTimeoutAsync(command, cancellationToken);
+            ? SendCircuitBlockingAsync(connection, command, cancellationToken, errorAttempts)
+            : connection.SendWithoutResponseTimeoutAsync(command, cancellationToken, errorAttempts);
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
     private async ValueTask<RespValue> SendCircuitBlockingAsync<TCommand>(
-        RespireConnection connection, TCommand command, CancellationToken cancellationToken)
+        RespireConnection connection, TCommand command, CancellationToken cancellationToken, int errorAttempts)
         where TCommand : struct, IRespCommand
     {
         var admission = AcquireCircuit(connection, cancellationToken);
         try
         {
-            var response = await connection.SendWithoutResponseTimeoutAsync(command, cancellationToken).ConfigureAwait(false);
+            var response = await connection.SendWithoutResponseTimeoutAsync(command, cancellationToken, errorAttempts).ConfigureAwait(false);
             admission.Success();
             return response;
         }
@@ -81,7 +81,8 @@ public sealed partial class RespireClient
 #endif
     private async ValueTask<RespValue> SendCircuitResponseAsync<TCommand>(
         string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken,
-        bool sendAsking, CommandDeadline commandDeadline, bool allowStreamingConnectionReroute)
+        bool sendAsking, CommandDeadline commandDeadline, bool allowStreamingConnectionReroute,
+        RespireTelemetry.ErrorObservation observation)
         where TCommand : struct, IRespCommand
     {
         commandDeadline = CreateCircuitDeadline(commandDeadline);
@@ -95,13 +96,15 @@ public sealed partial class RespireClient
                 connection.ThrowIfRetired();
                 admission = AcquireCircuit(connection, cancellationToken);
                 var response = await SendOnConnectionUncheckedAsync(operation, connection, command, cancellationToken,
-                    sendAsking, commandDeadline, allowStreamingConnectionReroute, pinToConnection: true).ConfigureAwait(false);
+                    sendAsking, commandDeadline, allowStreamingConnectionReroute, pinToConnection: true,
+                    observation: observation).ConfigureAwait(false);
                 admission.Success();
                 return response;
             }
-            catch (RespireConnectionRetiredException) when (allowStreamingConnectionReroute
+            catch (RespireConnectionRetiredException error) when (allowStreamingConnectionReroute
                 && connection.TryReroute(false, commandDeadline, out var target, out var rerouted, GetTransportReadZone(in command)))
             {
+                observation.Handled(error);
                 connection = target;
                 commandDeadline = rerouted;
             }
@@ -124,6 +127,7 @@ public sealed partial class RespireClient
         where TCommand : struct, IRespCommand
         where TSend : struct, IReadySend<TResult>
     {
+        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
         var commandDeadline = CreateCircuitDeadline();
         var attemptStarted = durationStarted with { SuppressRetirement = true };
         var durationOwnedByTransport = false;
@@ -142,16 +146,18 @@ public sealed partial class RespireClient
                     durationOwnedByTransport = true;
                     var response = mutationFence.IsRequired
                         ? await sender.Send(connection, operation, new MutationCommand<TCommand>(command, mutationFence),
-                            cancellationToken, attemptStarted, commandDeadline, pinToConnection: true).ConfigureAwait(false)
+                            cancellationToken, attemptStarted, commandDeadline, pinToConnection: true,
+                            errorObservation: observation).ConfigureAwait(false)
                         : await sender.Send(connection, operation, command, cancellationToken, attemptStarted,
-                            commandDeadline, pinToConnection: true).ConfigureAwait(false);
+                            commandDeadline, pinToConnection: true, errorObservation: observation).ConfigureAwait(false);
                     succeeded = true;
                     admission.Success();
                     return response;
                 }
-                catch (RespireConnectionRetiredException) when (connection.TryReroute(false, commandDeadline,
+                catch (RespireConnectionRetiredException error) when (connection.TryReroute(false, commandDeadline,
                     out var target, out var rerouted, GetTransportReadZone(in command)))
                 {
+                    observation.Handled(error);
                     connection = target;
                     commandDeadline = rerouted;
                 }
@@ -165,6 +171,7 @@ public sealed partial class RespireClient
         }
         catch (Exception error)
         {
+            observation.Final(error);
             // Final response sources own completion before user conversion. Undispatched
             // retirement retains the original start for retry or terminal failure here.
             if (!durationOwnedByTransport || error is RespireConnectionRetiredException)
@@ -185,7 +192,7 @@ public sealed partial class RespireClient
 #endif
     private async ValueTask<RespValue> SendCircuitTrackedAsync<TCommand>(
         string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken,
-        bool sendAsking, bool track) where TCommand : struct, IRespCommand
+        bool sendAsking, bool track, RespireTelemetry.ErrorObservation observation) where TCommand : struct, IRespCommand
     {
         var commandDeadline = CreateCircuitDeadline();
         while (true)
@@ -196,13 +203,15 @@ public sealed partial class RespireClient
                 connection.ThrowIfRetired();
                 admission = AcquireCircuit(connection, cancellationToken);
                 var response = await SendTrackedOnConnectionUncheckedAsync(operation, connection, command,
-                    cancellationToken, sendAsking, track, commandDeadline, pinToConnection: true).ConfigureAwait(false);
+                    cancellationToken, sendAsking, track, commandDeadline, pinToConnection: true,
+                    observation: observation).ConfigureAwait(false);
                 admission.Success();
                 return response;
             }
-            catch (RespireConnectionRetiredException) when (connection.TryReroute(false, commandDeadline,
+            catch (RespireConnectionRetiredException error) when (connection.TryReroute(false, commandDeadline,
                 out var target, out var rerouted, GetTransportReadZone(in command)))
             {
+                observation.Handled(error);
                 connection = target;
                 commandDeadline = rerouted;
             }
@@ -220,7 +229,7 @@ public sealed partial class RespireClient
 #endif
     private async ValueTask SendCircuitFireAndForgetAsync<TCommand>(
         string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken,
-        string? storedProcedureName) where TCommand : struct, IRespCommand
+        string? storedProcedureName, RespireTelemetry.ErrorObservation observation) where TCommand : struct, IRespCommand
     {
         var commandDeadline = CreateCircuitDeadline();
         while (true)
@@ -231,13 +240,15 @@ public sealed partial class RespireClient
                 connection.ThrowIfRetired();
                 admission = AcquireCircuit(connection, cancellationToken);
                 await SendFireAndForgetOnConnectionUncheckedAsync(operation, connection, command, cancellationToken,
-                    storedProcedureName, commandDeadline, pinToConnection: true).ConfigureAwait(false);
+                    storedProcedureName, commandDeadline, pinToConnection: true,
+                    observation: observation).ConfigureAwait(false);
                 // Queue acceptance cannot establish endpoint health without observing its reply.
                 return;
             }
-            catch (RespireConnectionRetiredException) when (connection.TryReroute(false, commandDeadline,
+            catch (RespireConnectionRetiredException error) when (connection.TryReroute(false, commandDeadline,
                 out var target, out var rerouted, GetTransportReadZone(in command)))
             {
+                observation.Handled(error);
                 connection = target;
                 commandDeadline = rerouted;
             }
