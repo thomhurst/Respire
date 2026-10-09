@@ -144,9 +144,11 @@ public class CommandRouteOwnershipTests
         var repo = CommandRouteOwnership.FindRepository();
         var files = Directory.EnumerateFiles(Path.Combine(repo, "src", "Respire"), "*.cs", SearchOption.AllDirectories)
             .Where(f => !Path.GetRelativePath(repo, f).Split(Path.DirectorySeparatorChar).Any(p => p is "bin" or "obj"))
+            .Append(Path.Combine(repo, "src", "Respire.Coordination", "RespireSemaphore.cs"))
             .Select(f => (File: Path.GetRelativePath(repo, f), Source: File.ReadAllText(f)));
         var source = CommandRouteOwnership.Discover(files);
         var declarations = Directory.EnumerateFiles(Path.Combine(repo, "src", "Respire"), "*.ownership.json", SearchOption.AllDirectories)
+            .Append(Path.Combine(repo, "src", "Respire.Coordination", "RespireSemaphore.cs.ownership.json"))
             .Select(file => (File: Path.GetRelativePath(repo, file)[..^".ownership.json".Length],
                 Inventory: JsonSerializer.Deserialize<CommandRouteOwnership.Inventory>(File.ReadAllText(file))!)).ToArray();
         var inventories = declarations.Select(d => d.Inventory).ToArray();
@@ -529,6 +531,7 @@ public class CommandRouteOwnershipTests
     }
 
     private static readonly string[] RequiredBoundaries = [
+        "semaphore-acquire", "semaphore-renew", "semaphore-release", "semaphore-cleanup", "semaphore-disposal",
         "blocking-dispatch-owner", "blocking-asking-transport",
         "dispatch-final-inspection", "dispatch-owner-start", "typed-dispatch-owner", "string-dispatch-owner", "bytes-dispatch-owner",
         "dispatch-write-outcome-borrower", "dispatch-discarded-reply-snapshot", "dispatch-cancelled-reply-drain",
