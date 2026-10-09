@@ -537,6 +537,8 @@ public class CommandRouteOwnershipTests
         "raw-dispatch-helper", "catalog-dispatch-helper", "interpolated-dispatch", "interpolated-helper",
         "connection-string-parsing", "connection-setup", "physical-connect-helper", "cache-producer", "cache-typed-producer",
         "cache-waiter", "cache-typed-waiter", "upload-payload-read", "download-payload-read", "fan-out", "fan-out-target",
+        "upload-dispatch-owner", "upload-cluster-borrower", "upload-frame-borrower", "upload-discarded-completion",
+        "download-payload-array-read", "download-payload-span-read", "download-payload-byte-read", "download-payload-legacy-read",
         "cache-aside-producer", "deferred-execution", "deferred-inspection", "deferred-awaiter", "transaction-commit",
         "caller-cleanup", "internal-health-probe", "internal-topology-query"
     ];

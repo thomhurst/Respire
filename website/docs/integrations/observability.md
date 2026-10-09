@@ -619,6 +619,16 @@ stream read failure contributes only its internal connection measurement. Invali
 buffer arguments, unsupported stream operations, and reads after disposal are excluded
 from payload error observations.
 
+Payload read failures acquire the failure-only observation lease at the error boundary.
+Successful reads acquire no error observation storage. Streaming uploads retain the
+enclosing caller's owner from preflight through source reads, route retries, reply parsing,
+and dedicated connection and mutation cleanup. Internal upload entry points start a
+failure-only owner when none is supplied. An error reply already completed when a frame
+write fails is counted once as internal with its copied retry count; the caller-visible
+write failure remains final. Checked streaming prefixes likewise keep prefix and discarded
+command errors separate, including deferred completion and caller cancellation while both
+replies drain. Cancellation status, tokens, and the original payload failure are preserved.
+
 ## Reads by availability zone
 
 When `ClientAvailabilityZone` is configured, the `Respire` meter exposes the observable
