@@ -553,7 +553,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                     }
                     catch (RespireConnectionRetiredException retirement) when (core.Circuits is not null
                         && ConnectionPolicy.CanReplayRejectedCommands
-                        && connection.TryReroute(false, deadline, out var target, out var rerouted, preferredZone: null))
+                        && _client.TryRerouteCircuit(connection, deadline, out var target, out var rerouted, preferredZone: null))
                     {
                         // Retirement rejected every frame before dispatch. Release this permit
                         // as ignored; the replacement endpoint owns its own health outcome.

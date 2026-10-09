@@ -433,9 +433,9 @@ public sealed record RespireOptions
     internal RespireEndpoint PrimaryEndpoint
         => Endpoints.Count > 0 ? Endpoints[0] : new RespireEndpoint("localhost");
 
-    /// <summary>Opt-in circuit admission for standalone and Cluster data commands. Null disables circuit breaking.</summary>
-    /// <remarks>Sentinel and standalone replica routing are not supported. Cluster primaries and replicas
-    /// have independent endpoint histories. Each batch command acquires
+    /// <summary>Opt-in circuit admission for standalone, Sentinel and Cluster data commands. Null disables circuit breaking.</summary>
+    /// <remarks>Configured standalone replica routing is not supported. Sentinel and Cluster data endpoints
+    /// have independent histories; Sentinel discovery and primary validation are not gated. Each batch command acquires
     /// admission independently; a transaction acquires one permit for its MULTI/EXEC sequence.
     /// WATCH setup and durability acknowledgements acquire independent admission.</remarks>
     public RespireCircuitBreakerOptions? CircuitBreaker { get; init; }
@@ -459,8 +459,8 @@ public sealed record RespireOptions
             || ClientAvailabilityZone is not null, nameof(ClientAvailabilityZone), "is required for AZ-affinity reads");
         HedgedReads?.Validate();
         CircuitBreaker?.Validate();
-        Require(CircuitBreaker is null || (string.IsNullOrWhiteSpace(SentinelPrimaryName)
-            && ReplicaEndpoints.Count == 0), nameof(CircuitBreaker), "requires standalone or Cluster routing without standalone replicas");
+        Require(CircuitBreaker is null || ReplicaEndpoints.Count == 0,
+            nameof(CircuitBreaker), "requires standalone, Sentinel or Cluster routing without configured replica endpoints");
         Require(
             ReplicaRefreshInterval >= TimeSpan.Zero && ReplicaRefreshInterval <= TimeSpan.FromHours(1),
             nameof(ReplicaRefreshInterval),

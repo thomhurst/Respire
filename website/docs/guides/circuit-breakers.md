@@ -1,11 +1,11 @@
 ---
-title: Circuit breakers
+title: Endpoint circuit breakers
 description: Opt-in endpoint admission, bounded recovery probes, and command health outcomes.
 ---
 
-# Circuit breakers
+# Endpoint circuit breakers
 
-Set `RespireOptions.CircuitBreaker` to stop new standalone or Redis Cluster commands from entering an unhealthy
+Set `RespireOptions.CircuitBreaker` to stop new standalone, Sentinel or Redis Cluster commands from entering an unhealthy
 endpoint. The default is `null`: the client creates no circuit registry or per-command permit,
 and retains its existing response sources and queue behavior.
 
@@ -168,12 +168,26 @@ after the open delay when a submitted transport failure reopened the node.
 
 ## Current scope
 
-This option covers standalone immediate typed, raw, interpolated, fire-and-forget, cache-miss,
+This option covers standalone and Sentinel immediate typed, raw, interpolated, fire-and-forget, cache-miss,
 blocking, streamed, batch, and transaction command dispatch.
 
-Redis Cluster data dispatch is also supported as described above. Configuration with Sentinel
-or standalone replica endpoints is rejected. Sentinel circuit admission remains separate work.
-This option does not change
+Redis Cluster data dispatch is also supported as described above.
+
+In Sentinel mode, circuit state belongs to the actual data endpoint, including discovered
+replica endpoints when read routing selects them. Sentinel monitor connections, discovery,
+and primary ROLE validation do not use application circuits. They can discover a healthy
+replacement while the old primary's circuit is open. The replacement has independent state;
+key-prefixed and cache-bypass views share that state across its data connections.
+
+When a generation retires before a command is accepted, ordinary immediate sends, batch
+entries, and unwatched transactions can select the current validated primary and acquire
+fresh endpoint admission. Accepted commands are never replayed. Cancellation completes an
+admitted probe as ignored, releases recovery capacity, and retains the accepted frame's
+FIFO response placeholder. A failed recovery probe reopens only that endpoint's circuit.
+WATCH state, import sessions, and durability acknowledgements keep their connection affinity.
+They cannot move to another primary to bypass circuit rejection or retirement.
+
+Configuration with configured standalone replica endpoints is rejected. This option does not change
 `RespireFailoverGroup` probe/failback behavior. The wider
 [resilience work](https://github.com/thomhurst/Respire/issues/863) remains open for retry and
 telemetry integration.
