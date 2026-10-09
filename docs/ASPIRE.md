@@ -192,6 +192,9 @@ Respire accepts directly ([hosting source](https://github.com/microsoft/aspire/b
 
 ## Sample and acceptance test
 
+See the [complete sample workflow](../website/docs/integrations/aspire-sample.md) for
+requirements, example requests, telemetry, readiness, and owned-resource cleanup.
+
 From `samples/Respire.Samples.Aspire.AppHost`, run `aspire start --non-interactive`
 (add `--isolated` in a worktree). Wait for `api` using `aspire wait api`, then open
 its dashboard endpoint. The AppHost starts Redis and Valkey, passes both references,
