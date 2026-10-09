@@ -367,8 +367,11 @@ public sealed class RespireLock : IAsyncDisposable
             }
             finally
             {
+                // Read before checking completion: the starter may consume and close its
+                // owner between these reads, but its completed snapshot remains available.
+                var liveAttempts = attempt.Observation.Attempts;
                 observation.SetAttempts(Math.Max(observation.Attempts,
-                    attempt.Task.IsCompleted ? attempt.RetryAttempts : attempt.Observation.Attempts));
+                    attempt.Task.IsCompleted ? attempt.RetryAttempts : liveAttempts));
             }
 
             var next = EnterRelease(cancellationToken, observation, out var outcome, out var started);

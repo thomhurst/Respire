@@ -123,23 +123,41 @@ public static class LockCommandExtensions
         TimeSpan expiry,
         bool keepAlive,
         CancellationToken cancellationToken = default)
-        => DispatchResponseSource<RespireLockAttempt>.Run(
-            (Locks: locks, Key: key, Expiry: expiry, KeepAlive: keepAlive, Token: cancellationToken),
-            static (state, owner) => AcquireBorrowedAsync(state.Locks, state.Key, state.Expiry, state.KeepAlive, state.Token, owner));
+        => locks is not null and not LockCommands
+            ? AcquireWrappedAsync(locks, key, expiry, keepAlive, cancellationToken)
+            : DispatchResponseSource<RespireLockAttempt>.Run(
+                (Locks: locks, Key: key, Expiry: expiry, KeepAlive: keepAlive, Token: cancellationToken),
+                static (state, owner) => AcquireBorrowedAsync(state.Locks!, state.Key, state.Expiry, state.KeepAlive, state.Token, owner));
+
+    private static async ValueTask<RespireLockAttempt> AcquireWrappedAsync(
+        ILockCommands locks, RespireKey key, TimeSpan expiry, bool keepAlive, CancellationToken cancellationToken)
+    {
+        // A public implementation may forward to a native caller boundary. Let acquisition
+        // retain its own final publisher; only keep-alive startup belongs to this extension.
+        var attempt = await locks.AcquireAsync(key, expiry, cancellationToken).ConfigureAwait(false);
+        if (!keepAlive || !attempt.Acquired) return attempt;
+        return await DispatchResponseSource<RespireLockAttempt>.Run(attempt,
+            static (attempt, owner) => StartKeepAliveBorrowedAsync(attempt, owner)).ConfigureAwait(false);
+    }
 
     private static async ValueTask<RespireLockAttempt> AcquireBorrowedAsync(
         ILockCommands locks, RespireKey key, TimeSpan expiry, bool keepAlive,
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         ArgumentNullException.ThrowIfNull(locks);
-        var attempt = locks is LockCommands native
-            ? await native.AcquireBorrowedAsync(key, expiry, cancellationToken, observation).ConfigureAwait(false)
-            : await locks.AcquireAsync(key, expiry, cancellationToken).ConfigureAwait(false);
+        var attempt = await ((LockCommands)locks).AcquireBorrowedAsync(key, expiry, cancellationToken, observation)
+            .ConfigureAwait(false);
         if (!keepAlive || !attempt.Acquired)
         {
             return attempt;
         }
 
+        return await StartKeepAliveBorrowedAsync(attempt, observation).ConfigureAwait(false);
+    }
+
+    private static async ValueTask<RespireLockAttempt> StartKeepAliveBorrowedAsync(
+        RespireLockAttempt attempt, RespireTelemetry.ErrorObservation observation)
+    {
         try
         {
             attempt.Lock.StartOwnedKeepAlive();

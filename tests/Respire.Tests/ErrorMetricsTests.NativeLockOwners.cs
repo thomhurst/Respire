@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Reflection;
 using Respire.Internal;
 using Respire.Tests.Networking;
 using TUnit.Assertions;
@@ -9,6 +10,58 @@ namespace Respire.Tests;
 
 public partial class ErrorMetricsTests
 {
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task WrappedNativeLockValidationHasOneFinalOwner(bool keepAlive)
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        await using var server = NativeLockMetricServer();
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        ILockCommands wrapper = new ForwardingLockCommands(client.Locks);
+        using var capture = new Capture(throwOnMeasurement: true);
+        await Assert.That(async () => await wrapper.AcquireAsync("key", TimeSpan.Zero, keepAlive))
+            .Throws<ArgumentOutOfRangeException>();
+        await Assert.That(capture.Items.Count).IsEqualTo(1);
+        await Assert.That(capture.Items.Single().Tags["redis.client.errors.internal"]).IsEqualTo(false);
+        await Assert.That(server.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
+    public async Task CancelledNativeLockReleaseJoinerRetainsRetriesWhenStarterClosesDuringSnapshot()
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        await using var server = NativeLockMetricServer();
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var mutex = await client.Locks.AcquireOrThrowAsync("key", TimeSpan.FromSeconds(30));
+        var starter = DispatchResponseSource<LockReleaseOutcome>.Start();
+        var starterObservation = starter.Observation;
+        starterObservation.SetAttempts(3);
+        var liveObservation = new CompletingReleaseObservation();
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        var attemptType = typeof(RespireLock).GetNestedType("ReleaseAttempt", BindingFlags.NonPublic)!;
+        var attempt = (TaskCompletionSource<LockReleaseOutcome>)Activator.CreateInstance(attemptType, flags,
+            binder: null, args: [new RespireTelemetry.ErrorObservation(liveObservation, 1)], culture: null)!;
+        liveObservation.Read = () =>
+        {
+            // Complete and consume the starter between the joiner's live read and completion check.
+            attemptType.GetField("RetryAttempts", flags)!.SetValue(attempt, starterObservation.Attempts);
+            attempt.TrySetResult(LockReleaseOutcome.Released);
+            _ = starter.Attach(new ValueTask<LockReleaseOutcome>(LockReleaseOutcome.Released)).GetAwaiter().GetResult();
+            return starterObservation.Attempts;
+        };
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        using var capture = new Capture(throwOnMeasurement: true);
+        var joiner = DispatchResponseSource<LockReleaseOutcome>.Run(mutex,
+            (handle, observation) => (ValueTask<LockReleaseOutcome>)typeof(RespireLock)
+                .GetMethod("JoinReleaseAsync", flags)!.Invoke(handle, [attempt, cancelled.Token, observation])!);
+        await Assert.That(async () => await joiner).Throws<OperationCanceledException>();
+        await Assert.That(capture.Items.Count).IsEqualTo(1);
+        await Assert.That(capture.Items.Single().Tags["redis.client.operation.retry_attempts"]).IsEqualTo(3);
+        await mutex.DisposeAsync();
+    }
+
     [Test]
     [MatrixDataSource]
     public async Task NativeLockValidationHasOneFinalOwner(
@@ -210,6 +263,38 @@ public partial class ErrorMetricsTests
     {
         ReplyOverride = (_, command) => NativeLockMetricReply(command),
     };
+
+    private sealed class CompletingReleaseObservation : IDispatchObservation
+    {
+        internal Func<int> Read { get; set; } = null!;
+        public int Attempts(long generation) => Read();
+        public void SetAttempts(long generation, int attempts) => throw new NotSupportedException();
+        public void Handled(long generation, Exception error) => throw new NotSupportedException();
+    }
+
+    private sealed class ForwardingLockCommands(ILockCommands inner) : ILockCommands
+    {
+        public ValueTask<RespireLockAttempt> AcquireAsync(RespireKey key, TimeSpan expiry, CancellationToken cancellationToken = default)
+            => inner.AcquireAsync(key, expiry, cancellationToken);
+        public ValueTask<RespireLockAttempt> AcquireAsync(RespireKey key, TimeSpan expiry, TimeSpan wait, CancellationToken cancellationToken = default)
+            => inner.AcquireAsync(key, expiry, wait, cancellationToken);
+        public ValueTask<RespireLockAttempt> AcquireAsync(RespireKey key, TimeSpan expiry, TimeSpan wait, TimeSpan retryEvery, CancellationToken cancellationToken = default)
+            => inner.AcquireAsync(key, expiry, wait, retryEvery, cancellationToken);
+        public ValueTask<RespireLock> AcquireOrThrowAsync(RespireKey key, TimeSpan expiry, CancellationToken cancellationToken = default)
+            => inner.AcquireOrThrowAsync(key, expiry, cancellationToken);
+        public ValueTask<RespireLock> AcquireOrThrowAsync(RespireKey key, TimeSpan expiry, TimeSpan wait, CancellationToken cancellationToken = default)
+            => inner.AcquireOrThrowAsync(key, expiry, wait, cancellationToken);
+        public ValueTask<RespireLock> AcquireOrThrowAsync(RespireKey key, TimeSpan expiry, TimeSpan wait, TimeSpan retryEvery, CancellationToken cancellationToken = default)
+            => inner.AcquireOrThrowAsync(key, expiry, wait, retryEvery, cancellationToken);
+        public ValueTask<bool> TryTakeAsync(RespireKey key, RespireLockToken token, TimeSpan expiry, CancellationToken cancellationToken = default)
+            => inner.TryTakeAsync(key, token, expiry, cancellationToken);
+        public ValueTask<bool> ReleaseAsync(RespireKey key, RespireLockToken token, CancellationToken cancellationToken = default)
+            => inner.ReleaseAsync(key, token, cancellationToken);
+        public ValueTask<bool> ResetExpiryAsync(RespireKey key, RespireLockToken token, TimeSpan newDuration, CancellationToken cancellationToken = default)
+            => inner.ResetExpiryAsync(key, token, newDuration, cancellationToken);
+        public ValueTask<RespireLockToken?> GetOwnerTokenAsync(RespireKey key, CancellationToken cancellationToken = default)
+            => inner.GetOwnerTokenAsync(key, cancellationToken);
+    }
 
     private static byte[] NativeLockMetricReply(string command)
         => command == "CLIENT ID" ? ":41\r\n"u8.ToArray()

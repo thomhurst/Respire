@@ -23,7 +23,7 @@
       "Members": [
         "AcquireAsync(this ILockCommands,RespireKey,TimeSpan,bool,CancellationToken):ValueTask<RespireLockAttempt>"
       ],
-      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+      "Contract": "Native acquisition borrows one extension owner through validation, dispatch, keep-alive startup and cleanup. Public wrapper implementations retain their acquisition owner; the extension starts a separate owner only after successful acquisition for keep-alive startup and cleanup."
     }
   ],
   "Boundaries": [
