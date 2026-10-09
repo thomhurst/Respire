@@ -1,0 +1,13 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "standalone-optional-hedge-selection",
+      "Role": "internal",
+      "Member": "Respire.Internal.ReadEndpointRouter.GetHedgeConnectionAsync(RespireReadFrom,RespireConnection,CancellationToken):ValueTask<RespireConnection?>",
+      "Owner": null,
+      "Contract": "Own optional selection independently until it finishes; acquire error observation storage only on failure and never publish a caller error."
+    }
+  ],
+  "NonRoutes": []
+}

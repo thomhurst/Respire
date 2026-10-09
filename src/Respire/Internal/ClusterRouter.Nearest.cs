@@ -36,7 +36,7 @@ internal sealed partial class ClusterRouter
             }
             catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
             {
-                observation.Handled(error);
+                ReadEndpointRouter.RecordCandidateFailure(observation, error);
                 lastError = error;
                 if (owner is not null) sampler.ConnectionFailed(owner);
             }
@@ -64,7 +64,7 @@ internal sealed partial class ClusterRouter
                 try { routes = await GetReplicaRoutesAsync(slot, cancellationToken).ConfigureAwait(false); }
                 catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
                 {
-                    observation.Handled(error);
+                    ReadEndpointRouter.RecordCandidateFailure(observation, error);
                     lastError = error;
                 }
             }
@@ -99,7 +99,7 @@ internal sealed partial class ClusterRouter
                 }
                 catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
                 {
-                    observation.Handled(error);
+                    ReadEndpointRouter.RecordCandidateFailure(observation, error);
                     lastError = error;
                     sampler.ConnectionFailed(node);
                     continue;

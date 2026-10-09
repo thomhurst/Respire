@@ -59,7 +59,7 @@ internal sealed partial class ClusterRouter
             }
             catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
             {
-                observation.Handled(error);
+                ReadEndpointRouter.RecordCandidateFailure(observation, error);
                 return await GetReplicaConnectionAsync(slot, cancellationToken, error, discovery, excluded: excluded, observation: observation).ConfigureAwait(false);
             }
         }
@@ -183,7 +183,7 @@ internal sealed partial class ClusterRouter
                 {
                     // The logical read borrows this owner through selection and eventual conversion.
                     // Report the rejected endpoint, not the aggregate no-healthy-replica wrapper.
-                    observation.Handled(error);
+                    ReadEndpointRouter.RecordCandidateFailure(observation, error);
                     lastError = error;
                 }
             }
@@ -198,7 +198,7 @@ internal sealed partial class ClusterRouter
                 }
                 catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
                 {
-                    observation.Handled(error);
+                    ReadEndpointRouter.RecordCandidateFailure(observation, error);
                     lastError = error;
                 }
             }

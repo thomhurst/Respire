@@ -527,6 +527,20 @@ replica connection candidates before another replica or the primary succeeds. Th
 aggregate no-healthy-replica wrapper is not a second handled error. A Cluster batch
 reports its shared selection failure once, then copies that count to each deferred
 command owner; a later command failure includes both selection and send retries.
+Standalone read selection, cursor reselection, Nearest selection and dedicated
+replica acquisition borrow the enclosing caller's failure-only owner. Rejected
+connection and ROLE candidates increment that caller's retry count, including
+when collection starts during selection. A later reply or conversion failure
+reports the accumulated count after cleanup; successful selection rents no error
+observation storage. Optional hedge selection and each hedge leg retain independent
+failure-only owners because they can finish after the caller. Their failures are
+internal; only the completed result leg's retry history is copied to the caller.
+Background replica reconnects and failover probes retain internal ownership and
+do not publish an additional caller failure.
+A physical socket close already owns its internal event. If that same failure
+rejects a selection candidate, selection increments the caller's retry count
+without publishing the physical event again. Every affected caller still owns
+its distinct final failure.
 Failed ordinary and sharded subscription recovery
 has its own internal owner; handled redirects and terminal rejections remain separate
 events. Cancellation caused by subscription shutdown is excluded.

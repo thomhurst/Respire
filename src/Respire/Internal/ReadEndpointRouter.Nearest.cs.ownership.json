@@ -1,0 +1,13 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "standalone-nearest-selection",
+      "Role": "borrower",
+      "Member": "Respire.Internal.ReadEndpointRouter.GetNearestAsync(CancellationToken,bool,long?,Exception?,ReadAttempt?,RespireTelemetry.ErrorObservation):ValueTask<Selection>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Retain caller retry history across failed candidates and bounded reselection. Latency probes remain internal."
+    }
+  ],
+  "NonRoutes": []
+}

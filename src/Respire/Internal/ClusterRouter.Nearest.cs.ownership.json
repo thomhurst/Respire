@@ -1,0 +1,13 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "cluster-nearest-selection",
+      "Role": "borrower",
+      "Member": "Respire.Internal.ClusterRouter.GetNearestReadConnectionAsync(int,CancellationToken,DiscoveryRound?,bool,long?,Exception?,HashSet<RespireConnectionMultiplexer>?,RespireTelemetry.ErrorObservation):ValueTask<RespireConnection>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Borrow the caller through ranked replica and primary selection, carrying rejected candidates into its final retry count."
+    }
+  ],
+  "NonRoutes": []
+}

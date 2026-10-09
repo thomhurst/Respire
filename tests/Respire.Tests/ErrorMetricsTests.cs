@@ -2038,7 +2038,10 @@ public partial class ErrorMetricsTests
             await Assert.That(recovered[0].Tags["redis.client.operation.retry_attempts"]).IsEqualTo(0);
         }
         if (outcome == "rejection" && final.Length != 0)
+        {
             await Assert.That(final[0].Tags["db.response.status_code"]).IsEqualTo("WRONGTYPE");
+            await Assert.That(final[0].Tags["redis.client.operation.retry_attempts"]).IsEqualTo(1);
+        }
         await Assert.That(items.SelectMany(item => item.Tags.Values)
             .Any(value => value?.ToString()?.Contains("private-") == true)).IsFalse();
         await Assert.That(failed.ReceivedCommands.Count(command => command == "GET private-key")).IsEqualTo(0);

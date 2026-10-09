@@ -3976,6 +3976,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 return false;
             }
 
+            // Publish physical observation ownership before failed writers or handshake
+            // waiters can reach a candidate fallback on another thread.
+            if (observeErrors && reason is not null and not RespireConnectionRetiredException)
+                RespireTelemetry.MarkConnectionError(reason);
             _dead = true;
             _abortReason = reason;
             // The flush loop owns an in-progress send: it completes that buffer when the socket

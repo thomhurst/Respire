@@ -1,0 +1,13 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "cluster-optional-hedge-selection",
+      "Role": "internal",
+      "Member": "Respire.Internal.ClusterRouter.GetHedgeConnectionAsync(int,RespireReadFrom,RespireConnection,CancellationToken):ValueTask<RespireConnection?>",
+      "Owner": null,
+      "Contract": "An optional selector can outlive its caller. Keep failure-only internal ownership through selector cleanup."
+    }
+  ],
+  "NonRoutes": []
+}

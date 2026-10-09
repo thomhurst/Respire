@@ -1,0 +1,13 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "sentinel-generation-selection",
+      "Role": "borrower",
+      "Member": "Respire.Internal.SentinelRouter.GetGenerationAsync(CancellationToken,bool,SentinelHint?,bool):ValueTask<Generation>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Foreground generation selection propagates its terminal failure to the caller after rejected-generation cleanup; background work remains internal."
+    }
+  ],
+  "NonRoutes": []
+}

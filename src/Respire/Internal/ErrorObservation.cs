@@ -50,6 +50,7 @@ internal static class ErrorObservation
 
         internal Borrower Borrow() => new(_lease?.Borrow());
         internal bool RecordHandled(Exception error) => _lease?.RecordHandled(error) ?? false;
+        internal bool RecordRetry() => _lease?.RecordRetry() ?? false;
         internal bool PublishFinal(Exception error) => _lease?.PublishFinal(error) ?? false;
         internal void Complete() => _lease?.Complete();
     }
@@ -119,6 +120,16 @@ internal static class ErrorObservation
             // remains this event's count even if another retry, final inspection or reuse wins.
             RespireTelemetry.RecordError(error, internallyHandled: true, retryAttempts);
             return true;
+        }
+
+        internal bool RecordRetry()
+        {
+            lock (observation.Gate)
+            {
+                if (!IsOpen) return false;
+                if (observation.RetryAttempts < int.MaxValue) observation.RetryAttempts++;
+                return true;
+            }
         }
 
         internal bool PublishFinal(Exception error)

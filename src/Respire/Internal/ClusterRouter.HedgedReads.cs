@@ -16,12 +16,13 @@ internal sealed partial class ClusterRouter
     internal async ValueTask<RespireConnection?> GetHedgeConnectionAsync(int slot, RespireReadFrom readFrom,
         RespireConnection original, CancellationToken cancellationToken)
     {
-        if (readFrom == RespireReadFrom.Primary) return null;
         // Selection can outlive the original caller. Keep its rejected candidates on an
         // independent owner until the selector finishes, including late metric activation.
-        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        var owner = DispatchResponseSource<bool>.Start();
+        var observation = owner.Observation;
         try
         {
+            if (readFrom == RespireReadFrom.Primary) return null;
             if (RoutingSnapshot[slot].Replicas is { } routes)
             {
                 var selected = await TrySelectReplicaAsync(routes, slot, cancellationToken, discovery: null,
@@ -37,8 +38,9 @@ internal sealed partial class ClusterRouter
         }
         catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
         {
-            observation.Handled(error);
+            ReadEndpointRouter.RecordCandidateFailure(observation, error);
             throw;
         }
+        finally { owner.CompleteInternal(); }
     }
 }
