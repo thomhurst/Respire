@@ -60,9 +60,8 @@ internal static class DeferredRawCommands
     internal static DynamicCommand CreateCommand(
         RespireCommand descriptor, RespireValue[] tokens, int routingKeyIndex, int argumentOffset)
     {
-        var cursorArgumentIndex = descriptor.CursorArgumentIndex < 0
-            ? -1
-            : argumentOffset + descriptor.CursorArgumentIndex;
+        // DynamicCommand.TryGetArgument applies argumentOffset; cursor positions are relative to arguments.
+        var cursorArgumentIndex = descriptor.CursorArgumentIndex;
         return new DynamicCommand(tokens, routingKeyIndex, argumentOffset,
             cacheMutation: descriptor.CacheMutation,
             readKind: descriptor.ReadKind, cursorArgumentIndex: cursorArgumentIndex,

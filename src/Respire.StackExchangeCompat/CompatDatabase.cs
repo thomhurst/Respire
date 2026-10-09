@@ -1,4 +1,5 @@
 using StackExchange.Redis;
+using RedisSortedSetEntry = StackExchange.Redis.SortedSetEntry;
 using RedisExpireWhen = StackExchange.Redis.ExpireWhen;
 
 // IDatabase requires synchronous methods; these waits intentionally implement that contract.
@@ -31,6 +32,9 @@ internal sealed partial class CompatDatabase : CompatDatabaseAsync, IDatabase
             throw Compatibility.Unsupported("FireAndForget with NoRedirect");
         var role = (int)flags & 12;
         if (role is 8 or 12 && !command.IsReadOnly) throw Compatibility.Unsupported("replica routing for a write command");
+        // StackExchange.Redis does not submit zero integer adjustments in fire-and-forget mode.
+        if ((flags & CommandFlags.FireAndForget) != 0 && (command.Name is "INCRBY" or "DECRBY") && arguments[1] == 0)
+            return Owner.Run(_ => Task.FromResult(default(T)!));
         var client = (RespireClient)_client.WithReadFrom(role switch
         {
             4 => RespireReadFrom.Primary,
@@ -68,6 +72,7 @@ internal sealed partial class CompatDatabase : CompatDatabaseAsync, IDatabase
             {
                 if (typeof(T) == typeof(RedisValue[])) return (T)(object)Array.Empty<RedisValue>();
                 if (typeof(T) == typeof(HashEntry[])) return (T)(object)Array.Empty<HashEntry>();
+                if (typeof(T) == typeof(RedisSortedSetEntry[])) return (T)(object)Array.Empty<RedisSortedSetEntry>();
                 return default(T)!;
             }
             using var result = await pending!.ConfigureAwait(false);

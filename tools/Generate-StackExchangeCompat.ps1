@@ -30,6 +30,10 @@ function Generate-Class($className, $interfaceNames, $excluded) {
     $methods = $types.GetMethods() | Sort-Object { $_.ToString() } -Unique
     foreach ($method in $methods) {
         if ($method.IsSpecialName -or $method.Name -in $excluded) { continue }
+        # Keep unsupported overloads of partially implemented method families explicit.
+        $name = $method.Name -replace 'Async$', ''
+        $parameterInfo = $method.GetParameters()
+        if ($name -in @('StringIncrement', 'StringDecrement') -and $parameterInfo.Count -eq 3 -and $parameterInfo[1].ParameterType -eq [long]) { continue }
         $parameters = $method.GetParameters() | ForEach-Object {
             $modifier = if ($_.IsOut) { 'out ' } elseif ($_.ParameterType.IsByRef) { 'ref ' } else { '' }
             $modifier + (Format-Type $_.ParameterType) + ' @' + $_.Name
@@ -57,9 +61,10 @@ function Generate-Class($className, $interfaceNames, $excluded) {
 }
 
 $hashList = @('HashGetAll', 'HashLength', 'HashDelete', 'ListLength', 'ListGetByIndex', 'ListLeftPush', 'ListRemove', 'ListTrim', 'ListRightPopLeftPush', 'LockTake', 'LockExtend', 'LockRelease', 'IdentifyEndpoint', 'Publish')
+$hangfire = @('KeyExists', 'KeyPersist', 'KeyTimeToLive', 'StringGet', 'SetAdd', 'SetRemove', 'SetMembers', 'SetLength', 'SortedSetAdd', 'SortedSetRemove', 'SortedSetLength', 'SortedSetRangeByRank', 'SortedSetRangeByRankWithScores', 'SortedSetRangeByScore', 'SortedSetRangeByScoreWithScores', 'SortedSetScan')
 $async = @('HashGetAsync', 'HashGetLeaseAsync', 'HashSetAsync', 'KeyExpireAsync', 'KeyDeleteAsync', 'ListRangeAsync', 'ListRightPushAsync', 'Database', 'Multiplexer', 'Wait', 'WaitAll', 'TryWait') + @($hashList | ForEach-Object { $_ + 'Async' })
-Generate-Class 'CompatDatabaseAsync' @('IDatabaseAsync', 'IRedisAsync') $async
-Generate-Class 'CompatDatabase' @('IDatabase', 'IRedis') (@('HashGet', 'HashGetLease', 'HashSet', 'KeyExpire', 'KeyDelete', 'ListRange', 'ListRightPush', 'CreateBatch', 'Database', 'Wait', 'WaitAll') + $hashList)
+Generate-Class 'CompatDatabaseAsync' @('IDatabaseAsync', 'IRedisAsync') ($async + @($hangfire | ForEach-Object { $_ + 'Async' }))
+Generate-Class 'CompatDatabase' @('IDatabase', 'IRedis') (@('HashGet', 'HashGetLease', 'HashSet', 'KeyExpire', 'KeyDelete', 'ListRange', 'ListRightPush', 'CreateBatch', 'Database', 'Wait', 'WaitAll') + $hashList + $hangfire)
 Generate-Class 'RespireConnectionMultiplexer' @('IConnectionMultiplexer') @('GetDatabase', 'GetEndPoints', 'GetServer', 'GetServers', 'GetSubscriber', 'Close', 'CloseAsync', 'Wait', 'WaitAll', 'ClientName', 'Configuration', 'TimeoutMilliseconds', 'IsConnected', 'ToString')
 Generate-Class 'CompatServer' @('IServer', 'IRedis', 'IRedisAsync') @('EndPoint', 'IsConnected', 'IsReplica', 'Multiplexer', 'InfoRaw', 'InfoRawAsync', 'Time', 'TimeAsync', 'Wait', 'WaitAll', 'TryWait')
 Generate-Class 'CompatSubscriber' @('ISubscriber', 'IRedis', 'IRedisAsync') @('Multiplexer', 'Subscribe', 'SubscribeAsync', 'Unsubscribe', 'UnsubscribeAsync', 'UnsubscribeAll', 'UnsubscribeAllAsync', 'Publish', 'PublishAsync', 'Wait', 'WaitAll', 'TryWait')

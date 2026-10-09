@@ -23,9 +23,6 @@ partial class CompatDatabaseAsync
     public global::System.Collections.Generic.IAsyncEnumerable<global::StackExchange.Redis.RedisValue> VectorSetRangeEnumerateAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @start, global::StackExchange.Redis.RedisValue @end, global::System.Int64 @count, global::StackExchange.Redis.Exclude @exclude, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("VectorSetRangeEnumerateAsync");
     /// <inheritdoc />
-    public global::System.Collections.Generic.IAsyncEnumerable<global::StackExchange.Redis.SortedSetEntry> SortedSetScanAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @pattern, global::System.Int32 @pageSize, global::System.Int64 @cursor, global::System.Int32 @pageOffset, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SortedSetScanAsync");
-    /// <inheritdoc />
     public global::System.Threading.Tasks.Task HashImportAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.HashImport @fieldSet, global::System.ReadOnlyMemory<global::StackExchange.Redis.RedisValue> @values, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("HashImportAsync");
     /// <inheritdoc />
@@ -233,9 +230,6 @@ partial class CompatDatabaseAsync
     public global::System.Threading.Tasks.Task<global::StackExchange.Redis.RedisValue[]> SetCombineAsync(global::StackExchange.Redis.SetOperation @operation, global::StackExchange.Redis.RedisKey[] @keys, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SetCombineAsync");
     /// <inheritdoc />
-    public global::System.Threading.Tasks.Task<global::StackExchange.Redis.RedisValue[]> SetMembersAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SetMembersAsync");
-    /// <inheritdoc />
     public global::System.Threading.Tasks.Task<global::StackExchange.Redis.RedisValue[]> SetPopAsync(global::StackExchange.Redis.RedisKey @key, global::System.Int64 @count, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SetPopAsync");
     /// <inheritdoc />
@@ -251,12 +245,6 @@ partial class CompatDatabaseAsync
     public global::System.Threading.Tasks.Task<global::StackExchange.Redis.RedisValue[]> SortedSetRandomMembersAsync(global::StackExchange.Redis.RedisKey @key, global::System.Int64 @count, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SortedSetRandomMembersAsync");
     /// <inheritdoc />
-    public global::System.Threading.Tasks.Task<global::StackExchange.Redis.RedisValue[]> SortedSetRangeByRankAsync(global::StackExchange.Redis.RedisKey @key, global::System.Int64 @start, global::System.Int64 @stop, global::StackExchange.Redis.Order @order, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SortedSetRangeByRankAsync");
-    /// <inheritdoc />
-    public global::System.Threading.Tasks.Task<global::StackExchange.Redis.RedisValue[]> SortedSetRangeByScoreAsync(global::StackExchange.Redis.RedisKey @key, global::System.Double @start, global::System.Double @stop, global::StackExchange.Redis.Exclude @exclude, global::StackExchange.Redis.Order @order, global::System.Int64 @skip, global::System.Int64 @take, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SortedSetRangeByScoreAsync");
-    /// <inheritdoc />
     public global::System.Threading.Tasks.Task<global::StackExchange.Redis.RedisValue[]> SortedSetRangeByValueAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @min, global::StackExchange.Redis.RedisValue @max, global::StackExchange.Redis.Exclude @exclude, global::System.Int64 @skip, global::System.Int64 @take, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SortedSetRangeByValueAsync");
     /// <inheritdoc />
@@ -265,9 +253,6 @@ partial class CompatDatabaseAsync
     /// <inheritdoc />
     public global::System.Threading.Tasks.Task<global::StackExchange.Redis.RedisValue[]> StreamClaimIdsOnlyAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @consumerGroup, global::StackExchange.Redis.RedisValue @claimingConsumer, global::System.Int64 @minIdleTimeInMs, global::StackExchange.Redis.RedisValue[] @messageIds, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("StreamClaimIdsOnlyAsync");
-    /// <inheritdoc />
-    public global::System.Threading.Tasks.Task<global::StackExchange.Redis.RedisValue[]> StringGetAsync(global::StackExchange.Redis.RedisKey[] @keys, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("StringGetAsync");
     /// <inheritdoc />
     public global::System.Threading.Tasks.Task<global::StackExchange.Redis.RedisValue[]> VectorSetRandomMembersAsync(global::StackExchange.Redis.RedisKey @key, global::System.Int64 @count, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("VectorSetRandomMembersAsync");
@@ -350,9 +335,6 @@ partial class CompatDatabaseAsync
     public global::System.Threading.Tasks.Task<global::StackExchange.Redis.RedisValue> StreamAddAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @streamField, global::StackExchange.Redis.RedisValue @streamValue, global::System.Nullable<global::StackExchange.Redis.RedisValue> @messageId, global::System.Nullable<global::System.Int64> @maxLength, global::System.Boolean @useApproximateMaxLength, global::System.Nullable<global::System.Int64> @limit, global::StackExchange.Redis.StreamTrimMode @trimMode, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("StreamAddAsync");
     /// <inheritdoc />
-    public global::System.Threading.Tasks.Task<global::StackExchange.Redis.RedisValue> StringGetAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("StringGetAsync");
-    /// <inheritdoc />
     public global::System.Threading.Tasks.Task<global::StackExchange.Redis.RedisValue> StringGetDeleteAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("StringGetDeleteAsync");
     /// <inheritdoc />
@@ -400,12 +382,6 @@ partial class CompatDatabaseAsync
     /// <inheritdoc />
     public global::System.Threading.Tasks.Task<global::StackExchange.Redis.SortedSetEntry[]> SortedSetRandomMembersWithScoresAsync(global::StackExchange.Redis.RedisKey @key, global::System.Int64 @count, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SortedSetRandomMembersWithScoresAsync");
-    /// <inheritdoc />
-    public global::System.Threading.Tasks.Task<global::StackExchange.Redis.SortedSetEntry[]> SortedSetRangeByRankWithScoresAsync(global::StackExchange.Redis.RedisKey @key, global::System.Int64 @start, global::System.Int64 @stop, global::StackExchange.Redis.Order @order, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SortedSetRangeByRankWithScoresAsync");
-    /// <inheritdoc />
-    public global::System.Threading.Tasks.Task<global::StackExchange.Redis.SortedSetEntry[]> SortedSetRangeByScoreWithScoresAsync(global::StackExchange.Redis.RedisKey @key, global::System.Double @start, global::System.Double @stop, global::StackExchange.Redis.Exclude @exclude, global::StackExchange.Redis.Order @order, global::System.Int64 @skip, global::System.Int64 @take, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SortedSetRangeByScoreWithScoresAsync");
     /// <inheritdoc />
     public global::System.Threading.Tasks.Task<global::StackExchange.Redis.SortedSetPopResult> SortedSetPopAsync(global::StackExchange.Redis.RedisKey[] @keys, global::System.Int64 @count, global::StackExchange.Redis.Order @order, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SortedSetPopAsync");
@@ -500,14 +476,8 @@ partial class CompatDatabaseAsync
     public global::System.Threading.Tasks.Task<global::System.Boolean> KeyCopyAsync(global::StackExchange.Redis.RedisKey @sourceKey, global::StackExchange.Redis.RedisKey @destinationKey, global::System.Int32 @destinationDatabase, global::System.Boolean @replace, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("KeyCopyAsync");
     /// <inheritdoc />
-    public global::System.Threading.Tasks.Task<global::System.Boolean> KeyExistsAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("KeyExistsAsync");
-    /// <inheritdoc />
     public global::System.Threading.Tasks.Task<global::System.Boolean> KeyMoveAsync(global::StackExchange.Redis.RedisKey @key, global::System.Int32 @database, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("KeyMoveAsync");
-    /// <inheritdoc />
-    public global::System.Threading.Tasks.Task<global::System.Boolean> KeyPersistAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("KeyPersistAsync");
     /// <inheritdoc />
     public global::System.Threading.Tasks.Task<global::System.Boolean> KeyRenameAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisKey @newKey, global::StackExchange.Redis.When @when, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("KeyRenameAsync");
@@ -515,29 +485,11 @@ partial class CompatDatabaseAsync
     public global::System.Threading.Tasks.Task<global::System.Boolean> KeyTouchAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("KeyTouchAsync");
     /// <inheritdoc />
-    public global::System.Threading.Tasks.Task<global::System.Boolean> SetAddAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @value, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SetAddAsync");
-    /// <inheritdoc />
     public global::System.Threading.Tasks.Task<global::System.Boolean> SetContainsAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @value, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SetContainsAsync");
     /// <inheritdoc />
     public global::System.Threading.Tasks.Task<global::System.Boolean> SetMoveAsync(global::StackExchange.Redis.RedisKey @source, global::StackExchange.Redis.RedisKey @destination, global::StackExchange.Redis.RedisValue @value, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SetMoveAsync");
-    /// <inheritdoc />
-    public global::System.Threading.Tasks.Task<global::System.Boolean> SetRemoveAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @value, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SetRemoveAsync");
-    /// <inheritdoc />
-    public global::System.Threading.Tasks.Task<global::System.Boolean> SortedSetAddAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @member, global::System.Double @score, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SortedSetAddAsync");
-    /// <inheritdoc />
-    public global::System.Threading.Tasks.Task<global::System.Boolean> SortedSetAddAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @member, global::System.Double @score, global::StackExchange.Redis.SortedSetWhen @when, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SortedSetAddAsync");
-    /// <inheritdoc />
-    public global::System.Threading.Tasks.Task<global::System.Boolean> SortedSetAddAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @member, global::System.Double @score, global::StackExchange.Redis.When @when, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SortedSetAddAsync");
-    /// <inheritdoc />
-    public global::System.Threading.Tasks.Task<global::System.Boolean> SortedSetRemoveAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @member, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SortedSetRemoveAsync");
     /// <inheritdoc />
     public global::System.Threading.Tasks.Task<global::System.Boolean> SortedSetUpdateAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @member, global::System.Double @score, global::StackExchange.Redis.SortedSetWhen @when, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SortedSetUpdateAsync");
@@ -659,9 +611,6 @@ partial class CompatDatabaseAsync
     public global::System.Threading.Tasks.Task<global::System.Int64> HyperLogLogLengthAsync(global::StackExchange.Redis.RedisKey[] @keys, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("HyperLogLogLengthAsync");
     /// <inheritdoc />
-    public global::System.Threading.Tasks.Task<global::System.Int64> KeyExistsAsync(global::StackExchange.Redis.RedisKey[] @keys, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("KeyExistsAsync");
-    /// <inheritdoc />
     public global::System.Threading.Tasks.Task<global::System.Int64> KeyTouchAsync(global::StackExchange.Redis.RedisKey[] @keys, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("KeyTouchAsync");
     /// <inheritdoc />
@@ -673,9 +622,6 @@ partial class CompatDatabaseAsync
     /// <inheritdoc />
     public global::System.Threading.Tasks.Task<global::System.Int64> ListPositionAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @element, global::System.Int64 @rank, global::System.Int64 @maxLength, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("ListPositionAsync");
-    /// <inheritdoc />
-    public global::System.Threading.Tasks.Task<global::System.Int64> SetAddAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue[] @values, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SetAddAsync");
     /// <inheritdoc />
     public global::System.Threading.Tasks.Task<global::System.Int64> SetCombineAndStoreAsync(global::StackExchange.Redis.SetOperation @operation, global::StackExchange.Redis.RedisKey @destination, global::StackExchange.Redis.RedisKey @first, global::StackExchange.Redis.RedisKey @second, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SetCombineAndStoreAsync");
@@ -689,23 +635,8 @@ partial class CompatDatabaseAsync
     public global::System.Threading.Tasks.Task<global::System.Int64> SetIntersectionLengthAsync(global::StackExchange.Redis.RedisKey[] @keys, global::System.Int64 @limit, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SetIntersectionLengthAsync");
     /// <inheritdoc />
-    public global::System.Threading.Tasks.Task<global::System.Int64> SetLengthAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SetLengthAsync");
-    /// <inheritdoc />
-    public global::System.Threading.Tasks.Task<global::System.Int64> SetRemoveAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue[] @values, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SetRemoveAsync");
-    /// <inheritdoc />
     public global::System.Threading.Tasks.Task<global::System.Int64> SortAndStoreAsync(global::StackExchange.Redis.RedisKey @destination, global::StackExchange.Redis.RedisKey @key, global::System.Int64 @skip, global::System.Int64 @take, global::StackExchange.Redis.Order @order, global::StackExchange.Redis.SortType @sortType, global::StackExchange.Redis.RedisValue @by, global::StackExchange.Redis.RedisValue[] @get, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SortAndStoreAsync");
-    /// <inheritdoc />
-    public global::System.Threading.Tasks.Task<global::System.Int64> SortedSetAddAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.SortedSetEntry[] @values, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SortedSetAddAsync");
-    /// <inheritdoc />
-    public global::System.Threading.Tasks.Task<global::System.Int64> SortedSetAddAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.SortedSetEntry[] @values, global::StackExchange.Redis.SortedSetWhen @when, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SortedSetAddAsync");
-    /// <inheritdoc />
-    public global::System.Threading.Tasks.Task<global::System.Int64> SortedSetAddAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.SortedSetEntry[] @values, global::StackExchange.Redis.When @when, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SortedSetAddAsync");
     /// <inheritdoc />
     public global::System.Threading.Tasks.Task<global::System.Int64> SortedSetCombineAndStoreAsync(global::StackExchange.Redis.SetOperation @operation, global::StackExchange.Redis.RedisKey @destination, global::StackExchange.Redis.RedisKey @first, global::StackExchange.Redis.RedisKey @second, global::StackExchange.Redis.Aggregate @aggregate, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SortedSetCombineAndStoreAsync");
@@ -716,17 +647,11 @@ partial class CompatDatabaseAsync
     public global::System.Threading.Tasks.Task<global::System.Int64> SortedSetIntersectionLengthAsync(global::StackExchange.Redis.RedisKey[] @keys, global::System.Int64 @limit, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SortedSetIntersectionLengthAsync");
     /// <inheritdoc />
-    public global::System.Threading.Tasks.Task<global::System.Int64> SortedSetLengthAsync(global::StackExchange.Redis.RedisKey @key, global::System.Double @min, global::System.Double @max, global::StackExchange.Redis.Exclude @exclude, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SortedSetLengthAsync");
-    /// <inheritdoc />
     public global::System.Threading.Tasks.Task<global::System.Int64> SortedSetLengthByValueAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @min, global::StackExchange.Redis.RedisValue @max, global::StackExchange.Redis.Exclude @exclude, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SortedSetLengthByValueAsync");
     /// <inheritdoc />
     public global::System.Threading.Tasks.Task<global::System.Int64> SortedSetRangeAndStoreAsync(global::StackExchange.Redis.RedisKey @sourceKey, global::StackExchange.Redis.RedisKey @destinationKey, global::StackExchange.Redis.RedisValue @start, global::StackExchange.Redis.RedisValue @stop, global::StackExchange.Redis.SortedSetOrder @sortedSetOrder, global::StackExchange.Redis.Exclude @exclude, global::StackExchange.Redis.Order @order, global::System.Int64 @skip, global::System.Nullable<global::System.Int64> @take, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SortedSetRangeAndStoreAsync");
-    /// <inheritdoc />
-    public global::System.Threading.Tasks.Task<global::System.Int64> SortedSetRemoveAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue[] @members, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SortedSetRemoveAsync");
     /// <inheritdoc />
     public global::System.Threading.Tasks.Task<global::System.Int64> SortedSetRemoveRangeByRankAsync(global::StackExchange.Redis.RedisKey @key, global::System.Int64 @start, global::System.Int64 @stop, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SortedSetRemoveRangeByRankAsync");
@@ -791,12 +716,6 @@ partial class CompatDatabaseAsync
     public global::System.Threading.Tasks.Task<global::System.Int64> StringBitPositionAsync(global::StackExchange.Redis.RedisKey @key, global::System.Boolean @bit, global::System.Int64 @start, global::System.Int64 @end, global::StackExchange.Redis.StringIndexType @indexType, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("StringBitPositionAsync");
     /// <inheritdoc />
-    public global::System.Threading.Tasks.Task<global::System.Int64> StringDecrementAsync(global::StackExchange.Redis.RedisKey @key, global::System.Int64 @value, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("StringDecrementAsync");
-    /// <inheritdoc />
-    public global::System.Threading.Tasks.Task<global::System.Int64> StringIncrementAsync(global::StackExchange.Redis.RedisKey @key, global::System.Int64 @value, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("StringIncrementAsync");
-    /// <inheritdoc />
     public global::System.Threading.Tasks.Task<global::System.Int64> StringLengthAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("StringLengthAsync");
     /// <inheritdoc />
@@ -853,9 +772,6 @@ partial class CompatDatabaseAsync
     /// <inheritdoc />
     public global::System.Threading.Tasks.Task<global::System.Nullable<global::System.TimeSpan>> KeyIdleTimeAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("KeyIdleTimeAsync");
-    /// <inheritdoc />
-    public global::System.Threading.Tasks.Task<global::System.Nullable<global::System.TimeSpan>> KeyTimeToLiveAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("KeyTimeToLiveAsync");
     /// <inheritdoc />
     public global::System.Threading.Tasks.Task<global::System.String[]> GeoHashAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue[] @members, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("GeoHashAsync");

@@ -144,9 +144,9 @@ public class AdapterTests(RedisTestContainer fixture)
         var database = connection.GetDatabase();
         Assert.Throws<NotSupportedException>(() => connection.GetDatabase(0));
         Assert.Throws<NotSupportedException>(() => connection.GetDatabase(asyncState: new object()));
-        Assert.Contains("native Respire APIs", Assert.Throws<NotSupportedException>(() => database.StringGet("key")).Message);
+        Assert.Contains("native Respire APIs", Assert.Throws<NotSupportedException>(() => database.StringGetLease("key")).Message);
         Assert.Throws<NotSupportedException>(() => database.HashGet("key", "field", (CommandFlags)1));
-        Assert.Throws<NotSupportedException>(() => { _ = database.CreateBatch().StringGetAsync("key"); });
+        Assert.Throws<NotSupportedException>(() => { _ = database.CreateBatch().StringGetLeaseAsync("key"); });
         await connection.CloseAsync(false);
         Assert.False(client.IsConnected);
     }

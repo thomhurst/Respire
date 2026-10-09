@@ -153,6 +153,16 @@ Both synchronous and asynchronous variants are supported:
 | `HashDelete` | One field or an array of fields; original deletion boolean/count; empty array is a no-op |
 | `KeyExpire` | Relative `TimeSpan?`, absolute local/UTC `DateTime?`, and `ExpireWhen` conditions; null and maximum-value sentinels persist unconditionally |
 | `KeyDelete` | One key or an array of keys; original deletion boolean/count |
+| `KeyExists`, `KeyPersist`, `KeyTimeToLive` | Existence boolean (or array count), original persistence outcome, and millisecond TTL; TTL is null for missing or persistent keys |
+| `StringGet` | One key or an array; binary values and nulls in original key order, including repeated keys |
+| `StringIncrement`, `StringDecrement` | Signed 64-bit integer overloads; Redis integer parsing, overflow errors, and original counter result |
+| `SetAdd`, `SetRemove` | One binary member or an array; original addition/removal boolean or count |
+| `SetMembers`, `SetLength` | Binary members and original cardinality; member order follows Redis and is not guaranteed |
+| `SortedSetAdd`, `SortedSetRemove` | One binary member or an entry/member array; unconditional additions and original addition/removal boolean or count; `When.Always`/`SortedSetWhen.Always` only |
+| `SortedSetLength` | Inclusive or exclusive score bounds; the default `-Infinity` to `+Infinity` range uses `ZCARD` and ignores endpoint exclusions, matching StackExchange.Redis |
+| `SortedSetRangeByRank`, `SortedSetRangeByRankWithScores` | Inclusive signed indexes and ascending/descending order, with original binary members and optional scores |
+| `SortedSetRangeByScore`, `SortedSetRangeByScoreWithScores` | Minimum/maximum score bounds, exclusion flags, order, skip/take, and optional scores; `take = -1` means unlimited |
+| `SortedSetScan` | Lazy `ZSCAN` with binary patterns, page size, cursor, page offset, and asynchronous enumeration; see scan contracts below |
 | `ListRange` | Start/stop indexes, including Redis negative indexes |
 | `ListLeftPush`, `ListRightPush` | Scalar or array with `When.Always`/`When.Exists`; original list length, including an empty-array length query |
 | `ListLength`, `ListGetByIndex` | Original length and binary indexed value; negative indexes supported, null for a missing index |
@@ -183,12 +193,18 @@ redirect failures can still surface. Combining `FireAndForget` with
 `NoRedirect` is rejected. Other flags, including retry categories, are rejected
 with native API guidance. Exceptions retain native Respire types; they are not
 translated into StackExchange.Redis exception types.
+Zero integer increment/decrement operations in fire-and-forget mode are no-ops,
+matching StackExchange.Redis without creating a missing counter.
+Integer adjustments select `INCR`/`DECR` for changes of one and the corresponding
+`INCRBY`/`DECRBY` for other signed changes, including deferred batches. Existing
+command-specific Redis ACLs therefore see the same commands as StackExchange.Redis.
 
 ### Batch and lifetime behavior
 
-`CreateBatch()` supports the listed hash/list asynchronous methods and
-`KeyExpireAsync` with `None`/`DemandMaster` flags. No queued command executes
-before `Execute()`; empty hash field arrays remain immediate no-ops. Execution
+`CreateBatch()` supports the listed hash/list/key/string/set/sorted-set asynchronous
+methods and `KeyExpireAsync` with `None`/`DemandMaster` flags. No queued command executes
+before `Execute()`; empty hash field, key, member, and sorted-set entry arrays
+remain immediate no-ops. Execution
 uses a native `RespireBatch`, so commands for the same key share an ordered
 pipeline even when a wrapped client has multiple connections. Each call to
 `Execute()` takes the current queue; later calls can send newly queued work,
@@ -196,6 +212,24 @@ and an empty call does not replay earlier work. Execution is not transactional.
 Different Cluster slot groups can execute independently, following native batch
 rules. Every queued task observes its own result/error/cancellation; one failed
 command does not hide another command's result.
+
+`SortedSetScan` and `SortedSetScanAsync` expose `IScanningCursor` on both the
+enumerable and its enumerator. `Cursor` identifies the server page containing
+the current entry, and `PageOffset` identifies that entry within the page.
+Resume with both values to include the current entry again, or increment the
+offset to continue after it. A scan copies its key/pattern when created and
+fetches pages only during enumeration. `pageSize` is a positive Redis `COUNT`
+hint, not a limit on returned entries. Null, empty, and `*` patterns match all
+members. Empty pages do not end a scan unless
+Redis returns cursor zero. Results follow Redis scan semantics: no ordering or
+snapshot guarantee, and mutations can cause repeats or omissions. Async
+enumeration accepts cancellation through `GetAsyncEnumerator`/`WithCancellation`.
+Fire-and-forget scans are rejected. A batch scan queues one page when its
+enumerator needs it; call `Execute()` for each pending page before awaiting
+that move. Buffered entries do not require another execution.
+Filtered scans can cross several empty pages during a single move, requiring
+several executions before that move completes. Use an ordinary database scan
+when the caller cannot drive those deferred pages.
 
 `Close`/`Dispose` and their asynchronous variants reject new work and cancel
 unexecuted queued tasks. The default close drains started commands before
@@ -210,6 +244,8 @@ unsupported. Unsupported members throw `NotSupportedException` with native
 API guidance rather than returning fabricated success. This adapter does not
 provide general StackExchange.Redis parity. SignalR and Hangfire acceptance
 remain pending under [#889](https://github.com/thomhurst/Respire/issues/889).
+Floating-point and bounded/expiring string increment overloads, conditional
+sorted-set additions, and lexicographic sorted-set ranges remain unsupported.
 
 ### Server discovery, locks, and storage subscriptions
 
@@ -265,7 +301,7 @@ Adapter close removes only its subscriptions, even when borrowing a client.
 
 ### Pinned source inventory and validation
 
-The hash/list facet was inventoried against `Hangfire.Redis.StackExchange`
+The hash/list and key/string/set/sorted-set facets were inventoried against `Hangfire.Redis.StackExchange`
 1.12.0 at the NuGet package's repository commit
 [`da8e39a33df204900afc30aeb65110f76f081c55`](https://github.com/marcoCasamento/Hangfire.Redis.StackExchange/tree/da8e39a33df204900afc30aeb65110f76f081c55).
 Its `RedisConnection`, `RedisFetchedJob`, `RedisMonitoringApi`,
@@ -274,7 +310,14 @@ deletion/count/entry reads and list pushes, lengths, indexed reads, removal,
 trimming and atomic moves. Focused tests exercise these contracts against
 real Redis with RESP2/RESP3 on .NET 8 and .NET 10, including binary snapshots,
 database isolation, deferred batch reads/writes, server errors and shutdown.
-This facet does not establish full Hangfire compatibility. Remaining command
+`RedisConnection`, `RedisMonitoringApi`, `RedisWriteDirectlyToDatabase`, and
+`ExpiredJobsWatcher` also use key existence/persistence/TTL, string reads and
+integer counters, set membership/cardinality, sorted-set additions/removals,
+score counts, rank/score ranges with scores, and scans. Tests cover this facet
+on both frameworks and protocols, compare score bounds/order against
+StackExchange.Redis on the same Redis server, and verify scan resume and
+deferred page execution.
+These facets do not establish full Hangfire compatibility. Remaining command
 facets, transactions and conditions, and official upstream
 suite acceptance are tracked by [#1269](https://github.com/thomhurst/Respire/issues/1269).
 
