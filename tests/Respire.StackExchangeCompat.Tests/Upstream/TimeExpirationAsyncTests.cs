@@ -1,6 +1,6 @@
 #nullable disable
 // Adapted from dotnet/aspnetcore v10.0.12: src/Caching/StackExchangeRedis/test/TimeExpirationAsyncTests.cs
-// Changes: TUnit discovery, Testcontainers isolation, adapter factory, and deterministic disposal.
+// Changes: TUnit discovery, Testcontainers isolation, adapter factory, deterministic disposal, and timing-test isolation.
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
@@ -16,6 +16,8 @@ using Respire.StackExchangeCompat;
 namespace Microsoft.Extensions.Caching.StackExchangeRedis;
 
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
+// Preserve upstream TTLs without concurrent blocking tests starving refresh continuations on small CI runners.
+[NotInParallel]
 public class TimeExpirationAsyncTests(RedisTestContainer fixture)
 {
 // async twin to UpstreamCache.ThrowsArgumentOutOfRange

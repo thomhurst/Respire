@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using StackExchange.Redis;
 
 namespace Respire.StackExchangeCompat;
@@ -51,8 +52,9 @@ internal sealed class CompatBatch(CompatDatabase database) : CompatDatabaseAsync
 
     private sealed class QueuedCommand<T> : IQueuedCommand
     {
+        private static readonly ConditionalWeakTable<Task<T>, QueuedCommand<T>> RetainedTasks = new();
         private readonly RespireCommand _command;
-        private readonly RedisValue[] _arguments;
+        private RedisValue[] _arguments;
         private readonly Func<RedisResult, T> _convert;
         private readonly TaskCompletionSource<T> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly CancellationTokenRegistration _registration;
@@ -63,7 +65,17 @@ internal sealed class CompatBatch(CompatDatabase database) : CompatDatabaseAsync
             _command = command;
             _arguments = arguments;
             _convert = convert;
-            _registration = shutdown.Register(() => _completion.TrySetCanceled(shutdown));
+            // A retained task keeps its command alive, but the connection must not root an abandoned batch's buffers.
+            RetainedTasks.Add(_completion.Task, this);
+            _registration = shutdown.Register(static (state, token) =>
+            {
+                if (((WeakReference<QueuedCommand<T>>)state!).TryGetTarget(out var queued))
+                {
+                    queued._arguments = [];
+                    queued._completion.TrySetCanceled(token);
+                    RetainedTasks.Remove(queued._completion.Task);
+                }
+            }, new WeakReference<QueuedCommand<T>>(this));
         }
 
         internal Task<T> Task => _completion.Task;
@@ -71,8 +83,10 @@ internal sealed class CompatBatch(CompatDatabase database) : CompatDatabaseAsync
         public void Enqueue(RespireBatch batch)
         {
             _registration.Dispose();
+            RetainedTasks.Remove(_completion.Task);
             if (!_completion.Task.IsCompleted)
                 _pending = batch.Execute(_command, _arguments.Select(static argument => argument.ToRespireValue()).ToArray());
+            _arguments = [];
         }
 
         public void Complete()
@@ -84,11 +98,15 @@ internal sealed class CompatBatch(CompatDatabase database) : CompatDatabaseAsync
                 _completion.TrySetResult(_convert(result.ToStackExchangeResult()));
             }
             catch (Exception error) { Fail(error); }
+            finally { _pending = null; }
         }
 
         public void Fail(Exception error)
         {
             _registration.Dispose();
+            RetainedTasks.Remove(_completion.Task);
+            _arguments = [];
+            _pending = null;
             if (error is OperationCanceledException canceled) _completion.TrySetCanceled(canceled.CancellationToken);
             else _completion.TrySetException(error);
         }

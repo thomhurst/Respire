@@ -49,7 +49,7 @@ jobs:
       - name: Test RESP2 and RESP3 conversion, cache and DataProtection against Redis
         run: >-
           dotnet run --project tests/Respire.StackExchangeCompat.Tests -c Release
-          -f ${{ matrix.framework }} --no-build -- --minimum-expected-tests 102
+          -f ${{ matrix.framework }} --no-build -- --minimum-expected-tests 108
 
   mapper-native-aot:
     name: Generated mapper Native AOT (${{ matrix.framework }})

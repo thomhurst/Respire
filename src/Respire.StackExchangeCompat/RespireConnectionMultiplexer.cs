@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using StackExchange.Redis;
 
 // IConnectionMultiplexer includes synchronous wait helpers.
@@ -85,7 +86,8 @@ public sealed partial class RespireConnectionMultiplexer : IConnectionMultiplexe
     /// <inheritdoc />
     public override string ToString() => Configuration;
     /// <inheritdoc />
-    public int TimeoutMilliseconds => _configuration.CommandTimeout is { } timeout ? checked((int)timeout.TotalMilliseconds) : Timeout.Infinite;
+    public int TimeoutMilliseconds => _configuration.CommandTimeout is { } timeout
+        ? (int)Math.Min(timeout.TotalMilliseconds, int.MaxValue) : Timeout.Infinite;
     /// <inheritdoc />
     public bool IsConnected { get { lock (_gate) return _closeTask is null && _clients.Values.Any(static client => client.IsConnected); } }
 
@@ -113,11 +115,39 @@ public sealed partial class RespireConnectionMultiplexer : IConnectionMultiplexe
     private void ThrowIfClosed() => ObjectDisposedException.ThrowIf(_closeTask is not null, this);
 
     /// <inheritdoc />
-    public void Wait(Task task) => task.WaitAsync(TimeSpan.FromMilliseconds(TimeoutMilliseconds)).GetAwaiter().GetResult();
+    public void Wait(Task task) => WaitCoreAsync(task).GetAwaiter().GetResult();
     /// <inheritdoc />
-    public T Wait<T>(Task<T> task) => task.WaitAsync(TimeSpan.FromMilliseconds(TimeoutMilliseconds)).GetAwaiter().GetResult();
+    public T Wait<T>(Task<T> task)
+    {
+        Wait((Task)task);
+        return task.GetAwaiter().GetResult();
+    }
     /// <inheritdoc />
     public void WaitAll(params Task[] tasks) => Wait(Task.WhenAll(tasks));
+
+    private async Task WaitCoreAsync(Task task)
+    {
+        if (_configuration.CommandTimeout is not { } timeout)
+        {
+            await task.ConfigureAwait(false);
+            return;
+        }
+        // Task.WaitAsync's timer cannot represent arbitrary native command timeouts.
+        var started = Stopwatch.GetTimestamp();
+        var remaining = timeout;
+        var maximumSlice = TimeSpan.FromDays(30);
+        while (remaining > maximumSlice)
+        {
+            try
+            {
+                await task.WaitAsync(maximumSlice).ConfigureAwait(false);
+                return;
+            }
+            catch (TimeoutException) when (!task.IsCompleted) { }
+            remaining = timeout - Stopwatch.GetElapsedTime(started);
+        }
+        await task.WaitAsync(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero).ConfigureAwait(false);
+    }
 
     /// <inheritdoc />
     public void Close(bool allowCommandsToComplete = true) => CloseAsync(allowCommandsToComplete).GetAwaiter().GetResult();

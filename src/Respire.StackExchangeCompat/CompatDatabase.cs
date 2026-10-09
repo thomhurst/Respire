@@ -30,7 +30,7 @@ internal sealed partial class CompatDatabase : CompatDatabaseAsync, IDatabase
             throw Compatibility.Unsupported("FireAndForget with NoRedirect");
         var role = (int)flags & 12;
         if (role is 8 or 12 && !command.IsReadOnly) throw Compatibility.Unsupported("replica routing for a write command");
-        var client = _client.WithReadFrom(role switch
+        var client = (RespireClient)_client.WithReadFrom(role switch
         {
             4 => RespireReadFrom.Primary,
             8 => RespireReadFrom.ReplicaPreferred,
@@ -40,8 +40,7 @@ internal sealed partial class CompatDatabase : CompatDatabaseAsync, IDatabase
         var nativeFlags = (flags & CommandFlags.NoRedirect) != 0 ? RespireCommandFlags.NoRedirect : RespireCommandFlags.None;
         return Owner.Run(async cancellationToken =>
         {
-            ValueTask<RedisResult> pending = default;
-            ValueTask fireAndForget = default;
+            Task<RespireResult>? pending = null;
             var discardReply = (flags & CommandFlags.FireAndForget) != 0;
             // Initialize and enqueue in caller order, then release before awaiting replies.
             // This preserves pipelining while preventing cold connection establishment from reordering commands.
@@ -52,18 +51,25 @@ internal sealed partial class CompatDatabase : CompatDatabaseAsync, IDatabase
                 if (discardReply)
                 {
                     var nativeArguments = arguments.Select(static value => value.ToRespireValue()).ToArray();
-                    fireAndForget = client.ExecuteFireAndForgetAsync(command, nativeArguments, cancellationToken);
+                    await client.ExecuteFireAndForgetAsync(command, nativeArguments, cancellationToken).ConfigureAwait(false);
                 }
-                else pending = client.ExecuteStackExchangeAsync(command, arguments, nativeFlags, cancellationToken);
+                else
+                {
+                    var admission = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    var nativeArguments = arguments.Select(static value => value.ToRespireValue()).ToArray();
+                    pending = client.ExecuteWithAdmissionAsync(command, nativeArguments, nativeFlags, cancellationToken, admission).AsTask();
+                    // Cache hits and pre-admission failures may settle the response without publishing a command.
+                    await Task.WhenAny(admission.Task, pending).ConfigureAwait(false);
+                }
             }
             finally { _dispatch.Release(); }
             if (discardReply)
             {
-                await fireAndForget.ConfigureAwait(false);
                 if (typeof(T) == typeof(RedisValue[])) return (T)(object)Array.Empty<RedisValue>();
                 return default(T)!;
             }
-            return convert(await pending.ConfigureAwait(false));
+            using var result = await pending!.ConfigureAwait(false);
+            return convert(result.ToStackExchangeResult());
         });
     }
 

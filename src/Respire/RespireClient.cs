@@ -674,7 +674,8 @@ public sealed partial class RespireClient : IRespireClient
         RespireCommand command,
         RespireValue[] args,
         RespireCommandFlags flags,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TaskCompletionSource? admission = null)
     {
         string? storedProcedureName;
         CatalogCommand commandValue;
@@ -695,7 +696,15 @@ public sealed partial class RespireClient : IRespireClient
         catch (Exception error) { RecordExecutePreflightFailure(error); throw; }
 
         RespValue response;
-        if (clusterWide is { } cluster)
+        if (admission is not null)
+        {
+            if (clusterWide is not null || command.IsBlocking(args) || storedProcedureName is not null)
+                throw new NotSupportedException("Admission tracking requires a nonblocking catalog command.");
+            response = await SendAsync(command.Name, new AdmissionCommand(commandValue, admission), cancellationToken, flags,
+                allowReadFrom: command.Sources != RespireCommandSource.None
+                    && commandValue.ReadKind != ReadCommandKind.None).ConfigureAwait(false);
+        }
+        else if (clusterWide is { } cluster)
         {
             response = await SendClusterWideAsync(
                     command.Name, cluster, commandValue, cancellationToken)

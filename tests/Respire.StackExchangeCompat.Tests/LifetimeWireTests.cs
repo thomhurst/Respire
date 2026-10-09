@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+using System.Threading.Channels;
 using Respire.Tests.Networking;
 using StackExchange.Redis;
 using TUnit.Core;
@@ -7,6 +9,106 @@ namespace Respire.StackExchangeCompat.Tests;
 
 public class LifetimeWireTests
 {
+    [Test]
+    [Arguments(30)]
+    [Arguments(60)]
+    public async Task LongTimeoutsPreserveSynchronousCommandsAndWaitHelpers(int days)
+    {
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray());
+        await using var connection = RespireConnectionMultiplexer.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespProtocol.Resp2,
+            CommandTimeout = TimeSpan.FromDays(days),
+        });
+        Assert.Equal(int.MaxValue, connection.TimeoutMilliseconds);
+        Assert.True(connection.GetDatabase().HashSet("key", "field", "value"));
+        var completion = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var complete = Task.Run(() => completion.SetResult(7));
+#pragma warning disable SER308 // These assertions exercise the required synchronous interface.
+        Assert.Equal(7, connection.Wait(completion.Task));
+        connection.WaitAll(completion.Task, complete);
+#pragma warning restore SER308
+    }
+
+    [Test]
+    public async Task AbandonedBatchTasksCanBeCollectedWhileConnectionRemainsOpen()
+    {
+        await using var connection = RespireConnectionMultiplexer.Create(RespireOptions.Parse("127.0.0.1:1"));
+        var abandoned = AbandonBatch(connection.GetDatabase());
+        GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
+        GC.WaitForPendingFinalizers();
+        GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
+        Assert.False(abandoned.IsAlive);
+        GC.KeepAlive(connection);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static WeakReference AbandonBatch(IDatabase database)
+    {
+        var batch = database.CreateBatch();
+        return new WeakReference(batch.HashSetAsync("abandoned", [new HashEntry("field", new byte[1024 * 1024])]));
+    }
+
+    [Test]
+    public async Task CloseCancelsRetainedTaskAfterBatchIsCollected()
+    {
+        await using var connection = RespireConnectionMultiplexer.Create(RespireOptions.Parse("127.0.0.1:1"));
+        var queued = QueueWithoutRetainingBatch(connection.GetDatabase());
+        GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
+        await connection.CloseAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => queued);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static Task QueueWithoutRetainingBatch(IDatabase database)
+        => database.CreateBatch().HashSetAsync("retained", [new HashEntry("field", "value")]);
+
+    [Test]
+    [Arguments(CommandFlags.None)]
+    [Arguments(CommandFlags.FireAndForget)]
+    public async Task CapacityBlockedCommandsRemainInCallerOrder(CommandFlags flags)
+    {
+        var received = Channel.CreateUnbounded<string>();
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray())
+        {
+            SuppressReply = command =>
+            {
+                received.Writer.TryWrite(command);
+                return true;
+            },
+        };
+        await using var connection = RespireConnectionMultiplexer.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespProtocol.Resp2,
+            MaxInflightCommands = 1,
+        });
+        try
+        {
+            var database = connection.GetDatabase();
+            var tasks = new List<Task>();
+            var expected = new List<string>();
+            tasks.Add(database.HashSetAsync("hold", [new HashEntry("field", "value")]));
+            Assert.Equal("HSET hold field value", await received.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10)));
+            for (var index = 0; index < 16; index++)
+            {
+                tasks.Add(database.HashSetAsync($"key{index}", [new HashEntry("field", "value")], flags));
+                tasks.Add(database.KeyExpireAsync($"key{index}", TimeSpan.FromSeconds(30), flags));
+                expected.Add($"HSET key{index} field value");
+                expected.Add($"PEXPIRE key{index} 30000");
+            }
+            foreach (var command in expected)
+            {
+                await server.SendRawAsync(":1\r\n"u8.ToArray());
+                Assert.Equal(command, await received.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10)));
+            }
+            await server.SendRawAsync(":1\r\n"u8.ToArray());
+            await Task.WhenAll(tasks).WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        finally { await connection.CloseAsync(allowCommandsToComplete: false); }
+    }
+
     [Test]
     public async Task BatchUsesOneOrderedPipelineEvenWithMultipleNativeConnections()
     {
