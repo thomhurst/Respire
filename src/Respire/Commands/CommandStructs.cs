@@ -504,6 +504,8 @@ internal readonly struct DynamicCommand(
     ClientCacheCommandMetadata cacheMetadata = default) : IRespCommand
 {
     public int GetWriteSizeHint() => CommandWriteSizeHint.Add(CommandWriteSizeHint.HeaderLength, tokens);
+    // Keep constrained response admission from boxing the raw command for the interface default.
+    public CancellationToken GetResponseCancellationToken(CancellationToken admissionToken) => admissionToken;
     public ReadCommandKind ReadKind => readKind;
     public int CursorArgumentIndex => cursorArgumentIndex;
 
@@ -720,6 +722,7 @@ internal readonly struct CatalogCommand(RespireCommand command, RespireValue[] a
     RawCommandKeyLayouts.KeyRouting routing = default) : IRespCommand
 {
     public int GetWriteSizeHint() => CommandWriteSizeHint.For(command.Verb, args);
+    public CancellationToken GetResponseCancellationToken(CancellationToken admissionToken) => admissionToken;
     private readonly ReadCommandKind readKind = command.ReadKind != ReadCommandKind.None
         ? command.ReadKind : RawCommandDescriptorLookup.GetReadKind(command.Name, args);
     public ReadCommandKind ReadKind => readKind;
