@@ -29,6 +29,35 @@
       "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
     }
   ],
-  "Boundaries": [],
+  "Boundaries": [
+    {
+      "Member": "Respire.RespireLock.ExtendBorrowedAsync(TimeSpan?,bool,Action?,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<bool>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Borrow the caller owner before the extension gate wait, through native renewal and local lease changes, and return only after releasing the gate.",
+      "Name": "native-lock-extension-gate",
+      "Role": "borrower"
+    },
+    {
+      "Member": "Respire.RespireLockKeepAlive.DisposeBorrowedAsync(RespireTelemetry.ErrorObservation):ValueTask",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Borrow the outer lock disposal owner while cancelling and joining owned keep-alive. Standalone keep-alive disposal starts its own caller boundary.",
+      "Name": "native-lock-keep-alive-cleanup",
+      "Role": "borrower"
+    },
+    {
+      "Member": "Respire.RespireLock.DisposeBorrowedAsync(RespireTelemetry.ErrorObservation):ValueTask",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Borrow the disposal or acquisition-cleanup caller owner through stopping owned keep-alive and release. Classify swallowed cleanup failures as handled instead of final.",
+      "Name": "native-lock-surrender-cleanup",
+      "Role": "borrower"
+    },
+    {
+      "Member": "Respire.RespireLockKeepAlive.RenewBeforeDeadlineBorrowedAsync(TimeSpan,RespireTelemetry.ErrorObservation):ValueTask<bool>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Borrow the renewal owner through extension and join the lease-deadline task before final publication.",
+      "Name": "native-lock-renewal-deadline",
+      "Role": "borrower"
+    }
+  ],
   "NonRoutes": []
 }

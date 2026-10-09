@@ -1,4 +1,5 @@
 using System.Runtime.ExceptionServices;
+using Respire.Internal;
 
 namespace Respire;
 
@@ -156,8 +157,11 @@ public sealed class RespireLock : IAsyncDisposable
     public ValueTask<bool> VerifyStillHeldAsync(CancellationToken cancellationToken = default)
         => IsHeldByOriginAsync(cancellationToken);
 
-    internal ValueTask<bool> RenewAsync(Action onOutcomeUncertain, CancellationToken cancellationToken)
-        => ExtendCoreAsync(expiry: null, signalLeaseChanged: false, onOutcomeUncertain, cancellationToken);
+    internal ValueTask<bool> RenewAsync(Action onOutcomeUncertain, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation = default)
+        => observation.IsEmpty
+            ? ExtendCoreAsync(expiry: null, signalLeaseChanged: false, onOutcomeUncertain, cancellationToken)
+            : ExtendBorrowedAsync(expiry: null, signalLeaseChanged: false, onOutcomeUncertain, cancellationToken, observation);
 
     internal CancellationToken LeaseChanged => Volatile.Read(ref _leaseChanged).Token;
 
@@ -170,11 +174,18 @@ public sealed class RespireLock : IAsyncDisposable
         }
     }
 
-    private async ValueTask<bool> ExtendCoreAsync(
+    private ValueTask<bool> ExtendCoreAsync(
         TimeSpan? expiry,
         bool signalLeaseChanged,
         Action? onOutcomeUncertain,
         CancellationToken cancellationToken)
+        => DispatchResponseSource<bool>.Run(
+            (Lock: this, Expiry: expiry, Changed: signalLeaseChanged, Uncertain: onOutcomeUncertain, Token: cancellationToken),
+            static (state, owner) => state.Lock.ExtendBorrowedAsync(state.Expiry, state.Changed, state.Uncertain, state.Token, owner));
+
+    private async ValueTask<bool> ExtendBorrowedAsync(
+        TimeSpan? expiry, bool signalLeaseChanged, Action? onOutcomeUncertain,
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         if (IsReleased)
         {
@@ -193,11 +204,14 @@ public sealed class RespireLock : IAsyncDisposable
 
             var effectiveExpiry = NormalizeDuration(expiry ?? Duration);
             var renewedTimestamp = Clock.GetTimestamp();
-            var extended = _locks is IManagedLockCommands managed
-                ? await managed.ExtendManagedAsync(
-                        Key, Token, effectiveExpiry, onOutcomeUncertain, cancellationToken)
-                    .ConfigureAwait(false)
-                : await _locks.ResetExpiryAsync(Key, Token, effectiveExpiry, cancellationToken).ConfigureAwait(false);
+            ValueTask<bool> response;
+            if (_locks is LockCommands native)
+                response = native.ExtendManagedBorrowedAsync(Key, Token, effectiveExpiry, onOutcomeUncertain, cancellationToken, observation);
+            else if (_locks is IManagedLockCommands managed)
+                response = managed.ExtendManagedAsync(Key, Token, effectiveExpiry, onOutcomeUncertain, cancellationToken);
+            else
+                response = _locks.ResetExpiryAsync(Key, Token, effectiveExpiry, cancellationToken);
+            var extended = await response.ConfigureAwait(false);
             if (!extended)
             {
                 changed = TryMarkOwnershipLost();
@@ -226,7 +240,8 @@ public sealed class RespireLock : IAsyncDisposable
     /// run for a lock at a time.
     /// </summary>
     public ValueTask<RespireLockKeepAlive> KeepAliveAsync(CancellationToken cancellationToken = default)
-        => ValueTask.FromResult(StartKeepAlive(cancellationToken));
+        => DispatchResponseSource<RespireLockKeepAlive>.Run((Lock: this, Token: cancellationToken),
+            static (state, _) => ValueTask.FromResult(state.Lock.StartKeepAlive(state.Token)));
 
     internal void StartOwnedKeepAlive()
         => Volatile.Write(ref _ownedKeepAlive, StartKeepAlive(CancellationToken.None));
@@ -274,8 +289,13 @@ public sealed class RespireLock : IAsyncDisposable
     /// Distinguishes a successful delete, a repeat call, and lost ownership.
     /// </returns>
     public ValueTask<LockReleaseOutcome> ReleaseAsync(CancellationToken cancellationToken = default)
+        => DispatchResponseSource<LockReleaseOutcome>.Run((Lock: this, Token: cancellationToken),
+            static (state, owner) => state.Lock.ReleaseBorrowedAsync(state.Token, owner));
+
+    private ValueTask<LockReleaseOutcome> ReleaseBorrowedAsync(
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
-        var attempt = EnterRelease(cancellationToken, out var outcome, out var started);
+        var attempt = EnterRelease(cancellationToken, observation, out var outcome, out var started);
         if (attempt is null)
         {
             return ValueTask.FromResult(outcome);
@@ -283,7 +303,7 @@ public sealed class RespireLock : IAsyncDisposable
 
         return started
             ? new ValueTask<LockReleaseOutcome>(attempt.Task)
-            : JoinReleaseAsync(attempt, cancellationToken);
+            : JoinReleaseAsync(attempt, cancellationToken, observation);
     }
 
     /// <summary>
@@ -291,7 +311,8 @@ public sealed class RespireLock : IAsyncDisposable
     /// or <see langword="null"/> with the final <paramref name="outcome"/> when release finished.
     /// </summary>
     private ReleaseAttempt? EnterRelease(
-        CancellationToken cancellationToken, out LockReleaseOutcome outcome, out bool started)
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation,
+        out LockReleaseOutcome outcome, out bool started)
     {
         ReleaseAttempt attempt;
         lock (_releaseSync)
@@ -311,7 +332,7 @@ public sealed class RespireLock : IAsyncDisposable
             }
 
             Volatile.Write(ref _state, StateReleasing);
-            attempt = _releaseAttempt = new ReleaseAttempt();
+            attempt = _releaseAttempt = new ReleaseAttempt(observation);
         }
 
         // Start outside _releaseSync so the first caller's synchronous prefix never runs under it.
@@ -322,7 +343,7 @@ public sealed class RespireLock : IAsyncDisposable
     }
 
     private async ValueTask<LockReleaseOutcome> JoinReleaseAsync(
-        ReleaseAttempt attempt, CancellationToken cancellationToken)
+        ReleaseAttempt attempt, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         // Each pass follows a newer attempt only after the previous one was cancelled before
         // submission and ownership was restored. This caller then starts the next attempt with
@@ -335,15 +356,22 @@ public sealed class RespireLock : IAsyncDisposable
                 // The joiner's token ends only its own wait; the shared release keeps running.
                 return await attempt.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (
+            catch (OperationCanceledException error) when (
                 !cancellationToken.IsCancellationRequested && attempt.OwnershipRestored)
             {
                 // The starter cancelled before submission. RestoreOwnership sets OwnershipRestored
                 // under _releaseSync before CompleteReleaseAsync completes the task, so this read
                 // cannot miss it. Fall through and start or join the next attempt.
+                observation.SetAttempts(attempt.RetryAttempts);
+                observation.Handled(error);
+            }
+            finally
+            {
+                observation.SetAttempts(Math.Max(observation.Attempts,
+                    attempt.Task.IsCompleted ? attempt.RetryAttempts : attempt.Observation.Attempts));
             }
 
-            var next = EnterRelease(cancellationToken, out var outcome, out var started);
+            var next = EnterRelease(cancellationToken, observation, out var outcome, out var started);
             if (next is null)
             {
                 return outcome;
@@ -360,9 +388,15 @@ public sealed class RespireLock : IAsyncDisposable
 
     private async Task CompleteReleaseAsync(ReleaseAttempt attempt, CancellationToken cancellationToken)
     {
-        try { attempt.TrySetResult(await ReleaseCoreAsync(attempt, cancellationToken).ConfigureAwait(false)); }
-        catch (OperationCanceledException error) { attempt.TrySetCanceled(error.CancellationToken); }
-        catch (Exception error) { attempt.TrySetException(error); }
+        LockReleaseOutcome outcome = default;
+        Exception? failure = null;
+        try { outcome = await ReleaseCoreAsync(attempt, cancellationToken).ConfigureAwait(false); }
+        catch (Exception error) { failure = error; }
+        // Copy before completing the shared task. Each joiner owns its own final publication.
+        attempt.RetryAttempts = attempt.Observation.Attempts;
+        if (failure is OperationCanceledException cancelled) attempt.TrySetCanceled(cancelled.CancellationToken);
+        else if (failure is not null) attempt.TrySetException(failure);
+        else attempt.TrySetResult(outcome);
     }
 
     private async Task<LockReleaseOutcome> ReleaseCoreAsync(
@@ -370,12 +404,15 @@ public sealed class RespireLock : IAsyncDisposable
     {
         try
         {
-            var released = _locks is IManagedLockCommands managed
-                // Stop protected work as soon as the outcome is uncertain; the fence that
-                // follows can wait on a control connection.
-                ? await managed.ReleaseManagedAsync(Key, Token, MarkOwnershipLost, cancellationToken)
-                    .ConfigureAwait(false)
-                : await _locks.ReleaseAsync(Key, Token, cancellationToken).ConfigureAwait(false);
+            // Stop protected work as soon as the outcome is uncertain, before fencing waits.
+            ValueTask<bool> response;
+            if (_locks is LockCommands native)
+                response = native.ReleaseManagedBorrowedAsync(Key, Token, MarkOwnershipLost, cancellationToken, attempt.Observation);
+            else if (_locks is IManagedLockCommands managed)
+                response = managed.ReleaseManagedAsync(Key, Token, MarkOwnershipLost, cancellationToken);
+            else
+                response = _locks.ReleaseAsync(Key, Token, cancellationToken);
+            var released = await response.ConfigureAwait(false);
             lock (_releaseSync)
             {
                 Volatile.Write(ref _state, released ? StateReleased : StateNotOwned);
@@ -439,17 +476,20 @@ public sealed class RespireLock : IAsyncDisposable
     /// answered with are not swallowed. Call <see cref="ReleaseAsync"/> explicitly when the
     /// release itself must be observed.
     /// </remarks>
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
+        => DispatchResponseSource.Run(this, static (@lock, owner) => @lock.DisposeBorrowedAsync(owner));
+
+    internal async ValueTask DisposeBorrowedAsync(RespireTelemetry.ErrorObservation observation)
     {
         var keepAlive = Volatile.Read(ref _ownedKeepAlive);
         if (keepAlive is not null && Interlocked.Exchange(ref _ownedKeepAliveDisposed, 1) == 0)
         {
-            await keepAlive.DisposeAsync().ConfigureAwait(false);
+            await keepAlive.DisposeBorrowedAsync(observation).ConfigureAwait(false);
         }
 
         try
         {
-            await ReleaseAsync().ConfigureAwait(false);
+            await ReleaseBorrowedAsync(CancellationToken.None, observation).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is RespireConnectionException
             or RespireTimeoutException
@@ -459,6 +499,7 @@ public sealed class RespireLock : IAsyncDisposable
             // The release could not be delivered. Swallowed so cleanup never masks the caller's
             // own failure; expiry still frees the lock, and uncertain ownership stops protected
             // work conservatively.
+            observation.Handled(ex);
         }
     }
 
@@ -505,9 +546,16 @@ public sealed class RespireLock : IAsyncDisposable
         }
     }
 
-    internal async ValueTask<bool> IsHeldByOriginAsync(CancellationToken cancellationToken)
+    internal ValueTask<bool> IsHeldByOriginAsync(CancellationToken cancellationToken)
+        => DispatchResponseSource<bool>.Run((Lock: this, Token: cancellationToken),
+            static (state, owner) => state.Lock.IsHeldByOriginBorrowedAsync(state.Token, owner));
+
+    private async ValueTask<bool> IsHeldByOriginBorrowedAsync(
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
-        var token = await _locks.GetOwnerTokenAsync(Key, cancellationToken).ConfigureAwait(false);
+        var token = _locks is LockCommands native
+            ? await native.GetOwnerTokenBorrowedAsync(Key, cancellationToken, observation).ConfigureAwait(false)
+            : await _locks.GetOwnerTokenAsync(Key, cancellationToken).ConfigureAwait(false);
         return token is { } owner && owner == Token;
     }
 
@@ -535,9 +583,11 @@ public sealed class RespireLock : IAsyncDisposable
     }
 
     /// <summary>One shared release; joiners read <see cref="OwnershipRestored"/> after it completes.</summary>
-    private sealed class ReleaseAttempt()
+    private sealed class ReleaseAttempt(RespireTelemetry.ErrorObservation observation)
         : TaskCompletionSource<LockReleaseOutcome>(TaskCreationOptions.RunContinuationsAsynchronously)
     {
+        internal RespireTelemetry.ErrorObservation Observation { get; } = observation;
+        internal int RetryAttempts;
         /// <summary>Set before completion when the attempt failed without submitting a delete.</summary>
         internal volatile bool OwnershipRestored;
     }
@@ -728,7 +778,11 @@ public sealed class RespireLockKeepAlive : IAsyncDisposable
     internal static TimeSpan GetTimerDelayChunk(TimeSpan remaining)
         => remaining > MaximumTimerDelay ? MaximumTimerDelay : remaining;
 
-    private async ValueTask<bool> RenewBeforeDeadlineAsync(TimeSpan remaining)
+    private ValueTask<bool> RenewBeforeDeadlineAsync(TimeSpan remaining)
+        => DispatchResponseSource<bool>.Run((KeepAlive: this, Remaining: remaining),
+            static (state, owner) => state.KeepAlive.RenewBeforeDeadlineBorrowedAsync(state.Remaining, owner));
+
+    private async ValueTask<bool> RenewBeforeDeadlineBorrowedAsync(TimeSpan remaining, RespireTelemetry.ErrorObservation observation)
     {
         using var deadlineStop = new CancellationTokenSource();
         using var renewalCancellation = new CancellationTokenSource();
@@ -736,7 +790,7 @@ public sealed class RespireLockKeepAlive : IAsyncDisposable
             remaining, deadlineStop.Token, renewalCancellation);
         try
         {
-            return await _lock.RenewAsync(MarkOwnershipUncertain, renewalCancellation.Token)
+            return await _lock.RenewAsync(MarkOwnershipUncertain, renewalCancellation.Token, observation)
                 .ConfigureAwait(false);
         }
         finally
@@ -782,7 +836,10 @@ public sealed class RespireLockKeepAlive : IAsyncDisposable
     }
 
     /// <summary>Stops renewal and waits for the background renewal loop to finish.</summary>
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
+        => DispatchResponseSource.Run(this, static (keepAlive, owner) => keepAlive.DisposeBorrowedAsync(owner));
+
+    internal async ValueTask DisposeBorrowedAsync(RespireTelemetry.ErrorObservation observation)
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
         {

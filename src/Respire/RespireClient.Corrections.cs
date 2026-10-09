@@ -11,6 +11,7 @@ public sealed partial class RespireClient
         TrackedConnectionIdentity ConnectionIdentity { get; }
         bool CommandMayBeOutstanding { get; }
         RespireTelemetry.ErrorObservation ErrorObservation => default;
+        ValueTask<TResult> CompleteResponseAsync(ValueTask<TResult> response) => response;
     }
 
     internal enum CorrectionOrdering
@@ -59,6 +60,9 @@ public sealed partial class RespireClient
         // The tracked response lends its lease. Only this observer returns it, after the
         // response's mutation fence and any dependent correction have completed.
         var observation = execution.ErrorObservation;
+        if (execution is TrackedLockExecution)
+            return execution.CompleteResponseAsync(
+                ExecuteWithCorrectionCoreAsync(execution, ordering, state, correct, onOutcomeUncertain, observation));
         if (observation.IsEmpty) observation = RespireTelemetry.ErrorObservation.Rent(force: true);
         return RespireTelemetry.ObserveFinalError(
             ExecuteWithCorrectionCoreAsync(execution, ordering, state, correct, onOutcomeUncertain, observation), observation);

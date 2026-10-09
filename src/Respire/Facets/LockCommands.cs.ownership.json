@@ -26,6 +26,28 @@
       "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
     }
   ],
-  "Boundaries": [],
+  "Boundaries": [
+    {
+      "Member": "Respire.LockCommands.AcquireBorrowedAsync(RespireKey,TimeSpan,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<RespireLockAttempt>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Borrow the acquisition caller owner through validation, SET conversion and managed handle construction. Contention conversion and keep-alive startup remain inside the outer caller boundary.",
+      "Name": "native-lock-acquisition",
+      "Role": "borrower"
+    },
+    {
+      "Member": "Respire.LockCommands.ReleaseManagedBorrowedAsync(RespireKey,RespireLockToken,Action,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<bool>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Borrow the release caller owner through identity setup, capability fallback, routing and fencing. The handle restores or loses ownership and unwraps non-submission before final publication.",
+      "Name": "native-lock-managed-release",
+      "Role": "borrower"
+    },
+    {
+      "Member": "Respire.LockCommands.ExtendManagedBorrowedAsync(RespireKey,RespireLockToken,TimeSpan,Action?,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<bool>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Borrow the renewal caller owner through validation, capability setup, native/Lua fallback and uncertain-command fencing. The outer handle finishes gate and deadline cleanup before publication.",
+      "Name": "native-lock-managed-renewal",
+      "Role": "borrower"
+    }
+  ],
   "NonRoutes": []
 }

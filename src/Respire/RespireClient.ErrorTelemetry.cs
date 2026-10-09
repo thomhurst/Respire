@@ -70,24 +70,23 @@ public sealed partial class RespireClient
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-    // A supplied owner is borrowed on failure, so its caller can classify a fallback as handled.
-    // On success the returned execution owns either lease.
+    // Setup borrows the caller's failure-only owner. Direct tracked callers transfer their
+    // own response source to the execution, which publishes only after response cleanup.
     internal async ValueTask<TrackedLockExecution> StartLockExecutionAsync(
         RespireKey key, RespireLockToken token, long? milliseconds, bool requireIdentity,
         bool allowUnfencedFallback, CancellationToken cancellationToken,
         RespireTelemetry.ErrorObservation callerObservation = default)
     {
-        var ownsObservation = callerObservation.IsEmpty;
-        var observation = ownsObservation ? RespireTelemetry.ErrorObservation.Rent(force: true) : callerObservation;
+        var owner = callerObservation.IsEmpty ? DispatchResponseSource<bool>.Start() : null;
+        var observation = owner?.Observation ?? callerObservation;
         try
         {
             return await StartLockExecutionCoreAsync(key, token, milliseconds, requireIdentity,
-                allowUnfencedFallback, cancellationToken, observation).ConfigureAwait(false);
+                allowUnfencedFallback, cancellationToken, observation, owner).ConfigureAwait(false);
         }
-        catch (Exception error) when (ownsObservation)
+        catch (Exception error)
         {
-            observation.Final(error);
-            observation.Dispose();
+            owner?.Fail(error);
             throw;
         }
     }

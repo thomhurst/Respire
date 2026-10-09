@@ -25,7 +25,8 @@ public sealed partial class RespireClient
     }
 
     internal sealed class TrackedLockExecution(TrackedConnectionIdentity connectionIdentity,
-        RespireTelemetry.ErrorObservation errorObservation = default) : ITrackedCorrectionExecution<bool>
+        RespireTelemetry.ErrorObservation errorObservation = default,
+        DispatchResponseSource<bool>? finalOwner = null) : ITrackedCorrectionExecution<bool>
     {
         internal TrackedConnectionIdentity ConnectionIdentity { get; set; } = connectionIdentity;
         private ValueTask<bool> _response;
@@ -33,7 +34,9 @@ public sealed partial class RespireClient
         internal void SetResponse(ValueTask<bool> response) => _response = response;
         // Direct readers consume once; correction dispatch borrows the raw response and lease.
         internal ValueTask<bool> ConsumeResponseAsync()
-            => ErrorObservation.IsEmpty ? _response : RespireTelemetry.ObserveFinalError(_response, ErrorObservation);
+            => CompleteResponseAsync(_response);
+        public ValueTask<bool> CompleteResponseAsync(ValueTask<bool> response)
+            => finalOwner is { } owner ? owner.Attach(response) : response;
 
         /// <summary>
         /// The single submission state for a lock command: whether it may have been written and is
@@ -88,10 +91,11 @@ public sealed partial class RespireClient
     }
 
     internal async ValueTask<bool> ExecuteLockAsync(
-        RespireKey key, RespireLockToken token, long? milliseconds, CancellationToken cancellationToken)
+        RespireKey key, RespireLockToken token, long? milliseconds, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation = default)
     {
         var execution = await StartLockExecutionAsync(
-                key, token, milliseconds, requireIdentity: false, allowUnfencedFallback: false, cancellationToken)
+                key, token, milliseconds, requireIdentity: false, allowUnfencedFallback: false, cancellationToken, observation)
             .ConfigureAwait(false);
         return await execution.ConsumeResponseAsync().ConfigureAwait(false);
     }
@@ -99,7 +103,7 @@ public sealed partial class RespireClient
     private async ValueTask<TrackedLockExecution> StartLockExecutionCoreAsync(
         RespireKey key, RespireLockToken token, long? milliseconds,
         bool requireIdentity, bool allowUnfencedFallback, CancellationToken cancellationToken,
-        RespireTelemetry.ErrorObservation observation)
+        RespireTelemetry.ErrorObservation observation, DispatchResponseSource<bool>? finalOwner)
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
@@ -129,7 +133,7 @@ public sealed partial class RespireClient
                 connection = await AcquireConnectionAsync(slot, cancellationToken).ConfigureAwait(false);
             }
 
-            var execution = new TrackedLockExecution(GetTrackedConnectionIdentity(connection, requireIdentity), observation);
+            var execution = new TrackedLockExecution(GetTrackedConnectionIdentity(connection, requireIdentity), observation, finalOwner);
             // Invariant: nothing above writes the lock command, and the send starts only inside
             // ExecuteRoutedLockAsync, whose failures surface through response consumption, never as a throw
             // from this method. LockCommands.ReleaseManagedAsync treats any exception thrown from

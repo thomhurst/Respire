@@ -603,6 +603,17 @@ idempotent. Owners must still finish their borrowers before returning the lease.
 The independent route inventory and broader ownership consolidation remain tracked in
 [issue #1046](https://github.com/thomhurst/Respire/issues/1046).
 
+Native lock calls start a failure-only caller owner before token or duration validation,
+capability checks and renewal gate waits. Acquisition, native command fallbacks,
+EVALSHA/EVAL retries and managed release fencing borrow that owner. The final error
+is published only after cache mutation fences, connection fencing and renewal deadline
+cleanup finish. Successful calls do not rent error observation storage.
+Concurrent managed-release callers each publish their own final failure and retain the
+shared attempt's retry count. Disposal reports a swallowed connection, timeout, disposal
+or cancellation failure as internally handled; a server rejection that disposal propagates
+remains one caller-visible failure. Contention becomes an error only when an
+`AcquireOrThrowAsync` call throws `RespireLockNotAcquiredException`.
+
 Failed batch and transaction commands produce one user-visible measurement per faulted
 deferred result, after the owner finishes correction and connection cleanup. Reading
 `Result` again or calling `ThrowIfAnyFailed` does not add another measurement.
