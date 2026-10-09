@@ -54,30 +54,78 @@ public partial interface ISortedSetCommands
 internal sealed partial class SortedSetCommands
 {
     public ValueTask<string?> RandomMemberAsync(RespireKey key, CancellationToken cancellationToken = default)
-        => client.StringOrNullAsync("ZRANDMEMBER", new Cmd1(RespireCommands.SortedSet.ZRANDMEMBER.Verb, client.Key(in key)), cancellationToken);
+    {
+        var owner = DispatchResponseSource<string?>.Start();
+        try { return owner.Attach(RandomMemberBorrowedAsync(key, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<string?> RandomMemberBorrowedAsync(RespireKey key, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        => client.StringOrNullAsync("ZRANDMEMBER", new Cmd1(RespireCommands.SortedSet.ZRANDMEMBER.Verb, client.Key(in key)), cancellationToken, observation: observation);
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<T?> RandomMemberAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
-        => client.DeserializeAsync<T, Cmd1>("ZRANDMEMBER", new Cmd1(RespireCommands.SortedSet.ZRANDMEMBER.Verb, client.Key(in key)), cancellationToken);
+    {
+        var owner = DispatchResponseSource<T?>.Start();
+        try { return owner.Attach(RandomMemberBorrowedAsync<T>(key, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    private ValueTask<T?> RandomMemberBorrowedAsync<T>(RespireKey key, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        => client.DeserializeAsync<T, Cmd1>("ZRANDMEMBER", new Cmd1(RespireCommands.SortedSet.ZRANDMEMBER.Verb, client.Key(in key)), cancellationToken, observation: observation);
 
     public ValueTask<string[]> RandomMembersAsync(RespireKey key, long count, CancellationToken cancellationToken = default)
-        => client.StringArrayAsync("ZRANDMEMBER", RandomMembersCommand(client, key, count), cancellationToken);
+    {
+        var owner = DispatchResponseSource<string[]>.Start();
+        try { return owner.Attach(RandomMembersBorrowedAsync(key, count, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<string[]> RandomMembersBorrowedAsync(RespireKey key, long count, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        => client.StringArrayAsync("ZRANDMEMBER", RandomMembersCommand(client, key, count), cancellationToken, observation: observation);
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<T[]> RandomMembersAsync<T>(RespireKey key, long count, CancellationToken cancellationToken = default)
-        => client.DeserializeArrayAsync<T, Cmd2>("ZRANDMEMBER", RandomMembersCommand(client, key, count), cancellationToken);
+    {
+        var owner = DispatchResponseSource<T[]>.Start();
+        try { return owner.Attach(RandomMembersBorrowedAsync<T>(key, count, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    private ValueTask<T[]> RandomMembersBorrowedAsync<T>(RespireKey key, long count, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        => client.DeserializeArrayAsync<T, Cmd2>("ZRANDMEMBER", RandomMembersCommand(client, key, count), cancellationToken, observation: observation);
 
     public ValueTask<SortedSetEntry[]> RandomMembersWithScoresAsync(RespireKey key, long count, CancellationToken cancellationToken = default)
+    {
+        var owner = DispatchResponseSource<SortedSetEntry[]>.Start();
+        try { return owner.Attach(RandomMembersWithScoresBorrowedAsync(key, count, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<SortedSetEntry[]> RandomMembersWithScoresBorrowedAsync(RespireKey key, long count, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         => client.ConvertResponseAsync("ZRANDMEMBER", RandomScoredMembersCommand(client, key, count), cancellationToken, this,
-            static (SortedSetCommands _, in RespValue reply) => ParseEntries(in reply));
+            static (SortedSetCommands _, in RespValue reply) => ParseEntries(in reply), observation: observation);
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<SortedSetEntry<T>[]> RandomMembersWithScoresAsync<T>(RespireKey key, long count, CancellationToken cancellationToken = default)
+    {
+        var owner = DispatchResponseSource<SortedSetEntry<T>[]>.Start();
+        try { return owner.Attach(RandomMembersWithScoresBorrowedAsync<T>(key, count, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    private ValueTask<SortedSetEntry<T>[]> RandomMembersWithScoresBorrowedAsync<T>(RespireKey key, long count, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         => client.ConvertResponseAsync("ZRANDMEMBER", RandomScoredMembersCommand(client, key, count), cancellationToken, client,
-            static (RespireClient c, in RespValue reply) => ParseEntries<T>(c, in reply));
+            static (RespireClient c, in RespValue reply) => ParseEntries<T>(c, in reply), observation: observation);
 
     internal static Cmd2 RandomMembersCommand(RespireClient client, RespireKey key, long count)
     {
@@ -98,34 +146,66 @@ internal sealed partial class SortedSetCommands
     }
 
     public ValueTask<long> CountByLexAsync(RespireKey key, RespireLexRange range, CancellationToken cancellationToken = default)
+    {
+        var owner = DispatchResponseSource<long>.Start();
+        try { return owner.Attach(CountByLexBorrowedAsync(key, range, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<long> CountByLexBorrowedAsync(RespireKey key, RespireLexRange range, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         => client.IntegerAsync("ZLEXCOUNT", new Cmd3(RespireCommands.SortedSet.ZLEXCOUNT.Verb,
-            client.Key(in key), range.Minimum.ToRespireValue(), range.Maximum.ToRespireValue()), cancellationToken);
+            client.Key(in key), range.Minimum.ToRespireValue(), range.Maximum.ToRespireValue()), cancellationToken, observation: observation);
 
     public ValueTask<long> RemoveRangeByLexAsync(RespireKey key, RespireLexRange range, CancellationToken cancellationToken = default)
+    {
+        var owner = DispatchResponseSource<long>.Start();
+        try { return owner.Attach(RemoveRangeByLexBorrowedAsync(key, range, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<long> RemoveRangeByLexBorrowedAsync(RespireKey key, RespireLexRange range, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         => client.IntegerAsync("ZREMRANGEBYLEX", new Cmd3(RespireCommands.SortedSet.ZREMRANGEBYLEX.Verb,
-            client.Key(in key), range.Minimum.ToRespireValue(), range.Maximum.ToRespireValue()), cancellationToken);
+            client.Key(in key), range.Minimum.ToRespireValue(), range.Maximum.ToRespireValue()), cancellationToken, observation: observation);
 
     public ValueTask<long> IntersectCountAsync(params ReadOnlySpan<RespireKey> keys)
-        => IntersectCountAsync(0, keys, CancellationToken.None);
+    {
+        var owner = DispatchResponseSource<long>.Start();
+        try { return owner.Attach(IntersectCountBorrowedAsync(keys, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<long> IntersectCountBorrowedAsync(ReadOnlySpan<RespireKey> keys, RespireTelemetry.ErrorObservation observation)
+        => IntersectCountBorrowedAsync(0, keys, CancellationToken.None, observation);
 
     public ValueTask<long> IntersectCountAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
-        => IntersectCountAsync(0, keys, cancellationToken);
+    {
+        var owner = DispatchResponseSource<long>.Start();
+        try { return owner.Attach(IntersectCountBorrowedAsync(keys, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<long> IntersectCountBorrowedAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        => IntersectCountBorrowedAsync(0, keys, cancellationToken, observation);
 
     public ValueTask<long> IntersectCountAsync(long limit, params ReadOnlySpan<RespireKey> keys)
-        => IntersectCountAsync(limit, keys, CancellationToken.None);
+    {
+        var owner = DispatchResponseSource<long>.Start();
+        try { return owner.Attach(IntersectCountBorrowedAsync(limit, keys, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<long> IntersectCountBorrowedAsync(long limit, ReadOnlySpan<RespireKey> keys, RespireTelemetry.ErrorObservation observation)
+        => IntersectCountBorrowedAsync(limit, keys, CancellationToken.None, observation);
 
     public ValueTask<long> IntersectCountAsync(long limit, ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
-        => client.IntegerAsync("ZINTERCARD", CreateObservedIntersectCountCommand(keys, limit), cancellationToken);
-
-    private CmdN CreateObservedIntersectCountCommand(ReadOnlySpan<RespireKey> keys, long limit)
     {
-        try { return IntersectCountCommand(client, keys, limit); }
-        catch (Exception error)
-        {
-            RespireTelemetry.RecordError(error, internallyHandled: false);
-            throw;
-        }
+        var owner = DispatchResponseSource<long>.Start();
+        try { return owner.Attach(IntersectCountBorrowedAsync(limit, keys, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
+
+    private ValueTask<long> IntersectCountBorrowedAsync(long limit, ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        => client.IntegerAsync("ZINTERCARD", IntersectCountCommand(client, keys, limit), cancellationToken, observation: observation);
 
     internal static CmdN IntersectCountCommand(RespireClient client, ReadOnlySpan<RespireKey> keys, long limit)
     {

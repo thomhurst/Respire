@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Protocol;
@@ -241,95 +242,223 @@ internal sealed partial class HashCommands(RespireClient client) : IHashCommands
     public ValueTask<bool> SetAsync(
         RespireKey key, string field, RespireValue value,
         CancellationToken cancellationToken = default)
-        => SetCoreAsync(key, field, value, SetWhen.Always, cancellationToken);
+    {
+        var owner = DispatchResponseSource<bool>.Start();
+        try { return owner.Attach(SetBorrowedAsync(key, field, value, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<bool> SetBorrowedAsync(
+        RespireKey key, string field, RespireValue value,
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        => SetCoreAsync(key, field, value, SetWhen.Always, cancellationToken, observation);
 
     public ValueTask<bool> SetAsync(
         RespireKey key, string field, RespireValue value, SetWhen when,
         CancellationToken cancellationToken = default)
-        => SetCoreAsync(key, field, value, when, cancellationToken);
+    {
+        var owner = DispatchResponseSource<bool>.Start();
+        try { return owner.Attach(SetBorrowedAsync(key, field, value, when, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<bool> SetBorrowedAsync(
+        RespireKey key, string field, RespireValue value, SetWhen when,
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        => SetCoreAsync(key, field, value, when, cancellationToken, observation);
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<bool> SetAsync<T>(
         RespireKey key, string field, T value,
         CancellationToken cancellationToken = default)
+    {
+        var owner = DispatchResponseSource<bool>.Start();
+        try { return owner.Attach(SetBorrowedAsync<T>(key, field, value, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    private ValueTask<bool> SetBorrowedAsync<T>(
+        RespireKey key, string field, T value,
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         => SetCoreAsync(
-            key, field, client.SerializeRawCompatible(value), SetWhen.Always, cancellationToken);
+            key, field, client.SerializeRawCompatible(value), SetWhen.Always, cancellationToken, observation);
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<bool> SetAsync<T>(
         RespireKey key, string field, T value, SetWhen when,
         CancellationToken cancellationToken = default)
-        => SetCoreAsync(key, field, client.SerializeRawCompatible(value), when, cancellationToken);
+    {
+        var owner = DispatchResponseSource<bool>.Start();
+        try { return owner.Attach(SetBorrowedAsync<T>(key, field, value, when, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    private ValueTask<bool> SetBorrowedAsync<T>(
+        RespireKey key, string field, T value, SetWhen when,
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        => SetCoreAsync(key, field, client.SerializeRawCompatible(value), when, cancellationToken, observation);
 
     private ValueTask<bool> SetCoreAsync(
-        RespireKey key, string field, RespireValue value, SetWhen when, CancellationToken cancellationToken)
+        RespireKey key, string field, RespireValue value, SetWhen when, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         => when switch
         {
             SetWhen.Always => client.FlagAsync(
-                "HSET", new Cmd3(Verbs.HSet, client.Key(in key), field, value), cancellationToken),
+                "HSET", new Cmd3(Verbs.HSet, client.Key(in key), field, value), cancellationToken, observation: observation),
             SetWhen.NotExists => client.FlagAsync(
-                "HSETNX", new Cmd3(Verbs.HSetNx, client.Key(in key), field, value), cancellationToken),
+                "HSETNX", new Cmd3(Verbs.HSetNx, client.Key(in key), field, value), cancellationToken, observation: observation),
             SetWhen.Exists => client.FlagAsync(
                 "HSETEX",
                 new Cmd1N(
                     RespireCommands.Hash.HSETEX.Verb,
                     client.Key(in key),
                     SetExFieldsBlock(option: null, 0, hasValue: false, when, [(field, value)])),
-                cancellationToken),
+                cancellationToken, observation: observation),
             _ => throw new ArgumentOutOfRangeException(nameof(when), when, null),
         };
 
     public ValueTask<long> SetAsync(RespireKey key, params ReadOnlySpan<(string Field, RespireValue Value)> fields)
-        => SetAsync(key, fields, CancellationToken.None);
+    {
+        var owner = DispatchResponseSource<long>.Start();
+        try { return owner.Attach(SetBorrowedAsync(key, fields, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<long> SetBorrowedAsync(RespireKey key, ReadOnlySpan<(string Field, RespireValue Value)> fields, RespireTelemetry.ErrorObservation observation)
+        => SetBorrowedAsync(key, fields, CancellationToken.None, observation);
 
     public ValueTask<long> SetAsync(
         RespireKey key,
         ReadOnlySpan<(string Field, RespireValue Value)> fields,
         CancellationToken cancellationToken)
+    {
+        var owner = DispatchResponseSource<long>.Start();
+        try { return owner.Attach(SetBorrowedAsync(key, fields, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<long> SetBorrowedAsync(
+        RespireKey key,
+        ReadOnlySpan<(string Field, RespireValue Value)> fields,
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         => client.IntegerAsync(
-            "HSET", new Cmd1N(Verbs.HSet, client.Key(in key), FieldValuePairs(fields)), cancellationToken);
+            "HSET", new Cmd1N(Verbs.HSet, client.Key(in key), FieldValuePairs(fields)), cancellationToken, observation: observation);
 
     public ValueTask<string?> GetStringAsync(RespireKey key, string field, CancellationToken cancellationToken = default)
-        => client.StringOrNullAsync("HGET", new Cmd2(Verbs.HGet, client.Key(in key), field), cancellationToken);
+    {
+        var owner = DispatchResponseSource<string?>.Start();
+        try { return owner.Attach(GetStringBorrowedAsync(key, field, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<string?> GetStringBorrowedAsync(RespireKey key, string field, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        => client.StringOrNullAsync("HGET", new Cmd2(Verbs.HGet, client.Key(in key), field), cancellationToken, observation: observation);
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<T?> GetAsync<T>(RespireKey key, string field, CancellationToken cancellationToken = default)
-        => client.DeserializeAsync<T, Cmd2>("HGET", new Cmd2(Verbs.HGet, client.Key(in key), field), cancellationToken);
+    {
+        var owner = DispatchResponseSource<T?>.Start();
+        try { return owner.Attach(GetBorrowedAsync<T>(key, field, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    private ValueTask<T?> GetBorrowedAsync<T>(RespireKey key, string field, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        => client.DeserializeAsync<T, Cmd2>("HGET", new Cmd2(Verbs.HGet, client.Key(in key), field), cancellationToken, observation: observation);
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<RespireGet<T>> TryGetAsync<T>(RespireKey key, string field, CancellationToken cancellationToken = default)
-        => client.TryDeserializeAsync<T, Cmd2>("HGET", new Cmd2(Verbs.HGet, client.Key(in key), field), cancellationToken);
+    {
+        var owner = DispatchResponseSource<RespireGet<T>>.Start();
+        try { return owner.Attach(TryGetBorrowedAsync<T>(key, field, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    private ValueTask<RespireGet<T>> TryGetBorrowedAsync<T>(RespireKey key, string field, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        => client.TryDeserializeAsync<T, Cmd2>("HGET", new Cmd2(Verbs.HGet, client.Key(in key), field), cancellationToken, observation: observation);
 
     public ValueTask<byte[]?> GetBytesAsync(RespireKey key, string field, CancellationToken cancellationToken = default)
-        => client.BytesOrNullAsync("HGET", new Cmd2(Verbs.HGet, client.Key(in key), field), cancellationToken);
+    {
+        var owner = DispatchResponseSource<byte[]?>.Start();
+        try { return owner.Attach(GetBytesBorrowedAsync(key, field, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<byte[]?> GetBytesBorrowedAsync(RespireKey key, string field, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        => client.BytesOrNullAsync("HGET", new Cmd2(Verbs.HGet, client.Key(in key), field), cancellationToken, observation: observation);
 
     public ValueTask<byte[]?> GetBytesAsync(RespireKey key, RespireKey field, CancellationToken cancellationToken = default)
     {
+        var owner = DispatchResponseSource<byte[]?>.Start();
+        try { return owner.Attach(GetBytesBorrowedAsync(key, field, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<byte[]?> GetBytesBorrowedAsync(RespireKey key, RespireKey field, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+    {
         var fieldSnapshot = field.Snapshot();
-        return client.BytesOrNullAsync("HGET", new Cmd2(Verbs.HGet, client.Key(in key), fieldSnapshot.AsValue()), cancellationToken);
+        return client.BytesOrNullAsync("HGET", new Cmd2(Verbs.HGet, client.Key(in key), fieldSnapshot.AsValue()), cancellationToken, observation: observation);
     }
 
     public ValueTask<string?[]> GetManyAsync(RespireKey key, params ReadOnlySpan<string> fields)
-        => GetManyAsync(key, fields, CancellationToken.None);
+    {
+        var owner = DispatchResponseSource<string?[]>.Start();
+        try { return owner.Attach(GetManyBorrowedAsync(key, fields, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<string?[]> GetManyBorrowedAsync(RespireKey key, ReadOnlySpan<string> fields, RespireTelemetry.ErrorObservation observation)
+        => GetManyBorrowedAsync(key, fields, CancellationToken.None, observation);
 
     public ValueTask<string?[]> GetManyAsync(
         RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
+    {
+        var owner = DispatchResponseSource<string?[]>.Start();
+        try { return owner.Attach(GetManyBorrowedAsync(key, fields, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<string?[]> GetManyBorrowedAsync(
+        RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         => client.NullableStringArrayAsync(
-            "HMGET", new Cmd1N(Verbs.HMGet, client.Key(in key), ToValues(fields)), cancellationToken);
+            "HMGET", new Cmd1N(Verbs.HMGet, client.Key(in key), ToValues(fields)), cancellationToken, observation: observation);
 
     public ValueTask<Dictionary<string, string>> GetAllAsync(RespireKey key, CancellationToken cancellationToken = default)
-        => client.StringMapAsync("HGETALL", new Cmd1(Verbs.HGetAll, client.Key(in key)), cancellationToken);
+    {
+        var owner = DispatchResponseSource<Dictionary<string, string>>.Start();
+        try { return owner.Attach(GetAllBorrowedAsync(key, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<Dictionary<string, string>> GetAllBorrowedAsync(RespireKey key, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        => client.StringMapAsync("HGETALL", new Cmd1(Verbs.HGetAll, client.Key(in key)), cancellationToken, observation: observation);
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<Dictionary<string, T>> GetAllAsync<T>(
         RespireKey key, CancellationToken cancellationToken = default)
+    {
+        var owner = DispatchResponseSource<Dictionary<string, T>>.Start();
+        try { return owner.Attach(GetAllBorrowedAsync<T>(key, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    private ValueTask<Dictionary<string, T>> GetAllBorrowedAsync<T>(
+        RespireKey key, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         => client.DeserializeMapAsync<T, Cmd1>(
-            "HGETALL", new Cmd1(Verbs.HGetAll, client.Key(in key)), cancellationToken);
+            "HGETALL", new Cmd1(Verbs.HGetAll, client.Key(in key)), cancellationToken, observation: observation);
 
     public IAsyncEnumerable<KeyValuePair<string, string>> ScanAsync(
         RespireKey key, string? match = null, int countHint = 250,
@@ -339,68 +468,184 @@ internal sealed partial class HashCommands(RespireClient client) : IHashCommands
             ParseScanEntries, cancellationToken);
 
     public ValueTask<long> RemoveAsync(RespireKey key, params ReadOnlySpan<string> fields)
-        => RemoveAsync(key, fields, CancellationToken.None);
+    {
+        var owner = DispatchResponseSource<long>.Start();
+        try { return owner.Attach(RemoveBorrowedAsync(key, fields, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<long> RemoveBorrowedAsync(RespireKey key, ReadOnlySpan<string> fields, RespireTelemetry.ErrorObservation observation)
+        => RemoveBorrowedAsync(key, fields, CancellationToken.None, observation);
 
     public ValueTask<long> RemoveAsync(RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
-        => client.IntegerAsync("HDEL", new Cmd1N(Verbs.HDel, client.Key(in key), ToValues(fields)), cancellationToken);
+    {
+        var owner = DispatchResponseSource<long>.Start();
+        try { return owner.Attach(RemoveBorrowedAsync(key, fields, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<long> RemoveBorrowedAsync(RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        => client.IntegerAsync("HDEL", new Cmd1N(Verbs.HDel, client.Key(in key), ToValues(fields)), cancellationToken, observation: observation);
 
     public ValueTask<bool> ExistsAsync(RespireKey key, string field, CancellationToken cancellationToken = default)
-        => client.FlagAsync("HEXISTS", new Cmd2(Verbs.HExists, client.Key(in key), field), cancellationToken);
+    {
+        var owner = DispatchResponseSource<bool>.Start();
+        try { return owner.Attach(ExistsBorrowedAsync(key, field, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<bool> ExistsBorrowedAsync(RespireKey key, string field, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        => client.FlagAsync("HEXISTS", new Cmd2(Verbs.HExists, client.Key(in key), field), cancellationToken, observation: observation);
 
     public ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken = default)
-        => client.IntegerAsync("HLEN", new Cmd1(Verbs.HLen, client.Key(in key)), cancellationToken);
+    {
+        var owner = DispatchResponseSource<long>.Start();
+        try { return owner.Attach(CountBorrowedAsync(key, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<long> CountBorrowedAsync(RespireKey key, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        => client.IntegerAsync("HLEN", new Cmd1(Verbs.HLen, client.Key(in key)), cancellationToken, observation: observation);
 
     public ValueTask<long> IncrementAsync(RespireKey key, string field, long by = 1, CancellationToken cancellationToken = default)
-        => client.IntegerAsync("HINCRBY", new Cmd3(Verbs.HIncrBy, client.Key(in key), field, by), cancellationToken);
+    {
+        var owner = DispatchResponseSource<long>.Start();
+        try { return owner.Attach(IncrementBorrowedAsync(key, field, by, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<long> IncrementBorrowedAsync(RespireKey key, string field, long by, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        => client.IntegerAsync("HINCRBY", new Cmd3(Verbs.HIncrBy, client.Key(in key), field, by), cancellationToken, observation: observation);
 
     public ValueTask<double> IncrementAsync(RespireKey key, string field, double by, CancellationToken cancellationToken = default)
-        => client.DoubleAsync("HINCRBYFLOAT", new Cmd3(Verbs.HIncrByFloat, client.Key(in key), field, by), cancellationToken);
+    {
+        var owner = DispatchResponseSource<double>.Start();
+        try { return owner.Attach(IncrementBorrowedAsync(key, field, by, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<double> IncrementBorrowedAsync(RespireKey key, string field, double by, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        => client.DoubleAsync("HINCRBYFLOAT", new Cmd3(Verbs.HIncrByFloat, client.Key(in key), field, by), cancellationToken, observation: observation);
 
     public ValueTask<string[]> FieldsAsync(RespireKey key, CancellationToken cancellationToken = default)
-        => client.StringArrayAsync("HKEYS", new Cmd1(Verbs.HKeys, client.Key(in key)), cancellationToken);
+    {
+        var owner = DispatchResponseSource<string[]>.Start();
+        try { return owner.Attach(FieldsBorrowedAsync(key, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<string[]> FieldsBorrowedAsync(RespireKey key, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        => client.StringArrayAsync("HKEYS", new Cmd1(Verbs.HKeys, client.Key(in key)), cancellationToken, observation: observation);
 
     public ValueTask<string[]> ValuesAsync(RespireKey key, CancellationToken cancellationToken = default)
-        => client.StringArrayAsync("HVALS", new Cmd1(Verbs.HVals, client.Key(in key)), cancellationToken);
+    {
+        var owner = DispatchResponseSource<string[]>.Start();
+        try { return owner.Attach(ValuesBorrowedAsync(key, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<string[]> ValuesBorrowedAsync(RespireKey key, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        => client.StringArrayAsync("HVALS", new Cmd1(Verbs.HVals, client.Key(in key)), cancellationToken, observation: observation);
 
     public ValueTask<long> LengthAsync(RespireKey key, string field, CancellationToken cancellationToken = default)
+    {
+        var owner = DispatchResponseSource<long>.Start();
+        try { return owner.Attach(LengthBorrowedAsync(key, field, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<long> LengthBorrowedAsync(RespireKey key, string field, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         => client.IntegerAsync("HSTRLEN",
-            new Cmd2(RespireCommands.Hash.HSTRLEN.Verb, client.Key(in key), field), cancellationToken);
+            new Cmd2(RespireCommands.Hash.HSTRLEN.Verb, client.Key(in key), field), cancellationToken, observation: observation);
 
     public ValueTask<string?> RandomFieldAsync(RespireKey key, CancellationToken cancellationToken = default)
+    {
+        var owner = DispatchResponseSource<string?>.Start();
+        try { return owner.Attach(RandomFieldBorrowedAsync(key, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<string?> RandomFieldBorrowedAsync(RespireKey key, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         => client.StringOrNullAsync("HRANDFIELD",
-            new Cmd1(RespireCommands.Hash.HRANDFIELD.Verb, client.Key(in key)), cancellationToken);
+            new Cmd1(RespireCommands.Hash.HRANDFIELD.Verb, client.Key(in key)), cancellationToken, observation: observation);
 
     public ValueTask<string[]> RandomFieldsAsync(RespireKey key, long count, CancellationToken cancellationToken = default)
+    {
+        var owner = DispatchResponseSource<string[]>.Start();
+        try { return owner.Attach(RandomFieldsBorrowedAsync(key, count, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<string[]> RandomFieldsBorrowedAsync(RespireKey key, long count, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         => client.StringArrayAsync("HRANDFIELD",
-            new Cmd2(RespireCommands.Hash.HRANDFIELD.Verb, client.Key(in key), count), cancellationToken);
+            new Cmd2(RespireCommands.Hash.HRANDFIELD.Verb, client.Key(in key), count), cancellationToken, observation: observation);
 
     public ValueTask<KeyValuePair<string, string>[]> RandomFieldsWithValuesAsync(
         RespireKey key, long count, CancellationToken cancellationToken = default)
+    {
+        var owner = DispatchResponseSource<KeyValuePair<string, string>[]>.Start();
+        try { return owner.Attach(RandomFieldsWithValuesBorrowedAsync(key, count, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<KeyValuePair<string, string>[]> RandomFieldsWithValuesBorrowedAsync(
+        RespireKey key, long count, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         => client.ConvertResponseAsync("HRANDFIELD",
             new Cmd3(RespireCommands.Hash.HRANDFIELD.Verb, client.Key(in key), count, "WITHVALUES"),
             cancellationToken, this,
-            static (HashCommands _, in RespValue value) => ParseRandomPairs(in value));
+            static (HashCommands _, in RespValue value) => ParseRandomPairs(in value), observation: observation);
 
     // Params spans must be last, so each default/explicit-precision form has a separate
     // span-plus-token overload. Keep all four forms for variadic calls and cancellation.
     public ValueTask<RespireExpiryTime[]> ExpiryTimeAsync(RespireKey key, params ReadOnlySpan<string> fields)
-        => ExpiryTimeAsync(key, ExpiryTimePrecision.Milliseconds, fields, CancellationToken.None);
+    {
+        var owner = DispatchResponseSource<RespireExpiryTime[]>.Start();
+        try { return owner.Attach(ExpiryTimeBorrowedAsync(key, fields, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<RespireExpiryTime[]> ExpiryTimeBorrowedAsync(RespireKey key, ReadOnlySpan<string> fields, RespireTelemetry.ErrorObservation observation)
+        => ExpiryTimeBorrowedAsync(key, ExpiryTimePrecision.Milliseconds, fields, CancellationToken.None, observation);
 
     public ValueTask<RespireExpiryTime[]> ExpiryTimeAsync(
         RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
-        => ExpiryTimeAsync(key, ExpiryTimePrecision.Milliseconds, fields, cancellationToken);
+    {
+        var owner = DispatchResponseSource<RespireExpiryTime[]>.Start();
+        try { return owner.Attach(ExpiryTimeBorrowedAsync(key, fields, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<RespireExpiryTime[]> ExpiryTimeBorrowedAsync(
+        RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        => ExpiryTimeBorrowedAsync(key, ExpiryTimePrecision.Milliseconds, fields, cancellationToken, observation);
 
     public ValueTask<RespireExpiryTime[]> ExpiryTimeAsync(
         RespireKey key, ExpiryTimePrecision precision, params ReadOnlySpan<string> fields)
-        => ExpiryTimeAsync(key, precision, fields, CancellationToken.None);
+    {
+        var owner = DispatchResponseSource<RespireExpiryTime[]>.Start();
+        try { return owner.Attach(ExpiryTimeBorrowedAsync(key, precision, fields, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<RespireExpiryTime[]> ExpiryTimeBorrowedAsync(
+        RespireKey key, ExpiryTimePrecision precision, ReadOnlySpan<string> fields, RespireTelemetry.ErrorObservation observation)
+        => ExpiryTimeBorrowedAsync(key, precision, fields, CancellationToken.None, observation);
 
     public ValueTask<RespireExpiryTime[]> ExpiryTimeAsync(
         RespireKey key, ExpiryTimePrecision precision, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
     {
+        var owner = DispatchResponseSource<RespireExpiryTime[]>.Start();
+        try { return owner.Attach(ExpiryTimeBorrowedAsync(key, precision, fields, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<RespireExpiryTime[]> ExpiryTimeBorrowedAsync(
+        RespireKey key, ExpiryTimePrecision precision, ReadOnlySpan<string> fields, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+    {
         var (operation, verb) = ExpiryTimeCommand(precision);
         return client.ConvertResponseAsync(operation,
             new Cmd1N(verb, client.Key(in key), FieldsBlock(fields)), cancellationToken, precision,
-            static (ExpiryTimePrecision p, in RespValue value) => ParseExpiryTimes(in value, p));
+            static (ExpiryTimePrecision p, in RespValue value) => ParseExpiryTimes(in value, p), observation: observation);
     }
 
     internal static (string Operation, Verb Verb) ExpiryTimeCommand(ExpiryTimePrecision precision)
@@ -463,17 +708,40 @@ internal sealed partial class HashCommands(RespireClient client) : IHashCommands
     }
 
     public ValueTask<RespireTtl[]> ExpiryAsync(RespireKey key, params ReadOnlySpan<string> fields)
-        => ExpiryAsync(key, fields, CancellationToken.None);
+    {
+        var owner = DispatchResponseSource<RespireTtl[]>.Start();
+        try { return owner.Attach(ExpiryBorrowedAsync(key, fields, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<RespireTtl[]> ExpiryBorrowedAsync(RespireKey key, ReadOnlySpan<string> fields, RespireTelemetry.ErrorObservation observation)
+        => ExpiryBorrowedAsync(key, fields, CancellationToken.None, observation);
 
     public ValueTask<RespireTtl[]> ExpiryAsync(
         RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
+    {
+        var owner = DispatchResponseSource<RespireTtl[]>.Start();
+        try { return owner.Attach(ExpiryBorrowedAsync(key, fields, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<RespireTtl[]> ExpiryBorrowedAsync(
+        RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         => client.TtlArrayAsync(
             "HPTTL",
             new Cmd1N(RespireCommands.Hash.HPTTL.Verb, client.Key(in key), FieldsBlock(fields)),
-            cancellationToken);
+            cancellationToken, observation: observation);
 
     public ValueTask<RespireTtl[]> ExpiryAsync(
         RespireKey key, ReadOnlySpan<RespireKey> fields, CancellationToken cancellationToken)
+    {
+        var owner = DispatchResponseSource<RespireTtl[]>.Start();
+        try { return owner.Attach(ExpiryBorrowedAsync(key, fields, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<RespireTtl[]> ExpiryBorrowedAsync(
+        RespireKey key, ReadOnlySpan<RespireKey> fields, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         if (fields.IsEmpty) throw new ArgumentException("At least one hash field is required.", nameof(fields));
         var fieldSnapshots = new RespireKey[fields.Length];
@@ -481,26 +749,59 @@ internal sealed partial class HashCommands(RespireClient client) : IHashCommands
         return client.TtlArrayAsync(
             "HPTTL",
             new Cmd1N(RespireCommands.Hash.HPTTL.Verb, client.Key(in key), FieldsBlock(fieldSnapshots)),
-            cancellationToken);
+            cancellationToken, observation: observation);
     }
 
-    public async ValueTask<RespireTtl> ExpiryAsync(
+    public ValueTask<RespireTtl> ExpiryAsync(
         RespireKey key, RespireKey field, CancellationToken cancellationToken = default)
+    {
+        var owner = DispatchResponseSource<RespireTtl>.Start();
+        try { return owner.Attach(ExpiryBorrowedAsync(key, field, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private async ValueTask<RespireTtl> ExpiryBorrowedAsync(
+        RespireKey key, RespireKey field, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         => await client.SingleTtlArrayAsync(
             "HPTTL", new Cmd1N(RespireCommands.Hash.HPTTL.Verb, client.Key(in key), FieldsBlock([field])),
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken, observation: observation).ConfigureAwait(false);
 
     public ValueTask<HashFieldExpiryResult[]> ExpireAsync(
         RespireKey key, RespireExpiry expiry, params ReadOnlySpan<string> fields)
-        => ExpireAsync(key, expiry, ExpireWhen.Always, fields, CancellationToken.None);
+    {
+        var owner = DispatchResponseSource<HashFieldExpiryResult[]>.Start();
+        try { return owner.Attach(ExpireBorrowedAsync(key, expiry, fields, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<HashFieldExpiryResult[]> ExpireBorrowedAsync(
+        RespireKey key, RespireExpiry expiry, ReadOnlySpan<string> fields, RespireTelemetry.ErrorObservation observation)
+        => ExpireBorrowedAsync(key, expiry, ExpireWhen.Always, fields, CancellationToken.None, observation);
 
     public ValueTask<HashFieldExpiryResult[]> ExpireAsync(
         RespireKey key, RespireExpiry expiry, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
-        => ExpireAsync(key, expiry, ExpireWhen.Always, fields, cancellationToken);
+    {
+        var owner = DispatchResponseSource<HashFieldExpiryResult[]>.Start();
+        try { return owner.Attach(ExpireBorrowedAsync(key, expiry, fields, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<HashFieldExpiryResult[]> ExpireBorrowedAsync(
+        RespireKey key, RespireExpiry expiry, ReadOnlySpan<string> fields, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        => ExpireBorrowedAsync(key, expiry, ExpireWhen.Always, fields, cancellationToken, observation);
 
     public ValueTask<HashFieldExpiryResult[]> ExpireAsync(
         RespireKey key, RespireExpiry expiry, ExpireWhen when, params ReadOnlySpan<string> fields)
-        => ExpireAsync(key, expiry, when, fields, CancellationToken.None);
+    {
+        var owner = DispatchResponseSource<HashFieldExpiryResult[]>.Start();
+        try { return owner.Attach(ExpireBorrowedAsync(key, expiry, when, fields, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<HashFieldExpiryResult[]> ExpireBorrowedAsync(
+        RespireKey key, RespireExpiry expiry, ExpireWhen when, ReadOnlySpan<string> fields, RespireTelemetry.ErrorObservation observation)
+        => ExpireBorrowedAsync(key, expiry, when, fields, CancellationToken.None, observation);
 
     public ValueTask<HashFieldExpiryResult[]> ExpireAsync(
         RespireKey key,
@@ -508,6 +809,18 @@ internal sealed partial class HashCommands(RespireClient client) : IHashCommands
         ExpireWhen when,
         ReadOnlySpan<string> fields,
         CancellationToken cancellationToken)
+    {
+        var owner = DispatchResponseSource<HashFieldExpiryResult[]>.Start();
+        try { return owner.Attach(ExpireBorrowedAsync(key, expiry, when, fields, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<HashFieldExpiryResult[]> ExpireBorrowedAsync(
+        RespireKey key,
+        RespireExpiry expiry,
+        ExpireWhen when,
+        ReadOnlySpan<string> fields,
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         if (expiry.IsPersist)
         {
@@ -519,19 +832,19 @@ internal sealed partial class HashCommands(RespireClient client) : IHashCommands
             return client.HashFieldExpiryResultArrayAsync(
                 "HPERSIST",
                 new Cmd1N(RespireCommands.Hash.HPERSIST.Verb, client.Key(in key), FieldsBlock(fields)),
-                cancellationToken);
+                cancellationToken, observation: observation);
         }
 
         if (expiry.TryGetRelativeMilliseconds(out var milliseconds))
         {
             return ExpireCore(
-                "HPEXPIRE", RespireCommands.Hash.HPEXPIRE.Verb, key, milliseconds, when, fields, cancellationToken);
+                "HPEXPIRE", RespireCommands.Hash.HPEXPIRE.Verb, key, milliseconds, when, fields, cancellationToken, observation);
         }
 
         if (expiry.TryGetAbsoluteUnixMilliseconds(out var unixMilliseconds))
         {
             return ExpireCore(
-                "HPEXPIREAT", RespireCommands.Hash.HPEXPIREAT.Verb, key, unixMilliseconds, when, fields, cancellationToken);
+                "HPEXPIREAT", RespireCommands.Hash.HPEXPIREAT.Verb, key, unixMilliseconds, when, fields, cancellationToken, observation);
         }
 
         throw new ArgumentException(
@@ -545,42 +858,73 @@ internal sealed partial class HashCommands(RespireClient client) : IHashCommands
         long value,
         ExpireWhen when,
         ReadOnlySpan<string> fields,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         => client.HashFieldExpiryResultArrayAsync(
             operation,
             new Cmd1N(verb, client.Key(in key), ExpireFieldsBlock(value, when, fields)),
-            cancellationToken);
+            cancellationToken, observation: observation);
 
     public ValueTask<string?[]> GetAndRemoveAsync(RespireKey key, params ReadOnlySpan<string> fields)
-        => GetAndRemoveAsync(key, fields, CancellationToken.None);
+    {
+        var owner = DispatchResponseSource<string?[]>.Start();
+        try { return owner.Attach(GetAndRemoveBorrowedAsync(key, fields, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<string?[]> GetAndRemoveBorrowedAsync(RespireKey key, ReadOnlySpan<string> fields, RespireTelemetry.ErrorObservation observation)
+        => GetAndRemoveBorrowedAsync(key, fields, CancellationToken.None, observation);
 
     public ValueTask<string?[]> GetAndRemoveAsync(
         RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
+    {
+        var owner = DispatchResponseSource<string?[]>.Start();
+        try { return owner.Attach(GetAndRemoveBorrowedAsync(key, fields, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<string?[]> GetAndRemoveBorrowedAsync(
+        RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         => client.NullableStringArrayAsync(
             "HGETDEL",
             new Cmd1N(RespireCommands.Hash.HGETDEL.Verb, client.Key(in key), FieldsBlock(fields)),
-            cancellationToken);
+            cancellationToken, observation: observation);
 
     public ValueTask<string?[]> GetAndExpireAsync(
         RespireKey key, RespireExpiry expiry, params ReadOnlySpan<string> fields)
-        => GetAndExpireAsync(key, expiry, fields, CancellationToken.None);
+    {
+        var owner = DispatchResponseSource<string?[]>.Start();
+        try { return owner.Attach(GetAndExpireBorrowedAsync(key, expiry, fields, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<string?[]> GetAndExpireBorrowedAsync(
+        RespireKey key, RespireExpiry expiry, ReadOnlySpan<string> fields, RespireTelemetry.ErrorObservation observation)
+        => GetAndExpireBorrowedAsync(key, expiry, fields, CancellationToken.None, observation);
 
     public ValueTask<string?[]> GetAndExpireAsync(
         RespireKey key, RespireExpiry expiry, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
     {
+        var owner = DispatchResponseSource<string?[]>.Start();
+        try { return owner.Attach(GetAndExpireBorrowedAsync(key, expiry, fields, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<string?[]> GetAndExpireBorrowedAsync(
+        RespireKey key, RespireExpiry expiry, ReadOnlySpan<string> fields, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+    {
         if (expiry.TryGetRelativeMilliseconds(out var milliseconds))
         {
-            return GetExpireCore(key, "PX", milliseconds, hasValue: true, fields, cancellationToken);
+            return GetExpireCore(key, "PX", milliseconds, hasValue: true, fields, cancellationToken, observation);
         }
 
         if (expiry.TryGetAbsoluteUnixMilliseconds(out var unixMilliseconds))
         {
-            return GetExpireCore(key, "PXAT", unixMilliseconds, hasValue: true, fields, cancellationToken);
+            return GetExpireCore(key, "PXAT", unixMilliseconds, hasValue: true, fields, cancellationToken, observation);
         }
 
         if (expiry.IsPersist)
         {
-            return GetExpireCore(key, "PERSIST", optionValue: 0, hasValue: false, fields, cancellationToken);
+            return GetExpireCore(key, "PERSIST", optionValue: 0, hasValue: false, fields, cancellationToken, observation);
         }
 
         throw new ArgumentException(
@@ -589,18 +933,45 @@ internal sealed partial class HashCommands(RespireClient client) : IHashCommands
 
     public ValueTask<bool> SetExpireAsync(
         RespireKey key, RespireExpiry expiry, params ReadOnlySpan<(string Field, RespireValue Value)> fields)
-        => SetExpireAsync(key, expiry, SetWhen.Always, fields, CancellationToken.None);
+    {
+        var owner = DispatchResponseSource<bool>.Start();
+        try { return owner.Attach(SetExpireBorrowedAsync(key, expiry, fields, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<bool> SetExpireBorrowedAsync(
+        RespireKey key, RespireExpiry expiry, ReadOnlySpan<(string Field, RespireValue Value)> fields, RespireTelemetry.ErrorObservation observation)
+        => SetExpireBorrowedAsync(key, expiry, SetWhen.Always, fields, CancellationToken.None, observation);
 
     public ValueTask<bool> SetExpireAsync(
         RespireKey key,
         RespireExpiry expiry,
         ReadOnlySpan<(string Field, RespireValue Value)> fields,
         CancellationToken cancellationToken)
-        => SetExpireAsync(key, expiry, SetWhen.Always, fields, cancellationToken);
+    {
+        var owner = DispatchResponseSource<bool>.Start();
+        try { return owner.Attach(SetExpireBorrowedAsync(key, expiry, fields, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<bool> SetExpireBorrowedAsync(
+        RespireKey key,
+        RespireExpiry expiry,
+        ReadOnlySpan<(string Field, RespireValue Value)> fields,
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        => SetExpireBorrowedAsync(key, expiry, SetWhen.Always, fields, cancellationToken, observation);
 
     public ValueTask<bool> SetExpireAsync(
         RespireKey key, RespireExpiry expiry, SetWhen when, params ReadOnlySpan<(string Field, RespireValue Value)> fields)
-        => SetExpireAsync(key, expiry, when, fields, CancellationToken.None);
+    {
+        var owner = DispatchResponseSource<bool>.Start();
+        try { return owner.Attach(SetExpireBorrowedAsync(key, expiry, when, fields, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<bool> SetExpireBorrowedAsync(
+        RespireKey key, RespireExpiry expiry, SetWhen when, ReadOnlySpan<(string Field, RespireValue Value)> fields, RespireTelemetry.ErrorObservation observation)
+        => SetExpireBorrowedAsync(key, expiry, when, fields, CancellationToken.None, observation);
 
     public ValueTask<bool> SetExpireAsync(
         RespireKey key,
@@ -609,19 +980,31 @@ internal sealed partial class HashCommands(RespireClient client) : IHashCommands
         ReadOnlySpan<(string Field, RespireValue Value)> fields,
         CancellationToken cancellationToken)
     {
+        var owner = DispatchResponseSource<bool>.Start();
+        try { return owner.Attach(SetExpireBorrowedAsync(key, expiry, when, fields, cancellationToken, owner.Observation)); }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
+
+    private ValueTask<bool> SetExpireBorrowedAsync(
+        RespireKey key,
+        RespireExpiry expiry,
+        SetWhen when,
+        ReadOnlySpan<(string Field, RespireValue Value)> fields,
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+    {
         if (expiry.TryGetRelativeMilliseconds(out var milliseconds))
         {
-            return SetExpireCore(key, "PX", milliseconds, hasValue: true, when, fields, cancellationToken);
+            return SetExpireCore(key, "PX", milliseconds, hasValue: true, when, fields, cancellationToken, observation);
         }
 
         if (expiry.TryGetAbsoluteUnixMilliseconds(out var unixMilliseconds))
         {
-            return SetExpireCore(key, "PXAT", unixMilliseconds, hasValue: true, when, fields, cancellationToken);
+            return SetExpireCore(key, "PXAT", unixMilliseconds, hasValue: true, when, fields, cancellationToken, observation);
         }
 
         if (expiry.IsKeep)
         {
-            return SetExpireCore(key, "KEEPTTL", optionValue: 0, hasValue: false, when, fields, cancellationToken);
+            return SetExpireCore(key, "KEEPTTL", optionValue: 0, hasValue: false, when, fields, cancellationToken, observation);
         }
 
         throw new ArgumentException(
@@ -634,14 +1017,14 @@ internal sealed partial class HashCommands(RespireClient client) : IHashCommands
         long optionValue,
         bool hasValue,
         ReadOnlySpan<string> fields,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         => client.NullableStringArrayAsync(
             "HGETEX",
             new Cmd1N(
                 RespireCommands.Hash.HGETEX.Verb,
                 client.Key(in key),
                 GetExFieldsBlock(option, optionValue, hasValue, fields)),
-            cancellationToken);
+            cancellationToken, observation: observation);
 
     private ValueTask<bool> SetExpireCore(
         RespireKey key,
@@ -650,14 +1033,14 @@ internal sealed partial class HashCommands(RespireClient client) : IHashCommands
         bool hasValue,
         SetWhen when,
         ReadOnlySpan<(string Field, RespireValue Value)> fields,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         => client.FlagAsync(
             "HSETEX",
             new Cmd1N(
                 RespireCommands.Hash.HSETEX.Verb,
                 client.Key(in key),
                 SetExFieldsBlock(option, optionValue, hasValue, when, fields)),
-            cancellationToken);
+            cancellationToken, observation: observation);
 
     /// <summary>field value… — shared with the deferred (batch/transaction) facet.</summary>
     internal static RespireValue[] FieldValuePairs(ReadOnlySpan<(string Field, RespireValue Value)> fields)

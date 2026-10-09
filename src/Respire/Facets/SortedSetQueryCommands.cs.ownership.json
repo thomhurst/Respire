@@ -17,7 +17,21 @@
         "RandomMembersWithScoresAsync`1(RespireKey,long,CancellationToken):ValueTask<SortedSetEntry<T>[]>",
         "RemoveRangeByLexAsync(RespireKey,RespireLexRange,CancellationToken):ValueTask<long>"
       ],
-      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+      "Contract": "Public entries start the failure-only owner before preflight. Private borrowed implementations share its retry history through send, typed conversion and cleanup. DispatchResponseSource owns final result inspection; its Fail boundary owns synchronous preflight failures. Successful calls acquire no ErrorObservation lease storage.",
+      "Overrides": {
+        "CountByLexAsync(RespireKey,RespireLexRange,CancellationToken):ValueTask<long>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "IntersectCountAsync(ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<long>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "IntersectCountAsync(long,ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<long>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "IntersectCountAsync(long,params ReadOnlySpan<RespireKey>):ValueTask<long>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "IntersectCountAsync(params ReadOnlySpan<RespireKey>):ValueTask<long>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "RandomMemberAsync(RespireKey,CancellationToken):ValueTask<string?>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "RandomMemberAsync`1(RespireKey,CancellationToken):ValueTask<T?>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "RandomMembersAsync(RespireKey,long,CancellationToken):ValueTask<string[]>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "RandomMembersAsync`1(RespireKey,long,CancellationToken):ValueTask<T[]>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "RandomMembersWithScoresAsync(RespireKey,long,CancellationToken):ValueTask<SortedSetEntry[]>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "RandomMembersWithScoresAsync`1(RespireKey,long,CancellationToken):ValueTask<SortedSetEntry<T>[]>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "RemoveRangeByLexAsync(RespireKey,RespireLexRange,CancellationToken):ValueTask<long>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult"
+      }
     }
   ],
   "Boundaries": [],

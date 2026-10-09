@@ -9,9 +9,10 @@ public sealed partial class RespireClient
 {
     internal ValueTask<TResult> ConvertResponseAsync<TCommand, TState, TResult>(
         string operation, in TCommand command, CancellationToken ct, TState state,
-        ResponseConverter<TState, TResult> converter, bool transferOwnership = false)
+        ResponseConverter<TState, TResult> converter, bool transferOwnership = false, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
     {
+        if (!observation.IsEmpty) return ConvertResponseCoreAsync(operation, command, ct, state, converter, transferOwnership, observation);
         if (TryGetNativeDispatchConnection(operation, in command, out var connection))
             return connection.SendNativeConvertedAsync(in command, ct, operation, state, converter, transferOwnership);
         return DispatchResponseSource<TResult>.Run(
@@ -21,18 +22,20 @@ public sealed partial class RespireClient
                 state.Command, state.Token, state.State, state.Converter, state.Transfer, observation));
     }
 
-    internal ValueTask<string?> StringOrNullAsync<TCommand>(string operation, in TCommand command, CancellationToken ct)
+    internal ValueTask<string?> StringOrNullAsync<TCommand>(string operation, in TCommand command, CancellationToken ct, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
     {
+        if (!observation.IsEmpty) return StringOrNullCoreAsync(operation, command, ct, observation);
         if (TryGetNativeDispatchConnection(operation, in command, out var connection))
             return connection.SendNativeStringAsync(in command, ct, operation);
         return DispatchResponseSource<string?>.Run((Client: this, Operation: operation, Command: command, Token: ct),
             static (state, observation) => state.Client.StringOrNullCoreAsync(state.Operation, state.Command, state.Token, observation));
     }
 
-    internal ValueTask<byte[]?> BytesOrNullAsync<TCommand>(string operation, in TCommand command, CancellationToken ct)
+    internal ValueTask<byte[]?> BytesOrNullAsync<TCommand>(string operation, in TCommand command, CancellationToken ct, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
     {
+        if (!observation.IsEmpty) return BytesOrNullCoreAsync(operation, command, ct, observation);
         if (TryGetNativeDispatchConnection(operation, in command, out var connection))
             return connection.SendNativeBytesAsync(in command, ct, operation);
         return DispatchResponseSource<byte[]?>.Run((Client: this, Operation: operation, Command: command, Token: ct),

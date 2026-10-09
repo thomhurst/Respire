@@ -53,8 +53,9 @@ internal sealed class DispatchResponseSource<TResult> : IValueTaskSource<TResult
 
     private DispatchResponseSource() => _continue = InvokeContinuation;
 
-    internal static ValueTask<TResult> Run<TState>(TState state,
-        Func<TState, RespireTelemetry.ErrorObservation, ValueTask<TResult>> send)
+    // Facet entries can contain spans, so begin ownership without capturing their
+    // arguments in a delegate. Construction finishes synchronously before Attach.
+    internal static DispatchResponseSource<TResult> Start()
     {
         var source = Pool.Rent();
         lock (source._gate)
@@ -62,19 +63,38 @@ internal sealed class DispatchResponseSource<TResult> : IValueTaskSource<TResult
             source._generation = unchecked(source._generation + 1);
             source._closed = false;
         }
-        var observation = new RespireTelemetry.ErrorObservation(source, source._generation);
+        return source;
+    }
+
+    internal RespireTelemetry.ErrorObservation Observation => new(this, _generation);
+
+    internal ValueTask<TResult> Attach(ValueTask<TResult> response)
+    {
+        _response = response;
+        return new(this, _version);
+    }
+
+    internal void Fail(Exception error)
+    {
+        Finish(error);
+        Pool.Return(this);
+    }
+
+    internal static ValueTask<TResult> Run<TState>(TState state,
+        Func<TState, RespireTelemetry.ErrorObservation, ValueTask<TResult>> send)
+    {
+        var source = Start();
+        var observation = source.Observation;
         ValueTask<TResult> response;
         try { response = send(state, observation); }
         catch (Exception error)
         {
-            source.Finish(error);
-            Pool.Return(source);
+            source.Fail(error);
             throw;
         }
         // Borrowers can run during send, but the caller cannot access this response until
         // Run returns. Publish the native response before exposing its ValueTask.
-        source._response = response;
-        return new(source, source._version);
+        return source.Attach(response);
     }
 
     int IDispatchObservation.Attempts(long generation)

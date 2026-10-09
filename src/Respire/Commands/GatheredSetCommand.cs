@@ -41,20 +41,20 @@ internal readonly struct GatheredSetCommand(SetCommand command, ArraySegment<byt
     }
 
     internal static ValueTask<bool> SendAsync(RespireClient client, SetCommand command,
-        RespireValue value, CancellationToken cancellationToken)
+        RespireValue value, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
         => value.TryGetByteMemory(out var memory) && memory.Length >= 8 * 1024
             && MemoryMarshal.TryGetArray(memory, out var payload)
-            ? SendBorrowedAsync(client, command, payload, cancellationToken)
-            : client.OkOrNullAsync("SET", command, cancellationToken);
+            ? SendBorrowedAsync(client, command, payload, cancellationToken, observation)
+            : client.OkOrNullAsync("SET", command, cancellationToken, observation);
 
     private static ValueTask<bool> SendBorrowedAsync(RespireClient client, SetCommand command,
-        ArraySegment<byte> payload, CancellationToken cancellationToken)
+        ArraySegment<byte> payload, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         var lease = GatheredSetWriteLease.Rent();
         ValueTask<bool> response;
         try
         {
-            response = client.OkOrNullAsync("SET", new GatheredSetCommand(command, payload, lease), cancellationToken);
+            response = client.OkOrNullAsync("SET", new GatheredSetCommand(command, payload, lease), cancellationToken, observation);
         }
         catch (Exception error)
         {
