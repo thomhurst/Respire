@@ -512,8 +512,16 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                             "MULTI", _ops, static op => op.Operation,
                             connection.Host, connection.Port, core.Options.Database, out telemetryOperation, sentinelStarted);
                     RespValue reply;
+                    CircuitAdmission admission = default;
                     try
                     {
+                        // The entire MULTI/EXEC sequence owns one endpoint permit. Pin transport
+                        // acceptance so a maintenance replacement cannot bypass its own circuit.
+                        if (core.Circuits is { } circuits)
+                        {
+                            connection.ThrowIfRetired();
+                            admission = circuits.Acquire(new(connection.Host, connection.Port), cancellationToken);
+                        }
                         if (ConnectionPolicy.IsImportSession)
                         {
                             if (!connection.TryAcquireCredentialSequence(cancellationToken, out credentialSequence))
@@ -527,18 +535,32 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                             // Import-only MULTI cannot reroute; keep this decision in the shared policy.
                             using var multi = await _client.SendOnConnectionAsync("MULTI", connection,
                                 new ProtocolCommand<Cmd>(new Cmd(RespireCommands.Transaction.MULTI.Verb)), cancellationToken, commandDeadline: deadline,
-                                allowStreamingConnectionReroute: ConnectionPolicy.CanReplayRejectedCommands).ConfigureAwait(false);
+                                allowStreamingConnectionReroute: ConnectionPolicy.CanReplayRejectedCommands,
+                                pinToConnection: core.Circuits is not null).ConfigureAwait(false);
                             ResponseReader.ExpectOk(in multi);
                             importTransactionStarted = true;
                         }
                         reply = await connection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count,
                                 cancellationToken, includeMulti: !ConnectionPolicy.IsImportSession, commandDeadline: deadline,
-                                transaction: this, observation: observation, mutationFence: mutationFence)
+                                transaction: this, observation: observation, mutationFence: mutationFence,
+                                pinToConnection: core.Circuits is not null)
                             .ConfigureAwait(false);
+                        admission.Success();
                         connection = ExecutingConnection ?? connection;
                         if (ConnectionPolicy.IsImportSession && (reply.Type == RespDataType.Array || reply.IsNull
                             || reply.TransactionStateCleared))
                             importTransactionStarted = false;
+                    }
+                    catch (RespireConnectionRetiredException retirement) when (core.Circuits is not null
+                        && ConnectionPolicy.CanReplayRejectedCommands
+                        && connection.TryReroute(false, deadline, out var target, out var rerouted, preferredZone: null))
+                    {
+                        // Retirement rejected every frame before dispatch. Release this permit
+                        // as ignored; the replacement endpoint owns its own health outcome.
+                        observation.Handled(retirement);
+                        connection = target;
+                        deadline = rerouted;
+                        continue;
                     }
                     catch (RespireConnectionRetiredException retirement) when (cluster is not null
                         && ConnectionPolicy.CanRetryRetirement(cluster, attempt, cancellationToken))
@@ -552,6 +574,12 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                         discoveryPending = false;
                         continue;
                     }
+                    catch (Exception error)
+                    {
+                        admission.Failed(error, cancellationToken);
+                        throw;
+                    }
+                    finally { admission.Dispose(); }
                     if (!reply.IsError || cluster is null)
                     {
                         return reply;

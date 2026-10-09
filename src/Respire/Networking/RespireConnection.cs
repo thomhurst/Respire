@@ -1007,7 +1007,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// <summary>Sends an intentionally blocking command without applying the receive watchdog
     /// or the command deadline (a BLPOP-style wait may legitimately outlast both).</summary>
     internal async ValueTask<RespValue> SendWithoutResponseTimeoutAsync<TCommand>(
-        TCommand command, CancellationToken cancellationToken = default, int errorAttempts = 0)
+        TCommand command, CancellationToken cancellationToken = default, int errorAttempts = 0, bool pinToConnection = false)
         where TCommand : struct, IRespCommand
     {
         Interlocked.Increment(ref _responseTimeoutSuppressions);
@@ -1015,7 +1015,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             return await SendCoreAsync(
                     in command, discardRepliesBefore: 0, throwOnError: false, cancellationToken,
-                    commandName: null, armCommandDeadline: false, errorAttempts: errorAttempts)
+                    commandName: null, armCommandDeadline: false, errorAttempts: errorAttempts, pinToConnection: pinToConnection)
                 .ConfigureAwait(false);
         }
         finally
@@ -1394,14 +1394,14 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         TimeSpan? cancellationTimeout = null, CancellationToken callerCancellationToken = default, bool includeMulti = true,
         CommandDeadline commandDeadline = default, RespireTransactionBase? transaction = null,
         RespireTelemetry.ErrorObservation observation = default,
-        ClientSideCacheCoordinator.MutationFence mutationFence = default)
+        ClientSideCacheCoordinator.MutationFence mutationFence = default, bool pinToConnection = false)
     {
         ValidateTransactionCapacity(commandCount, includeMulti);
         var prefixReplies = includeMulti ? 1 : 0;
         return SendMultiReplyCoreAsync(
             new TransactionCommand(serializedCommands, includeMulti, transaction, mutationFence), repliesBeforeFinal: commandCount + prefixReplies,
             firstQueueReply: prefixReplies, cancellationToken, commandName: "MULTI/EXEC", cancellationTimeout, callerCancellationToken,
-            commandDeadline, observation: observation);
+            commandDeadline, observation: observation, pinToConnection: pinToConnection);
     }
 
     internal void ValidateTransactionCapacity(int commandCount, bool includeMulti = true)

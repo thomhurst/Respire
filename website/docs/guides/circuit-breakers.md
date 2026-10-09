@@ -92,12 +92,43 @@ Fire-and-forget operations that observe a transport failure still report that fa
 Cache-fenced fire-and-forget commands that already await a reply retain their existing behavior
 and can contribute a completed reply outcome.
 
+## Batches and transactions
+
+Adding commands to a queue requires no admission. An empty ordinary batch or transaction
+requires no admission because it sends no frame.
+Each batch command acquires its own permit when execution reaches transport dispatch on the
+selected connection. An open endpoint sends none of the rejected commands. `TryExecuteAsync`
+returns failures in original queue order; `ExecuteAsync` throws the first failure after completing
+every pending. Successful pending results retain their existing ownership.
+
+A batch can dispatch partially: admitted commands can execute while later entries are rejected,
+including when all half-open slots are occupied. Rejected entries are not retried or replayed.
+Accepted replies remain in FIFO order, including after cancellation releases a permit. Circuit
+admission does not make a pipeline atomic. Circuit-enabled batches stay on their selected
+connection rather than moving individual entries during a maintenance handoff.
+
+A nonempty transaction acquires one permit for the entire MULTI/EXEC sequence immediately before
+dispatch. Open rejection sends neither MULTI nor its queued commands nor EXEC, and faults all
+pending results with `RespireCircuitOpenException`. A normal transaction can follow a maintenance
+replacement only before the sequence is accepted; the replacement requires fresh admission.
+Watched transactions and hash import transactions retain their original connection. WATCH setup
+is an immediate command with its own admission; a rejected commit discards its dedicated WATCH
+lease. A WATCH abort or ordinary Redis error still demonstrates a healthy reply.
+
+Hash import batches admit their entries in connection order. Rejection before dispatch preserves
+the import session and its prepared fieldsets. Durability batches also guard each write and the
+subsequent WAIT or WAITAOF separately. A failed write prevents the acknowledgement; a rejected
+acknowledgement cannot undo writes that already completed. Empty durability batches are rejected
+by validation before any acknowledgement command is sent.
+
+Cancellation, validation failure, and undispatched exceptions release recovery capacity as ignored.
+Each transaction or batch permit completes even when response conversion fails. These boundaries
+preserve the existing transaction completion, batch failure, and result disposal contracts.
+
 ## Current scope
 
 This option covers standalone immediate typed, raw, interpolated, fire-and-forget, cache-miss,
-blocking, and streamed command dispatch. Batches and transactions retain their existing
-admission semantics; their circuit boundaries are tracked separately by
-[the integration epic](https://github.com/thomhurst/Respire/issues/1255).
+blocking, streamed, batch, and transaction command dispatch.
 
 Configuration with Redis Cluster, Sentinel, or standalone replica endpoints is rejected.
 Topology-specific circuit admission is separate work. This option does not change

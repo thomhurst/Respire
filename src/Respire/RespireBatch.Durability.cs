@@ -119,7 +119,10 @@ public sealed partial class RespireBatch
             cancellationToken.ThrowIfCancellationRequested();
 
             var admittedAcknowledgement = new MutationCommand<TCommand>(acknowledgement, mutationFence);
-            using var response = await connection.SendWithoutResponseTimeoutAsync(admittedAcknowledgement, cancellationToken).ConfigureAwait(false);
+            using var response = core.Circuits is { } circuits
+                ? await QueuedCircuitDispatch.SendAsync(circuits, connection, admittedAcknowledgement, operation,
+                    cancellationToken, default, withoutResponseTimeout: true).ConfigureAwait(false)
+                : await connection.SendWithoutResponseTimeoutAsync(admittedAcknowledgement, cancellationToken).ConfigureAwait(false);
             if (response.IsError) throw ResponseReader.ServerError(in response, operation);
             return convert(response);
         }

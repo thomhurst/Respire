@@ -434,8 +434,9 @@ public sealed record RespireOptions
         => Endpoints.Count > 0 ? Endpoints[0] : new RespireEndpoint("localhost");
 
     /// <summary>Opt-in circuit admission for standalone commands. Null disables circuit breaking.</summary>
-    /// <remarks>Cluster, Sentinel, and replica routing are not supported. Batches and transactions
-    /// retain their existing admission semantics.</remarks>
+    /// <remarks>Cluster, Sentinel, and replica routing are not supported. Each batch command acquires
+    /// admission independently; a transaction acquires one permit for its MULTI/EXEC sequence.
+    /// WATCH setup and durability acknowledgements acquire independent admission.</remarks>
     public RespireCircuitBreakerOptions? CircuitBreaker { get; init; }
 
     internal RespireOptions ValidateAndSnapshot()

@@ -278,10 +278,10 @@ Respire.Networking.RespireConnection | method SendPrefixedBulkStreamAsync`2(in T
 Respire.Networking.RespireConnection | method SendPrefixedCheckedAsync`2(in TPrefix, in TCommand, CancellationToken, string?, CommandDeadline, bool, string?, RespireTelemetry.ErrorObservation) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendPrefixedWithoutResponseTimeoutAsync`2(TPrefix, TCommand, bool, CancellationToken, int) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendStringAsync`1(in TCommand, CancellationToken, string?, CommandDeadline, int, RespireTelemetry.ErrorObservation, RespireTelemetry.OperationStart, bool) : ValueTask<string?>
-Respire.Networking.RespireConnection | method SendTransactionAsync(ReadOnlyMemory<byte>, int, CancellationToken, TimeSpan?, CancellationToken, bool, CommandDeadline, RespireTransactionBase?, RespireTelemetry.ErrorObservation, ClientSideCacheCoordinator.MutationFence) : ValueTask<RespValue>
+Respire.Networking.RespireConnection | method SendTransactionAsync(ReadOnlyMemory<byte>, int, CancellationToken, TimeSpan?, CancellationToken, bool, CommandDeadline, RespireTransactionBase?, RespireTelemetry.ErrorObservation, ClientSideCacheCoordinator.MutationFence, bool) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendValidatedPrefixedAsync`2(in TPrefix, in TCommand, CancellationToken, string, string?, bool, CommandDeadline, RespireTelemetry.ErrorObservation) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendValidatedPrefixedAsync`3(in TFirstPrefix, in TSecondPrefix, in TCommand, CancellationToken, string, string?, RespireTelemetry.ErrorObservation) : ValueTask<RespValue>
-Respire.Networking.RespireConnection | method SendWithoutResponseTimeoutAsync`1(TCommand, CancellationToken, int) : ValueTask<RespValue>
+Respire.Networking.RespireConnection | method SendWithoutResponseTimeoutAsync`1(TCommand, CancellationToken, int, bool) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SetLeaseRented(bool) : void
 Respire.Networking.RespireConnection | method StopAcceptingCommands() : void
 Respire.Networking.RespireConnection | method ThrowIfRetired(bool) : void

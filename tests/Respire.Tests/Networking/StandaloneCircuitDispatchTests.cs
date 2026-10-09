@@ -14,7 +14,7 @@ using TUnit.Core;
 namespace Respire.Tests.Networking;
 
 [NotInParallel]
-public class StandaloneCircuitDispatchTests
+public partial class StandaloneCircuitDispatchTests
 {
     [Test]
     [Arguments(false, "string")]
@@ -742,21 +742,23 @@ public class StandaloneCircuitDispatchTests
     }
 
     [Test]
-    public async Task RejectedDispatchDoesNotChangeBatchOrTransactionAdmission()
+    public async Task OpenCircuitRejectsBatchAndTransactionWithoutSendingCommands()
     {
         await using var server = Server();
         await using var client = await RespireClient.ConnectAsync(Options(server));
         var (circuit, _) = await Prepare(client, server);
         await Trip(client, server);
+        var commands = server.CommandsSeen;
         using var batch = client.CreateBatch();
         var pending = batch.Strings.GetString("batch");
-        await batch.ExecuteAsync();
-        await Assert.That(await pending).IsEqualTo("batch");
+        await Assert.That(await Failure(async () => await batch.ExecuteAsync())).IsTypeOf<RespireCircuitOpenException>();
+        await Assert.That(pending.Error).IsTypeOf<RespireCircuitOpenException>();
         await using var transaction = client.CreateTransaction();
         var transactional = transaction.Strings.GetString("transaction");
-        await transaction.CommitAsync();
-        await Assert.That(await transactional).IsEqualTo("transaction");
+        await Assert.That(await Failure(async () => await transaction.CommitAsync())).IsTypeOf<RespireCircuitOpenException>();
+        await Assert.That(transactional.Error).IsTypeOf<RespireCircuitOpenException>();
         await Assert.That(circuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Open);
+        await Assert.That(server.CommandsSeen).IsEqualTo(commands);
     }
 
     [Test]
