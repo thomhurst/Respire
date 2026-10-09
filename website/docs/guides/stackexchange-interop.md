@@ -204,12 +204,64 @@ completion, and disposes owned clients. Closing is idempotent. Borrowed clients
 remain usable. Disposing a native view retains that view's native ownership
 behavior; use the owning root client when transferring ownership.
 
-Profiling registration, library-name suffixes, events, subscriber/server APIs,
+Profiling registration, library-name suffixes, events, unlisted subscriber/server APIs,
 transactions, non-null `asyncState`, and all unlisted commands are explicitly
 unsupported. Unsupported members throw `NotSupportedException` with native
 API guidance rather than returning fabricated success. This adapter does not
 provide general StackExchange.Redis parity. SignalR and Hangfire acceptance
 remain pending under [#889](https://github.com/thomhurst/Respire/issues/889).
+
+### Server discovery, locks, and storage subscriptions
+
+`GetEndPoints(true)` returns configured endpoints (including configured standalone
+replicas). `GetEndPoints(false)` connects and returns the actual standalone or
+Sentinel primary and replicas, or discovered Cluster nodes including replicas.
+`IdentifyEndpoint[Async]` returns the selected primary for the supplied key's slot;
+without a key it returns the native connection selected for a keyless command.
+It supports `None`, `DemandMaster`, and `NoRedirect`; replica selection and use on
+`IBatch` are explicitly unsupported. DNS, IP, and Unix socket endpoint identities
+are retained. Discovery reports live topology rather than inventing a localhost
+endpoint. `Configuration` contains parseable endpoints and the default database,
+without credentials; it is a diagnostic string, not a complete connection recipe.
+
+`GetServer` overloads and `GetServers` return cached handles for physical endpoints.
+Each handle owns an independent native client with the adapter's authentication,
+TLS, protocol, and database settings. Server calls never redirect or fail over to
+another endpoint. `IsConnected` establishes that handle's connection and reports
+connection failures; `IsReplica` queries Redis `ROLE`. `InfoRaw[Async]` returns
+Redis `INFO` text with an optional section; `Time[Async]` returns Redis `TIME` as
+a UTC `DateTime`. These server commands support only `CommandFlags.None`.
+Closing the adapter drains/cancels admitted calls, disposes its server clients,
+and rejects subsequent calls on retained handles. A caller-owned wrapped client
+remains usable.
+
+`LockTake[Async]` sends atomic `SET key token PX milliseconds NX`.
+`LockExtend[Async]` and `LockRelease[Async]` use Lua to compare the original binary
+token and perform `PEXPIRE` or `DEL` atomically. No token substitution or managed
+lock handle is involved. A missing key or different owner returns `false`;
+an expired holder cannot extend or delete a replacement lock. Expiry must be
+positive, is truncated to milliseconds, and has a one-millisecond minimum.
+The individual database flag rules above apply, including rejection of replica
+writes. `FireAndForget` returns the default `false` after admission and discards
+the server reply. Lock operations on `IBatch` remain unsupported.
+Lua errors preserve native `RespireServerException` and the server message;
+there are no direct `ScriptEvaluate` call sites in the pinned Hangfire source,
+and general script evaluation remains explicitly unsupported.
+
+`GetSubscriber()` supports literal, binary channel callback
+`Subscribe[Async]`, `Unsubscribe[Async]`, and `UnsubscribeAll[Async]` with `None`.
+Handlers for the same channel share a native subscription; duplicate handlers
+are ignored. Channel buffers are copied at the adapter boundary.
+Unsubscribing a handler retains other handlers. Native reconnect
+and resubscription behavior applies; delivery gaps cannot replay messages.
+If the native reconnect limit is exhausted, subscribing again propagates the
+native reconnect-limit exception; recreate the client and adapter to resume delivery.
+Callbacks execute separately from subscription admission, and callback exceptions
+do not terminate delivery. `ChannelMessageQueue`, patterns, and all other
+subscriber calls remain unsupported. `Publish[Async]` is available on the
+subscriber and database with `None` or `DemandMaster`; batches and other flags
+are rejected. Subscription and publication both apply the native pub/sub prefix.
+Adapter close removes only its subscriptions, even when borrowing a client.
 
 ### Pinned source inventory and validation
 
@@ -223,8 +275,18 @@ trimming and atomic moves. Focused tests exercise these contracts against
 real Redis with RESP2/RESP3 on .NET 8 and .NET 10, including binary snapshots,
 database isolation, deferred batch reads/writes, server errors and shutdown.
 This facet does not establish full Hangfire compatibility. Remaining command
-facets, transactions and conditions, server/lock support, and official upstream
+facets, transactions and conditions, and official upstream
 suite acceptance are tracked by [#1269](https://github.com/thomhurst/Respire/issues/1269).
+
+The server/lock inventory additionally checks `RedisStorage` discovery and
+dashboard `InfoRaw`, `RedisConnection.GetUtcDateTime` (`IServer.Time`),
+`RedisLock` acquisition/extension/release, and `RedisSubscription` literal
+callback subscribe/unsubscribe. Real Redis tests run on .NET 8 and .NET 10 with
+RESP2/RESP3, including physical replica identity, token/TTL wire controls,
+competing acquisitions, stale ownership, Lua errors, and borrowed-client cleanup.
+Tests also construct the pinned 1.12.0 `RedisStorage`, obtain a storage connection,
+read server time, and acquire/release its distributed lock. These focused
+scenarios do not establish combined upstream Hangfire acceptance.
 
 Before implementing this surface, the integration call sites were checked in
 [ASP.NET Core 10.0.12 RedisCache.cs](https://github.com/dotnet/aspnetcore/blob/v10.0.12/src/Caching/StackExchangeRedis/src/RedisCache.cs)

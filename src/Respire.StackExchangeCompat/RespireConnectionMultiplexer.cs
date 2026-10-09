@@ -85,7 +85,8 @@ public sealed partial class RespireConnectionMultiplexer : IConnectionMultiplexe
     /// <inheritdoc />
     public string ClientName => _configuration.ClientName ?? string.Empty;
     /// <summary>Identifies native configuration without exposing credentials.</summary>
-    public string Configuration => $"Respire;defaultDatabase={_defaultDatabase}";
+    public string Configuration => string.Join(",", _configuration.Endpoints.Select(static endpoint => endpoint.ToString()))
+        + $",defaultDatabase={_defaultDatabase}";
     /// <inheritdoc />
     public override string ToString() => Configuration;
     /// <inheritdoc />
@@ -180,9 +181,15 @@ public sealed partial class RespireConnectionMultiplexer : IConnectionMultiplexe
         {
             try { await Task.WhenAll(operations).ConfigureAwait(false); }
             catch { /* Command failures remain on the command tasks. */ }
-            if (_ownsClients)
+            try
             {
-                await Task.WhenAll(clients.Select(static client => client.DisposeAsync().AsTask())).ConfigureAwait(false);
+                if (_subscriber is not null) await _subscriber.DisposeSubscriptionsAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                var owned = _servers.Values.Select(static server => (IRespireClient)server.Client);
+                if (_ownsClients) owned = owned.Concat(clients);
+                await Task.WhenAll(owned.Select(static client => client.DisposeAsync().AsTask())).ConfigureAwait(false);
             }
         }
         catch (Exception error) { failure = error; }

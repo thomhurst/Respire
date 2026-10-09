@@ -50,15 +50,6 @@ partial class CompatDatabase
     public global::System.Boolean KeyTouch(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("KeyTouch");
     /// <inheritdoc />
-    public global::System.Boolean LockExtend(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @value, global::System.TimeSpan @expiry, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("LockExtend");
-    /// <inheritdoc />
-    public global::System.Boolean LockRelease(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @value, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("LockRelease");
-    /// <inheritdoc />
-    public global::System.Boolean LockTake(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @value, global::System.TimeSpan @expiry, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("LockTake");
-    /// <inheritdoc />
     public global::System.Boolean SetAdd(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @value, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SetAdd");
     /// <inheritdoc />
@@ -211,9 +202,6 @@ partial class CompatDatabase
     /// <inheritdoc />
     public global::System.Int64 ListPosition(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @element, global::System.Int64 @rank, global::System.Int64 @maxLength, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("ListPosition");
-    /// <inheritdoc />
-    public global::System.Int64 Publish(global::StackExchange.Redis.RedisChannel @channel, global::StackExchange.Redis.RedisValue @message, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("Publish");
     /// <inheritdoc />
     public global::System.Int64 SetAdd(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue[] @values, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SetAdd");
@@ -802,9 +790,6 @@ partial class CompatDatabase
     /// <inheritdoc />
     public global::System.Collections.Generic.IEnumerable<global::StackExchange.Redis.SortedSetEntry> SortedSetScan(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @pattern, global::System.Int32 @pageSize, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SortedSetScan");
-    /// <inheritdoc />
-    public global::System.Net.EndPoint IdentifyEndpoint(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("IdentifyEndpoint");
     /// <inheritdoc />
     public global::System.Nullable<global::StackExchange.Redis.GeoPosition> GeoPosition(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @member, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("GeoPosition");
