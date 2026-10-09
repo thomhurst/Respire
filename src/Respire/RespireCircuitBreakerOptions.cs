@@ -1,7 +1,7 @@
 namespace Respire;
 
 /// <summary>Settings for an opt-in endpoint circuit breaker.</summary>
-/// <remarks>Set <see cref="RespireOptions.CircuitBreaker"/> to enable standalone endpoint admission.</remarks>
+/// <remarks>Set <see cref="RespireOptions.CircuitBreaker"/> to enable standalone or Cluster data endpoint admission.</remarks>
 public sealed record RespireCircuitBreakerOptions
 {
     /// <summary>Failure fraction required to open the circuit, from greater than zero through one. Defaults to 0.5.</summary>

@@ -1112,7 +1112,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         TPrefix prefix,
         TCommand command,
         bool throwOnError,
-        CancellationToken cancellationToken = default, int errorAttempts = 0)
+        CancellationToken cancellationToken = default, int errorAttempts = 0, bool pinToConnection = false)
         where TPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
     {
@@ -1121,7 +1121,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             return await SendPrefixedAsync(
                     in prefix, in command, throwOnError, cancellationToken,
-                    commandName: null, armCommandDeadline: false, errorAttempts: errorAttempts)
+                    commandName: null, armCommandDeadline: false, errorAttempts: errorAttempts, pinToConnection: pinToConnection)
                 .ConfigureAwait(false);
         }
         finally
@@ -1328,7 +1328,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         CancellationToken cancellationToken = default,
         string? commandName = null,
         Action<Exception?>? onFrameCompleted = null,
-        string? preferredZone = null, RespireTelemetry.ErrorObservation observation = default, bool pinToConnection = false)
+        string? preferredZone = null, RespireTelemetry.ErrorObservation observation = default, bool pinToConnection = false,
+        CommandDeadline commandDeadline = default)
         where TPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
         => SendBulkStreamCoreAsync(
@@ -1336,7 +1337,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             new BulkStreamPendingResponseSource(commandName, hasPrefixReply: true, onFrameCompleted,
                 cancellationToken, OnBulkStreamLifetimeCancelled),
             discardRepliesBefore: 1, retainRepliesBefore: true, cancellationToken,
-            preferredZone: preferredZone, observation: observation, pinToConnection: pinToConnection);
+            preferredZone: preferredZone, observation: observation, pinToConnection: pinToConnection, commandDeadline: commandDeadline);
 
     private ValueTask<Stream?> SendBulkStreamCoreAsync<TCommand>(
         TCommand command,
@@ -1601,7 +1602,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         in TCommand command,
         CancellationToken cancellationToken = default,
         string commandName = "(command)",
-        string? preferredZone = null, RespireTelemetry.ErrorObservation observation = default)
+        string? preferredZone = null, RespireTelemetry.ErrorObservation observation = default,
+        bool pinToConnection = false, CommandDeadline commandDeadline = default)
         where TFirstPrefix : struct, IRespCommand
         where TSecondPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
@@ -1619,7 +1621,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             repliesBeforeFinal: 2,
             firstQueueReply: 0,
             cancellationToken,
-            commandName, preferredZone: preferredZone, observation: observation);
+            commandName, preferredZone: preferredZone, observation: observation,
+            pinToConnection: pinToConnection, commandDeadline: commandDeadline);
     }
 
     private ValueTask<RespValue> SendMultiReplyCoreAsync<TCommand>(

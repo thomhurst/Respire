@@ -78,6 +78,46 @@ public class DedicatedLeaseAcquisitionTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task OpenCircuitOnStoppedOrStalePoolDoesNotRejectHealthyReplacement(bool stalePublication)
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", server.Port)], UseCluster = true,
+            CircuitBreaker = new() { MinimumFailureCount = 1 }, ThreadPoolMonitoring = false,
+        });
+        await using var replacement = new DedicatedConnectionPool(
+            "127.0.0.1", server.Port, RespireConnectionOptions.Default, null);
+        var endpoint = new RespireEndpoint("127.0.0.1", 9000);
+        await using var original = new DedicatedConnectionPool(endpoint.Host, endpoint.Port,
+            RespireConnectionOptions.Default, null)
+        {
+            MovingOwner = stalePublication ? client.Core.Cluster!.GetMultiplexer(endpoint) : null,
+            // A different publication is stale even before the old pool starts stopping.
+            MovingPublication = new object(),
+        };
+        if (!stalePublication) await original.RetireAsync();
+        var circuits = client.Core.Circuits!;
+        var admission = circuits.Acquire(endpoint, default);
+        try { admission.Failed(new RespireConnectionException("Injected old endpoint failure."), default); }
+        finally { admission.Dispose(); }
+        var state = new RouteState(replacement);
+        var lease = await DedicatedLeaseAcquisition.RentAsync(original, new TestRoute(state), default,
+            reuseIdle: true, DedicatedLeaseKind.Ordinary, circuits: circuits);
+        try
+        {
+            await Assert.That(lease.Pool).IsSameReferenceAs(replacement);
+            await Assert.That(state.Selections).IsEqualTo(1);
+            await Assert.That(state.Retirements).IsEqualTo(1);
+            await Assert.That(state.TerminalError).IsNull();
+            await Assert.That(state.Completions).IsEqualTo(1);
+        }
+        finally { lease.Pool.Return(lease.Connection); }
+    }
+
+    [Test]
     public async Task SelectingSameStoppedPoolPreservesFailureAndStops()
     {
         await using var pool = new DedicatedConnectionPool("127.0.0.1", 6379, RespireConnectionOptions.Default, null);

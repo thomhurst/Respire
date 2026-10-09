@@ -15,7 +15,9 @@ public sealed partial class RespireClient
         cluster = _core.Cluster;
         // Cache fences and server-local cursors keep the normal route. StringOrNullAsync
         // lacks an outer streaming exclusion, so this shared cluster guard must retain it.
-        return cluster is not null && _core.ClientCache is null
+        // Opt-in circuits use the response path: endpoint health completes before caller
+        // conversion, and every redirect or retired generation reacquires admission.
+        return cluster is not null && _core.Circuits is null && _core.ClientCache is null
             && command.ReadKind != ReadCommandKind.CursorRead && command is not IStreamingRespCommand;
     }
 

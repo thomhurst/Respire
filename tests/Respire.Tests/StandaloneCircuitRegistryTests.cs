@@ -8,6 +8,33 @@ namespace Respire.Tests;
 
 public class StandaloneCircuitRegistryTests
 {
+    [Test]
+    public async Task LiveMembershipSkipsRepeatedScansAndInvalidationTrimsAfterRelease()
+    {
+        var endpoints = Enumerable.Range(0, 32).Select(i => new RespireEndpoint("node", 9000 + i)).ToArray();
+        var live = endpoints.ToHashSet();
+        var checks = 0;
+        var registry = new StandaloneCircuitRegistry(new(), isCurrentEndpoint: endpoint =>
+        {
+            checks++;
+            return live.Contains(endpoint);
+        });
+        foreach (var endpoint in endpoints) registry.Acquire(endpoint, default).Dispose();
+        checks = 0;
+        for (var i = 0; i < 100; i++) registry.Acquire(endpoints[i % endpoints.Length], default).Dispose();
+        await Assert.That(checks).IsEqualTo(0);
+        var held = registry.Acquire(endpoints[0], default);
+        live.Remove(endpoints[0]);
+        registry.InvalidateMembership();
+        registry.Acquire(endpoints[1], default).Dispose();
+        await Assert.That(registry.CountForTests).IsEqualTo(32);
+        held.Dispose();
+        await Assert.That(registry.CountForTests).IsEqualTo(31);
+        checks = 0;
+        for (var i = 1; i < 32; i++) registry.Acquire(endpoints[i], default).Dispose();
+        await Assert.That(checks).IsEqualTo(0);
+    }
+
     [Test, NotInParallel]
     public async Task WarmHealthyAdmissionAllocatesNothingWithPositiveControl()
     {

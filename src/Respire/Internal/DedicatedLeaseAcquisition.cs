@@ -47,7 +47,8 @@ internal static class DedicatedLeaseAcquisition
     // Struct routes avoid strategy allocations.
     internal static async ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> RentAsync<TRoute>(
         DedicatedConnectionPool pool, TRoute route, CancellationToken cancellationToken,
-        bool reuseIdle, DedicatedLeaseKind kind, string? preferredZone = null)
+        bool reuseIdle, DedicatedLeaseKind kind, string? preferredZone = null,
+        StandaloneCircuitRegistry? circuits = null)
         where TRoute : struct, IDedicatedLeaseRoute
     {
         try
@@ -59,12 +60,23 @@ internal static class DedicatedLeaseAcquisition
                 route.ThrowIfDisposed();
                 try
                 {
-                    var connection = await pool.RentAsync(cancellationToken, reuseIdle: reuseIdle, kind: kind,
-                        preferredZone: preferredZone).ConfigureAwait(false);
-                    return (pool, connection);
+                    // A stale selection must reselect before consulting the old endpoint's history.
+                    if (circuits is not null)
+                        ObjectDisposedException.ThrowIf(pool.IsStopping || !pool.IsMovingPublicationCurrent, pool);
+                    var admission = circuits?.Acquire(pool.Endpoint, cancellationToken) ?? default;
+                    try
+                    {
+                        var connection = await pool.RentAsync(cancellationToken, reuseIdle: reuseIdle, kind: kind,
+                            preferredZone: preferredZone).ConfigureAwait(false);
+                        // Connecting is not a successful application probe. Dispatch owns its own permit.
+                        return (pool, connection);
+                    }
+                    catch (Exception error) { admission.ConnectionFailed(error, cancellationToken); throw; }
+                    finally { admission.Dispose(); }
                 }
-                catch (Exception error) when (!cancellationToken.IsCancellationRequested && pool.IsStopping
-                    && DedicatedConnectionPool.IsRetirementFailure(error)
+                catch (Exception error) when (!cancellationToken.IsCancellationRequested
+                    && (pool.IsStopping || circuits is not null && !pool.IsMovingPublicationCurrent)
+                    && (DedicatedConnectionPool.IsRetirementFailure(error) || error is RespireCircuitOpenException)
                     && route.CanRetry(retirements, cancellationToken))
                 {
                     route.RecordRetirement(error, retirements++);

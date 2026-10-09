@@ -2,7 +2,7 @@ namespace Respire.Internal;
 
 // Created only in opt-in mode. Prefix and cache-bypass views share endpoint state.
 internal sealed class StandaloneCircuitRegistry(RespireCircuitBreakerOptions options,
-    Func<RespireEndpoint>? getCurrentEndpoint = null)
+    Func<RespireEndpoint>? getCurrentEndpoint = null, Func<RespireEndpoint, bool>? isCurrentEndpoint = null)
 {
     internal const int RetainedEndpointLimit = 16;
     private readonly Lock _gate = new();
@@ -10,12 +10,17 @@ internal sealed class StandaloneCircuitRegistry(RespireCircuitBreakerOptions opt
     // Retain current and in-flight endpoint state; trim only idle maintenance history.
     private readonly Dictionary<RespireEndpoint, Entry> _circuits = new(RespireEndpointComparer.Instance);
     private long _lastUse;
+    private long _membershipVersion;
+    private long _trimmedMembershipVersion = -1;
+    private bool _trimPending;
+    private RespireEndpoint? _lastCurrentEndpoint;
 
     internal sealed class Entry(EndpointCircuitBreaker circuit)
     {
         internal EndpointCircuitBreaker Circuit { get; } = circuit;
         internal int ActiveAdmissions;
         internal long LastUse;
+        internal bool TrimAfterRelease;
     }
 
     internal CircuitAdmission Acquire(RespireEndpoint endpoint, CancellationToken cancellationToken)
@@ -24,7 +29,10 @@ internal sealed class StandaloneCircuitRegistry(RespireCircuitBreakerOptions opt
         lock (_gate)
         {
             if (!_circuits.TryGetValue(endpoint, out var entry))
+            {
                 _circuits.Add(endpoint, entry = new(new(endpoint, options)));
+                _trimPending = true;
+            }
             entry.LastUse = ++_lastUse;
             if (!entry.Circuit.TryAcquire(out var permit, out var retryAfter))
                 throw new RespireCircuitOpenException(endpoint, retryAfter);
@@ -39,6 +47,7 @@ internal sealed class StandaloneCircuitRegistry(RespireCircuitBreakerOptions opt
         lock (_gate)
         {
             entry.ActiveAdmissions--;
+            if (entry.ActiveAdmissions == 0 && entry.TrimAfterRelease) _trimPending = true;
             TrimInactive();
         }
     }
@@ -47,13 +56,22 @@ internal sealed class StandaloneCircuitRegistry(RespireCircuitBreakerOptions opt
     {
         if (_circuits.Count <= RetainedEndpointLimit) return;
         var current = getCurrentEndpoint?.Invoke();
+        var version = Volatile.Read(ref _membershipVersion);
+        // A stable live set above the standalone cap has nothing to evict. Revisit only
+        // after membership changes, a new entry, or completion of retained inactive work.
+        if (!_trimPending && version == _trimmedMembershipVersion && current == _lastCurrentEndpoint) return;
+        _trimPending = false;
+        _trimmedMembershipVersion = version;
+        _lastCurrentEndpoint = current;
         while (_circuits.Count > RetainedEndpointLimit)
         {
             Entry? oldest = null;
             foreach (var entry in _circuits.Values)
             {
-                if (entry.ActiveAdmissions != 0 || current is { } endpoint
-                    && RespireEndpointComparer.Instance.Equals(entry.Circuit.Endpoint, endpoint)) continue;
+                var isCurrent = current is { } endpoint && RespireEndpointComparer.Instance.Equals(entry.Circuit.Endpoint, endpoint)
+                    || isCurrentEndpoint?.Invoke(entry.Circuit.Endpoint) == true;
+                entry.TrimAfterRelease = !isCurrent && entry.ActiveAdmissions != 0;
+                if (isCurrent || entry.ActiveAdmissions != 0) continue;
                 if (oldest is null || entry.LastUse < oldest.LastUse) oldest = entry;
             }
             // Active work owns its state until completion; it cannot be evicted to meet a cap.
@@ -61,6 +79,9 @@ internal sealed class StandaloneCircuitRegistry(RespireCircuitBreakerOptions opt
             _circuits.Remove(oldest.Circuit.Endpoint);
         }
     }
+
+    // Safe under router writer gates: no registry lock or router callback is taken here.
+    internal void InvalidateMembership() => Interlocked.Increment(ref _membershipVersion);
 
     internal int CountForTests { get { lock (_gate) return _circuits.Count; } }
 
@@ -81,6 +102,14 @@ internal struct CircuitAdmission(CircuitPermit permit, StandaloneCircuitRegistry
     private CircuitOutcome _outcome = CircuitOutcome.Ignored;
 
     internal void Success() => _outcome = CircuitOutcome.Success;
+
+    // Socket/TLS setup failures precede the command transport's exception wrappers.
+    // Classify them without changing the exception returned to the caller.
+    internal void ConnectionFailed(Exception error, CancellationToken cancellationToken)
+        => Failed(error is IOException or System.Net.Sockets.SocketException
+            or System.Security.Authentication.AuthenticationException
+                ? new RespireConnectionException("Endpoint connection acquisition failed.", error) : error,
+            cancellationToken);
 
     internal void Failed(Exception error, CancellationToken cancellationToken)
     {
