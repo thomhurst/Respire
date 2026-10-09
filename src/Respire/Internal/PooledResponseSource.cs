@@ -34,6 +34,7 @@ internal sealed class PooledResponseSource<TState, TResult> : IValueTaskSource<T
     // Incomplete inputs must publish successful replies on an owner that can safely run
     // caller code inline, outside receive-loop continuations and locks (CompletionScheduler
     // for network replies). Faults/cancellation may originate on any owner and are dispatched.
+    // TODO(#1308): Remove the legacy observation overload after dispatch migrates to FinalOwner.
     public static ValueTask<TResult> Create(
         ValueTask<RespValue> responseTask,
         TState state,
@@ -78,7 +79,14 @@ internal sealed class PooledResponseSource<TState, TResult> : IValueTaskSource<T
                 {
                     if (!transferOwnership || !converted) response.Dispose();
                 }
-                catch (Exception error) { failure = error; throw; }
+                catch (Exception cleanupError)
+                {
+                    if (failure is null)
+                    {
+                        failure = cleanupError;
+                        throw;
+                    }
+                }
                 finally
                 {
                     // An ordinary raw send owns its failures. A transferred final lease
@@ -142,7 +150,7 @@ internal sealed class PooledResponseSource<TState, TResult> : IValueTaskSource<T
             {
                 if (!transferOwnership || !converted) response.Dispose();
             }
-            catch (Exception cleanupError) { error = cleanupError; }
+            catch (Exception cleanupError) { error ??= cleanupError; }
         }
 
         FinishObservation(observation, legacyObservation, error,
@@ -164,6 +172,7 @@ internal sealed class PooledResponseSource<TState, TResult> : IValueTaskSource<T
         }
     }
 
+    // TODO(#1308): Remove the legacy branch when dispatch migrates to FinalOwner.
     // Existing dispatch owns categorized retry history through its legacy lease. Keep
     // that contract until dispatch migrates to the independent failure-only owner.
     private static void FinishObservation(ErrorObservation.FinalOwner observation,

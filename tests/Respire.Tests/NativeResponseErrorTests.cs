@@ -87,6 +87,54 @@ public class NativeResponseErrorTests
     }
 
     [Test]
+    [Arguments(false, "conversion")]
+    [Arguments(true, "conversion")]
+    [Arguments(false, "cancel")]
+    [Arguments(true, "cancel")]
+    [Arguments(false, "cleanup")]
+    [Arguments(true, "cleanup")]
+    public async Task PooledConversionPreservesFirstFailureWhenCleanupThrows(bool asynchronous, string outcome)
+    {
+        using var configuration = new MetricConfigurationScope();
+        using var capture = new Capture();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        Exception? expected = outcome switch
+        {
+            "conversion" => new RespireProtocolException("conversion failure"),
+            "cancel" => new OperationCanceledException(cancellation.Token),
+            _ => null,
+        };
+        // An invalid element count injects a deterministic disposal failure without renting storage.
+        var response = RespValue.PooledAggregate(RespDataType.Array, new RespValue[1], 2);
+        var owner = ErrorObservation.StartFailure();
+        var completion = new TaskCompletionSource<RespValue>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Exception? actual = null;
+        Task<int>? task = null;
+        try
+        {
+            var converted = PooledResponseSource<Exception?, int>.Create(
+                asynchronous ? new(completion.Task) : new(response), expected,
+                static (Exception? error, in RespValue _) => error is null ? 1 : throw error,
+                observation: owner);
+            task = converted.AsTask();
+            if (asynchronous) completion.SetResult(response);
+            _ = await task;
+        }
+        catch (Exception error) { actual = error; }
+        if (expected is null) await Assert.That(actual).IsTypeOf<IndexOutOfRangeException>();
+        else await Assert.That(ReferenceEquals(actual, expected)).IsTrue();
+        if (outcome == "cancel")
+        {
+            await Assert.That(((OperationCanceledException)actual!).CancellationToken).IsEqualTo(cancellation.Token);
+            if (asynchronous) await Assert.That(task!.IsCanceled).IsTrue();
+        }
+        await Assert.That(capture.Items.Count).IsEqualTo(1);
+        if (outcome == "cancel") await Assert.That(capture.Items.Single().Category).IsEqualTo("cancelled");
+        await Assert.That(owner.PublishFinal(new IOException())).IsFalse();
+    }
+
+    [Test]
     [Arguments("raw", "transport")]
     [Arguments("raw", "server")]
     [Arguments("raw", "cancel")]
