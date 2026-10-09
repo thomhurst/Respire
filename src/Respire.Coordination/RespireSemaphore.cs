@@ -94,15 +94,20 @@ public sealed class RespireSemaphore
         var concreteClient = _client as RespireClient;
         // Only a client that can fence gets one; the others still use a tracked execution for its
         // send timestamp.
-        var trackedWire = concreteClient is null
-            ? null
-            : await concreteClient.GetCorrectionTrackingClientAsync(cancellationToken, observation).ConfigureAwait(false);
-        if (concreteClient is not null && milliseconds == 0)
+        RespireClient? trackedWire = null;
+        if (concreteClient is not null)
         {
-            // An uncertain owner-only acquire has no server expiry as a fallback. Require the
-            // identity barrier even without a command timeout or caller cancellation.
-            await concreteClient.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
-            trackedWire = concreteClient;
+            if (milliseconds == 0)
+            {
+                // An uncertain owner-only acquire has no server expiry as a fallback. Require
+                // the identity barrier directly, without first handling a failed optional probe.
+                await concreteClient.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
+                trackedWire = concreteClient;
+            }
+            else
+            {
+                trackedWire = await concreteClient.GetCorrectionTrackingClientAsync(cancellationToken, observation).ConfigureAwait(false);
+            }
         }
         // Sampled after connection preflight: the permit cannot exist before the script is sent,
         // so only the acquisition itself counts against a short expiry.

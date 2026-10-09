@@ -36,6 +36,44 @@ public class SemaphoreErrorMetricsTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task OwnerOnlyAcquireReportsRejectedOrderingProbeOnce(bool rejectKill)
+    {
+        using var metrics = new ErrorCollector();
+        await using var server = new FakeRespServer(32, ":1\r\n"u8.ToArray());
+        server.ReplyOverride = (_, command) => command switch
+        {
+            "CLIENT ID" when rejectKill => ":123\r\n"u8.ToArray(),
+            "CLIENT ID" => "-NOPERM identity rejected\r\n"u8.ToArray(),
+            _ when command.StartsWith("CLIENT KILL ", StringComparison.Ordinal) => "-NOPERM kill rejected\r\n"u8.ToArray(),
+            _ => null,
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new RespireEndpoint("127.0.0.1", server.Port)],
+            Connections = 1,
+            Protocol = RespProtocol.Resp2,
+            CommandTimeout = null,
+        });
+        metrics.Items.Clear();
+
+        var error = await Assert.That(async () => await new RespireSemaphore(client, "key", 1)
+            .TryAcquireAsync()).ThrowsExactly<RespireServerException>();
+
+        await Assert.That(error!.Code).IsEqualTo("NOPERM");
+        await Assert.That(server.ReceivedCommands.Count(command => command == "CLIENT ID")).IsEqualTo(1);
+        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("CLIENT KILL ", StringComparison.Ordinal)))
+            .IsEqualTo(rejectKill ? 1 : 0);
+        await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("EVAL", StringComparison.Ordinal))).IsFalse();
+        await Assert.That(metrics.Items.Count).IsEqualTo(1);
+        var final = metrics.Items.Single();
+        await Assert.That((bool)final["redis.client.errors.internal"]!).IsFalse();
+        await Assert.That(final["db.response.status_code"]).IsEqualTo("NOPERM");
+        await Assert.That(final["redis.client.operation.retry_attempts"]).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task PreCancelledAcquireRetainsCancellationToken()
     {
         using var metrics = new ErrorCollector();
