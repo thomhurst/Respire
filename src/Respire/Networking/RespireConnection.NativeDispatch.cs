@@ -8,9 +8,8 @@ internal sealed partial class RespireConnection
     // Only an immediately admitted ordinary command transfers final ownership to its
     // native source. Capacity waits and retirement recovery keep the dispatch owner.
     private bool TryAdmitNative<TCommand>(in TCommand command, PendingResponse source,
-        CancellationToken cancellationToken, string operation, out RespireConnection destination,
-        out CommandDeadline deadline, out RespireConnectionRetiredException? retirement,
-        RespireTelemetry.OperationStart durationStarted = default)
+        CancellationToken cancellationToken, out RespireConnection destination,
+        out CommandDeadline deadline, out RespireConnectionRetiredException? retirement)
         where TCommand : struct, IRespCommand
     {
         destination = this;
@@ -30,10 +29,11 @@ internal sealed partial class RespireConnection
         }
         catch (Exception error)
         {
-            ReclaimUnpublished(source);
-            new RespireTelemetry.DurationObservation(this, durationStarted).Complete(operation, error);
-            RespireTelemetry.RecordError(error, internallyHandled: false);
-            throw;
+            // Preserve the async admission boundary and let native inspection publish
+            // duration and final error once. No receive entry owns the second reference.
+            source.TrySetException(error);
+            source.ReleaseRef();
+            return true;
         }
         if (!enqueued)
         {
@@ -52,7 +52,7 @@ internal sealed partial class RespireConnection
         var source = _sourcePool.Rent(throwOnError: true, operation, observeErrors: true);
         // Capture the token before admission: completion may race publication.
         var response = source.Task;
-        if (TryAdmitNative(in command, source, cancellationToken, operation, out var destination, out var deadline, out var retirement)) return response;
+        if (TryAdmitNative(in command, source, cancellationToken, out var destination, out var deadline, out var retirement)) return response;
         return DispatchResponseSource<RespValue>.Run(
             (Connection: destination, Command: command, Token: cancellationToken, Operation: operation, Deadline: deadline, Retirement: retirement),
             static (state, observation) =>
@@ -71,7 +71,7 @@ internal sealed partial class RespireConnection
         var source = StringPendingResponseSource.Rent(operation,
             duration: new RespireTelemetry.DurationObservation(this, started));
         var response = source.Task;
-        if (TryAdmitNative(in command, source, cancellationToken, operation, out var destination, out var deadline, out var retirement, started)) return response;
+        if (TryAdmitNative(in command, source, cancellationToken, out var destination, out var deadline, out var retirement)) return response;
         return DispatchResponseSource<string?>.Run(
             (Connection: destination, Command: command, Token: cancellationToken, Operation: operation, Deadline: deadline, Retirement: retirement, Started: started),
             static (state, observation) =>
@@ -90,7 +90,7 @@ internal sealed partial class RespireConnection
         var source = BytesPendingResponseSource.Rent(operation,
             duration: new RespireTelemetry.DurationObservation(this, started));
         var response = source.Task;
-        if (TryAdmitNative(in command, source, cancellationToken, operation, out var destination, out var deadline, out var retirement, started)) return response;
+        if (TryAdmitNative(in command, source, cancellationToken, out var destination, out var deadline, out var retirement)) return response;
         return DispatchResponseSource<byte[]?>.Run(
             (Connection: destination, Command: command, Token: cancellationToken, Operation: operation, Deadline: deadline, Retirement: retirement, Started: started),
             static (state, observation) =>
@@ -110,7 +110,7 @@ internal sealed partial class RespireConnection
         var source = ConvertedPendingResponseSource<TState, TResult>.Rent(state, converter, transferOwnership, operation,
             duration: new RespireTelemetry.DurationObservation(this, started));
         var response = source.Task;
-        if (TryAdmitNative(in command, source, cancellationToken, operation, out var destination, out var deadline, out var retirement, started)) return response;
+        if (TryAdmitNative(in command, source, cancellationToken, out var destination, out var deadline, out var retirement)) return response;
         return DispatchResponseSource<TResult>.Run(
             (Connection: destination, Command: command, Token: cancellationToken, Operation: operation, Deadline: deadline,
                 Retirement: retirement, Started: started, State: state, Converter: converter, Transfer: transferOwnership),

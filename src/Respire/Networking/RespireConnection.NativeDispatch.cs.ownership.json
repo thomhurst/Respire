@@ -6,7 +6,7 @@
       "Role": "helper",
       "Member": "Respire.Networking.RespireConnection.SendNativeCheckedAsync`1(in TCommand,CancellationToken,string):ValueTask<RespValue>",
       "Owner": "Respire.Networking.PendingResponseSource.IValueTaskSource<RespValue>.GetResult(short):RespValue",
-      "Contract": "Immediate admission transfers final ownership directly to the native raw response. Rejected admission reclaims the unpublished source and retains the logical dispatch owner on fallback. Pre-admission failures publish only after reclaiming the source. No cache fence, scripted response, route retry, or outer cleanup is bypassed."
+      "Contract": "Immediate admission transfers final ownership directly to the native raw response. Capacity waits and retirement fallback reclaim the unpublished source and retain the logical dispatch owner. Pre-admission failures complete the native source exceptionally and release its unpublished receive reference; native caller inspection publishes after cleanup. No cache fence, scripted response, route retry, or outer cleanup is bypassed."
     },
     {
       "Name": "native-string-admission",
