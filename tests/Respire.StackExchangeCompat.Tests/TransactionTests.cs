@@ -265,6 +265,57 @@ public class TransactionTests(RedisTestContainer redis)
     [Test]
     [Arguments(2)]
     [Arguments(3)]
+    public async Task SortedSetConditionsPreserveNumericInfinityAndSnapshotByteValues(int protocol)
+    {
+        await using var connection = RespireConnectionMultiplexer.Create(Options(protocol));
+        using var control = await ConnectionMultiplexer.ConnectAsync(redis.StackExchangeConnectionString);
+        var expected = control.GetDatabase();
+        foreach (var score in new[] { double.NegativeInfinity, double.PositiveInfinity })
+        {
+            await expected.SortedSetAddAsync("sorted", "member", score);
+            RedisValue textScore = score < 0 ? "-inf"u8.ToArray() : "+inf"u8.ToArray();
+            var conditions = new (Condition Condition, bool Satisfied)[]
+            {
+                (Condition.SortedSetEqual("sorted", "member", score), true),
+                (Condition.SortedSetNotEqual("sorted", "member", score), false),
+                (Condition.SortedSetEqual("sorted", "member", -score), false),
+                (Condition.SortedSetNotEqual("sorted", "member", -score), true),
+                (Condition.SortedSetEqual("sorted", "member", textScore), false),
+                (Condition.SortedSetNotEqual("sorted", "member", textScore), true),
+                (Condition.SortedSetEqual("sorted", "missing", RedisValue.Null), true),
+                (Condition.SortedSetNotEqual("sorted", "missing", RedisValue.Null), false),
+            };
+            foreach (var (condition, satisfied) in conditions)
+            {
+                var upstream = expected.CreateTransaction();
+                var reference = upstream.AddCondition(condition);
+                Assert.Equal(satisfied, await upstream.ExecuteAsync());
+                Assert.Equal(satisfied, reference.WasSatisfied);
+                var transaction = connection.GetDatabase().CreateTransaction();
+                var actual = transaction.AddCondition(condition);
+                var write = transaction.StringIncrementAsync("counter");
+                Assert.Equal(satisfied, await transaction.ExecuteAsync());
+                Assert.Equal(reference.WasSatisfied, actual.WasSatisfied);
+                Assert.False(transaction.WasWatchConflict);
+                if (satisfied) await write;
+                else await Assert.ThrowsAnyAsync<OperationCanceledException>(() => write);
+            }
+        }
+
+        await expected.SortedSetAddAsync("sorted", "member", 1.5);
+        byte[] expectedBytes = "1.5000000000000000"u8.ToArray();
+        var snapshotTransaction = connection.GetDatabase().CreateTransaction();
+        var snapshot = snapshotTransaction.AddCondition(Condition.SortedSetEqual("sorted", "member", expectedBytes));
+        expectedBytes.AsSpan().Fill((byte)'2');
+        var snapshotWrite = snapshotTransaction.StringIncrementAsync("snapshot-counter");
+        Assert.True(await snapshotTransaction.ExecuteAsync());
+        Assert.True(snapshot.WasSatisfied);
+        Assert.Equal(1, await snapshotWrite);
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
     public async Task SupportedConditionFamiliesMatchUpstream(int protocol)
     {
         await using var connection = RespireConnectionMultiplexer.Create(Options(protocol));

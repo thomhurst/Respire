@@ -122,7 +122,13 @@ internal sealed class CompatCondition(RespireKey key, RespireCommand command, Re
         return satisfied;
     }
 
-    private static RedisValue Copy(RedisValue value) => value.IsNull ? RedisValue.Null : ((byte[]?)value)!.ToArray();
+    private static RedisValue Copy(RedisValue value)
+    {
+        // Numeric values are immutable. Keep their representation because upstream equality
+        // deliberately distinguishes numeric infinity from its textual form.
+        if (value.IsNull || value.IsInteger || value.Box() is double) return value;
+        return ((byte[]?)value)!.ToArray();
+    }
     private static RedisValue Score(RedisValue value)
     {
         var score = (double)value;
