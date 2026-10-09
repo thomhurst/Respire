@@ -35,7 +35,7 @@ public class AsyncFlushSignalTests
     [Arguments(true)]
     public async Task ConcurrentPublicationAndRearmingDrainEveryPublishedItem(bool preferInline)
     {
-        const int producers = 8;
+        const int producers = 50;
         const int perProducer = 1_000;
         var signal = new AsyncFlushSignal();
         var gate = new object();
@@ -72,6 +72,45 @@ public class AsyncFlushSignalTests
         await Task.WhenAll(writers).WaitAsync(deadline.Token);
         await Assert.That(drained).IsEqualTo(producers * perProducer);
         await Assert.That(observed.All(item => item)).IsTrue();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ConcurrentSignalsCoalesceWhileParkedWaiterIsResuming(bool preferInline)
+    {
+        var signal = new AsyncFlushSignal();
+        var pending = signal.WaitAsync();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resumed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        pending.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(() =>
+        {
+            try
+            {
+                entered.TrySetResult();
+                if (!release.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("Waiter was not released.");
+                pending.ConfigureAwait(false).GetAwaiter().GetResult();
+                resumed.TrySetResult();
+            }
+            catch (Exception error) { resumed.TrySetException(error); }
+        });
+        var wake = Task.Run(() => signal.Signal(preferInline));
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Task.WhenAll(Enumerable.Range(0, 50).Select(_ => Task.Run(() => signal.Signal(preferInline))));
+        }
+        finally
+        {
+            release.Set();
+            await Task.WhenAll(wake, resumed.Task).WaitAsync(TimeSpan.FromSeconds(5));
+        }
+
+        var next = signal.WaitAsync();
+        await Assert.That(next.IsCompleted).IsFalse();
+        signal.Signal(preferInline);
+        await next.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
     }
 
     [Test]

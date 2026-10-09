@@ -57,6 +57,13 @@ internal sealed class AsyncFlushSignal : IValueTaskSource, IThreadPoolWorkItem
     /// </param>
     public void Signal(bool preferInline = false)
     {
+        // The consumer drains authoritative work after consuming a signal. An existing
+        // signal covers this publication too, so busy producers need not write its cache line.
+        if (Volatile.Read(ref _state) == Signaled)
+        {
+            return;
+        }
+
         if (Interlocked.Exchange(ref _state, Signaled) != Waiting)
         {
             return;

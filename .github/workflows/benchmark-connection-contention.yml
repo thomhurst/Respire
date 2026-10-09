@@ -27,3 +27,51 @@ jobs:
       # changes still produce comparisons without requiring a new speedup.
       improvement-methods: ${{ github.event.pull_request.number == 1152 && 'GetPipeline,ConcurrentGetPipelines' || '' }}
       artifact-prefix: connection-contention-comparison
+
+  process-cpu:
+    if: github.event.label.name == 'run-connection-contention-benchmarks'
+    needs: compare
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: connection-contention-comparison-net10.0
+      - name: Summarize c=50 process CPU per completed GET
+        shell: python
+        run: |
+          import json, math, os
+          from pathlib import Path
+          from statistics import mean
+          prefix = 'CONNECTION_CONTENTION_CPU '
+          phases = {}
+          lines = ['## c=50 process CPU stress', '',
+                   'Each sample runs for at least five seconds after two seconds of warmup, outside BDN timings. CPU includes client background work and excludes Redis. Lower CPU ns/GET is better; compare the candidate with both controls.', '',
+                   '| Phase | Sample | Completed GETs | CPU ms | Wall seconds | CPU ns/GET |',
+                   '| --- | ---: | ---: | ---: | ---: | ---: |']
+          for phase in ('baseline-validation', 'candidate-validation', 'baseline-a', 'candidate', 'baseline-b'):
+              samples = [json.loads(line[len(prefix):]) for line in Path(f'{phase}.log').read_text().splitlines()
+                         if line.startswith(prefix)]
+              assert samples, f'Missing CPU samples: {phase}'
+              for index, sample in enumerate(samples, 1):
+                  assert sample['concurrency'] == 50 and sample['operations'] > 0
+                  assert math.isfinite(sample['cpuMilliseconds']) and sample['cpuMilliseconds'] > 0
+                  assert math.isfinite(sample['elapsedSeconds']) and sample['elapsedSeconds'] >= 5
+                  sample['cpuNanosecondsPerGet'] = sample['cpuMilliseconds'] * 1e6 / sample['operations']
+                  lines.append(f"| {phase} | {index} | {sample['operations']} | {sample['cpuMilliseconds']:.3f} | {sample['elapsedSeconds']:.3f} | {sample['cpuNanosecondsPerGet']:.3f} |")
+              phases[phase] = samples
+          candidate = mean(sample['cpuNanosecondsPerGet'] for sample in phases['candidate'])
+          lines.extend(['', 'Mean CPU ns/GET deltas (informational; inspect sample variation):'])
+          for control in ('baseline-a', 'baseline-b'):
+              baseline = mean(sample['cpuNanosecondsPerGet'] for sample in phases[control])
+              lines.append(f'- Candidate versus {control}: {100 * (candidate / baseline - 1):+.2f}%')
+          summary = '\n'.join(lines) + '\n'
+          Path('process-cpu.md').write_text(summary)
+          Path('process-cpu.json').write_text(json.dumps(phases, indent=2))
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as stream:
+              stream.write(summary)
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: connection-contention-process-cpu-net10.0
+          path: process-cpu.*
+          retention-days: 14
