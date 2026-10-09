@@ -27,7 +27,11 @@ public partial interface IServerCommands
 
 internal sealed partial class ServerCommands
 {
-    public async ValueTask<RespireHotKeysTracker> GetHotKeysTrackerAsync(CancellationToken cancellationToken = default)
+    public ValueTask<RespireHotKeysTracker> GetHotKeysTrackerAsync(CancellationToken cancellationToken = default)
+        => DispatchResponseSource<RespireHotKeysTracker>.Run((Client: this, cancellationToken: cancellationToken),
+            static (state, observation) => state.Client.GetHotKeysTrackerBorrowedAsync(state.cancellationToken, observation));
+
+    private async ValueTask<RespireHotKeysTracker> GetHotKeysTrackerBorrowedAsync(CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var connection = await client.AcquireConnectionAsync(cancellationToken).ConfigureAwait(false);
@@ -36,33 +40,63 @@ internal sealed partial class ServerCommands
 
     public ValueTask<RespireServerResult<bool>[]> StartHotKeysOnAllNodesAsync(RespireHotKeysOptions options, CancellationToken cancellationToken = default)
     {
-        EnsureAdminAllowed("HOTKEYS START");
-        ArgumentNullException.ThrowIfNull(options);
-        var command = options.BuildCommand();
-        cancellationToken.ThrowIfCancellationRequested();
-        return FanOutAsync("HOTKEYS START", command, cancellationToken,
-            static (ServerCommands _, in RespValue value) => HotKeysParser.Ok(in value));
+        var owner = DispatchResponseSource<RespireServerResult<bool>[]>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            EnsureAdminAllowed("HOTKEYS START");
+            ArgumentNullException.ThrowIfNull(options);
+            var command = options.BuildCommand();
+            cancellationToken.ThrowIfCancellationRequested();
+            return owner.Attach(FanOutAsync("HOTKEYS START", command, cancellationToken,
+                static (ServerCommands _, in RespValue value) => HotKeysParser.Ok(in value), observation: observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     public ValueTask<RespireServerResult<RespireHotKeysSnapshot[]?>[]> GetHotKeysOnAllNodesAsync(CancellationToken cancellationToken = default)
-        => FanOutAsync("HOTKEYS GET", new Cmd(HotKeysCommands.Get), cancellationToken,
-            static (ServerCommands _, in RespValue value) => HotKeysParser.Parse(in value));
+    {
+        var owner = DispatchResponseSource<RespireServerResult<RespireHotKeysSnapshot[]?>[]>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            return owner.Attach(FanOutAsync("HOTKEYS GET", new Cmd(HotKeysCommands.Get), cancellationToken,
+            static (ServerCommands _, in RespValue value) => HotKeysParser.Parse(in value), observation: observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
 
     public ValueTask<RespireServerResult<bool>[]> StopHotKeysOnAllNodesAsync(CancellationToken cancellationToken = default)
-        => MutateHotKeysOnAllNodesAsync("HOTKEYS STOP", new Cmd(HotKeysCommands.Stop), cancellationToken,
-            static (ServerCommands _, in RespValue value) => HotKeysParser.Stopped(in value));
+    {
+        var owner = DispatchResponseSource<RespireServerResult<bool>[]>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            return owner.Attach(MutateHotKeysOnAllNodesAsync("HOTKEYS STOP", new Cmd(HotKeysCommands.Stop), cancellationToken,
+            static (ServerCommands _, in RespValue value) => HotKeysParser.Stopped(in value), observation: observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
 
     public ValueTask<RespireServerResult<bool>[]> ResetHotKeysOnAllNodesAsync(CancellationToken cancellationToken = default)
-        => MutateHotKeysOnAllNodesAsync("HOTKEYS RESET", new Cmd(HotKeysCommands.Reset), cancellationToken,
-            static (ServerCommands _, in RespValue value) => HotKeysParser.Ok(in value));
+    {
+        var owner = DispatchResponseSource<RespireServerResult<bool>[]>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            return owner.Attach(MutateHotKeysOnAllNodesAsync("HOTKEYS RESET", new Cmd(HotKeysCommands.Reset), cancellationToken,
+            static (ServerCommands _, in RespValue value) => HotKeysParser.Ok(in value), observation: observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
 
     private ValueTask<RespireServerResult<bool>[]> MutateHotKeysOnAllNodesAsync<TCommand>(string operation,
-        TCommand command, CancellationToken cancellationToken, ResponseConverter<ServerCommands, bool> convert)
+        TCommand command, CancellationToken cancellationToken, ResponseConverter<ServerCommands, bool> convert, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
     {
         EnsureAdminAllowed(operation);
         cancellationToken.ThrowIfCancellationRequested();
-        return FanOutAsync(operation, command, cancellationToken, convert);
+        return FanOutAsync(operation, command, cancellationToken, convert, observation: observation);
     }
 }
 
@@ -89,18 +123,17 @@ public sealed class RespireHotKeysTracker
     public bool IsConnected => !_client.Core.Disposed && _connection.IsConnected;
 
     /// <summary>Starts a shared node-local session. Requires AllowAdmin; an active session fails on the server.</summary>
-    public async ValueTask StartAsync(RespireHotKeysOptions options, CancellationToken cancellationToken = default)
+    public ValueTask StartAsync(RespireHotKeysOptions options, CancellationToken cancellationToken = default)
+        => DispatchResponseSource.Run((Client: this, options: options, cancellationToken: cancellationToken),
+            static (state, observation) => state.Client.StartBorrowedAsync(state.options, state.cancellationToken, observation));
+
+    private async ValueTask StartBorrowedAsync(RespireHotKeysOptions options, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         // The owner covers handle preflight and transfers into conversion.
-        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
         CmdN command;
-        try
-        {
-            EnsureAdmin("HOTKEYS START");
-            ArgumentNullException.ThrowIfNull(options);
-            command = options.BuildCommand();
-        }
-        catch (Exception error) { observation.Final(error); observation.Dispose(); throw; }
+        EnsureAdmin("HOTKEYS START");
+        ArgumentNullException.ThrowIfNull(options);
+        command = options.BuildCommand();
         _ = await ConvertAsync("HOTKEYS START", command, cancellationToken,
             static (RespireHotKeysTracker _, in RespValue reply) => HotKeysParser.Ok(in reply), observation).ConfigureAwait(false);
     }
@@ -108,33 +141,38 @@ public sealed class RespireHotKeysTracker
     /// <summary>Returns owned snapshot maps in server order, or null when no session exists. Does not stop tracking.</summary>
     /// <remarks>Does not require AllowAdmin; server ACLs still apply. The array preserves the server's outer
     /// reply without assuming that future servers always return exactly one snapshot.</remarks>
-    public async ValueTask<RespireHotKeysSnapshot[]?> GetAsync(CancellationToken cancellationToken = default)
-        => await ConvertAsync("HOTKEYS GET", new Cmd(HotKeysCommands.Get), cancellationToken,
-            static (RespireHotKeysTracker _, in RespValue reply) => HotKeysParser.Parse(in reply)).ConfigureAwait(false);
+    public ValueTask<RespireHotKeysSnapshot[]?> GetAsync(CancellationToken cancellationToken = default)
+        => DispatchResponseSource<RespireHotKeysSnapshot[]?>.Run((Client: this, cancellationToken: cancellationToken),
+            static (state, observation) => state.Client.GetBorrowedAsync(state.cancellationToken, observation));
+
+    private async ValueTask<RespireHotKeysSnapshot[]?> GetBorrowedAsync(CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+    {
+        return await ConvertAsync("HOTKEYS GET", new Cmd(HotKeysCommands.Get), cancellationToken,
+            static (RespireHotKeysTracker _, in RespValue reply) => HotKeysParser.Parse(in reply), observation: observation).ConfigureAwait(false);
+    }
 
     /// <summary>Stops collection, retaining its data. Requires AllowAdmin; false means no active session.</summary>
-    public async ValueTask<bool> StopAsync(CancellationToken cancellationToken = default)
+    public ValueTask<bool> StopAsync(CancellationToken cancellationToken = default)
+        => DispatchResponseSource<bool>.Run((Client: this, cancellationToken: cancellationToken),
+            static (state, observation) => state.Client.StopBorrowedAsync(state.cancellationToken, observation));
+
+    private async ValueTask<bool> StopBorrowedAsync(CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
-        var observation = AdminObservation("HOTKEYS STOP");
+        EnsureAdmin("HOTKEYS STOP");
         return await ConvertAsync("HOTKEYS STOP", new Cmd(HotKeysCommands.Stop), cancellationToken,
             static (RespireHotKeysTracker _, in RespValue reply) => HotKeysParser.Stopped(in reply), observation).ConfigureAwait(false);
     }
 
     /// <summary>Releases stopped session data. Requires AllowAdmin; an active session fails on the server.</summary>
-    public async ValueTask ResetAsync(CancellationToken cancellationToken = default)
+    public ValueTask ResetAsync(CancellationToken cancellationToken = default)
+        => DispatchResponseSource.Run((Client: this, cancellationToken: cancellationToken),
+            static (state, observation) => state.Client.ResetBorrowedAsync(state.cancellationToken, observation));
+
+    private async ValueTask ResetBorrowedAsync(CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
-        var observation = AdminObservation("HOTKEYS RESET");
+        EnsureAdmin("HOTKEYS RESET");
         _ = await ConvertAsync("HOTKEYS RESET", new Cmd(HotKeysCommands.Reset), cancellationToken,
             static (RespireHotKeysTracker _, in RespValue reply) => HotKeysParser.Ok(in reply), observation).ConfigureAwait(false);
-    }
-
-    // Starts the final owner before AllowAdmin preflight; conversion takes ownership on success.
-    private RespireTelemetry.ErrorObservation AdminObservation(string operation)
-    {
-        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
-        try { EnsureAdmin(operation); }
-        catch (Exception error) { observation.Final(error); observation.Dispose(); throw; }
-        return observation;
     }
 
     private ValueTask<TResult> ConvertAsync<TCommand, TResult>(string operation, TCommand command,

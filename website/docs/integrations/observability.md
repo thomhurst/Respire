@@ -419,11 +419,14 @@ or permanently disable reporting. Publication can succeed after that listener is
 
 Connection-string parsing failures in `RespireClient.ConnectAsync(string)` are final
 connection failures, including null or malformed input. Parsing preserves its synchronous
-exception behavior. Once parsing succeeds, the delegated connection setup owns the final
-observation, so authentication or cancellation failures are not counted twice.
+exception behavior. The same failure-only owner covers parsing, structured setup, handshake and failed-client
+cleanup, so authentication or cancellation failures are not counted twice.
 
-Direct node sends, CLIENT handles, and HOTKEYS handles have explicit final observers.
-These observers include reply parsing. Typed conversion retains the operation's
+Server/admin commands, CLIENT filters and handles, HOTKEYS handles and fan-outs, and
+explicit-node commands start their final owner before argument, option and admin
+checks. Successful calls rent no error-observation storage. These owners include reply
+parsing and cleanup; per-node failures publish only after `ReleaseServerPoolAsync`
+finishes. Fan-out discovery failures belong to the enclosing caller owner. Typed conversion retains the operation's
 observation through transport retries or redirects, so a converter failure reports
 the completed retry count. The conversion source returns its lease before publishing
 the caller's result and preserves the original exception and cancellation token.

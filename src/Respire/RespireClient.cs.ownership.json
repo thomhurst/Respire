@@ -115,6 +115,20 @@
       "Member": "Respire.RespireClient.DisposeAsync():ValueTask",
       "Owner": "Respire.RespireClient.DisposeAsync():ValueTask",
       "Contract": "Explicit disposal is its own caller operation; cleanup inside another command borrows that command owner and finishes before publication."
+    },
+    {
+      "Name": "connection-string-owner",
+      "Role": "final",
+      "Member": "Respire.RespireClient.ConnectAsync(string,CancellationToken):ValueTask<RespireClient>",
+      "Owner": "Respire.RespireClient.ConnectAsync(string,CancellationToken):ValueTask<RespireClient>",
+      "Contract": "Start before parsing and retain ownership through structured setup and failed-client cleanup without a nested final event."
+    },
+    {
+      "Name": "connection-candidate-owner",
+      "Role": "final",
+      "Member": "Respire.RespireClient.ConnectAnyAsync(IEnumerable<RespireOptions>,CancellationToken):ValueTask<RespireClient>",
+      "Owner": "Respire.RespireClient.ConnectAnyAsync(IEnumerable<RespireOptions>,CancellationToken):ValueTask<RespireClient>",
+      "Contract": "Start before enumeration and cancellation. Candidate failures borrow retry history; exhaustion preserves the network wrapper and cancellation retains completed failures."
     }
   ],
   "NonRoutes": []

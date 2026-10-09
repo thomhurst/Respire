@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Protocol;
@@ -45,27 +46,23 @@ internal sealed partial class ServerCommands
 
     private async ValueTask<RespireServerResult<T>[]> FanOutAsync<TCommand, T>(
         string operation, TCommand command, CancellationToken cancellationToken,
-        ResponseConverter<ServerCommands, T> convert) where TCommand : struct, IRespCommand
+        ResponseConverter<ServerCommands, T> convert, RespireTelemetry.ErrorObservation observation = default) where TCommand : struct, IRespCommand
     {
-        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
-        try
-        {
-            ObjectDisposedException.ThrowIf(client.Core.Disposed, client);
-            cancellationToken.ThrowIfCancellationRequested();
-            var endpoints = await DiscoverServerEndpointsAsync(cancellationToken, observation).ConfigureAwait(false);
-            using var capacity = new SemaphoreSlim(MaxFanOutConcurrency);
-            var tasks = new Task<RespireServerResult<T>>[endpoints.Length];
-            for (var index = 0; index < endpoints.Length; index++)
-                tasks[index] = ExecuteOnNodeAsync(endpoints[index], operation, command, convert, capacity, cancellationToken);
-            // Node failures return error results with their own observations. Only an exception
-            // that escapes the fan-out itself belongs to this final observer.
-            return await Task.WhenAll(tasks).ConfigureAwait(false);
-        }
-        catch (Exception error)
-        {
-            observation.Final(error);
-            throw;
-        }
+        if (observation.IsEmpty)
+            return await DispatchResponseSource<RespireServerResult<T>[]>.Run(
+                (Server: this, Operation: operation, Command: command, Token: cancellationToken, Convert: convert),
+                static (state, owner) => state.Server.FanOutAsync(state.Operation, state.Command,
+                    state.Token, state.Convert, owner)).ConfigureAwait(false);
+        ObjectDisposedException.ThrowIf(client.Core.Disposed, client);
+        cancellationToken.ThrowIfCancellationRequested();
+        var endpoints = await DiscoverServerEndpointsAsync(cancellationToken, observation).ConfigureAwait(false);
+        using var capacity = new SemaphoreSlim(MaxFanOutConcurrency);
+        var tasks = new Task<RespireServerResult<T>>[endpoints.Length];
+        for (var index = 0; index < endpoints.Length; index++)
+            tasks[index] = ExecuteOnNodeAsync(endpoints[index], operation, command, convert, capacity, cancellationToken);
+        // Node failures return error results with their own observations. Only an exception
+        // that escapes the fan-out itself belongs to this final observer.
+        return await Task.WhenAll(tasks).ConfigureAwait(false);
     }
 
     private async Task<RespireServerResult<T>> ExecuteOnNodeAsync<TCommand, T>(
@@ -73,10 +70,26 @@ internal sealed partial class ServerCommands
         ResponseConverter<ServerCommands, T> convert, SemaphoreSlim capacity, CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
-        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        try
+        {
+            var value = await DispatchResponseSource<T>.Run(
+                (Server: this, Endpoint: endpoint, Operation: operation, Command: command,
+                    Convert: convert, Capacity: capacity, Token: cancellationToken),
+                static (state, owner) => state.Server.ExecuteOnNodeBorrowedAsync(state.Endpoint,
+                    state.Operation, state.Command, state.Convert, state.Capacity, state.Token, owner)).ConfigureAwait(false);
+            return RespireServerResult<T>.Success(endpoint, value);
+        }
+        catch (Exception error) { return RespireServerResult<T>.Failure(endpoint, error); }
+    }
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private async ValueTask<T> ExecuteOnNodeBorrowedAsync<TCommand, T>(
+        RespireEndpoint endpoint, string operation, TCommand command,
+        ResponseConverter<ServerCommands, T> convert, SemaphoreSlim capacity, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation) where TCommand : struct, IRespCommand
+    {
         DedicatedConnectionPool? pool = null;
         var entered = false;
-        Exception failure;
         try
         {
             await capacity.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -86,11 +99,7 @@ internal sealed partial class ServerCommands
             var connection = await pool.RentAsync(cancellationToken).ConfigureAwait(false);
             using var reply = await client.SendOnConnectionAsync(operation, connection, command, cancellationToken,
                 observation: observation).ConfigureAwait(false);
-            return RespireServerResult<T>.Success(endpoint, convert(this, in reply));
-        }
-        catch (Exception error)
-        {
-            failure = error;
+            return convert(this, in reply);
         }
         finally
         {
@@ -103,10 +112,6 @@ internal sealed partial class ServerCommands
                 if (entered) capacity.Release();
             }
         }
-        // Report only after the node's dedicated connections are cleaned up. Preserve successes
-        // from other nodes, including when cancellation occurs after discovery.
-        observation.Final(failure);
-        return RespireServerResult<T>.Failure(endpoint, failure);
     }
 
     private async ValueTask<RespireEndpoint[]> DiscoverServerEndpointsAsync(CancellationToken cancellationToken,

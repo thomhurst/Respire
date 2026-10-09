@@ -56,25 +56,32 @@ public partial interface IServerCommands
 
 internal sealed partial class ServerCommands
 {
-    public async ValueTask<RespireServerClientConnection> GetClientConnectionAsync(CancellationToken cancellationToken = default)
+    public ValueTask<RespireServerClientConnection> GetClientConnectionAsync(CancellationToken cancellationToken = default)
+        => DispatchResponseSource<RespireServerClientConnection>.Run((Client: this, cancellationToken: cancellationToken),
+            static (state, observation) => state.Client.GetClientConnectionBorrowedAsync(state.cancellationToken, observation));
+
+    private async ValueTask<RespireServerClientConnection> GetClientConnectionBorrowedAsync(CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
-        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
-        try
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var connection = await client.AcquireConnectionAsync(cancellationToken).ConfigureAwait(false);
-            using var reply = await client.SendAdmittedOnPinnedConnectionAsync("CLIENT ID", connection,
-                new ClientIdCommand(), cancellationToken, observation).ConfigureAwait(false);
-            if (reply.Type != RespDataType.Integer || reply.AsInteger() <= 0)
-                throw new RespireProtocolException("CLIENT ID must return a positive integer.");
-            return new RespireServerClientConnection(client, connection, reply.AsInteger());
-        }
-        catch (Exception error) { observation.Final(error); throw; }
+        cancellationToken.ThrowIfCancellationRequested();
+        var connection = await client.AcquireConnectionAsync(cancellationToken).ConfigureAwait(false);
+        using var reply = await client.SendAdmittedOnPinnedConnectionAsync("CLIENT ID", connection,
+            new ClientIdCommand(), cancellationToken, observation).ConfigureAwait(false);
+        if (reply.Type != RespDataType.Integer || reply.AsInteger() <= 0)
+            throw new RespireProtocolException("CLIENT ID must return a positive integer.");
+        return new RespireServerClientConnection(client, connection, reply.AsInteger());
     }
 
     public ValueTask<RespireServerResult<RespireServerClientInfo[]>[]> ClientsOnAllNodesAsync(CancellationToken cancellationToken = default)
-        => FanOutAsync("CLIENT LIST", new Cmd(Verbs.ClientList), cancellationToken,
-            static (ServerCommands _, in RespValue value) => ParseClientList(in value));
+    {
+        var owner = DispatchResponseSource<RespireServerResult<RespireServerClientInfo[]>[]>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            return owner.Attach(FanOutAsync("CLIENT LIST", new Cmd(Verbs.ClientList), cancellationToken,
+            static (ServerCommands _, in RespValue value) => ParseClientList(in value), observation: observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
 
     internal static RespireServerClientInfo ParseClientInfo(in RespValue value)
     {
@@ -124,19 +131,32 @@ public sealed partial class RespireServerClientConnection
     public bool IsConnected => !_client.Core.Disposed && _connection.IsConnected;
 
     /// <summary>Reads owned CLIENT INFO, preserving unknown attributes. Requires Redis 6.2+.</summary>
-    public async ValueTask<RespireServerClientInfo> InfoAsync(CancellationToken cancellationToken = default)
-        => await ConvertAsync("CLIENT INFO", new ProtocolCommand<Cmd>(new Cmd(ClientInfo)), cancellationToken,
-            static (RespireServerClientConnection _, in RespValue reply) => ServerCommands.ParseClientInfo(in reply)).ConfigureAwait(false);
+    public ValueTask<RespireServerClientInfo> InfoAsync(CancellationToken cancellationToken = default)
+        => DispatchResponseSource<RespireServerClientInfo>.Run((Client: this, cancellationToken: cancellationToken),
+            static (state, observation) => state.Client.InfoBorrowedAsync(state.cancellationToken, observation));
+
+    private async ValueTask<RespireServerClientInfo> InfoBorrowedAsync(CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+    {
+        return await ConvertAsync("CLIENT INFO", new ProtocolCommand<Cmd>(new Cmd(ClientInfo)), cancellationToken,
+            static (RespireServerClientConnection _, in RespValue reply) => ServerCommands.ParseClientInfo(in reply), observation: observation).ConfigureAwait(false);
+    }
 
     /// <summary>Reads this connection's name, or null when unset. Redis: CLIENT GETNAME (2.6.9+).</summary>
-    public async ValueTask<string?> GetNameAsync(CancellationToken cancellationToken = default)
-        => await ConvertAsync("CLIENT GETNAME", new ProtocolCommand<Cmd>(new Cmd(ClientGetName)), cancellationToken,
-            static (RespireServerClientConnection _, in RespValue reply) => ResponseReader.StringOrNull(in reply)).ConfigureAwait(false);
+    public ValueTask<string?> GetNameAsync(CancellationToken cancellationToken = default)
+        => DispatchResponseSource<string?>.Run((Client: this, cancellationToken: cancellationToken),
+            static (state, observation) => state.Client.GetNameBorrowedAsync(state.cancellationToken, observation));
+
+    private async ValueTask<string?> GetNameBorrowedAsync(CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+    {
+        return await ConvertAsync("CLIENT GETNAME", new ProtocolCommand<Cmd>(new Cmd(ClientGetName)), cancellationToken,
+            static (RespireServerClientConnection _, in RespValue reply) => ResponseReader.StringOrNull(in reply), observation: observation).ConfigureAwait(false);
+    }
 
     /// <summary>Changes this connection's library metadata. Requires AllowAdmin and Redis 7.2+.</summary>
     public ValueTask SetInfoAsync(RespireClientInfoAttribute attribute, string value, CancellationToken cancellationToken = default)
     {
-        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        var owner = DispatchResponseSource<bool>.Start();
+        var observation = owner.Observation;
         try
         {
             EnsureAdmin("CLIENT SETINFO");
@@ -147,33 +167,35 @@ public sealed partial class RespireServerClientConnection
                 RespireClientInfoAttribute.LibraryVersion => "LIB-VER",
                 _ => throw new ArgumentOutOfRangeException(nameof(attribute)),
             };
-            return OkAsync("CLIENT SETINFO", new Cmd2(ClientSetInfo, name, value), cancellationToken, observation);
+            return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(OkAsync("CLIENT SETINFO", new Cmd2(ClientSetInfo, name, value), cancellationToken, observation))));
         }
-        catch (Exception error) { observation.Final(error); observation.Dispose(); throw; }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     /// <summary>Changes this connection's exemption from client eviction. Requires AllowAdmin and Redis 7+.</summary>
     public ValueTask SetNoEvictAsync(bool enabled, CancellationToken cancellationToken = default)
     {
-        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        var owner = DispatchResponseSource<bool>.Start();
+        var observation = owner.Observation;
         try
         {
             EnsureAdmin("CLIENT NO-EVICT");
-            return OkAsync("CLIENT NO-EVICT", new Cmd1(ClientNoEvict, enabled ? "ON" : "OFF"), cancellationToken, observation);
+            return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(OkAsync("CLIENT NO-EVICT", new Cmd1(ClientNoEvict, enabled ? "ON" : "OFF"), cancellationToken, observation))));
         }
-        catch (Exception error) { observation.Final(error); observation.Dispose(); throw; }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     /// <summary>Controls this connection's LRU/LFU touches. Requires AllowAdmin and Redis 7.2+.</summary>
     public ValueTask SetNoTouchAsync(bool enabled, CancellationToken cancellationToken = default)
     {
-        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        var owner = DispatchResponseSource<bool>.Start();
+        var observation = owner.Observation;
         try
         {
             EnsureAdmin("CLIENT NO-TOUCH");
-            return OkAsync("CLIENT NO-TOUCH", new Cmd1(ClientNoTouch, enabled ? "ON" : "OFF"), cancellationToken, observation);
+            return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(OkAsync("CLIENT NO-TOUCH", new Cmd1(ClientNoTouch, enabled ? "ON" : "OFF"), cancellationToken, observation))));
         }
-        catch (Exception error) { observation.Final(error); observation.Dispose(); throw; }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     /// <summary>Pauses commands on this endpoint for whole milliseconds. Requires AllowAdmin and Redis 6.2+.</summary>
@@ -181,7 +203,8 @@ public sealed partial class RespireServerClientConnection
     public ValueTask PauseClientsAsync(TimeSpan duration, RespireClientPauseMode mode = RespireClientPauseMode.Write,
         CancellationToken cancellationToken = default)
     {
-        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        var owner = DispatchResponseSource<bool>.Start();
+        var observation = owner.Observation;
         try
         {
             EnsureAdmin("CLIENT PAUSE");
@@ -189,44 +212,47 @@ public sealed partial class RespireServerClientConnection
                 throw new ArgumentOutOfRangeException(nameof(duration), "Pause duration must be nonnegative whole milliseconds.");
             var argument = mode switch
             {
-                RespireClientPauseMode.Write => "WRITE", RespireClientPauseMode.All => "ALL",
+                RespireClientPauseMode.Write => "WRITE",
+                RespireClientPauseMode.All => "ALL",
                 _ => throw new ArgumentOutOfRangeException(nameof(mode)),
             };
-            return OkAsync("CLIENT PAUSE", new Cmd2(ClientPause, duration.Ticks / TimeSpan.TicksPerMillisecond, argument), cancellationToken, observation);
+            return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(OkAsync("CLIENT PAUSE", new Cmd2(ClientPause, duration.Ticks / TimeSpan.TicksPerMillisecond, argument), cancellationToken, observation))));
         }
-        catch (Exception error) { observation.Final(error); observation.Dispose(); throw; }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     /// <summary>Ends CLIENT PAUSE on this endpoint. Requires AllowAdmin and Redis 6.2+.</summary>
     public ValueTask UnpauseClientsAsync(CancellationToken cancellationToken = default)
     {
-        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        var owner = DispatchResponseSource<bool>.Start();
+        var observation = owner.Observation;
         try
         {
             EnsureAdmin("CLIENT UNPAUSE");
-            return OkAsync("CLIENT UNPAUSE", new Cmd(ClientUnpause), cancellationToken, observation);
+            return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(OkAsync("CLIENT UNPAUSE", new Cmd(ClientUnpause), cancellationToken, observation))));
         }
-        catch (Exception error) { observation.Final(error); observation.Dispose(); throw; }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     /// <summary>Unblocks an ID on this endpoint; returns false if it was not blocked. Requires AllowAdmin and Redis 5+.</summary>
-    public async ValueTask<bool> UnblockClientAsync(long clientId, RespireClientUnblockMode mode = RespireClientUnblockMode.Timeout,
+    public ValueTask<bool> UnblockClientAsync(long clientId, RespireClientUnblockMode mode = RespireClientUnblockMode.Timeout,
         CancellationToken cancellationToken = default)
+        => DispatchResponseSource<bool>.Run((Client: this, clientId: clientId, mode: mode, cancellationToken: cancellationToken),
+            static (state, observation) => state.Client.UnblockClientBorrowedAsync(state.clientId, state.mode, state.cancellationToken, observation));
+
+    private async ValueTask<bool> UnblockClientBorrowedAsync(long clientId, RespireClientUnblockMode mode,
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
-        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
         Cmd2 command;
-        try
+        EnsureAdmin("CLIENT UNBLOCK");
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(clientId);
+        var argument = mode switch
         {
-            EnsureAdmin("CLIENT UNBLOCK");
-            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(clientId);
-            var argument = mode switch
-            {
-                RespireClientUnblockMode.Timeout => "TIMEOUT", RespireClientUnblockMode.Error => "ERROR",
-                _ => throw new ArgumentOutOfRangeException(nameof(mode)),
-            };
-            command = new Cmd2(ClientUnblock, clientId, argument);
-        }
-        catch (Exception error) { observation.Final(error); observation.Dispose(); throw; }
+            RespireClientUnblockMode.Timeout => "TIMEOUT",
+            RespireClientUnblockMode.Error => "ERROR",
+            _ => throw new ArgumentOutOfRangeException(nameof(mode)),
+        };
+        command = new Cmd2(ClientUnblock, clientId, argument);
 
         // Conversion owns the lease from here, including failures. Do not observe it again
         // after awaiting a converter that has already returned the lease to its pool.
@@ -240,9 +266,15 @@ public sealed partial class RespireServerClientConnection
     }
 
     /// <summary>Reads this connection's tracking configuration without changing internal caching. Redis 6.2+.</summary>
-    public async ValueTask<RespireClientTrackingInfo> TrackingInfoAsync(CancellationToken cancellationToken = default)
-        => await ConvertAsync("CLIENT TRACKINGINFO", new ProtocolCommand<Cmd>(new Cmd(ClientTrackingInfo)), cancellationToken,
-            static (RespireServerClientConnection _, in RespValue reply) => ParseTrackingInfo(in reply)).ConfigureAwait(false);
+    public ValueTask<RespireClientTrackingInfo> TrackingInfoAsync(CancellationToken cancellationToken = default)
+        => DispatchResponseSource<RespireClientTrackingInfo>.Run((Client: this, cancellationToken: cancellationToken),
+            static (state, observation) => state.Client.TrackingInfoBorrowedAsync(state.cancellationToken, observation));
+
+    private async ValueTask<RespireClientTrackingInfo> TrackingInfoBorrowedAsync(CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+    {
+        return await ConvertAsync("CLIENT TRACKINGINFO", new ProtocolCommand<Cmd>(new Cmd(ClientTrackingInfo)), cancellationToken,
+            static (RespireServerClientConnection _, in RespValue reply) => ParseTrackingInfo(in reply), observation: observation).ConfigureAwait(false);
+    }
 
     private static RespireClientTrackingInfo ParseTrackingInfo(in RespValue reply)
     {
@@ -264,13 +296,19 @@ public sealed partial class RespireServerClientConnection
     }
 
     /// <summary>Echoes binary bytes on this connection. The returned bytes are owned; no key prefix is applied.</summary>
-    public async ValueTask<byte[]> EchoAsync(ReadOnlyMemory<byte> value, CancellationToken cancellationToken = default)
-        => await ConvertAsync("ECHO", new Cmd1(Echo, value), cancellationToken,
+    public ValueTask<byte[]> EchoAsync(ReadOnlyMemory<byte> value, CancellationToken cancellationToken = default)
+        => DispatchResponseSource<byte[]>.Run((Client: this, value: value, cancellationToken: cancellationToken),
+            static (state, observation) => state.Client.EchoBorrowedAsync(state.value, state.cancellationToken, observation));
+
+    private async ValueTask<byte[]> EchoBorrowedAsync(ReadOnlyMemory<byte> value, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+    {
+        return await ConvertAsync("ECHO", new Cmd1(Echo, value), cancellationToken,
             static (RespireServerClientConnection _, in RespValue reply) =>
             {
                 if (reply.Type != RespDataType.BulkString) throw new RespireProtocolException("ECHO must return a bulk string.");
                 return reply.AsSpan().ToArray();
-            }).ConfigureAwait(false);
+            }, observation: observation).ConfigureAwait(false);
+    }
 
     private ValueTask<TResult> ConvertAsync<TCommand, TResult>(string operation, TCommand command,
         CancellationToken cancellationToken, ResponseConverter<RespireServerClientConnection, TResult> converter,
