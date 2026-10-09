@@ -50,6 +50,7 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <Compile Include="$(GeneratedSnippetsPath)" Link="GeneratedSnippets.g.cs" />
     <Compile Include="../../samples/Respire.Samples.VectorData/Movie.cs" Link="VectorDataMovie.cs" />
+    <Compile Include="../../samples/Respire.Samples.VectorData/JsonMovie.cs" Link="VectorDataJsonMovie.cs" />
   </ItemGroup>
 
   <Target Name="RecordExpectedRuntimeAssemblies" BeforeTargets="GetAssemblyAttributes">

@@ -21,6 +21,9 @@ public abstract class RespireVectorDataHashMapper<TRecord> : RespireVectorDataMa
 }
 
 /// <summary>Explicit vector schema with a CLR property name and Redis hash field name or JSON query alias.</summary>
+/// <param name="PropertyName">CLR property name for vector selection. JSON mappings also accept a dotted member path, such as <c>Data.Values</c>.</param>
+/// <param name="StorageName">Redis hash field name or JSON query alias.</param>
+/// <param name="Dimensions">Number of FLOAT32 elements in the vector.</param>
 public sealed record RespireVectorDataVectorField(string PropertyName, string StorageName, int Dimensions)
 {
     /// <summary>JSON property path. Defaults to <c>$.StorageName</c>; ignored by hash mappings.</summary>

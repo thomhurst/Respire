@@ -59,6 +59,7 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
             {
                 identifier = vector.JsonPath ?? "$." + vector.StorageName;
                 _vectorPaths[fields.Count] = RespireVectorDataJsonPaths.Parse(identifier);
+                RespireVectorDataJsonPaths.ValidateMetadata(_jsonMapper.JsonTypeInfo, _vectorPaths[fields.Count]);
                 if (!paths.Add(identifier)) throw new ArgumentException("JSON schema paths must be unique.", nameof(mapper));
             }
             fields.Add(new(identifier, RespireSearchFieldType.Vector, Alias: _jsonMapper is null ? null : vector.StorageName)
@@ -72,7 +73,7 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
             if (_jsonMapper is null) ValidateFieldName(field.Identifier);
             else
             {
-                RespireVectorDataJsonPaths.Parse(field.Identifier);
+                RespireVectorDataJsonPaths.ValidateMetadata(_jsonMapper.JsonTypeInfo, RespireVectorDataJsonPaths.Parse(field.Identifier));
                 ValidateFieldName(field.Alias ?? throw new ArgumentException("JSON scalar fields require a query alias.", nameof(mapper)));
                 if (!paths.Add(field.Identifier)) throw new ArgumentException("JSON schema paths must be unique.", nameof(mapper));
             }
@@ -140,7 +141,7 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
             using var json = await RespireVectorDataOperations.ExecuteAsync(
                 _client.Json.Commands.GetAsync(RecordKey(key), ["."], cancellationToken), nameof(GetAsync), Name).ConfigureAwait(false);
             if (json.IsNull) return null;
-            if (options?.IncludeVectors == true) RespireVectorDataJsonPaths.ValidateVectors(json.AsBytes(), _vectors, _vectorPaths);
+            if (options?.IncludeVectors == true) RespireVectorDataJsonPaths.ValidateVectors(json.AsBytes(), _vectors, _vectorPaths, _jsonMapper.JsonTypeInfo.Options.MaxDepth);
             return _jsonMapper.Read(json.AsSpan(), options?.IncludeVectors == true, _vectorPaths);
         }
         using var result = await RespireVectorDataOperations.ExecuteAsync(
@@ -203,7 +204,7 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
         if (_jsonMapper is not null)
         {
             var json = _jsonMapper.Write(record);
-            RespireVectorDataJsonPaths.ValidateVectors(json, _vectors, _vectorPaths);
+            RespireVectorDataJsonPaths.ValidateVectors(json, _vectors, _vectorPaths, _jsonMapper.JsonTypeInfo.Options.MaxDepth);
             using var replaced = await RespireVectorDataOperations.ExecuteAsync(
                 _client.Scripts.ExecuteAsync(ReplaceJson, [key], [json], cancellationToken), nameof(UpsertAsync), Name).ConfigureAwait(false);
             return;
@@ -321,9 +322,21 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
             return _vectors[0];
         }
         var body = property.Body is UnaryExpression { NodeType: ExpressionType.Convert } conversion ? conversion.Operand : property.Body;
-        if (body is MemberExpression { Expression: ParameterExpression } member && member.Expression == property.Parameters[0])
-            return _vectors.FirstOrDefault(v => v.PropertyName == member.Member.Name) ?? throw new ArgumentException("The selected property is not a mapped vector.", nameof(property));
-        throw new ArgumentException("Select a direct mapped vector property.", nameof(property));
+        if (body is MemberExpression { Expression: ParameterExpression } direct && direct.Expression == property.Parameters[0])
+            return _vectors.FirstOrDefault(v => v.PropertyName == direct.Member.Name) ?? throw new ArgumentException("The selected property is not a mapped vector.", nameof(property));
+        if (_jsonMapper is null) throw new ArgumentException("Select a direct mapped vector property.", nameof(property));
+        var members = new Stack<string>();
+        while (body is MemberExpression member)
+        {
+            members.Push(member.Member.Name);
+            body = member.Expression;
+        }
+        if (body == property.Parameters[0] && members.Count > 0)
+        {
+            var name = string.Join('.', members);
+            return _vectors.FirstOrDefault(v => v.PropertyName == name) ?? throw new ArgumentException("The selected property is not a mapped vector.", nameof(property));
+        }
+        throw new ArgumentException("Select a mapped vector property; JSON mappings also support nested member paths.", nameof(property));
     }
 
     private string RecordKey(string key)

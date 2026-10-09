@@ -189,6 +189,62 @@ public class JsonCollectionTests(ModernRedisTestContainer fixture)
     }
 
     [Test, Arguments(2), Arguments(3)]
+    public async Task NestedVectorsUnderSharedParentSupportExplicitSelection(int protocol)
+    {
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+        using var store = new RespireVectorStore(client, "nested-multi:" + Guid.NewGuid().ToString("N"));
+        store.RegisterMapper(new NestedMultiVectorMapper());
+        using var collection = store.GetJsonCollection<NestedMultiVectorRecord>("nested");
+        try
+        {
+            await collection.EnsureCollectionExistsAsync();
+            await collection.UpsertAsync(new[]
+            {
+                new NestedMultiVectorRecord("first", new([1, 0], [0, 1])),
+                new NestedMultiVectorRecord("second", new([0, 1], [1, 0])),
+            });
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            List<VectorSearchResult<NestedMultiVectorRecord>> first;
+            do
+            {
+                first = await Collect(collection.SearchAsync(new float[] { 1, 0 }, 2,
+                    new() { VectorProperty = record => record.Values.First }, deadline.Token));
+                if (first.Count < 2) await Task.Delay(20, deadline.Token);
+            } while (first.Count < 2);
+            first.Select(hit => hit.Record.Id).Should().Equal("first", "second");
+            first.Select(hit => hit.Score).Should().Equal(0, 2);
+            first.Should().OnlyContain(hit => hit.Record.Values.First == null && hit.Record.Values.Second == null);
+            var second = await Collect(collection.SearchAsync(new float[] { 1, 0 }, 2,
+                new() { VectorProperty = record => record.Values.Second, IncludeVectors = true }));
+            second.Select(hit => hit.Record.Id).Should().Equal("second", "first");
+            second.Select(hit => hit.Score).Should().Equal(0, 2);
+            second[0].Record.Values.First.Should().Equal(0, 1);
+            second[0].Record.Values.Second.Should().Equal(1, 0);
+        }
+        finally { await collection.EnsureCollectionDeletedAsync(); }
+    }
+
+    [Test, Arguments(2), Arguments(3)]
+    public async Task GeneratedMaxDepthAppliesToUpsertAndBothRetrievalModes(int protocol)
+    {
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+        using var store = new RespireVectorStore(client, "deep:" + Guid.NewGuid().ToString("N"));
+        store.RegisterMapper(new DeepJsonMapper());
+        using var collection = store.GetJsonCollection<DeepJsonRecord>("records");
+        try
+        {
+            await collection.UpsertAsync(JsonDepthTests.CreateRecord());
+            var withVectors = (await collection.GetAsync("deep", new() { IncludeVectors = true }))!;
+            withVectors.Vector.Should().Equal(1, 0);
+            JsonDepthTests.Depth(withVectors.Data).Should().Be(100);
+            var withoutVectors = (await collection.GetAsync("deep"))!;
+            withoutVectors.Vector.Should().BeNull();
+            JsonDepthTests.Depth(withoutVectors.Data).Should().Be(100);
+        }
+        finally { await collection.EnsureCollectionDeletedAsync(); }
+    }
+
+    [Test, Arguments(2), Arguments(3)]
     public Task InvalidJsonVectorsFailBeforeReplacingStoredRecord(int protocol) => WithCollection(protocol, async (_, _, collection) =>
     {
         await collection.UpsertAsync(Movie("one", 1, 0));

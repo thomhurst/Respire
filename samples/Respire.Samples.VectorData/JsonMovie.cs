@@ -25,7 +25,7 @@ public sealed record NestedVectorData([property: JsonPropertyName("renamed_vecto
 public sealed class NestedVectorMapper() : RespireVectorDataJsonMapper<NestedVectorRecord>(MovieJsonContext.Default.NestedVectorRecord)
 {
     public override IReadOnlyList<RespireVectorDataVectorField> VectorFields =>
-        [new(nameof(NestedVectorRecord.Data), "embedding", 2) { JsonPath = "$.Data.renamed_vector", Algorithm = RespireSearchVectorAlgorithm.Flat }];
+        [new("Data.Values", "embedding", 2) { JsonPath = "$.Data.renamed_vector", Algorithm = RespireSearchVectorAlgorithm.Flat }];
     public override string GetKey(NestedVectorRecord record) => record.Id;
 }
 
