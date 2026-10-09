@@ -58,6 +58,7 @@ const sidebars = {
         'guides/hash-import',
         'guides/durability-acknowledgements',
         'guides/raw-commands',
+        'guides/stackexchange-interop',
         'guides/generated-commands',
         'guides/server-extensions',
         'guides/deferred-raw-commands',

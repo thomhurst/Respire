@@ -10,6 +10,11 @@ multiplexed connections, automatic pipelining, Cluster, Sentinel, pub/sub, trans
 scripting — with a different API shape and some capabilities StackExchange.Redis does not provide.
 This page compares the two and maps common StackExchange.Redis code to Respire.
 
+For call sites that still pass `RedisKey`/`RedisValue` or consume `RedisResult`,
+use the [incremental migration boundary](./guides/stackexchange-interop).
+StackExchange.Redis client interfaces and downstream library compatibility
+remain pending under [#889](https://github.com/thomhurst/Respire/issues/889).
+
 Comparisons describe StackExchange.Redis 3.3.1, the version used by Respire's comparison
 benchmarks. Recheck the StackExchange.Redis claims on this page when that version changes.
 The upstream [configuration](https://github.com/StackExchange/StackExchange.Redis/blob/3.3.1/docs/Configuration.md)

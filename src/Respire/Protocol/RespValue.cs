@@ -45,6 +45,8 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
 
     public RespDataType Type => _type;
     public bool IsNull => _type == RespDataType.Null;
+    // Null needs no numeric storage. Retain framing here without growing every parsed value.
+    internal RespDataType NullWireType => _integerValue == 0 ? RespDataType.Null : (RespDataType)_integerValue;
     public bool IsError => _type is RespDataType.Error or RespDataType.BulkError;
 
     // Retained queue errors carry EXEC's confirmed outcome without changing payload ownership.
@@ -65,6 +67,8 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
     }
 
     public static readonly RespValue Null = new(RespDataType.Null);
+    internal static RespValue NullFromWire(RespDataType wireType)
+        => new(RespDataType.Null, integerValue: (long)wireType);
     public static readonly RespValue True = new(RespDataType.Boolean, integerValue: 1);
     public static readonly RespValue False = new(RespDataType.Boolean, integerValue: 0);
 
@@ -409,6 +413,6 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
 
     public override bool Equals(object? obj) => obj is RespValue other && Equals(other);
 
-    public override int GetHashCode() => HashCode.Combine(_type, _integerValue,
+    public override int GetHashCode() => HashCode.Combine(_type, IsNull ? 0 : _integerValue,
         _elements is null ? _payload.Length : 0, _elementCount);
 }

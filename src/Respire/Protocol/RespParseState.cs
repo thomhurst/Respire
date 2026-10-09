@@ -287,7 +287,7 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
         pos = cursor;
         if (declaredLength == -1)
         {
-            value = RespValue.Null;
+            value = RespValue.NullFromWire((RespDataType)typeByte);
             return RespParseStatus.Done;
         }
 
@@ -359,7 +359,7 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
         if (declaredCount == -1)
         {
             pos = cursor;
-            value = RespValue.Null;
+            value = RespValue.NullFromWire((RespDataType)typeByte);
             return RespParseStatus.Done;
         }
 

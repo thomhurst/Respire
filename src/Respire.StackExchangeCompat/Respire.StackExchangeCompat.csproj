@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Respire.StackExchangeCompat</PackageId>
+    <Title>Respire.StackExchangeCompat</Title>
+    <Description>Binary-safe StackExchange.Redis value interop for incremental migration to native Respire APIs.</Description>
+    <PackageTags>$(PackageTags);stackexchange;interop</PackageTags>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="StackExchange.Redis" />
+    <ProjectReference Include="../Respire/Respire.csproj" />
+    <ProjectReference Include="../Respire.Analyzers/Respire.Analyzers.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
+  </ItemGroup>
+</Project>
