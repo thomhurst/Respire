@@ -41,6 +41,14 @@ jobs:
       REDIS_PORT: 6379
       RESPIRE_BENCH_ERRORS: ${{ matrix.error-metrics }}
     steps:
+      # Route Docker Hub pulls through mirror.gcr.io; see .github/actions/docker-hub-mirror.
+      - name: Use Docker Hub mirror
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        run: |
+          sudo cat /etc/docker/daemon.json 2>/dev/null | jq -s '(.[0] // {}) | ."registry-mirrors" = ["https://mirror.gcr.io"]' > "$RUNNER_TEMP/daemon.json"
+          sudo install -m 644 "$RUNNER_TEMP/daemon.json" /etc/docker/daemon.json
+          sudo kill -HUP "$(pidof dockerd)"
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: |

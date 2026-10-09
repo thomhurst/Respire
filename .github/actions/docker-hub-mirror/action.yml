@@ -8,18 +8,28 @@ runs:
   using: composite
   steps:
     # registry-mirrors is a live-reloadable daemon option: SIGHUP applies it without restarting
-    # dockerd, so service containers that the job already started keep running.
+    # dockerd, so service containers that the job already started keep running. The mirror is an
+    # optimisation, so every failure here degrades to a warning instead of failing the job.
     - name: Configure Docker Hub mirror
       if: runner.os == 'Linux' && runner.environment == 'github-hosted'
       shell: bash
       run: |
+        set +e
         config=/etc/docker/daemon.json
-        current='{}'
-        if [ -s "$config" ]; then current=$(sudo cat "$config"); fi
-        echo "$current" \
-          | jq '."registry-mirrors" = ((."registry-mirrors" // []) + ["https://mirror.gcr.io"] | unique)' \
-          | sudo tee "$config" > /dev/null
-        sudo kill -HUP "$(pidof dockerd)"
+        updated=$(mktemp)
+        if ! sudo cat "$config" 2>/dev/null \
+          | jq -s '(.[0] // {}) | ."registry-mirrors" = ((."registry-mirrors" // []) + ["https://mirror.gcr.io"] | unique)' \
+          > "$updated"; then
+          echo "::warning::Could not read $config; pulls go straight to Docker Hub"
+          exit 0
+        fi
+        sudo install -m 644 "$updated" "$config"
+        pid=$(pidof dockerd)
+        if [ -z "$pid" ]; then
+          echo "::warning::dockerd is not running; pulls go straight to Docker Hub"
+          exit 0
+        fi
+        sudo kill -HUP $pid
         for _ in $(seq 1 10); do
           if docker info --format '{{json .RegistryConfig.Mirrors}}' | grep -q mirror.gcr.io; then
             echo "Docker Hub pulls use mirror.gcr.io"

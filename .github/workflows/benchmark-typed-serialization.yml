@@ -42,6 +42,14 @@ jobs:
       REDIS_PORT: 6379
       FRAMEWORK: ${{ matrix.framework }}
     steps:
+      # Route Docker Hub pulls through mirror.gcr.io; see .github/actions/docker-hub-mirror.
+      - name: Use Docker Hub mirror
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        run: |
+          sudo cat /etc/docker/daemon.json 2>/dev/null | jq -s '(.[0] // {}) | ."registry-mirrors" = ["https://mirror.gcr.io"]' > "$RUNNER_TEMP/daemon.json"
+          sudo install -m 644 "$RUNNER_TEMP/daemon.json" /etc/docker/daemon.json
+          sudo kill -HUP "$(pidof dockerd)"
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.14'
