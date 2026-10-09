@@ -771,8 +771,10 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         {
             try
             {
-                var reply = await connection.EnqueuePinnedAsync(new MutationCommand<TCommand>(command, MutationFence),
-                    cancellationToken, Operation).ConfigureAwait(false);
+                var bound = new MutationCommand<TCommand>(command, MutationFence);
+                var reply = client.Core.Circuits is { } circuits
+                    ? await QueuedCircuitDispatch.EnqueueAsync(circuits, connection, bound, Operation, cancellationToken).ConfigureAwait(false)
+                    : await connection.EnqueuePinnedAsync(bound, cancellationToken, Operation).ConfigureAwait(false);
                 return CompleteReplyAsync(client, reply);
             }
             catch (Exception ex)
@@ -789,8 +791,10 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             try
             {
                 var bound = new MutationCommand<TCommand>(command, MutationFence);
-                return CompleteReplyAsync(client, connection.SendAsync(in bound, cancellationToken,
-                    commandName: Operation, observation: observation));
+                var reply = client.Core.Circuits is { } circuits
+                    ? QueuedCircuitDispatch.SendAsync(circuits, connection, bound, Operation, cancellationToken, observation)
+                    : connection.SendAsync(in bound, cancellationToken, commandName: Operation, observation: observation);
+                return CompleteReplyAsync(client, reply);
             }
             catch (Exception ex)
             {
