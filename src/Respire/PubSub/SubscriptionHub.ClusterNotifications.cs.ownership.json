@@ -1,0 +1,34 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "pubsub-notification-activation",
+      "Role": "borrower",
+      "Member": "Respire.Internal.SubscriptionHub.ActivateClusterNotificationsAsync(RespireSubscription,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Borrow activation ownership through coverage discovery, every endpoint, topology catch-up and rollback."
+    },
+    {
+      "Name": "pubsub-notification-route",
+      "Role": "borrower",
+      "Member": "Respire.Internal.SubscriptionHub.AddNotificationRouteAsync(ClusterNotificationNode,RespireSubscription,RespireChannel,bool,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Borrow the activation or reconciliation owner through control replies and rejected-route removal."
+    },
+    {
+      "Name": "pubsub-notification-reconciliation",
+      "Role": "internal",
+      "Member": "Respire.Internal.SubscriptionHub.ReconcileNotificationsAsync(long,RespireEndpoint[]?,bool,int,IReadOnlyCollection<RespireSubscription>?,bool):Task",
+      "Owner": null,
+      "Contract": "Each background subscription reconciliation has an internal failure-only owner through every endpoint and rollback. Subscription shutdown produces no observation."
+    },
+    {
+      "Name": "pubsub-notification-reconciliation-route",
+      "Role": "borrower",
+      "Member": "Respire.Internal.SubscriptionHub.ReconcileNotificationSubscriptionAsync(RespireSubscription,long,RespireEndpoint[]?,bool,StrongBox<RespireEndpoint?>,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<bool>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Borrow either the pending activation owner or independent internal reconciliation owner through new-route fan-out and uncertain-socket cleanup."
+    }
+  ],
+  "NonRoutes": []
+}

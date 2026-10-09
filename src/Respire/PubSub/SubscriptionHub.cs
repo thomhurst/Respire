@@ -76,9 +76,10 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
         RespireSubscriptionOptions options,
         CancellationToken cancellationToken)
     {
-        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
-        return RespireTelemetry.ObserveFinalError(
-            SubscribeAsync(kind, names, options, cancellationToken, observation), observation);
+        return DispatchResponseSource<RespireSubscription>.Run(
+            (Hub: this, Kind: kind, Names: names, Options: options, Token: cancellationToken),
+            static (state, observation) => state.Hub.SubscribeAsync(
+                state.Kind, state.Names, state.Options, state.Token, observation));
     }
 
     public async ValueTask<RespireSubscription> SubscribeAsync(
@@ -399,12 +400,16 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
         bool ask = false,
         RespireTelemetry.ErrorObservation observation = default)
     {
-        var telemetry = instrument
-            ? RespireTelemetry.StartOperation(
-                operation, connection.Host, connection.Port, core.Options.Database)
-            : default;
+        // Activation and reconciliation borrow their logical owner. Unsubscribe and
+        // standalone replay own an internal attempt, including command construction.
+        var owner = observation.IsEmpty ? DispatchResponseSource<bool>.Start() : null;
+        if (owner is not null) observation = owner.Observation;
+        RespireTelemetry.OperationScope telemetry = default;
         try
         {
+            if (instrument)
+                telemetry = RespireTelemetry.StartOperation(
+                    operation, connection.Host, connection.Port, core.Options.Database);
             var command = new ProtocolCommand<Cmd1>(new Cmd1(verb, name.AsValue()));
             var reply = ask
                 ? await ClusterRouter.SendAskingAsync(connection, in command, cancellationToken, operation,
@@ -424,25 +429,17 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
         catch (Exception ex)
         {
             telemetry.Complete(core, operation, error: ex, connection: connection);
+            if (owner is not null && !_disposed && !core.Disposed && !cancellationToken.IsCancellationRequested)
+                observation.Handled(ex);
             throw;
         }
+        finally { owner?.CompleteInternal(); }
     }
 
-    private async ValueTask SendRecoveryControlAsync(RespireConnection connection,
+    private ValueTask SendRecoveryControlAsync(RespireConnection connection,
         SubscriptionKind kind, RespireChannel name, CancellationToken cancellationToken)
-    {
-        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
-        try
-        {
-            await SendControlAsync(connection, SubscribeVerb(kind), SubscribeOperation(kind), name,
-                cancellationToken, instrument: false, observation: observation).ConfigureAwait(false);
-        }
-        catch (Exception error) when (!_disposed && !core.Disposed && !cancellationToken.IsCancellationRequested)
-        {
-            observation.Handled(error);
-            throw;
-        }
-    }
+        => SendControlAsync(connection, SubscribeVerb(kind), SubscribeOperation(kind), name,
+            cancellationToken, instrument: false);
 
     private async ValueTask<RespireConnection> EnsureConnectionAsync(CancellationToken cancellationToken, bool watch = true)
     {

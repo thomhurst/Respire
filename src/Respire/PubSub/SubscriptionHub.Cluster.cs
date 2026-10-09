@@ -117,7 +117,7 @@ internal sealed partial class SubscriptionHub
     // Caller owns _shardedControlGate. Connections and acknowledgement state are published under
     // _gate so pushes, topology callbacks and disposal can safely race control commands.
     private async ValueTask EnsureShardedRouteAsync(RespireChannel name, CancellationToken cancellationToken, bool recovering,
-        RespireTelemetry.ErrorObservation observation = default)
+        RespireTelemetry.ErrorObservation observation = default, int recoveryAttempts = 0)
     {
         var slot = ClusterHash.GetSlot(name.Span);
         var commandConnection = await core.Cluster!.GetConnectionAsync(slot, cancellationToken, discovery: null).ConfigureAwait(false);
@@ -171,7 +171,11 @@ internal sealed partial class SubscriptionHub
                 catch (RespireServerException error) when ((error.Code is RespireErrorCodes.Moved or RespireErrorCodes.Ask)
                     && redirect < ClusterRouter.RedirectLimit)
                 {
-                    if (!observation.IsEmpty) observation.Handled(error);
+                    if (!observation.IsEmpty)
+                    {
+                        if (observation.Attempts == 0) observation.SetAttempts(recoveryAttempts);
+                        observation.Handled(error);
+                    }
                     else RespireTelemetry.RecordError(error, internallyHandled: true, retryAttempts: redirect);
                     commandConnection = await core.Cluster.GetRedirectConnectionAsync(error, primary.Connection!, cancellationToken, slot, discovery: null)
                         .ConfigureAwait(false);
@@ -496,22 +500,25 @@ internal sealed partial class SubscriptionHub
                     failure = null;
                     foreach (var name in names)
                     {
-                        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
-                        observation.SetAttempts(attempt - 1);
+                        var owner = DispatchResponseSource<bool>.Start();
+                        var observation = owner.Observation;
                         try
                         {
-                            await EnsureShardedRouteAsync(name, cancellationToken, recovering: true, observation).ConfigureAwait(false);
+                            await EnsureShardedRouteAsync(name, cancellationToken, recovering: true, observation,
+                                recoveryAttempts: attempt - 1).ConfigureAwait(false);
                         }
-                        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+                        catch (Exception error) when (!cancellationToken.IsCancellationRequested && !_disposed && !core.Disposed)
                         {
                             // Detached recovery owns an internal attempt, separate from activation.
                             // Redirects already increment this owner before a terminal rejection.
+                            observation.SetAttempts(Math.Max(observation.Attempts, attempt - 1));
                             observation.Handled(error);
                             failure ??= error;
                             lock (_gate)
                                 if (_shardedOwners.TryGetValue(name, out var primary))
                                     _shardedRecoveryEndpoints.Add(new(primary.Owner.Host, primary.Owner.Port));
                         }
+                        finally { owner.CompleteInternal(); }
                     }
                     // An unexpected cleanup failure counts as a failed attempt. Ending the loop
                     // here would leave interrupted routes and unhealthy endpoints unrecovered.

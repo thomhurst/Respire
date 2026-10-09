@@ -1343,18 +1343,17 @@ public sealed partial class RespireClient : IRespireClient
     {
         // One activation owns admission, control replies, redirects and rollback. Background
         // recovery never borrows this lease after the subscription has been returned.
-        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        var owner = DispatchResponseSource<RespireSubscription>.Start();
         try
         {
             if (_pubSubPrefix is not null)
                 for (var i = 0; i < names.Length; i++) names[i] = ResolveChannel(names[i]);
-            return RespireTelemetry.ObserveFinalError(
-                _core.Hub.SubscribeAsync(kind, names, options, cancellationToken, observation), observation);
+            return owner.Attach(
+                _core.Hub.SubscribeAsync(kind, names, options, cancellationToken, owner.Observation));
         }
         catch (Exception error)
         {
-            observation.Final(error);
-            observation.Dispose();
+            owner.Fail(error);
             throw;
         }
     }
