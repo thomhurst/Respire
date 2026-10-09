@@ -52,17 +52,17 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-dotnet
-      - name: Run hash collection contracts on RESP2 and RESP3
+      - name: Run hash and JSON collection contracts on RESP2 and RESP3
         run: >-
           dotnet run --project tests/Respire.VectorData.Tests -c Release -f ${{ matrix.framework }} --
-          --minimum-expected-tests 51 --report-trx --results-directory "$GITHUB_WORKSPACE/TestResults/vector-data"
+          --minimum-expected-tests 144 --report-trx --results-directory "$GITHUB_WORKSPACE/TestResults/vector-data"
       - name: Install NativeAOT prerequisites
         run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
       - name: Publish native sample with trimming warnings as errors
         run: >-
           dotnet publish samples/Respire.Samples.VectorData -c Release -f ${{ matrix.framework }}
           -r linux-x64 -o "$GITHUB_WORKSPACE/artifacts/vector-data"
-      - name: Run native hash and vector search smoke
+      - name: Run native hash, generated JSON and vector search smoke
         run: >-
           ./artifacts/vector-data/Respire.Samples.VectorData
           redis://127.0.0.1:${{ job.services.redis.ports['6379'] }}

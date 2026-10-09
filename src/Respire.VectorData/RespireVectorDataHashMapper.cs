@@ -5,22 +5,13 @@ namespace Respire.VectorData;
 
 /// <summary>Explicit record mapping without reflection, expression compilation or runtime serialization.</summary>
 /// <remarks>Implementations must be thread-safe. Returned field buffers must remain unchanged until the operation completes.</remarks>
-public abstract class RespireVectorDataHashMapper<TRecord> where TRecord : class
+public abstract class RespireVectorDataHashMapper<TRecord> : RespireVectorDataMapper<TRecord> where TRecord : class
 {
-    /// <summary>Indexed scalar fields. Unindexed hash fields may also be written by the mapper.</summary>
-    public virtual IReadOnlyList<RespireSearchField> DataFields => [];
-
     /// <summary>Explicit CLR property mappings for filters. These declare additional indexed hash fields.</summary>
     /// <remarks>Write strings using <see cref="RespireVectorDataFilterEncoding.EncodeTag"/>, string collections
     /// using <see cref="RespireVectorDataFilterEncoding.EncodeTags"/>, booleans as 0/1, and finite numbers
     /// using invariant culture. Omit null values. Existing collections require recreation to add these fields.</remarks>
     public virtual IReadOnlyList<RespireVectorDataFilterField> FilterFields => [];
-
-    /// <summary>Indexed FLOAT32 vector fields, with explicit CLR property names for vector selection.</summary>
-    public abstract IReadOnlyList<RespireVectorDataVectorField> VectorFields { get; }
-
-    /// <summary>Returns the logical string key.</summary>
-    public abstract string GetKey(TRecord record);
 
     /// <summary>Maps all present fields. Omitted fields are removed when a record is replaced.</summary>
     public abstract IReadOnlyDictionary<string, ReadOnlyMemory<byte>> Write(TRecord record);
@@ -29,9 +20,12 @@ public abstract class RespireVectorDataHashMapper<TRecord> where TRecord : class
     public abstract TRecord Read(string key, IReadOnlyDictionary<string, ReadOnlyMemory<byte>> fields);
 }
 
-/// <summary>Explicit vector schema with a CLR property name and Redis hash field name.</summary>
+/// <summary>Explicit vector schema with a CLR property name and Redis hash field name or JSON query alias.</summary>
 public sealed record RespireVectorDataVectorField(string PropertyName, string StorageName, int Dimensions)
 {
+    /// <summary>JSON property path. Defaults to <c>$.StorageName</c>; ignored by hash mappings.</summary>
+    public string? JsonPath { get; init; }
+
     /// <summary>Distance function returned unchanged as the result score. Lower is better.</summary>
     public RespireSearchDistanceMetric DistanceMetric { get; init; } = RespireSearchDistanceMetric.Cosine;
 

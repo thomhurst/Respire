@@ -12,5 +12,6 @@
     <Compile Include="../Respire.IntegrationTests/StandaloneRedisTestContainer.cs" Link="StandaloneRedisTestContainer.cs" />
     <Compile Include="../Respire.IntegrationTests/ModernRedisTestContainer.cs" Link="ModernRedisTestContainer.cs" />
     <Compile Include="../../samples/Respire.Samples.VectorData/Movie.cs" Link="Movie.cs" />
+    <Compile Include="../../samples/Respire.Samples.VectorData/JsonMovie.cs" Link="JsonMovie.cs" />
   </ItemGroup>
 </Project>

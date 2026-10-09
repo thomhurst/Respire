@@ -34,7 +34,7 @@ internal static class RespireVectorDataOperations
         const string operationName = "EnsureCollectionDeletedAsync";
         await ExecuteAsync(client.Search.DropIndexAsync(index, deleteDocuments: true, cancellationToken),
             operationName, collectionName, "Unknown Index name", "SEARCH_INDEX_NOT_FOUND").ConfigureAwait(false);
-        // FT.DROPINDEX DD only removes indexed documents. Also remove hashes written before index creation.
+        // FT.DROPINDEX DD only removes indexed documents. Also remove records written before index creation.
         try
         {
             await foreach (var key in client.Keys.ScanAsync(match: prefix + "*", cancellationToken: cancellationToken).ConfigureAwait(false))

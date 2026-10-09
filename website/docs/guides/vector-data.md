@@ -1,11 +1,11 @@
 ---
 title: Microsoft.Extensions.VectorData
-description: Store typed vector records in Redis hashes through an explicit AOT-friendly mapper.
+description: Store typed vector records in Redis hashes or JSON through explicit AOT-friendly mapping.
 ---
 
 # Microsoft.Extensions.VectorData
 
-`Respire.VectorData` implements `VectorStore` and string-keyed `VectorStoreCollection<string,TRecord>` from `Microsoft.Extensions.VectorData.Abstractions` 10.10.0 using Redis Query Engine hashes. It supports collection lifecycle, record CRUD, sequential batch operations, expression filters, filtered retrieval and FLOAT32 KNN search. Use an unprefixed Respire client; Search commands reject client key prefixes. This connector supports standalone Redis Query Engine, included in standalone Redis 8. Redis Cluster is unsupported: collection deletion scans one node and cannot remove unindexed hashes across all shards, even when a search coordinator is available.
+`Respire.VectorData` implements `VectorStore` and string-keyed `VectorStoreCollection<string,TRecord>` from `Microsoft.Extensions.VectorData.Abstractions` 10.10.0 using Redis Query Engine hashes or RedisJSON documents. Both storage kinds support collection lifecycle, record CRUD, sequential batch operations and FLOAT32 KNN search. Hash collections also support expression filters and filtered retrieval. Use an unprefixed Respire client; Search commands reject client key prefixes. This connector supports standalone Redis Query Engine, included in standalone Redis 8. Redis Cluster is unsupported: collection deletion scans one node and cannot remove unindexed records across all shards, even when a search coordinator is available.
 
 ```bash
 dotnet add package Respire.VectorData
@@ -41,15 +41,38 @@ Keys and collection names must be nonblank valid UTF-8 strings. The store encode
 
 Upsert replaces a complete record atomically in one Lua script. Optional fields omitted by `Write` are deleted, and existing expiry is cleared. Batch upserts run sequentially and are not atomic across records; an error may leave earlier records committed. Reads return null for missing keys. Vector fields are excluded unless `IncludeVectors` is true; the mapper's `Read` method must handle absent vectors. Returned buffers are owned and survive later replies. Disposing a collection or store does not dispose the caller's client.
 
+## JSON storage
+
+Choose hashes for explicit field codecs and binary vectors. Choose JSON for nested documents and generated `System.Text.Json` serialization. Derive from `RespireVectorDataJsonMapper<TRecord>` and pass a generated `JsonTypeInfo<TRecord>` to its constructor. There is no reflection fallback. The generated context must support both serialization and deserialization, and the model must deserialize with vector properties absent. Required vector properties are therefore unsuitable for the default retrieval behavior. Your `JsonPropertyName` attributes and serializer options determine the stored names and values, including nested data and omitted optional properties.
+
+The runnable sample includes `JsonMovie`, `MovieJsonContext`, and `JsonMovieMapper`. Its title is stored at `$.details.movie_title`, and the CLR `Vector` property is stored at `$.embedding`. It also declares a second vector. Register the JSON mapper and choose the concrete JSON collection method:
+
+```csharp
+store.RegisterMapper(new JsonMovieMapper());
+using var jsonMovies = store.GetJsonCollection<JsonMovie>("json-movies");
+await jsonMovies.EnsureCollectionExistsAsync();
+await jsonMovies.UpsertAsync(new JsonMovie("arrival", new("Arrival"), [1, 0]));
+
+await foreach (var hit in jsonMovies.SearchAsync(new float[] { 1, 0 }, 10,
+    new() { VectorProperty = movie => movie.Vector, IncludeVectors = true }))
+    Console.WriteLine($"{hit.Record.Details.Title}: distance {hit.Score}");
+```
+
+JSON scalar schemas use a `RespireSearchField` whose identifier is a property path and whose alias is an explicit query name, for example `new("$.details.movie_title", RespireSearchFieldType.Text, Alias: "title")`. Each vector's `StorageName` is its query alias; `JsonPath` selects its stored property and defaults to `$.StorageName`. Paths select single object properties using `$.property.nested_property`. Property segments contain ASCII letters, digits, or underscores; array indices, wildcards, recursive selectors, and bracket syntax are unsupported. Aliases follow the hash name rules, including the reserved `vector_score` name. Duplicate paths or aliases fail before I/O.
+
+JSON vectors are numeric arrays, while hash vectors are little-endian byte blobs. KNN query vectors use binary FLOAT32 values for both storage kinds. JSON writes validate dimensions, numeric representation, and finite FLOAT32 elements before dispatch. Missing or null vector properties remain unindexed. `IncludeVectors` applies to every declared vector, including nested vector paths; omitting vectors does not remove their sibling data. Retrieved records own their arrays and nested data.
+
+JSON upsert uses a single script that replaces the entire root with `JSON.SET` and clears expiry. Omitted optional data and vectors disappear from the previous document. Collection deletion also removes records written before index creation, while preserving other collection and store namespaces. Batch, cancellation, distance, paging, and exception behavior match hashes. Register one storage mapping per record type per store; `GetHashCollection` and `GetJsonCollection` reject a mapper of the wrong storage kind. The upstream `GetCollection<string,TRecord>` method selects the registered kind automatically.
+
 ## Search behavior
 
 Search accepts `float[]`, `Memory<float>` or `ReadOnlyMemory<float>`. It returns Redis's distance unchanged: lower scores are better. `Skip` and `top` select a page from the nearest `Skip + top` candidates. `ScoreThreshold` is a maximum distance applied after that page is selected; filtered hits are not replaced, so fewer than `top` records can be returned. Set `VectorProperty` to a direct mapped property expression when multiple vectors are declared. Records deleted between search and retrieval are omitted without refilling the page; this is not a transactional snapshot. Search indexing can lag writes. Malformed search scores or documents outside the collection become `VectorStoreException` with an `InvalidOperationException` cause and collection/operation metadata.
 
-This connector supports hashes and explicit typed mappings. JSON storage, hybrid search, embedding generation, dynamic dictionaries and non-string keys are unsupported. Unsupported filters and inputs throw; they are never silently ignored. Server and transport failures become `VectorStoreException` with the original Respire exception as their cause and collection/operation metadata. Cancellation stays `OperationCanceledException`. [The connector epic](https://github.com/thomhurst/Respire/issues/887) retains the remaining features and full official conformance suite. Tests include named lifecycle, basic-model and supported filter contracts adapted from [the upstream conformance tests at the package source revision](https://github.com/dotnet/extensions/tree/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests). Passing this subset does not establish complete upstream conformance; the complete suite remains required by [the final conformance child](https://github.com/thomhurst/Respire/issues/1262).
+This connector supports hashes, JSON, and explicit typed mappings. Hybrid search, embedding generation, dynamic dictionaries and non-string keys are unsupported. Expression filters and filtered retrieval currently support hashes only; JSON requests with filters throw before I/O. Unsupported filters and inputs are never silently ignored. Server and transport failures become `VectorStoreException` with the original Respire exception as their cause and collection/operation metadata. Cancellation stays `OperationCanceledException`. [The connector epic](https://github.com/thomhurst/Respire/issues/887) retains the remaining features and full official conformance suite. Tests include lifecycle, basic-model, multivector and supported hash-filter contracts adapted from [the upstream conformance tests at the package source revision](https://github.com/dotnet/extensions/tree/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests), with the supported JSON contracts tested on RESP2 and RESP3. Passing this subset does not establish complete upstream conformance; the complete suite remains required by [the final conformance child](https://github.com/thomhurst/Respire/issues/1262).
 
 ## Expression filters
 
-Declare `FilterFields` on your mapper with explicit CLR property names, unique hash storage names and `RespireVectorDataFilterKind` values. These add their own schema fields; do not repeat their storage names in `DataFields`. Existing indexes must be recreated when adding filter fields. Filtering requires Redis Query Engine 2.10 or later (included in Redis 8) for `INDEXMISSING`.
+Declare `FilterFields` on your hash mapper with explicit CLR property names, unique hash storage names and `RespireVectorDataFilterKind` values. These add their own schema fields; do not repeat their storage names in `DataFields`. Existing indexes must be recreated when adding filter fields. Filtering requires Redis Query Engine 2.10 or later (included in Redis 8) for `INDEXMISSING`. JSON mappings do not expose these hash filter fields.
 
 The sample `MovieMapper` declares ordinal string filters for `Title` and `Tag`, stored in `filter_title` and `filter_tag`. Write string fields with `RespireVectorDataFilterEncoding.EncodeTag` and collections with `EncodeTags`, then encode the returned text as UTF-8 hash bytes. Decode with `DecodeTag` in `Read`, or keep separate original fields as the sample does. Encoding preserves case, empty strings, whitespace, separators and Unicode, and prevents values from introducing query syntax. Raw TAG fields are unsuitable for exact CLR string semantics because Redis splits separators and trims whitespace. The connector validates canonical encoded filter tokens before upsert.
 
@@ -95,7 +118,7 @@ The exception contract distinguishes database failures from application validati
 
 ## NativeAOT
 
-Use the concrete `GetHashCollection<TRecord>` method for trimming and NativeAOT. The upstream `VectorStore.GetCollection<TKey,TRecord>` method carries `RequiresDynamicCode` and `RequiresUnreferencedCode` annotations, which overrides must preserve. The safe concrete method uses only registered mapper code. No warning suppression or reflection fallback is needed.
+Use the concrete `GetHashCollection<TRecord>` or `GetJsonCollection<TRecord>` method for trimming and NativeAOT. The upstream `VectorStore.GetCollection<TKey,TRecord>` method carries `RequiresDynamicCode` and `RequiresUnreferencedCode` annotations, which overrides must preserve. The safe concrete methods use only registered mapper code or explicitly supplied JSON metadata. No warning suppression or reflection fallback is needed. The sample disables reflection serialization and exercises both storage kinds, renamed nested JSON data, vector omission, and KNN search.
 
 Publish the sample with its local NativeAOT setting:
 

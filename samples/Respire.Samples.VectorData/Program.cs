@@ -41,4 +41,40 @@ foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
         Console.WriteLine($"VectorData hash, filtered retrieval and filtered KNN smoke passed ({protocol}).");
     }
     finally { await collection.EnsureCollectionDeletedAsync(CancellationToken.None); }
+
+    store.RegisterMapper(new JsonMovieMapper());
+    using var jsonCollection = store.GetJsonCollection<JsonMovie>("json-movies");
+    try
+    {
+        await jsonCollection.EnsureCollectionExistsAsync(deadline.Token);
+        await jsonCollection.UpsertAsync(new JsonMovie("1", new("Arrival", "science-fiction"), [1, 0], [0, 1]), deadline.Token);
+        var jsonRecord = await jsonCollection.GetAsync("1", new() { IncludeVectors = true }, deadline.Token);
+        if (jsonRecord?.Details.Title != "Arrival" || jsonRecord.Vector?.Length != 2 || jsonRecord.AlternateVector?.Length != 2)
+            throw new InvalidOperationException("Generated JSON mapping smoke failed.");
+        var withoutVectors = await jsonCollection.GetAsync("1", cancellationToken: deadline.Token);
+        if (withoutVectors?.Details.Title != "Arrival" || withoutVectors.Vector is not null || withoutVectors.AlternateVector is not null)
+            throw new InvalidOperationException("JSON vector omission smoke failed.");
+        while (true)
+        {
+            var found = false;
+            await foreach (var result in jsonCollection.SearchAsync(new float[] { 1, 0 }, 1,
+                new() { IncludeVectors = true, VectorProperty = movie => movie.Vector }, deadline.Token))
+            {
+                if (result.Record.Id != "1" || result.Score != 0 || result.Record.Vector?.Length != 2)
+                    throw new InvalidOperationException("JSON KNN smoke failed.");
+                found = true;
+            }
+            if (found) break;
+            await Task.Delay(20, deadline.Token);
+        }
+        await jsonCollection.UpsertAsync(new JsonMovie("1", new("Updated"), [0, 1]), deadline.Token);
+        var updated = await jsonCollection.GetAsync("1", new() { IncludeVectors = true }, deadline.Token);
+        if (updated?.Details.Title != "Updated" || updated.Details.Tag is not null || updated.AlternateVector is not null)
+            throw new InvalidOperationException("JSON replacement smoke failed.");
+        await jsonCollection.DeleteAsync("1", deadline.Token);
+        if (await jsonCollection.GetAsync("1", cancellationToken: deadline.Token) is not null)
+            throw new InvalidOperationException("JSON deletion smoke failed.");
+        Console.WriteLine($"VectorData JSON and KNN smoke passed ({protocol}).");
+    }
+    finally { await jsonCollection.EnsureCollectionDeletedAsync(CancellationToken.None); }
 }
