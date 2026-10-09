@@ -361,6 +361,8 @@ public partial class CacheErrorMetricsTests
         {
             var written = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var correcting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var replacementRead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var replacementCorrection = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             await using var server = new FakeRespServer(32, FakeRespServer.OkReply)
             {
                 ReplyOverride = (_, command) => command == "CLIENT ID" ? ":123\r\n"u8.ToArray()
@@ -413,6 +415,9 @@ public partial class CacheErrorMetricsTests
             var correctionStart = server.ReceivedCommands.Count;
             var response = refresh ? cache.RefreshAsync("key", cancellation.Token) : cache.GetAsync("key", cancellation.Token);
             await written.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var readIndex = server.ReceivedCommands.ToList().FindIndex(command =>
+                command.StartsWith("EVALSHA ", StringComparison.Ordinal));
+            var readConnection = server.ReceivedConnectionIds[readIndex];
             cancellation.Cancel();
             await correcting.Task.WaitAsync(TimeSpan.FromSeconds(5));
             var correctionIndex = server.ReceivedCommands.ToList().FindLastIndex(command =>
@@ -426,12 +431,23 @@ public partial class CacheErrorMetricsTests
             finally
             {
                 server.SuppressReply = null;
-                server.ReplyOverride = (_, command) => command.StartsWith("EVAL", StringComparison.Ordinal)
-                    ? ":0\r\n"u8.ToArray() : command == "CLIENT ID" ? ":123\r\n"u8.ToArray() : null;
+                server.ReplyOverride = (connection, command) =>
+                {
+                    if (command.StartsWith("EVAL ", StringComparison.Ordinal) && connection != readConnection)
+                        replacementCorrection.TrySetResult();
+                    return command.StartsWith("EVAL", StringComparison.Ordinal)
+                        ? ":0\r\n"u8.ToArray() : command == "CLIENT ID" ? ":123\r\n"u8.ToArray() : null;
+                };
+                // Hold the replacement past the foreground bound to exercise a detached pass.
+                if (!replace) server.ReadGate = replacementRead.Task;
                 await server.SendRawAsync(replace ? "-NOPERM correction rejected\r\n"u8.ToArray() : ":0\r\n"u8.ToArray(), correctionConnection);
             }
-            if (replace) await Assert.That(async () => await response).Throws<RespireServerException>();
-            else await Assert.That(async () => await response).Throws<OperationCanceledException>();
+            try
+            {
+                if (replace) await Assert.That(async () => await response).Throws<RespireServerException>();
+                else await Assert.That(async () => await response).Throws<OperationCanceledException>();
+            }
+            finally { replacementRead.TrySetResult(); }
             var final = finals.Single();
             await Assert.That(final["error.type"]).IsEqualTo(replace
                 ? typeof(RespireServerException).FullName : typeof(OperationCanceledException).FullName);
@@ -444,14 +460,14 @@ public partial class CacheErrorMetricsTests
                 await Assert.That(retry["redis.client.operation.retry_attempts"]).IsEqualTo(0);
                 // The cancelled read remains ahead of the first correction in the old FIFO.
                 // Closing that socket faults the correction; its replacement must execute it.
+                // A bounded foreground wait can finish before the replacement reaches the server.
+                await replacementCorrection.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 var arguments = server.ReceivedArguments;
                 var correctionIndices = Enumerable.Range(correctionStart, arguments.Count - correctionStart)
                     .Where(index => arguments[index].Length > 1
                         && arguments[index][0].AsSpan().SequenceEqual("EVAL"u8)
                         && Encoding.UTF8.GetString(arguments[index][1]) == RespireDistributedCache.CapRefreshedTtlScript.Source)
                     .ToArray();
-                var readIndex = server.ReceivedCommands.ToList().FindIndex(command =>
-                    command.StartsWith("EVALSHA ", StringComparison.Ordinal));
                 var connectionIds = server.ReceivedConnectionIds;
                 await Assert.That(correctionIndices.Any(index => connectionIds[index] != connectionIds[readIndex])).IsTrue();
             }
