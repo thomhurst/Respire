@@ -122,7 +122,9 @@ Nacks, handler failures and deliveries interrupted by shutdown. `MinimumIdleTime
 visibility timeout, defaulting to one minute. `RecoveryPollInterval` defaults to five seconds.
 Both settings must be positive and at most `Int32.MaxValue` milliseconds; fractional
 milliseconds round up on the server. Set the visibility timeout above normal processing
-time, including time spent waiting behind earlier entries in a prefetched batch. There is
+time, including time spent waiting behind earlier entries in a prefetched batch. For sequential
+handlers, budget at least `BatchSize` times the worst-case handler duration, plus acknowledgement
+and dispatch time. There is
 no lease extension: a long-running handler can overlap a recovery attempt. Handlers must
 be idempotent and consumer identities must be unique among active hosts and registrations.
 
@@ -180,5 +182,7 @@ without Docker. It supports this worker's group creation, blocking reads, `XAUTO
 `XDEL`, the exact built-in atomic worker scripts, pending inspection and group metadata.
 It does not interpret arbitrary Lua. Default fake consumer registration matches Redis 7.0.
 Use `new RespireFakeServer(clock: null, createConsumersOnEmptyReads: true)` to model Redis 7.2
-or later registering consumers on empty new-entry reads. Compatibility tests against real
+or later registering consumers on empty new-entry reads. Pass `autoClaimDeletesPendingEntries: false`
+to the three-argument constructor to model Redis 6.2 returning null claimed entries for deleted
+pending IDs. The worker skips those entries and retains the scan cursor. Compatibility tests against real
 Redis remain necessary.

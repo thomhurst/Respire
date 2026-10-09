@@ -41,7 +41,8 @@ public sealed partial class RespireFakeServer
         while (scanned < pending.Length && scanned < Math.Min(count, int.MaxValue) * 10L && entries.Count + deleted.Count < count)
         {
             var (id, delivery) = pending[scanned++];
-            if (!stream.Entries.TryGetValue(id, out var fields))
+            var hasBody = stream.Entries.TryGetValue(id, out var fields);
+            if (!hasBody && _autoClaimDeletesPendingEntries)
             {
                 group.Pending.Remove(id);
                 deleted.Add(FakeReply.Text(id.Value));
@@ -52,10 +53,14 @@ public sealed partial class RespireFakeServer
             delivery.Consumer = args[3];
             delivery.DeliveredAt = Now;
             if (!justIds) delivery.DeliveryCount++;
-            entries.Add(justIds ? FakeReply.Text(id.Value) : StreamFields(id, fields));
+            var entry = justIds ? FakeReply.Text(id.Value) : FakeReply.Null;
+            if (!justIds && hasBody) entry = StreamFields(id, fields!);
+            entries.Add(entry);
         }
-        return FakeReply.Array([FakeReply.Text(scanned < pending.Length ? pending[scanned].Key.Value : "0-0"),
-            FakeReply.Array(entries.ToArray()), FakeReply.Array(deleted.ToArray())]);
+        var cursor = FakeReply.Text(scanned < pending.Length ? pending[scanned].Key.Value : "0-0");
+        return FakeReply.Array(_autoClaimDeletesPendingEntries
+            ? [cursor, FakeReply.Array(entries.ToArray()), FakeReply.Array(deleted.ToArray())]
+            : [cursor, FakeReply.Array(entries.ToArray())]);
     }
 
     private static FakeReply StreamFields(RespireStreamId id, byte[][] fields)
@@ -109,7 +114,7 @@ public sealed partial class RespireFakeServer
             page = FakeReply.Array([FakeReply.Text(owned.Length == 0 ? "0-0" : owned[^1].Key.Value), FakeReply.Array(entries.ToArray())]);
         }
         var parts = (FakeReply[])page.Value!;
-        var rows = ((FakeReply[])parts[1].Value!).Select(entry =>
+        var rows = ((FakeReply[])parts[1].Value!).Where(entry => entry.Value is not null).Select(entry =>
         {
             var fields = (FakeReply[])entry.Value!;
             var id = StreamId((byte[])fields[0].Value!);

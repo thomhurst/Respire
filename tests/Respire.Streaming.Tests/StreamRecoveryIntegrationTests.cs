@@ -15,6 +15,37 @@ public class StreamRecoveryIntegrationTests(RedisTestContainer redis)
     [Test]
     [Arguments(2)]
     [Arguments(3)]
+    public async Task ClaimSkipsDeletedPendingEntriesAndKeepsCursor(int protocol)
+    {
+        await using var real = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+            with { Protocol = (RespProtocol)protocol });
+        await using var server = new RespireFakeServer(null, createConsumersOnEmptyReads: false,
+            autoClaimDeletesPendingEntries: false);
+        await using var fake = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        foreach (var client in new[] { real, fake })
+        {
+            for (var i = 1; i <= 2; i++)
+                await client.Streams.AddAsync("deleted-claim", new StreamAddOptions { Id = $"{i}-0" }, ("payload", i));
+            await client.Streams.CreateGroupAsync("deleted-claim", "g", RespireStreamId.Beginning);
+            await client.Streams.ReadGroupOnceAsync("deleted-claim", "g", "abandoned", new() { Count = 2 });
+            await client.Streams.RemoveAsync("deleted-claim", ["1-0"]);
+            using (var deleted = await client.Scripts.ExecuteAsync(StreamWorkerScripts.Claim, ["deleted-claim"],
+                ["g", "new", 0, "0-0", 1]))
+            {
+                await Assert.That(deleted[0].AsString()).IsEqualTo("2-0");
+                await Assert.That(deleted[1].Count).IsEqualTo(0);
+            }
+            using var valid = await client.Scripts.ExecuteAsync(StreamWorkerScripts.Claim, ["deleted-claim"],
+                ["g", "new", 0, "2-0", 1]);
+            await Assert.That(valid[0].AsString()).IsEqualTo("0-0");
+            await Assert.That(valid[1][0][0].AsString()).IsEqualTo("2-0");
+            await Assert.That(valid[1][0][2].AsString()).IsEqualTo("2");
+        }
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
     public async Task BoundedCursorDeletedPendingAndAttemptFencingMatchRedis(int protocol)
     {
         await using var real = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)

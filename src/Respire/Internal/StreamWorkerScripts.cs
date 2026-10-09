@@ -26,9 +26,11 @@ internal static class StreamWorkerScripts
         local page = redis.call('XAUTOCLAIM', KEYS[1], ARGV[1], ARGV[2], ARGV[3], ARGV[4], 'COUNT', ARGV[5])
         local entries = {}
         for _, entry in ipairs(page[2]) do
-            local pending = redis.call('XPENDING', KEYS[1], ARGV[1], entry[1], entry[1], 1)
-            if #pending == 1 then
-                table.insert(entries, {entry[1], entry[2], tostring(pending[1][4])})
+            if entry and entry[2] then
+                local pending = redis.call('XPENDING', KEYS[1], ARGV[1], entry[1], entry[1], 1)
+                if #pending == 1 then
+                    table.insert(entries, {entry[1], entry[2], tostring(pending[1][4])})
+                end
             end
         end
         return {page[1], entries}
