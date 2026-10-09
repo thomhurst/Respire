@@ -10,6 +10,83 @@ namespace Respire.StackExchangeCompat.Tests;
 public class LifetimeWireTests
 {
     [Test]
+    [Arguments("HSET", false)]
+    [Arguments("HDEL", false)]
+    [Arguments("PEXPIRE", false)]
+    [Arguments("PERSIST", false)]
+    [Arguments("HSET", true)]
+    [Arguments("HDEL", true)]
+    [Arguments("PEXPIRE", true)]
+    [Arguments("PERSIST", true)]
+    public async Task AdmissionMutationsInvalidateAndFenceCachedReads(string operation, bool cancel)
+    {
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var readReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var holdReads = false;
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
+                "HGET key field" => "$5\r\nvalue\r\n"u8.ToArray(),
+                _ => null,
+            },
+            SuppressReply = command =>
+            {
+                if (holdReads && command == "HGET key field")
+                {
+                    readReceived.TrySetResult();
+                    return true;
+                }
+                if (!command.StartsWith(operation + " ", StringComparison.Ordinal)) return false;
+                received.TrySetResult();
+                return true;
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespProtocol.Resp3,
+            ClientSideCache = new(),
+            Connections = 1,
+        });
+        await using var connection = RespireConnectionMultiplexer.Wrap(client);
+        var database = connection.GetDatabase();
+        Assert.Equal("value", (string?)await database.HashGetAsync("key", "field"));
+        Assert.Equal("value", (string?)await database.HashGetAsync("key", "field"));
+        Assert.Equal(1, client.ClientSideCache!.GetStatistics().Hits);
+        Assert.Equal(1, client.ClientSideCache.Count);
+        var mutation = operation switch
+        {
+            "HSET" => database.HashSetAsync("key", "field", "new"),
+            "HDEL" => database.HashSetAsync("key", "field", RedisValue.Null),
+            "PEXPIRE" => database.KeyExpireAsync("key", TimeSpan.FromMinutes(1)),
+            "PERSIST" => database.KeyExpireAsync("key", (TimeSpan?)null),
+            _ => throw new ArgumentOutOfRangeException(nameof(operation)),
+        };
+        await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(0, client.ClientSideCache.Count);
+        if (cancel)
+        {
+            await connection.CloseAsync(allowCommandsToComplete: false);
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => mutation);
+        }
+
+        // A read submitted while the mutation still owns its FIFO slot cannot publish a cache entry,
+        // even after the adapter's caller has cancelled and the read's reply follows the write's reply.
+        holdReads = true;
+        var read = client.Hashes.GetStringAsync("key", "field").AsTask();
+        await readReceived.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        holdReads = false;
+        await server.SendRawAsync(":1\r\n$5\r\nvalue\r\n"u8.ToArray());
+        if (!cancel) Assert.True(await mutation);
+        Assert.Equal("value", await read.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal(0, client.ClientSideCache.Count);
+        Assert.Equal("value", await client.Hashes.GetStringAsync("key", "field"));
+        Assert.Equal(1, client.ClientSideCache.Count);
+    }
+
+    [Test]
     [Arguments(30)]
     [Arguments(60)]
     public async Task LongTimeoutsPreserveSynchronousCommandsAndWaitHelpers(int days)
