@@ -5,6 +5,7 @@ using Respire;
 
 // Run through Smoke.ps1. Every scrape comes from the real OpenTelemetry HTTP exporter.
 var endpoint = int.Parse(args[0], System.Globalization.CultureInfo.InvariantCulture);
+var dedicatedPoolLabel = $"db_client_connection_pool_name=\"127.0.0.1:{endpoint}/0/dedicated\"";
 var output = Path.GetFullPath(args[1]);
 Directory.CreateDirectory(output);
 RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Default });
@@ -77,8 +78,8 @@ try
         while (true)
         {
             var text = await Scrape("busy");
-            if (PrometheusCheck.HasPositive(text, "db_client_connection_pending_requests")
-                && PrometheusCheck.HasPositive(text, "db_client_connection_count", "db_client_connection_state=\"used\"")) break;
+            if (PrometheusCheck.HasPositive(text, "db_client_connection_pending_requests", dedicatedPoolLabel)
+                && PrometheusCheck.HasPositive(text, "db_client_connection_count", dedicatedPoolLabel, "db_client_connection_state=\"used\"")) break;
             await Task.Delay(20, deadline.Token);
         }
         await optional.Lists.RightPushAsync("optional:queue", "released");
@@ -88,7 +89,7 @@ try
     // Lifecycle delivery is asynchronous. Wait for the actual application close observation.
     while (!PrometheusCheck.HasPositive(await Scrape("closed"), "redis_client_connection_closed_total"))
         await Task.Delay(20, deadline.Token);
-    PrometheusCheck.Verify(output, args[2]);
+    PrometheusCheck.Verify(output, args[2], dedicatedPoolLabel);
     Console.WriteLine("PASS: real Redis workload, default/optional exports, lifecycle, and pinned dashboard contract.");
 }
 finally

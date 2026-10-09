@@ -28,7 +28,9 @@ The same actual workload runs with default groups and all groups: `SET`/`GET` ro
 cache hit/miss/capacity eviction, Redis `WRONGTYPE`, acknowledged publication and subscription
 receipt, `XADD`/`XREAD`, and explicit application `RecordProcessingStart()`. A blocking list pop
 holds a dedicated socket until a scrape proves pending replies and used state; `RPUSH` releases it.
-Disposal produces actual physical closes. No synthetic metrics are emitted.
+The same exact dedicated pool must then have a positive idle count and no positive used count;
+an idle shared socket cannot satisfy this check. Disposal produces actual physical closes.
+No synthetic metrics are emitted.
 
 Expected output includes both `PASS` lines. Evidence contains:
 

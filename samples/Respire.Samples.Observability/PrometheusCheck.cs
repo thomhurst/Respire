@@ -10,8 +10,8 @@ internal static class PrometheusCheck
     private static readonly HashSet<string> UnsupportedMetrics =
     ["redis_client_csc_network_saved_bytes_total", "redis_client_csc_items"];
 
-    internal static bool HasPositive(string text, string metric, string? label = null) => Samples(text, metric)
-        .Any(line => (label is null || line.Contains(label, StringComparison.Ordinal))
+    internal static bool HasPositive(string text, string metric, params string[] labels) => Samples(text, metric)
+        .Any(line => labels.All(label => line.Contains(label, StringComparison.Ordinal))
             && double.Parse(line[(line.LastIndexOf(' ') + 1)..], CultureInfo.InvariantCulture) > 0);
 
     private static IEnumerable<string> Samples(string text, string metric) => text.Split('\n')
@@ -23,7 +23,7 @@ internal static class PrometheusCheck
         if (!condition) throw new InvalidOperationException(message);
     }
 
-    internal static void Verify(string output, string dashboardPath)
+    internal static void Verify(string output, string dashboardPath, string dedicatedPoolLabel)
     {
         var defaults = File.ReadAllText(Path.Combine(output, "default.prom"));
         var optional = File.ReadAllText(Path.Combine(output, "optional.prom"));
@@ -51,8 +51,10 @@ internal static class PrometheusCheck
         foreach (var direction in new[] { "in", "out" })
             Require(HasPositive(optional, "redis_client_pubsub_messages_total", $"redis_client_pubsub_message_direction=\"{direction}\""), "Missing pub/sub direction: " + direction);
         Require(HasPositive(closed, "redis_client_connection_closed_total", "redis_client_connection_close_reason=\"application_close\""), "No application close.");
-        Require(HasPositive(busy, "db_client_connection_count", "db_client_connection_state=\"used\""), "No used socket.");
-        Require(HasPositive(optional, "db_client_connection_count", "db_client_connection_state=\"idle\""), "No idle socket.");
+        Require(HasPositive(busy, "db_client_connection_pending_requests", dedicatedPoolLabel), "No pending dedicated reply.");
+        Require(HasPositive(busy, "db_client_connection_count", dedicatedPoolLabel, "db_client_connection_state=\"used\""), "No used dedicated socket.");
+        Require(HasPositive(optional, "db_client_connection_count", dedicatedPoolLabel, "db_client_connection_state=\"idle\""), "Dedicated socket did not return idle.");
+        Require(!HasPositive(optional, "db_client_connection_count", dedicatedPoolLabel, "db_client_connection_state=\"used\""), "Dedicated socket remains used after its reply.");
         foreach (var metric in new[] { "redis_client_errors_total", "redis_client_csc_requests_total", "redis_client_pubsub_messages_total", "redis_client_stream_lag_seconds_count" })
             Require(Samples(optional, metric).All(line => line.Contains("redis_client_library=\"Respire:", StringComparison.Ordinal)
                 && line.Contains("db_system_name=\"redis\"", StringComparison.Ordinal)), "Missing standard labels: " + metric);
