@@ -18,9 +18,9 @@
     {
       "Name": "pubsub-control",
       "Role": "borrower",
-      "Member": "Respire.Internal.SubscriptionHub.SendControlAsync(RespireConnection,Verb,string,RespireChannel,CancellationToken,bool,bool,RespireTelemetry.ErrorObservation):ValueTask",
+      "Member": "Respire.Internal.SubscriptionHub.SendControlAsync(RespireConnection,Verb,string,RespireChannel,CancellationToken,bool,bool,RespireTelemetry.ErrorObservation,bool):ValueTask",
       "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
-      "Contract": "Activation and reconciliation borrow their logical owner through command construction, transport and reply disposal. Unsubscribe and ordinary replay start an independent internal owner and exclude shutdown cancellation."
+      "Contract": "Activation and reconciliation borrow their logical owner through command construction, transport and reply disposal. Unsubscribe and ordinary replay start an independent internal owner and exclude caller or shutdown cancellation. Private cleanup deadlines remain internal failures while the hub is live."
     },
     {
       "Name": "pubsub-ordinary-recovery-control",

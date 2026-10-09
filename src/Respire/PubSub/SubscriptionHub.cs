@@ -398,7 +398,8 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
         CancellationToken cancellationToken,
         bool instrument,
         bool ask = false,
-        RespireTelemetry.ErrorObservation observation = default)
+        RespireTelemetry.ErrorObservation observation = default,
+        bool observeDeadlineCancellation = false)
     {
         // Activation and reconciliation borrow their logical owner. Unsubscribe and
         // standalone replay own an internal attempt, including command construction.
@@ -429,15 +430,19 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
         catch (Exception ex)
         {
             telemetry.Complete(core, operation, error: ex, connection: connection);
-            if (owner is not null && ShouldObserveHandled())
+            // Private cleanup deadlines are failures while the hub is live; caller
+            // cancellation is excluded even when this command has an internal owner.
+            if (owner is not null && ShouldObserveHandled(ex,
+                    observeDeadlineCancellation ? CancellationToken.None : cancellationToken))
                 observation.Handled(ex);
             throw;
         }
         finally { owner?.CompleteInternal(); }
     }
 
-    private bool ShouldObserveHandled()
-        => !_disposed && !core.Disposed && !_lifetimeCancellation.IsCancellationRequested;
+    private bool ShouldObserveHandled(Exception? error = null, CancellationToken cancellationToken = default)
+        => !_disposed && !core.Disposed && !_lifetimeCancellation.IsCancellationRequested
+            && (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested);
 
     private ValueTask SendRecoveryControlAsync(RespireConnection connection,
         SubscriptionKind kind, RespireChannel name, CancellationToken cancellationToken)

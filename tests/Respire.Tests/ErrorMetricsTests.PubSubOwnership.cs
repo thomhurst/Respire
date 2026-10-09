@@ -158,6 +158,73 @@ public partial class ErrorMetricsTests
     }
 
     [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task StandalonePubSubControlExcludesCallerCancellation(bool replay, bool cancelInFlight)
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        await using var server = new FakeRespServer(8, FakeRespServer.OkReply);
+        server.ReplyOverride = (_, command) => command switch
+        {
+            "CLUSTER SLOTS" => Encoding.ASCII.GetBytes(
+                $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{server.Port}\r\n"),
+            "SSUBSCRIBE one" => "*3\r\n$10\r\nssubscribe\r\n$3\r\none\r\n:1\r\n"u8.ToArray(),
+            "SUNSUBSCRIBE one" => "*3\r\n$12\r\nsunsubscribe\r\n$3\r\none\r\n:0\r\n"u8.ToArray(),
+            _ => null,
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1,
+            ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", server.Port)],
+            CommandTimeout = null,
+        });
+        await using var hub = new SubscriptionHub(client.Core);
+        await using var subscription = await hub.SubscribeAsync(
+            SubscriptionKind.Sharded, ["one"], new(), CancellationToken.None).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var primaries = (System.Collections.IDictionary)typeof(SubscriptionHub).GetField("_primaryConnections", flags)!.GetValue(hub)!;
+        var primary = primaries.Values.Cast<object>().Single();
+        var connection = primary.GetType().GetField("Connection", flags)!.GetValue(primary)!;
+        var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var commandName = replay ? "SSUBSCRIBE one" : "SUNSUBSCRIBE one";
+        server.SuppressReply = command =>
+        {
+            if (command != commandName) return false;
+            waiting.TrySetResult();
+            return true;
+        };
+        using var cancellation = new CancellationTokenSource();
+        if (!cancelInFlight) cancellation.Cancel();
+        using var capture = new Capture(throwOnMeasurement: true);
+        try
+        {
+            // Exercise the internal owner directly; activation has a separate final owner.
+            var pending = replay
+                ? (ValueTask)typeof(SubscriptionHub).GetMethod("SendRecoveryControlAsync", flags)!
+                    .Invoke(hub, [connection, SubscriptionKind.Sharded, (RespireChannel)"one", cancellation.Token])!
+                : (ValueTask)typeof(SubscriptionHub).GetMethod("UnsubscribePrimaryAsync", flags)!
+                    .Invoke(hub, [primary, (RespireChannel)"one", cancellation.Token])!;
+            if (cancelInFlight)
+            {
+                await waiting.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                cancellation.Cancel();
+            }
+            if (replay)
+                await Assert.That(async () => await pending).Throws<OperationCanceledException>();
+            else
+                await pending.AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+            await Assert.That(client.Core.Disposed).IsFalse();
+            await Assert.That(capture.Items).IsEmpty();
+        }
+        finally
+        {
+            await hub.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        }
+    }
+
+    [Test]
     public async Task NotificationCleanupDeadlineReportsInternalFailure()
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });

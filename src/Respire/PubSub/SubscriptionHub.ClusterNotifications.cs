@@ -659,7 +659,7 @@ internal sealed partial class SubscriptionHub
             {
                 var timeout = new CancellationTokenSource(core.Options.CommandTimeout ?? core.Options.ConnectTimeout);
                 var ack = SendControlAsync(connection, UnsubscribeVerb(kind), UnsubscribeOperation(kind), name,
-                    timeout.Token, instrument: true).AsTask();
+                    timeout.Token, instrument: true, observeDeadlineCancellation: true).AsTask();
                 cleanupAcks.Add((other, connection, kind, name, timeout, ack));
             }
             if (node.Connection is { } nodeConnection) close.Add(nodeConnection);
@@ -777,7 +777,8 @@ internal sealed partial class SubscriptionHub
             var acks = new Task[released.Count];
             for (var index = 0; index < released.Count; index++)
                 acks[index] = SendControlAsync(connection, UnsubscribeVerb(subscription.Kind),
-                    UnsubscribeOperation(subscription.Kind), released[index], timeout.Token, instrument: true).AsTask();
+                    UnsubscribeOperation(subscription.Kind), released[index], timeout.Token, instrument: true,
+                    observeDeadlineCancellation: true).AsTask();
             try { await Task.WhenAll(acks).ConfigureAwait(false); }
             catch (Exception error) when (error is RespireException or OperationCanceledException)
             {
