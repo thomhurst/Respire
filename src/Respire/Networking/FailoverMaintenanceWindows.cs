@@ -15,9 +15,10 @@ internal sealed class FailoverMaintenanceWindows
         lock (_gate)
         {
             Prune(now);
-            if (state.GetWindow(now) is not { } window) return;
-            // Retain overlap history even after completion or expiry removes the active window.
+            // Record every applied notification, including a zero-grace MOVING handoff that
+            // never opens a window, and retain overlap history after completion or expiry.
             _generation++;
+            if (state.GetWindow(now) is not { } window) return;
             if (_states.Contains(state)) return;
             if (_states.Count < MaximumStates) _states.Add(state);
             // At capacity, retain only a finite expiry rather than another socket's state.

@@ -128,6 +128,53 @@ public class FailoverGroupMaintenanceTests
     }
 
     [Test]
+    public async Task ZeroGraceMovingRecordsOverlapWithoutOpeningWindow()
+    {
+        var tracker = new FailoverMaintenanceWindows();
+        var state = new MaintenanceTimeoutState(5000);
+        var generation = tracker.Generation;
+        state.Apply(new("MOVING", 1, 0, new RespireEndpoint("127.0.0.1", 6379)), Environment.TickCount64);
+        tracker.Observe(state);
+
+        await Assert.That(tracker.Generation).IsGreaterThan(generation);
+        await Assert.That(tracker.IsActive).IsFalse();
+    }
+
+    [Test]
+    public async Task ZeroGraceMovingDuringProbeDoesNotCountFailure()
+    {
+        await using var source = Server();
+        await using var target = Server();
+        await using var group = await RespireFailoverGroup.ConnectAsync([Candidate(source)], ManualOptions());
+        var original = group.ActiveClient;
+        var multiplexer = ((RespireClient)original).Core.Multiplexer;
+        var sourceConnection = multiplexer.GetConnection();
+        var replies = source.ReplyOverride!;
+        target.DelayCommand("HELLO", 200);
+        source.ReplyOverride = (id, command) => command == "PING"
+            ? [.. Encoding.UTF8.GetBytes($">4\r\n+MOVING\r\n:1\r\n:0\r\n+127.0.0.1:{target.Port}\r\n"),
+                .. "-ERR unavailable\r\n"u8.ToArray()]
+            : replies(id, command);
+
+        // Zero grace closes the window immediately, but the handoff still overlaps this probe.
+        await group.ForTests.ProbeAsync(0);
+        await Assert.That(sourceConnection.HasMaintenanceWindow).IsFalse();
+        await Assert.That(group.GetEndpointStatuses()[0].ConsecutiveFailures).IsEqualTo(0);
+        await Assert.That(group.GetEndpointStatuses()[0].IsHealthy).IsTrue();
+        await Assert.That(group.ForTests.Circuit(0).State).IsEqualTo(EndpointCircuitState.Closed);
+        await WaitUntilAsync(() => multiplexer.ActiveConnectionEndpoint.Port == target.Port);
+        await group.ActiveClient.PingAsync();
+        await Assert.That(ReferenceEquals(group.ActiveClient, original)).IsTrue();
+
+        // A failure after the handoff must resume normal circuit policy.
+        var targetReplies = target.ReplyOverride!;
+        target.ReplyOverride = (id, command) => command == "PING" ? "-ERR unavailable\r\n"u8.ToArray() : targetReplies(id, command);
+        await group.ForTests.ProbeAsync(0);
+        await Assert.That(group.GetEndpointStatuses()[0].ConsecutiveFailures).IsEqualTo(1);
+        await Assert.That(group.GetEndpointStatuses()[0].IsHealthy).IsFalse();
+    }
+
+    [Test]
     public async Task MaintenanceWindowSurvivesSocketLossButExpires()
     {
         await using var server = Server();
