@@ -131,9 +131,17 @@ internal abstract partial class CompatDatabaseAsync
 
     private static RedisValue[] ScoreArguments(RedisKey key, double start, double stop, Exclude exclude, Order order, long skip, long take, bool scores)
     {
-        var min = Bound(start, exclude, Exclude.Start);
-        var max = Bound(stop, exclude, Exclude.Stop);
-        RedisValue[] arguments = order == Order.Ascending ? [Key(key), min, max] : [Key(key), max, min];
+        if ((order == Order.Ascending) == (start > stop))
+        {
+            (start, stop) = (stop, start);
+            exclude = exclude switch
+            {
+                Exclude.Start => Exclude.Stop,
+                Exclude.Stop => Exclude.Start,
+                _ => exclude,
+            };
+        }
+        RedisValue[] arguments = [Key(key), Bound(start, exclude, Exclude.Start), Bound(stop, exclude, Exclude.Stop)];
         if (scores) arguments = [.. arguments, "WITHSCORES"];
         if (skip != 0 || take != -1) arguments = [.. arguments, "LIMIT", skip, take];
         return arguments;

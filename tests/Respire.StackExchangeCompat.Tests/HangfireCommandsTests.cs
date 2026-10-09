@@ -89,7 +89,7 @@ public class HangfireCommandsTests(RedisTestContainer redis)
             Assert.Equal(expected.SortedSetRangeByScore("sorted", order: order, skip: 2, take: -1), database.SortedSetRangeByScore("sorted", order: order, skip: 2, take: -1));
         }
         Assert.Equal(7, database.SortedSetLength("sorted"));
-        Assert.Empty(database.SortedSetRangeByScore("sorted", 2, 1));
+        Assert.Equal(expected.SortedSetRangeByScore("sorted", 2, 1), database.SortedSetRangeByScore("sorted", 2, 1));
         Assert.Empty(await database.SortedSetRangeByScoreWithScoresAsync("sorted", take: 0));
         Assert.Empty(database.SortedSetRangeByRankWithScores("missing"));
         Assert.True(await database.SortedSetRemoveAsync("sorted", binary));
@@ -97,6 +97,39 @@ public class HangfireCommandsTests(RedisTestContainer redis)
         Assert.Equal(2, database.SortedSetRemove("sorted", ["a", "b", "missing"]));
         Assert.Equal(1, await database.SortedSetRemoveAsync("sorted", ["zero"]));
         Assert.Equal("ERR", (await Assert.ThrowsAsync<RespireServerException>(() => database.SortedSetAddAsync("sorted", "nan", double.NaN))).Code);
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task ReversedScoreBoundsPreserveEndpointExclusionsAcrossAllDispatchPaths(int protocol)
+    {
+        await using var connection = RespireConnectionMultiplexer.Create(Options(protocol));
+        using var control = await ConnectionMultiplexer.ConnectAsync(redis.StackExchangeConnectionString);
+        var database = connection.GetDatabase();
+        var expected = control.GetDatabase();
+        RedisSortedSetEntry[] entries = [new("negative", -1), new("zero", 0), new("one", 1), new("two", 2), new("three", 3)];
+        await expected.SortedSetAddAsync("reversed", entries);
+        foreach (var order in new[] { Order.Ascending, Order.Descending })
+        foreach (var exclude in new[] { Exclude.None, Exclude.Start, Exclude.Stop, Exclude.Both })
+        foreach (var (start, stop) in new[] { (2d, 1d), (1d, 2d), (1d, 1d), (double.PositiveInfinity, double.NegativeInfinity) })
+        foreach (var (skip, take) in new[] { (0L, -1L), (1L, 1L) })
+        {
+            var values = await expected.SortedSetRangeByScoreAsync("reversed", start, stop, exclude, order, skip, take);
+            var scores = await expected.SortedSetRangeByScoreWithScoresAsync("reversed", start, stop, exclude, order, skip, take);
+            Assert.Equal(values, database.SortedSetRangeByScore("reversed", start, stop, exclude, order, skip, take));
+            Assert.Equal(values, await database.SortedSetRangeByScoreAsync("reversed", start, stop, exclude, order, skip, take));
+            Assert.Equal(scores, database.SortedSetRangeByScoreWithScores("reversed", start, stop, exclude, order, skip, take));
+            Assert.Equal(scores, await database.SortedSetRangeByScoreWithScoresAsync("reversed", start, stop, exclude, order, skip, take));
+            var batch = database.CreateBatch();
+            var batchValues = batch.SortedSetRangeByScoreAsync("reversed", start, stop, exclude, order, skip, take);
+            var batchScores = batch.SortedSetRangeByScoreWithScoresAsync("reversed", start, stop, exclude, order, skip, take);
+            Assert.False(batchValues.IsCompleted);
+            Assert.False(batchScores.IsCompleted);
+            batch.Execute();
+            Assert.Equal(values, await batchValues);
+            Assert.Equal(scores, await batchScores);
+        }
     }
 
     [Test]
@@ -313,6 +346,50 @@ public class HangfireCommandsTests(RedisTestContainer redis)
         Assert.Equal(long.MaxValue, database.StringIncrement("maximum", long.MaxValue));
         Assert.Equal("ERR", (await Assert.ThrowsAsync<RespireServerException>(() => database.StringIncrementAsync("maximum"))).Code);
         Assert.Equal("ERR", (await Assert.ThrowsAsync<RespireServerException>(() => database.StringDecrementAsync("minimum", long.MinValue))).Code);
+    }
+
+    [Test]
+    public async Task SynchronousScanTimeoutStopsEnumeratorBeforeLatePageCompletes()
+    {
+        var secondPage = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) =>
+            {
+                if (command.StartsWith("ZSCAN key 0", StringComparison.Ordinal)) return "*2\r\n$1\r\n1\r\n*0\r\n"u8.ToArray();
+                if (command.StartsWith("EXISTS ", StringComparison.Ordinal)) return ":0\r\n"u8.ToArray();
+                return null;
+            },
+            SuppressReply = command =>
+            {
+                if (!command.StartsWith("ZSCAN key 1", StringComparison.Ordinal)) return false;
+                secondPage.TrySetResult();
+                return true;
+            },
+        };
+        server.DelayCommand("ZSCAN key 0", 750);
+        await using var connection = RespireConnectionMultiplexer.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespProtocol.Resp2,
+            CommandTimeout = TimeSpan.FromSeconds(2),
+        });
+        var database = connection.GetDatabase();
+        await database.KeyExistsAsync("warm");
+        using var scan = database.SortedSetScan("key", "member*").GetEnumerator();
+        var position = Assert.IsAssignableFrom<IScanningCursor>(scan);
+        var move = Task.Run(scan.MoveNext);
+        await secondPage.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.ThrowsAsync<TimeoutException>(() => move);
+        Assert.Throws<ObjectDisposedException>(scan.Reset);
+        Assert.False(scan.MoveNext());
+        var cursor = position.Cursor;
+        var offset = position.PageOffset;
+        await server.SendRawAsync("*2\r\n$1\r\n0\r\n*2\r\n$6\r\nmember\r\n$1\r\n1\r\n"u8.ToArray());
+        Assert.False(await database.KeyExistsAsync("barrier"));
+        Assert.False(scan.MoveNext());
+        Assert.Equal(cursor, position.Cursor);
+        Assert.Equal(offset, position.PageOffset);
+        Assert.Equal(2, server.ReceivedCommands.Count(command => command.StartsWith("ZSCAN ", StringComparison.Ordinal)));
     }
 
     [Test]
