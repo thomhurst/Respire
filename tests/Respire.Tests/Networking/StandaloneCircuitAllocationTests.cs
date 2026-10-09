@@ -10,13 +10,16 @@ public class StandaloneCircuitAllocationTests
     private const string ProbeMode = "RESPIRE_CIRCUIT_DISABLED_ALLOCATION_PROBE";
 
     [Test]
-    public async Task DisabledDispatchAddsNoAllocation()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DisabledDispatchAddsNoAllocation(bool raw)
     {
         // A blocked producer can trigger pool growth, whose Thread/StartHelper allocations
         // are charged to the signaling thread. Reuse the bounded isolated-probe workflow.
         var start = AsyncFlushSignalTests.CreateProbeStartInfo(Environment.ProcessPath,
             Environment.GetEnvironmentVariable("DOTNET_HOST_PATH"), typeof(StandaloneCircuitAllocationTests).Assembly.Location);
         start.Environment[ProbeMode] = Environment.Version.ToString();
+        start.Environment["RESPIRE_RAW_DISPATCH_ALLOCATION_PROBE"] = raw.ToString();
         // Measure fully optimized steady state, independent of asynchronous tier promotion.
         // Throughput comparisons retain the runtime's normal tiering settings.
         start.Environment["DOTNET_TieredCompilation"] = "0";
@@ -53,13 +56,14 @@ public class StandaloneCircuitAllocationTests
                 release.Set();
                 if (!finished.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Workers did not finish warming.");
             }
-            RunMeasurementAsync().GetAwaiter().GetResult();
+            RunMeasurementAsync(bool.Parse(Environment.GetEnvironmentVariable("RESPIRE_RAW_DISPATCH_ALLOCATION_PROBE") ?? "False"))
+                .GetAwaiter().GetResult();
             return 0;
         }
         catch (Exception error) { Console.Error.WriteLine(error); return 1; }
     }
 
-    private static async Task RunMeasurementAsync()
+    private static async Task RunMeasurementAsync(bool raw)
     {
         RespireMetrics.Configure(new() { Groups = RespireMetricGroups.None });
         await using var server = new FakeRespServer(4, ":5\r\n"u8.ToArray());
@@ -71,42 +75,51 @@ public class StandaloneCircuitAllocationTests
         for (var i = 0; i < 32; i++) await client.Strings.LengthAsync("warm");
         server.SuppressReply = command => command == "STRLEN measured";
         var connection = client.Core.Multiplexer.GetConnection();
-        Measure(client, server, connection, false);
-        Measure(client, server, connection, true);
+        RespireValue[] arguments = ["measured"];
+        Measure(client, server, connection, false, raw, arguments);
+        Measure(client, server, connection, true, raw, arguments);
         var measured = AllocationMeasurement.WithoutConcurrentGc(() =>
         {
             var workers = ThreadPool.ThreadCount;
-            return (Bytes: Measure(client, server, connection, false), Control: Measure(client, server, connection, true),
+            return (Bytes: Measure(client, server, connection, false, raw, arguments), Control: Measure(client, server, connection, true, raw, arguments),
                 WorkersBefore: workers, WorkersAfter: ThreadPool.ThreadCount);
         });
-        Console.WriteLine($"runtime={Environment.Version}; {measured}");
+        Console.WriteLine($"runtime={Environment.Version}; raw={raw}; {measured}");
         if (measured.Bytes != 0 || measured.Control < 32L * 37 || measured.WorkersBefore != 2 || measured.WorkersAfter != 2)
             throw new InvalidOperationException($"Expected zero disabled dispatch allocations, positive control, and two existing workers; observed {measured}.");
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static long Measure(RespireClient client, FakeRespServer server, RespireConnection connection, bool control)
+    private static long Measure(RespireClient client, FakeRespServer server, RespireConnection connection, bool control,
+        bool raw, RespireValue[] arguments)
     {
         long total = 0;
         for (var i = 0; i < 32; i++)
         {
             var commands = server.CommandsSeen;
-            total += MeasureDispatch(client, control, out var pending);
+            total += MeasureDispatch(client, control, raw, arguments, out var pending, out var rawPending);
             if (!connection.InspectForTests().Inflight.TryPeek(out var source)) throw new InvalidOperationException("Missing reply source.");
             if (!SpinWait.SpinUntil(() => server.CommandsSeen > commands, TimeSpan.FromSeconds(5))) throw new TimeoutException();
             server.SendRawAsync(":5\r\n"u8.ToArray()).GetAwaiter().GetResult();
-            if (!SpinWait.SpinUntil(() => pending.IsCompleted && Volatile.Read(ref ResponseReferences(source!)) <= 1,
+            if (!SpinWait.SpinUntil(() => (raw ? rawPending.IsCompleted : pending.IsCompleted) && Volatile.Read(ref ResponseReferences(source!)) <= 1,
                 TimeSpan.FromSeconds(5))) throw new TimeoutException();
-            GC.KeepAlive(pending.GetAwaiter().GetResult());
+            if (raw)
+            {
+                using var result = rawPending.GetAwaiter().GetResult();
+                if (result.AsInteger() != 5) throw new InvalidOperationException("Unexpected raw reply.");
+            }
+            else GC.KeepAlive(pending.GetAwaiter().GetResult());
         }
         return total;
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static long MeasureDispatch(RespireClient client, bool control, out ValueTask<long> pending)
+    private static long MeasureDispatch(RespireClient client, bool control, bool raw, RespireValue[] arguments,
+        out ValueTask<long> pending, out ValueTask<RespireResult> rawPending)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
-        pending = client.Strings.LengthAsync("measured");
+        pending = raw ? default : client.Strings.LengthAsync("measured");
+        rawPending = raw ? client.ExecuteAsync(RespireCommands.String.STRLEN, arguments) : default;
         if (control) GC.KeepAlive(new byte[37]);
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }

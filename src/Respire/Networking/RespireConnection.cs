@@ -1108,30 +1108,6 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
     }
 
-    /// <summary>Sends a prefixed blocking command without applying the receive watchdog
-    /// or the command deadline (a BLPOP-style wait may legitimately outlast both).</summary>
-    internal async ValueTask<RespValue> SendPrefixedWithoutResponseTimeoutAsync<TPrefix, TCommand>(
-        TPrefix prefix,
-        TCommand command,
-        bool throwOnError,
-        CancellationToken cancellationToken = default, int errorAttempts = 0, bool pinToConnection = false)
-        where TPrefix : struct, IRespCommand
-        where TCommand : struct, IRespCommand
-    {
-        Interlocked.Increment(ref _responseTimeoutSuppressions);
-        try
-        {
-            return await SendPrefixedAsync(
-                    in prefix, in command, throwOnError, cancellationToken,
-                    commandName: null, armCommandDeadline: false, errorAttempts: errorAttempts, pinToConnection: pinToConnection)
-                .ConfigureAwait(false);
-        }
-        finally
-        {
-            Interlocked.Decrement(ref _responseTimeoutSuppressions);
-        }
-    }
-
     // Blocking ASK must retain the ASKING error and drain both replies. Its logical
     // caller owns final inspection; native response metadata keeps a retry-count copy.
     internal async ValueTask<RespValue> SendValidatedPrefixedWithoutResponseTimeoutAsync<TPrefix, TCommand>(
