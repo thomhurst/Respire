@@ -393,11 +393,13 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
 
     private async Task ProbeAsync(CandidateState candidate, CancellationToken cancellationToken)
     {
-        if (!candidate.TryAcquireProbe(out var permit)) return;
-        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        var owner = DispatchResponseSource<bool>.Start();
+        CircuitPermit permit = default;
         var outcome = CircuitOutcome.Ignored;
         try
         {
+            if (!candidate.TryAcquireProbe(out permit)) return;
+            var observation = owner.Observation;
             cancellationToken.ThrowIfCancellationRequested();
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(_options.ProbeTimeout);
@@ -455,7 +457,8 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         }
         finally
         {
-            candidate.CompleteProbe(ref permit, outcome);
+            try { candidate.CompleteProbe(ref permit, outcome); }
+            finally { owner.CompleteInternal(); }
         }
     }
 

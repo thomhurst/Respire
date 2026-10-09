@@ -15,8 +15,10 @@ public sealed partial class RespireClient
         internal Task<RespValue>? Hedge;
         internal RespireConnection? Alternative;
         internal Task<RespValue>? Returned;
-        internal RespireTelemetry.ErrorObservation OriginalObservation;
-        internal RespireTelemetry.ErrorObservation HedgeObservation;
+        internal DispatchResponseSource<RespValue>? OriginalOwner;
+        internal DispatchResponseSource<RespValue>? HedgeOwner;
+        internal readonly RespireTelemetry.ErrorObservation OriginalObservation => OriginalOwner?.Observation ?? default;
+        internal readonly RespireTelemetry.ErrorObservation HedgeObservation => HedgeOwner?.Observation ?? default;
 
 #if NET
         [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
@@ -60,22 +62,22 @@ public sealed partial class RespireClient
             // Resolution may already have awaited a failed leg. Report only here so each
             // discarded leg has one owner. A sole failed original belongs to the caller.
             if (Original is not null && !ReferenceEquals(Original, Returned))
-                _ = DisposeReplyAsync(Original, OriginalObservation, Hedge is not null);
-            else OriginalObservation.Dispose();
+                _ = DisposeReplyAsync(Original, OriginalOwner!, Hedge is not null);
+            else OriginalOwner?.CompleteInternal();
             if (Hedge is not null && !ReferenceEquals(Hedge, Returned))
-                _ = DisposeReplyAsync(Hedge, HedgeObservation, reportError: true);
-            else HedgeObservation.Dispose();
+                _ = DisposeReplyAsync(Hedge, HedgeOwner!, reportError: true);
+            else HedgeOwner?.CompleteInternal();
         }
 
         private static async Task DisposeReplyAsync(Task<RespValue> response,
-            RespireTelemetry.ErrorObservation observation, bool reportError)
+            DispatchResponseSource<RespValue> owner, bool reportError)
         {
             try { using var discarded = await response.ConfigureAwait(false); }
             catch (Exception error)
             {
-                if (reportError) RespireTelemetry.RecordError(error, internallyHandled: true, observation.Attempts);
+                if (reportError) owner.Observation.Handled(error);
             }
-            finally { observation.Dispose(); }
+            finally { owner.CompleteInternal(); }
         }
     }
 }

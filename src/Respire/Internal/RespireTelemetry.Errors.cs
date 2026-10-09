@@ -28,6 +28,38 @@ internal static partial class RespireTelemetry
     // Bound the cache independently of caller-supplied counts; larger counts retain their exact value.
     private static readonly object[] ErrorRetryCounts = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
 
+    // A physical close can fail handshake selection before that candidate is discarded.
+    // Remember only failure identities, weakly, so selection can retain logical retries
+    // without publishing the same physical failure twice. Successful routes never touch this.
+    private static class ConnectionErrorMarkers
+    {
+        internal static readonly ConditionalWeakTable<Exception, object> Table = new();
+        internal static readonly object Marker = new();
+    }
+
+    internal static void MarkConnectionError(Exception error)
+    {
+        try { ConnectionErrorMarkers.Table.GetValue(error, static _ => ConnectionErrorMarkers.Marker); }
+        catch (Exception) { /* Observation must preserve the original failure. */ }
+    }
+
+    internal static bool IsObservedConnectionError(Exception error)
+    {
+        try
+        {
+            for (var depth = 0; depth < 16; depth++)
+            {
+                if (ConnectionErrorMarkers.Table.TryGetValue(error, out _)) return true;
+                var cause = error is RespireException respire ? respire.ErrorCause
+                    : error is AggregateException { InnerExceptions.Count: 1 } aggregate ? aggregate.InnerExceptions[0] : null;
+                if (cause is null) return false;
+                error = cause;
+            }
+        }
+        catch (Exception) { /* Observation must preserve the original failure. */ }
+        return false;
+    }
+
     internal static bool ErrorsEnabled
     {
         get
@@ -139,6 +171,16 @@ internal static partial class RespireTelemetry
                 if (!IsActive(_state)) return;
                 _state.Attempts = Math.Max(0, attempts);
             }
+        }
+
+        // A socket can already own this failure's internal event. Retain the caller's
+        // retry without publishing again, atomically with parallel selection borrowers.
+        internal void Retry()
+        {
+            if (_dispatch is not null) { _dispatch.Retry(_generation); return; }
+            if (_state is null) return;
+            lock (_state.Gate)
+                if (IsActive(_state) && _state.Attempts < int.MaxValue) _state.Attempts++;
         }
 
         // Called under the storage gate, so validation and mutation cannot race a return/re-rent.

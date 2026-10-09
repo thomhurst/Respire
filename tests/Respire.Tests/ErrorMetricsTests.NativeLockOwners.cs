@@ -267,9 +267,11 @@ public partial class ErrorMetricsTests
     private sealed class CompletingReleaseObservation : IDispatchObservation
     {
         internal Func<int> Read { get; set; } = null!;
+        public bool IsOpen(long generation) => true;
         public int Attempts(long generation) => Read();
         public void SetAttempts(long generation, int attempts) => throw new NotSupportedException();
-        public void Handled(long generation, Exception error) => throw new NotSupportedException();
+        public bool Handled(long generation, Exception error) => throw new NotSupportedException();
+        public void Retry(long generation) => throw new NotSupportedException();
     }
 
     private sealed class ForwardingLockCommands(ILockCommands inner) : ILockCommands

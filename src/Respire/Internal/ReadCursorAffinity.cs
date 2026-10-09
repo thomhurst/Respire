@@ -35,12 +35,12 @@ internal sealed class ReadCursorAffinity
 
     internal async ValueTask<RespireConnection> GetConnectionAsync(
         ReadEndpointRouter router, RespireReadFrom readFrom, ReadAffinity? affinity, bool isContinuation,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
     {
         if (affinity is not null)
         {
             if (affinity.IsPinned) return await GetPinnedConnectionAsync(router, affinity, cancellationToken).ConfigureAwait(false);
-            var first = await router.SelectAsync(readFrom, cancellationToken).ConfigureAwait(false);
+            var first = await router.SelectAsync(readFrom, cancellationToken, observation: observation).ConfigureAwait(false);
             affinity.Replica = first.Replica;
             affinity.Primary = first.Primary;
             affinity.ReadFrom = readFrom;
@@ -49,7 +49,7 @@ internal sealed class ReadCursorAffinity
 
         if (_shared.TryGetValue(readFrom, out var shared))
         {
-            if (await IsPinCurrentAsync(router, shared, cancellationToken).ConfigureAwait(false))
+            if (await IsPinCurrentAsync(router, shared, cancellationToken, observation).ConfigureAwait(false))
                 return await GetSharedPinnedConnectionAsync(router, readFrom, shared, cancellationToken).ConfigureAwait(false);
             _shared.TryRemove(new KeyValuePair<RespireReadFrom, ReadAffinity>(readFrom, shared));
         }
@@ -62,12 +62,12 @@ internal sealed class ReadCursorAffinity
         {
             if (_shared.TryGetValue(readFrom, out shared))
             {
-                if (await IsPinCurrentAsync(router, shared, cancellationToken).ConfigureAwait(false))
+                if (await IsPinCurrentAsync(router, shared, cancellationToken, observation).ConfigureAwait(false))
                     return await GetSharedPinnedConnectionAsync(router, readFrom, shared, cancellationToken).ConfigureAwait(false);
                 _shared.TryRemove(new KeyValuePair<RespireReadFrom, ReadAffinity>(readFrom, shared));
             }
 
-            var selection = await router.SelectAsync(readFrom, cancellationToken).ConfigureAwait(false);
+            var selection = await router.SelectAsync(readFrom, cancellationToken, observation: observation).ConfigureAwait(false);
             _shared[readFrom] = new ReadAffinity { Replica = selection.Replica, Primary = selection.Primary, ReadFrom = readFrom };
             return selection.Connection;
         }
@@ -96,7 +96,7 @@ internal sealed class ReadCursorAffinity
             try { return await cluster.GetPinnedReadConnectionAsync(slot, sharedNode, cancellationToken, revalidate: !isContinuation, readFrom: shared.ReadFrom).ConfigureAwait(false); }
             catch (Exception error) when (ReadEndpointRouter.IsUnavailable(error, cancellationToken))
             {
-                if (!isContinuation) observation.Handled(error);
+                if (!isContinuation) ReadEndpointRouter.RecordCandidateFailure(observation, error);
                 _clusterShared.TryRemove(new KeyValuePair<(RespireReadFrom, int), ReadAffinity>(key, shared));
             }
         }
@@ -114,7 +114,7 @@ internal sealed class ReadCursorAffinity
                 try { return await cluster.GetPinnedReadConnectionAsync(slot, currentNode, cancellationToken, revalidate: true, readFrom: shared.ReadFrom).ConfigureAwait(false); }
                 catch (Exception error) when (ReadEndpointRouter.IsUnavailable(error, cancellationToken))
                 {
-                    observation.Handled(error);
+                    ReadEndpointRouter.RecordCandidateFailure(observation, error);
                     _clusterShared.TryRemove(new KeyValuePair<(RespireReadFrom, int), ReadAffinity>(key, shared));
                 }
             }
@@ -156,13 +156,18 @@ internal sealed class ReadCursorAffinity
     }
 
     private static async ValueTask<bool> IsPinCurrentAsync(
-        ReadEndpointRouter router, ReadAffinity affinity, CancellationToken cancellationToken)
+        ReadEndpointRouter router, ReadAffinity affinity, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation)
     {
         if (affinity.Replica is { } replica) return router.IsCurrent(replica);
         // An unreachable or replaced primary invalidates the pin so the policy can reselect.
         var core = router.Core;
         try { await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false); }
-        catch (Exception error) when (ReadEndpointRouter.IsUnavailable(error, cancellationToken)) { return false; }
+        catch (Exception error) when (ReadEndpointRouter.IsUnavailable(error, cancellationToken))
+        {
+            ReadEndpointRouter.RecordCandidateFailure(observation, error);
+            return false;
+        }
         return ReferenceEquals(core.Multiplexer, affinity.Primary);
     }
 

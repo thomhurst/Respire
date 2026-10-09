@@ -1,0 +1,27 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "standalone-read-selection",
+      "Role": "borrower",
+      "Member": "Respire.Internal.ReadEndpointRouter.GetConnectionAsync(RespireReadFrom,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<RespireConnection>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Borrow the caller owner through selection and ROLE validation. Count rejected candidates once and retain retries through later reply conversion."
+    },
+    {
+      "Name": "standalone-dedicated-read-selection",
+      "Role": "borrower",
+      "Member": "Respire.Internal.ReadEndpointRouter.RentDedicatedConnectionAsync(RespireReadFrom,CancellationToken,string?,bool?,ReadAttempt?,RespireTelemetry.ErrorObservation):ValueTask<(DedicatedConnectionPoolPool,RespireConnectionConnection,boolIsReplica)>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Borrow caller retries through dedicated candidate acquisition and cleanup; establishment and ROLE must not independently count the same failure."
+    },
+    {
+      "Name": "standalone-cursor-read-selection",
+      "Role": "borrower",
+      "Member": "Respire.Internal.ReadEndpointRouter.GetCursorConnectionAsync(RespireReadFrom,ReadAffinity?,bool,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<RespireConnection>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Keep cursor selection failures with the enclosing caller, including fresh-cursor reselection."
+    }
+  ],
+  "NonRoutes": []
+}

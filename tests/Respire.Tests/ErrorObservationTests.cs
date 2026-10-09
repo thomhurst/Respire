@@ -12,6 +12,25 @@ namespace Respire.Tests;
 public class ErrorObservationTests
 {
     [Test]
+    public async Task AlreadyObservedRetriesRemainAtomicWithoutDuplicateEvents()
+    {
+        using var configuration = new MetricConfigurationScope();
+        using var capture = new Capture();
+        var owner = ErrorObservation.StartFailure();
+        try
+        {
+            Parallel.For(0, 128, _ => owner.RecordRetry());
+            await Assert.That(owner.RetryAttempts).IsEqualTo(128);
+            await Assert.That(capture.Items.Count).IsEqualTo(0);
+            owner.PublishFinal(new IOException());
+            await Assert.That(capture.Items.Single().RetryAttempts).IsEqualTo(128);
+            await Assert.That(capture.Items.Single().Internal).IsFalse();
+            await Assert.That(owner.RecordRetry()).IsFalse();
+        }
+        finally { owner.Complete(); }
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task BorrowAfterFinalPublicationOrCompletionRejectsRetryHistory(bool publishFinal)

@@ -1,0 +1,13 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "discarded-hedge-reply",
+      "Role": "internal",
+      "Member": "Respire.RespireClient.HedgeRace.DisposeReplyAsync(Task<RespValue>,DispatchResponseSource<RespValue>,bool):Task",
+      "Owner": null,
+      "Contract": "Retain discarded-leg ownership through FIFO reply consumption and disposal. Complete only after recording its one internal failure."
+    }
+  ],
+  "NonRoutes": []
+}

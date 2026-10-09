@@ -12,6 +12,7 @@ internal interface IDispatchObservation
     int Attempts(long generation);
     void SetAttempts(long generation, int attempts);
     bool Handled(long generation, Exception error);
+    void Retry(long generation);
 }
 
 internal static class DispatchResponseSource
@@ -137,6 +138,16 @@ internal sealed class DispatchResponseSource<TResult> : IValueTaskSource<TResult
             if (generation != _generation || _closed || (attempts <= 0 && _owner.IsEmpty)) return;
             if (_owner.IsEmpty) _owner = ErrorObservation.StartFailure(attempts);
             else _owner.SetRetryAttempts(attempts);
+        }
+    }
+
+    void IDispatchObservation.Retry(long generation)
+    {
+        lock (_gate)
+        {
+            if (generation != _generation || _closed) return;
+            if (_owner.IsEmpty) _owner = ErrorObservation.StartFailure();
+            _owner.RecordRetry();
         }
     }
 

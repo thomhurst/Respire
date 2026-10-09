@@ -2810,8 +2810,8 @@ public sealed partial class RespireClient : IRespireClient
         var connection = readKind == ReadCommandKind.CursorRead
             ? await _core.ReadRouter.GetCursorConnectionAsync(_readFrom, affinity,
                 affinity is null && CursorCommandMetadata.IsCursorContinuation(in command),
-                cancellationToken).ConfigureAwait(false)
-            : await _core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken).ConfigureAwait(false);
+                cancellationToken, observation).ConfigureAwait(false)
+            : await _core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken, observation).ConfigureAwait(false);
         return await SendOnConnectionAsync(operation, connection, command, cancellationToken, observation: observation).ConfigureAwait(false);
     }
 
@@ -3017,7 +3017,7 @@ public sealed partial class RespireClient : IRespireClient
                 RespireConnection connection;
                 if (allowReadFrom && command.ReadKind != ReadCommandKind.None && _readFrom != RespireReadFrom.Primary)
                 {
-                    connection = await core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken).ConfigureAwait(false);
+                    connection = await core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken, observation).ConfigureAwait(false);
                 }
                 else
                 {
@@ -3563,7 +3563,7 @@ public sealed partial class RespireClient : IRespireClient
         string? storedProcedureName, RespireTelemetry.ErrorObservation observation)
         where TCommand : struct, IRespCommand
     {
-        var connection = await _core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken).ConfigureAwait(false);
+        var connection = await _core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken, observation).ConfigureAwait(false);
         await SendFireAndForgetOnConnectionAsync(
                 operation, connection, command, cancellationToken, storedProcedureName, observation)
             .ConfigureAwait(false);
@@ -3798,7 +3798,7 @@ public sealed partial class RespireClient : IRespireClient
         RespireTelemetry.ErrorObservation observation)
         where TCommand : struct, IRespCommand
     {
-        var connection = await _core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken).ConfigureAwait(false);
+        var connection = await _core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken, observation).ConfigureAwait(false);
         return await SendBulkStreamOnConnectionAsync(operation, connection, command, cancellationToken,
             observation: observation).ConfigureAwait(false);
     }
@@ -4228,7 +4228,7 @@ public sealed partial class RespireClient : IRespireClient
                         try
                         {
                             (pool, connection, onReplica) = await core.ReadRouter.RentDedicatedConnectionAsync(
-                                readFrom, cancellationToken, preferredZone, fallback.ReplicaOnly).ConfigureAwait(false);
+                                readFrom, cancellationToken, preferredZone, fallback.ReplicaOnly, observation: observation).ConfigureAwait(false);
                         }
                         catch (Exception error) when (fallback.OriginalFailure is not null && ReadEndpointRouter.IsReadCandidateFailure(error, cancellationToken))
                         {
@@ -4866,7 +4866,7 @@ public sealed partial class RespireClient : IRespireClient
         try
         {
             if (script.IsReadOnly && _readFrom != RespireReadFrom.Primary)
-                connection = await core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken).ConfigureAwait(false);
+                connection = await core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken, observation).ConfigureAwait(false);
             else
             {
                 await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);

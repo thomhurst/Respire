@@ -292,6 +292,11 @@ public sealed class RespireSemaphore
             if (caller.IsOpen) caller.SetAttempts(attempts);
             else detached.SetAttempts(attempts);
         }
+        public void Retry(long generation)
+        {
+            if (caller.IsOpen) caller.Retry();
+            else detached.Retry();
+        }
         public bool Handled(long generation, Exception error)
             => caller.TryHandled(error) || detached.TryHandled(error);
     }

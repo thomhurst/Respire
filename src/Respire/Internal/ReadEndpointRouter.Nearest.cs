@@ -10,7 +10,8 @@ internal sealed partial class ReadEndpointRouter
     private object? _nearestGate;
 
     private async ValueTask<Selection> GetNearestAsync(CancellationToken cancellationToken, bool retry = true,
-        long? samplingDeadline = null, Exception? previousFailure = null, ReadAttempt? attempt = null)
+        long? samplingDeadline = null, Exception? previousFailure = null, ReadAttempt? attempt = null,
+        RespireTelemetry.ErrorObservation observation = default)
     {
         var deadline = samplingDeadline ?? NearestReadSelection.CreateDeadline();
         var sampler = LazyInitializer.EnsureInitialized(ref NearestLatency, ref _nearestGate, static () => ReadLatencySampler.Create());
@@ -31,6 +32,7 @@ internal sealed partial class ReadEndpointRouter
             }
             catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
             {
+                RecordCandidateFailure(observation, error);
                 lastError = error;
                 sampler.ConnectionFailed(primaryCandidate);
             }
@@ -40,6 +42,7 @@ internal sealed partial class ReadEndpointRouter
         try { endpoints = await GetReplicaEndpointsAsync(cancellationToken, waitForUnknown: primary is null).ConfigureAwait(false); }
         catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
         {
+            RecordCandidateFailure(observation, error);
             // Failed Sentinel discovery does not remove a usable primary or already-known replica.
             lastError = error;
         }
@@ -70,6 +73,7 @@ internal sealed partial class ReadEndpointRouter
                 }
                 catch (Exception error) when (!cancellationToken.IsCancellationRequested && error is not ObjectDisposedException)
                 {
+                    RecordCandidateFailure(observation, error);
                     lastError = error;
                     TryRecordFailure(entry, error, nearest: true);
                     continue;
@@ -105,11 +109,15 @@ internal sealed partial class ReadEndpointRouter
             // join a pending/due refresh before the one bounded retry. The same endpoint can
             // recover during that wait, so unchanged addresses do not suppress reselection.
             try { await RefreshSentinelReplicasAsync(sentinel, cancellationToken).ConfigureAwait(false); }
-            catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken)) { lastError = error; }
+            catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
+            {
+                RecordCandidateFailure(observation, error);
+                lastError = error;
+            }
         }
         if (retry)
             return await GetNearestAsync(cancellationToken, retry: false, samplingDeadline: deadline,
-                previousFailure: lastError, attempt: attempt).ConfigureAwait(false);
+                previousFailure: lastError, attempt: attempt, observation: observation).ConfigureAwait(false);
         if (attempt?.FirstFailure is { } original)
         {
             // Exclusions alone preserve the original exception. A later selection or
