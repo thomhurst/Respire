@@ -251,6 +251,58 @@ public class HangfireCommandsTests(RedisTestContainer redis)
     }
 
     [Test]
+    [Arguments(false, 0L)]
+    [Arguments(true, 0L)]
+    [Arguments(false, 7L)]
+    [Arguments(true, 7L)]
+    public async Task ScanRetainsResumePositionAfterForeachBreak(bool asynchronous, long pageCursor)
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) =>
+            {
+                if (command.StartsWith("ZSCAN key 0", StringComparison.Ordinal))
+                    return "*2\r\n$1\r\n7\r\n*6\r\n$1\r\na\r\n$1\r\n1\r\n$1\r\nb\r\n$1\r\n2\r\n$1\r\nc\r\n$1\r\n3\r\n"u8.ToArray();
+                if (command.StartsWith("ZSCAN key 7", StringComparison.Ordinal))
+                    return "*2\r\n$1\r\n0\r\n*6\r\n$1\r\nd\r\n$1\r\n4\r\n$1\r\ne\r\n$1\r\n5\r\n$1\r\nf\r\n$1\r\n6\r\n"u8.ToArray();
+                return null;
+            },
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await using var connection = RespireConnectionMultiplexer.Wrap(client);
+        var database = connection.GetDatabase();
+        var consumed = 0;
+        var stopAfter = pageCursor == 0 ? 2 : 5;
+        IScanningCursor position;
+        if (asynchronous)
+        {
+            var scan = database.SortedSetScanAsync("key", pageSize: 3);
+            position = Assert.IsAssignableFrom<IScanningCursor>(scan);
+            await foreach (var entry in scan)
+            {
+                if (++consumed == stopAfter) break;
+            }
+        }
+        else
+        {
+            var scan = database.SortedSetScan("key", pageSize: 3);
+            position = Assert.IsAssignableFrom<IScanningCursor>(scan);
+            foreach (var entry in scan)
+            {
+                if (++consumed == stopAfter) break;
+            }
+        }
+
+        Assert.Equal(pageCursor, position.Cursor);
+        Assert.Equal(1, position.PageOffset);
+        Assert.Equal(3, position.PageSize);
+        // StackExchange.Redis resumes inclusively at the last returned entry.
+        var remaining = database.SortedSetScan("key", pageSize: position.PageSize,
+            cursor: position.Cursor, pageOffset: position.PageOffset).Select(entry => (string)entry.Element!);
+        Assert.Equal(new[] { "a", "b", "c", "d", "e", "f" }.Skip(stopAfter - 1), remaining);
+    }
+
+    [Test]
     [Arguments(2)]
     [Arguments(3)]
     public async Task BatchDefersAllCommandFamiliesAndSnapshotsBinaryArguments(int protocol)

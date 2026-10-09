@@ -97,7 +97,7 @@ internal sealed class CompatSortedSetScan(
             _started = _complete = false;
         }
 
-        public void Dispose() { _disposed = true; _page = []; _index = 0; }
+        public void Dispose() { _disposed = true; _page = []; }
         public ValueTask DisposeAsync() { Dispose(); return ValueTask.CompletedTask; }
     }
 }
