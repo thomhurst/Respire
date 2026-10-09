@@ -61,8 +61,10 @@ foreach (var failure in result.Failures)
 
 `result.ThrowIfAnyFailed()` remains available when inspection code later chooses to rethrow.
 
-On an idle standalone connection, a batch that fits `MaxInflightCommands` is admitted together
-and sent in one flush. Socket backpressure can require multiple writes to finish that flush.
+On an idle standalone connection with the circuit breaker disabled, a batch that fits
+`MaxInflightCommands` is admitted together and sent in one flush. Socket backpressure can require
+multiple writes to finish that flush. Circuit-enabled batches use ordered per-command admission
+so each command owns its circuit permit until its reply completes.
 When capacity is already occupied, the batch exceeds the ring capacity, or connection maintenance
 holds admission, commands wait for admission in queue order and may use multiple flushes.
 Batch completion reuses pooled response awaitables instead of allocating a task for every command.

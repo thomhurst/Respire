@@ -39,14 +39,16 @@ internal static class QueuedCircuitDispatch
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
     internal static async ValueTask<ValueTask<RespValue>> EnqueueAsync<TCommand>(StandaloneCircuitRegistry circuits,
-        RespireConnection connection, TCommand command, string operation, CancellationToken cancellationToken)
+        RespireConnection connection, TCommand command, string operation, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation = default, CommandDeadline deadline = default)
         where TCommand : struct, IRespCommand
     {
         var admission = circuits.Acquire(new(connection.Host, connection.Port), cancellationToken);
         var transferred = false;
         try
         {
-            var reply = await connection.EnqueuePinnedAsync(command, cancellationToken, operation).ConfigureAwait(false);
+            var reply = await connection.EnqueuePinnedAsync(command, cancellationToken, operation,
+                observation, deadline: deadline).ConfigureAwait(false);
             // ObserveAsync starts eagerly and owns reply completion even before the caller
             // awaits its returned result. Connection failure/cancellation also completes it.
             var guarded = ObserveAsync(reply, admission, cancellationToken);

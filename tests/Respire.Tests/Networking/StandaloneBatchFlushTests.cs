@@ -133,12 +133,15 @@ public class StandaloneBatchFlushTests
     }
 
     [Test]
-    public async Task BatchLargerThanRingPreservesQueueOrder()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task BatchLargerThanRingPreservesQueueOrder(bool circuitEnabled)
     {
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespProtocol.Resp2, Connections = 1, MaxInflightCommands = 2,
+            CircuitBreaker = circuitEnabled ? new() : null,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
         });
         using var batch = client.CreateBatch();
@@ -149,9 +152,11 @@ public class StandaloneBatchFlushTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task StalledBoundedRingBatchRetainsOriginalTimeout(bool durability)
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task StalledBoundedRingBatchRetainsOriginalTimeout(bool durability, bool circuitEnabled)
     {
         await using var server = new FakeRespServer(2, ":1\r\n"u8.ToArray())
         {
@@ -161,6 +166,7 @@ public class StandaloneBatchFlushTests
         {
             Protocol = RespProtocol.Resp2, Connections = 1, MaxInflightCommands = 2,
             CommandTimeout = TimeSpan.FromMilliseconds(500),
+            CircuitBreaker = circuitEnabled ? new() { MinimumFailureCount = 101 } : null,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
         });
         using var batch = client.CreateBatch();
@@ -185,9 +191,11 @@ public class StandaloneBatchFlushTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task WriteGateContentionConsumesBatchTimeout(bool boundedRing)
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task WriteGateContentionConsumesBatchTimeout(bool boundedRing, bool circuitEnabled)
     {
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray()) { SuppressReply = _ => true };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
@@ -195,6 +203,7 @@ public class StandaloneBatchFlushTests
             Protocol = RespProtocol.Resp2, Connections = 1,
             MaxInflightCommands = boundedRing ? 2 : 128,
             CommandTimeout = TimeSpan.FromSeconds(2),
+            CircuitBreaker = circuitEnabled ? new() : null,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
         });
         using var batch = client.CreateBatch();
