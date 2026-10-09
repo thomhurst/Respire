@@ -16,7 +16,8 @@ public sealed partial class RespireClient
     private bool UsesCircuitResponsePath(string operation, bool pinToConnection)
         // Standalone queues own their guard; Cluster queues use this dispatch path,
         // including recovery through their snapshotting deferred view.
-        => _core.Circuits is not null && (!_snapshotPrefixedBinaryKeys || _core.Cluster is not null) && !pinToConnection
+        => _core.Circuits is not null && (!_snapshotPrefixedBinaryKeys || _core.Cluster is not null)
+            && (!pinToConnection || _core.Cluster is not null)
             && operation != "MULTI";
 
     private CommandDeadline CreateCircuitDeadline(CommandDeadline deadline = default)

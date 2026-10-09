@@ -101,7 +101,7 @@ internal sealed class ClientCore : IAsyncDisposable
         _dedicatedPool = CreateStandaloneDedicatedPool(_multiplexer.CaptureMovingPublication());
         _ownedPools.Add(_dedicatedPool);
         Cluster = options.UseCluster
-            ? new ClusterRouter(options, Multiplexer, connectionOptions)
+            ? new ClusterRouter(options, Multiplexer, connectionOptions, circuits: Circuits)
             : null;
         Sentinel = string.IsNullOrWhiteSpace(options.SentinelPrimaryName) ? null : new SentinelRouter(this);
         if (Cluster is { } cluster)

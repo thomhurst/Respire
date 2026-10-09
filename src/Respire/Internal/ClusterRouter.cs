@@ -55,6 +55,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     private const int MaxRedirects = 5;
     private static readonly ProtocolCommand<RawCommand> Asking = new(new("*1\r\n$6\r\nASKING\r\n"u8.ToArray()));
     private readonly RespireOptions _options;
+    private readonly StandaloneCircuitRegistry? _circuits;
     private readonly ILogger? _logger;
     private readonly RespireConnectionOptions _commandConnectionOptions;
     private readonly RespireEndpoint[] _seeds;
@@ -129,9 +130,10 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         RespireOptions options,
         RespireConnectionMultiplexer primary,
         RespireConnectionOptions commandConnectionOptions,
-        Func<long>? migrationClock = null)
+        Func<long>? migrationClock = null, StandaloneCircuitRegistry? circuits = null)
     {
         _options = options;
+        _circuits = circuits;
         _ownedPools = new(_nodesGate);
         _unknownReplicaDiscovery = new(RefreshReplicaRoutesAsync, HasReplicaCoverage);
         _logger = options.CreateLogger("Respire.Cluster");
@@ -277,6 +279,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     // Circuit trimming may discard idle history, but never a live primary, replica,
     // redirect target or maintenance destination. Detached generations retain their
     // outstanding admissions until completion independently of this lookup.
+    // Registry trimming holds its gate before taking _nodesGate. Never acquire
+    // a circuit while holding _nodesGate.
     internal bool IsCircuitEndpointCurrent(RespireEndpoint endpoint)
     {
         lock (_nodesGate)
@@ -512,26 +516,38 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
     private static RespireEndpoint Endpoint(RespireConnectionMultiplexer node) => new(node.Host, node.Port);
 
-    private static async ValueTask EnsureRouteNodeConnectedAsync(
-        RespireConnectionMultiplexer node, CancellationToken cancellationToken, DiscoveryRound? discovery)
+    private async ValueTask EnsureRouteNodeConnectedAsync(
+        RespireConnectionMultiplexer node, CancellationToken cancellationToken, DiscoveryRound? discovery,
+        bool admitCircuit = true)
     {
-        if (discovery is not null) await discovery.BeforeCandidateAsync(Endpoint(node), cancellationToken).ConfigureAwait(false);
+        // Connected routes are admitted by dispatch. A disconnected candidate must
+        // be admitted before discovery/reconnect, which can fail before dispatch.
+        var admission = admitCircuit && _circuits is not null && !node.IsConnected && !node.IsRetired
+            ? _circuits.Acquire(node.ActiveConnectionEndpoint, cancellationToken) : default;
         try
         {
-            await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            if (discovery is not null) await discovery.BeforeCandidateAsync(Endpoint(node), cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (node.IsRetired && !cancellationToken.IsCancellationRequested)
+            {
+                // Preserve caller cancellation; normalize only an unpublished handshake cancelled by retirement.
+                var retired = new RespireConnectionRetiredException(node.Host, node.Port);
+                discovery?.FailedNode(node, retired);
+                throw retired;
+            }
+            catch (Exception error)
+            {
+                admission.ConnectionFailed(error, cancellationToken);
+                discovery?.FailedNode(node, error);
+                throw;
+            }
         }
-        catch (OperationCanceledException) when (node.IsRetired && !cancellationToken.IsCancellationRequested)
-        {
-            // Preserve caller cancellation; normalize only an unpublished handshake cancelled by retirement.
-            var retired = new RespireConnectionRetiredException(node.Host, node.Port);
-            discovery?.FailedNode(node, retired);
-            throw retired;
-        }
-        catch (Exception error)
-        {
-            discovery?.FailedNode(node, error);
-            throw;
-        }
+        // Connecting alone is not a successful application response. Release an
+        // ignored probe so dispatch can acquire the permit for the actual command.
+        finally { admission.Dispose(); }
     }
 
     internal async ValueTask<RespireConnection> GetRedirectConnectionAsync(
@@ -1217,7 +1233,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
     // Configuration failures remain actionable; cancellation belongs to the caller.
     private static bool CanRetryConnectionFailure(Exception error, CancellationToken cancellationToken)
-        => error is not (RespireConfigurationException or DiscoveryRoundUsageException)
+        => error is not (RespireConfigurationException or DiscoveryRoundUsageException or RespireCircuitOpenException)
             && !cancellationToken.IsCancellationRequested;
 
     private bool CanRetryDiscoveryFailure(Exception error, CancellationToken cancellationToken, DiscoveryRound? discovery)
@@ -1225,7 +1241,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             && CanRetryConnectionFailure(error, cancellationToken);
 
     private static bool IsDiscoveryFailure(Exception exception)
-        => exception is (RespireException and not RespireConfigurationException)
+        => exception is (RespireException and not (RespireConfigurationException or RespireCircuitOpenException))
             or IOException or System.Net.Sockets.SocketException
             or System.Security.Authentication.AuthenticationException or TimeoutException;
 
@@ -1339,10 +1355,12 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         CancellationToken cancellationToken,
         string? commandName = null,
         Action<Exception?>? onFrameCompleted = null, string? preferredZone = null,
-        RespireTelemetry.ErrorObservation observation = default)
+        RespireTelemetry.ErrorObservation observation = default, bool pinToConnection = false,
+        CommandDeadline commandDeadline = default)
         where TCommand : struct, Respire.Protocol.IRespCommand
          => connection.SendPrefixedBulkStreamAsync(
-             in Asking, in command, cancellationToken, commandName, onFrameCompleted, preferredZone, observation);
+             in Asking, in command, cancellationToken, commandName, onFrameCompleted, preferredZone, observation,
+             pinToConnection, commandDeadline);
 
     internal static ValueTask<Respire.Protocol.RespValue> SendAskingUncheckedAsync<TCommand>(
         RespireConnection connection,
@@ -1358,10 +1376,10 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     internal static ValueTask<Respire.Protocol.RespValue> SendBlockingAskingUncheckedAsync<TCommand>(
         RespireConnection connection,
         in TCommand command,
-        CancellationToken cancellationToken, int errorAttempts = 0)
+        CancellationToken cancellationToken, int errorAttempts = 0, bool pinToConnection = false)
         where TCommand : struct, Respire.Protocol.IRespCommand
         => connection.SendPrefixedWithoutResponseTimeoutAsync(
-            Asking, command, throwOnError: false, cancellationToken, errorAttempts);
+            Asking, command, throwOnError: false, cancellationToken, errorAttempts, pinToConnection);
 
     internal async ValueTask<RespireConnection[]> GetMasterConnectionsAsync(
         CancellationToken cancellationToken, DiscoveryRound? discovery)

@@ -199,7 +199,7 @@ internal sealed partial class ClusterRouter
                 using var candidateToken = CancellationTokenSource.CreateLinkedTokenSource(linked.Token, candidateDeadline.Token);
                 try
                 {
-                    await EnsureRouteNodeConnectedAsync(node, candidateToken.Token, discovery: null).ConfigureAwait(false);
+                    await EnsureRouteNodeConnectedAsync(node, candidateToken.Token, discovery: null, admitCircuit: false).ConfigureAwait(false);
                     // Apply partial maps while continuing through known candidates. A later node
                     // may provide the complete map needed to replace stale routes during failover.
                     var load = await TryLoadSlotsAsync(node, candidateToken.Token, keepUncoveredOwners: true,

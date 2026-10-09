@@ -139,6 +139,16 @@ the target endpoint before sending the command or `ASKING`. Redis redirection re
 healthy responses from the source; a target rejection reports the target's `Endpoint` and
 `RetryAfter`. Commands rejected by retired generations require fresh admission on their replacement.
 Accepted commands are never replayed because another node opens.
+Pinned node-local reads, including `SCAN` and `CLUSTERSCAN`, acquire admission without changing
+their destination. Blocking commands and streamed uploads admit each dedicated attempt, including
+redirects. A streamed ASK read that moves during a capacity wait reacquires admission on the
+maintenance destination before sending either `ASKING` or the read.
+
+A disconnected route candidate acquires admission before reconnecting. Socket, TLS, and connection
+setup failures contribute to that endpoint's history, while caller cancellation remains ignored.
+Connecting alone releases its permit as ignored; the application reply owns the health outcome.
+Background topology refresh retains its independent connection lifecycle.
+
 Cluster fire-and-forget calls that await replies to handle routing rejection also contribute
 those reply outcomes to endpoint health.
 

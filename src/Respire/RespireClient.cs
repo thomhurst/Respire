@@ -3938,7 +3938,8 @@ public sealed partial class RespireClient : IRespireClient
                     stream = sendAsking
                         ? await ClusterRouter.SendAskingBulkStreamAsync(
                             connection, in command, cancellationToken, operation, CompleteTelemetry,
-                            GetTransportReadZone(in command), observation).ConfigureAwait(false)
+                            GetTransportReadZone(in command), observation, pinToConnection: core.Circuits is not null,
+                            commandDeadline: commandDeadline).ConfigureAwait(false)
                         : await connection.SendBulkStreamAsync(
                             in command, cancellationToken, operation, CompleteTelemetry,
                             GetTransportReadZone(in command), pinToConnection: core.Circuits is not null,
@@ -4358,16 +4359,22 @@ public sealed partial class RespireClient : IRespireClient
                     var sentAsking = sendAsking;
                     RespValue response = default;
                     RespireServerException? serverError = null;
+                    CircuitAdmission admission = default;
                     try
                     {
+                        connection.ThrowIfRetired();
+                        if (core.Circuits is not null) admission = AcquireCircuit(connection, cancellationToken);
                         response = await (sendAsking
                             ? ClusterRouter.SendBlockingAskingUncheckedAsync(connection, in command, cancellationToken,
-                                observation.IsEmpty ? errorAttempts : observation.Attempts)
+                                observation.IsEmpty ? errorAttempts : observation.Attempts, pinToConnection: core.Circuits is not null)
                             : connection.SendWithoutResponseTimeoutAsync(command, cancellationToken,
-                                observation.IsEmpty ? errorAttempts : observation.Attempts))
+                                observation.IsEmpty ? errorAttempts : observation.Attempts, pinToConnection: core.Circuits is not null))
                             .ConfigureAwait(false);
+                        admission.Success();
                     }
-                    catch (RespireServerException error) { serverError = error; }
+                    catch (RespireServerException error) { admission.Failed(error, cancellationToken); serverError = error; }
+                    catch (Exception error) { admission.Failed(error, cancellationToken); throw; }
+                    finally { admission.Dispose(); }
                     sendAsking = false;
                     if (serverError is not null || response.IsError)
                     {

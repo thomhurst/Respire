@@ -83,6 +83,14 @@ internal struct CircuitAdmission(CircuitPermit permit, StandaloneCircuitRegistry
 
     internal void Success() => _outcome = CircuitOutcome.Success;
 
+    // Socket/TLS setup failures precede the command transport's exception wrappers.
+    // Classify them without changing the exception returned to the caller.
+    internal void ConnectionFailed(Exception error, CancellationToken cancellationToken)
+        => Failed(error is IOException or System.Net.Sockets.SocketException
+            or System.Security.Authentication.AuthenticationException
+                ? new RespireConnectionException("Endpoint connection acquisition failed.", error) : error,
+            cancellationToken);
+
     internal void Failed(Exception error, CancellationToken cancellationToken)
     {
         if (cancellationToken.IsCancellationRequested || error is OperationCanceledException
