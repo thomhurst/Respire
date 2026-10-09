@@ -11,6 +11,7 @@ internal sealed partial class CompatDatabase : CompatDatabaseAsync, IDatabase
     internal RespireConnectionMultiplexer Owner { get; }
     internal int Number { get; }
     private readonly RespireClient _client;
+    internal RespireClient Client => _client;
     private readonly SemaphoreSlim _dispatch = new(1, 1);
     internal CompatDatabase(RespireConnectionMultiplexer owner, RespireClient client, int number)
     {

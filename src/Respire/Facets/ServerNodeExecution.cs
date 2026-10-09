@@ -114,8 +114,8 @@ internal sealed partial class ServerCommands
         }
     }
 
-    private async ValueTask<RespireEndpoint[]> DiscoverServerEndpointsAsync(CancellationToken cancellationToken,
-        RespireTelemetry.ErrorObservation observation)
+    internal async ValueTask<RespireEndpoint[]> DiscoverServerEndpointsAsync(CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation = default)
     {
         // Acquisition selects a client-owned multiplexed connection, not a dedicated lease.
         var connection = await client.AcquireConnectionAsync(cancellationToken).ConfigureAwait(false);

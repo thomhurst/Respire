@@ -515,15 +515,6 @@ partial class CompatDatabaseAsync
     public global::System.Threading.Tasks.Task<global::System.Boolean> KeyTouchAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("KeyTouchAsync");
     /// <inheritdoc />
-    public global::System.Threading.Tasks.Task<global::System.Boolean> LockExtendAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @value, global::System.TimeSpan @expiry, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("LockExtendAsync");
-    /// <inheritdoc />
-    public global::System.Threading.Tasks.Task<global::System.Boolean> LockReleaseAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @value, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("LockReleaseAsync");
-    /// <inheritdoc />
-    public global::System.Threading.Tasks.Task<global::System.Boolean> LockTakeAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @value, global::System.TimeSpan @expiry, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("LockTakeAsync");
-    /// <inheritdoc />
     public global::System.Threading.Tasks.Task<global::System.Boolean> SetAddAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @value, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SetAddAsync");
     /// <inheritdoc />
@@ -683,9 +674,6 @@ partial class CompatDatabaseAsync
     public global::System.Threading.Tasks.Task<global::System.Int64> ListPositionAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @element, global::System.Int64 @rank, global::System.Int64 @maxLength, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("ListPositionAsync");
     /// <inheritdoc />
-    public global::System.Threading.Tasks.Task<global::System.Int64> PublishAsync(global::StackExchange.Redis.RedisChannel @channel, global::StackExchange.Redis.RedisValue @message, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("PublishAsync");
-    /// <inheritdoc />
     public global::System.Threading.Tasks.Task<global::System.Int64> SetAddAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue[] @values, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SetAddAsync");
     /// <inheritdoc />
@@ -817,9 +805,6 @@ partial class CompatDatabaseAsync
     /// <inheritdoc />
     public global::System.Threading.Tasks.Task<global::System.Int64> VectorSetLengthAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("VectorSetLengthAsync");
-    /// <inheritdoc />
-    public global::System.Threading.Tasks.Task<global::System.Net.EndPoint> IdentifyEndpointAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("IdentifyEndpointAsync");
     /// <inheritdoc />
     public global::System.Threading.Tasks.Task<global::System.Nullable<global::StackExchange.Redis.GeoPosition>[]> GeoPositionAsync(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue[] @members, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("GeoPositionAsync");

@@ -17,32 +17,8 @@ partial class RespireConnectionMultiplexer
     public global::System.Int64 PublishReconfigure(global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("PublishReconfigure");
     /// <inheritdoc />
-    public global::StackExchange.Redis.IServer GetServer(global::StackExchange.Redis.RedisKey @key, global::System.Object @asyncState, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("GetServer");
-    /// <inheritdoc />
-    public global::StackExchange.Redis.IServer GetServer(global::System.Net.EndPoint @endpoint, global::System.Object @asyncState)
-        => throw Compatibility.Unsupported("GetServer");
-    /// <inheritdoc />
-    public global::StackExchange.Redis.IServer GetServer(global::System.Net.IPAddress @host, global::System.Int32 @port)
-        => throw Compatibility.Unsupported("GetServer");
-    /// <inheritdoc />
-    public global::StackExchange.Redis.IServer GetServer(global::System.String @host, global::System.Int32 @port, global::System.Object @asyncState)
-        => throw Compatibility.Unsupported("GetServer");
-    /// <inheritdoc />
-    public global::StackExchange.Redis.IServer GetServer(global::System.String @hostAndPort, global::System.Object @asyncState)
-        => throw Compatibility.Unsupported("GetServer");
-    /// <inheritdoc />
-    public global::StackExchange.Redis.IServer[] GetServers()
-        => throw Compatibility.Unsupported("GetServers");
-    /// <inheritdoc />
-    public global::StackExchange.Redis.ISubscriber GetSubscriber(global::System.Object @asyncState)
-        => throw Compatibility.Unsupported("GetSubscriber");
-    /// <inheritdoc />
     public global::StackExchange.Redis.ServerCounters GetCounters()
         => throw Compatibility.Unsupported("GetCounters");
-    /// <inheritdoc />
-    public global::System.Net.EndPoint[] GetEndPoints(global::System.Boolean @configuredOnly)
-        => throw Compatibility.Unsupported("GetEndPoints");
     /// <inheritdoc />
     public global::System.String GetStatus()
         => throw Compatibility.Unsupported("GetStatus");
