@@ -108,24 +108,14 @@ public sealed partial class RespireClient
         ReadAffinity? cursorAffinity = null)
         where TCommand : struct, IRespCommand
     {
-        RespireTelemetry.ErrorObservation observation = default;
-        try
-        {
-            // Routing and streamed-upload retries own their terminal boundary and attempt count.
-            if ((_core.Cluster is not null && (ReadCache is null ||
-                    !ClientSideCacheCoordinator.CanCacheOperation(operation))) || command is IStreamingRespCommand)
-                return SendCoreAsync(operation, command, cancellationToken, flags, allowReadFrom, cursorAffinity);
-            // Selection can change while a response is pending, so retain attempts even when metrics are off.
-            observation = RespireTelemetry.ErrorObservation.Rent(force: true);
-            return RespireTelemetry.ObserveFinalError(
-                SendCoreAsync(operation, command, cancellationToken, flags, allowReadFrom, cursorAffinity, observation), observation);
-        }
-        catch (Exception error)
-        {
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: false);
-            else { observation.Final(error); observation.Dispose(); }
-            throw;
-        }
+        if (flags == RespireCommandFlags.None && cursorAffinity is null && !RespireTelemetry.IsOperationEnabled(operation)
+            && TryGetNativeDispatchConnection(operation, in command, out var connection))
+            return connection.SendNativeCheckedAsync(in command, cancellationToken, operation);
+        return DispatchResponseSource<RespValue>.Run(
+            (Client: this, Operation: operation, Command: command, Token: cancellationToken,
+                Flags: flags, Read: allowReadFrom, Affinity: cursorAffinity),
+            static (state, observation) => state.Client.SendCoreAsync(state.Operation, state.Command,
+                state.Token, state.Flags, state.Read, state.Affinity, observation, observeErrors: false));
     }
 
     // A correction scope supplies the lease and reports only after recovery and cleanup.
@@ -174,27 +164,22 @@ public sealed partial class RespireClient
         bool pinToConnection = false, RespireTelemetry.ErrorObservation observation = default, bool sendAsking = false)
         where TCommand : struct, IRespCommand
     {
-        var ownsObservation = observation.IsEmpty;
-        if (observation.IsEmpty) observation = RespireTelemetry.ErrorObservation.Rent(force: true);
-        try
-        {
-            ObjectDisposedException.ThrowIf(_core.Disposed, this);
-            cancellationToken.ThrowIfCancellationRequested();
-            var response = RespireTelemetry.IsOperationEnabled(operation)
-                ? SendOnConnectionInstrumentedAsync(operation, connection, command, cancellationToken,
-                    storedProcedureName: null, sendAsking: sendAsking, commandDeadline: default,
-                    allowStreamingConnectionReroute: !pinToConnection, pinToConnection: pinToConnection,
-                    observation: observation)
-                : SendOnConnectionCoreAsync(operation, connection, command, cancellationToken, sendAsking,
-                    allowStreamingConnectionReroute: !pinToConnection, pinToConnection: pinToConnection,
-                    observation: observation);
-            return ownsObservation ? RespireTelemetry.ObserveFinalError(response, observation) : response;
-        }
-        catch (Exception error)
-        {
-            if (ownsObservation) { observation.Final(error); observation.Dispose(); }
-            throw;
-        }
+        if (observation.IsEmpty)
+            return DispatchResponseSource<RespValue>.Run(
+                (Client: this, Operation: operation, Connection: connection, Command: command,
+                    Token: cancellationToken, Pinned: pinToConnection, Asking: sendAsking),
+                static (state, owner) => state.Client.SendOnConnectionObservedAsync(state.Operation,
+                    state.Connection, state.Command, state.Token, state.Pinned, owner, state.Asking));
+        ObjectDisposedException.ThrowIf(_core.Disposed, this);
+        cancellationToken.ThrowIfCancellationRequested();
+        return RespireTelemetry.IsOperationEnabled(operation)
+            ? SendOnConnectionInstrumentedAsync(operation, connection, command, cancellationToken,
+                storedProcedureName: null, sendAsking: sendAsking, commandDeadline: default,
+                allowStreamingConnectionReroute: !pinToConnection, pinToConnection: pinToConnection,
+                observation: observation)
+            : SendOnConnectionCoreAsync(operation, connection, command, cancellationToken, sendAsking,
+                allowStreamingConnectionReroute: !pinToConnection, pinToConnection: pinToConnection,
+                observation: observation);
     }
 
     private ValueTask<TResult> ConvertCachedResponseAsync<TCommand, TState, TResult>(
@@ -225,10 +210,15 @@ public sealed partial class RespireClient
     private ValueTask<TResult> ConvertObservedResponseAsync<TCommand, TState, TResult>(
         string operation, TCommand command, CancellationToken cancellationToken,
         TState state, ResponseConverter<TState, TResult> converter, bool transferOwnership,
-        ReadAffinity? cursorAffinity = null)
+        ReadAffinity? cursorAffinity = null, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
     {
-        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        if (observation.IsEmpty)
+            return DispatchResponseSource<TResult>.Run(
+                (Client: this, Operation: operation, Command: command, Token: cancellationToken,
+                    State: state, Converter: converter, Transfer: transferOwnership, Affinity: cursorAffinity),
+                static (state, owner) => state.Client.ConvertObservedResponseAsync(state.Operation, state.Command,
+                    state.Token, state.State, state.Converter, state.Transfer, state.Affinity, owner));
         ClientSideCacheCoordinator.MutationFence mutationFence = default;
         ValueTask<RespValue> response;
         try
@@ -309,7 +299,12 @@ public sealed partial class RespireClient
         RespireTelemetry.ErrorObservation observation = default, bool admit = false)
         where TCommand : struct, IRespCommand
     {
-        if (observation.IsEmpty) observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        if (observation.IsEmpty)
+            return DispatchResponseSource<TResult>.Run(
+                (Client: this, Operation: operation, Connection: connection, Command: command, Token: cancellationToken,
+                    State: state, Converter: converter, Pinned: pinToConnection, Admit: admit),
+                static (state, owner) => state.Client.ConvertOnConnectionAsync(state.Operation, state.Connection,
+                    state.Command, state.Token, state.State, state.Converter, state.Pinned, owner, state.Admit));
         ValueTask<RespValue> response;
         try
         {

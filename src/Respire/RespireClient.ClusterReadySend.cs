@@ -23,11 +23,11 @@ public sealed partial class RespireClient
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
     private async ValueTask<TResult> SendOnReadyClusterAsync<TCommand, TResult, TSend>(
-        string operation, ClusterRouter cluster, TCommand command, CancellationToken cancellationToken, TSend sender)
+        string operation, ClusterRouter cluster, TCommand command, CancellationToken cancellationToken, TSend sender,
+        RespireTelemetry.ErrorObservation observation)
         where TCommand : struct, IRespCommand
         where TSend : struct, IClusterReadySend<TResult>
     {
-        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
         try
         {
             var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;

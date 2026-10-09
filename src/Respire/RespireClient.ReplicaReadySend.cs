@@ -10,7 +10,7 @@ public sealed partial class RespireClient
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private bool TryDispatchReplica<TCommand, TResult, TSend>(
         string operation, in TCommand command, CancellationToken cancellationToken,
-        TSend sender, out ValueTask<TResult> response)
+        TSend sender, out ValueTask<TResult> response, RespireTelemetry.ErrorObservation observation)
         where TCommand : struct, IRespCommand
         where TSend : struct, IReadySend<TResult>
     {
@@ -21,7 +21,7 @@ public sealed partial class RespireClient
             return false;
         }
         response = SendOnReadyReplicaAsync<TCommand, TResult, TSend>(
-            operation, connection, in command, cancellationToken, sender);
+            operation, connection, in command, cancellationToken, sender, observation);
         return true;
     }
 
@@ -44,12 +44,12 @@ public sealed partial class RespireClient
 
     private static ValueTask<TResult> SendOnReadyReplicaAsync<TCommand, TResult, TSend>(
         string operation, RespireConnection connection, in TCommand command,
-        CancellationToken cancellationToken, TSend sender)
+        CancellationToken cancellationToken, TSend sender, RespireTelemetry.ErrorObservation observation)
         where TCommand : struct, IRespCommand
         where TSend : struct, IReadySend<TResult>
     {
         // The ready replica gate excludes telemetry; the ordinary route owns its duration.
-        try { return sender.Send(connection, operation, in command, cancellationToken, default); }
+        try { return sender.Send(connection, operation, in command, cancellationToken, default, errorObservation: observation); }
         catch (Exception error)
         {
             // Readiness is an observation, not a lease. Preserve the former async failure shape.

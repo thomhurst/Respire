@@ -3234,7 +3234,7 @@ public sealed partial class RespireClient : IRespireClient
                 && !ClusterRouter.CanRecover(serverError, slot))
             {
                 if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts);
-                else observation.Handled(error);
+                else RespireTelemetry.RecordError(error, internallyHandled: true, observation.Attempts);
                 return default;
             }
             if (observeErrors) observation.Final(error);
@@ -3350,23 +3350,11 @@ public sealed partial class RespireClient : IRespireClient
         string? storedProcedureName = null,
         bool allowReadFrom = false)
         where TCommand : struct, IRespCommand
-    {
-        RespireTelemetry.ErrorObservation observation = default;
-        try
-        {
-            // A listener or group can be enabled while submission waits for capacity.
-            if (_core.Cluster is null) observation = RespireTelemetry.ErrorObservation.Rent(force: true);
-            var response = SendFireAndForgetCoreAsync(operation, command, cancellationToken,
-                storedProcedureName, allowReadFrom, observation);
-            return observation.IsEmpty ? response : RespireTelemetry.ObserveFinalError(response, observation);
-        }
-        catch (Exception error)
-        {
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: false);
-            else { observation.Final(error); observation.Dispose(); }
-            throw;
-        }
-    }
+        => DispatchResponseSource.Run(
+            (Client: this, Operation: operation, Command: command, Token: cancellationToken,
+                Procedure: storedProcedureName, Read: allowReadFrom),
+            static (state, observation) => state.Client.SendFireAndForgetCoreAsync(state.Operation,
+                state.Command, state.Token, state.Procedure, state.Read, observation));
 
     private ValueTask SendFireAndForgetCoreAsync<TCommand>(
         string operation, TCommand command, CancellationToken cancellationToken,
@@ -3382,7 +3370,7 @@ public sealed partial class RespireClient : IRespireClient
             if (core.Cluster is { } readCluster)
             {
                 return SendFireAndForgetClusterAsync(
-                    operation, readCluster, command, cancellationToken, storedProcedureName, allowReadFrom: true);
+                    operation, readCluster, command, cancellationToken, storedProcedureName, allowReadFrom: true, observation: observation);
             }
 
             return SendFireAndForgetViaReadRouterAsync(operation, command, cancellationToken, storedProcedureName, observation);
@@ -3403,7 +3391,7 @@ public sealed partial class RespireClient : IRespireClient
         if (core.Cluster is { } cluster)
         {
             return SendFireAndForgetClusterAsync(
-                operation, cluster, command, cancellationToken, storedProcedureName);
+                operation, cluster, command, cancellationToken, storedProcedureName, observation: observation);
         }
 
         if (core.Sentinel is not null || !core.Multiplexer.IsInitialized)
@@ -3435,7 +3423,8 @@ public sealed partial class RespireClient : IRespireClient
             if (core.Cluster is { } cluster)
             {
                 await SendFireAndForgetClusterAsync(
-                        operation, cluster, new MutationCommand<TCommand>(command, mutationFence), cancellationToken, storedProcedureName)
+                        operation, cluster, new MutationCommand<TCommand>(command, mutationFence), cancellationToken, storedProcedureName,
+                        observation: observation)
                     .ConfigureAwait(false);
                 return;
             }
@@ -3569,14 +3558,13 @@ public sealed partial class RespireClient : IRespireClient
         TCommand command,
         CancellationToken cancellationToken,
         string? storedProcedureName,
-        bool allowReadFrom = false)
+        bool allowReadFrom = false, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
     {
         ClusterRouter.DiscoveryRound? discovery = null;
         var discoveryPending = false;
         var delegatedErrors = false;
         var mayCloseWithoutReply = RespireCommand.MayCloseWithoutReply(operation);
-        using var observation = mayCloseWithoutReply ? RespireTelemetry.ErrorObservation.Rent(force: true) : default;
         try
         {
             if (mayCloseWithoutReply)
@@ -3609,7 +3597,7 @@ public sealed partial class RespireClient : IRespireClient
             delegatedErrors = true;
             using var response = await SendClusterAsync(
                     operation, cluster, command, cancellationToken, storedProcedureName,
-                    allowReadFrom: allowReadFrom, observeErrors: true, discardServerErrors: true)
+                    allowReadFrom: allowReadFrom, observeErrors: false, discardServerErrors: true, observation: observation)
                 .ConfigureAwait(false);
         }
         catch (Exception error)
@@ -5538,19 +5526,23 @@ public sealed partial class RespireClient : IRespireClient
 
     private async Task RevokeLeaseAsync(Cmd1 command)
     {
+        // Cleanup owns its handled failure. Lend that owner to native reply inspection
+        // so it cannot publish the revocation as a caller-facing command failure.
+        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
         try
         {
             var reply = await SendCoreAsync("UNLINK", command, CancellationToken.None,
                 RespireCommandFlags.None, allowReadFrom: false, cursorAffinity: null,
-                observeErrors: false).ConfigureAwait(false);
+                observation: observation, observeErrors: false).ConfigureAwait(false);
             reply.Dispose();
         }
         catch (Exception error)
         {
             // Revocation is cleanup: its failure is handled by lease expiry, not the caller.
-            RespireTelemetry.RecordError(error, internallyHandled: true);
+            RespireTelemetry.RecordError(error, internallyHandled: true, observation.Attempts);
             throw;
         }
+        finally { observation.Dispose(); }
     }
 
     private static async Task ObserveRevokeAsync(Task revoke)
@@ -5671,19 +5663,19 @@ public sealed partial class RespireClient : IRespireClient
         where TCommand : struct, IRespCommand
         => ConvertResponseAsync(operation, command, ct, this, converter, transferOwnership);
 
-    internal ValueTask<TResult> ConvertResponseAsync<TCommand, TState, TResult>(
+    private ValueTask<TResult> ConvertResponseCoreAsync<TCommand, TState, TResult>(
         string operation,
         in TCommand command,
         CancellationToken ct,
         TState state,
         ResponseConverter<TState, TResult> converter,
-        bool transferOwnership = false)
+        bool transferOwnership, RespireTelemetry.ErrorObservation observation)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
-        if (core.Disposed) ThrowIfDisposedForCommand();
+        if (core.Disposed) ThrowIfDisposedForCommand(observeErrors: false);
         if (TryDispatchReplica<TCommand, TResult, ConvertedReadySend<TState, TResult>>(
-            operation, in command, ct, new(state, converter, transferOwnership), out var replicaResponse))
+            operation, in command, ct, new(state, converter, transferOwnership), out var replicaResponse, observation))
             return replicaResponse;
         if (CanUseDirectReplySource(operation, in command)
             && command is not IStreamingRespCommand)
@@ -5696,16 +5688,17 @@ public sealed partial class RespireClient : IRespireClient
                 var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
                 return SendOnReadyPrimaryAsync<TCommand, TResult, ConvertedReadySend<TState, TResult>>(
                     operation, readyMultiplexer, command, ct,
-                    new ConvertedReadySend<TState, TResult>(state, converter, transferOwnership), cache, mutationFence);
+                    new ConvertedReadySend<TState, TResult>(state, converter, transferOwnership), cache, mutationFence,
+                    observeSelectionErrors: false, observation: observation);
             }
             else if (TryGetDirectReplyCluster(in command, out var cluster))
             {
                 return SendOnReadyClusterAsync<TCommand, TResult, ClusterConvertedReadySend<TState, TResult>>(
-                    operation, cluster, command, ct, new(state, converter, transferOwnership));
+                    operation, cluster, command, ct, new(state, converter, transferOwnership), observation);
             }
         }
 
-        return ConvertObservedResponseAsync(operation, command, ct, state, converter, transferOwnership);
+        return ConvertObservedResponseAsync(operation, command, ct, state, converter, transferOwnership, observation: observation);
     }
 
     internal ValueTask<long> IntegerAsync<TCommand>(string operation, in TCommand command, CancellationToken ct)
@@ -5773,13 +5766,14 @@ public sealed partial class RespireClient : IRespireClient
             operation, command, ct,
             static (RespireClient _, in RespValue value) => ResponseReader.String(in value));
 
-    internal ValueTask<string?> StringOrNullAsync<TCommand>(string operation, in TCommand command, CancellationToken ct)
+    private ValueTask<string?> StringOrNullCoreAsync<TCommand>(string operation, in TCommand command, CancellationToken ct,
+        RespireTelemetry.ErrorObservation observation)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
-        if (core.Disposed) ThrowIfDisposedForCommand();
+        if (core.Disposed) ThrowIfDisposedForCommand(observeErrors: false);
         if (TryDispatchReplica<TCommand, string?, StringReadySend>(
-            operation, in command, ct, default, out var replicaResponse))
+            operation, in command, ct, default, out var replicaResponse, observation))
             return replicaResponse;
         if (CanUseDirectReplySource(operation, in command))
         {
@@ -5791,27 +5785,29 @@ public sealed partial class RespireClient : IRespireClient
                 var cache = core.ClientCache;
                 var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
                 return SendOnReadyPrimaryAsync<TCommand, string?, StringReadySend>(
-                    operation, readyMultiplexer, command, ct, default, cache, mutationFence);
+                    operation, readyMultiplexer, command, ct, default, cache, mutationFence,
+                    observeSelectionErrors: false, observation: observation);
             }
             else if (TryGetDirectReplyCluster(in command, out var cluster))
             {
-                return SendOnReadyClusterAsync<TCommand, string?, StringReadySend>(operation, cluster, command, ct, default);
+                return SendOnReadyClusterAsync<TCommand, string?, StringReadySend>(operation, cluster, command, ct, default, observation);
             }
         }
 
-        return ConvertResponseAsync(
+        return ConvertResponseCoreAsync(
             operation, command, ct, this,
             static (RespireClient _, in RespValue value) => ResponseReader.StringOrNull(in value),
-            transferOwnership: false);
+            transferOwnership: false, observation: observation);
     }
 
-    internal ValueTask<byte[]?> BytesOrNullAsync<TCommand>(string operation, in TCommand command, CancellationToken ct)
+    private ValueTask<byte[]?> BytesOrNullCoreAsync<TCommand>(string operation, in TCommand command, CancellationToken ct,
+        RespireTelemetry.ErrorObservation observation)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
-        if (core.Disposed) ThrowIfDisposedForCommand();
+        if (core.Disposed) ThrowIfDisposedForCommand(observeErrors: false);
         if (TryDispatchReplica<TCommand, byte[]?, BytesReadySend>(
-            operation, in command, ct, default, out var replicaResponse))
+            operation, in command, ct, default, out var replicaResponse, observation))
             return replicaResponse;
         if (CanUseDirectReplySource(operation, in command)
             && command is not IStreamingRespCommand)
@@ -5821,16 +5817,16 @@ public sealed partial class RespireClient : IRespireClient
                 var cache = core.ClientCache;
                 var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
                 return SendOnReadyPrimaryAsync<TCommand, byte[]?, BytesReadySend>(
-                    operation, readyMultiplexer, command, ct, default, cache, mutationFence);
+                    operation, readyMultiplexer, command, ct, default, cache, mutationFence,
+                    observeSelectionErrors: false, observation: observation);
             }
             else if (TryGetDirectReplyCluster(in command, out var cluster))
             {
-                return SendOnReadyClusterAsync<TCommand, byte[]?, BytesReadySend>(operation, cluster, command, ct, default);
+                return SendOnReadyClusterAsync<TCommand, byte[]?, BytesReadySend>(operation, cluster, command, ct, default, observation);
             }
         }
-        return ConvertAsync(
-            operation, command, ct,
-            static (RespireClient _, in RespValue value) => ResponseReader.BytesOrNull(in value));
+        return ConvertResponseCoreAsync(operation, command, ct, this,
+            static (RespireClient _, in RespValue value) => ResponseReader.BytesOrNull(in value), false, observation);
     }
 
     internal ValueTask<double> DoubleAsync<TCommand>(string operation, in TCommand command, CancellationToken ct)

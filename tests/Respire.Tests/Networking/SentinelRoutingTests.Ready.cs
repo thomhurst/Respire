@@ -45,10 +45,8 @@ public partial class SentinelRoutingTests
                     ":7\r\n"u8.ToArray(), static value => value == 7);
                 break;
             case "raw":
-                // Raw commands retain a pooled final-error observer even when command
-                // telemetry is off, so late error-metric activation still sees completion.
                 await VerifySourceAsync(client.SendAsync("GET", new Cmd1(Verbs.Get, "ready"), default),
-                    "StateMachineBox", "$5\r\nvalue\r\n"u8.ToArray(), static value =>
+                    "PendingResponseSource", "$5\r\nvalue\r\n"u8.ToArray(), static value =>
                     {
                         using (value) return value.AsSpan().SequenceEqual("value"u8);
                     });
@@ -71,8 +69,13 @@ public partial class SentinelRoutingTests
                 var sourceField = typeof(ValueTask<T>).GetField("_obj", BindingFlags.Instance | BindingFlags.NonPublic)
                     ?? throw new InvalidOperationException("ValueTask<T>._obj is unavailable; update the reply-source control for this runtime.");
                 var source = sourceField.GetValue(response);
+                await Assert.That(source).IsTypeOf<DispatchResponseSource<T>>();
+                var nativeResponseField = typeof(DispatchResponseSource<T>).GetField("_response", BindingFlags.Instance | BindingFlags.NonPublic)
+                    ?? throw new InvalidOperationException("DispatchResponseSource<T>._response is unavailable; update the reply-source control.");
+                var nativeResponse = nativeResponseField.GetValue(source);
+                source = sourceField.GetValue(nativeResponse);
                 // TUnit's default HTML reporter attaches a tracing listener. The dedicated
-                // uninstrumented CI lane disables that reporter to verify direct sources;
+                // uninstrumented CI lane disables that reporter to verify native sources;
                 // ordinary test runs must still retain their instrumented outer wrappers.
                 if (RespireTelemetry.IsOperationEnabled(shape == "integer" ? "INCR" : "GET"))
                     expectedSource = shape == "raw" ? "StateMachineBox" : "PooledResponseSource";

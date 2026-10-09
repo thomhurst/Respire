@@ -1,0 +1,13 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "dispatch-write-outcome-borrower",
+      "Role": "borrower",
+      "Member": "Respire.Networking.RespireConnection.SendAttemptAsync`1(TCommand,CancellationToken,string?,CommandDeadline,int,int,bool,DedicatedStreamRoute,bool,RespireTelemetry.ErrorObservation):ValueTask<CommandAttemptResult>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Attempt evidence does not independently publish final errors. Forward a supplied logical caller observation to raw and multi-reply native sources, including immutable discarded-reply retry metadata."
+    }
+  ],
+  "NonRoutes": []
+}

@@ -12,6 +12,16 @@ internal sealed partial class RespireConnection
         RespireTelemetry.ErrorObservation observation = default, RespireTelemetry.OperationStart durationStarted = default, bool pinToConnection = false)
         where TCommand : struct, IRespCommand
     {
+        if (observation.IsEmpty)
+            return DispatchResponseSource<byte[]?>.Run(
+                (Connection: this, Command: command, Token: cancellationToken, Name: commandName,
+                    Deadline: commandDeadline, Attempts: errorAttempts, Duration: durationStarted, Pinned: pinToConnection),
+                static (state, owner) =>
+                {
+                    owner.SetAttempts(state.Attempts);
+                    return state.Connection.SendBytesAsync(state.Command, state.Token, state.Name, state.Deadline,
+                        state.Attempts, owner, state.Duration, state.Pinned);
+                });
         if (!commandDeadline.IsSet) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
         var duration = new RespireTelemetry.DurationObservation(this, durationStarted);
         var source = BytesPendingResponseSource.Rent(commandName, (observation.IsEmpty ? errorAttempts : observation.Attempts),

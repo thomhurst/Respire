@@ -48,6 +48,13 @@ internal static partial class RespireTelemetry
         private static readonly ObjectPool<ObservationState, Policy> Pool = new(4096);
         private readonly ObservationState? _state;
         private readonly long _generation;
+        private readonly IDispatchObservation? _dispatch;
+
+        internal ErrorObservation(IDispatchObservation dispatch, long generation)
+        {
+            _dispatch = dispatch;
+            _generation = generation;
+        }
 
         private ErrorObservation(ObservationState state, long generation)
         {
@@ -55,12 +62,13 @@ internal static partial class RespireTelemetry
             _generation = generation;
         }
 
-        internal bool IsEmpty => _state is null;
+        internal bool IsEmpty => _state is null && _dispatch is null;
 
         internal int Attempts
         {
             get
             {
+                if (_dispatch is not null) return _dispatch.Attempts(_generation);
                 if (_state is null) return 0;
                 lock (_state.Gate)
                     return _state.Active && _state.Generation == _generation ? _state.Attempts : 0;
@@ -82,6 +90,7 @@ internal static partial class RespireTelemetry
         }
         internal void Handled(Exception error)
         {
+            if (_dispatch is not null) { _dispatch.Handled(_generation, error); return; }
             if (_state is null) return;
             int attempt;
             lock (_state.Gate)
@@ -94,6 +103,8 @@ internal static partial class RespireTelemetry
         }
         internal void Final(Exception error)
         {
+            // DispatchResponseSource publishes after all response parsing and cleanup.
+            if (_dispatch is not null) return;
             if (_state is null) return;
             int attempts;
             lock (_state.Gate)
@@ -107,6 +118,7 @@ internal static partial class RespireTelemetry
         // A hedge race copies only its completed result leg's count into the caller's lease.
         internal void SetAttempts(int attempts)
         {
+            if (_dispatch is not null) { _dispatch.SetAttempts(_generation, attempts); return; }
             if (_state is null) return;
             lock (_state.Gate)
             {
@@ -131,6 +143,7 @@ internal static partial class RespireTelemetry
         // handle under one gate, avoiding a second lock per completed deferred command.
         internal int DisposeAndGetAttempts()
         {
+            if (_dispatch is not null) return _dispatch.Attempts(_generation);
             if (_state is null) return 0;
             int attempts;
             lock (_state.Gate)
@@ -148,7 +161,7 @@ internal static partial class RespireTelemetry
 
         internal readonly ref struct TestInspection(ErrorObservation observation)
         {
-            internal object? StorageIdentity => observation._state;
+            internal object? StorageIdentity => (object?)observation._dispatch ?? observation._state;
         }
 
         private sealed class ObservationState

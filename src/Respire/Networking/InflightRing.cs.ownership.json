@@ -1,0 +1,12 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "dispatch-discarded-reply-snapshot",
+      "Role": "internal",
+      "Member": "Respire.Networking.InflightRing.TryEnqueueDiscard(string?,long,int):bool",
+      "Contract": "Copy operation and retry count before slot publication; retain no caller lease. Dequeue captures and clears the snapshot before releasing the FIFO slot for reuse."
+    }
+  ],
+  "NonRoutes": []
+}

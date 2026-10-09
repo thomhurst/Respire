@@ -123,7 +123,9 @@ public class CommandDurationTests
     }
 
     [Test]
-    public async Task AdmissionFailureReturnsFaultedResultAndOneDuration()
+    [MatrixDataSource]
+    public async Task AdmissionFailureReturnsFaultedResultAndOneDuration(
+        [Matrix("string", "bytes", "integer")] string shape, [Matrix(false, true)] bool native)
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Command });
         await using var server = new FakeRespServer();
@@ -131,8 +133,20 @@ public class CommandDurationTests
         using var capture = new DurationCapture();
         var expected = new InvalidOperationException("admission rejected");
         // Obtaining the ValueTask must retain the previous instrumented async boundary.
-        var pending = client.ConvertResponseAsync<AdmissionFailureCommand, int, int>("GET",
-            new(expected), default, 0, static (int state, in RespValue _) => state);
+        var command = new AdmissionFailureCommand(expected);
+        // Exercise native admission even when the test runner installs activity tracing.
+        var connection = client.Core.Multiplexer.GetConnection();
+        Task pending = (shape, native) switch
+        {
+            ("string", true) => connection.SendNativeStringAsync(in command, default, "GET").AsTask(),
+            ("bytes", true) => connection.SendNativeBytesAsync(in command, default, "GET").AsTask(),
+            ("integer", true) => connection.SendNativeConvertedAsync(in command, default, "GET",
+                0, static (int state, in RespValue _) => state, false).AsTask(),
+            ("string", false) => client.StringOrNullAsync("GET", in command, default).AsTask(),
+            ("bytes", false) => client.BytesOrNullAsync("GET", in command, default).AsTask(),
+            _ => client.ConvertResponseAsync<AdmissionFailureCommand, int, int>("GET",
+                in command, default, 0, static (int state, in RespValue _) => state).AsTask(),
+        };
         var actual = await Assert.That(async () => await pending).ThrowsExactly<InvalidOperationException>();
         await Assert.That(actual).IsSameReferenceAs(expected);
         await Assert.That(capture.Items.Single().Tags.ContainsKey("error.type")).IsTrue();

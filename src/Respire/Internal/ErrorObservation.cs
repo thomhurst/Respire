@@ -45,6 +45,8 @@ internal static class ErrorObservation
         internal FinalOwner(Lease lease) => _lease = lease;
 
         internal bool IsEmpty => _lease is null;
+        internal int RetryAttempts => _lease?.RetryAttempts ?? 0;
+        internal void SetRetryAttempts(int retryAttempts) => _lease?.SetRetryAttempts(retryAttempts);
 
         internal Borrower Borrow() => new(_lease?.Borrow());
         internal bool RecordHandled(Exception error) => _lease?.RecordHandled(error) ?? false;
@@ -75,6 +77,21 @@ internal static class ErrorObservation
     {
         private bool _completed;
 
+        internal int RetryAttempts
+        {
+            get
+            {
+                lock (observation.Gate)
+                    return observation.Generation == generation && !_completed ? observation.RetryAttempts : 0;
+            }
+        }
+
+        internal void SetRetryAttempts(int retryAttempts)
+        {
+            lock (observation.Gate)
+                if (IsOpen) observation.RetryAttempts = Math.Max(0, retryAttempts);
+        }
+
         internal Lease? Borrow()
         {
             lock (observation.Gate)
@@ -95,8 +112,8 @@ internal static class ErrorObservation
             lock (observation.Gate)
             {
                 if (!IsOpen) return false;
-                if (observation.RetryAttempts < int.MaxValue) observation.RetryAttempts++;
                 retryAttempts = observation.RetryAttempts;
+                if (observation.RetryAttempts < int.MaxValue) observation.RetryAttempts++;
             }
             // Never invoke an exporter while holding the ownership gate. The captured count
             // remains this event's count even if another retry, final inspection or reuse wins.

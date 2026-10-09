@@ -143,11 +143,10 @@ public sealed partial class RespireClient
     private async ValueTask<TResult> SendCircuitReadyAsync<TCommand, TResult, TSend>(
         string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken,
         TSend sender, RespireTelemetry.OperationStart durationStarted, ClientSideCacheCoordinator? cache,
-        ClientSideCacheCoordinator.MutationFence mutationFence)
+        ClientSideCacheCoordinator.MutationFence mutationFence, RespireTelemetry.ErrorObservation observation)
         where TCommand : struct, IRespCommand
         where TSend : struct, IReadySend<TResult>
     {
-        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
         var commandDeadline = CreateCircuitDeadline();
         var attemptStarted = durationStarted with { SuppressRetirement = true };
         var durationOwnedByTransport = false;

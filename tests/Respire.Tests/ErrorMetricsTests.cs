@@ -5012,6 +5012,63 @@ public partial class ErrorMetricsTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task FencedClusterFireAndForgetRetainsRedirectOwner(bool cancel)
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        var targetSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var target = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "HELLO 3" ? "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray() : null,
+            SuppressReply = command =>
+            {
+                if (!command.StartsWith("SET ", StringComparison.Ordinal)) return false;
+                targetSeen.TrySetResult();
+                return cancel;
+            },
+        };
+        var slot = ClusterHash.GetSlot("key");
+        await using var seed = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "CLUSTER SLOTS" => "*0\r\n"u8.ToArray(),
+                "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
+                _ when command.StartsWith("SET ", StringComparison.Ordinal)
+                    => Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n"),
+                _ => null,
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            ClientSideCache = new(), Endpoints = [new("127.0.0.1", seed.Port)],
+        });
+        using var capture = new Capture(throwOnMeasurement: true);
+        using var cancellation = new CancellationTokenSource();
+        var pending = client.ExecuteFireAndForgetAsync("SET", ["key", "value"], cancellation.Token).AsTask();
+        await targetSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        if (cancel)
+        {
+            cancellation.Cancel();
+            var error = await Assert.That(async () => await pending).Throws<OperationCanceledException>();
+            await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
+        }
+        else await pending;
+        var items = capture.Items.ToArray();
+        await Assert.That(items.Length).IsEqualTo(cancel ? 2 : 1);
+        await Assert.That((bool)items[0].Tags["redis.client.errors.internal"]!).IsTrue();
+        await Assert.That(items[0].Tags["db.response.status_code"]).IsEqualTo("MOVED");
+        await Assert.That(items[0].Tags["redis.client.operation.retry_attempts"]).IsEqualTo(0);
+        if (cancel)
+        {
+            await Assert.That((bool)items[1].Tags["redis.client.errors.internal"]!).IsFalse();
+            await Assert.That(items[1].Tags["redis.client.operation.retry_attempts"]).IsEqualTo(1);
+        }
+    }
+
+    [Test]
     [Arguments("string", false)]
     [Arguments("bytes", false)]
     [Arguments("typed", false)]

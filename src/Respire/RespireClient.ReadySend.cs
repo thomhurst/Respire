@@ -25,12 +25,14 @@ public sealed partial class RespireClient
         where TCommand : struct, IRespCommand
         // Raw sends keep their mutation fence in the outer SendAsync path.
         => SendOnReadyPrimaryAsync<TCommand, RespValue, RawReadySend>(
-            operation, multiplexer, command, cancellationToken, new RawReadySend(this, observation), observeSelectionErrors: false);
+            operation, multiplexer, command, cancellationToken, new RawReadySend(this, observation),
+            observeSelectionErrors: false, observation: observation);
 
     private ValueTask<TResult> SendOnReadyPrimaryAsync<TCommand, TResult, TSend>(
         string operation, RespireConnectionMultiplexer multiplexer, in TCommand command,
         CancellationToken cancellationToken, TSend sender, ClientSideCacheCoordinator? cache = null,
-        ClientSideCacheCoordinator.MutationFence mutationFence = default, bool observeSelectionErrors = true)
+        ClientSideCacheCoordinator.MutationFence mutationFence = default, bool observeSelectionErrors = true,
+        RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
         where TSend : struct, IReadySend<TResult>
     {
@@ -47,13 +49,13 @@ public sealed partial class RespireClient
         }
         if (sender.ObserveDuration && _core.Circuits is not null && !_snapshotPrefixedBinaryKeys)
             return SendCircuitReadyAsync<TCommand, TResult, TSend>(operation, connection, command, cancellationToken, sender,
-                durationStarted, cache, mutationFence);
+                durationStarted, cache, mutationFence, observation);
         if (mutationFence.IsRequired)
             return SendReadyMutationAsync<TCommand, TResult, TSend>(connection, operation, in command, cancellationToken, sender,
-                cache!, mutationFence, durationStarted);
+                cache!, mutationFence, durationStarted, observation);
         try
         {
-            return sender.Send(connection, operation, in command, cancellationToken, durationStarted);
+            return sender.Send(connection, operation, in command, cancellationToken, durationStarted, errorObservation: observation);
         }
         // _core is readonly: this filter observes the same core captured by the caller.
         catch (Exception error) when (_core.Sentinel is not null || durationStarted.MetricEnabled)
@@ -67,11 +69,10 @@ public sealed partial class RespireClient
     private static ValueTask<TResult> SendReadyMutationAsync<TCommand, TResult, TSend>(
         RespireConnection connection, string operation, in TCommand command, CancellationToken cancellationToken,
         TSend sender, ClientSideCacheCoordinator cache, ClientSideCacheCoordinator.MutationFence mutationFence,
-        RespireTelemetry.OperationStart durationStarted)
+        RespireTelemetry.OperationStart durationStarted, RespireTelemetry.ErrorObservation observation)
         where TCommand : struct, IRespCommand
         where TSend : struct, IReadySend<TResult>
     {
-        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
         ValueTask<TResult> response;
         try
         {

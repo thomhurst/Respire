@@ -1,0 +1,34 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "native-raw-admission",
+      "Role": "helper",
+      "Member": "Respire.Networking.RespireConnection.SendNativeCheckedAsync`1(in TCommand,CancellationToken,string):ValueTask<RespValue>",
+      "Owner": "Respire.Networking.PendingResponseSource.IValueTaskSource<RespValue>.GetResult(short):RespValue",
+      "Contract": "Immediate admission transfers final ownership directly to the native raw response. Capacity waits and retirement fallback reclaim the unpublished source and retain the logical dispatch owner. Pre-admission failures reclaim both unpublished references before final publication and synchronous rethrow. No cache fence, scripted response, route retry, or outer cleanup is bypassed."
+    },
+    {
+      "Name": "native-string-admission",
+      "Role": "helper",
+      "Member": "Respire.Networking.RespireConnection.SendNativeStringAsync`1(in TCommand,CancellationToken,string):ValueTask<string?>",
+      "Owner": "Respire.Networking.StringPendingResponseSource.IValueTaskSource<string?>.GetResult(short):string?",
+      "Contract": "Immediate admission returns the original string source and its native cancellation, status and continuation behavior. Uninstrumented admission failures reclaim both unpublished references and rethrow synchronously. Captured instrumented admission failures complete the source exceptionally and release its unpublished receive reference, preserving asynchronous caller inspection. The source owns final inspection through response cleanup and caller release, independently of metric selection at admission."
+    },
+    {
+      "Name": "native-bytes-admission",
+      "Role": "helper",
+      "Member": "Respire.Networking.RespireConnection.SendNativeBytesAsync`1(in TCommand,CancellationToken,string):ValueTask<byte[]?>",
+      "Owner": "Respire.Networking.BytesPendingResponseSource.IValueTaskSource<byte[]?>.GetResult(short):byte[]?",
+      "Contract": "Immediate admission returns the original byte source. It retains native cancellation, FIFO receive lifetime and final publication after cleanup, including listeners enabled while pending."
+    },
+    {
+      "Name": "native-converted-admission",
+      "Role": "helper",
+      "Member": "Respire.Networking.RespireConnection.SendNativeConvertedAsync`3(in TCommand,CancellationToken,string,TState,ResponseConverter<TState,TResult>,bool):ValueTask<TResult>",
+      "Owner": "Respire.Networking.ConvertedPendingResponseSource`2.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Immediate admission returns the original converted source. Conversion remains deferred to caller inspection; final failure publication follows conversion, response disposal and caller reference release. Transfers retain existing response ownership semantics."
+    }
+  ],
+  "NonRoutes": []
+}

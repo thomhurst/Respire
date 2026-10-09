@@ -1,0 +1,13 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "dispatch-gathered-admission",
+      "Role": "borrower",
+      "Member": "Respire.Networking.RespireConnection.TryEnqueueGathered(in GatheredSetCommand,PendingResponse,CommandDeadline,out bool,out Task?,bool,int,bool,string?,int,CommandWriteObservation?):bool",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Borrow dispatch admission; failures before publication unwind to the caller. Copy discarded-reply retry metadata before publication and keep gathered writes uninterrupted and payload leases live through kernel completion."
+    }
+  ],
+  "NonRoutes": []
+}

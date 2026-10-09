@@ -25,7 +25,8 @@ internal sealed partial class RespireConnection
     internal async ValueTask<CommandAttemptResult> SendAttemptAsync<TCommand>(
         TCommand command, CancellationToken cancellationToken = default, string? commandName = null,
         CommandDeadline commandDeadline = default, int repliesBeforeFinal = 0, int firstQueueReply = 0,
-        bool pinToConnection = true, DedicatedStreamRoute streamingRoute = default, bool throwOnError = true)
+        bool pinToConnection = true, DedicatedStreamRoute streamingRoute = default, bool throwOnError = true,
+        RespireTelemetry.ErrorObservation errorObservation = default)
         where TCommand : struct, IRespCommand
     {
         var observation = new CommandWriteObservation();
@@ -37,10 +38,10 @@ internal sealed partial class RespireConnection
             var pending = repliesBeforeFinal == 0
                 ? SendCoreAsync(in command, discardRepliesBefore: 0, throwOnError, cancellationToken,
                     commandName, commandDeadline: commandDeadline, pinToConnection: pinToConnection,
-                    streamingRoute: streamingRoute, writeObservation: observation)
+                    streamingRoute: streamingRoute, observation: errorObservation, writeObservation: observation)
                 : SendMultiReplyCoreAsync(in command, repliesBeforeFinal, firstQueueReply,
                     cancellationToken, commandName ?? "(command)", commandDeadline: commandDeadline,
-                    pinToConnection: pinToConnection, writeObservation: observation);
+                    pinToConnection: pinToConnection, observation: errorObservation, writeObservation: observation);
             var response = await pending.ConfigureAwait(false);
             return CaptureAttemptResult(observation, response);
         }
