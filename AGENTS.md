@@ -77,6 +77,10 @@ Benchmark concurrency groups must include `github.event.label.name` alongside th
 
 `benchmark-comparison.yml`, `benchmark-redis-throughput.yml` and `benchmark-redis-container.yml` are not pull request comparisons. Start them with `gh workflow run <file>`. `benchmark-comparison.yml` and `benchmark-redis-throughput.yml` also run weekly on a schedule; the weekly comparison run refreshes the published performance docs.
 
+## Never wait on results
+
+Do not wait for CI, reviews, benchmark runs, reviewer replies, or any other asynchronous result. Do not sleep, poll, run `gh pr checks --watch` or `gh run watch`, or schedule a monitor to wait for one. Instead, push or record what you have, release the item, and pick up another issue or PR. The result is usually ready when you come back to the item on a later pass. When you start a benchmark by label, move on at once and report the result in the PR description on that later pass.
+
 ## Pull request reviews
 
 - Resolve each PR review thread, whether a human or a bot opened it, as soon as you have dispositioned it: the fix is pushed to the PR head and your reply names the commit, or your reply pushes back on the finding with evidence. Leave a thread open only while it has no disposition. If the reviewer replies after your disposition, unresolve the thread and handle the reply.
