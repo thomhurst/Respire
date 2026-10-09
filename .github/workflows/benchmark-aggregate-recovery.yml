@@ -1,0 +1,71 @@
+name: Aggregate recovery benchmarks
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}-${{ github.event.label.name }}
+  cancel-in-progress: true
+
+jobs:
+  # Compare with the accepted pre-transfer implementation as well as current main.
+  # This prevents an improvement over regressed main from claiming full recovery.
+  historical-parsing:
+    if: github.event.label.name == 'run-aggregate-recovery-benchmarks'
+    uses: ./.github/workflows/benchmark-compare.yml
+    with:
+      event-base-sha: ${{ github.event.pull_request.base.sha }}
+      candidate-sha: ${{ github.sha }}
+      expected-head-sha: ${{ github.event.pull_request.head.sha }}
+      control-sha: 8a2a63a7663ca820a6972780fecdc73deb071760
+      fixture: benchmarks/Respire.Benchmarks/AggregateParsingBenchmarks.cs
+      filter: '*AggregateParsingBenchmarks*'
+      expected-case-count: 10
+      expected-methods: Complete,Nested,ScalarBatch,Fragmented,FragmentedNested
+      zero-allocation-methods: Complete,Nested,ScalarBatch,Fragmented,FragmentedNested
+      artifact-prefix: aggregate-historical-parsing
+  historical-payload:
+    if: github.event.label.name == 'run-aggregate-recovery-benchmarks'
+    uses: ./.github/workflows/benchmark-compare.yml
+    with:
+      event-base-sha: ${{ github.event.pull_request.base.sha }}
+      candidate-sha: ${{ github.sha }}
+      expected-head-sha: ${{ github.event.pull_request.head.sha }}
+      control-sha: 8a2a63a7663ca820a6972780fecdc73deb071760
+      fixture: benchmarks/Respire.Benchmarks/AggregatePayloadBenchmarks.cs
+      filter: '*AggregatePayloadBenchmarks*'
+      expected-case-count: 8
+      expected-methods: MGet,HGetAll,MGetLargeValues,HGetAllLargeValues,RetainedMGet,RetainedHGetAll,SparseMixed,RetainedSparseMixed
+      artifact-prefix: aggregate-historical-payload
+  historical-byte-get:
+    if: github.event.label.name == 'run-aggregate-recovery-benchmarks'
+    uses: ./.github/workflows/benchmark-compare.yml
+    with:
+      event-base-sha: ${{ github.event.pull_request.base.sha }}
+      candidate-sha: ${{ github.sha }}
+      expected-head-sha: ${{ github.event.pull_request.head.sha }}
+      control-sha: 8a2a63a7663ca820a6972780fecdc73deb071760
+      fixture: benchmarks/Respire.Benchmarks/ByteGetBenchmarks.cs
+      filter: '*ByteGetBenchmarks*'
+      expected-case-count: 4
+      expected-methods: GetBytes,GetTypedBytes
+      redis-server: true
+      artifact-prefix: aggregate-historical-byte-get
+  historical-contention:
+    if: github.event.label.name == 'run-aggregate-recovery-benchmarks'
+    uses: ./.github/workflows/benchmark-compare.yml
+    with:
+      event-base-sha: ${{ github.event.pull_request.base.sha }}
+      candidate-sha: ${{ github.sha }}
+      expected-head-sha: ${{ github.event.pull_request.head.sha }}
+      control-sha: 8a2a63a7663ca820a6972780fecdc73deb071760
+      fixture: benchmarks/Respire.Benchmarks/ConnectionContentionBenchmarks.cs
+      filter: '*ConnectionContentionBenchmarks*'
+      expected-case-count: 2
+      expected-methods: GetPipeline,ConcurrentGetPipelines
+      redis-server: true
+      artifact-prefix: aggregate-historical-contention

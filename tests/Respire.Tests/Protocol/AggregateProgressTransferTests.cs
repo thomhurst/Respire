@@ -9,6 +9,47 @@ namespace Respire.Tests.Protocol;
 public class AggregateProgressTransferTests
 {
     [Test]
+    [Arguments("*3\r\n:1\r\n:2\r\n:3\r\n", 3)]
+    [Arguments("*2\r\n+saved\r\n$5\r\nhello\r\n", 1)]
+    [Arguments("%1\r\n+k\r\n~2\r\n:1\r\n>1\r\n$5\r\nhello\r\n", 2)]
+    [Arguments("|1\r\n+k\r\n:9\r\n*2\r\n+saved\r\n$5\r\nhello\r\n", 3)]
+    public async Task BufferedReplyKeepsFastPathAndOwnsPayloads(string frame, int expectedScalarReads)
+    {
+        var input = Encoding.ASCII.GetBytes(":99\r\n" + frame);
+        using var parser = new RespParseState(int.MaxValue);
+        using var control = new RespParseState(int.MaxValue);
+        var position = 5;
+        var controlPosition = 5;
+        await Assert.That(parser.TryParse(input, ref position, out var actual, out _))
+            .IsEqualTo(RespParseStatus.Done);
+        await Assert.That(control.TryParseResumable(input, ref controlPosition, out var expected, out _))
+            .IsEqualTo(RespParseStatus.Done);
+        using (actual)
+        using (expected)
+        {
+            await Assert.That(position).IsEqualTo(input.Length);
+            await Assert.That(controlPosition).IsEqualTo(position);
+            await Assert.That(parser.IsIdle).IsTrue();
+#if DEBUG
+            // A forced-resumable positive control proves the counter observes scalar work.
+            await Assert.That(parser.ResumedScalarCountForTests).IsEqualTo(0);
+            await Assert.That(control.ResumedScalarCountForTests).IsEqualTo(expectedScalarReads);
+#else
+            _ = expectedScalarReads;
+#endif
+            input.AsSpan().Fill(0);
+            position = 0;
+            await Assert.That(parser.TryParse("*1\r\n+fresh\r\n"u8, ref position, out var following, out _))
+                .IsEqualTo(RespParseStatus.Done);
+            using (following)
+            {
+                await Assert.That(following.AsArray()[0].AsString()).IsEqualTo("fresh");
+                await Assert.That(actual.Equals(expected)).IsTrue();
+            }
+        }
+    }
+
+    [Test]
     [Arguments("*3\r\n:1\r\n:2\r\n$5\r\nhe", 2, false)]
     [Arguments("*3\r\n:1\r\n:2\r\n$5\r\nhe", 2, true)]
     [Arguments("~3\r\n:1\r\n:2\r\n$5\r\nhe", 2, false)]
