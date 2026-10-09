@@ -23,9 +23,6 @@ partial class CompatDatabase
     public global::System.Boolean GeoRemove(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @member, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("GeoRemove");
     /// <inheritdoc />
-    public global::System.Boolean HashDelete(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @hashField, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("HashDelete");
-    /// <inheritdoc />
     public global::System.Boolean HashExists(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @hashField, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("HashExists");
     /// <inheritdoc />
@@ -188,14 +185,8 @@ partial class CompatDatabase
     public global::System.Int64 HashDecrement(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @hashField, global::System.Int64 @value, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("HashDecrement");
     /// <inheritdoc />
-    public global::System.Int64 HashDelete(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue[] @hashFields, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("HashDelete");
-    /// <inheritdoc />
     public global::System.Int64 HashIncrement(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @hashField, global::System.Int64 @value, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("HashIncrement");
-    /// <inheritdoc />
-    public global::System.Int64 HashLength(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("HashLength");
     /// <inheritdoc />
     public global::System.Int64 HashStringLength(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @hashField, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("HashStringLength");
@@ -218,23 +209,8 @@ partial class CompatDatabase
     public global::System.Int64 ListInsertBefore(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @pivot, global::StackExchange.Redis.RedisValue @value, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("ListInsertBefore");
     /// <inheritdoc />
-    public global::System.Int64 ListLeftPush(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @value, global::StackExchange.Redis.When @when, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("ListLeftPush");
-    /// <inheritdoc />
-    public global::System.Int64 ListLeftPush(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue[] @values, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("ListLeftPush");
-    /// <inheritdoc />
-    public global::System.Int64 ListLeftPush(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue[] @values, global::StackExchange.Redis.When @when, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("ListLeftPush");
-    /// <inheritdoc />
-    public global::System.Int64 ListLength(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("ListLength");
-    /// <inheritdoc />
     public global::System.Int64 ListPosition(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @element, global::System.Int64 @rank, global::System.Int64 @maxLength, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("ListPosition");
-    /// <inheritdoc />
-    public global::System.Int64 ListRemove(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @value, global::System.Int64 @count, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("ListRemove");
     /// <inheritdoc />
     public global::System.Int64 Publish(global::StackExchange.Redis.RedisChannel @channel, global::StackExchange.Redis.RedisValue @message, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("Publish");
@@ -401,9 +377,6 @@ partial class CompatDatabase
     public global::StackExchange.Redis.GeoRadiusResult[] GeoSearch(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @member, global::StackExchange.Redis.GeoSearchShape @shape, global::System.Int32 @count, global::System.Boolean @demandClosest, global::System.Nullable<global::StackExchange.Redis.Order> @order, global::StackExchange.Redis.GeoRadiusOptions @options, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("GeoSearch");
     /// <inheritdoc />
-    public global::StackExchange.Redis.HashEntry[] HashGetAll(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("HashGetAll");
-    /// <inheritdoc />
     public global::StackExchange.Redis.HashEntry[] HashRandomFieldsWithValues(global::StackExchange.Redis.RedisKey @key, global::System.Int64 @count, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("HashRandomFieldsWithValues");
     /// <inheritdoc />
@@ -563,9 +536,6 @@ partial class CompatDatabase
     public global::StackExchange.Redis.RedisValue HashRandomField(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("HashRandomField");
     /// <inheritdoc />
-    public global::StackExchange.Redis.RedisValue ListGetByIndex(global::StackExchange.Redis.RedisKey @key, global::System.Int64 @index, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("ListGetByIndex");
-    /// <inheritdoc />
     public global::StackExchange.Redis.RedisValue ListLeftPop(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("ListLeftPop");
     /// <inheritdoc />
@@ -574,9 +544,6 @@ partial class CompatDatabase
     /// <inheritdoc />
     public global::StackExchange.Redis.RedisValue ListRightPop(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("ListRightPop");
-    /// <inheritdoc />
-    public global::StackExchange.Redis.RedisValue ListRightPopLeftPush(global::StackExchange.Redis.RedisKey @source, global::StackExchange.Redis.RedisKey @destination, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("ListRightPopLeftPush");
     /// <inheritdoc />
     public global::StackExchange.Redis.RedisValue LockQuery(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("LockQuery");
@@ -925,9 +892,6 @@ partial class CompatDatabase
     /// <inheritdoc />
     public void ListSetByIndex(global::StackExchange.Redis.RedisKey @key, global::System.Int64 @index, global::StackExchange.Redis.RedisValue @value, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("ListSetByIndex");
-    /// <inheritdoc />
-    public void ListTrim(global::StackExchange.Redis.RedisKey @key, global::System.Int64 @start, global::System.Int64 @stop, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("ListTrim");
     /// <inheritdoc />
     public void StreamConfigure(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.StreamConfiguration @configuration, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("StreamConfigure");

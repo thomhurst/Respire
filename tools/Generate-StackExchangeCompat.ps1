@@ -56,7 +56,8 @@ function Generate-Class($className, $interfaceNames, $excluded) {
     [IO.File]::WriteAllLines((Join-Path $PSScriptRoot "../src/Respire.StackExchangeCompat/$className.Unsupported.g.cs"), $lines)
 }
 
-$async = @('HashGetAsync', 'HashGetLeaseAsync', 'HashSetAsync', 'KeyExpireAsync', 'KeyDeleteAsync', 'ListRangeAsync', 'ListRightPushAsync', 'Database', 'Multiplexer', 'Wait', 'WaitAll', 'TryWait')
+$hashList = @('HashGetAll', 'HashLength', 'HashDelete', 'ListLength', 'ListGetByIndex', 'ListLeftPush', 'ListRemove', 'ListTrim', 'ListRightPopLeftPush')
+$async = @('HashGetAsync', 'HashGetLeaseAsync', 'HashSetAsync', 'KeyExpireAsync', 'KeyDeleteAsync', 'ListRangeAsync', 'ListRightPushAsync', 'Database', 'Multiplexer', 'Wait', 'WaitAll', 'TryWait') + @($hashList | ForEach-Object { $_ + 'Async' })
 Generate-Class 'CompatDatabaseAsync' @('IDatabaseAsync', 'IRedisAsync') $async
-Generate-Class 'CompatDatabase' @('IDatabase', 'IRedis') @('HashGet', 'HashGetLease', 'HashSet', 'KeyExpire', 'KeyDelete', 'ListRange', 'ListRightPush', 'CreateBatch', 'Database', 'Wait', 'WaitAll')
+Generate-Class 'CompatDatabase' @('IDatabase', 'IRedis') (@('HashGet', 'HashGetLease', 'HashSet', 'KeyExpire', 'KeyDelete', 'ListRange', 'ListRightPush', 'CreateBatch', 'Database', 'Wait', 'WaitAll') + $hashList)
 Generate-Class 'RespireConnectionMultiplexer' @('IConnectionMultiplexer') @('GetDatabase', 'Close', 'CloseAsync', 'Wait', 'WaitAll', 'ClientName', 'Configuration', 'TimeoutMilliseconds', 'IsConnected', 'ToString')

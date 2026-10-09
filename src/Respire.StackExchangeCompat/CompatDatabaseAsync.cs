@@ -121,17 +121,7 @@ internal abstract partial class CompatDatabaseAsync : IDatabaseAsync
     public Task<long> ListRightPushAsync(RedisKey key, RedisValue[] values, CommandFlags flags)
         => ListRightPushAsync(key, values, When.Always, flags);
     public Task<long> ListRightPushAsync(RedisKey key, RedisValue[] values, When when, CommandFlags flags)
-    {
-        ArgumentNullException.ThrowIfNull(values);
-        var command = when switch
-        {
-            When.Always => RespireCommands.List.RPUSH,
-            When.Exists => RespireCommands.List.RPUSHX,
-            _ => throw Compatibility.Unsupported("ListRightPush When.NotExists"),
-        };
-        if (values.Length == 0) return Send(RespireCommands.List.LLEN, [Key(key)], flags, static result => (long)result);
-        return Send(command, [Key(key), .. values.Select(Value)], flags, static result => (long)result);
-    }
+        => ListPush(key, values, when, flags, left: false);
 
     public void Wait(Task task) => DatabaseOwner.Owner.Wait(task);
     public T Wait<T>(Task<T> task) => DatabaseOwner.Owner.Wait(task);
