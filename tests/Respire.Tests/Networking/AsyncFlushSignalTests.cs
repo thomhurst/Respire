@@ -77,6 +77,50 @@ public class AsyncFlushSignalTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
+    public async Task PublicationWithoutWriteGateIsObservedAfterCoalescedSignals(bool preferInline)
+    {
+        const int publications = 10_000;
+        var signal = new AsyncFlushSignal();
+        var published = 0;
+        var observed = 0;
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var writer = Task.Run(() =>
+        {
+            for (var i = 1; i <= publications; i++)
+            {
+                // Race the consumer's initial wake with publication and a second signal.
+                // No write gate or caller-supplied full fence publishes this value.
+                signal.Signal(preferInline);
+                Volatile.Write(ref published, i);
+                signal.Signal(preferInline);
+                var spin = new SpinWait();
+                while (Volatile.Read(ref observed) != i)
+                {
+                    deadline.Token.ThrowIfCancellationRequested();
+                    spin.SpinOnce(sleep1Threshold: -1);
+                }
+            }
+        });
+        try
+        {
+            while (Volatile.Read(ref observed) < publications)
+            {
+                await signal.WaitAsync().AsTask().WaitAsync(deadline.Token);
+                Volatile.Write(ref observed, Volatile.Read(ref published));
+            }
+            await writer.WaitAsync(deadline.Token);
+        }
+        finally
+        {
+            deadline.Cancel();
+            await writer;
+        }
+        await Assert.That(observed).IsEqualTo(publications);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
     public async Task ConcurrentSignalsCoalesceWhileParkedWaiterIsResuming(bool preferInline)
     {
         var signal = new AsyncFlushSignal();
