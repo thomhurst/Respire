@@ -16,20 +16,10 @@ public sealed partial class RespireClient
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<T?> GetOrSetAsync<T>(RespireKey key, Func<CancellationToken, ValueTask<T?>> factory,
         TimeSpan ttl, CancellationToken cancellationToken = default)
-    {
-        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
-        try
-        {
-            return RespireTelemetry.ObserveFinalError(
-                GetOrSetCoreAsync(key, factory, ttl, cancellationToken, observation), observation);
-        }
-        catch (Exception error)
-        {
-            observation.Final(error);
-            observation.Dispose();
-            throw;
-        }
-    }
+        => DispatchResponseSource<T?>.Run(
+            (Client: this, Key: key, Factory: factory, Ttl: ttl, Token: cancellationToken),
+            static (state, observation) => state.Client.GetOrSetCoreAsync(
+                state.Key, state.Factory, state.Ttl, state.Token, observation));
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
@@ -46,7 +36,12 @@ public sealed partial class RespireClient
         var resolvedKey = ResolveKey(key);
         if (ReadCache is not { } cache)
             return GetOrSetUncachedAsync(resolvedKey.Snapshot(), factory, milliseconds, cancellationToken, observation);
-        if (cache.TryGet(in resolvedKey, out var cached) && !cached.IsNull)
+        if (typeof(T) == typeof(string))
+        {
+            if (cache.TryGetString(in resolvedKey, out var cachedText) && cachedText is not null)
+                return new ValueTask<T?>((T)(object)cachedText);
+        }
+        else if (cache.TryGet(in resolvedKey, out var cached) && !cached.IsNull)
             return new ValueTask<T?>(DeserializeBorrowed<T>(in cached));
 
         return GetOrSetMissAsync(resolvedKey.Snapshot(), factory, milliseconds, cache, cancellationToken, observation);

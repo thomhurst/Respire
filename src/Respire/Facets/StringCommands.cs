@@ -390,6 +390,8 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
         RespireKey key, RespireValue value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always,
         CancellationToken cancellationToken = default)
     {
+        var borrowed = DispatchResponseSource.DecoratedObservation;
+        if (borrowed.IsOpen) return SetBorrowedAsync(key, value, expiry, when, cancellationToken, borrowed);
         var owner = DispatchResponseSource<bool>.Start();
         try { return owner.Attach(SetBorrowedAsync(key, value, expiry, when, cancellationToken, owner.Observation)); }
         catch (Exception error) { owner.Fail(error); throw; }

@@ -651,7 +651,19 @@ the caller and is counted as a final failure.
 Cached reads count final failure once for each waiting caller. A shared producer does
 not add another user-visible failure when it faults several coalesced waiters. Internal
 producer retries are counted at their handling boundary; each cache waiter inherits the
-producer's completed retry count in its final measurement. Hedge races report their final
+producer's completed retry count in its final measurement. Cache hits, peek conversion,
+and cache-aside factories keep the same caller boundary without renting error observation
+storage on success. Each coalesced `GetOrSetAsync` waiter owns its own conversion and final
+failure, including failures after the factory succeeds.
+
+Distributed-cache operations start ownership before validation, payload encoding and
+correction setup. GET and buffered GET retain it through payload decoding and response
+disposal. SET and refresh retain it through foreground TTL correction. Detached correction
+passes keep an independent failure-only owner, so they cannot reuse an already completed
+caller's lease. Foreground correction retries are included in the caller's completed count;
+late handled failures remain internal measurements.
+
+Hedge races report their final
 outcome with the completed result leg's retry count; each leg retains its own retry owner
 until its reply finishes, including a loser that outlives the caller. Each failed discarded
 hedge leg contributes one internal measurement, including a late loser; when both legs
@@ -943,7 +955,8 @@ validation, batch execution and pending inspection have distinct lifetimes.
 Returned per-node failures must not also become duplicate parent failures.
 
 Run `CommandRouteOwnershipTests` on net8.0 and net10.0. The guard scans the core
-library source, including catalog dispatch, and validates each target framework
+library source, including catalog dispatch, plus the distributed-cache implementation,
+and validates each target framework
 independently. A route's executable owner and inherited interface contract must
 exist on the same target; a body in another framework branch cannot supply them.
 Declarations for target-specific routes apply only where those routes are public.

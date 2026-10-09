@@ -1649,13 +1649,13 @@ public partial class ErrorMetricsTests
         using var capture = new Capture(throwOnMeasurement: true);
         Task<RespValue> Read(CancellationToken token)
         {
-            var caller = RespireTelemetry.ErrorObservation.Rent(force: true);
-            return RespireTelemetry.ObserveFinalError(cache.CoalesceReadAsync(identity, release,
-                static (source, _, producer) =>
-                {
-                    producer!.Handled(new RespireServerException("MOVED 1 private-host:6379"));
-                    return new ValueTask<RespValue>(source.Task);
-                }, token, caller), caller).AsTask();
+            return DispatchResponseSource<RespValue>.Run((Token: token, Cache: cache, Identity: identity, Release: release),
+                static (state, caller) => state.Cache.CoalesceReadAsync(state.Identity, state.Release,
+                    static (source, _, producer) =>
+                    {
+                        producer!.Handled(new RespireServerException("MOVED 1 private-host:6379"));
+                        return new ValueTask<RespValue>(source.Task);
+                    }, state.Token, caller)).AsTask();
         }
         var first = Read(cancellation.Token);
         var second = Read(default);
@@ -1668,8 +1668,9 @@ public partial class ErrorMetricsTests
             await Assert.That(second.IsCompleted).IsFalse();
             // A different operation can reuse the returned caller lease while the producer
             // remains pending. Its count must never become the remaining waiter's count.
-            using var unrelated = RespireTelemetry.ErrorObservation.Rent(force: true);
-            unrelated.SetAttempts(7);
+            var unrelated = DispatchResponseSource<RespValue>.Start();
+            unrelated.Observation.SetAttempts(7);
+            unrelated.CompleteInternal();
             var expected = new RespireServerException("WRONGTYPE private-key");
             release.SetException(expected);
             var failure = await Assert.That(async () =>

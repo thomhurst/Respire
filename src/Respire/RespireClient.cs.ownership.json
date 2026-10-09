@@ -76,6 +76,27 @@
   ],
   "Boundaries": [
     {
+      "Name": "cache-get-owner",
+      "Role": "helper",
+      "Member": "Respire.RespireClient.CachedGetAsync`1(RespireKey,CancellationToken,ResponseConverter<RespireClient,TResult>,bool,RespireTelemetry.ErrorObservation):ValueTask<TResult>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Start before cache lookup and command construction unless supplied by the public route. Misses and peek conversion borrow the same failure-only owner through response disposal. Debug cached conversion preserves the explicit allocation-free struct."
+    },
+    {
+      "Name": "cache-mget-owner",
+      "Role": "helper",
+      "Member": "Respire.RespireClient.CachedGetManyAsync`1(ReadOnlySpan<RespireKey>,CancellationToken,ResponseConverter<RespireClient,TResult>,bool,bool,RespireTelemetry.ErrorObservation):ValueTask<TResult[]>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Start before slot validation, cached value conversion and misses unless supplied by the public route. All keys share the caller owner through conversion, publication and cleanup."
+    },
+    {
+      "Name": "cache-removal-owner",
+      "Role": "helper",
+      "Member": "Respire.RespireClient.UnlinkGuardedAsync(RespireKey,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Borrow the distributed-cache caller or start a failure-only owner. Publish only after the removal lease becomes harmless and timeout translation preserves the caller token."
+    },
+    {
       "Name": "blocking-dispatch-owner",
       "Role": "helper",
       "Member": "Respire.RespireClient.SendBlockingAsync`1(string,TCommand,CancellationToken,string?,bool,TimeSpan?,CancellationToken,bool,bool,RespireTelemetry.ErrorObservation):ValueTask<RespValue>",

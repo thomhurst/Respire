@@ -1876,33 +1876,21 @@ public sealed partial class RespireClient : IRespireClient
         ResponseConverter<RespireClient, TResult> converter,
         bool observeErrors = true, RespireTelemetry.ErrorObservation observation = default)
     {
-        if (!observation.IsEmpty) observeErrors = false;
+        if (observation.IsEmpty && observeErrors)
+            return DispatchResponseSource<TResult>.Run(
+                (Client: this, Key: resolvedKey, Token: cancellationToken, Converter: converter),
+                static (state, owner) => state.Client.CachedGetAsync(
+                    state.Key, state.Token, state.Converter, observeErrors: false, observation: owner));
         var cache = GetReadCache;
         var command = new Cmd1(Verbs.Get, resolvedKey.AsValue());
         if (cache is null)
         {
-            return ConvertCachedResponseAsync("GET", command, cancellationToken, this, converter, observeErrors, observation);
+            return ConvertUnobservedResponseAsync("GET", command, cancellationToken, this, converter, observation);
         }
-
-        try
-        {
-            var generation = _core.Sentinel?.Current;
-            if (cache.TryGet(in resolvedKey, out var cached) && IsCacheGenerationCurrent(generation))
-                return new ValueTask<TResult>(converter(this, in cached));
-
-            if (observeErrors) observation = RespireTelemetry.ErrorObservation.Rent(force: true);
-            var response = GetAndCacheAsync(resolvedKey, cache, cancellationToken, converter, observation);
-            return observeErrors ? RespireTelemetry.ObserveFinalError(response, observation) : response;
-        }
-        catch (Exception error)
-        {
-            if (observeErrors)
-            {
-                if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: false);
-                else { observation.Final(error); observation.Dispose(); }
-            }
-            throw;
-        }
+        var generation = _core.Sentinel?.Current;
+        if (cache.TryGet(in resolvedKey, out var cached) && IsCacheGenerationCurrent(generation))
+            return new ValueTask<TResult>(converter(this, in cached));
+        return GetAndCacheAsync(resolvedKey, cache, cancellationToken, converter, observation);
     }
 
     /// <summary>
@@ -1911,34 +1899,22 @@ public sealed partial class RespireClient : IRespireClient
     /// </summary>
     internal ValueTask<string?> CachedGetStringAsync(RespireKey resolvedKey, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
     {
-        var cache = GetReadCache;
-        if (cache is null)
-            return StringOrNullAsync("GET", new Cmd1(Verbs.Get, resolvedKey.AsValue()), cancellationToken, observation: observation);
-
         if (observation.IsEmpty)
             return DispatchResponseSource<string?>.Run((Client: this, Key: resolvedKey, Token: cancellationToken),
                 static (state, owner) => state.Client.CachedGetStringAsync(state.Key, state.Token, owner));
-        try
-        {
-            var generation = _core.Sentinel?.Current;
-            if (cache.TryGetString(in resolvedKey, out var cached) && IsCacheGenerationCurrent(generation))
-                return new ValueTask<string?>(cached);
-
-            var response = cache.CoalesceConcurrentMisses
-                ? GetSharedCacheReadAsync(resolvedKey, cache, cancellationToken, 0,
-                    static (int _, in ClientSideCacheCoordinator.GetReadResult result) => result.GetString(),
-                    decodeString: true, observation: observation)
-                : FetchGetCacheReadAsync(resolvedKey, cache, cancellationToken, 0,
-                    static (int _, in ClientSideCacheCoordinator.GetReadResult result) => result.GetString(),
-                    decodeString: true, observation: observation);
-            return RespireTelemetry.ObserveFinalError(response, observation);
-        }
-        catch (Exception error)
-        {
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: false);
-            else { observation.Final(error); observation.Dispose(); }
-            throw;
-        }
+        var cache = GetReadCache;
+        if (cache is null)
+            return StringOrNullAsync("GET", new Cmd1(Verbs.Get, resolvedKey.AsValue()), cancellationToken, observation: observation);
+        var generation = _core.Sentinel?.Current;
+        if (cache.TryGetString(in resolvedKey, out var cached) && IsCacheGenerationCurrent(generation))
+            return new ValueTask<string?>(cached);
+        return cache.CoalesceConcurrentMisses
+            ? GetSharedCacheReadAsync(resolvedKey, cache, cancellationToken, 0,
+                static (int _, in ClientSideCacheCoordinator.GetReadResult result) => result.GetString(),
+                decodeString: true, observation: observation)
+            : FetchGetCacheReadAsync(resolvedKey, cache, cancellationToken, 0,
+                static (int _, in ClientSideCacheCoordinator.GetReadResult result) => result.GetString(),
+                decodeString: true, observation: observation);
     }
 
     internal ValueTask<byte[]?> CachedGetBytesAsync(RespireKey resolvedKey, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
@@ -1969,11 +1945,11 @@ public sealed partial class RespireClient : IRespireClient
         bool keysResolved = false,
         bool observeErrors = true, RespireTelemetry.ErrorObservation observation = default)
     {
-        if (!observation.IsEmpty) observeErrors = false;
-        var cache = _readFrom == RespireReadFrom.Primary ? ReadCache : null;
+        var owner = observation.IsEmpty && observeErrors ? DispatchResponseSource<TResult[]>.Start() : null;
+        observation = owner?.Observation ?? observation;
         try
         {
-            if (observeErrors) observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+            var cache = _readFrom == RespireReadFrom.Primary ? ReadCache : null;
             ValueTask<TResult[]> response;
             if (keys.Length == 0)
             {
@@ -2027,15 +2003,11 @@ public sealed partial class RespireClient : IRespireClient
             {
                 response = CachedGetManyCoreAsync(keys, cancellationToken, converter, keysResolved, cache, observation);
             }
-            return observeErrors ? RespireTelemetry.ObserveFinalError(response, observation) : response;
+            return owner is null ? response : owner.Attach(response);
         }
         catch (Exception error)
         {
-            if (observeErrors)
-            {
-                if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: false);
-                else { observation.Final(error); observation.Dispose(); }
-            }
+            owner?.Fail(error);
             throw;
         }
     }
@@ -5450,9 +5422,17 @@ public sealed partial class RespireClient : IRespireClient
     /// at all: abandoning a wait there leaves the command queued indefinitely, and killing a
     /// shared connection would fault every innocent in-flight command on it.
     /// </summary>
-    internal async ValueTask UnlinkGuardedAsync(RespireKey key, CancellationToken cancellationToken)
+    internal ValueTask UnlinkGuardedAsync(RespireKey key, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation = default)
+        => observation.IsEmpty
+            ? DispatchResponseSource.Run((Client: this, Key: key, Token: cancellationToken),
+                static (state, owner) => state.Client.UnlinkGuardedCoreAsync(state.Key, state.Token, owner))
+            : UnlinkGuardedCoreAsync(key, cancellationToken, observation);
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+    private async ValueTask UnlinkGuardedCoreAsync(RespireKey key, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation)
     {
-        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
         var timeout = _core.Options.CommandTimeout ?? RemovalLeaseTtl;
         using var timeoutSource = CommandTimeoutCancellation.Create(cancellationToken, timeout);
         try
@@ -5461,22 +5441,13 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (RespireTimeoutException ex)
         {
-            var error = new RespireTimeoutException("UNLINK", timeout, ex);
-            observation.Final(error);
-            throw error;
+            throw new RespireTimeoutException("UNLINK", timeout, ex);
         }
         catch (OperationCanceledException ex) when (
             RespireConnection.IsDeadlineCancellation(ex, timeoutSource.Token, cancellationToken))
         {
-            var error = new RespireTimeoutException("UNLINK", timeout, ex,
+            throw new RespireTimeoutException("UNLINK", timeout, ex,
                 RespireTimeoutDiagnostics.Capture());
-            observation.Final(error);
-            throw error;
-        }
-        catch (Exception error)
-        {
-            observation.Final(error);
-            throw;
         }
     }
 

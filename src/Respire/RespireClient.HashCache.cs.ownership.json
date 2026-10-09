@@ -1,0 +1,13 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "cache-hash-partial-read",
+      "Role": "borrower",
+      "Member": "Respire.RespireClient.FetchHashFieldsAndCacheAsync(RespireKey,RespireValue[],int[],RespValue[],ClientSideCacheCoordinator,CancellationToken,SentinelRouter.Generation?,RespireValue[]?,RespireTelemetry.ErrorObservation):ValueTask<RespValue>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Partial hash cache reads borrow the dispatch owner through field validation, coalesced waiter retries, publication and dependency cleanup. Each waiter retains separate result storage and final ownership."
+    }
+  ],
+  "NonRoutes": []
+}

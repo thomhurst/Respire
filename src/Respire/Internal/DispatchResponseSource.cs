@@ -17,6 +17,23 @@ internal interface IDispatchObservation
 
 internal static class DispatchResponseSource
 {
+    private static AsyncLocal<RespireTelemetry.ErrorObservation>? _decoratedObservation;
+
+    // Only interface fallbacks establish this scope. Async decorators capture it with their
+    // ExecutionContext; restoring the caller's context does not end the borrowed generation.
+    internal static RespireTelemetry.ErrorObservation DecoratedObservation
+        => Volatile.Read(ref _decoratedObservation)?.Value ?? default;
+
+    internal static ValueTask<TResult> InvokeDecorated<TState, TResult>(TState state,
+        RespireTelemetry.ErrorObservation observation, Func<TState, ValueTask<TResult>> send)
+    {
+        var current = LazyInitializer.EnsureInitialized(ref _decoratedObservation);
+        var previous = current.Value;
+        current.Value = observation;
+        try { return send(state); }
+        finally { current.Value = previous; }
+    }
+
     internal static ValueTask Run<TState>(TState state,
         Func<TState, RespireTelemetry.ErrorObservation, ValueTask> send)
         => Complete(DispatchResponseSource<bool>.Run((State: state, Send: send),

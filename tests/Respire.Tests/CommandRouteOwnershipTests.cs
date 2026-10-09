@@ -142,13 +142,16 @@ public class CommandRouteOwnershipTests
     public async Task SourceRoutesHaveDeclaredExecutableFinalOwners()
     {
         var repo = CommandRouteOwnership.FindRepository();
+        var cacheSource = Path.Combine(repo, "src", "Respire.Caching", "RespireDistributedCache.cs");
         var files = Directory.EnumerateFiles(Path.Combine(repo, "src", "Respire"), "*.cs", SearchOption.AllDirectories)
+            .Append(cacheSource)
             .Where(f => !Path.GetRelativePath(repo, f).Split(Path.DirectorySeparatorChar).Any(p => p is "bin" or "obj"))
             .Append(Path.Combine(repo, "src", "Respire.Coordination", "RespireSemaphore.cs"))
             .Select(f => (File: Path.GetRelativePath(repo, f), Source: File.ReadAllText(f)));
         var source = CommandRouteOwnership.Discover(files);
         var declarations = Directory.EnumerateFiles(Path.Combine(repo, "src", "Respire"), "*.ownership.json", SearchOption.AllDirectories)
             .Append(Path.Combine(repo, "src", "Respire.Coordination", "RespireSemaphore.cs.ownership.json"))
+            .Append(cacheSource + ".ownership.json")
             .Select(file => (File: Path.GetRelativePath(repo, file)[..^".ownership.json".Length],
                 Inventory: JsonSerializer.Deserialize<CommandRouteOwnership.Inventory>(File.ReadAllText(file))!)).ToArray();
         var inventories = declarations.Select(d => d.Inventory).ToArray();
@@ -532,6 +535,8 @@ public class CommandRouteOwnershipTests
 
     private static readonly string[] RequiredBoundaries = [
         "semaphore-acquire", "semaphore-renew", "semaphore-release", "semaphore-cleanup", "semaphore-disposal",
+        "cache-get-owner", "cache-mget-owner", "cache-hash-partial-read", "cache-correction-owner", "distributed-cache-correction", "cache-removal-owner",
+        "distributed-cache-wrapped-removal", "decorated-dispatch-borrower",
         "blocking-dispatch-owner", "blocking-asking-transport",
         "dispatch-final-inspection", "dispatch-owner-start", "typed-dispatch-owner", "string-dispatch-owner", "bytes-dispatch-owner",
         "dispatch-write-outcome-borrower", "dispatch-discarded-reply-snapshot", "dispatch-cancelled-reply-drain",
