@@ -910,100 +910,67 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
             "XINFO CONSUMERS", new Cmd2(XInfoConsumers, client.Key(in key), group), cancellationToken, this,
             static (StreamCommands _, in RespValue value) => ParseConsumerInfo(in value));
 
-    // Iterator preflight runs on the first MoveNextAsync, before any page conversion owns errors.
-    private RespireValue ResolveGroupReadKey(in RespireKey key, int batchSize)
-    {
-        try
-        {
-            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batchSize);
-            return client.Key(in key);
-        }
-        catch (Exception error)
-        {
-            RespireTelemetry.RecordError(error, internallyHandled: false);
-            throw;
-        }
-    }
-
-    public async IAsyncEnumerable<RespireStreamEntry> ReadGroupAsync(
+    public IAsyncEnumerable<RespireStreamEntry> ReadGroupAsync(
         RespireKey key, string group, string consumer, int batchSize = 64,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        var resolvedKey = ResolveGroupReadKey(in key, batchSize);
-        while (!cancellationToken.IsCancellationRequested)
-        {
-            var entries = await client.ConvertBlockingResponseAsync(
-                "XREADGROUP",
-                new CmdN(Verbs.XReadGroup,
-                [
-                    "GROUP", group, consumer,
-                    "COUNT", batchSize,
-                    "BLOCK", (long)BlockInterval.TotalMilliseconds,
-                    "STREAMS", resolvedKey, ">",
-                ]),
-                cancellationToken, (Commands: this, Key: resolvedKey, Group: group),
-                static ((StreamCommands Commands, RespireValue Key, string Group) state, in RespValue reply) =>
-                    reply.IsNull ? [] : state.Commands.ParseReadReply(in reply, state.Key, state.Group))
-                .ConfigureAwait(false);
-
-            foreach (var entry in entries)
-            {
-                yield return entry;
-            }
-        }
-    }
+        CancellationToken cancellationToken = default)
+        => ReadGroupAsync(key, group, consumer, startAt: null, batchSize, cancellationToken);
 
     public async IAsyncEnumerable<RespireStreamEntry> ReadGroupAsync(
         RespireKey key, string group, string consumer, RespireStreamId? startAt,
         int batchSize = 64,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        if (startAt is null)
+        var owner = DispatchResponseSource<bool>.Start();
+        Exception? failure = null;
+        try
         {
-            // The live iterator performs and observes the same preflight on its first page.
-            await foreach (var entry in ReadGroupAsync(key, group, consumer, batchSize, cancellationToken)
-                .ConfigureAwait(false))
+            RespireValue resolvedKey;
+            try
             {
-                yield return entry;
+                ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batchSize);
+                resolvedKey = client.Key(in key);
             }
-
-            yield break;
+            catch (Exception error) { failure = error; throw; }
+            var cursor = startAt ?? RespireStreamId.Beginning;
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                RespireStreamEntry[] entries;
+                try
+                {
+                    var state = (Commands: this, Key: resolvedKey, Group: group);
+                    if (startAt is null)
+                    {
+                        entries = await client.ConvertBlockingResponseAsync("XREADGROUP",
+                            new CmdN(Verbs.XReadGroup,
+                            [
+                                "GROUP", group, consumer, "COUNT", batchSize,
+                                "BLOCK", (long)BlockInterval.TotalMilliseconds, "STREAMS", resolvedKey, ">",
+                            ]), cancellationToken, state,
+                            static ((StreamCommands Commands, RespireValue Key, string Group) state, in RespValue reply) =>
+                                reply.IsNull ? [] : state.Commands.ParseReadReply(in reply, state.Key, state.Group),
+                            owner.Observation).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        entries = await client.ConvertResponseAsync("XREADGROUP",
+                            new CmdN(Verbs.XReadGroupReplay,
+                            [
+                                "GROUP", group, consumer, "COUNT", batchSize, "STREAMS", resolvedKey, cursor.Value,
+                            ]), cancellationToken, state,
+                            static ((StreamCommands Commands, RespireValue Key, string Group) state, in RespValue reply) =>
+                                reply.IsNull ? [] : state.Commands.ParseReadReply(in reply, state.Key, state.Group),
+                            observation: owner.Observation).ConfigureAwait(false);
+                    }
+                }
+                catch (Exception error) { failure = error; throw; }
+                if (entries.Length == 0 && startAt is not null) yield break;
+                foreach (var entry in entries) yield return entry;
+                if (startAt is null) continue;
+                if (entries[^1].Id == cursor) yield break;
+                cursor = entries[^1].Id;
+            }
         }
-
-        var resolvedKey = ResolveGroupReadKey(in key, batchSize);
-        var cursor = startAt.Value;
-        while (!cancellationToken.IsCancellationRequested)
-        {
-            var entries = await client.ConvertResponseAsync(
-                "XREADGROUP",
-                new CmdN(Verbs.XReadGroupReplay,
-                [
-                    "GROUP", group, consumer,
-                    "COUNT", batchSize,
-                    "STREAMS", resolvedKey, cursor.Value,
-                ]),
-                cancellationToken, (Commands: this, Key: resolvedKey, Group: group),
-                static ((StreamCommands Commands, RespireValue Key, string Group) state, in RespValue reply) =>
-                    reply.IsNull ? [] : state.Commands.ParseReadReply(in reply, state.Key, state.Group))
-                .ConfigureAwait(false);
-
-            if (entries.Length == 0)
-            {
-                yield break;
-            }
-
-            foreach (var entry in entries)
-            {
-                yield return entry;
-            }
-
-            if (entries[^1].Id == cursor)
-            {
-                yield break;
-            }
-
-            cursor = entries[^1].Id;
-        }
+        finally { FinishReadIterator(owner, failure); }
     }
 
     /// <summary>XREADGROUP replies [[key, entries]] (RESP2 array) or {key: entries} (RESP3 map, pairs flattened).</summary>

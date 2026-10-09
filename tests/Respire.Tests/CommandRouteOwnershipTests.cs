@@ -538,6 +538,7 @@ public class CommandRouteOwnershipTests
         "connection-string-parsing", "connection-setup", "physical-connect-helper", "cache-producer", "cache-typed-producer",
         "cache-waiter", "cache-typed-waiter", "upload-payload-read", "download-payload-read", "fan-out", "fan-out-target",
         "cache-aside-producer", "deferred-execution", "deferred-inspection", "deferred-awaiter", "transaction-commit",
-        "caller-cleanup", "internal-health-probe", "internal-topology-query"
+        "caller-cleanup", "internal-health-probe", "internal-topology-query",
+        "stream-continuous-read", "stream-iterator-final-inspection", "stream-options-group-iterator", "stream-legacy-group-iterator"
     ];
 }
