@@ -237,8 +237,9 @@ public class ClusterTests
     [Arguments("HSCAN", false)]
     [Arguments("SSCAN", false)]
     [Arguments("ZSCAN", false)]
+    [Arguments("ZSCAN", true)]
     [Arguments("HSCAN", true)]
-    public async Task ReadFrom_FreshRawCursorRevalidatesButContinuationKeepsAffinity(string operation, bool typedBatch)
+    public async Task ReadFrom_FreshRawCursorRevalidatesButContinuationKeepsAffinity(string operation, bool batchPage)
     {
         byte[]? topology = null;
         await using var replica = new FakeRespServer(8, FakeRespServer.OkReply)
@@ -264,12 +265,21 @@ public class ClusterTests
         };
         async Task ReadPageAsync(ulong cursor)
         {
-            if (typedBatch)
+            if (batchPage)
             {
                 using var batch = reads.CreateBatch();
-                var page = batch.Hashes.ScanFieldsPage("key", cursor);
-                await batch.ExecuteAsync();
-                _ = page.Result;
+                if (operation == "ZSCAN")
+                {
+                    var page = batch.Execute(descriptor, "key", cursor, "COUNT", 10);
+                    await batch.ExecuteAsync();
+                    using var result = page.Result;
+                }
+                else
+                {
+                    var page = batch.Hashes.ScanFieldsPage("key", cursor);
+                    await batch.ExecuteAsync();
+                    _ = page.Result;
+                }
             }
             else
             {
@@ -429,10 +439,10 @@ public class ClusterTests
     }
 
     [Test]
-    [Arguments("HSCAN")]
-    [Arguments("SSCAN")]
-    [Arguments("ZSCAN")]
-    public async Task ReadFrom_BatchedCursorPagesAreRejectedBeforeSending(string operation)
+    [Arguments("HSCAN", false)]
+    [Arguments("SSCAN", false)]
+    [Arguments("ZSCAN", true)]
+    public async Task ReadFrom_BatchedCursorPagesRespectDeferredSupport(string operation, bool supported)
     {
         await using var replica = new FakeRespServer(8, FakeRespServer.OkReply)
         {
@@ -456,11 +466,24 @@ public class ClusterTests
         foreach (var cursor in new[] { "0", "7" })
         {
             using var batch = reads.CreateBatch();
-            await Assert.That(() => { _ = batch.Execute(descriptor, "key", cursor); }).ThrowsExactly<NotSupportedException>();
-            await Assert.That(batch.Count).IsEqualTo(0);
+            if (supported)
+            {
+                var page = batch.Execute(descriptor, "key", cursor);
+                await Assert.That(batch.Count).IsEqualTo(1);
+                await Assert.That(replica.ReceivedCommands.Any(command => command.StartsWith(operation))).IsEqualTo(cursor != "0");
+                await batch.ExecuteAsync();
+                using var result = page.Result;
+                await Assert.That(result[0].AsString()).IsEqualTo("0");
+            }
+            else
+            {
+                await Assert.That(() => { _ = batch.Execute(descriptor, "key", cursor); }).ThrowsExactly<NotSupportedException>();
+                await Assert.That(batch.Count).IsEqualTo(0);
+            }
         }
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
-        await Assert.That(replica.ReceivedCommands.Any(command => command.StartsWith(operation))).IsFalse();
+        await Assert.That(replica.ReceivedCommands.Where(command => command.StartsWith(operation)).ToArray())
+            .IsEquivalentTo(supported ? new[] { "ZSCAN key 0", "ZSCAN key 7" } : Array.Empty<string>());
     }
 
     private static RespireClient CreateLazyClusterClient() => RespireClient.Create(new RespireOptions

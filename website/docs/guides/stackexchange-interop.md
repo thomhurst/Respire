@@ -159,7 +159,7 @@ Both synchronous and asynchronous variants are supported:
 | `SetAdd`, `SetRemove` | One binary member or an array; original addition/removal boolean or count |
 | `SetMembers`, `SetLength` | Binary members and original cardinality; member order follows Redis and is not guaranteed |
 | `SortedSetAdd`, `SortedSetRemove` | One binary member or an entry/member array; unconditional additions and original addition/removal boolean or count; `When.Always`/`SortedSetWhen.Always` only |
-| `SortedSetLength` | Inclusive or exclusive minimum/maximum score bounds, including infinities |
+| `SortedSetLength` | Inclusive or exclusive score bounds; the default `-Infinity` to `+Infinity` range uses `ZCARD` and ignores endpoint exclusions, matching StackExchange.Redis |
 | `SortedSetRangeByRank`, `SortedSetRangeByRankWithScores` | Inclusive signed indexes and ascending/descending order, with original binary members and optional scores |
 | `SortedSetRangeByScore`, `SortedSetRangeByScoreWithScores` | Minimum/maximum score bounds, exclusion flags, order, skip/take, and optional scores; `take = -1` means unlimited |
 | `SortedSetScan` | Lazy `ZSCAN` with binary patterns, page size, cursor, page offset, and asynchronous enumeration; see scan contracts below |
@@ -195,6 +195,9 @@ with native API guidance. Exceptions retain native Respire types; they are not
 translated into StackExchange.Redis exception types.
 Zero integer increment/decrement operations in fire-and-forget mode are no-ops,
 matching StackExchange.Redis without creating a missing counter.
+Integer adjustments select `INCR`/`DECR` for changes of one and the corresponding
+`INCRBY`/`DECRBY` for other signed changes, including deferred batches. Existing
+command-specific Redis ACLs therefore see the same commands as StackExchange.Redis.
 
 ### Batch and lifetime behavior
 

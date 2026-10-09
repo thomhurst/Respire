@@ -34,10 +34,16 @@ internal abstract partial class CompatDatabaseAsync
     }
 
     public Task<long> StringIncrementAsync(RedisKey key, long value, CommandFlags flags)
-        => Send(RespireCommands.String.INCRBY, [Key(key), value], flags, static result => (long)result);
+        => value switch
+        {
+            1 => Send(RespireCommands.String.INCR, [Key(key)], flags, static result => (long)result),
+            -1 => Send(RespireCommands.String.DECR, [Key(key)], flags, static result => (long)result),
+            >= 0 => Send(RespireCommands.String.INCRBY, [Key(key), value], flags, static result => (long)result),
+            _ => Send(RespireCommands.String.DECRBY, [Key(key), unchecked(-value)], flags, static result => (long)result),
+        };
 
     public Task<long> StringDecrementAsync(RedisKey key, long value, CommandFlags flags)
-        => Send(RespireCommands.String.DECRBY, [Key(key), value], flags, static result => (long)result);
+        => StringIncrementAsync(key, unchecked(-value), flags);
 
     public Task<bool> SetAddAsync(RedisKey key, RedisValue value, CommandFlags flags)
         => Send(RespireCommands.Set.SADD, [Key(key), Value(value)], flags, static result => (long)result != 0);
@@ -100,8 +106,10 @@ internal abstract partial class CompatDatabaseAsync
         => SetChange(RespireCommands.SortedSet.ZREM, key, members, flags);
 
     public Task<long> SortedSetLengthAsync(RedisKey key, double min, double max, Exclude exclude, CommandFlags flags)
-        => Send(RespireCommands.SortedSet.ZCOUNT,
-            [Key(key), Bound(min, exclude, Exclude.Start), Bound(max, exclude, Exclude.Stop)], flags, static result => (long)result);
+        => double.IsNegativeInfinity(min) && double.IsPositiveInfinity(max)
+            ? Send(RespireCommands.SortedSet.ZCARD, [Key(key)], flags, static result => (long)result)
+            : Send(RespireCommands.SortedSet.ZCOUNT,
+                [Key(key), Bound(min, exclude, Exclude.Start), Bound(max, exclude, Exclude.Stop)], flags, static result => (long)result);
 
     public Task<RedisValue[]> SortedSetRangeByRankAsync(RedisKey key, long start, long stop, Order order, CommandFlags flags)
         => Send(RankCommand(order), [Key(key), start, stop], flags, Values);

@@ -22,6 +22,75 @@ public class HangfireCommandsTests(RedisTestContainer redis)
     [Test]
     [Arguments(2)]
     [Arguments(3)]
+    public async Task UnboundedSortedSetLengthIncludesInfiniteScoresAcrossAllDispatchPaths(int protocol)
+    {
+        await using var connection = RespireConnectionMultiplexer.Create(Options(protocol));
+        using var control = await ConnectionMultiplexer.ConnectAsync(redis.StackExchangeConnectionString);
+        var database = connection.GetDatabase();
+        var expected = control.GetDatabase();
+        await expected.SortedSetAddAsync("length", [new("negative", double.NegativeInfinity), new("zero", 0), new("positive", double.PositiveInfinity)]);
+        foreach (var exclude in new[] { Exclude.None, Exclude.Start, Exclude.Stop, Exclude.Both })
+        foreach (var (min, max) in new[] { (double.NegativeInfinity, double.PositiveInfinity), (double.NegativeInfinity, 0d), (0d, double.PositiveInfinity), (double.PositiveInfinity, double.NegativeInfinity) })
+        {
+            var count = await expected.SortedSetLengthAsync("length", min, max, exclude);
+            Assert.Equal(count, database.SortedSetLength("length", min, max, exclude));
+            Assert.Equal(count, await database.SortedSetLengthAsync("length", min, max, exclude));
+            var batch = database.CreateBatch();
+            var pending = batch.SortedSetLengthAsync("length", min, max, exclude);
+            Assert.False(pending.IsCompleted);
+            batch.Execute();
+            Assert.Equal(count, await pending);
+        }
+    }
+
+    [Test]
+    public async Task IntegerCountersPreserveUpstreamWireCommandsAcrossAllDispatchPaths()
+    {
+        await using var server = new FakeRespServer(":42\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await using var connection = RespireConnectionMultiplexer.Wrap(client);
+        var database = connection.GetDatabase();
+        var commands = new List<string>();
+        foreach (var (value, increment, decrement) in new[]
+        {
+            (1L, "INCR key", "DECR key"),
+            (-1L, "DECR key", "INCR key"),
+            (0L, "INCRBY key 0", "INCRBY key 0"),
+            (2L, "INCRBY key 2", "DECRBY key 2"),
+            (-2L, "DECRBY key 2", "INCRBY key 2"),
+            (long.MaxValue, "INCRBY key 9223372036854775807", "DECRBY key 9223372036854775807"),
+            (long.MinValue, "DECRBY key -9223372036854775808", "DECRBY key -9223372036854775808"),
+        })
+        {
+            Assert.Equal(42, database.StringIncrement("key", value));
+            Assert.Equal(42, database.StringDecrement("key", value));
+            Assert.Equal(42, await database.StringIncrementAsync("key", value));
+            Assert.Equal(42, await database.StringDecrementAsync("key", value));
+            var batch = database.CreateBatch();
+            var increase = batch.StringIncrementAsync("key", value);
+            var decrease = batch.StringDecrementAsync("key", value);
+            Assert.False(increase.IsCompleted);
+            Assert.False(decrease.IsCompleted);
+            batch.Execute();
+            Assert.Equal(42, await increase);
+            Assert.Equal(42, await decrease);
+            commands.AddRange([increment, decrement, increment, decrement, increment, decrement]);
+        }
+        Assert.Equal(42, await database.StringIncrementAsync("key"));
+        Assert.Equal(42, await database.StringDecrementAsync("key"));
+        commands.AddRange(["INCR key", "DECR key"]);
+        Assert.Equal(0, await database.StringIncrementAsync("key", flags: CommandFlags.FireAndForget));
+        Assert.Equal(0, database.StringDecrement("key", flags: CommandFlags.FireAndForget));
+        Assert.Equal(0, await database.StringIncrementAsync("key", 0, CommandFlags.FireAndForget));
+        Assert.Equal(0, database.StringDecrement("key", 0, CommandFlags.FireAndForget));
+        Assert.Equal(42, await database.StringIncrementAsync("barrier"));
+        commands.AddRange(["INCR key", "DECR key", "INCR barrier"]);
+        Assert.Equal(commands, server.ReceivedCommands);
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
     public async Task KeyStringAndSetCommandsPreserveBinaryValuesAndRedisOutcomes(int protocol)
     {
         await using var client = await RespireClient.ConnectAsync(Options(protocol));
@@ -425,7 +494,11 @@ public class HangfireCommandsTests(RedisTestContainer redis)
     {
         var command = DeferredRawCommands.CreateCommand(RespireCommands.SortedSet.ZSCAN, ["ZSCAN", "key", "17"], 1, 1);
         Assert.Equal(ReadCommandKind.CursorRead, command.ReadKind);
-        Assert.Equal(2, command.CursorArgumentIndex);
+        Assert.Equal(1, command.CursorArgumentIndex);
+        Assert.True(CursorCommandMetadata.IsCursorContinuation(in command));
+        var initial = DeferredRawCommands.CreateCommand(RespireCommands.SortedSet.ZSCAN,
+            ["ZSCAN", "key", "0", "MATCH", "prefix*", "COUNT", 10], 1, 1);
+        Assert.False(CursorCommandMetadata.IsCursorContinuation(in initial));
         var layout = Respire.Commands.RawCommandKeyLayouts.GetDeferredLayout("ZSCAN", ["key", "17", "MATCH", "prefix*", "COUNT", 10]);
         Assert.Equal(new Respire.Commands.RawCommandKeyLayouts.KeyLayout(0, 1), layout);
         await using var client = await RespireClient.ConnectAsync(Options(protocol));
