@@ -83,10 +83,10 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
     /// <inheritdoc />
     public override async Task EnsureCollectionDeletedAsync(CancellationToken cancellationToken = default)
     {
-        if (!await CollectionExistsAsync(cancellationToken).ConfigureAwait(false)) return;
-        await RespireVectorDataOperations.ExecuteAsync(
-            _client.Search.DropIndexAsync(_index, deleteDocuments: true, cancellationToken),
-            nameof(EnsureCollectionDeletedAsync), Name, "Unknown Index name").ConfigureAwait(false);
+        ThrowIfDisposed();
+        cancellationToken.ThrowIfCancellationRequested();
+        await RespireVectorDataOperations.DeleteCollectionAsync(
+            _client, _index, _prefix, Name, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -205,6 +205,7 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
         var queryOptions = new RespireSearchQueryOptions { Limit = (skip, top), ReturnFields = ["vector_score"] };
         var result = await RespireVectorDataOperations.ExecuteAsync(
             _client.Search.VectorSearchAsync(_index, request, queryOptions, cancellationToken), nameof(SearchAsync), Name).ConfigureAwait(false);
+        var hits = new List<(string Key, double Score)>();
         foreach (var document in result.Documents)
         {
             if (!document.Id.StartsWith(_prefix, StringComparison.Ordinal)) throw new InvalidOperationException("Search returned a document outside this collection.");
@@ -212,8 +213,24 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
             if (!double.IsFinite(score)) throw new InvalidOperationException("Search returned a non-finite distance.");
             if (options?.ScoreThreshold is { } threshold && score > threshold) continue;
             var key = RespireVectorStore.DecodeName(document.Id[_prefix.Length..]);
-            var record = await GetAsync(key, new() { IncludeVectors = options?.IncludeVectors ?? false }, cancellationToken).ConfigureAwait(false);
-            if (record is not null) yield return new(record, score);
+            hits.Add((key, score));
+        }
+        const int batchSize = 32;
+        var retrievalOptions = new RecordRetrievalOptions { IncludeVectors = options?.IncludeVectors ?? false };
+        for (var offset = 0; offset < hits.Count; offset += batchSize)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var count = Math.Min(batchSize, hits.Count - offset);
+            var reads = new Task<TRecord?>[count];
+            for (var i = 0; i < count; i++)
+                reads[i] = GetAsync(hits[offset + i].Key, retrievalOptions, cancellationToken);
+            // Observe every read before yielding, including when enumeration stops early or one read fails.
+            var records = await Task.WhenAll(reads).ConfigureAwait(false);
+            for (var i = 0; i < count; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (records[i] is { } record) yield return new(record, hits[offset + i].Score);
+            }
         }
     }
 

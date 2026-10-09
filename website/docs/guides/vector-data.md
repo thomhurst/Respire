@@ -17,8 +17,11 @@ Derive from `RespireVectorDataHashMapper<TRecord>`. Implement `GetKey`, `Write` 
 
 ```csharp
 using Microsoft.Extensions.VectorData;
+using Respire;
 using Respire.VectorData;
+using Respire.Samples.VectorData; // Movie and MovieMapper from the runnable sample.
 
+await using var client = await RespireClient.ConnectAsync("redis://localhost:6379");
 using var store = new RespireVectorStore(client, "my-application");
 store.RegisterMapper(new MovieMapper());
 using var movies = store.GetHashCollection<Movie>("movies");

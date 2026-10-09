@@ -35,6 +35,7 @@
     <PackageReference Include="Respire.Json" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.OutputCaching" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Search" Version="$(RespirePackageVersion)" />
+    <PackageReference Include="Respire.VectorData" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.TimeSeries" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Probabilistic" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.12" />
@@ -48,6 +49,7 @@
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <Compile Include="$(GeneratedSnippetsPath)" Link="GeneratedSnippets.g.cs" />
+    <Compile Include="../../samples/Respire.Samples.VectorData/Movie.cs" Link="VectorDataMovie.cs" />
   </ItemGroup>
 
   <Target Name="RecordExpectedRuntimeAssemblies" BeforeTargets="GetAssemblyAttributes">

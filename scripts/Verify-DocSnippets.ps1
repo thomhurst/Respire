@@ -60,6 +60,7 @@ $requiredPackages = @(
     'Respire.Json'
     'Respire.OutputCaching'
     'Respire.Search'
+    'Respire.VectorData'
     'Respire.TimeSeries'
     'Respire.Testing.Containers'
 )

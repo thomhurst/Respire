@@ -32,6 +32,36 @@ public class HashCollectionTests(ModernRedisTestContainer fixture)
     }
 
     [Test, Arguments(2), Arguments(3)]
+    public async Task DeletingWithoutAnIndexRemovesOnlyTheCollectionsHashes(int protocol)
+    {
+        await using var client = await Connect(protocol);
+        using var store = Store(client);
+        using var collection = store.GetHashCollection<Movie>("movies");
+        using var other = store.GetHashCollection<Movie>("movies:other");
+        try
+        {
+            await collection.UpsertAsync(Movie("before-index", 1, 0));
+            await other.UpsertAsync(Movie("before-index", 0, 1));
+            await collection.EnsureCollectionDeletedAsync();
+            (await collection.GetAsync("before-index")).Should().BeNull();
+            (await other.GetAsync("before-index")).Should().NotBeNull();
+
+            await collection.UpsertAsync(Movie("before-index", 1, 0));
+            await store.EnsureCollectionDeletedAsync(collection.Name);
+            (await collection.GetAsync("before-index")).Should().BeNull();
+            (await other.GetAsync("before-index")).Should().NotBeNull();
+            await collection.EnsureCollectionExistsAsync();
+            (await Collect(collection.SearchAsync(new float[] { 1, 0 }, 1))).Should().BeEmpty();
+        }
+        finally
+        {
+            await collection.DeleteAsync("before-index");
+            await other.DeleteAsync("before-index");
+            await collection.EnsureCollectionDeletedAsync();
+        }
+    }
+
+    [Test, Arguments(2), Arguments(3)]
     public async Task CrudBatchReplacementAndVectorInclusion(int protocol)
     {
         await using var client = await Connect(protocol);
@@ -83,6 +113,40 @@ public class HashCollectionTests(ModernRedisTestContainer fixture)
             page.Should().ContainSingle().Which.Record.Id.Should().Be("b");
             page[0].Record.Vector.ToArray().Should().Equal(0, 1);
             (await Collect(collection.SearchAsync(new float[] { 1, 0 }, 3, new() { ScoreThreshold = 2.1 }))).Select(r => r.Record.Id).Should().Equal("a", "b");
+        }
+        finally { await collection.EnsureCollectionDeletedAsync(); }
+    }
+
+    [Test, Arguments(2), Arguments(3)]
+    public async Task SearchBatchesPreserveOrderVectorsAndEarlyDisposal(int protocol)
+    {
+        await using var client = await Connect(protocol);
+        using var store = Store(client);
+        using var collection = store.GetHashCollection<Movie>("movies");
+        try
+        {
+            await collection.EnsureCollectionExistsAsync();
+            var movies = Enumerable.Range(0, 40).Select(i => Movie(i.ToString(), i + 1, 0)).ToArray();
+            await collection.UpsertAsync(movies);
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            List<VectorSearchResult<Movie>> hits;
+            do
+            {
+                hits = await Collect(collection.SearchAsync(new float[] { 1, 0 }, 40, new() { IncludeVectors = true }, deadline.Token));
+                if (hits.Count < 40) await Task.Delay(20, deadline.Token);
+            } while (hits.Count < 40);
+            hits.Select(hit => hit.Record.Id).Should().Equal(movies.Select(movie => movie.Id));
+            for (var i = 0; i < hits.Count; i++)
+            {
+                hits[i].Score.Should().Be(i * i);
+                hits[i].Record.Vector.ToArray().Should().Equal(i + 1, 0);
+            }
+            await using (var iterator = collection.SearchAsync(new float[] { 1, 0 }, 40).GetAsyncEnumerator())
+            {
+                (await iterator.MoveNextAsync()).Should().BeTrue();
+                iterator.Current.Record.Id.Should().Be("0");
+            }
+            await client.PingAsync();
         }
         finally { await collection.EnsureCollectionDeletedAsync(); }
     }

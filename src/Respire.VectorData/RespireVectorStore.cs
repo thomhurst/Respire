@@ -84,10 +84,10 @@ public sealed class RespireVectorStore : VectorStore
     /// <inheritdoc />
     public override async Task EnsureCollectionDeletedAsync(string name, CancellationToken cancellationToken = default)
     {
-        if (!await CollectionExistsAsync(name, cancellationToken).ConfigureAwait(false)) return;
-        await RespireVectorDataOperations.ExecuteAsync(
-            _client.Search.DropIndexAsync(IndexName(name), deleteDocuments: true, cancellationToken),
-            nameof(EnsureCollectionDeletedAsync), name, "Unknown Index name").ConfigureAwait(false);
+        ThrowIfDisposed();
+        cancellationToken.ThrowIfCancellationRequested();
+        await RespireVectorDataOperations.DeleteCollectionAsync(
+            _client, IndexName(name), DocumentPrefix(name), name, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
