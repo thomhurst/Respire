@@ -254,6 +254,8 @@ Handlers for the same channel share a native subscription; duplicate handlers
 are ignored. Channel buffers are copied at the adapter boundary.
 Unsubscribing a handler retains other handlers. Native reconnect
 and resubscription behavior applies; delivery gaps cannot replay messages.
+If the native reconnect limit is exhausted, subscribing again propagates the
+native reconnect-limit exception; recreate the client and adapter to resume delivery.
 Callbacks execute separately from subscription admission, and callback exceptions
 do not terminate delivery. `ChannelMessageQueue`, patterns, and all other
 subscriber calls remain unsupported. `Publish[Async]` is available on the

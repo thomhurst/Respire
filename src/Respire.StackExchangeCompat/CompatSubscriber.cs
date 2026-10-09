@@ -30,8 +30,14 @@ internal sealed partial class CompatSubscriber(RespireConnectionMultiplexer owne
             {
                 if (_subscriptions.TryGetValue(channel, out var existing))
                 {
-                    lock (existing.Handlers) if (!existing.Handlers.Contains(handler)) existing.Handlers.Add(handler);
-                    return true;
+                    if (!existing.Subscription.IsDisposed)
+                    {
+                        lock (existing.Handlers) if (!existing.Handlers.Contains(handler)) existing.Handlers.Add(handler);
+                        return true;
+                    }
+                    // Terminal native subscriptions cannot deliver; retry native admission so its failure is not hidden.
+                    _subscriptions.Remove(channel);
+                    lock (existing.Handlers) existing.Handlers.Clear();
                 }
                 byte[]? bytes = channel;
                 var subscription = await client.SubscribeAsync(new RespireChannel(bytes!.AsMemory()), token).ConfigureAwait(false);
