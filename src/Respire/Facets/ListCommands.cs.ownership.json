@@ -33,7 +33,37 @@
         "SetAsync(RespireKey,long,RespireValue,CancellationToken):ValueTask<bool>",
         "TrimAsync(RespireKey,long,long,CancellationToken):ValueTask<bool>"
       ],
-      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+      "Contract": "Public entries start the failure-only owner before preflight. Private borrowed implementations share its retry history through send, typed conversion and cleanup. DispatchResponseSource owns final result inspection; its Fail boundary owns synchronous preflight failures. Successful calls acquire no ErrorObservation lease storage.",
+      "Overrides": {
+        "CountAsync(RespireKey,CancellationToken):ValueTask<long>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "IndexAsync(RespireKey,long,CancellationToken):ValueTask<string?>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "InsertAfterAsync(RespireKey,RespireValue,RespireValue,CancellationToken):ValueTask<long>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "InsertBeforeAsync(RespireKey,RespireValue,RespireValue,CancellationToken):ValueTask<long>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "LeftPopAsync(RespireKey,TimeSpan?,CancellationToken):ValueTask<string?>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "LeftPopAsync`1(RespireKey,TimeSpan?,CancellationToken):ValueTask<T?>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "LeftPopManyAsync(RespireKey,long,CancellationToken):ValueTask<string[]>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "LeftPopManyAsync`1(RespireKey,long,CancellationToken):ValueTask<T[]>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "LeftPushAsync(RespireKey,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<long>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "LeftPushAsync(RespireKey,params ReadOnlySpan<RespireValue>):ValueTask<long>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "LeftPushIfExistsAsync(RespireKey,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<long>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "LeftPushIfExistsAsync(RespireKey,params ReadOnlySpan<RespireValue>):ValueTask<long>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "MoveAsync(RespireKey,RespireKey,ListSide,ListSide,TimeSpan?,CancellationToken):ValueTask<string?>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "PositionAsync(RespireKey,RespireValue,long,long,CancellationToken):ValueTask<long?>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "PositionsAsync(RespireKey,RespireValue,long,long,long,CancellationToken):ValueTask<long[]>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "RangeAsync(RespireKey,long,long,CancellationToken):ValueTask<string[]>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "RangeAsync`1(RespireKey,long,long,CancellationToken):ValueTask<T[]>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "RemoveAsync(RespireKey,RespireValue,long,CancellationToken):ValueTask<long>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "RightPopAsync(RespireKey,TimeSpan?,CancellationToken):ValueTask<string?>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "RightPopAsync`1(RespireKey,TimeSpan?,CancellationToken):ValueTask<T?>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "RightPopManyAsync(RespireKey,long,CancellationToken):ValueTask<string[]>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "RightPopManyAsync`1(RespireKey,long,CancellationToken):ValueTask<T[]>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "RightPushAsync(RespireKey,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<long>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "RightPushAsync(RespireKey,params ReadOnlySpan<RespireValue>):ValueTask<long>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "RightPushIfExistsAsync(RespireKey,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<long>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "RightPushIfExistsAsync(RespireKey,params ReadOnlySpan<RespireValue>):ValueTask<long>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "SetAsync(RespireKey,long,RespireValue,CancellationToken):ValueTask<bool>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "TrimAsync(RespireKey,long,long,CancellationToken):ValueTask<bool>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult"
+      }
     }
   ],
   "Boundaries": [],

@@ -130,11 +130,14 @@ public sealed partial class RespireClient
     internal ValueTask<Stream?> SendBulkStreamAsync<TCommand>(
         string operation,
         TCommand command,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
     {
         // Keep attempts even if metrics are enabled while this streaming operation is pending.
-        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        if (observation.IsEmpty)
+            return DispatchResponseSource<Stream?>.Run(
+                (Client: this, Operation: operation, Command: command, Token: cancellationToken),
+                static (state, owner) => state.Client.SendBulkStreamAsync(state.Operation, state.Command, state.Token, owner));
         try
         {
             return RespireTelemetry.ObserveStreamError(
@@ -259,10 +262,14 @@ public sealed partial class RespireClient
 
     internal ValueTask<TResult> ConvertBlockingResponseAsync<TCommand, TState, TResult>(
         string operation, TCommand command, CancellationToken cancellationToken,
-        TState state, ResponseConverter<TState, TResult> converter)
+        TState state, ResponseConverter<TState, TResult> converter, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
     {
-        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        if (observation.IsEmpty)
+            return DispatchResponseSource<TResult>.Run(
+                (Client: this, Operation: operation, Command: command, Token: cancellationToken, State: state, Converter: converter),
+                static (state, owner) => state.Client.ConvertBlockingResponseAsync(
+                    state.Operation, state.Command, state.Token, state.State, state.Converter, owner));
         // SendBlockingAsync captures preflight errors in its ValueTask. The converter owns
         // the lease through dedicated connection cleanup and final reply publication.
         var response = SendBlockingAsync(operation, command, cancellationToken, observeErrors: false, observation: observation);

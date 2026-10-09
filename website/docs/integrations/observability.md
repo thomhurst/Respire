@@ -912,6 +912,14 @@ the independent route inventory. Helper, borrower, transport, and cleanup observ
 must remain distinct from the caller's final publication. Preserve checked native
 response lifetimes and deferred-result inspection; do not introduce a universal wrapper.
 
+Single-command string, hash, key, list, and sorted-set query facets start their caller
+boundary before argument validation, serialization, key mapping, and command construction.
+The same boundary covers typed reply conversion and command cleanup. Transparent
+redirects and connection retries borrow that boundary: a recovered failure is internal,
+and a failure returned to the caller is counted once with its complete retry count.
+Preflight failures keep their original exception and cancellation behavior. Successful
+calls keep an empty failure-only lease, including synchronous client-cache hits.
+
 ## Sentinel primary changes
 
 Sentinel batch, durability-batch, and transaction acquisition failures still emit an error

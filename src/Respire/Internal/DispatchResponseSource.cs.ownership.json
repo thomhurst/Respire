@@ -14,6 +14,27 @@
       "Member": "Respire.Internal.DispatchResponseSource`1.Run`1(TState,Func<TState,RespireTelemetry.ErrorObservation,ValueTask<TResult>>):ValueTask<TResult>",
       "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
       "Contract": "Establish the response owner before invoking dispatch preflight. Synchronous failures complete the same owner after dispatch unwinds; pending operations transfer final inspection to GetResult."
+    },
+    {
+      "Name": "facet-owner-start",
+      "Role": "helper",
+      "Member": "Respire.Internal.DispatchResponseSource`1.Start():DispatchResponseSource<TResult>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Span-capable facet ownership starts before preflight. Synchronous preflight failure finishes after unwinding; attachment retains ownership through final response inspection and cleanup."
+    },
+    {
+      "Name": "facet-owner-attach",
+      "Role": "helper",
+      "Member": "Respire.Internal.DispatchResponseSource`1.Attach(ValueTask<TResult>):ValueTask<TResult>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Span-capable facet ownership starts before preflight. Synchronous preflight failure finishes after unwinding; attachment retains ownership through final response inspection and cleanup."
+    },
+    {
+      "Name": "facet-preflight-final",
+      "Role": "final",
+      "Member": "Respire.Internal.DispatchResponseSource`1.Fail(Exception):void",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.Fail(Exception):void",
+      "Contract": "Span-capable facet ownership starts before preflight. Synchronous preflight failure finishes after unwinding; attachment retains ownership through final response inspection and cleanup."
     }
   ],
   "NonRoutes": []
