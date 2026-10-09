@@ -50,28 +50,23 @@ internal sealed partial class ListCommands
         ListMoveCountMode countMode = ListMoveCountMode.UpTo, ListMoveOrder order = ListMoveOrder.OneByOne,
         TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
     {
-        (string operation, CmdN command) frame;
+        var owner = DispatchResponseSource<string[]?>.Start();
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            frame = MoveManyCommand(client, source, destination, count, from, to, countMode, order, waitFor);
+            var (operation, command) = MoveManyCommand(client, source, destination, count, from, to, countMode, order, waitFor);
+            return owner.Attach(waitFor.HasValue
+                ? MoveManyBlockingAsync(operation, command, cancellationToken, owner.Observation)
+                : client.ConvertResponseAsync(operation, command, cancellationToken, this,
+                    static (ListCommands _, in RespValue reply) => ParseMovedValues(in reply), observation: owner.Observation));
         }
-        catch (Exception error)
-        {
-            RespireTelemetry.RecordError(error, internallyHandled: false);
-            throw;
-        }
-        var (operation, command) = frame;
-        return waitFor.HasValue
-            ? MoveManyBlockingAsync(operation, command, cancellationToken)
-            : client.ConvertResponseAsync(operation, command, cancellationToken, this,
-                static (ListCommands _, in RespValue reply) => ParseMovedValues(in reply));
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
-    private async ValueTask<string[]?> MoveManyBlockingAsync(string operation, CmdN command, CancellationToken cancellationToken)
+    private async ValueTask<string[]?> MoveManyBlockingAsync(string operation, CmdN command, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         return await client.ConvertBlockingResponseAsync(operation, command, cancellationToken, 0,
-            static (int _, in RespValue reply) => ParseMovedValues(in reply)).ConfigureAwait(false);
+            static (int _, in RespValue reply) => ParseMovedValues(in reply), observation).ConfigureAwait(false);
     }
 
     internal static string[]? ParseMovedValues(in RespValue reply)

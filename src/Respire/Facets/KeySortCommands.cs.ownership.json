@@ -10,7 +10,12 @@
         "SortAsync`1(RespireKey,RespireSortOptions?,CancellationToken):ValueTask<T?[]>",
         "SortStoreAsync(RespireKey,RespireKey,RespireSortOptions?,CancellationToken):ValueTask<long>"
       ],
-      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner. These migrated entries retain the failure-only dispatch owner through preflight, conversion and cleanup; synchronous construction failure completes its Fail boundary.",
+      "Overrides": {
+        "SortAsync(RespireKey,RespireSortOptions?,CancellationToken):ValueTask<string?[]>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "SortAsync`1(RespireKey,RespireSortOptions?,CancellationToken):ValueTask<T?[]>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "SortStoreAsync(RespireKey,RespireKey,RespireSortOptions?,CancellationToken):ValueTask<long>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult"
+      }
     }
   ],
   "Boundaries": [],

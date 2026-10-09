@@ -2,6 +2,13 @@
   "Surfaces": [],
   "Boundaries": [
     {
+      "Name": "blocking-asking-transport",
+      "Role": "borrower",
+      "Member": "Respire.Networking.RespireConnection.SendValidatedPrefixedWithoutResponseTimeoutAsync`2(TPrefix,TCommand,CancellationToken,int,bool,RespireTelemetry.ErrorObservation):ValueTask<RespValue>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Borrow the blocking caller's retry history. Retain ASKING failure, drain both FIFO replies, and restore watchdog suppression before final caller inspection. Never arm a blocking command deadline."
+    },
+    {
       "Name": "physical-connect-helper",
       "Role": "borrower",
       "Member": "Respire.Networking.RespireConnection.ConnectAsync(string,int,RespireConnectionOptions?,ILogger?,CancellationToken,bool):Task<RespireConnection>",
