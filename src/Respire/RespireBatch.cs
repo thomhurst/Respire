@@ -403,7 +403,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
                 // reverse this batch's queue order. The response thread frees ring slots
                 // without awaiting these reply tasks. Capacity waits share the same budget.
                 for (var i = 0; i < _ops.Count; i++)
-                    sends[i] = await _ops[i].StartOrderedSendAsync(connection, cancellationToken, observations[i], deadline, circuits).ConfigureAwait(false);
+                    sends[i] = await _ops[i].StartOrderedSendAsync(_client, connection, cancellationToken, observations[i], deadline, circuits).ConfigureAwait(false);
             }
             for (var i = 0; i < _ops.Count; i++)
                 _ = await _ops[i].CompleteSendAsync(_client, sends[i]).ConfigureAwait(false);
@@ -677,7 +677,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, bool deferFlush,
             CommandDeadline deadline);
 
-        public abstract ValueTask<ValueTask<RespValue>> StartOrderedSendAsync(RespireConnection connection,
+        public abstract ValueTask<ValueTask<RespValue>> StartOrderedSendAsync(RespireClient client, RespireConnection connection,
             CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, CommandDeadline deadline,
             StandaloneCircuitRegistry? circuits);
 
@@ -827,7 +827,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
 #if NET
         [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
-        public override async ValueTask<ValueTask<RespValue>> StartOrderedSendAsync(RespireConnection connection,
+        public override async ValueTask<ValueTask<RespValue>> StartOrderedSendAsync(RespireClient client, RespireConnection connection,
             CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, CommandDeadline deadline,
             StandaloneCircuitRegistry? circuits)
         {
@@ -836,7 +836,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
                 var bound = new MutationCommand<TCommand>(command, MutationFence);
                 return circuits is not null
                     ? await QueuedCircuitDispatch.EnqueueAsync(circuits, connection, bound, Operation,
-                        cancellationToken, observation, deadline).ConfigureAwait(false)
+                        cancellationToken, observation, deadline, client).ConfigureAwait(false)
                     : await connection.EnqueuePinnedAsync(bound, cancellationToken, Operation, observation,
                         pinToConnection: false, deadline: deadline).ConfigureAwait(false);
             }

@@ -115,6 +115,7 @@ public sealed class SentinelCircuitDispatchTests
     [Arguments("raw")]
     [Arguments("typed")]
     [Arguments("queued")]
+    [Arguments("ordered")]
     public async Task CursorRetirementAfterSelectionDoesNotReroute(string shape)
     {
         await using var first = Primary();
@@ -135,11 +136,15 @@ public sealed class SentinelCircuitDispatchTests
         var pending = Task.Run(async () =>
         {
             if (shape == "typed") await enumerator.MoveNextAsync();
-            else if (shape == "queued")
+            else if (shape is "queued" or "ordered")
             {
                 var command = new CatalogCommand(RespireCommands.Key.SCAN, ["7"]);
-                using var page = await QueuedCircuitDispatch.SendAsync(client.Core.Circuits!, issuingConnection,
-                    command, "SCAN", default, default, client: client);
+                var response = shape == "ordered"
+                    ? await QueuedCircuitDispatch.EnqueueAsync(client.Core.Circuits!, issuingConnection,
+                        command, "SCAN", default, client: client)
+                    : QueuedCircuitDispatch.SendAsync(client.Core.Circuits!, issuingConnection,
+                        command, "SCAN", default, default, client: client);
+                using var page = await response;
             }
             else { using var page = await view.ExecuteAsync(RespireCommands.Key.SCAN, ["7"]); }
         });
@@ -221,7 +226,9 @@ public sealed class SentinelCircuitDispatchTests
     }
 
     [Test]
-    public async Task RetiredBatchConnectionUsesNewEndpointAdmission()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RetiredBatchConnectionUsesNewEndpointAdmission(bool orderedAdmission)
     {
         await using var first = Primary();
         await using var second = Primary();
@@ -234,10 +241,46 @@ public sealed class SentinelCircuitDispatchTests
         port = second.Port;
         await client.Core.Sentinel!.GetGenerationAsync(default, forceDiscovery: true);
         var command = new CatalogCommand(RespireCommands.String.GET, ["queued"]);
-        using var reply = await QueuedCircuitDispatch.SendAsync(client.Core.Circuits!, old, command, "GET", default, default, client: client);
+        var response = orderedAdmission
+            ? await QueuedCircuitDispatch.EnqueueAsync(client.Core.Circuits!, old, command, "GET", default, client: client)
+            : QueuedCircuitDispatch.SendAsync(client.Core.Circuits!, old, command, "GET", default, default, client: client);
+        using var reply = await response;
         await Assert.That(ResponseReader.String(in reply)).IsEqualTo("queued");
         await Assert.That(first.ReceivedCommands.Contains("GET queued")).IsFalse();
         await Assert.That(second.ReceivedCommands.Count(value => value == "GET queued")).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task BatchAdmissionRaceRetainsOrderOnReplacementPrimary()
+    {
+        await using var first = Primary();
+        await using var second = Primary();
+        var port = first.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        await using var client = await Connect(sentinel);
+        var (circuit, _) = Prepare(client, first);
+        using var clock = new AdmissionGateClock();
+        CircuitClock(circuit) = clock;
+        using var batch = client.CreateBatch();
+        var one = batch.GetString("first");
+        var two = batch.GetString("second");
+        clock.Arm();
+        var execution = Task.Run(async () => await batch.ExecuteAsync());
+        try
+        {
+            await clock.Selected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Volatile.Write(ref port, second.Port);
+            await client.Core.Sentinel!.GetGenerationAsync(default, forceDiscovery: true);
+        }
+        finally { clock.Release(); }
+        await execution.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(await one).IsEqualTo("first");
+        await Assert.That(await two).IsEqualTo("second");
+        await Assert.That(first.ReceivedCommands.Any(command => command.StartsWith("GET "))).IsFalse();
+        await Assert.That(second.ReceivedCommands.Where(command => command.StartsWith("GET ")).ToArray())
+            .IsEquivalentTo(new[] { "GET first", "GET second" }, TUnit.Assertions.Enums.CollectionOrdering.Matching);
+        await Assert.That(circuit.Snapshot().FailureCount).IsEqualTo(0);
+        await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(0);
     }
 
     [Test]
