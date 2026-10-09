@@ -495,6 +495,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             var importSubmissionAttempted = false;
             ClusterRouter.DiscoveryRound? discovery = null;
             var discoveryPending = false;
+            var sentinelTelemetryStarted = false;
             try
             {
                 var cluster = core.Cluster;
@@ -508,9 +509,16 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                     acquisition.Dispose();
                     acquisition.CheckDeadline("MULTI/EXEC", core, ConnectionPolicy.ImportConnection);
                     if (core.Sentinel is not null)
-                        telemetry = RespireTelemetry.StartBatchOperation(
-                            "MULTI", _ops, static op => op.Operation,
-                            connection.Host, connection.Port, core.Options.Database, out telemetryOperation, sentinelStarted);
+                    {
+                        if (!sentinelTelemetryStarted)
+                        {
+                            telemetry = RespireTelemetry.StartBatchOperation(
+                                "MULTI", _ops, static op => op.Operation,
+                                connection.Host, connection.Port, core.Options.Database, out telemetryOperation, sentinelStarted);
+                            sentinelTelemetryStarted = true;
+                        }
+                        else telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
+                    }
                     RespValue reply;
                     CircuitAdmission admission = default;
                     try

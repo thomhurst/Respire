@@ -57,6 +57,17 @@ internal static class QueuedCircuitDispatch
         RespireConnection connection, TCommand command, string operation, CancellationToken cancellationToken,
         RespireTelemetry.ErrorObservation observation = default, CommandDeadline deadline = default, RespireClient? client = null)
         where TCommand : struct, IRespCommand
+        => (await EnqueueWithConnectionAsync(circuits, connection, command, operation, cancellationToken,
+            observation, deadline, client).ConfigureAwait(false)).Reply;
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    internal static async ValueTask<(ValueTask<RespValue> Reply, RespireConnection Connection)> EnqueueWithConnectionAsync<TCommand>(
+        StandaloneCircuitRegistry circuits, RespireConnection connection, TCommand command, string operation,
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default,
+        CommandDeadline deadline = default, RespireClient? client = null)
+        where TCommand : struct, IRespCommand
     {
         if (!deadline.IsSet) deadline = connection.CreateCommandDeadline();
         while (true)
@@ -73,7 +84,7 @@ internal static class QueuedCircuitDispatch
                 // awaits its returned result. Connection failure/cancellation also completes it.
                 var guarded = ObserveAsync(reply, admission, cancellationToken);
                 transferred = true;
-                return guarded;
+                return (guarded, connection);
             }
             catch (RespireConnectionRetiredException error) when (command.ReadKind != ReadCommandKind.CursorRead
                 && client?.Core.Sentinel is not null

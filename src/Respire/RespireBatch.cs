@@ -364,7 +364,9 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             }
             else
             {
-                await RunStandaloneBatchAsync(connection, cancellationToken).ConfigureAwait(false);
+                connection = await RunStandaloneBatchAsync(connection, cancellationToken).ConfigureAwait(false);
+                if (core.Sentinel is not null && core.Circuits is not null)
+                    telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
             }
 
             var batchFailures = CompleteMutationAndCollectFailures(ref cacheToInvalidate, in mutationFence);
@@ -381,14 +383,15 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
     }
 
 #if NET
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
-    private async ValueTask RunStandaloneBatchAsync(RespireConnection connection, CancellationToken cancellationToken)
+    private async ValueTask<RespireConnection> RunStandaloneBatchAsync(RespireConnection connection, CancellationToken cancellationToken)
     {
         // Both admission paths include write-gate contention in the original timeout budget.
         var deadline = connection.CreateCommandDeadline();
         var sends = ArrayPool<ValueTask<RespValue>>.Shared.Rent(_ops.Count);
         var observations = ArrayPool<RespireTelemetry.ErrorObservation>.Shared.Rent(_ops.Count);
+        var executingConnection = connection;
         try
         {
             for (var i = 0; i < _ops.Count; i++)
@@ -403,10 +406,20 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
                 // reverse this batch's queue order. The response thread frees ring slots
                 // without awaiting these reply tasks. Capacity waits share the same budget.
                 for (var i = 0; i < _ops.Count; i++)
-                    sends[i] = await _ops[i].StartOrderedSendAsync(_client, connection, cancellationToken, observations[i], deadline, circuits).ConfigureAwait(false);
+                {
+                    // Cursor commands retain the original socket. Ordinary entries follow the
+                    // last accepted route so a replacement pool cannot split their wire order.
+                    var operationConnection = _ops[i].IsCursorRead ? connection : executingConnection;
+                    var accepted = await _ops[i].StartOrderedSendAsync(_client, operationConnection, cancellationToken,
+                        observations[i], deadline, circuits).ConfigureAwait(false);
+                    sends[i] = accepted.Reply;
+                    // A pipeline can span generations. Attribute its scope to the last accepted entry.
+                    if (accepted.Connection is { } endpoint) executingConnection = endpoint;
+                }
             }
             for (var i = 0; i < _ops.Count; i++)
                 _ = await _ops[i].CompleteSendAsync(_client, sends[i]).ConfigureAwait(false);
+            return executingConnection;
         }
         finally
         {
@@ -672,12 +685,13 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         public abstract bool IsReadOnly { get; }
 
         public abstract bool AllowsReadRouting { get; }
+        public abstract bool IsCursorRead { get; }
 
         public abstract ValueTask<RespValue> StartSend(RespireConnection connection,
             CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, bool deferFlush,
             CommandDeadline deadline);
 
-        public abstract ValueTask<ValueTask<RespValue>> StartOrderedSendAsync(RespireClient client, RespireConnection connection,
+        public abstract ValueTask<(ValueTask<RespValue> Reply, RespireConnection? Connection)> StartOrderedSendAsync(RespireClient client, RespireConnection connection,
             CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, CommandDeadline deadline,
             StandaloneCircuitRegistry? circuits);
 
@@ -724,6 +738,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             || command.GetCacheMutation(Operation) == RespireCacheMutation.ReadOnly;
 
         public override bool AllowsReadRouting => command.ReadKind != ReadCommandKind.None;
+        public override bool IsCursorRead => command.ReadKind == ReadCommandKind.CursorRead;
 
         // ARSCAN pages are index ranges without an issuing server cursor. They can follow
         // same-slot writes on the primary while the catalog retains its CursorRead classification.
@@ -827,22 +842,24 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
 #if NET
         [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
-        public override async ValueTask<ValueTask<RespValue>> StartOrderedSendAsync(RespireClient client, RespireConnection connection,
+        public override async ValueTask<(ValueTask<RespValue> Reply, RespireConnection? Connection)> StartOrderedSendAsync(RespireClient client, RespireConnection connection,
             CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, CommandDeadline deadline,
             StandaloneCircuitRegistry? circuits)
         {
             try
             {
                 var bound = new MutationCommand<TCommand>(command, MutationFence);
-                return circuits is not null
-                    ? await QueuedCircuitDispatch.EnqueueAsync(circuits, connection, bound, Operation,
-                        cancellationToken, observation, deadline, client).ConfigureAwait(false)
-                    : await connection.EnqueuePinnedAsync(bound, cancellationToken, Operation, observation,
-                        pinToConnection: false, deadline: deadline).ConfigureAwait(false);
+                if (circuits is not null)
+                {
+                    return await QueuedCircuitDispatch.EnqueueWithConnectionAsync(circuits, connection, bound, Operation,
+                        cancellationToken, observation, deadline, client).ConfigureAwait(false);
+                }
+                return (await connection.EnqueuePinnedAsync(bound, cancellationToken, Operation, observation,
+                    pinToConnection: false, deadline: deadline).ConfigureAwait(false), connection);
             }
             catch (Exception ex)
             {
-                return ValueTask.FromException<RespValue>(ex);
+                return (ValueTask.FromException<RespValue>(ex), null);
             }
         }
 
