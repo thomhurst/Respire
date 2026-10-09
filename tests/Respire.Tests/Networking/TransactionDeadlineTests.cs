@@ -222,7 +222,7 @@ public class TransactionDeadlineTests
         await Assert.That(async () => await session.SetAsync("later", "schema", "v")).Throws<ObjectDisposedException>();
     }
 
-    [Test]
+    [Test, NotInParallel]
     [Arguments(false, false)]
     [Arguments(true, false)]
     [Arguments(true, true)]
@@ -232,7 +232,9 @@ public class TransactionDeadlineTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespProtocol.Resp2, Connections = 1,
-            CommandTimeout = cancelCaller ? Timeout : TimeSpan.FromMilliseconds(200),
+            // Setup shares this budget; allow AUTH and PREPARE to complete before
+            // testing expiry at the held gate, still well below the ten-second safety limit.
+            CommandTimeout = cancelCaller ? Timeout : TimeSpan.FromSeconds(2),
             CredentialProvider = new ExpiringCredentials(),
             Endpoints = [new("127.0.0.1", server.Port)],
         });
