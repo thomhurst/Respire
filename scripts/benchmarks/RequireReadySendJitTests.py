@@ -3,15 +3,37 @@ import unittest
 from RequireReadySendJit import require_dispatch_evidence
 
 
-def listing(method):
-    return f'; Assembly listing for method Respire.RespireClient:{method}[Respire.Commands.Cmd1]() (Tier0)\n'
+def listing(method, types=None):
+    if types is None:
+        types = ('Respire.Commands.Cmd1,System.__Canon,long'
+                 if method == 'ConvertResponseCoreAsync' else 'Respire.Commands.Cmd1')
+    return f'; Assembly listing for method Respire.RespireClient:{method}[{types}]() (Tier0)\n'
 
 
 class RequireReadySendJitTests(unittest.TestCase):
     def setUp(self):
         self.baseline = ''.join(listing(method) for method in (
             'ConvertResponseCoreAsync', 'StringOrNullCoreAsync', 'BytesOrNullCoreAsync'))
-        self.candidate = self.baseline + listing('SendOnReadyPrimaryAsync')
+        self.candidate = self.baseline + listing(
+            'SendOnReadyPrimaryAsync',
+            'Respire.Commands.Cmd1,System.__Canon,Respire.RespireClient+StringReadySend')
+
+    def test_raw_overload_does_not_satisfy_strategy_evidence(self):
+        with self.assertRaisesRegex(ValueError, 'SendOnReadyPrimaryAsync'):
+            require_dispatch_evidence(self.baseline + listing('SendOnReadyPrimaryAsync'), candidate=True)
+
+    def test_nested_generics_and_array_arguments_preserve_strategy_arity(self):
+        for types in (
+            'Respire.Commands.Cmd1,ubyte[],Respire.RespireClient+BytesReadySend',
+            'Respire.Commands.Cmd1,bool,Respire.RespireClient+ConvertedReadySend`2[System.__Canon,bool]',
+        ):
+            with self.subTest(types=types):
+                require_dispatch_evidence(self.baseline + listing('SendOnReadyPrimaryAsync', types), candidate=True)
+
+    def test_nested_commas_do_not_turn_raw_overload_into_strategy_evidence(self):
+        raw = listing('SendOnReadyPrimaryAsync', 'Other.Command`3[System.__Canon,bool,int]')
+        with self.assertRaisesRegex(ValueError, 'SendOnReadyPrimaryAsync'):
+            require_dispatch_evidence(self.baseline + raw, candidate=True)
 
     def test_pre_strategy_dispatch_does_not_require_the_unused_strategy_helper(self):
         require_dispatch_evidence(self.baseline, candidate=False)

@@ -10,17 +10,26 @@ merge's first parent.
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 
+def git_environment() -> dict[str, str]:
+    """Keep Git commands scoped to their explicit checkout, including from hooks."""
+    return {key: value for key, value in os.environ.items()
+            if key not in ('GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE')}
+
+
 def prepare(checkout: Path, evidence: Path) -> None:
     checkout = checkout.resolve()
     patch = Path(__file__).with_name('ReadySendStrategy.patch').resolve()
+    environment = git_environment()
 
     def git(*arguments: str) -> str:
-        return subprocess.check_output(['git', '-C', str(checkout), *arguments], text=True).strip()
+        return subprocess.check_output(['git', '-C', str(checkout), *arguments],
+                                       text=True, env=environment).strip()
 
     if Path(git('rev-parse', '--show-toplevel')).resolve() != checkout:
         raise RuntimeError('The baseline must be a separate checkout root.')
