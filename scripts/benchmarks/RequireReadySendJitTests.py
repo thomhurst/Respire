@@ -22,6 +22,24 @@ class RequireReadySendJitTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'SendOnReadyPrimaryAsync'):
             require_dispatch_evidence(self.baseline + listing('SendOnReadyPrimaryAsync'), candidate=True)
 
+    def test_raw_sender_specialization_does_not_satisfy_typed_strategy_evidence(self):
+        raw = listing('SendOnReadyPrimaryAsync',
+                      'Respire.Commands.Cmd1,Respire.RespValue,Respire.RespireClient+RawReadySend')
+        with self.assertRaisesRegex(ValueError, 'SendOnReadyPrimaryAsync'):
+            require_dispatch_evidence(self.baseline + raw, candidate=True)
+        require_dispatch_evidence(self.candidate + raw, candidate=True)
+
+    def test_sender_must_be_the_third_outer_argument(self):
+        for types in (
+            'Respire.Commands.Cmd1,Respire.RespireClient+StringReadySend,Respire.RespireClient+RawReadySend',
+            'Other.Command`1[Respire.RespireClient+StringReadySend],Respire.RespValue,Respire.RespireClient+RawReadySend',
+            'Respire.Commands.Cmd1,System.__Canon,Other.Client+StringReadySend',
+            'Respire.Commands.Cmd1,System.__Canon,Respire.RespireClient+StringReadySendExtra',
+        ):
+            with self.subTest(types=types):
+                with self.assertRaisesRegex(ValueError, 'SendOnReadyPrimaryAsync'):
+                    require_dispatch_evidence(self.baseline + listing('SendOnReadyPrimaryAsync', types), candidate=True)
+
     def test_nested_generics_and_array_arguments_preserve_strategy_arity(self):
         for types in (
             'Respire.Commands.Cmd1,ubyte[],Respire.RespireClient+BytesReadySend',
