@@ -36,7 +36,12 @@ public sealed partial class RespireClient
         var resolvedKey = ResolveKey(key);
         if (ReadCache is not { } cache)
             return GetOrSetUncachedAsync(resolvedKey.Snapshot(), factory, milliseconds, cancellationToken, observation);
-        if (cache.TryGet(in resolvedKey, out var cached) && !cached.IsNull)
+        if (typeof(T) == typeof(string))
+        {
+            if (cache.TryGetString(in resolvedKey, out var cachedText) && cachedText is not null)
+                return new ValueTask<T?>((T)(object)cachedText);
+        }
+        else if (cache.TryGet(in resolvedKey, out var cached) && !cached.IsNull)
             return new ValueTask<T?>(DeserializeBorrowed<T>(in cached));
 
         return GetOrSetMissAsync(resolvedKey.Snapshot(), factory, milliseconds, cache, cancellationToken, observation);

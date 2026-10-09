@@ -44,6 +44,8 @@ public partial class ErrorMetricsTests
             _ = client.GetStringAsync("key").GetAwaiter().GetResult();
             _ = client.GetOrSetAsync<int>("key", static _ => throw new InvalidOperationException("Unexpected cache miss."),
                 TimeSpan.FromMinutes(1)).GetAwaiter().GetResult();
+            _ = client.GetOrSetAsync<string>("key", static _ => throw new InvalidOperationException("Unexpected cache miss."),
+                TimeSpan.FromMinutes(1)).GetAwaiter().GetResult();
             if (allocate) Volatile.Write(ref _cacheAllocationControl, new byte[37]);
         }
         return GC.GetAllocatedBytesForCurrentThread() - before;
