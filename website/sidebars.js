@@ -31,6 +31,7 @@ const sidebars = {
         'guides/blocking-queues',
         'guides/stream-workers',
         'guides/vector-sets',
+        'guides/vector-data',
         'guides/json',
         'guides/generated-hash-codecs',
           'guides/search',

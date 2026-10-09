@@ -45,6 +45,7 @@ jobs:
             tests/Respire.Caching.Hybrid.Tests \
             tests/Respire.FusionCache.Tests \
             tests/Respire.SignalR.Tests \
+            tests/Respire.VectorData.Tests \
             tests/Respire.Streaming.Tests
           do
             dotnet build "$project" -c Release -f net8.0

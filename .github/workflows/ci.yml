@@ -31,6 +31,47 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  vector-data:
+    name: VectorData contracts and NativeAOT (${{ matrix.framework }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: [net8.0, net10.0]
+    services:
+      redis:
+        image: redis:8.10-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+        ports:
+          - 6379/tcp
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 1s --health-timeout 3s --health-retries 30
+    env:
+      TUNIT_DISABLE_HTML_REPORTER: 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-dotnet
+      - name: Run hash collection contracts on RESP2 and RESP3
+        run: >-
+          dotnet run --project tests/Respire.VectorData.Tests -c Release -f ${{ matrix.framework }} --
+          --minimum-expected-tests 51 --report-trx --results-directory "$GITHUB_WORKSPACE/TestResults/vector-data"
+      - name: Install NativeAOT prerequisites
+        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
+      - name: Publish native sample with trimming warnings as errors
+        run: >-
+          dotnet publish samples/Respire.Samples.VectorData -c Release -f ${{ matrix.framework }}
+          -r linux-x64 -o "$GITHUB_WORKSPACE/artifacts/vector-data"
+      - name: Run native hash and vector search smoke
+        run: >-
+          ./artifacts/vector-data/Respire.Samples.VectorData
+          redis://127.0.0.1:${{ job.services.redis.ports['6379'] }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: vector-data-contracts-${{ matrix.framework }}
+          path: TestResults/vector-data
+
   stackexchange-interop:
     name: StackExchange compatibility (${{ matrix.framework }})
     runs-on: ubuntu-latest

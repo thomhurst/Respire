@@ -14,6 +14,7 @@ Each library uses the same name for its NuGet package, assembly, project, and ro
 | `Respire` | Core RESP client, commands, connections, serialization, and built-in compression abstractions |
 | `Respire.Json` | Redis JSON documents |
 | `Respire.Search` | Redis Search, indexing, aggregation, and vector queries |
+| `Respire.VectorData` | Explicit AOT-friendly VectorData hash collections and KNN search |
 | `Respire.TimeSeries` | Redis time series |
 | `Respire.Probabilistic` | Bloom, Cuckoo, Count-Min Sketch, Top-K, and t-digest |
 | `Respire.Aws` | AWS IAM credentials for ElastiCache and MemoryDB |

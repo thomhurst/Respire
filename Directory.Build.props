@@ -42,6 +42,7 @@
       Respire.Streaming;
       Respire.StackExchangeCompat;
       Respire.TimeSeries;
+      Respire.VectorData;
       Respire.Testing;
       Respire.Testing.Containers;
     </RespirePackageProjects>
