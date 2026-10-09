@@ -47,36 +47,46 @@ internal sealed partial class SortedSetCommands
         ReadOnlySpan<RespireKey> keys, long count = 1, bool descending = false,
         TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
     {
-        var (operation, command) = CreateObservedPopManyCommand(keys, count, descending, waitFor);
-        return waitFor.HasValue
-            ? PopManyBlockingAsync(operation, command, cancellationToken)
-            : client.ConvertResponseAsync(operation, command, cancellationToken, client,
-                static (RespireClient c, in RespValue reply) => ParsePopMany(in reply, c.KeyPrefixBytes));
+        var owner = DispatchResponseSource<RespireSortedSetPopManyResult?>.Start();
+        try
+        {
+            var (operation, command) = PopManyCommand(client, keys, count, descending, waitFor);
+            return owner.Attach(waitFor.HasValue
+                ? PopManyBlockingAsync(operation, command, cancellationToken, owner.Observation)
+                : client.ConvertResponseAsync(operation, command, cancellationToken, client,
+                    static (RespireClient c, in RespValue reply) => ParsePopMany(in reply, c.KeyPrefixBytes), observation: owner.Observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     public ValueTask<RespireSortedSetPopResult?> PopAsync(
         ReadOnlySpan<RespireKey> keys, TimeSpan waitFor, bool descending = false,
         CancellationToken cancellationToken = default)
     {
-        var (operation, command) = CreateObservedPopOneCommand(keys, waitFor, descending);
-        return PopOneBlockingAsync(operation, command, cancellationToken);
+        var owner = DispatchResponseSource<RespireSortedSetPopResult?>.Start();
+        try
+        {
+            var (operation, command) = PopOneCommand(client, keys, waitFor, descending);
+            return owner.Attach(PopOneBlockingAsync(operation, command, cancellationToken, owner.Observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<RespireSortedSetPopManyResult?> PopManyBlockingAsync(
-        string operation, CmdN command, CancellationToken cancellationToken)
+        string operation, CmdN command, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         return await client.ConvertBlockingResponseAsync(operation, command, cancellationToken, client,
-            static (RespireClient owner, in RespValue reply) => ParsePopMany(in reply, owner.KeyPrefixBytes))
+            static (RespireClient owner, in RespValue reply) => ParsePopMany(in reply, owner.KeyPrefixBytes), observation)
             .ConfigureAwait(false);
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<RespireSortedSetPopResult?> PopOneBlockingAsync(
-        string operation, CmdN command, CancellationToken cancellationToken)
+        string operation, CmdN command, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         return await client.ConvertBlockingResponseAsync(operation, command, cancellationToken, client,
-            static (RespireClient owner, in RespValue reply) => ParsePopOne(in reply, owner.KeyPrefixBytes))
+            static (RespireClient owner, in RespValue reply) => ParsePopOne(in reply, owner.KeyPrefixBytes), observation)
             .ConfigureAwait(false);
     }
 
@@ -102,11 +112,16 @@ internal sealed partial class SortedSetCommands
         ReadOnlySpan<RespireKey> keys, long count = 1, bool descending = false,
         TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
     {
-        var (operation, command) = CreateObservedPopManyCommand(keys, count, descending, waitFor);
-        return waitFor.HasValue
-            ? PopManyBlockingAsync<T>(operation, command, cancellationToken)
-            : client.ConvertResponseAsync(operation, command, cancellationToken, client,
-                static (RespireClient c, in RespValue reply) => ParsePopMany<T>(c, in reply));
+        var owner = DispatchResponseSource<RespireSortedSetPopManyResult<T>?>.Start();
+        try
+        {
+            var (operation, command) = PopManyCommand(client, keys, count, descending, waitFor);
+            return owner.Attach(waitFor.HasValue
+                ? PopManyBlockingAsync<T>(operation, command, cancellationToken, owner.Observation)
+                : client.ConvertResponseAsync(operation, command, cancellationToken, client,
+                    static (RespireClient c, in RespValue reply) => ParsePopMany<T>(c, in reply), observation: owner.Observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
@@ -115,18 +130,23 @@ internal sealed partial class SortedSetCommands
         ReadOnlySpan<RespireKey> keys, TimeSpan waitFor, bool descending = false,
         CancellationToken cancellationToken = default)
     {
-        var (operation, command) = CreateObservedPopOneCommand(keys, waitFor, descending);
-        return PopOneBlockingAsync<T>(operation, command, cancellationToken);
+        var owner = DispatchResponseSource<RespireSortedSetPopResult<T>?>.Start();
+        try
+        {
+            var (operation, command) = PopOneCommand(client, keys, waitFor, descending);
+            return owner.Attach(PopOneBlockingAsync<T>(operation, command, cancellationToken, owner.Observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<RespireSortedSetPopManyResult<T>?> PopManyBlockingAsync<T>(
-        string operation, CmdN command, CancellationToken cancellationToken)
+        string operation, CmdN command, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         return await client.ConvertBlockingResponseAsync(operation, command, cancellationToken, client,
-            static (RespireClient owner, in RespValue reply) => ParsePopMany<T>(owner, in reply))
+            static (RespireClient owner, in RespValue reply) => ParsePopMany<T>(owner, in reply), observation)
             .ConfigureAwait(false);
     }
 
@@ -134,33 +154,11 @@ internal sealed partial class SortedSetCommands
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<RespireSortedSetPopResult<T>?> PopOneBlockingAsync<T>(
-        string operation, CmdN command, CancellationToken cancellationToken)
+        string operation, CmdN command, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         return await client.ConvertBlockingResponseAsync(operation, command, cancellationToken, client,
-            static (RespireClient owner, in RespValue reply) => ParsePopOne<T>(owner, in reply))
+            static (RespireClient owner, in RespValue reply) => ParsePopOne<T>(owner, in reply), observation)
             .ConfigureAwait(false);
-    }
-
-    private (string Operation, CmdN Command) CreateObservedPopManyCommand(
-        ReadOnlySpan<RespireKey> keys, long count, bool descending, TimeSpan? waitFor)
-    {
-        try { return PopManyCommand(client, keys, count, descending, waitFor); }
-        catch (Exception error)
-        {
-            RespireTelemetry.RecordError(error, internallyHandled: false);
-            throw;
-        }
-    }
-
-    private (string Operation, CmdN Command) CreateObservedPopOneCommand(
-        ReadOnlySpan<RespireKey> keys, TimeSpan waitFor, bool descending)
-    {
-        try { return PopOneCommand(client, keys, waitFor, descending); }
-        catch (Exception error)
-        {
-            RespireTelemetry.RecordError(error, internallyHandled: false);
-            throw;
-        }
     }
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]

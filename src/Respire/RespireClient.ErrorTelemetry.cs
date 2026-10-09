@@ -98,9 +98,12 @@ public sealed partial class RespireClient
         CancellationToken cancellationToken,
         RespireCommandFlags flags,
         bool allowReadFrom = true,
-        ReadAffinity? cursorAffinity = null)
+        ReadAffinity? cursorAffinity = null, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
     {
+        if (!observation.IsEmpty)
+            return SendCoreAsync(operation, command, cancellationToken, flags, allowReadFrom,
+                cursorAffinity, observation, observeErrors: false);
         if (flags == RespireCommandFlags.None && cursorAffinity is null && !RespireTelemetry.IsOperationEnabled(operation)
             && TryGetNativeDispatchConnection(operation, in command, out var connection))
             return connection.SendNativeCheckedAsync(in command, cancellationToken, operation);

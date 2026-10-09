@@ -830,6 +830,20 @@ the responsibility of each family's entry point.
 Successful inspection and conversion keep a default lease and rent no error
 observation storage.
 
+`ExecuteAsync` and `ExecuteFireAndForgetAsync` retain a caller response owner before
+raw parsing, catalog validation, key-prefix rewriting and Cluster slot validation.
+Raw blocking commands, including ASK redirects and the `ASKING` reply, borrow that
+owner. SORT, multi-key list moves and list/sorted-set pops retain the same boundary
+through construction and typed conversion. MGET, MSETNX and ZINTERCARD also cover
+local multi-key validation. Cluster-wide sends share the caller's retry history
+across targets and complete cache fences and discovery cleanup before publishing a
+final failure. Successful calls rent no error observation storage.
+
+`SendShutdownAsync` starts its caller boundary before option validation and the
+`AllowAdmin` check, retaining ownership until its control socket is released. It
+counts caller-visible preflight and write failures; completion still confirms only
+the local write, and server-side errors remain outside this submission API.
+
 When adding a core public method, update its source-adjacent
 `<source-file>.cs.ownership.json` declaration in the same change. There is no shared
 inventory file to update. The guard treats every public method on a public core

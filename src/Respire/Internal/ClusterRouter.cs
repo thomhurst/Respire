@@ -1382,10 +1382,11 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     internal static ValueTask<Respire.Protocol.RespValue> SendBlockingAskingUncheckedAsync<TCommand>(
         RespireConnection connection,
         in TCommand command,
-        CancellationToken cancellationToken, int errorAttempts = 0, bool pinToConnection = false)
+        CancellationToken cancellationToken, int errorAttempts = 0, bool pinToConnection = false,
+        RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, Respire.Protocol.IRespCommand
-        => connection.SendPrefixedWithoutResponseTimeoutAsync(
-            Asking, command, throwOnError: false, cancellationToken, errorAttempts, pinToConnection);
+        => connection.SendValidatedPrefixedWithoutResponseTimeoutAsync(
+            Asking, command, cancellationToken, errorAttempts, pinToConnection, observation);
 
     internal async ValueTask<RespireConnection[]> GetMasterConnectionsAsync(
         CancellationToken cancellationToken, DiscoveryRound? discovery)

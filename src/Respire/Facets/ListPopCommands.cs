@@ -39,62 +39,52 @@ internal sealed partial class ListCommands
         ReadOnlySpan<RespireKey> keys, long count = 1, ListSide side = ListSide.Left,
         TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
     {
-        var (operation, command) = CreateObservedPopManyCommand(keys, count, side, waitFor);
-        return waitFor.HasValue
-            ? PopManyBlockingAsync(operation, command, cancellationToken)
-            : client.ConvertResponseAsync(operation, command, cancellationToken, client,
-                static (RespireClient c, in RespValue reply) => ParsePopMany(in reply, c.KeyPrefixBytes));
+        var owner = DispatchResponseSource<RespireListPopManyResult?>.Start();
+        try
+        {
+            var (operation, command) = PopManyCommand(client, keys, count, side, waitFor);
+            return owner.Attach(waitFor.HasValue
+                ? PopManyBlockingAsync(operation, command, cancellationToken, owner.Observation)
+                : client.ConvertResponseAsync(operation, command, cancellationToken, client,
+                    static (RespireClient c, in RespValue reply) => ParsePopMany(in reply, c.KeyPrefixBytes), observation: owner.Observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     public ValueTask<RespireListPopResult?> PopAsync(
         ReadOnlySpan<RespireKey> keys, TimeSpan waitFor, ListSide side = ListSide.Left,
         CancellationToken cancellationToken = default)
     {
-        var operation = side == ListSide.Left ? "BLPOP" : "BRPOP";
-        CmdN command;
+        var owner = DispatchResponseSource<RespireListPopResult?>.Start();
         try
         {
+            var operation = side == ListSide.Left ? "BLPOP" : "BRPOP";
+            CmdN command;
             _ = SideToken(side);
             MultiKeyPop.ValidateWait(waitFor);
             var arguments = new RespireValue[keys.Length + 1];
             MultiKeyPop.CopyPopKeys(client, keys, arguments, operation);
             arguments[^1] = MultiKeyPop.ToSeconds(waitFor);
             command = new CmdN(side == ListSide.Left ? Verbs.BLPop : Verbs.BRPop, arguments);
-        }
-        catch (Exception error)
-        {
-            RespireTelemetry.RecordError(error, internallyHandled: false);
-            throw;
-        }
-        return PopOneBlockingAsync(operation, command, cancellationToken);
-    }
 
-    private (string Operation, CmdN Command) CreateObservedPopManyCommand(
-        ReadOnlySpan<RespireKey> keys, long count, ListSide side, TimeSpan? waitFor)
-    {
-        try { return PopManyCommand(client, keys, count, side, waitFor); }
-        catch (Exception error)
-        {
-            // No attempt or reply source exists yet. Preserve native converted dispatch and
-            // let its existing owner handle failures after construction succeeds.
-            RespireTelemetry.RecordError(error, internallyHandled: false);
-            throw;
+            return owner.Attach(PopOneBlockingAsync(operation, command, cancellationToken, owner.Observation));
         }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     private async ValueTask<RespireListPopManyResult?> PopManyBlockingAsync(
-        string operation, CmdN command, CancellationToken cancellationToken)
+        string operation, CmdN command, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         return await client.ConvertBlockingResponseAsync(operation, command, cancellationToken, client,
-            static (RespireClient owner, in RespValue reply) => ParsePopMany(in reply, owner.KeyPrefixBytes))
+            static (RespireClient owner, in RespValue reply) => ParsePopMany(in reply, owner.KeyPrefixBytes), observation)
             .ConfigureAwait(false);
     }
 
     private async ValueTask<RespireListPopResult?> PopOneBlockingAsync(
-        string operation, CmdN command, CancellationToken cancellationToken)
+        string operation, CmdN command, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         return await client.ConvertBlockingResponseAsync(operation, command, cancellationToken, client,
-            static (RespireClient owner, in RespValue reply) => ParsePopOne(in reply, owner.KeyPrefixBytes))
+            static (RespireClient owner, in RespValue reply) => ParsePopOne(in reply, owner.KeyPrefixBytes), observation)
             .ConfigureAwait(false);
     }
 

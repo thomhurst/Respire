@@ -31,22 +31,37 @@ internal sealed partial class KeyCommands
 {
     public ValueTask<string?[]> SortAsync(RespireKey key, RespireSortOptions? options = null, CancellationToken cancellationToken = default)
     {
-        var (operation, command) = CreateObservedSortCommand(key, options);
-        return client.NullableStringArrayAsync(operation, command, cancellationToken);
+        var owner = DispatchResponseSource<string?[]>.Start();
+        try
+        {
+            var (operation, command) = SortCommand(client, key, options);
+            return owner.Attach(client.NullableStringArrayAsync(operation, command, cancellationToken, observation: owner.Observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<T?[]> SortAsync<T>(RespireKey key, RespireSortOptions? options = null, CancellationToken cancellationToken = default)
     {
-        var (operation, command) = CreateObservedSortCommand(key, options);
-        return client.DeserializeNullableArrayAsync<T, CmdN>(operation, command, cancellationToken);
+        var owner = DispatchResponseSource<T?[]>.Start();
+        try
+        {
+            var (operation, command) = SortCommand(client, key, options);
+            return owner.Attach(client.DeserializeNullableArrayAsync<T, CmdN>(operation, command, cancellationToken, observation: owner.Observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     public ValueTask<long> SortStoreAsync(RespireKey key, RespireKey destination, RespireSortOptions? options = null, CancellationToken cancellationToken = default)
     {
-        var (operation, command) = CreateObservedSortCommand(key, options, destination);
-        return client.IntegerAsync(operation, command, cancellationToken);
+        var owner = DispatchResponseSource<long>.Start();
+        try
+        {
+            var (operation, command) = SortCommand(client, key, options, destination);
+            return owner.Attach(client.IntegerAsync(operation, command, cancellationToken, observation: owner.Observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     public ValueTask<RespireKey?> RandomAsync(CancellationToken cancellationToken = default)
@@ -76,17 +91,6 @@ internal sealed partial class KeyCommands
         ArgumentOutOfRangeException.ThrowIfNegative(database);
         if (client.Core.Cluster is not null)
             throw new NotSupportedException("MOVE is not supported by Cluster clients.");
-    }
-
-    private (string Operation, CmdN Command) CreateObservedSortCommand(
-        RespireKey key, RespireSortOptions? options, RespireKey? destination = null)
-    {
-        try { return SortCommand(client, key, options, destination); }
-        catch (Exception error)
-        {
-            RespireTelemetry.RecordError(error, internallyHandled: false);
-            throw;
-        }
     }
 
     internal static (string Operation, CmdN Command) SortCommand(
