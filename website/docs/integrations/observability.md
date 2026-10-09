@@ -790,7 +790,13 @@ Exceptions and cancellation tokens retain their original identity and status.
 
 Native raw, typed, string and byte response sources support explicit error
 observation through response inspection, conversion, cleanup and caller reference
-release. Core raw sends and typed, string and byte dispatch establish a logical
+release. Immediately admitted ordinary standalone raw, typed, string and byte dispatch
+returns the original native response source. Its inspection owns final publication, with
+no extra dispatch source, ownership lock or continuation forwarding on successful commands.
+This path excludes cache coordination, circuits, Sentinel, Cluster, replica reads,
+streaming, scripts and activity tracing; raw operation-duration metrics also retain the
+normal route. Capacity waits and retirement recovery retain the normal dispatch owner.
+Other core raw sends and typed, string and byte dispatch establish a logical
 response owner before disposal checks, route selection and cancellation handling.
 Primary, replica and Cluster ready sends borrow that owner. Retired-connection
 handoffs, capacity waits, MOVED/ASK retries and Sentinel replacement share its retry

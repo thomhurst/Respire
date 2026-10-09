@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using System.Runtime.CompilerServices;
+using System.Reflection;
+using System.Text;
 using System.Threading.Tasks.Sources;
 using Respire.Commands;
 using Respire.Internal;
@@ -16,6 +18,280 @@ namespace Respire.Tests;
 [NotInParallel]
 public class DispatchResponseObservationTests
 {
+    private const string NativeProbe = "RESPIRE_NATIVE_DISPATCH_PROBE";
+
+    [Test]
+    [Arguments("raw", "success")]
+    [Arguments("string", "success")]
+    [Arguments("bytes", "success")]
+    [Arguments("typed", "success")]
+    [Arguments("raw", "error")]
+    [Arguments("string", "error")]
+    [Arguments("bytes", "error")]
+    [Arguments("typed", "error")]
+    [Arguments("raw", "cancelled")]
+    [Arguments("string", "cancelled")]
+    [Arguments("bytes", "cancelled")]
+    [Arguments("typed", "cancelled")]
+    [Arguments("raw", "pre-cancelled")]
+    [Arguments("string", "pre-cancelled")]
+    [Arguments("bytes", "pre-cancelled")]
+    [Arguments("typed", "pre-cancelled")]
+    public async Task ReadyStandaloneDispatchReturnsNativeSourceAndObservesLateEnabledErrors(string shape, string mode)
+        => await RunNativeProbeAsync(shape + ":" + mode);
+
+    // The test runner installs a global ActivityListener. Run before its startup so
+    // the production no-tracing gate and the original native ValueTask can be tested.
+    private static async Task RunNativeProbeAsync(string mode)
+    {
+        var start = AsyncFlushSignalTests.CreateProbeStartInfo(Environment.ProcessPath,
+            Environment.GetEnvironmentVariable("DOTNET_HOST_PATH"), typeof(DispatchResponseObservationTests).Assembly.Location);
+        start.Environment[NativeProbe] = mode;
+        await AsyncFlushSignalTests.RunProbeAsync(start, TimeSpan.FromSeconds(30));
+    }
+
+    internal static int? RunIsolatedNativeDispatchProbe()
+    {
+        var mode = Environment.GetEnvironmentVariable(NativeProbe);
+        if (mode is null) return null;
+        try
+        {
+            if (mode == "converter") NativeConverterProbeAsync().GetAwaiter().GetResult();
+            else if (mode == "capacity") NativeCapacityProbeAsync().GetAwaiter().GetResult();
+            else if (mode.StartsWith("retirement:", StringComparison.Ordinal)) NativeRetirementProbeAsync(mode.Split(':')[1]).GetAwaiter().GetResult();
+            else
+            {
+                var parts = mode.Split(':');
+                NativeDispatchProbeAsync(parts[0], parts[1]).GetAwaiter().GetResult();
+            }
+            return 0;
+        }
+        catch (Exception error) { Console.Error.WriteLine(error); return 1; }
+    }
+
+    private static async Task NativeDispatchProbeAsync(string shape, string mode)
+    {
+        using var configuration = new MetricConfigurationScope();
+        RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Resiliency });
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            SuppressReply = command => command.StartsWith("GET ", StringComparison.Ordinal),
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        using var cancellation = new CancellationTokenSource();
+        if (mode == "pre-cancelled") cancellation.Cancel();
+        var command = new Cmd1(Verbs.Get, "held");
+        switch (shape)
+        {
+            case "raw":
+                await InspectNativeDispatch(server, client.SendAsync("GET", command, cancellation.Token),
+                    typeof(PendingResponseSource), mode, cancellation);
+                break;
+            case "string":
+                await InspectNativeDispatch(server, client.StringOrNullAsync("GET", command, cancellation.Token),
+                    typeof(StringPendingResponseSource), mode, cancellation);
+                break;
+            case "bytes":
+                await InspectNativeDispatch(server, client.BytesOrNullAsync("GET", command, cancellation.Token),
+                    typeof(BytesPendingResponseSource), mode, cancellation);
+                break;
+            default:
+                await InspectNativeDispatch(server, client.ConvertResponseAsync("GET", command, cancellation.Token, 0,
+                    static (int _, in RespValue value) => ResponseReader.StringOrNull(in value)),
+                    typeof(ConvertedPendingResponseSource<int, string?>), mode, cancellation);
+                break;
+        }
+    }
+
+    private static async Task InspectNativeDispatch<T>(FakeRespServer server, ValueTask<T> response,
+        Type expectedSource, string mode, CancellationTokenSource cancellation)
+    {
+        var sourceField = typeof(ValueTask<T>).GetField("_obj", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        await Assert.That(sourceField.GetValue(response)!.GetType()).IsEqualTo(expectedSource);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while (!server.ReceivedCommands.Contains("GET held")) await Task.Delay(1, deadline.Token);
+        // Enable the listener after admission: native ownership must not depend on it
+        // being enabled when the operation starts.
+        using var capture = new Capture();
+        if (mode is "cancelled" or "pre-cancelled") cancellation.Cancel();
+        else await server.SendRawAsync(mode == "error" ? "-WRONGTYPE native error\r\n"u8.ToArray() : "$2\r\n42\r\n"u8.ToArray());
+        Exception? failure = null;
+        try
+        {
+            var result = await response.AsTask().WaitAsync(deadline.Token);
+            if (result is RespValue raw)
+            {
+                await Assert.That(ResponseReader.StringOrNull(in raw)).IsEqualTo("42");
+                raw.Dispose();
+            }
+            else if (result is byte[] bytes) await Assert.That(bytes).IsEquivalentTo("42"u8.ToArray());
+            else await Assert.That(result).IsEqualTo((T)(object)"42");
+        }
+        catch (Exception error) { failure = error; }
+        if (mode == "success")
+        {
+            await Assert.That(failure).IsNull();
+            await Assert.That(capture.Items).IsEmpty();
+        }
+        else
+        {
+            if (mode is "cancelled" or "pre-cancelled")
+            {
+                await Assert.That(failure is OperationCanceledException).IsTrue();
+                await Assert.That(((OperationCanceledException)failure!).CancellationToken).IsEqualTo(cancellation.Token);
+                await server.SendRawAsync("$2\r\n42\r\n"u8.ToArray());
+            }
+            else await Assert.That(failure is RespireServerException { Code: "WRONGTYPE" }).IsTrue();
+            await Assert.That(capture.Items.ToArray()).IsEquivalentTo(new[] { (false, 0) });
+        }
+    }
+
+    [Test]
+    public async Task DirectNativeConverterRunsAtConsumptionAndPreservesFailureThroughThrowingListener()
+        => await RunNativeProbeAsync("converter");
+
+    private static async Task NativeConverterProbeAsync()
+    {
+        using var configuration = new MetricConfigurationScope();
+        RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Resiliency });
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("GET ", StringComparison.Ordinal) ? "$2\r\n42\r\n"u8.ToArray() : null,
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var failure = new InvalidOperationException("native converter failure");
+        var converted = false;
+        var response = client.ConvertResponseAsync<Cmd1, int, int>("GET", new Cmd1(Verbs.Get, "held"), default, 0,
+            (int _, in RespValue _) => { converted = true; throw failure; });
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while (!response.IsCompleted) await Task.Delay(1, deadline.Token);
+        await Assert.That(converted).IsFalse();
+        using var listener = new MeterListener();
+        var publications = 0;
+        listener.InstrumentPublished = (instrument, owner) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "redis.client.errors") owner.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, _, _) => { publications++; throw new IOException("listener failure"); });
+        listener.Start();
+        Exception? actual = null;
+        try { _ = await response; } catch (Exception error) { actual = error; }
+        await Assert.That(ReferenceEquals(actual, failure)).IsTrue();
+        await Assert.That(converted).IsTrue();
+        await Assert.That(publications).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task FullNativeRingTransfersCapacityWaitToDispatchOwner()
+        => await RunNativeProbeAsync("capacity");
+
+    private static async Task NativeCapacityProbeAsync()
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            SuppressReply = command => command.StartsWith("GET ", StringComparison.Ordinal),
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
+        });
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var first = client.GetStringAsync("first");
+        while (!server.ReceivedCommands.Contains("GET first")) await Task.Delay(1, deadline.Token);
+        var second = client.GetStringAsync("second");
+        var source = typeof(ValueTask<string?>).GetField("_obj", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(second);
+        await Assert.That(source is DispatchResponseSource<string?>).IsTrue();
+        using var capture = new Capture();
+        await server.SendRawAsync("$2\r\n42\r\n"u8.ToArray());
+        await Assert.That(await first).IsEqualTo("42");
+        while (!server.ReceivedCommands.Contains("GET second")) await Task.Delay(1, deadline.Token);
+        await server.SendRawAsync("-WRONGTYPE capacity fallback\r\n"u8.ToArray());
+        Exception? actual = null;
+        try { _ = await second; } catch (Exception error) { actual = error; }
+        await Assert.That(actual is RespireServerException { Code: "WRONGTYPE" }).IsTrue();
+        await Assert.That(capture.Items.ToArray()).IsEquivalentTo(new[] { (false, 0) });
+    }
+
+    [Test]
+    [Arguments("raw")]
+    [Arguments("string")]
+    [Arguments("bytes")]
+    [Arguments("typed")]
+    public async Task NativeRetirementRaceTransfersHandledRetryToDispatchOwner(string shape)
+        => await RunNativeProbeAsync("retirement:" + shape);
+
+    private static async Task NativeRetirementProbeAsync(string shape)
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        static byte[]? Reply(int _, string command) => command switch
+        {
+            _ when command.StartsWith("HELLO", StringComparison.Ordinal) => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
+            "CLIENT ID" => ":1\r\n"u8.ToArray(),
+            "GET raced" => "-WRONGTYPE retirement fallback\r\n"u8.ToArray(),
+            _ => null,
+        };
+        await using var origin = new FakeRespServer(FakeRespServer.OkReply) { ReplyOverride = Reply };
+        await using var target = new FakeRespServer(FakeRespServer.OkReply) { ReplyOverride = Reply };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp3, Connections = 1, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            CommandTimeout = TimeSpan.FromSeconds(15), Endpoints = [new("127.0.0.1", origin.Port)],
+        });
+        var connection = client.Core.Multiplexer.GetConnection();
+        using var entered = new ManualResetEventSlim();
+        using var released = new ManualResetEventSlim();
+        var first = 1;
+        var command = new RetirementRaceCommand(() =>
+        {
+            if (Interlocked.Exchange(ref first, 0) != 1) return;
+            entered.Set();
+            if (!released.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("Retirement race was not released.");
+        });
+        using var capture = new Capture();
+        switch (shape)
+        {
+            case "raw": await Race(() => connection.SendNativeCheckedAsync(command, default, "GET")); break;
+            case "string": await Race(() => connection.SendNativeStringAsync(command, default, "GET")); break;
+            case "bytes": await Race(() => connection.SendNativeBytesAsync(command, default, "GET")); break;
+            default: await Race(() => connection.SendNativeConvertedAsync(command, default, "GET", 0,
+                static (int _, in RespValue response) => ResponseReader.StringOrNull(in response), false)); break;
+        }
+        await Assert.That(capture.Items.ToArray()).IsEquivalentTo(new[] { (true, 0), (false, 1) });
+
+        async Task Race<T>(Func<ValueTask<T>> send)
+        {
+            var dispatch = Task.Run(send);
+            try
+            {
+                if (!entered.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("Native serialization did not start.");
+                await origin.SendRawAsync(Encoding.UTF8.GetBytes($">4\r\n+MOVING\r\n:1\r\n:10\r\n+127.0.0.1:{target.Port}\r\n"));
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                while (connection.IsAcceptingCommands || ReferenceEquals(client.Core.Multiplexer.GetConnection(), connection))
+                    await Task.Delay(1, deadline.Token);
+            }
+            finally { released.Set(); }
+            var response = await dispatch;
+            var source = typeof(ValueTask<T>).GetField("_obj", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(response);
+            await Assert.That(source is DispatchResponseSource<T>).IsTrue();
+            Exception? actual = null;
+            try { _ = await response; } catch (Exception error) { actual = error; }
+            await Assert.That(actual is RespireServerException { Code: "WRONGTYPE" }).IsTrue();
+        }
+    }
+
+    private readonly struct RetirementRaceCommand(Action beforeWrite) : IRespCommand
+    {
+        public int GetWriteSizeHint() => 0;
+        public ReadCommandKind ReadKind => ReadCommandKind.None;
+        public void Write(ref RespWriter writer)
+        {
+            beforeWrite();
+            writer.WriteRaw("*2\r\n$3\r\nGET\r\n$5\r\nraced\r\n"u8);
+        }
+    }
+
     [Test]
     [Arguments("synchronous")]
     [Arguments("pending")]

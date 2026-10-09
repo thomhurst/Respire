@@ -107,11 +107,16 @@ public sealed partial class RespireClient
         bool allowReadFrom = true,
         ReadAffinity? cursorAffinity = null)
         where TCommand : struct, IRespCommand
-        => DispatchResponseSource<RespValue>.Run(
+    {
+        if (flags == RespireCommandFlags.None && cursorAffinity is null && !RespireTelemetry.IsOperationEnabled(operation)
+            && TryGetNativeDispatchConnection(operation, in command, out var connection))
+            return connection.SendNativeCheckedAsync(in command, cancellationToken, operation);
+        return DispatchResponseSource<RespValue>.Run(
             (Client: this, Operation: operation, Command: command, Token: cancellationToken,
                 Flags: flags, Read: allowReadFrom, Affinity: cursorAffinity),
             static (state, observation) => state.Client.SendCoreAsync(state.Operation, state.Command,
                 state.Token, state.Flags, state.Read, state.Affinity, observation, observeErrors: false));
+    }
 
     // A correction scope supplies the lease and reports only after recovery and cleanup.
     internal ValueTask<RespValue> SendForCorrectionAsync<TCommand>(

@@ -6,21 +6,21 @@
       "Role": "helper",
       "Member": "Respire.RespireClient.ConvertResponseAsync`3(string,in TCommand,CancellationToken,TState,ResponseConverter<TState,TResult>,bool):ValueTask<TResult>",
       "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
-      "Contract": "Start ownership before disposal, route selection, command validation and cache fences. Native conversion, primary/replica/cluster ready sends and transparent retries borrow this owner."
+      "Contract": "Immediately admitted ordinary standalone commands transfer final ownership directly to native converted inspection, including conversion and cleanup. All other paths start dispatch ownership before disposal, route selection, command validation and cache fences. Replica/cluster routes, capacity waits and transparent retries borrow the generation-bound dispatch owner."
     },
     {
       "Name": "string-dispatch-owner",
       "Role": "helper",
       "Member": "Respire.RespireClient.StringOrNullAsync`1(string,in TCommand,CancellationToken):ValueTask<string?>",
       "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
-      "Contract": "Own string dispatch before preflight through response consumption; every ready route shares the same failure-only lease."
+      "Contract": "Immediately admitted ordinary standalone commands return native string inspection as final owner. Other string dispatch owns preflight through response consumption; ready routes and transparent retries borrow the same failure-only dispatch lease."
     },
     {
       "Name": "bytes-dispatch-owner",
       "Role": "helper",
       "Member": "Respire.RespireClient.BytesOrNullAsync`1(string,in TCommand,CancellationToken):ValueTask<byte[]?>",
       "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
-      "Contract": "Own byte dispatch before preflight through response consumption; copied discarded-reply metadata outlives caller ownership."
+      "Contract": "Immediately admitted ordinary standalone commands return native byte inspection as final owner. Other byte dispatch owns preflight through response consumption; copied discarded-reply metadata outlives either caller owner."
     }
   ],
   "NonRoutes": []
