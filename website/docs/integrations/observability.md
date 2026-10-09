@@ -943,6 +943,12 @@ and a failure returned to the caller is counted once with its complete retry cou
 Preflight failures keep their original exception and cancellation behavior. Successful
 calls keep an empty failure-only lease, including synchronous client-cache hits.
 
+Lua script execution starts its caller boundary before script validation and command
+construction. EVALSHA transport retries, redirects and NOSCRIPT fallback share that
+boundary through typed conversion and cleanup. SCRIPT LOAD, EXISTS and FLUSH keep one
+caller boundary across all Cluster primaries and join every target before publishing
+one final failure. Successful script calls rent no error observation storage.
+
 ## Sentinel primary changes
 
 Sentinel batch, durability-batch, and transaction acquisition failures still emit an error
