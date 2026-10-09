@@ -190,6 +190,7 @@ internal abstract partial class CompatDatabaseAsync
 
     internal CompatSortedSetScan Scan(RedisKey key, RedisValue pattern, int pageSize, long cursor, int pageOffset, CommandFlags flags)
     {
+        if (this is CompatTransaction) throw Compatibility.Unsupported("SortedSetScan on ITransaction; enumerate outside the transaction");
         if (pageSize <= 0) throw new ArgumentOutOfRangeException(nameof(pageSize));
         if (pageOffset < 0) throw new ArgumentOutOfRangeException(nameof(pageOffset));
         if ((flags & CommandFlags.FireAndForget) != 0) throw Compatibility.Unsupported("SortedSetScan FireAndForget");

@@ -13,17 +13,21 @@ internal sealed class CompatBatch(CompatDatabase database) : CompatDatabaseAsync
 
     protected override Task<T> Send<T>(RespireCommand command, RedisValue[] arguments, CommandFlags flags, Func<RedisResult, T> convert)
     {
-        if (command.Name is not ("HGET" or "HMGET" or "HGETALL" or "HLEN" or "HSET" or "HSETNX" or "HDEL"
-            or "LLEN" or "LINDEX" or "LRANGE" or "LPUSH" or "LPUSHX" or "RPUSH" or "RPUSHX"
-            or "LREM" or "LTRIM" or "RPOPLPUSH" or "PEXPIRE" or "PEXPIREAT" or "PERSIST"
-            or "EXISTS" or "PTTL" or "GET" or "MGET" or "INCR" or "DECR" or "INCRBY" or "DECRBY" or "SADD" or "SREM" or "SMEMBERS" or "SCARD"
-            or "ZADD" or "ZREM" or "ZCARD" or "ZCOUNT" or "ZRANGE" or "ZREVRANGE" or "ZRANGEBYSCORE" or "ZREVRANGEBYSCORE" or "ZSCAN"))
+        if (!SupportsCommand(command))
             throw Compatibility.Unsupported($"IBatch {command.Name}");
         if ((flags & ~CommandFlags.DemandMaster) != 0) throw Compatibility.Unsupported($"IBatch CommandFlags {flags}");
         var queued = new QueuedCommand<T>(command, arguments, convert, DatabaseOwner.Owner.QueuedShutdown);
         lock (_gate) _pending.Add(queued);
         return queued.Task;
     }
+
+    internal static bool SupportsCommand(RespireCommand command) => command.Name is
+        "HGET" or "HMGET" or "HGETALL" or "HLEN" or "HSET" or "HSETNX" or "HDEL"
+        or "LLEN" or "LINDEX" or "LRANGE" or "LPUSH" or "LPUSHX" or "RPUSH" or "RPUSHX"
+        or "LREM" or "LTRIM" or "RPOPLPUSH" or "PEXPIRE" or "PEXPIREAT" or "PERSIST"
+        or "EXISTS" or "PTTL" or "GET" or "MGET" or "INCR" or "DECR" or "INCRBY" or "DECRBY"
+        or "SADD" or "SREM" or "SMEMBERS" or "SCARD" or "ZADD" or "ZREM" or "ZCARD" or "ZCOUNT"
+        or "ZRANGE" or "ZREVRANGE" or "ZRANGEBYSCORE" or "ZREVRANGEBYSCORE" or "ZSCAN";
 
     public void Execute()
     {
@@ -54,14 +58,16 @@ internal sealed class CompatBatch(CompatDatabase database) : CompatDatabaseAsync
         return true;
     }
 
-    private interface IQueuedCommand
+    internal interface IQueuedCommand
     {
-        void Enqueue(RespireBatch batch);
+        void Admit();
+        void Enqueue(IRespireCommandQueue batch);
         void Complete();
         void Fail(Exception error);
+        void Abort();
     }
 
-    private sealed class QueuedCommand<T> : IQueuedCommand
+    internal sealed class QueuedCommand<T> : IQueuedCommand
     {
         private static readonly ConditionalWeakTable<Task<T>, QueuedCommand<T>> RetainedTasks = new();
         private readonly RespireCommand _command;
@@ -91,10 +97,15 @@ internal sealed class CompatBatch(CompatDatabase database) : CompatDatabaseAsync
 
         internal Task<T> Task => _completion.Task;
 
-        public void Enqueue(RespireBatch batch)
+        public void Admit()
         {
             _registration.Dispose();
             RetainedTasks.Remove(_completion.Task);
+        }
+
+        public void Enqueue(IRespireCommandQueue batch)
+        {
+            Admit();
             if (!_completion.Task.IsCompleted)
                 _pending = batch.Execute(_command, _arguments.Select(static argument => argument.ToRespireValue()).ToArray());
             _arguments = [];
@@ -121,5 +132,7 @@ internal sealed class CompatBatch(CompatDatabase database) : CompatDatabaseAsync
             if (error is OperationCanceledException canceled) _completion.TrySetCanceled(canceled.CancellationToken);
             else _completion.TrySetException(error);
         }
+
+        public void Abort() => Fail(new OperationCanceledException("The Redis transaction was aborted."));
     }
 }

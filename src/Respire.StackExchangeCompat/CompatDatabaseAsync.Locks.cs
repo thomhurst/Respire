@@ -20,6 +20,14 @@ internal abstract partial class CompatDatabaseAsync
         => Send(RespireCommands.Scripting.EVAL, [ReleaseLock, 1, Key(key), Value(value)], flags, static result => (long)result != 0);
     public Task<long> PublishAsync(RedisChannel channel, RedisValue message, CommandFlags flags)
     {
+        if (this is CompatTransaction)
+        {
+            if (channel.IsPattern) throw Compatibility.Unsupported("publishing a pattern channel");
+            byte[]? snapshot = channel;
+            ArgumentNullException.ThrowIfNull(snapshot, nameof(channel));
+            var resolved = DatabaseOwner.Client.ResolveChannel(new RespireChannel(snapshot.AsMemory()));
+            return Send(RespireCommands.PubSub.PUBLISH, [resolved.Bytes.ToArray(), Value(message)], flags, static result => (long)result);
+        }
         if (this is not CompatDatabase) throw Compatibility.Unsupported("Publish on a batch; use the database directly");
         if (flags is not (CommandFlags.None or CommandFlags.DemandMaster))
             throw Compatibility.Unsupported($"Publish CommandFlags {flags}; use None or DemandMaster");

@@ -90,7 +90,9 @@ provides binary-safe value conversion, a native raw-command bridge, and the limi
 multiplexer/database/batch adapter required by the official distributed cache and
 DataProtection packages. It also supports the hash/list/key/string/set/sorted-set
 command facets inventoried for Hangfire.Redis.StackExchange, including deferred
-batch reads/writes and cursor-based scans.
+batch reads/writes and cursor-based scans. Its transaction adapter supports
+deferred MULTI/EXEC, the inventoried Hangfire notification calls, and documented
+WATCH conditions, including synchronous Execute and repeat execution after aborts.
 The adapter also provides endpoint discovery, physical server INFO/TIME/ROLE,
 atomic token locks, and literal callback subscriptions used by RedisStorage.
 General StackExchange.Redis interface parity and SignalR/Hangfire

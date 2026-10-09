@@ -68,7 +68,7 @@ internal static class RawCommandKeyLayouts
         // the typed session queues rather than ordinary deferred raw execution.
         AddPrefixable(LayoutKind.First, "HIMPORT SET");
         Add(LayoutKind.None,
-            "PING", "ECHO", "TIME");
+            "PING", "ECHO", "TIME", "PUBLISH");
         Add(LayoutKind.First,
             "GET", "SET", "GETSET", "SETNX", "SETEX", "PSETEX", "GETDEL",
             "GETEX", "APPEND", "STRLEN", "GETRANGE", "SETRANGE", "INCR", "INCRBY", "DELEX", "DELIFEQ",
