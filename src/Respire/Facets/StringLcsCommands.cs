@@ -1,4 +1,5 @@
 using Respire.Commands;
+using Respire.Internal;
 using Respire.Protocol;
 
 namespace Respire;
@@ -16,13 +17,29 @@ internal sealed partial class StringCommands
     public ValueTask<RespireLcsIndexResult> LcsIndexAsync(RespireKey firstKey, RespireKey secondKey,
         RespireLcsOptions? options = null, CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        return client.ConvertResponseAsync("LCS", LcsIndexCommand(client, firstKey, secondKey, options),
+        return client.ConvertResponseAsync("LCS", LcsIndexCommand(client, firstKey, secondKey, options, cancellationToken),
             cancellationToken, this,
             static (StringCommands _, in RespValue value) => ParseLcsIndex(in value));
     }
 
     internal static CmdN LcsIndexCommand(RespireClient client, RespireKey firstKey, RespireKey secondKey,
+        RespireLcsOptions? options, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return CreateLcsIndexCommand(client, firstKey, secondKey, options);
+        }
+        catch (Exception error)
+        {
+            // Construction has no transport attempts. Dispatch and deferred execution
+            // retain their existing owners after this boundary succeeds.
+            RespireTelemetry.RecordError(error, internallyHandled: false);
+            throw;
+        }
+    }
+
+    private static CmdN CreateLcsIndexCommand(RespireClient client, RespireKey firstKey, RespireKey secondKey,
         RespireLcsOptions? options)
     {
         if (options?.MinimumMatchLength is { } minimum) ArgumentOutOfRangeException.ThrowIfNegative(minimum);
