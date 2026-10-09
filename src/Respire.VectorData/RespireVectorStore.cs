@@ -27,6 +27,10 @@ public sealed class RespireVectorStore : VectorStore
         _namespace = "respire:vector:" + EncodeName(keyNamespace) + ":";
     }
 
+    /// <summary>Registers an immutable hash mapping, preserving the original registration signature for compiled consumers.</summary>
+    public void RegisterMapper<TRecord>(RespireVectorDataHashMapper<TRecord> mapper) where TRecord : class
+        => RegisterMapper((RespireVectorDataMapper<TRecord>)mapper);
+
     /// <summary>Registers one immutable mapping per record type. Existing collection definitions cannot replace it.</summary>
     public void RegisterMapper<TRecord>(RespireVectorDataMapper<TRecord> mapper) where TRecord : class
     {
