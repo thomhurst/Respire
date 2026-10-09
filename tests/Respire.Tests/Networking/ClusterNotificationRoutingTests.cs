@@ -1775,13 +1775,19 @@ public class ClusterNotificationRoutingTests
     [NotInParallel] // The shared no-GC measurement boundary is process-wide.
     public async Task UnroutedNotificationFrameAllocatesNothing()
     {
-        await using var server = new FakeRespServer(20);
-        Configure(server, SinglePrimaryTopology(server.Port), resp3: false);
-        await using var client = CreateClusterClient(server.Port, resp3: false);
-        await using var subscription = await client.SubscribeAsync(RespireChannel.KeyEvent(RespireKeyNotificationType.Set, 0))
-            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
-        var hub = client.Core.Hub!;
-        var endpoint = new RespireEndpoint("127.0.0.1", server.Port);
+        // Populate the real routing state without starting sockets or topology reconciliation.
+        // Those background writers can initialize lock contention state during measurement.
+        await using var client = CreateClusterClient(26379, resp3: false);
+        await using var hub = new SubscriptionHub(client.Core);
+        var endpoint = new RespireEndpoint("127.0.0.1", 26379);
+        var node = new ClusterNotificationNode(endpoint);
+        var descriptor = RespireChannel.KeyEvent(RespireKeyNotificationType.Set, 0);
+        var subscription = new RespireSubscription(
+            hub, SubscriptionKind.Channel, [descriptor], 4, SubscriptionOverflow.DropOldest);
+        var coordinator = NotificationCoordinator(hub);
+        coordinator.RegisterNode(node);
+        coordinator.AddRoute(node, subscription, descriptor);
+        coordinator.Subscriptions.Add(subscription, new() { Coverage = { endpoint } });
         var channel = "__keyevent@0__:del"u8.ToArray();
         var payload = "tenant:key"u8.ToArray();
         _ = MeasureUnroutedDelivery(hub, endpoint, channel, payload, allocate: false, iterations: 100);
@@ -1796,6 +1802,9 @@ public class ClusterNotificationRoutingTests
         await Assert.That(measured.Allocated).IsEqualTo(0L);
         await Assert.That(control.Allocated).IsGreaterThanOrEqualTo(1000L * 37);
     }
+
+    [System.Runtime.CompilerServices.UnsafeAccessor(System.Runtime.CompilerServices.UnsafeAccessorKind.Field, Name = "_clusterNotifications")]
+    private static extern ref ClusterNotificationCoordinator NotificationCoordinator(SubscriptionHub hub);
 
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static (long Allocated, int Delivered) MeasureUnroutedDelivery(
