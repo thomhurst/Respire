@@ -1,5 +1,8 @@
 using System.Diagnostics;
 using StackExchange.Redis;
+#if !NET9_0_OR_GREATER
+using Lock = System.Object;
+#endif
 
 // IConnectionMultiplexer includes synchronous wait helpers.
 #pragma warning disable SER308
@@ -10,7 +13,7 @@ namespace Respire.StackExchangeCompat;
 /// <remarks>Use native Respire APIs for other commands. Each selected database uses a separate native client.</remarks>
 public sealed partial class RespireConnectionMultiplexer : IConnectionMultiplexer, IAsyncDisposable
 {
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly RespireOptions? _options;
     private readonly RespireOptions _configuration;
     private readonly Dictionary<int, RespireClient> _clients = [];

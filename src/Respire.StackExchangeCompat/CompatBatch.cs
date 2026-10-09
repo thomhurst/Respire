@@ -1,11 +1,14 @@
 using System.Runtime.CompilerServices;
 using StackExchange.Redis;
+#if !NET9_0_OR_GREATER
+using Lock = System.Object;
+#endif
 
 namespace Respire.StackExchangeCompat;
 
 internal sealed class CompatBatch(CompatDatabase database) : CompatDatabaseAsync(database), IBatch
 {
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly List<IQueuedCommand> _pending = [];
 
     protected override Task<T> Send<T>(RespireCommand command, RedisValue[] arguments, CommandFlags flags, Func<RedisResult, T> convert)
