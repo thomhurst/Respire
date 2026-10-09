@@ -345,25 +345,44 @@ public class StandaloneCircuitDispatchTests
     }
 
     [Test]
-    [Arguments("raw", false)]
-    [Arguments("string", false)]
-    [Arguments("bytes", false)]
-    [Arguments("integer", false)]
-    [Arguments("fire-and-forget", false)]
-    [Arguments("stream", false)]
-    [Arguments("cache", false)]
-    [Arguments("raw", true)]
-    [Arguments("string", true)]
-    [Arguments("bytes", true)]
-    [Arguments("integer", true)]
-    [Arguments("fire-and-forget", true)]
-    [Arguments("stream", true)]
-    [Arguments("cache", true)]
-    public async Task MaintenanceHandoffReacquiresAdmissionForActualEndpoint(string shape, bool targetOpen)
+    [Arguments("raw", false, false)]
+    [Arguments("string", false, false)]
+    [Arguments("bytes", false, false)]
+    [Arguments("integer", false, false)]
+    [Arguments("fire-and-forget", false, false)]
+    [Arguments("stream", false, false)]
+    [Arguments("cache", false, false)]
+    [Arguments("raw", true, false)]
+    [Arguments("string", true, false)]
+    [Arguments("bytes", true, false)]
+    [Arguments("integer", true, false)]
+    [Arguments("fire-and-forget", true, false)]
+    [Arguments("stream", true, false)]
+    [Arguments("cache", true, false)]
+    [Arguments("string", false, true)]
+    [Arguments("bytes", false, true)]
+    [Arguments("integer", false, true)]
+    [Arguments("string", true, true)]
+    [Arguments("bytes", true, true)]
+    [Arguments("integer", true, true)]
+    public async Task MaintenanceHandoffReacquiresAdmissionForActualEndpoint(string shape, bool targetOpen, bool tracingEnabled)
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Command | RespireMetricGroups.Resiliency });
         var durations = new ConcurrentQueue<Dictionary<string, object?>>();
         var errors = new ConcurrentQueue<Dictionary<string, object?>>();
+        var activities = new ConcurrentQueue<Activity>();
+        using var tracing = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == RespireTelemetry.SourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activity =>
+            {
+                if (activity.OperationName is "GET" or "STRLEN") activities.Enqueue(activity);
+            },
+        };
+        // Traced typed commands use the general response path. Its circuit retry must
+        // retain ownership of both the activity and duration through the handoff.
+        if (tracingEnabled) ActivitySource.AddActivityListener(tracing);
         using var listener = new MeterListener();
         listener.InstrumentPublished = static (instrument, meter) =>
         {
@@ -398,6 +417,8 @@ public class StandaloneCircuitDispatchTests
         var targetCircuit = client.Core.Circuits.GetForTests(endpoint);
         durations.Clear();
         errors.Clear();
+        activities.Clear();
+        await Assert.That(RespireTelemetry.Source.HasListeners()).IsEqualTo(tracingEnabled);
         var pending = Dispatch();
         await Assert.That(pending.IsCompleted).IsFalse();
         await source.SendRawAsync(Encoding.UTF8.GetBytes($">4\r\n+MOVING\r\n:1\r\n:10\r\n+127.0.0.1:{target.Port}\r\n"));
@@ -436,6 +457,13 @@ public class StandaloneCircuitDispatchTests
                 await Assert.That(duration.ContainsKey("error.type")).IsEqualTo(targetOpen);
                 if (targetOpen)
                     await Assert.That(duration["error.type"]).IsEqualTo(typeof(RespireCircuitOpenException).FullName);
+                await Assert.That(activities.Count).IsEqualTo(tracingEnabled ? 1 : 0);
+                if (tracingEnabled)
+                {
+                    var activity = activities.Single();
+                    await Assert.That(activity.GetTagItem("server.port")).IsEqualTo(target.Port);
+                    await Assert.That(activity.Status).IsEqualTo(targetOpen ? ActivityStatusCode.Error : ActivityStatusCode.Unset);
+                }
             }
         }
         finally
@@ -455,6 +483,69 @@ public class StandaloneCircuitDispatchTests
                 await Assert.That(await reader.ReadToEndAsync()).IsEqualTo("routed");
             }
             else await Send(client, shape == "cache" ? "string" : shape, "routed");
+        }
+    }
+
+    [Test]
+    [Arguments("activity", false)]
+    [Arguments("activity", true)]
+    [Arguments("duration", false)]
+    [Arguments("duration", true)]
+    public async Task ThrowingTelemetryListenerCannotUndoSuccessfulRecoveryProbe(string callback, bool connectionFailure)
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Command });
+        await using var server = Server();
+        await using var client = await RespireClient.ConnectAsync(Options(server) with
+        {
+            CircuitBreaker = Options(server).CircuitBreaker! with { HalfOpenProbeCount = 1 },
+        });
+        var (circuit, clock) = await Prepare(client, server);
+        await Trip(client, server);
+        clock.Advance(TimeSpan.FromMinutes(1));
+        Exception listenerError = connectionFailure
+            ? new RespireConnectionException("Telemetry listener failed.")
+            : new InvalidOperationException("Telemetry listener failed.");
+        EndpointCircuitState? callbackState = null;
+        int? callbackProbes = null;
+        var callbacks = 0;
+        using var tracing = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == RespireTelemetry.SourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activity =>
+            {
+                if (callback == "activity" && activity.OperationName == "GET") ThrowFromListener();
+            },
+        };
+        ActivitySource.AddActivityListener(tracing);
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = static (instrument, meter) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.operation.duration")
+                meter.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<double>((_, _, _, _) =>
+        {
+            if (callback == "duration") ThrowFromListener();
+        });
+        listener.Start();
+
+        var error = await Failure(() => Send(client, "string", "recovery"));
+        await Assert.That(error).IsSameReferenceAs(listenerError);
+        await Assert.That(callbacks).IsEqualTo(1);
+        await Assert.That(callbackState).IsEqualTo(EndpointCircuitState.Closed);
+        await Assert.That(callbackProbes).IsEqualTo(0);
+        await Assert.That(circuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Closed);
+        await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(0);
+        await Assert.That(server.ReceivedCommands.Count(command => command == "GET recovery")).IsEqualTo(1);
+
+        void ThrowFromListener()
+        {
+            callbacks++;
+            var snapshot = circuit.Snapshot();
+            callbackState = snapshot.State;
+            callbackProbes = snapshot.ActiveProbes;
+            throw listenerError;
         }
     }
 

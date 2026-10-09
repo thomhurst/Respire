@@ -12,6 +12,11 @@ public sealed partial class RespireClient
     private CircuitAdmission AcquireCircuit(RespireConnection connection, CancellationToken cancellationToken)
         => _core.Circuits!.Acquire(new(connection.Host, connection.Port), cancellationToken);
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool UsesCircuitResponsePath(string operation, bool pinToConnection)
+        => _core.Circuits is not null && !_snapshotPrefixedBinaryKeys && !pinToConnection
+            && operation is not ("MULTI" or "WATCH");
+
     private CommandDeadline CreateCircuitDeadline(CommandDeadline deadline = default)
         => deadline.IsSet || _core.Options.CommandTimeout is not { } timeout
             ? deadline : CommandDeadline.After(Math.Max(1L, (long)timeout.TotalMilliseconds));
@@ -82,39 +87,54 @@ public sealed partial class RespireClient
     private async ValueTask<RespValue> SendCircuitResponseAsync<TCommand>(
         string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken,
         bool sendAsking, CommandDeadline commandDeadline, bool allowStreamingConnectionReroute,
-        RespireTelemetry.ErrorObservation observation)
+        RespireTelemetry.ErrorObservation observation, RespireTelemetry.OperationScope telemetry = default,
+        string? storedProcedureName = null)
         where TCommand : struct, IRespCommand
     {
         commandDeadline = CreateCircuitDeadline(commandDeadline);
-        while (true)
+        RespValue response;
+        try
         {
-            CircuitAdmission admission = default;
-            try
+            while (true)
             {
-                // Check retirement before admission so an old open endpoint cannot reject
-                // a command that will be sent on its healthy maintenance replacement.
-                connection.ThrowIfRetired();
-                admission = AcquireCircuit(connection, cancellationToken);
-                var response = await SendOnConnectionUncheckedAsync(operation, connection, command, cancellationToken,
-                    sendAsking, commandDeadline, allowStreamingConnectionReroute, pinToConnection: true,
-                    observation: observation).ConfigureAwait(false);
-                admission.Success();
-                return response;
+                CircuitAdmission admission = default;
+                try
+                {
+                    // Check retirement before admission so an old open endpoint cannot reject
+                    // a command that will be sent on its healthy maintenance replacement.
+                    connection.ThrowIfRetired();
+                    admission = AcquireCircuit(connection, cancellationToken);
+                    response = await SendOnConnectionUncheckedAsync(operation, connection, command, cancellationToken,
+                        sendAsking, commandDeadline, allowStreamingConnectionReroute, pinToConnection: true,
+                        observation: observation).ConfigureAwait(false);
+                    admission.Success();
+                    break;
+                }
+                catch (RespireConnectionRetiredException error) when (allowStreamingConnectionReroute
+                    && connection.TryReroute(false, commandDeadline, out var target, out var rerouted, GetTransportReadZone(in command)))
+                {
+                    observation.Handled(error);
+                    connection = target;
+                    commandDeadline = rerouted;
+                    telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
+                }
+                catch (Exception error)
+                {
+                    admission.Failed(error, cancellationToken);
+                    throw;
+                }
+                finally { admission.Dispose(); }
             }
-            catch (RespireConnectionRetiredException error) when (allowStreamingConnectionReroute
-                && connection.TryReroute(false, commandDeadline, out var target, out var rerouted, GetTransportReadZone(in command)))
-            {
-                observation.Handled(error);
-                connection = target;
-                commandDeadline = rerouted;
-            }
-            catch (Exception error)
-            {
-                admission.Failed(error, cancellationToken);
-                throw;
-            }
-            finally { admission.Dispose(); }
         }
+        catch (Exception error)
+        {
+            telemetry.Complete(_core, operation, storedProcedureName, error, connection);
+            throw;
+        }
+        // Listener callbacks run only after the final admission records its outcome.
+        // A callback failure must not rewrite a successful endpoint response.
+        telemetry.Complete(_core, operation, storedProcedureName, connection: connection);
+        return response;
     }
 
 #if NET
