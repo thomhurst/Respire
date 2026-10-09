@@ -32,9 +32,13 @@ class PrepareReadySendBaselineTests(unittest.TestCase):
             recorded = json.loads(evidence.read_text())
             self.assertEqual(recorded['baseline_commit'], git('rev-parse', 'HEAD'))
             self.assertEqual(recorded['before_sha256'], before)
+            self.assertEqual(recorded['patch_sha256'], hashlib.sha256(
+                (repository / 'scripts/benchmarks/ReadySendStrategy.patch').read_bytes()).hexdigest())
+            self.assertEqual(recorded['after_sha256'][paths[0]], hashlib.sha256(
+                (checkout / paths[0]).read_bytes()).hexdigest())
             self.assertIsNone(recorded['after_sha256'][paths[1]])
             self.assertEqual(set(git('diff', '--name-only').splitlines()), set(paths))
-            self.assertIn('diff --git', evidence.with_suffix('.patch').read_text())
+            self.assertEqual(evidence.with_suffix('.patch').read_text(), git('diff', '--binary') + '\n')
             control = (checkout / paths[0]).read_text()
             ready = (repository / paths[1]).read_text()
             # Compare complete relocated blocks, so ownership behavior cannot drift
