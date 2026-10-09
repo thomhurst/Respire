@@ -17,6 +17,79 @@ namespace Respire.Tests;
 public class DispatchResponseObservationTests
 {
     [Test]
+    [Arguments("synchronous")]
+    [Arguments("pending")]
+    [Arguments("cancelled")]
+    public async Task ThrowingErrorListenerPreservesFailureAndReturnsDispatchSource(string mode)
+    {
+        using var configuration = new MetricConfigurationScope();
+        using var listener = new MeterListener();
+        var publications = 0;
+        listener.InstrumentPublished = (instrument, owner) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "redis.client.errors")
+                owner.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, _, _) =>
+        {
+            publications++;
+            throw new InvalidOperationException("error exporter failure");
+        });
+        listener.Start();
+
+        var failure = new IOException("original dispatch failure");
+        using var cancellation = new CancellationTokenSource();
+        var completion = new TaskCompletionSource<ThrowingListenerResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        RespireTelemetry.ErrorObservation original = default;
+        Exception? actual = null;
+        try
+        {
+            var response = DispatchResponseSource<ThrowingListenerResult>.Run(mode, (mode, observation) =>
+            {
+                original = observation;
+                observation.Handled(new IOException("recovered dispatch failure"));
+                if (mode == "synchronous") throw failure;
+                return new(completion.Task);
+            });
+            var pending = response.AsTask();
+            if (mode == "cancelled")
+            {
+                cancellation.Cancel();
+                completion.SetCanceled(cancellation.Token);
+            }
+            else completion.SetException(failure);
+            _ = await pending;
+        }
+        catch (Exception error) { actual = error; }
+
+        if (mode == "cancelled")
+        {
+            await Assert.That(actual is OperationCanceledException).IsTrue();
+            await Assert.That(((OperationCanceledException)actual!).CancellationToken).IsEqualTo(cancellation.Token);
+        }
+        else await Assert.That(ReferenceEquals(actual, failure)).IsTrue();
+        await Assert.That(publications).IsEqualTo(2);
+
+        // This private result type has only one outstanding source, so the next rent
+        // must reuse it. A skipped Pool.Return cannot pass the identity assertion.
+        var identity = original.InspectForTests().StorageIdentity;
+        RespireTelemetry.ErrorObservation reused = default;
+        var next = DispatchResponseSource<ThrowingListenerResult>.Run(0, (_, observation) =>
+        {
+            reused = observation;
+            return new ValueTask<ThrowingListenerResult>(default(ThrowingListenerResult));
+        });
+        try
+        {
+            await Assert.That(ReferenceEquals(identity, reused.InspectForTests().StorageIdentity)).IsTrue();
+            original.Handled(new IOException("stale retry after reuse"));
+            await Assert.That(reused.Attempts).IsEqualTo(0);
+            await Assert.That(publications).IsEqualTo(2);
+        }
+        finally { _ = await next; }
+    }
+
+    [Test]
     public async Task PendingStatusChecksAvoidRedundantNativeQueries()
     {
         var native = new CountedResponseSource();
@@ -304,6 +377,8 @@ public class DispatchResponseObservationTests
         }
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
+
+    private readonly struct ThrowingListenerResult;
 
     private sealed class PendingState
     {

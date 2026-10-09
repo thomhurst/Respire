@@ -71,6 +71,8 @@ internal sealed class DispatchResponseSource<TResult> : IValueTaskSource<TResult
             Pool.Return(source);
             throw;
         }
+        // Borrowers can run during send, but the caller cannot access this response until
+        // Run returns. Publish the native response before exposing its ValueTask.
         source._response = response;
         return new(source, source._version);
     }
