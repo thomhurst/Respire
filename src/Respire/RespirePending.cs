@@ -57,6 +57,9 @@ public sealed class RespirePending<T> : IDispatchObservation
         lock (this) return ErrorAttempts;
     }
 
+    bool IDispatchObservation.IsOpen(long generation)
+        => (Volatile.Read(ref _state) & ObservationClosed) == 0;
+
     void IDispatchObservation.SetAttempts(long generation, int attempts)
     {
         lock (this)
@@ -67,17 +70,17 @@ public sealed class RespirePending<T> : IDispatchObservation
         }
     }
 
-    void IDispatchObservation.Handled(long generation, Exception error)
+    bool IDispatchObservation.Handled(long generation, Exception error)
     {
         ErrorObservation.Borrower borrower;
         lock (this)
         {
-            if ((Volatile.Read(ref _state) & ObservationClosed) != 0) return;
+            if ((Volatile.Read(ref _state) & ObservationClosed) != 0) return false;
             if (_failure is not RetryObservation)
                 _failure = new RetryObservation(ErrorObservation.StartFailure(_errorAttempts), (Exception?)_failure);
             borrower = ((RetryObservation)_failure).Owner.Borrow();
         }
-        try { borrower.RecordHandled(error); }
+        try { return borrower.RecordHandled(error); }
         finally { borrower.Complete(); }
     }
 

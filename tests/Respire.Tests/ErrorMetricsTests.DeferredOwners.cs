@@ -11,6 +11,36 @@ public partial class ErrorMetricsTests
 {
     [Test]
     [MatrixDataSource]
+    public async Task DeferredObservationRejectsHandledErrorsAfterPublication(
+        [Matrix(false, true)] bool enabled, [Matrix(false, true)] bool faulted)
+    {
+        using var configuration = new MetricConfigurationScope(new()
+            { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
+        using var capture = new Capture();
+        var pending = new RespirePending<int>();
+        var observation = pending.Observation;
+        var error = new RespireServerException("WRONGTYPE private-key");
+        await Assert.That(observation.IsOpen).IsTrue();
+        await Assert.That(observation.TryHandled(error)).IsTrue();
+        await Assert.That(observation.Attempts).IsEqualTo(1);
+        if (faulted) pending.Fail(error);
+        else pending.Succeed(42);
+        await Assert.That(pending.ReportError()).IsEqualTo(faulted);
+
+        await Assert.That(observation.IsOpen).IsFalse();
+        await Assert.That(observation.TryHandled(error)).IsFalse();
+        observation.SetAttempts(50);
+        pending.AddErrorAttempts(50);
+        _ = pending.ReportError();
+        await Assert.That(observation.Attempts).IsEqualTo(1);
+        var expectedErrors = enabled ? 1 + (faulted ? 1 : 0) : 0;
+        await Assert.That(capture.Items.Count).IsEqualTo(expectedErrors);
+        if (faulted) await Assert.That(pending.Error).IsSameReferenceAs(error);
+        else await Assert.That(pending.Result).IsEqualTo(42);
+    }
+
+    [Test]
+    [MatrixDataSource]
     public async Task DeferredInspectionCountsEachLifecycleFailureOnce(
         [Matrix(false, true)] bool enabled, [Matrix(false, true)] bool awaiter)
     {
@@ -178,20 +208,28 @@ public partial class ErrorMetricsTests
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         await ExecuteAsync();
-        var before = RentalCounts();
-        await ExecuteAsync();
-        await Assert.That(RentalCounts()).IsEqualTo(before);
-        await Assert.That(capture.Items).IsEmpty();
+        long legacyRentals = 0, failureRentals = 0;
+        RespireTelemetry.ErrorObservation.RentalObserverForTests = () => Interlocked.Increment(ref legacyRentals);
+        ErrorObservation.RentalObserverForTests = () => Interlocked.Increment(ref failureRentals);
+        try
+        {
+            await ExecuteAsync();
+            await Assert.That(Interlocked.Read(ref legacyRentals)).IsEqualTo(0L);
+            await Assert.That(Interlocked.Read(ref failureRentals)).IsEqualTo(0L);
+            await Assert.That(capture.Items).IsEmpty();
 
-        // These controls detect rentals even when both pools return warmed storage.
-        using (RespireTelemetry.ErrorObservation.Rent(force: true)) { }
-        await Assert.That(RentalCounts().Legacy).IsEqualTo(before.Legacy + 1);
-        var owner = ErrorObservation.StartFailure();
-        owner.Complete();
-        await Assert.That(RentalCounts().Failure).IsEqualTo(before.Failure + 1);
-
-        static (long Legacy, long Failure) RentalCounts() =>
-            (RespireTelemetry.ErrorObservation.RentalCountForTests, ErrorObservation.RentalCountForTests);
+            // These controls detect rentals even when both pools return warmed storage.
+            using (RespireTelemetry.ErrorObservation.Rent(force: true)) { }
+            await Assert.That(Interlocked.Read(ref legacyRentals)).IsEqualTo(1L);
+            var owner = ErrorObservation.StartFailure();
+            owner.Complete();
+            await Assert.That(Interlocked.Read(ref failureRentals)).IsEqualTo(1L);
+        }
+        finally
+        {
+            RespireTelemetry.ErrorObservation.RentalObserverForTests = null;
+            ErrorObservation.RentalObserverForTests = null;
+        }
 
         async Task ExecuteAsync()
         {

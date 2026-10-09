@@ -78,8 +78,7 @@ internal static partial class RespireTelemetry
     internal readonly struct ErrorObservation : IDisposable
     {
         private static readonly ObjectPool<ObservationState, Policy> Pool = new(4096);
-        private static long _rentalCount;
-        internal static long RentalCountForTests => Interlocked.Read(ref _rentalCount);
+        internal static Action? RentalObserverForTests;
         private readonly ObservationState? _state;
         private readonly long _generation;
         private readonly IDispatchObservation? _dispatch;
@@ -123,7 +122,7 @@ internal static partial class RespireTelemetry
         {
             if (!force && !ErrorsEnabled) return default;
             var state = Pool.Rent();
-            Interlocked.Increment(ref _rentalCount);
+            Volatile.Read(ref RentalObserverForTests)?.Invoke();
             lock (state.Gate)
             {
                 state.Generation = unchecked(state.Generation + 1);
