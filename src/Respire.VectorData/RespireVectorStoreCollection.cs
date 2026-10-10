@@ -304,6 +304,9 @@ public sealed partial class RespireVectorStoreCollection<TRecord> : VectorStoreC
         foreach (var document in result.Documents)
         {
             var score = RespireVectorDataOperations.ReadSearchScore(document, _prefix, Name);
+            // Redis IP is 1 - dot(a,b); VectorData's negative dot product is -dot(a,b).
+            // Normalize before applying the public ScoreThreshold, preserving nearest-first order.
+            if (vector.DistanceMetric == RespireSearchDistanceMetric.InnerProduct) score -= 1;
             if (options?.ScoreThreshold is { } threshold && score > threshold) continue;
             var key = RespireVectorDataOperations.DecodeName(document.Id[_prefix.Length..], nameof(SearchAsync), Name);
             hits.Add((key, score));
