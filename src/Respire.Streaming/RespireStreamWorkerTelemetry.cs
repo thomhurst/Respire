@@ -98,13 +98,13 @@ internal sealed class StreamWorkerTelemetry : IDisposable
         Activity? activity = null;
         try
         {
+            // Suppress host context throughout an attempt, including when no activity is sampled.
+            Activity.Current = null;
             if (!_disposed && _source?.HasListeners() == true)
             {
                 // A delivery has a remote producer parent or is a new root, never the host's ambient activity.
-                Activity.Current = null;
                 activity = _source.StartActivity("stream process", ActivityKind.Consumer,
                     StreamTraceContext.Extract(entry, options), tags: [_workerTag]);
-                if (activity is null) RestoreCurrent(previous);
             }
         }
         catch
@@ -113,7 +113,7 @@ internal sealed class StreamWorkerTelemetry : IDisposable
             // Never dispose the host's activity if a CurrentChanged callback fails early.
             if (!ReferenceEquals(Activity.Current, previous))
                 try { Activity.Current?.Dispose(); } catch { }
-            RestoreCurrent(previous);
+            RestoreCurrent(null);
         }
         return new Attempt(this, activity, previous);
     }

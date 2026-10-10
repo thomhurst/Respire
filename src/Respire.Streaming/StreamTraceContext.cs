@@ -13,12 +13,12 @@ internal static class StreamTraceContext
         // TryParse accepts upper-case hex on some runtimes. W3C fields require lower-case hex.
         for (var i = 3; i < parent.Length; i++)
             if (i is 35 or 52 ? parent[i] != '-' : !IsHex(parent[i])) return default;
-        var state = ReadField(entry, options.TraceStateField, 512);
+        var state = ReadField(entry, options.TraceStateField, 512, allowTabs: true);
         return new(context.TraceId, context.SpanId, context.TraceFlags,
             IsValidState(state) ? state : null, isRemote: true);
     }
 
-    private static string? ReadField(RespireStreamEntry entry, string? name, int maximum)
+    private static string? ReadField(RespireStreamEntry entry, string? name, int maximum, bool allowTabs = false)
     {
         if (name is null) return null;
         byte[]? found = null;
@@ -30,7 +30,7 @@ internal static class StreamTraceContext
         }
         if (found is null) return null;
         foreach (var value in found)
-            if (value is < 32 or > 126) return null;
+            if ((value is < 32 or > 126) && !(allowTabs && value == 9)) return null;
         return Encoding.ASCII.GetString(found);
     }
 
@@ -42,13 +42,16 @@ internal static class StreamTraceContext
     {
         if (string.IsNullOrEmpty(state)) return false;
         var keys = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var raw in state.Split(','))
+        var members = state.Split(',');
+        if (members.Length > 32) return false;
+        foreach (var raw in members)
         {
-            var member = raw.Trim(' ');
+            var member = raw.Trim(' ', '\t');
+            if (member.Length == 0) continue;
             var equals = member.IndexOf('=');
             if (equals < 1 || equals > 256 || equals == member.Length - 1) return false;
             var key = member[..equals];
-            if (!keys.Add(key) || keys.Count > 32) return false;
+            if (!keys.Add(key)) return false;
             var at = key.IndexOf('@');
             if (at < 0)
             {

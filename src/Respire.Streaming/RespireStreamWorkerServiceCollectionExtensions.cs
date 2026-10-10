@@ -19,7 +19,8 @@ public static class RespireStreamWorkerServiceCollectionExtensions
 
     /// <summary>Registers a typed handler with an explicit serializer, suitable for source-generated JSON or custom codecs.</summary>
     /// <remarks>The serializer can run concurrently on different consumers. Register IRespireClient separately;
-    /// the worker does not dispose it. Each registration creates its own hosted service and consumer identities.</remarks>
+    /// the worker does not dispose it. Each registration creates its own hosted service and consumer identities.
+    /// TelemetryName must be unique within the service collection, even when no telemetry listener is attached.</remarks>
     public static IServiceCollection AddRespireStreamWorker<
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] THandler, TMessage>(
         this IServiceCollection services, string stream, string group,
@@ -32,6 +33,12 @@ public static class RespireStreamWorkerServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(deserialize);
         options ??= new RespireStreamWorkerOptions();
         options.Validate();
+        if (services.Any(service => service.ServiceType == typeof(TelemetryRegistration)
+            && service.ImplementationInstance is TelemetryRegistration registration
+            && string.Equals(registration.Name, options.TelemetryName, StringComparison.Ordinal)))
+            throw new ArgumentException("Each stream worker must have a unique telemetry name within the service collection.",
+                nameof(RespireStreamWorkerOptions.TelemetryName));
+        services.AddSingleton(new TelemetryRegistration(options.TelemetryName));
         services.TryAddScoped<THandler>();
         services.AddSingleton<IHostedService>(provider => new RespireStreamWorker<THandler, TMessage>(
             provider.GetRequiredService<IRespireClient>(), provider.GetRequiredService<IServiceScopeFactory>(),
@@ -40,4 +47,6 @@ public static class RespireStreamWorkerServiceCollectionExtensions
             stream, group, deserialize, options));
         return services;
     }
+
+    private sealed record TelemetryRegistration(string Name);
 }

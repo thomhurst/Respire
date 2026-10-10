@@ -164,6 +164,73 @@ public partial class StreamWorkerTests
     }
 
     [Test, NotInParallel]
+    [Arguments("vendor=a,\tother=b", true)]
+    [Arguments("\tvendor=a \t, \tother=b\t", true)]
+    [Arguments("vendor=a,\t,other=b", true)]
+    [Arguments("ven\tdor=a", false)]
+    [Arguments("vendor=a\tb", false)]
+    [Arguments("vendor=\ta", false)]
+    [Arguments("vendor=a,\tother=b\n", false)]
+    public async Task TelemetryTracestateAcceptsBoundaryTabsOnly(string traceState, bool valid)
+    {
+        var stopped = new ConcurrentQueue<Activity>();
+        using var tracing = ListenToWorker(stopped.Enqueue);
+        await using var fixture = await Fixture.CreateAsync(options: new() { TelemetryName = WorkerName });
+        await fixture.View.Streams.AddAsync("events", ("payload", "0"), ("traceparent", Parent), ("tracestate", traceState));
+        await fixture.StartAsync();
+        await UntilAsync(() => Task.FromResult(stopped.Count == 1));
+        await fixture.StopAsync();
+        var activity = stopped.Single();
+        await Assert.That(activity.ParentSpanId.ToHexString()).IsEqualTo("0123456789abcdef");
+        await Assert.That(activity.TraceStateString).IsEqualTo(valid ? traceState : null);
+        await Assert.That((await fixture.View.Streams.PendingSummaryAsync("events", "workers")).Count).IsEqualTo(0);
+    }
+
+    [Test, NotInParallel]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task TelemetryUnsampledAttemptsSuppressHostAmbientActivity(bool workerListener)
+    {
+        using var host = new Activity("host startup").Start();
+        using var childSource = new ActivitySource("worker-handler-control");
+        using var tracing = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == childSource.Name
+                || workerListener && source.Name == RespireStreamWorkerTelemetry.ActivitySourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> options) => options.Source.Name == childSource.Name
+                ? ActivitySamplingResult.AllData : ActivitySamplingResult.None,
+        };
+        ActivitySource.AddActivityListener(tracing);
+        var contexts = new ConcurrentQueue<Activity?>();
+        var children = new ConcurrentQueue<Activity>();
+        var state = new State { Handle = (_, _) =>
+        {
+            contexts.Enqueue(Activity.Current);
+            using var child = childSource.StartActivity("handler child");
+            children.Enqueue(child!);
+            return ValueTask.FromResult(RespireStreamWorkerResult.Ack);
+        } };
+        await using var fixture = await Fixture.CreateAsync(state: state, options: new() { TelemetryName = WorkerName });
+        await fixture.View.Streams.AddAsync("events", ("payload", "0"), ("traceparent", Parent));
+        await fixture.StartAsync();
+        await UntilAsync(() => Task.FromResult(children.Count == 1));
+        await fixture.StopAsync();
+        var context = contexts.Single();
+        // TUnit's HTML reporter can independently sample all sources; without it these attempts have no activity.
+        if (context is null)
+            await Assert.That(children.Single().ParentSpanId).IsEqualTo(default(ActivitySpanId));
+        else
+        {
+            await Assert.That(context.Source.Name).IsEqualTo(RespireStreamWorkerTelemetry.ActivitySourceName);
+            await Assert.That(context.ParentSpanId.ToHexString()).IsEqualTo("0123456789abcdef");
+            await Assert.That(children.Single().ParentSpanId).IsEqualTo(context.SpanId);
+        }
+        await Assert.That(children.Single().TraceId == host.TraceId).IsFalse();
+        await Assert.That(Activity.Current).IsSameReferenceAs(host);
+        await Assert.That((await fixture.View.Streams.PendingSummaryAsync("events", "workers")).Count).IsEqualTo(0);
+    }
+
+    [Test, NotInParallel]
     [Arguments("sample")]
     [Arguments("source")]
     [Arguments("started")]
@@ -218,7 +285,7 @@ public partial class StreamWorkerTests
         await Assert.That(fixture.Service.ExecuteTask!.IsCompletedSuccessfully).IsTrue();
         await Assert.That((await fixture.View.Streams.PendingSummaryAsync("events", "workers")).Count).IsEqualTo(0);
         if (failure is "started" or "sample" or "source")
-            await Assert.That(handlerContexts.All(context => ReferenceEquals(context, ambient))).IsTrue();
+            await Assert.That(handlerContexts.All(context => context is null)).IsTrue();
         if (failure == "disabled")
             foreach (var activity in handlerContexts)
                 if (!ReferenceEquals(activity, ambient) && activity is not null)
@@ -252,6 +319,56 @@ public partial class StreamWorkerTests
         await fixture.StopAsync();
         await Assert.That(stopped.Single().ParentSpanId == default).IsTrue();
         await Assert.That((await fixture.View.Streams.PendingSummaryAsync("events", "workers")).Count).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments("worker\nname")]
+    [Arguments("worker\rname")]
+    [Arguments("worker\tname")]
+    [Arguments("worker\0name")]
+    [Arguments("worker name")]
+    [Arguments("worker/name")]
+    [Arguments("wörker")]
+    public async Task TelemetryNamesRejectCharactersOutsideDocumentedPattern(string name)
+    {
+        var services = new ServiceCollection();
+        var error = await Assert.That(() => services.AddRespireStreamWorker<EntryHandler>("s", "g",
+            new() { TelemetryName = name })).Throws<ArgumentException>();
+        await Assert.That(error!.ParamName).IsEqualTo(nameof(RespireStreamWorkerOptions.TelemetryName));
+        await Assert.That(services.Count).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task TelemetryDuplicateNamesFailBeforeChangingRegistrations(bool useDefault)
+    {
+        var services = new ServiceCollection();
+        RespireStreamWorkerOptions? options = useDefault ? null : new() { TelemetryName = "orders" };
+        services.AddRespireStreamWorker<EntryHandler>("first", "group-one", options);
+        var count = services.Count;
+        var error = await Assert.That(() => services.AddRespireStreamWorker<TypedHandler, int>(
+            "second", "group-two", _ => 0, options)).Throws<ArgumentException>();
+        await Assert.That(error!.ParamName).IsEqualTo(nameof(RespireStreamWorkerOptions.TelemetryName));
+        await Assert.That(services.Count).IsEqualTo(count);
+        services.AddRespireStreamWorker<TypedHandler, int>("second", "group-two", _ => 0,
+            new() { TelemetryName = "other" });
+        await Assert.That(services.Count(descriptor => descriptor.ServiceType == typeof(Microsoft.Extensions.Hosting.IHostedService)))
+            .IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task TelemetryNamesAcceptPatternBoundariesAndRemainLocalToServiceCollection()
+    {
+        var services = new ServiceCollection();
+        foreach (var name in new[] { "a", "A", "Az09._-", new string('z', 128) })
+            services.AddRespireStreamWorker<EntryHandler>("s", "g", new() { TelemetryName = name });
+        var other = new ServiceCollection();
+        other.AddRespireStreamWorker<EntryHandler>("s", "g", new() { TelemetryName = "a" });
+        await Assert.That(services.Count(descriptor => descriptor.ServiceType == typeof(Microsoft.Extensions.Hosting.IHostedService)))
+            .IsEqualTo(4);
+        await Assert.That(other.Count(descriptor => descriptor.ServiceType == typeof(Microsoft.Extensions.Hosting.IHostedService)))
+            .IsEqualTo(1);
     }
 
     [Test]

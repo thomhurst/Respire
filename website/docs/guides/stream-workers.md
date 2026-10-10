@@ -290,9 +290,12 @@ builder.Services.AddOpenTelemetry()
 The package creates instruments and activities, not a provider or exporter. Worker telemetry
 is independent of the core client's `RespireMetrics` selection. Configure a fixed,
 low-cardinality `TelemetryName` for each application role, such as `"order-processing"`.
-The default is `"default"`; names are limited to 128 characters. Registrations with the
-same name intentionally share metric dimensions. Do not put tenant, message or consumer
-identifiers in this name. No metric includes stream keys, group names, consumer names,
+The default is `"default"`; names must match `[A-Za-z0-9._-]{1,128}`. Names are
+case-sensitive and must be unique within the service collection, including the default.
+Duplicate names fail during registration, even before a telemetry listener is attached,
+so each worker's lag and pending gauges have distinct metric dimensions. Separate hosts
+can reuse names. Do not put tenant, message or consumer identifiers in this name.
+No metric includes stream keys, group names, consumer names,
 message IDs, attempt numbers, exception text or payload fields.
 
 | Instrument | Kind / unit | Meaning |
@@ -340,7 +343,9 @@ tracestate  = vendor=value,other=value
 ```
 
 Trace and span IDs must be nonzero. Parent bytes must be exactly 55 printable ASCII bytes.
-Vendor state is optional, at most 512 printable ASCII bytes and 32 distinct W3C members.
+Vendor state is optional, at most 512 ASCII bytes and 32 W3C list members with distinct keys.
+Spaces and horizontal tabs around members, including whitespace-only members, are accepted;
+tabs inside keys or values and other control characters are rejected.
 Invalid, oversized or duplicate parent fields start a new root; invalid vendor state is
 discarded without discarding a valid parent or rejecting the message. No baggage or
 arbitrary payload fields are copied into activities. Treat propagated trace state as
@@ -372,8 +377,10 @@ a `Consumer` activity named `"stream process"` for every attempt when sampled, i
 startup replay, idle retries and delivery-limit completion. Retries are sibling activities
 with the original producer parent and distinct span IDs. Handler child activities inherit
 that attempt. Missing or invalid context creates a root rather than inheriting a host
-startup activity. Each attempt disposes its activity and restores the prior ambient
-activity, including when a listener throws. An uncooperative handler retains its activity
+startup activity. Host context stays suppressed during unsampled attempts too, so handler
+activities start a new root when there is no worker activity. Each attempt disposes its
+activity and restores the prior ambient activity, including when a listener throws.
+An uncooperative handler retains its activity
 until that attempt actually completes, just as it retains its handler scope.
 
 The remaining reliable worker features are tracked independently:

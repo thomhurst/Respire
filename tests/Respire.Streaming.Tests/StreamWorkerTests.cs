@@ -757,13 +757,17 @@ public partial class StreamWorkerTests
             collection.AddLogging(logging => logging.AddProvider(new RecordingLoggerProvider(state)));
             for (var i = 0; i < registrations; i++)
             {
+                var registrationOptions = registrations == 1 ? options : (options ?? new()) with
+                {
+                    TelemetryName = $"{options?.TelemetryName ?? "default"}-{i}",
+                };
                 if (typed)
                     collection.AddRespireStreamWorker<TypedHandler, int>("events", "workers",
-                        entry => int.Parse(entry.GetString("payload")!), options);
+                        entry => int.Parse(entry.GetString("payload")!), registrationOptions);
                 else if (deserializeFailure)
                     collection.AddRespireStreamWorker<EntryHandler, RespireStreamEntry>("events", "workers",
-                        entry => entry.GetString("payload") == "0" ? throw new FormatException("private payload") : entry, options);
-                else collection.AddRespireStreamWorker<EntryHandler>("events", "workers", options);
+                        entry => entry.GetString("payload") == "0" ? throw new FormatException("private payload") : entry, registrationOptions);
+                else collection.AddRespireStreamWorker<EntryHandler>("events", "workers", registrationOptions);
             }
             var provider = collection.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
             return new Fixture

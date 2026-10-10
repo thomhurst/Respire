@@ -45,8 +45,9 @@ public sealed record RespireStreamWorkerOptions
     /// <summary>Initial position for a newly created group. Defaults to the beginning.</summary>
     public RespireStreamId GroupStart { get; init; } = RespireStreamId.Beginning;
 
-    /// <summary>Low-cardinality registration label for worker metrics and traces, at most 128 characters.</summary>
-    /// <remarks>Use a fixed application role, never a message, tenant or consumer identifier.</remarks>
+    /// <summary>Low-cardinality registration label matching [A-Za-z0-9._-]{1,128} for worker metrics and traces.</summary>
+    /// <remarks>Names are case-sensitive and must be unique within the service collection, including the default.
+    /// Use a fixed application role, never a message, tenant or consumer identifier.</remarks>
     public string TelemetryName { get; init; } = "default";
 
     /// <summary>Interval of at least one millisecond between group metric polls. No queries run without a gauge listener.</summary>
@@ -65,6 +66,11 @@ public sealed record RespireStreamWorkerOptions
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(TelemetryName);
         if (TelemetryName.Length > 128) throw new ArgumentOutOfRangeException(nameof(TelemetryName));
+        foreach (var character in TelemetryName)
+        {
+            if (character is not (>= 'A' and <= 'Z' or >= 'a' and <= 'z' or >= '0' and <= '9' or '.' or '_' or '-'))
+                throw new ArgumentException("Telemetry names must match [A-Za-z0-9._-]{1,128}.", nameof(TelemetryName));
+        }
         if (TraceParentField is not null) ArgumentException.ThrowIfNullOrWhiteSpace(TraceParentField);
         if (TraceStateField is not null) ArgumentException.ThrowIfNullOrWhiteSpace(TraceStateField);
         if (TraceParentField is not null && TraceParentField == TraceStateField)
