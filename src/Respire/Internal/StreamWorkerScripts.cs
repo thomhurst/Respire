@@ -63,7 +63,8 @@ internal static class StreamWorkerScripts
         end
         local function unavailable(reply)
             return type(reply) == 'table' and reply.err
-                and (string.find(reply.err, 'unknown command', 1, true) or reply.err == 'ERR syntax error')
+                and (string.find(reply.err, 'unknown command', 1, true)
+                    or string.find(reply.err, 'Unknown Redis command', 1, true) or reply.err == 'ERR syntax error')
         end
 
         """;

@@ -10,6 +10,38 @@ namespace Respire.Streaming.Tests;
 public class StreamWorkerCapabilityIntegrationTests(RedisTestContainer redis)
 {
     [Test]
+    [Arguments("ack-delete", 2)]
+    [Arguments("nack", 8)]
+    public async Task DisabledNativeCommandUsesCompatibleCompletion(string completion, int minimumMinor)
+    {
+        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString));
+        var info = await admin.Server.InfoAsync("server");
+        var line = info.Split('\n').Single(value => value.StartsWith("redis_version:"));
+        var version = Version.Parse(line["redis_version:".Length..].Trim().Split('-')[0]);
+        if (version < new Version(8, minimumMinor)) return;
+        var nack = completion == "nack";
+        var image = Environment.GetEnvironmentVariable("RESPIRE_TEST_REDIS_IMAGE") ?? "redis:7.0.15";
+        await using var disabled = new Testcontainers.Redis.RedisBuilder(image)
+            .WithCommand(["redis-server", "--rename-command", nack ? "XNACK" : "XACKDEL", ""])
+            .Build();
+        await disabled.StartAsync();
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(disabled.GetConnectionString()));
+        await client.Streams.AddAsync("disabled", new StreamAddOptions { Id = "1-0" }, ("f", "v"));
+        await client.Streams.CreateGroupAsync("disabled", "g", RespireStreamId.Beginning);
+        await client.Streams.ReadGroupOnceAsync("disabled", "g", "owner");
+        await client.Scripts.ExecuteIntegerAsync(nack ? StreamWorkerScripts.Nack : StreamWorkerScripts.AckAndDelete,
+            ["disabled"], nack ? ["g", "owner", "1-0", 1, 0] : ["g", "owner", "1-0", 1]);
+        await Assert.That((await client.Streams.PendingSummaryAsync("disabled", "g")).Count).IsEqualTo(nack ? 1 : 0);
+        await Assert.That(await client.Streams.CountAsync("disabled")).IsEqualTo(1);
+        if (nack)
+        {
+            var pending = (await client.Streams.PendingAsync("disabled", "g")).Single();
+            await Assert.That(pending.Consumer).IsEqualTo("owner");
+            await Assert.That(pending.DeliveryCount).IsEqualTo(1);
+        }
+    }
+
+    [Test]
     public async Task DiscoveryIsRefreshedAfterReconnectAndPermissionChanges()
     {
         await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { AllowAdmin = true });
