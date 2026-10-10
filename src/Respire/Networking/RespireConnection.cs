@@ -4066,7 +4066,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             return new RespireConnectionClosedBeforeSendException($"Connection to {Host}:{Port} is closed.", null);
         }
 
-        return reason switch
+        Exception failure = reason switch
         {
             RespireAuthenticationException authentication => MarkNotSubmitted(authentication),
             RespireReconnectLimitException reconnectLimit => MarkNotSubmitted(reconnectLimit),
@@ -4075,6 +4075,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 => new RespireConnectionClosedBeforeSendException(connection.Message, connection.InnerException),
             _ => new RespireConnectionClosedBeforeSendException(reason.Message, reason),
         };
+
+        // Keep physical observation ownership on the per-command copy. A handshake
+        // can enqueue its next step after the receive loop has already closed the socket.
+        if (RespireTelemetry.IsObservedConnectionError(reason))
+            RespireTelemetry.MarkConnectionError(failure);
+        return failure;
     }
 
     private static RespireAuthenticationException MarkNotSubmitted(RespireAuthenticationException reason)

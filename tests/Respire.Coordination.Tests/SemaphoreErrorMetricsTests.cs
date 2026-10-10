@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
+using System.Reflection;
+using Respire.Internal;
 using Respire.Tests.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -10,6 +12,38 @@ namespace Respire.Coordination.Tests;
 [NotInParallel]
 public class SemaphoreErrorMetricsTests
 {
+    [Test]
+    public async Task FinalizedCallerForwardsCleanupBookkeepingToDetachedOwner()
+    {
+        using var metrics = new ErrorCollector();
+        using var caller = RespireTelemetry.ErrorObservation.Rent(force: true);
+        var detached = DispatchResponseSource<bool>.Start();
+        try
+        {
+            // Exercise the production adapter without adding a test-only construction API.
+            var cleanupType = typeof(RespireSemaphore).GetNestedType("CleanupObservation", BindingFlags.NonPublic)!;
+            var cleanup = (IDispatchObservation)Activator.CreateInstance(cleanupType,
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null,
+                [caller, detached.Observation], null)!;
+            cleanup.SetAttempts(0, 3);
+            await Assert.That(caller.Attempts).IsEqualTo(3);
+            await Assert.That(detached.Observation.Attempts).IsEqualTo(0);
+
+            caller.Final(new IOException("foreground failure"));
+            await Assert.That(caller.IsOpen).IsFalse();
+            cleanup.SetAttempts(0, 7);
+            cleanup.Retry(0);
+            await Assert.That(cleanup.Attempts(0)).IsEqualTo(8);
+            await Assert.That(cleanup.Handled(0, new IOException("detached cleanup failure"))).IsTrue();
+            await Assert.That(caller.Attempts).IsEqualTo(3);
+            await Assert.That(detached.Observation.Attempts).IsEqualTo(9);
+            await Assert.That(metrics.Items.Count).IsEqualTo(2);
+            var handled = metrics.Items.Single(item => (bool)item["redis.client.errors.internal"]!);
+            await Assert.That(handled["redis.client.operation.retry_attempts"]).IsEqualTo(8);
+        }
+        finally { detached.CompleteInternal(); }
+    }
+
     [Test]
     [Arguments(false)]
     [Arguments(true)]

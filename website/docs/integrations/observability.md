@@ -1006,6 +1006,14 @@ original failure or affect a new caller's observation. Do not retain completed l
 for later asynchronous work. Storage returns outside the ownership gate after the last
 completion. Retry counts saturate at `int.MaxValue`.
 
+Failure-only owners and legacy route observations use the same retry and final-publication
+bookkeeping. Their lifetime gates, generations, references and completion rights remain
+separate. A handled event captures the count before advancing it; counts saturate at
+`int.MaxValue`. Final publication freezes that logical observation's count and rejects
+later handled events or count updates, including reentrant exporter callbacks. This does
+not suppress late native replies: discarded replies retain their own copied attempt count
+and publish internal errors independently after the caller observation has closed.
+
 When adding a command path, declare its public boundary and delegated final owner in
 the independent route inventory. Helper, borrower, transport, and cleanup observations
 must remain distinct from the caller's final publication. Preserve checked native

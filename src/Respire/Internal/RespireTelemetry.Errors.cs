@@ -103,7 +103,7 @@ internal static partial class RespireTelemetry
             {
                 if (_dispatch is not null) return _dispatch.IsOpen(_generation);
                 if (_state is null) return false;
-                lock (_state.Gate) return _state.Active && _state.Generation == _generation;
+                lock (_state.Gate) return _state.Active && _state.Generation == _generation && !_state.Final;
             }
         }
 
@@ -143,8 +143,7 @@ internal static partial class RespireTelemetry
             lock (_state.Gate)
             {
                 if (!IsActive(_state)) return false;
-                attempt = _state.Attempts;
-                _state.Attempts = unchecked(attempt + 1);
+                if (!ErrorPublication.TryRecordHandled(ref _state.Attempts, _state.Final, out attempt)) return false;
             }
             RecordError(error, internallyHandled: true, attempt);
             return true;
@@ -157,9 +156,7 @@ internal static partial class RespireTelemetry
             int attempts;
             lock (_state.Gate)
             {
-                if (!IsActive(_state) || _state.Final) return;
-                _state.Final = true;
-                attempts = _state.Attempts;
+                if (!IsActive(_state) || !ErrorPublication.TryPublishFinal(_state.Attempts, ref _state.Final, out attempts)) return;
             }
             RecordError(error, internallyHandled: false, attempts);
         }
@@ -171,7 +168,7 @@ internal static partial class RespireTelemetry
             lock (_state.Gate)
             {
                 if (!IsActive(_state)) return;
-                _state.Attempts = Math.Max(0, attempts);
+                ErrorPublication.SetAttempts(ref _state.Attempts, _state.Final, attempts);
             }
         }
 
@@ -182,7 +179,7 @@ internal static partial class RespireTelemetry
             if (_dispatch is not null) { _dispatch.Retry(_generation); return; }
             if (_state is null) return;
             lock (_state.Gate)
-                if (IsActive(_state) && _state.Attempts < int.MaxValue) _state.Attempts++;
+                if (IsActive(_state)) ErrorPublication.TryRecordRetry(ref _state.Attempts, _state.Final);
         }
 
         // Called under the storage gate, so validation and mutation cannot race a return/re-rent.

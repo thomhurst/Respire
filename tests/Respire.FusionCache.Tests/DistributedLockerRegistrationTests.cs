@@ -128,15 +128,15 @@ public class DistributedLockerRegistrationTests(RedisTestContainer fixture)
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var calls = 0;
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        Task<int> Execute(IFusionCache cache) => synchronous
-            ? Task.Run(() => cache.GetOrSet<int>("product", _ =>
+        Task<int> Execute(IFusionCache cache, string key = "product") => synchronous
+            ? Task.Run(() => cache.GetOrSet<int>(key, _ =>
             {
                 Interlocked.Increment(ref calls);
                 entered.TrySetResult();
                 release.Task.Wait(timeout.Token);
                 return 42;
             }, token: timeout.Token))
-            : cache.GetOrSetAsync<int>("product", async _ =>
+            : cache.GetOrSetAsync<int>(key, async _ =>
             {
                 Interlocked.Increment(ref calls);
                 entered.TrySetResult();
@@ -161,11 +161,11 @@ public class DistributedLockerRegistrationTests(RedisTestContainer fixture)
         // A cancelled FusionCache contender propagates caller cancellation without running its factory.
         entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
         release = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        await first.RemoveAsync("product");
-        producing = Execute(first);
+        // A fresh key avoids racing the previous phase's asynchronous backplane invalidation.
+        producing = Execute(first, "cancelled-product");
         await entered.Task.WaitAsync(timeout.Token);
         using var cancelled = new CancellationTokenSource();
-        var cancelledWait = second.GetOrSetAsync<int>("product", _ =>
+        var cancelledWait = second.GetOrSetAsync<int>("cancelled-product", _ =>
         {
             Interlocked.Increment(ref calls);
             return Task.FromResult(-1);
