@@ -656,6 +656,15 @@ and cache-aside factories keep the same caller boundary without renting error ob
 storage on success. Each coalesced `GetOrSetAsync` waiter owns its own conversion and final
 failure, including failures after the factory succeeds.
 
+Ordinary and typed coalesced reads finish producer response copying and disposal before
+waking waiters. They retain the completed retry count separately from the returned
+producer observation. Each waiter combines that count with its own existing retries,
+saturating at `int.MaxValue`. A waiter that cancels while the producer is still active
+copies the producer count at its release boundary and keeps its own cancellation token;
+later producer retries belong to the remaining waiters. A converter failure affects only
+that caller. Reusing a completed producer or canceled caller observation cannot change
+another waiter's count or publish another final failure.
+
 Distributed-cache operations start ownership before validation, payload encoding and
 correction setup. GET and buffered GET retain it through payload decoding and response
 disposal. SET and refresh retain it through foreground TTL correction. Detached correction
