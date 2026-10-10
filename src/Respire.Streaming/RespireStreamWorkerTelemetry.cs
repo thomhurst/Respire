@@ -1,3 +1,8 @@
+#if !NET9_0_OR_GREATER
+// This package cannot access the core library's internal Lock polyfill.
+using Lock = System.Object;
+#endif
+
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 
@@ -16,7 +21,7 @@ public static class RespireStreamWorkerTelemetry
 internal sealed class StreamWorkerTelemetry : IDisposable
 {
     private readonly ActivitySource? _source;
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly Meter _meter = new(RespireStreamWorkerTelemetry.MeterName);
     private readonly KeyValuePair<string, object?> _workerTag;
     private readonly Histogram<double>? _duration;
