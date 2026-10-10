@@ -6,9 +6,20 @@
       "Members": [
         "ScanValkeyClusterPageAsync(string,string?,RespireKeyType?,int,int?,CancellationToken):ValueTask<RespireValkeyClusterScanPage>"
       ],
-      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+      "Contract": "Start the failure-only dispatch owner before cursor, count, slot, disposal and cancellation validation or command construction. Retain it through redirects, binary page conversion and response cleanup; successful pages rent no ErrorObservation storage.",
+      "Overrides": {
+        "ScanValkeyClusterPageAsync(string,string?,RespireKeyType?,int,int?,CancellationToken):ValueTask<RespireValkeyClusterScanPage>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult"
+      }
     }
   ],
-  "Boundaries": [],
+  "Boundaries": [
+    {
+      "Name": "valkey-clusterscan-page",
+      "Role": "borrower",
+      "Member": "Respire.KeyCommands.ScanValkeyClusterPageBorrowedAsync(string,string?,RespireKeyType?,int,int?,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<RespireValkeyClusterScanPage>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Preserve the asynchronous fault and cancellation status of argument preflight. Construction, normal Cluster dispatch and binary page conversion borrow the caller owner through response cleanup."
+    }
+  ],
   "NonRoutes": []
 }

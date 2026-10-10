@@ -43,7 +43,7 @@
       "Role": "final",
       "Member": "Respire.RespireTransaction.CommitAsync(CancellationToken):ValueTask",
       "Owner": "Respire.RespireTransaction.CommitAsync(CancellationToken):ValueTask",
-      "Contract": "Commit owns preflight, watch validation, all replies and UNWATCH/dedicated cleanup. Pending inspection remains separate."
+      "Contract": "Start before commit preflight and cancellation. Each pending borrows the shared transaction retry history through replies, conversion, UNWATCH and dedicated cleanup. Publish terminal failures once after cleanup, without a successful-path error rental."
     }
   ],
   "NonRoutes": []

@@ -26,7 +26,8 @@ Server and protocol requirements vary by feature; each linked guide describes it
   and [availability-zone affinity](fundamentals/connections.md#availability-zone-affinity).
 - [Reconnect policies](guides/reconnect-policy.md), automatic pub/sub resubscription,
   [maintenance notifications and handoffs](fundamentals/connections.md#maintenance-notifications),
-  and health-checked [failover groups](guides/failover-groups.md) across deployments.
+  and health-checked [failover groups](guides/failover-groups.md) across deployments, with
+  member-local maintenance handoffs and bounded pauses in health failure counting.
 - [Opt-in endpoint circuit breakers](guides/circuit-breakers.md) reject standalone, Sentinel and Cluster
   immediate, batch, and transaction commands during endpoint failures, with independent data-endpoint
   histories and bounded half-open probes. Remaining resilience integration stays
@@ -44,8 +45,9 @@ Server and protocol requirements vary by feature; each linked guide describes it
 - [Blocking queues](guides/blocking-queues.md) and [streamed string transfers](commands/strings-and-keys.md)
   use dedicated connections where needed to keep multiplexed traffic moving.
 - [Hosted stream consumers](guides/stream-workers.md) support bounded concurrency, scoped typed handlers,
-  explicit acknowledgement and graceful draining. Automatic idle recovery, delivery limits,
-  dead-letter handling and worker telemetry remain tracked by [#891](https://github.com/thomhurst/Respire/issues/891).
+  explicit attempt-fenced acknowledgement, automatic idle recovery, delivery limits,
+  atomic dead-letter completion and graceful draining.
+  Worker telemetry and newer stream capabilities remain tracked by [#891](https://github.com/thomhurst/Respire/issues/891).
 - [Batches, transactions, and `WATCH`](guides/batches-and-transactions.md), plus
   [durability acknowledgements](guides/durability-acknowledgements.md).
 - [Pub/sub](guides/pub-sub.md), pattern and sharded subscriptions, and delivery-gap reporting.
@@ -62,6 +64,15 @@ Server and protocol requirements vary by feature; each linked guide describes it
   with vector codecs, compile-time diagnostics and a public VectorStore metadata seam.
 
 ### Caching, integration, and testing
+
+- [VectorData hash and JSON collections](guides/vector-data.md) with explicit AOT-friendly mapping and KNN search.
+  JSON mapping uses generated serializer metadata and supports nested schema paths.
+  Hash collections also support expression filters and filtered retrieval. Both support capability-aware
+  FT.HYBRID search on Redis 8.4+. Applicable official JSON model, CRUD, vector, distance/index and hybrid
+  contracts run on RESP2 and RESP3 with explicit generated metadata; exclusions are listed in the guide.
+  JSON filters and
+  full upstream conformance remain tracked by
+  [the VectorData connector epic](https://github.com/thomhurst/Respire/issues/887).
 
 - Bounded RESP3 [server-assisted client-side caching](fundamentals/client-side-caching.md),
   with OPTIN or BCAST/prefix tracking for eligible reads.
@@ -81,9 +92,20 @@ Server and protocol requirements vary by feature; each linked guide describes it
 ## Planned work
 
 The [StackExchange.Redis migration boundary](./guides/stackexchange-interop)
-provides binary-safe value conversion and a native raw-command bridge. Full
-StackExchange.Redis interface and downstream library compatibility remains
-planned under [#889](https://github.com/thomhurst/Respire/issues/889).
+provides binary-safe value conversion, a native raw-command bridge, and the limited
+multiplexer/database/batch adapter required by the official distributed cache and
+DataProtection packages. It also supports the hash/list/key/string/set/sorted-set
+command facets inventoried for Hangfire.Redis.StackExchange, including deferred
+batch reads/writes and cursor-based scans. Its transaction adapter supports
+deferred MULTI/EXEC, the inventoried Hangfire notification calls, and documented
+WATCH conditions, including synchronous Execute and repeat execution after aborts.
+The adapter also provides endpoint discovery, physical server INFO/TIME/ROLE,
+atomic token locks, and literal callback subscriptions used by RedisStorage.
+[Pinned Hangfire acceptance](./guides/hangfire-acceptance) exercises 93 upstream
+facts and two real worker lifecycle cases on .NET 8/.NET 10 and RESP2/RESP3,
+with explicit exclusions and limitations. General StackExchange.Redis interface
+parity and combined Microsoft/SignalR/Hangfire acceptance remain planned under
+[#889](https://github.com/thomhurst/Respire/issues/889).
 
 These open epics track remaining work, not release commitments. Follow their linked issues for
 acceptance criteria, dependencies, and current status:
@@ -98,6 +120,8 @@ acceptance criteria, dependencies, and current status:
   messaging, caching, and other libraries that currently depend on StackExchange.Redis.
 - [Higher-level capabilities](https://github.com/thomhurst/Respire/issues/860): stream workers,
   source-generated object mapping and field-level caching research.
+  [Stream workers](./guides/stream-workers) include serving-server capability discovery for
+  CLAIM recovery, delayed fenced XNACK release, and optional XACKDEL ACKED completion.
   [Generated hash codecs](./guides/generated-hash-codecs) provide scalar model conversion, key templates,
   Redis hash writes/full reads, explicit partial reads, field TTL and change tracking. The remaining
   [object mapper work](https://github.com/thomhurst/Respire/issues/895) includes

@@ -18,7 +18,8 @@ public class DeferredRawCommandTests
         await Assert.That(read.ReadKind).IsEqualTo(ReadCommandKind.Read);
         await Assert.That(read.CursorArgumentIndex).IsEqualTo(-1);
         await Assert.That(cursor.ReadKind).IsEqualTo(ReadCommandKind.CursorRead);
-        await Assert.That(cursor.CursorArgumentIndex).IsEqualTo(1);
+        await Assert.That(cursor.CursorArgumentIndex).IsEqualTo(0);
+        await Assert.That(CursorCommandMetadata.IsCursorContinuation(in cursor)).IsTrue();
     }
 
     [Test]

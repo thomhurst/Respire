@@ -71,35 +71,18 @@ public sealed partial class RespireClient : IRespireClient
     /// (see <see cref="RespireOptions.Parse"/>).
     /// </summary>
     public static ValueTask<RespireClient> ConnectAsync(string connectionString, CancellationToken cancellationToken = default)
-    {
-        RespireOptions options;
-        try
-        {
-            options = RespireOptions.Parse(connectionString);
-        }
-        catch (Exception error)
-        {
-            RespireTelemetry.RecordError(error, internallyHandled: false);
-            throw;
-        }
-
-        // Structured connection setup owns its final failure; observe only parsing here.
-        return ConnectAsync(options, cancellationToken);
-    }
+        => DispatchResponseSource<RespireClient>.Run((ConnectionString: connectionString, Token: cancellationToken),
+            static (state, observation) => ConnectBorrowedAsync(RespireOptions.Parse(state.ConnectionString), state.Token));
 
     /// <summary>Connects eagerly using structured client options.</summary>
-    public static async ValueTask<RespireClient> ConnectAsync(RespireOptions options, CancellationToken cancellationToken = default)
+    public static ValueTask<RespireClient> ConnectAsync(RespireOptions options, CancellationToken cancellationToken = default)
+        => DispatchResponseSource<RespireClient>.Run((Options: options, Token: cancellationToken),
+            static (state, observation) => ConnectBorrowedAsync(state.Options, state.Token));
+
+    private static async ValueTask<RespireClient> ConnectBorrowedAsync(RespireOptions options, CancellationToken cancellationToken)
     {
-        try
-        {
-            options = (options ?? throw new ArgumentNullException(nameof(options))).ValidateAndSnapshot();
-            return await ConnectPrimaryAsync(options, cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception error)
-        {
-            RespireTelemetry.RecordError(error, internallyHandled: false);
-            throw;
-        }
+        options = (options ?? throw new ArgumentNullException(nameof(options))).ValidateAndSnapshot();
+        return await ConnectPrimaryAsync(options, cancellationToken).ConfigureAwait(false);
     }
 
     private static async ValueTask<RespireClient> ConnectPrimaryAsync(
@@ -129,63 +112,59 @@ public sealed partial class RespireClient : IRespireClient
     /// <exception cref="RespireConnectionException">
     /// Thrown with an aggregate inner exception when every candidate fails to connect.
     /// </exception>
-    public static async ValueTask<RespireClient> ConnectAnyAsync(
+    public static ValueTask<RespireClient> ConnectAnyAsync(
+        IEnumerable<RespireOptions> candidates, CancellationToken cancellationToken = default)
+        => DispatchResponseSource<RespireClient>.Run((Candidates: candidates, Token: cancellationToken),
+            static (state, observation) => ConnectAnyBorrowedAsync(state.Candidates, state.Token, observation));
+
+    private static async ValueTask<RespireClient> ConnectAnyBorrowedAsync(
         IEnumerable<RespireOptions> candidates,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
-        var retryAttempts = 0;
-        try
+        ArgumentNullException.ThrowIfNull(candidates);
+
+        List<Exception>? failures = null;
+        List<string>? failureMessages = null;
+        var candidateIndex = 0;
+        foreach (var candidate in candidates)
         {
-            ArgumentNullException.ThrowIfNull(candidates);
-
-            List<Exception>? failures = null;
-            List<string>? failureMessages = null;
-            var candidateIndex = 0;
-            foreach (var candidate in candidates)
+            cancellationToken.ThrowIfCancellationRequested();
+            candidateIndex++;
+            if (candidate is null)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                candidateIndex++;
-                if (candidate is null)
-                {
-                    throw new ArgumentException("Connection candidates cannot contain null entries.", nameof(candidates));
-                }
-
-                try
-                {
-                    return await ConnectPrimaryAsync(candidate.ValidateAndSnapshot(), cancellationToken).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    RespireTelemetry.RecordError(ex, internallyHandled: true, retryAttempts++);
-                    (failures ??= []).Add(ex);
-                    (failureMessages ??= []).Add(
-                        $"{candidateIndex}. {FormatCandidateEndpoints(candidate)}: {ex.GetType().Name}: {ex.Message}");
-                }
+                throw new ArgumentException("Connection candidates cannot contain null entries.", nameof(candidates));
             }
 
-            if (candidateIndex == 0)
+            try
             {
-                throw new RespireConnectionException("No Redis connection candidates were provided.");
+                return await ConnectPrimaryAsync(candidate.ValidateAndSnapshot(), cancellationToken).ConfigureAwait(false);
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                observation.Handled(ex);
+                (failures ??= []).Add(ex);
+                (failureMessages ??= []).Add(
+                    $"{candidateIndex}. {FormatCandidateEndpoints(candidate)}: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
 
-            // Exhaustion publishes the last failed connection attempt. Preflight, iteration,
-            // and cancellation failures instead follow every completed failed candidate.
-            retryAttempts = candidateIndex - 1;
-            throw new RespireConnectionException(
-                "Unable to connect to any Redis endpoint candidate. Attempts:" +
-                Environment.NewLine +
-                string.Join(Environment.NewLine, failureMessages!),
-                new AggregateException("All Redis connection candidates failed.", failures!));
-        }
-        catch (Exception error)
+        if (candidateIndex == 0)
         {
-            RespireTelemetry.RecordError(error, internallyHandled: false, retryAttempts);
-            throw;
+            throw new RespireConnectionException("No Redis connection candidates were provided.");
         }
+
+        // Exhaustion publishes the last failed connection attempt. Preflight, iteration,
+        // and cancellation failures instead follow every completed failed candidate.
+        observation.SetAttempts(candidateIndex - 1);
+        throw new RespireConnectionException(
+            "Unable to connect to any Redis endpoint candidate. Attempts:" +
+            Environment.NewLine +
+            string.Join(Environment.NewLine, failureMessages!),
+            new AggregateException("All Redis connection candidates failed.", failures!));
     }
 
     private static string FormatCandidateEndpoints(RespireOptions options)
@@ -467,14 +446,19 @@ public sealed partial class RespireClient : IRespireClient
     public ValueTask ExecuteFireAndForgetAsync(
         RespireCommandInterpolatedStringHandler command,
         CancellationToken cancellationToken = default)
-        => ExecuteInterpolatedFireAndForgetAsync(command, cancellationToken);
+        => DispatchResponseSource.Run((Client: this, Command: command, Token: cancellationToken),
+            static (state, owner) => state.Client.ExecuteInterpolatedFireAndForgetAsync(state.Command, state.Token, owner));
 
     private ValueTask<RespireResult> ExecuteCommandAsync(
         RespireCommand command,
         RespireValue[] args,
         RespireCommandFlags flags,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
     {
+        if (observation.IsEmpty)
+            return DispatchResponseSource<RespireResult>.Run(
+                (Client: this, Command: command, Args: args, Flags: flags, Token: cancellationToken),
+                static (state, owner) => state.Client.ExecuteCommandAsync(state.Command, state.Args, state.Flags, state.Token, owner));
         if (command.IsCallerSupplied)
         {
             if (_keyPrefix is not null && IsModuleCommand(command.Name))
@@ -492,14 +476,14 @@ public sealed partial class RespireClient : IRespireClient
                 cacheMutation: command.CacheMutation,
                 hasExplicitCacheMutation: command.HasExplicitCacheMutation,
                 readKind: RawCommandDescriptorLookup.GetReadKind(command.Name, args),
-                allowReadFrom: false);
+                allowReadFrom: false, observation: observation);
         }
 
         // Catalog execution handles typed commands; explicit prefixable layouts also allow raw module commands.
         if (!TryGetPreencodedRawOperation(command, args, out var operation, out var rawArguments))
         {
             if (_keyPrefix is null || !RawCommandKeyLayouts.HasPrefixableLayout(command.Name))
-                return ExecuteCatalogAsync(command, args, flags, cancellationToken);
+                return ExecuteCatalogAsync(command, args, flags, cancellationToken, observation: observation);
             operation = command.Name;
             rawArguments = args;
         }
@@ -513,21 +497,25 @@ public sealed partial class RespireClient : IRespireClient
             operation, rawArguments, flags, cancellationToken,
             cacheMutation: cacheMutation,
             hasExplicitCacheMutation: command.HasExplicitCacheMutation,
-            readKind: readKind, allowReadFrom: command.Sources != RespireCommandSource.None);
+            readKind: readKind, allowReadFrom: command.Sources != RespireCommandSource.None, observation: observation);
         var prefixError = PrefixModuleKeysOrError(operation, rawArguments, out var prefixedArguments);
         return prefixError is null
             ? ExecuteRawAsync(operation, prefixedArguments, flags, cancellationToken,
                 cacheMutation: cacheMutation,
                 hasExplicitCacheMutation: command.HasExplicitCacheMutation,
-                readKind: readKind, allowReadFrom: command.Sources != RespireCommandSource.None)
+                readKind: readKind, allowReadFrom: command.Sources != RespireCommandSource.None, observation: observation)
             : ValueTask.FromException<RespireResult>(prefixError);
     }
 
     private ValueTask ExecuteCommandFireAndForgetAsync(
         RespireCommand command,
         RespireValue[] args,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
     {
+        if (observation.IsEmpty)
+            return DispatchResponseSource.Run(
+                (Client: this, Command: command, Args: args, Token: cancellationToken),
+                static (state, owner) => state.Client.ExecuteCommandFireAndForgetAsync(state.Command, state.Args, state.Token, owner));
         if (command.IsCallerSupplied)
         {
             if (_keyPrefix is not null && IsModuleCommand(command.Name))
@@ -545,13 +533,13 @@ public sealed partial class RespireClient : IRespireClient
                 cacheMutation: command.CacheMutation,
                 hasExplicitCacheMutation: command.HasExplicitCacheMutation,
                 readKind: RawCommandDescriptorLookup.GetReadKind(command.Name, args),
-                allowReadFrom: false);
+                allowReadFrom: false, observation: observation);
         }
 
         if (!TryGetPreencodedRawOperation(command, args, out var operation, out var rawArguments))
         {
             if (_keyPrefix is null || !RawCommandKeyLayouts.HasPrefixableLayout(command.Name))
-                return ExecuteCatalogFireAndForgetAsync(command, args, cancellationToken);
+                return ExecuteCatalogFireAndForgetAsync(command, args, cancellationToken, observation);
             operation = command.Name;
             rawArguments = args;
         }
@@ -565,14 +553,14 @@ public sealed partial class RespireClient : IRespireClient
             operation, rawArguments, cancellationToken,
             cacheMutation: cacheMutation,
             hasExplicitCacheMutation: command.HasExplicitCacheMutation,
-            readKind: readKind, allowReadFrom: command.Sources != RespireCommandSource.None);
+            readKind: readKind, allowReadFrom: command.Sources != RespireCommandSource.None, observation: observation);
         var prefixError = PrefixModuleKeysOrError(operation, rawArguments, out var prefixedArguments);
         return prefixError is null
             ? ExecuteRawFireAndForgetAsync(
                 operation, prefixedArguments, cancellationToken,
                 cacheMutation: cacheMutation,
                 hasExplicitCacheMutation: command.HasExplicitCacheMutation,
-                readKind: readKind, allowReadFrom: command.Sources != RespireCommandSource.None)
+                readKind: readKind, allowReadFrom: command.Sources != RespireCommandSource.None, observation: observation)
             : ValueTask.FromException(prefixError);
     }
 
@@ -674,31 +662,42 @@ public sealed partial class RespireClient : IRespireClient
         RespireCommand command,
         RespireValue[] args,
         RespireCommandFlags flags,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TaskCompletionSource? admission = null, RespireTelemetry.ErrorObservation observation = default)
     {
+        if (observation.IsEmpty)
+        {
+            return await DispatchResponseSource<RespireResult>.Run(
+                (Client: this, Command: command, Args: args, Flags: flags, Token: cancellationToken, Admission: admission),
+                static (state, owner) => state.Client.ExecuteCatalogAsync(state.Command, state.Args, state.Flags, state.Token, state.Admission, owner)).ConfigureAwait(false);
+        }
         string? storedProcedureName;
         CatalogCommand commandValue;
         ClusterRouter? clusterWide = null;
-        try
+        ValidateResultFlags(flags);
+        ValidateCatalogCommand(command);
+        args = PrefixCatalogKeys(command.Name, args);
+        storedProcedureName = StoredProcedureName(command.Name, args);
+        commandValue = new CatalogCommand(command, args, ValidateClusterRawKeys(command.Name, args));
+        if (_core.Cluster is { } router && DynamicCommandRouting.IsClusterWideMutation(command.Name, args))
         {
-            ValidateResultFlags(flags);
-            ValidateCatalogCommand(command);
-            args = PrefixCatalogKeys(command.Name, args);
-            storedProcedureName = StoredProcedureName(command.Name, args);
-            commandValue = new CatalogCommand(command, args, ValidateClusterRawKeys(command.Name, args));
-            if (_core.Cluster is { } router && DynamicCommandRouting.IsClusterWideMutation(command.Name, args))
-            {
-                ValidateClusterWideFlags(command.Name, flags);
-                clusterWide = router;
-            }
+            ValidateClusterWideFlags(command.Name, flags);
+            clusterWide = router;
         }
-        catch (Exception error) { RecordExecutePreflightFailure(error); throw; }
 
         RespValue response;
-        if (clusterWide is { } cluster)
+        if (admission is not null)
+        {
+            if (clusterWide is not null || command.IsBlocking(args) || storedProcedureName is not null)
+                throw new NotSupportedException("Admission tracking requires a nonblocking catalog command.");
+            response = await SendAsync(command.Name, new AdmissionCommand(commandValue, admission), cancellationToken, flags,
+                allowReadFrom: command.Sources != RespireCommandSource.None
+                    && commandValue.ReadKind != ReadCommandKind.None, observation: observation).ConfigureAwait(false);
+        }
+        else if (clusterWide is { } cluster)
         {
             response = await SendClusterWideAsync(
-                    command.Name, cluster, commandValue, cancellationToken)
+                    command.Name, cluster, commandValue, cancellationToken, observation)
                 .ConfigureAwait(false);
         }
         else if (command.IsBlocking(args))
@@ -709,21 +708,21 @@ public sealed partial class RespireClient : IRespireClient
                     cancellationToken,
                     noRedirect: HasFlag(flags, RespireCommandFlags.NoRedirect),
                     allowReadFrom: command.Sources != RespireCommandSource.None
-                        && commandValue.ReadKind != ReadCommandKind.None)
+                        && commandValue.ReadKind != ReadCommandKind.None, observation: observation)
                 .ConfigureAwait(false);
         }
         else if (storedProcedureName is null)
         {
             response = await SendAsync(command.Name, commandValue, cancellationToken, flags,
                 allowReadFrom: command.Sources != RespireCommandSource.None
-                    && commandValue.ReadKind != ReadCommandKind.None).ConfigureAwait(false);
+                    && commandValue.ReadKind != ReadCommandKind.None, observation: observation).ConfigureAwait(false);
         }
         else
         {
             response = await SendStoredProcedureAsync(
                     command.Name, commandValue, cancellationToken, storedProcedureName, flags,
                     allowReadFrom: command.Sources != RespireCommandSource.None
-                        && commandValue.ReadKind != ReadCommandKind.None)
+                        && commandValue.ReadKind != ReadCommandKind.None, observation: observation)
                 .ConfigureAwait(false);
         }
 
@@ -736,8 +735,15 @@ public sealed partial class RespireClient : IRespireClient
     private async ValueTask ExecuteCatalogFireAndForgetAsync(
         RespireCommand command,
         RespireValue[] args,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
     {
+        if (observation.IsEmpty)
+        {
+            await DispatchResponseSource.Run(
+                (Client: this, Command: command, Args: args, Token: cancellationToken),
+                static (state, owner) => state.Client.ExecuteCatalogFireAndForgetAsync(state.Command, state.Args, state.Token, owner)).ConfigureAwait(false);
+            return;
+        }
         ValidateCatalogCommand(command);
         args = PrefixCatalogKeys(command.Name, args);
         if (command.IsBlocking(args))
@@ -752,7 +758,7 @@ public sealed partial class RespireClient : IRespireClient
             && DynamicCommandRouting.IsClusterWideMutation(command.Name, args))
         {
             await SendClusterWideFireAndForgetAsync(
-                    command.Name, cluster, commandValue, cancellationToken, storedProcedureName)
+                    command.Name, cluster, commandValue, cancellationToken, storedProcedureName, observation)
                 .ConfigureAwait(false);
             return;
         }
@@ -760,7 +766,7 @@ public sealed partial class RespireClient : IRespireClient
         await SendFireAndForgetAsync(
                 command.Name, commandValue, cancellationToken, storedProcedureName,
                 allowReadFrom: command.Sources != RespireCommandSource.None
-                    && commandValue.ReadKind != ReadCommandKind.None)
+                    && commandValue.ReadKind != ReadCommandKind.None, observation: observation)
             .ConfigureAwait(false);
     }
 
@@ -775,37 +781,39 @@ public sealed partial class RespireClient : IRespireClient
         RespireCacheMutation cacheMutation = RespireCacheMutation.Unknown,
         bool hasExplicitCacheMutation = false,
         ReadCommandKind readKind = ReadCommandKind.None,
-        bool allowReadFrom = false)
+        bool allowReadFrom = false, RespireTelemetry.ErrorObservation observation = default)
     {
+        if (observation.IsEmpty)
+        {
+            return await DispatchResponseSource<RespireResult>.Run(
+                (Client: this, Command: command, Args: args, Flags: flags, Token: cancellationToken, Mutation: cacheMutation, Explicit: hasExplicitCacheMutation, Read: readKind, AllowRead: allowReadFrom),
+                static (state, owner) => state.Client.ExecuteRawAsync(state.Command, state.Args, state.Flags, state.Token, state.Mutation, state.Explicit, state.Read, state.AllowRead, owner)).ConfigureAwait(false);
+        }
         string operation;
         string? storedProcedureName;
         DynamicCommand commandValue;
         bool isBlocking;
         ClusterRouter? clusterWide = null;
-        try
+        ValidateResultFlags(flags);
+        (operation, var words, var firstArgumentIndex) = ParseRawCommand(command, ref args);
+        (storedProcedureName, commandValue) = CreateRawCommand(
+            operation, words, firstArgumentIndex, args, cacheMutation, hasExplicitCacheMutation, readKind);
+        isBlocking = RespireCommand.IsBlocking(
+            operation,
+            RespireCommand.Classify(operation),
+            words.AsSpan(firstArgumentIndex),
+            args);
+        if (_core.Cluster is { } router && DynamicCommandRouting.IsClusterWideMutation(operation, args))
         {
-            ValidateResultFlags(flags);
-            (operation, var words, var firstArgumentIndex) = ParseRawCommand(command, ref args);
-            (storedProcedureName, commandValue) = CreateRawCommand(
-                operation, words, firstArgumentIndex, args, cacheMutation, hasExplicitCacheMutation, readKind);
-            isBlocking = RespireCommand.IsBlocking(
-                operation,
-                RespireCommand.Classify(operation),
-                words.AsSpan(firstArgumentIndex),
-                args);
-            if (_core.Cluster is { } router && DynamicCommandRouting.IsClusterWideMutation(operation, args))
-            {
-                ValidateClusterWideFlags(operation, flags);
-                clusterWide = router;
-            }
+            ValidateClusterWideFlags(operation, flags);
+            clusterWide = router;
         }
-        catch (Exception error) { RecordExecutePreflightFailure(error); throw; }
 
         RespValue response;
         if (clusterWide is { } cluster)
         {
             response = await SendClusterWideAsync(
-                    operation, cluster, commandValue, cancellationToken)
+                    operation, cluster, commandValue, cancellationToken, observation)
                 .ConfigureAwait(false);
         }
         else if (isBlocking)
@@ -816,19 +824,19 @@ public sealed partial class RespireClient : IRespireClient
                     cancellationToken,
                     storedProcedureName,
                     noRedirect: HasFlag(flags, RespireCommandFlags.NoRedirect),
-                    allowReadFrom: allowReadFrom && readKind != ReadCommandKind.None)
+                    allowReadFrom: allowReadFrom && readKind != ReadCommandKind.None, observation: observation)
                 .ConfigureAwait(false);
         }
         else if (storedProcedureName is null)
         {
             response = await SendAsync(operation, commandValue, cancellationToken, flags,
-                allowReadFrom: allowReadFrom && readKind != ReadCommandKind.None).ConfigureAwait(false);
+                allowReadFrom: allowReadFrom && readKind != ReadCommandKind.None, observation: observation).ConfigureAwait(false);
         }
         else
         {
             response = await SendStoredProcedureAsync(
                     operation, commandValue, cancellationToken, storedProcedureName, flags,
-                    allowReadFrom: allowReadFrom && readKind != ReadCommandKind.None)
+                    allowReadFrom: allowReadFrom && readKind != ReadCommandKind.None, observation: observation)
                 .ConfigureAwait(false);
         }
 
@@ -845,8 +853,15 @@ public sealed partial class RespireClient : IRespireClient
         RespireCacheMutation cacheMutation = RespireCacheMutation.Unknown,
         bool hasExplicitCacheMutation = false,
         ReadCommandKind readKind = ReadCommandKind.None,
-        bool allowReadFrom = false)
+        bool allowReadFrom = false, RespireTelemetry.ErrorObservation observation = default)
     {
+        if (observation.IsEmpty)
+        {
+            await DispatchResponseSource.Run(
+                (Client: this, Command: command, Args: args, Token: cancellationToken, Mutation: cacheMutation, Explicit: hasExplicitCacheMutation, Read: readKind, AllowRead: allowReadFrom),
+                static (state, owner) => state.Client.ExecuteRawFireAndForgetAsync(state.Command, state.Args, state.Token, state.Mutation, state.Explicit, state.Read, state.AllowRead, owner)).ConfigureAwait(false);
+            return;
+        }
         var (operation, words, firstArgumentIndex) = ParseRawCommand(command, ref args);
         ValidateRawFireAndForgetCommand(
             operation, words.AsSpan(firstArgumentIndex), args);
@@ -857,14 +872,14 @@ public sealed partial class RespireClient : IRespireClient
             && DynamicCommandRouting.IsClusterWideMutation(operation, args))
         {
             await SendClusterWideFireAndForgetAsync(
-                    operation, cluster, commandValue, cancellationToken, storedProcedureName)
+                    operation, cluster, commandValue, cancellationToken, storedProcedureName, observation)
                 .ConfigureAwait(false);
             return;
         }
 
         await SendFireAndForgetAsync(
                 operation, commandValue, cancellationToken, storedProcedureName,
-                allowReadFrom: allowReadFrom && readKind != ReadCommandKind.None)
+                allowReadFrom: allowReadFrom && readKind != ReadCommandKind.None, observation: observation)
             .ConfigureAwait(false);
     }
 
@@ -878,7 +893,9 @@ public sealed partial class RespireClient : IRespireClient
         RespireCommandInterpolatedStringHandler command,
         RespireCommandFlags flags = RespireCommandFlags.None,
         CancellationToken cancellationToken = default)
-        => ExecuteInterpolatedAsync(command, flags, cancellationToken);
+        => DispatchResponseSource<RespireResult>.Run(
+            (Client: this, Command: command, Flags: flags, Token: cancellationToken),
+            static (state, owner) => state.Client.ExecuteInterpolatedAsync(state.Command, state.Flags, state.Token, owner));
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
@@ -886,41 +903,43 @@ public sealed partial class RespireClient : IRespireClient
     private async ValueTask<RespireResult> ExecuteInterpolatedAsync(
         RespireCommandInterpolatedStringHandler command,
         RespireCommandFlags flags,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
     {
+        if (observation.IsEmpty)
+        {
+            return await DispatchResponseSource<RespireResult>.Run(
+                (Client: this, Command: command, Flags: flags, Token: cancellationToken),
+                static (state, owner) => state.Client.ExecuteInterpolatedAsync(state.Command, state.Flags, state.Token, owner)).ConfigureAwait(false);
+        }
         string operation;
         string? storedProcedureName;
         DynamicCommand commandValue;
         bool isBlocking;
         ClusterRouter? clusterWide = null;
-        try
+        ValidateResultFlags(flags);
+        var (initialOperation, tokens) = command.Build();
+        (operation, var firstArgumentIndex) = NormalizeInterpolatedOperation(initialOperation, tokens);
+        var arguments = tokens.AsSpan(firstArgumentIndex);
+        storedProcedureName = StoredProcedureName(operation, arguments);
+        var routingKeyIndex = GetRawRoutingKeyIndex(operation, tokens, firstArgumentIndex);
+        commandValue = new DynamicCommand(
+            tokens, routingKeyIndex, firstArgumentIndex,
+            readKind: RawCommandDescriptorLookup.GetReadKind(operation, arguments),
+            cursorArgumentIndex: Verb.GetCursorArgumentIndex(operation),
+            cacheMetadata: _core.ClientCache is null ? default : ClientCacheCommandMetadata.Get(operation));
+        isBlocking = RespireCommand.IsBlocking(
+            operation, RespireCommand.Classify(operation), arguments);
+        if (_core.Cluster is { } router && DynamicCommandRouting.IsClusterWideMutation(operation, arguments))
         {
-            ValidateResultFlags(flags);
-            var (initialOperation, tokens) = command.Build();
-            (operation, var firstArgumentIndex) = NormalizeInterpolatedOperation(initialOperation, tokens);
-            var arguments = tokens.AsSpan(firstArgumentIndex);
-            storedProcedureName = StoredProcedureName(operation, arguments);
-            var routingKeyIndex = GetRawRoutingKeyIndex(operation, tokens, firstArgumentIndex);
-            commandValue = new DynamicCommand(
-                tokens, routingKeyIndex, firstArgumentIndex,
-                readKind: RawCommandDescriptorLookup.GetReadKind(operation, arguments),
-                cursorArgumentIndex: Verb.GetCursorArgumentIndex(operation),
-                cacheMetadata: _core.ClientCache is null ? default : ClientCacheCommandMetadata.Get(operation));
-            isBlocking = RespireCommand.IsBlocking(
-                operation, RespireCommand.Classify(operation), arguments);
-            if (_core.Cluster is { } router && DynamicCommandRouting.IsClusterWideMutation(operation, arguments))
-            {
-                ValidateClusterWideFlags(operation, flags);
-                clusterWide = router;
-            }
+            ValidateClusterWideFlags(operation, flags);
+            clusterWide = router;
         }
-        catch (Exception error) { RecordExecutePreflightFailure(error); throw; }
 
         RespValue response;
         if (clusterWide is { } cluster)
         {
             response = await SendClusterWideAsync(
-                    operation, cluster, commandValue, cancellationToken)
+                    operation, cluster, commandValue, cancellationToken, observation)
                 .ConfigureAwait(false);
         }
         else if (isBlocking)
@@ -931,19 +950,19 @@ public sealed partial class RespireClient : IRespireClient
                     cancellationToken,
                     storedProcedureName,
                     noRedirect: HasFlag(flags, RespireCommandFlags.NoRedirect),
-                    allowReadFrom: false)
+                    allowReadFrom: false, observation: observation)
                 .ConfigureAwait(false);
         }
         // Resolve read metadata only from the audited command catalog. Unknown operations stay primary.
         else if (storedProcedureName is null)
         {
-            response = await SendAsync(operation, commandValue, cancellationToken, flags, allowReadFrom: false)
+            response = await SendAsync(operation, commandValue, cancellationToken, flags, allowReadFrom: false, observation: observation)
                 .ConfigureAwait(false);
         }
         else
         {
             response = await SendStoredProcedureAsync(
-                    operation, commandValue, cancellationToken, storedProcedureName, flags, allowReadFrom: false)
+                    operation, commandValue, cancellationToken, storedProcedureName, flags, allowReadFrom: false, observation: observation)
                 .ConfigureAwait(false);
         }
 
@@ -955,8 +974,15 @@ public sealed partial class RespireClient : IRespireClient
 #endif
     private async ValueTask ExecuteInterpolatedFireAndForgetAsync(
         RespireCommandInterpolatedStringHandler command,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
     {
+        if (observation.IsEmpty)
+        {
+            await DispatchResponseSource.Run(
+                (Client: this, Command: command, Token: cancellationToken),
+                static (state, owner) => state.Client.ExecuteInterpolatedFireAndForgetAsync(state.Command, state.Token, owner)).ConfigureAwait(false);
+            return;
+        }
         var (initialOperation, tokens) = command.Build();
         var (operation, firstArgumentIndex) = NormalizeInterpolatedOperation(initialOperation, tokens);
         var arguments = tokens.AsSpan(firstArgumentIndex);
@@ -974,13 +1000,13 @@ public sealed partial class RespireClient : IRespireClient
             && DynamicCommandRouting.IsClusterWideMutation(operation, arguments))
         {
             await SendClusterWideFireAndForgetAsync(
-                    operation, cluster, commandValue, cancellationToken, storedProcedureName)
+                    operation, cluster, commandValue, cancellationToken, storedProcedureName, observation)
                 .ConfigureAwait(false);
             return;
         }
 
         await SendFireAndForgetAsync(
-                operation, commandValue, cancellationToken, storedProcedureName, allowReadFrom: false)
+                operation, commandValue, cancellationToken, storedProcedureName, allowReadFrom: false, observation: observation)
             .ConfigureAwait(false);
     }
 
@@ -1096,11 +1122,6 @@ public sealed partial class RespireClient : IRespireClient
            || candidate.EqualsAsciiIgnoreCase("PAUSE")
            || candidate.EqualsAsciiIgnoreCase("UNBLOCK")
            || candidate.EqualsAsciiIgnoreCase("UNPAUSE");
-
-    // Execute entry points validate and build commands before a send owns final errors.
-    // Each selected send records its own final failure, so preflight records separately.
-    private static void RecordExecutePreflightFailure(Exception error)
-        => RespireTelemetry.RecordError(error, internallyHandled: false);
 
     private static (string Operation, string[] Words, int FirstArgumentIndex) ParseRawCommand(string command, ref RespireValue[] args)
     {
@@ -1355,18 +1376,17 @@ public sealed partial class RespireClient : IRespireClient
     {
         // One activation owns admission, control replies, redirects and rollback. Background
         // recovery never borrows this lease after the subscription has been returned.
-        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        var owner = DispatchResponseSource<RespireSubscription>.Start();
         try
         {
             if (_pubSubPrefix is not null)
                 for (var i = 0; i < names.Length; i++) names[i] = ResolveChannel(names[i]);
-            return RespireTelemetry.ObserveFinalError(
-                _core.Hub.SubscribeAsync(kind, names, options, cancellationToken, observation), observation);
+            return owner.Attach(
+                _core.Hub.SubscribeAsync(kind, names, options, cancellationToken, owner.Observation));
         }
         catch (Exception error)
         {
-            observation.Final(error);
-            observation.Dispose();
+            owner.Fail(error);
             throw;
         }
     }
@@ -1558,8 +1578,16 @@ public sealed partial class RespireClient : IRespireClient
     public ValueTask<RespireWatchedTransaction> CreateTransactionAsync(
         RespireKey[] watchKeys, CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(watchKeys);
-        return CreateTransactionAsync(watchKeys.AsSpan(), cancellationToken);
+        try
+        {
+            ArgumentNullException.ThrowIfNull(watchKeys);
+            return CreateTransactionAsync(watchKeys.AsSpan(), cancellationToken);
+        }
+        catch (ArgumentNullException error) when (watchKeys is null)
+        {
+            ErrorObservation.FinishFinal(default, error);
+            throw;
+        }
     }
 
     /// <inheritdoc cref="CreateTransactionAsync(RespireKey[], CancellationToken)"/>
@@ -1570,14 +1598,14 @@ public sealed partial class RespireClient : IRespireClient
     public ValueTask<RespireWatchedTransaction> CreateTransactionAsync(
         ReadOnlySpan<RespireKey> watchKeys, CancellationToken cancellationToken)
     {
-        if (watchKeys.Length == 0)
-        {
-            return new ValueTask<RespireWatchedTransaction>(new RespireWatchedTransaction(this));
-        }
-
-        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        var owner = DispatchResponseSource<RespireWatchedTransaction>.Start();
+        var observation = owner.Observation;
         try
         {
+            ObjectDisposedException.ThrowIf(_core.Disposed, this);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (watchKeys.Length == 0)
+                return owner.Attach(new ValueTask<RespireWatchedTransaction>(new RespireWatchedTransaction(this)));
             // Resolve and own keys before the first await so routing and WATCH use the same bytes.
             var keys = MapKeys(watchKeys);
             int? slot = null;
@@ -1588,12 +1616,11 @@ public sealed partial class RespireClient : IRespireClient
                     RespireTransactionBase.ValidateClusterSlot(keySlot, ref slot);
             }
             // The asynchronous setup takes ownership only after preflight succeeds.
-            return CreateWatchedTransactionAsync(keys, slot, cancellationToken, observation);
+            return owner.Attach(CreateWatchedTransactionAsync(keys, slot, cancellationToken, observation));
         }
         catch (Exception error)
         {
-            observation.Final(error);
-            observation.Dispose();
+            owner.Fail(error);
             throw;
         }
     }
@@ -1602,7 +1629,6 @@ public sealed partial class RespireClient : IRespireClient
         RespireValue[] watchKeys, int? slot, CancellationToken cancellationToken,
         RespireTelemetry.ErrorObservation observation)
     {
-        using var ownedObservation = observation;
         try
         {
             ObjectDisposedException.ThrowIf(_core.Disposed, this);
@@ -1850,33 +1876,21 @@ public sealed partial class RespireClient : IRespireClient
         ResponseConverter<RespireClient, TResult> converter,
         bool observeErrors = true, RespireTelemetry.ErrorObservation observation = default)
     {
-        if (!observation.IsEmpty) observeErrors = false;
+        if (observation.IsEmpty && observeErrors)
+            return DispatchResponseSource<TResult>.Run(
+                (Client: this, Key: resolvedKey, Token: cancellationToken, Converter: converter),
+                static (state, owner) => state.Client.CachedGetAsync(
+                    state.Key, state.Token, state.Converter, observeErrors: false, observation: owner));
         var cache = GetReadCache;
         var command = new Cmd1(Verbs.Get, resolvedKey.AsValue());
         if (cache is null)
         {
-            return ConvertCachedResponseAsync("GET", command, cancellationToken, this, converter, observeErrors, observation);
+            return ConvertUnobservedResponseAsync("GET", command, cancellationToken, this, converter, observation);
         }
-
-        try
-        {
-            var generation = _core.Sentinel?.Current;
-            if (cache.TryGet(in resolvedKey, out var cached) && IsCacheGenerationCurrent(generation))
-                return new ValueTask<TResult>(converter(this, in cached));
-
-            if (observeErrors) observation = RespireTelemetry.ErrorObservation.Rent(force: true);
-            var response = GetAndCacheAsync(resolvedKey, cache, cancellationToken, converter, observation);
-            return observeErrors ? RespireTelemetry.ObserveFinalError(response, observation) : response;
-        }
-        catch (Exception error)
-        {
-            if (observeErrors)
-            {
-                if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: false);
-                else { observation.Final(error); observation.Dispose(); }
-            }
-            throw;
-        }
+        var generation = _core.Sentinel?.Current;
+        if (cache.TryGet(in resolvedKey, out var cached) && IsCacheGenerationCurrent(generation))
+            return new ValueTask<TResult>(converter(this, in cached));
+        return GetAndCacheAsync(resolvedKey, cache, cancellationToken, converter, observation);
     }
 
     /// <summary>
@@ -1885,34 +1899,22 @@ public sealed partial class RespireClient : IRespireClient
     /// </summary>
     internal ValueTask<string?> CachedGetStringAsync(RespireKey resolvedKey, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
     {
-        var cache = GetReadCache;
-        if (cache is null)
-            return StringOrNullAsync("GET", new Cmd1(Verbs.Get, resolvedKey.AsValue()), cancellationToken, observation: observation);
-
         if (observation.IsEmpty)
             return DispatchResponseSource<string?>.Run((Client: this, Key: resolvedKey, Token: cancellationToken),
                 static (state, owner) => state.Client.CachedGetStringAsync(state.Key, state.Token, owner));
-        try
-        {
-            var generation = _core.Sentinel?.Current;
-            if (cache.TryGetString(in resolvedKey, out var cached) && IsCacheGenerationCurrent(generation))
-                return new ValueTask<string?>(cached);
-
-            var response = cache.CoalesceConcurrentMisses
-                ? GetSharedCacheReadAsync(resolvedKey, cache, cancellationToken, 0,
-                    static (int _, in ClientSideCacheCoordinator.GetReadResult result) => result.GetString(),
-                    decodeString: true, observation: observation)
-                : FetchGetCacheReadAsync(resolvedKey, cache, cancellationToken, 0,
-                    static (int _, in ClientSideCacheCoordinator.GetReadResult result) => result.GetString(),
-                    decodeString: true, observation: observation);
-            return RespireTelemetry.ObserveFinalError(response, observation);
-        }
-        catch (Exception error)
-        {
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: false);
-            else { observation.Final(error); observation.Dispose(); }
-            throw;
-        }
+        var cache = GetReadCache;
+        if (cache is null)
+            return StringOrNullAsync("GET", new Cmd1(Verbs.Get, resolvedKey.AsValue()), cancellationToken, observation: observation);
+        var generation = _core.Sentinel?.Current;
+        if (cache.TryGetString(in resolvedKey, out var cached) && IsCacheGenerationCurrent(generation))
+            return new ValueTask<string?>(cached);
+        return cache.CoalesceConcurrentMisses
+            ? GetSharedCacheReadAsync(resolvedKey, cache, cancellationToken, 0,
+                static (int _, in ClientSideCacheCoordinator.GetReadResult result) => result.GetString(),
+                decodeString: true, observation: observation)
+            : FetchGetCacheReadAsync(resolvedKey, cache, cancellationToken, 0,
+                static (int _, in ClientSideCacheCoordinator.GetReadResult result) => result.GetString(),
+                decodeString: true, observation: observation);
     }
 
     internal ValueTask<byte[]?> CachedGetBytesAsync(RespireKey resolvedKey, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
@@ -1943,11 +1945,11 @@ public sealed partial class RespireClient : IRespireClient
         bool keysResolved = false,
         bool observeErrors = true, RespireTelemetry.ErrorObservation observation = default)
     {
-        if (!observation.IsEmpty) observeErrors = false;
-        var cache = _readFrom == RespireReadFrom.Primary ? ReadCache : null;
+        var owner = observation.IsEmpty && observeErrors ? DispatchResponseSource<TResult[]>.Start() : null;
+        observation = owner?.Observation ?? observation;
         try
         {
-            if (observeErrors) observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+            var cache = _readFrom == RespireReadFrom.Primary ? ReadCache : null;
             ValueTask<TResult[]> response;
             if (keys.Length == 0)
             {
@@ -2001,15 +2003,11 @@ public sealed partial class RespireClient : IRespireClient
             {
                 response = CachedGetManyCoreAsync(keys, cancellationToken, converter, keysResolved, cache, observation);
             }
-            return observeErrors ? RespireTelemetry.ObserveFinalError(response, observation) : response;
+            return owner is null ? response : owner.Attach(response);
         }
         catch (Exception error)
         {
-            if (observeErrors)
-            {
-                if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: false);
-                else { observation.Final(error); observation.Dispose(); }
-            }
+            owner?.Fail(error);
             throw;
         }
     }
@@ -2790,8 +2788,8 @@ public sealed partial class RespireClient : IRespireClient
         var connection = readKind == ReadCommandKind.CursorRead
             ? await _core.ReadRouter.GetCursorConnectionAsync(_readFrom, affinity,
                 affinity is null && CursorCommandMetadata.IsCursorContinuation(in command),
-                cancellationToken).ConfigureAwait(false)
-            : await _core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken).ConfigureAwait(false);
+                cancellationToken, observation).ConfigureAwait(false)
+            : await _core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken, observation).ConfigureAwait(false);
         return await SendOnConnectionAsync(operation, connection, command, cancellationToken,
             allowStreamingConnectionReroute: readKind != ReadCommandKind.CursorRead,
             observation: observation).ConfigureAwait(false);
@@ -2965,13 +2963,17 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken,
         string storedProcedureName,
         RespireCommandFlags flags = RespireCommandFlags.None,
-        bool allowReadFrom = true)
+        bool allowReadFrom = true, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
     {
+        if (observation.IsEmpty)
+        {
+            return await DispatchResponseSource<RespValue>.Run((Client: this, Operation: operation, Command: command, Token: cancellationToken, Procedure: storedProcedureName, Flags: flags, Read: allowReadFrom),
+                static (state, owner) => state.Client.SendStoredProcedureAsync(state.Operation, state.Command, state.Token, state.Procedure, state.Flags, state.Read, owner)).ConfigureAwait(false);
+        }
         var core = _core;
         // Raw procedures retain their owner through preflight, reroutes and cache cleanup,
         // including selection enabled while the command is pending.
-        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
         try
         {
             ObjectDisposedException.ThrowIf(core.Disposed, this);
@@ -2995,7 +2997,7 @@ public sealed partial class RespireClient : IRespireClient
                 RespireConnection connection;
                 if (allowReadFrom && command.ReadKind != ReadCommandKind.None && _readFrom != RespireReadFrom.Primary)
                 {
-                    connection = await core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken).ConfigureAwait(false);
+                    connection = await core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken, observation).ConfigureAwait(false);
                 }
                 else
                 {
@@ -3266,12 +3268,16 @@ public sealed partial class RespireClient : IRespireClient
         string operation,
         ClusterRouter cluster,
         TCommand command,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
     {
+        if (observation.IsEmpty)
+        {
+            return await DispatchResponseSource<RespValue>.Run((Client: this, Operation: operation, Cluster: cluster, Command: command, Token: cancellationToken),
+                static (state, owner) => state.Client.SendClusterWideAsync(state.Operation, state.Cluster, state.Command, state.Token, owner)).ConfigureAwait(false);
+        }
         ClusterRouter.DiscoveryRound? discovery = null;
         var discoveryPending = false;
-        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
         try
         {
             var cache = _core.ClientCache;
@@ -3355,9 +3361,11 @@ public sealed partial class RespireClient : IRespireClient
         TCommand command,
         CancellationToken cancellationToken,
         string? storedProcedureName = null,
-        bool allowReadFrom = false)
+        bool allowReadFrom = false, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
-        => DispatchResponseSource.Run(
+        => !observation.IsEmpty
+            ? SendFireAndForgetCoreAsync(operation, command, cancellationToken, storedProcedureName, allowReadFrom, observation)
+            : DispatchResponseSource.Run(
             (Client: this, Operation: operation, Command: command, Token: cancellationToken,
                 Procedure: storedProcedureName, Read: allowReadFrom),
             static (state, observation) => state.Client.SendFireAndForgetCoreAsync(state.Operation,
@@ -3535,7 +3543,7 @@ public sealed partial class RespireClient : IRespireClient
         string? storedProcedureName, RespireTelemetry.ErrorObservation observation)
         where TCommand : struct, IRespCommand
     {
-        var connection = await _core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken).ConfigureAwait(false);
+        var connection = await _core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken, observation).ConfigureAwait(false);
         await SendFireAndForgetOnConnectionAsync(
                 operation, connection, command, cancellationToken, storedProcedureName, observation)
             .ConfigureAwait(false);
@@ -3621,12 +3629,17 @@ public sealed partial class RespireClient : IRespireClient
         ClusterRouter cluster,
         TCommand command,
         CancellationToken cancellationToken,
-        string? storedProcedureName = null)
+        string? storedProcedureName = null, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
     {
+        if (observation.IsEmpty)
+        {
+            await DispatchResponseSource.Run((Client: this, Operation: operation, Cluster: cluster, Command: command, Token: cancellationToken, Procedure: storedProcedureName),
+                static (state, owner) => state.Client.SendClusterWideFireAndForgetAsync(state.Operation, state.Cluster, state.Command, state.Token, state.Procedure, owner)).ConfigureAwait(false);
+            return;
+        }
         ClusterRouter.DiscoveryRound? discovery = null;
         var discoveryPending = false;
-        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
         try
         {
             var cache = _core.ClientCache;
@@ -3765,7 +3778,7 @@ public sealed partial class RespireClient : IRespireClient
         RespireTelemetry.ErrorObservation observation)
         where TCommand : struct, IRespCommand
     {
-        var connection = await _core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken).ConfigureAwait(false);
+        var connection = await _core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken, observation).ConfigureAwait(false);
         return await SendBulkStreamOnConnectionAsync(operation, connection, command, cancellationToken,
             observation: observation).ConfigureAwait(false);
     }
@@ -4150,6 +4163,16 @@ public sealed partial class RespireClient : IRespireClient
         bool observeErrors = true, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
     {
+        if (observeErrors && observation.IsEmpty)
+            return await DispatchResponseSource<RespValue>.Run(
+                (Client: this, Operation: operation, Command: command, Token: cancellationToken,
+                    Procedure: storedProcedureName, NoRedirect: noRedirect, Timeout: cancellationTimeout,
+                    Caller: callerCancellationToken, Read: allowReadFrom),
+                static (state, owner) => state.Client.SendBlockingAsync(state.Operation, state.Command,
+                    state.Token, state.Procedure, state.NoRedirect, state.Timeout, state.Caller, state.Read,
+                    observeErrors: false, observation: owner)).ConfigureAwait(false);
+        // The caller or the source above publishes only after all dedicated cleanup.
+        observeErrors = false;
         var core = _core;
         if (core.Disposed) ThrowIfDisposedForCommand(observeErrors);
         var readFrom = GetReadFromForCommand(in command, allowReadFrom);
@@ -4185,7 +4208,7 @@ public sealed partial class RespireClient : IRespireClient
                         try
                         {
                             (pool, connection, onReplica) = await core.ReadRouter.RentDedicatedConnectionAsync(
-                                readFrom, cancellationToken, preferredZone, fallback.ReplicaOnly).ConfigureAwait(false);
+                                readFrom, cancellationToken, preferredZone, fallback.ReplicaOnly, observation: observation).ConfigureAwait(false);
                         }
                         catch (Exception error) when (fallback.OriginalFailure is not null && ReadEndpointRouter.IsReadCandidateFailure(error, cancellationToken))
                         {
@@ -4212,9 +4235,9 @@ public sealed partial class RespireClient : IRespireClient
                     }
                     response = mutationFence.IsRequired
                         ? await SendBlockingOnConnectionAsync(connection, new MutationCommand<TCommand>(command, mutationFence), cancellationToken,
-                            observation.IsEmpty ? errorAttempts : observation.Attempts).ConfigureAwait(false)
+                            observation.IsEmpty ? errorAttempts : observation.Attempts, observation).ConfigureAwait(false)
                         : await SendBlockingOnConnectionAsync(connection, command, cancellationToken,
-                            observation.IsEmpty ? errorAttempts : observation.Attempts).ConfigureAwait(false);
+                            observation.IsEmpty ? errorAttempts : observation.Attempts, observation).ConfigureAwait(false);
                     if (response.IsError && fallback.OriginalFailure is null && readFrom != RespireReadFrom.Primary)
                     {
                         var error = ResponseReader.ServerError(in response, operation);
@@ -4364,9 +4387,11 @@ public sealed partial class RespireClient : IRespireClient
                         }
                         response = await (sendAsking
                             ? ClusterRouter.SendBlockingAskingUncheckedAsync(connection, in command, cancellationToken,
-                                observation.IsEmpty ? errorAttempts : observation.Attempts, pinToConnection: core.Circuits is not null)
+                                observation.IsEmpty ? errorAttempts : observation.Attempts, pinToConnection: core.Circuits is not null,
+                                observation: observation)
                             : connection.SendWithoutResponseTimeoutAsync(command, cancellationToken,
-                                observation.IsEmpty ? errorAttempts : observation.Attempts, pinToConnection: core.Circuits is not null))
+                                observation.IsEmpty ? errorAttempts : observation.Attempts, pinToConnection: core.Circuits is not null,
+                                observation: observation))
                             .ConfigureAwait(false);
                         admission.Success();
                     }
@@ -4559,7 +4584,8 @@ public sealed partial class RespireClient : IRespireClient
     /// command: required whenever the command can time out or be canceled, and opportunistic
     /// otherwise. Returns null when ordering cannot be established without that requirement.
     /// </summary>
-    internal async ValueTask<RespireClient?> GetCorrectionTrackingClientAsync(CancellationToken cancellationToken)
+    internal async ValueTask<RespireClient?> GetCorrectionTrackingClientAsync(CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation = default)
     {
         if (RequiresReliableCorrectionOrdering(cancellationToken))
         {
@@ -4567,10 +4593,10 @@ public sealed partial class RespireClient : IRespireClient
             return this;
         }
 
-        return await TryEnsureReliableCorrectionOrderingAsync().ConfigureAwait(false) ? this : null;
+        return await TryEnsureReliableCorrectionOrderingAsync(observation).ConfigureAwait(false) ? this : null;
     }
 
-    internal async ValueTask<bool> TryEnsureReliableCorrectionOrderingAsync()
+    internal async ValueTask<bool> TryEnsureReliableCorrectionOrderingAsync(RespireTelemetry.ErrorObservation observation = default)
     {
         if (_core.Cluster is not null)
         {
@@ -4592,11 +4618,12 @@ public sealed partial class RespireClient : IRespireClient
             await multiplexer.EnsureReliableCorrectionOrderingAsync().ConfigureAwait(false);
             return true;
         }
-        catch (RespireServerException)
+        catch (RespireServerException error)
         {
             // Normal non-cancellable access remains compatible with ACLs and RESP servers that
             // do not expose CLIENT commands. Its connection-loss guarantee is necessarily
             // best-effort when no server-side identity can be obtained.
+            observation.Handled(error);
             return false;
         }
     }
@@ -4828,7 +4855,7 @@ public sealed partial class RespireClient : IRespireClient
         try
         {
             if (script.IsReadOnly && _readFrom != RespireReadFrom.Primary)
-                connection = await core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken).ConfigureAwait(false);
+                connection = await core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken, observation).ConfigureAwait(false);
             else
             {
                 await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
@@ -5406,9 +5433,17 @@ public sealed partial class RespireClient : IRespireClient
     /// at all: abandoning a wait there leaves the command queued indefinitely, and killing a
     /// shared connection would fault every innocent in-flight command on it.
     /// </summary>
-    internal async ValueTask UnlinkGuardedAsync(RespireKey key, CancellationToken cancellationToken)
+    internal ValueTask UnlinkGuardedAsync(RespireKey key, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation = default)
+        => observation.IsEmpty
+            ? DispatchResponseSource.Run((Client: this, Key: key, Token: cancellationToken),
+                static (state, owner) => state.Client.UnlinkGuardedCoreAsync(state.Key, state.Token, owner))
+            : UnlinkGuardedCoreAsync(key, cancellationToken, observation);
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+    private async ValueTask UnlinkGuardedCoreAsync(RespireKey key, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation)
     {
-        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
         var timeout = _core.Options.CommandTimeout ?? RemovalLeaseTtl;
         using var timeoutSource = CommandTimeoutCancellation.Create(cancellationToken, timeout);
         try
@@ -5417,22 +5452,13 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (RespireTimeoutException ex)
         {
-            var error = new RespireTimeoutException("UNLINK", timeout, ex);
-            observation.Final(error);
-            throw error;
+            throw new RespireTimeoutException("UNLINK", timeout, ex);
         }
         catch (OperationCanceledException ex) when (
             RespireConnection.IsDeadlineCancellation(ex, timeoutSource.Token, cancellationToken))
         {
-            var error = new RespireTimeoutException("UNLINK", timeout, ex,
+            throw new RespireTimeoutException("UNLINK", timeout, ex,
                 RespireTimeoutDiagnostics.Capture());
-            observation.Final(error);
-            throw error;
-        }
-        catch (Exception error)
-        {
-            observation.Final(error);
-            throw;
         }
     }
 

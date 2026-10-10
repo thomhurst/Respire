@@ -18,6 +18,7 @@
     <Project Path="samples/Respire.Samples.Observability/Respire.Samples.Observability.csproj" />
     <Project Path="samples/Respire.Samples.Sentinel/Respire.Samples.Sentinel.csproj" />
     <Project Path="samples/Respire.Samples.Testing/Respire.Samples.Testing.csproj" />
+    <Project Path="samples/Respire.Samples.VectorData/Respire.Samples.VectorData.csproj" />
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/Aspire.Respire/Aspire.Respire.csproj" />
@@ -42,6 +43,7 @@
     <Project Path="src/Respire.Streaming/Respire.Streaming.csproj" />
     <Project Path="src/Respire.StackExchangeCompat/Respire.StackExchangeCompat.csproj" />
     <Project Path="src/Respire.TimeSeries/Respire.TimeSeries.csproj" />
+    <Project Path="src/Respire.VectorData/Respire.VectorData.csproj" />
     <Project Path="src/Respire.Testing.Containers/Respire.Testing.Containers.csproj" />
     <Project Path="src/Respire.Coordination/Respire.Coordination.csproj" />
     <Project Path="src/Respire.Aws/Respire.Aws.csproj" />
@@ -50,6 +52,7 @@
     <Project Path="src/Respire.Testing/Respire.Testing.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Respire.Hangfire.Acceptance.Tests/Respire.Hangfire.Acceptance.Tests.csproj" />
     <Project Path="tests/Aspire.Respire.IntegrationTests/Aspire.Respire.IntegrationTests.csproj" />
     <Project Path="tests/Aspire.Respire.Tests/Aspire.Respire.Tests.csproj" />
     <Project Path="tests/Respire.HealthChecks.Tests/Respire.HealthChecks.Tests.csproj" />
@@ -66,6 +69,8 @@
     <Project Path="tests/Respire.SignalR.Tests/Respire.SignalR.Tests.csproj" />
     <Project Path="tests/Respire.Streaming.Tests/Respire.Streaming.Tests.csproj" />
     <Project Path="tests/Respire.StackExchangeCompat.Tests/Respire.StackExchangeCompat.Tests.csproj" />
+    <Project Path="tests/Respire.VectorData.Tests/Respire.VectorData.Tests.csproj" />
+    <Project Path="tests/Respire.VectorData.Conformance.Tests/Respire.VectorData.Conformance.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/Respire.StressTests/Respire.StressTests.csproj" />

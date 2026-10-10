@@ -296,11 +296,11 @@ internal sealed class RespBulkPayloadPipe : IDisposable
         if (error is OperationCanceledException cancelled && readCancellation.IsCancellationRequested
             && cancelled.CancellationToken == readCancellation)
         {
-            RespireTelemetry.RecordError(error, internallyHandled: false, _errorAttempts);
+            ErrorObservation.FinishFinal(default, error, retryAttempts: _errorAttempts);
             return;
         }
         if (Interlocked.Exchange(ref _reportedReadError, 1) == 0)
-            RespireTelemetry.RecordError(error, internallyHandled: false, _errorAttempts);
+            ErrorObservation.FinishFinal(default, error, retryAttempts: _errorAttempts);
     }
 
     internal Memory<byte> GetMemory(int sizeHint) => _pipe.Writer.GetMemory(sizeHint);

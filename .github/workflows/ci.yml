@@ -31,8 +31,59 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  vector-data:
+    name: VectorData contracts and NativeAOT (${{ matrix.framework }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: [net8.0, net10.0]
+    services:
+      redis:
+        image: mirror.gcr.io/library/redis:8.10-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+        ports:
+          - 6379/tcp
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 1s --health-timeout 3s --health-retries 30
+    env:
+      TUNIT_DISABLE_HTML_REPORTER: 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-dotnet
+      - name: Run hash, JSON and hybrid collection contracts on RESP2 and RESP3
+        run: >-
+          dotnet run --project tests/Respire.VectorData.Tests -c Release -f ${{ matrix.framework }} --
+          --minimum-expected-tests 198 --report-trx --results-directory "$GITHUB_WORKSPACE/TestResults/vector-data"
+      - name: Run pinned official lifecycle and JSON backend conformance on RESP2 and RESP3
+        if: matrix.framework == 'net10.0'
+        env:
+          RESPIRE_VECTOR_CONFORMANCE_CONNECTION: redis://127.0.0.1:${{ job.services.redis.ports['6379'] }}
+        run: >-
+          dotnet run --project tests/Respire.VectorData.Conformance.Tests -c Release -f net10.0 --
+          --minimum-expected-tests 110 --fail-skips on --report-xunit-trx
+          --results-directory "$GITHUB_WORKSPACE/TestResults/vector-data-official"
+      - name: Install NativeAOT prerequisites
+        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
+      - name: Publish native sample with trimming warnings as errors
+        run: >-
+          dotnet publish samples/Respire.Samples.VectorData -c Release -f ${{ matrix.framework }}
+          -r linux-x64 -o "$GITHUB_WORKSPACE/artifacts/vector-data"
+      - name: Run native hash, generated JSON, vector and hybrid search smoke
+        run: >-
+          ./artifacts/vector-data/Respire.Samples.VectorData
+          redis://127.0.0.1:${{ job.services.redis.ports['6379'] }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: vector-data-contracts-${{ matrix.framework }}
+          path: |
+            TestResults/vector-data
+            TestResults/vector-data-official
+
   stackexchange-interop:
-    name: StackExchange value boundary (${{ matrix.framework }})
+    name: StackExchange compatibility (${{ matrix.framework }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -46,10 +97,36 @@ jobs:
       - uses: ./.github/actions/setup-dotnet
       - name: Build compatibility boundary
         run: dotnet build tests/Respire.StackExchangeCompat.Tests -c Release -f ${{ matrix.framework }}
-      - name: Test RESP2 and RESP3 conversion against Redis
+      - name: Verify unsupported-member scaffold
+        if: matrix.framework == 'net10.0'
+        shell: pwsh
+        run: |
+          $assets = Get-Content tests/Respire.StackExchangeCompat.Tests/obj/project.assets.json -Raw | ConvertFrom-Json
+          $package = $assets.libraries.PSObject.Properties | Where-Object Name -Like 'StackExchange.Redis/*'
+          $packageRoot = $assets.packageFolders.PSObject.Properties.Name | Select-Object -First 1
+          $assembly = Join-Path $packageRoot "$($package.Value.path)/lib/net10.0/StackExchange.Redis.dll"
+          ./tools/Generate-StackExchangeCompat.ps1 -AssemblyPath $assembly
+          git diff --exit-code -- 'src/Respire.StackExchangeCompat/*.Unsupported.g.cs'
+      - name: Test RESP2 and RESP3 conversion, cache and DataProtection against Redis
         run: >-
           dotnet run --project tests/Respire.StackExchangeCompat.Tests -c Release
-          -f ${{ matrix.framework }} --no-build -- --minimum-expected-tests 38
+          -f ${{ matrix.framework }} --no-build -- --minimum-expected-tests 116
+      - name: Build pinned Hangfire upstream acceptance
+        run: dotnet build tests/Respire.Hangfire.Acceptance.Tests -c Release -f ${{ matrix.framework }}
+      - name: Test pinned Hangfire suite and worker lifecycle on RESP2 and RESP3
+        shell: bash
+        run: |
+          # 95 cases: 93 ported upstream facts and 2 worker lifecycle cases.
+          for protocol in 2 3; do
+            RESPIRE_TEST_PROTOCOL="$protocol" dotnet run --project tests/Respire.Hangfire.Acceptance.Tests -c Release \
+              -f ${{ matrix.framework }} --no-build -- --minimum-expected-tests 95 --report-trx \
+              --results-directory "TestResults/hangfire/${{ matrix.framework }}/resp$protocol"
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: hangfire-acceptance-${{ matrix.framework }}
+          path: TestResults/hangfire
 
   mapper-native-aot:
     name: Generated mapper Native AOT (${{ matrix.framework }})
@@ -61,7 +138,7 @@ jobs:
         framework: [net8.0, net10.0]
     services:
       redis:
-        image: redis:8.10-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+        image: mirror.gcr.io/library/redis:8.10-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
         ports:
           - 6379/tcp
         options: >-
@@ -93,9 +170,7 @@ jobs:
         run: python -m pip install --disable-pip-version-check PyYAML==6.0.3
       - name: Verify policy and rejection controls
         run: |
-          python scripts/workflows/BenchmarkWorkflowPolicyTests.py
-          python scripts/workflows/BenchmarkRetentionTests.py
-          python scripts/workflows/BenchmarkProfileTests.py
+          python -B -m unittest discover -s scripts/workflows -p '*Tests.py'
           python -B -m unittest discover -s scripts/benchmarks -p '*Tests.py'
           python scripts/workflows/BenchmarkWorkflowPolicy.py
 
@@ -155,7 +230,7 @@ jobs:
         framework: [net8.0, net10.0]
     services:
       redis:
-        image: redis:8.10-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+        image: mirror.gcr.io/library/redis:8.10-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
         ports:
           - 6379/tcp
         options: >-

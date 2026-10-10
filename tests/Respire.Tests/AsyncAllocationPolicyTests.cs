@@ -34,6 +34,8 @@ public class AsyncAllocationPolicyTests
             (typeof(RespireClient), "ExecuteScriptOnConnectionAsync"),
             (typeof(RespireClient), "ExecuteScriptOnConnectionCoreAsync"),
             (typeof(RespireConnection), "WaitForInflightCapacityAsync"),
+            (typeof(RespireConnection), "SendStreamedSetAsync"),
+            (typeof(RespireConnection), "SendStreamingCoreAsync"),
         };
 
         var candidates = commandTypes

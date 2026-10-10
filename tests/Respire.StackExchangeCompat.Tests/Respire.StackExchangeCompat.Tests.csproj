@@ -3,6 +3,12 @@
   <ItemGroup>
     <PackageReference Include="TUnit" />
     <PackageReference Include="Testcontainers.Redis" />
+    <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" />
+    <PackageReference Include="Microsoft.AspNetCore.DataProtection.StackExchangeRedis" />
+    <PackageReference Include="Microsoft.AspNetCore.DataProtection" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="xunit.assert" />
+    <PackageReference Include="Hangfire.Redis.StackExchange" />
     <ProjectReference Include="../../src/Respire.StackExchangeCompat/Respire.StackExchangeCompat.csproj" />
     <Compile Include="../RedisTestContainer.cs" Link="RedisTestContainer.cs" />
     <Compile Include="../Respire.Tests/Networking/FakeRespServer.cs" Link="FakeRespServer.cs" />

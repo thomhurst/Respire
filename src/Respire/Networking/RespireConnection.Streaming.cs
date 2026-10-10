@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Protocol;
@@ -81,6 +82,9 @@ internal sealed partial class RespireConnection
         CommandDeadline commandDeadline, DedicatedStreamRoute streamingRoute, int errorAttempts)
         => SendStreamedSetAsync(command, cancellationToken, commandDeadline, streamingRoute, asking, errorAttempts);
 
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
     private async ValueTask<RespValue> SendStreamedSetAsync(
         StreamedSetCommand command, CancellationToken cancellationToken, CommandDeadline deadline,
         DedicatedStreamRoute streamingRoute, ProtocolCommand<RawCommand>? prelude = null, int errorAttempts = 0,
@@ -501,11 +505,21 @@ internal sealed partial class RespireConnection
         if (_dead) throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
     }
 
-    private static async ValueTask ObserveStreamedSetResponseAsync(PendingResponseSource source)
+    internal static async ValueTask ObserveStreamedSetResponseAsync(PendingResponseSource source)
     {
+        // GetResult releases the caller reference and can return this source to its pool.
+        var commandName = source.CommandName;
+        var attempts = source.ErrorAttempts;
         try
         {
             using var response = await source.Task.ConfigureAwait(false);
+            RespireTelemetry.RecordDiscardedError(in response, commandName, attempts);
+        }
+        catch (RespireServerException error)
+        {
+            // The reply can win before a failed final write aborts the connection. It is
+            // discarded because the write failure owns the caller's final boundary.
+            RespireTelemetry.RecordError(error, internallyHandled: true, attempts);
         }
         catch
         {

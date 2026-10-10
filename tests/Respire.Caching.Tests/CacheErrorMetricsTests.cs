@@ -11,7 +11,7 @@ using TUnit.Core;
 namespace Respire.Caching.Tests;
 
 [NotInParallel]
-public class CacheErrorMetricsTests
+public partial class CacheErrorMetricsTests
 {
     [Test]
     [Arguments(false)]
@@ -84,9 +84,11 @@ public class CacheErrorMetricsTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task DetachedCorrectionRetainsItsLeaseAndReportsHandledFailures(bool refresh)
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task DetachedCorrectionRetainsItsLeaseAndReportsHandledFailures(bool refresh, bool decorated)
     {
         var previous = RespireMetrics.Configuration;
         RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Resiliency });
@@ -119,7 +121,13 @@ public class CacheErrorMetricsTests
                 Protocol = RespProtocol.Resp2, Connections = 1,
                 Endpoints = [new("127.0.0.1", server.Port)], CommandTimeout = TimeSpan.FromSeconds(5),
             });
-            await using var cache = new RespireDistributedCache(client)
+            IRespireClient cacheClient = decorated
+                ? new RespireDistributedCacheTests.ScriptInterceptingClient(client, async (_, send) =>
+                {
+                    await Task.Yield();
+                    return await send().ConfigureAwait(false);
+                }) : client;
+            await using var cache = new RespireDistributedCache(cacheClient)
             {
                 CorrectionWaitBound = TimeSpan.FromMilliseconds(50),
             };
@@ -150,10 +158,10 @@ public class CacheErrorMetricsTests
 
             // Rent unrelated owners after the foreground owner has returned. A detached
             // NOSCRIPT retry must retain its own live generation through the later EVAL.
-            var owners = Enumerable.Range(0, 32).Select(_ => RespireTelemetry.ErrorObservation.Rent(force: true)).ToArray();
+            var owners = Enumerable.Range(0, 32).Select(_ => DispatchResponseSource<bool>.Start()).ToArray();
             try
             {
-                foreach (var owner in owners) owner.SetAttempts(37);
+                foreach (var owner in owners) owner.Observation.SetAttempts(37);
                 server.SuppressReply = null;
                 index = server.ReceivedCommands.ToList().FindLastIndex(command =>
                     command.StartsWith(correctionPrefix, StringComparison.Ordinal));
@@ -166,10 +174,10 @@ public class CacheErrorMetricsTests
                 await Assert.That(recorded[0]["redis.client.operation.retry_attempts"]).IsEqualTo(0);
                 await Assert.That(recorded[1]["db.response.status_code"]).IsEqualTo("NOPERM");
                 await Assert.That(recorded[1]["redis.client.operation.retry_attempts"]).IsEqualTo(1);
-                await Assert.That(owners.All(owner => owner.Attempts == 37)).IsTrue();
+                await Assert.That(owners.All(owner => owner.Observation.Attempts == 37)).IsTrue();
                 await Assert.That(await client.PingAsync()).IsGreaterThanOrEqualTo(TimeSpan.Zero);
             }
-            finally { foreach (var owner in owners) owner.Dispose(); }
+            finally { foreach (var owner in owners) owner.CompleteInternal(); }
         }
         finally { RespireMetrics.Configure(previous); }
     }
@@ -181,6 +189,9 @@ public class CacheErrorMetricsTests
     [Arguments(true, true)]
     public async Task SuccessfulDelayedReadReportsCorrectionFailureOnce(bool refresh, bool retry)
     {
+        // Metrics are process-wide; retain every error from this operation's execution
+        // context, including its retries, without counting another test's detached work.
+        var metricScope = new AsyncLocal<bool> { Value = true };
         var previous = RespireMetrics.Configuration;
         RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Resiliency });
         try
@@ -208,7 +219,7 @@ public class CacheErrorMetricsTests
                 Endpoints = [new("127.0.0.1", server.Port)], CommandTimeout = TimeSpan.FromSeconds(5),
             });
             await using var cache = client.AsDistributedCache();
-            var items = new ConcurrentQueue<Dictionary<string, object?>>();
+            var items = new ConcurrentQueue<(Dictionary<string, object?> Tags, string Publication)>();
             using var listener = new MeterListener();
             listener.InstrumentPublished = (instrument, meterListener) =>
             {
@@ -217,7 +228,11 @@ public class CacheErrorMetricsTests
             };
             listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
             {
-                items.Enqueue(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value));
+                // Keep the publisher with its tags so a rare extra physical or detached error
+                // can be distinguished from duplicate correction publication in CI.
+                if (!metricScope.Value) return;
+                items.Enqueue((tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value),
+                    string.Join(Environment.NewLine, Environment.StackTrace.Split(Environment.NewLine).Take(20))));
                 throw new InvalidOperationException("Listener failure must remain isolated.");
             });
             listener.Start();
@@ -225,6 +240,16 @@ public class CacheErrorMetricsTests
             await reading.Task.WaitAsync(TimeSpan.FromSeconds(5));
             try
             {
+                // Detached work from an earlier test can publish after its foreground wait
+                // ends, even though this class is NotInParallel. Reproduce that publication
+                // on a context that does not belong to this cache operation.
+                Task unrelatedPublication;
+                using (ExecutionContext.SuppressFlow())
+                {
+                    unrelatedPublication = Task.Run(() => RespireTelemetry.RecordError(
+                        new ObjectDisposedException("earlier test"), internallyHandled: true, retryAttempts: 1));
+                }
+                await unrelatedPublication;
                 // Exceed the production tolerance while the successful read reply is parked.
                 await Task.Delay(TimeSpan.FromMilliseconds(1100));
             }
@@ -237,8 +262,16 @@ public class CacheErrorMetricsTests
             }
             var error = await Assert.That(async () => await response).ThrowsExactly<RespireServerException>();
             await Assert.That(error!.Code).IsEqualTo("NOPERM");
-            var recorded = items.ToArray();
-            await Assert.That(recorded.Length).IsEqualTo(retry ? 2 : 1);
+            var snapshot = items.ToArray();
+            var recorded = snapshot.Select(item => item.Tags).ToArray();
+            var diagnostics = recorded.Length == (retry ? 2 : 1) ? string.Empty
+                : string.Join(Environment.NewLine, snapshot.Take(16).Select((item, index) =>
+                    $"Measurement {index}: {string.Join(", ", item.Tags.Select(tag => $"{tag.Key}={tag.Value}"))}"
+                    + Environment.NewLine + item.Publication))
+                    + Environment.NewLine + "Server commands (last 64):" + Environment.NewLine
+                    + string.Join(Environment.NewLine, server.ReceivedConnectionIds.Zip(server.ReceivedCommands,
+                        (connection, command) => $"Connection {connection}: {command}").TakeLast(64));
+            await Assert.That(recorded.Length).IsEqualTo(retry ? 2 : 1).Because(diagnostics);
             await Assert.That((bool)recorded[^1]["redis.client.errors.internal"]!).IsFalse();
             await Assert.That(recorded[^1]["db.response.status_code"]).IsEqualTo("NOPERM");
             await Assert.That(recorded[^1]["redis.client.operation.retry_attempts"]).IsEqualTo(retry ? 1 : 0);
@@ -405,8 +438,13 @@ public class CacheErrorMetricsTests
             var correctionStart = server.ReceivedCommands.Count;
             var response = refresh ? cache.RefreshAsync("key", cancellation.Token) : cache.GetAsync("key", cancellation.Token);
             await written.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var readIndex = server.ReceivedCommands.ToList().FindIndex(command =>
+                command.StartsWith("EVALSHA ", StringComparison.Ordinal));
+            var readConnection = server.ReceivedConnectionIds[readIndex];
             cancellation.Cancel();
             await correcting.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var replacementIdentifying = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var replacementCorrecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var correctionIndex = server.ReceivedCommands.ToList().FindLastIndex(command =>
                 command.StartsWith("CLIENT KILL ", StringComparison.Ordinal));
             var correctionConnection = server.ReceivedConnectionIds[correctionIndex];
@@ -417,13 +455,36 @@ public class CacheErrorMetricsTests
             }
             finally
             {
-                server.SuppressReply = null;
-                server.ReplyOverride = (_, command) => command.StartsWith("EVAL", StringComparison.Ordinal)
-                    ? ":0\r\n"u8.ToArray() : command == "CLIENT ID" ? ":123\r\n"u8.ToArray() : null;
+                // Park the replacement handshake beyond the bounded foreground wait.
+                // An acknowledged fence allows its idempotent correction to finish later.
+                server.SuppressReply = command =>
+                {
+                    if (replace || command != "CLIENT ID") return false;
+                    replacementIdentifying.TrySetResult();
+                    return true;
+                };
+                server.ReplyOverride = (connection, command) =>
+                {
+                    if (command == "CLIENT ID") return ":123\r\n"u8.ToArray();
+                    if (!command.StartsWith("EVAL ", StringComparison.Ordinal)) return null;
+                    if (connection != readConnection) replacementCorrecting.TrySetResult();
+                    return ":0\r\n"u8.ToArray();
+                };
                 await server.SendRawAsync(replace ? "-NOPERM correction rejected\r\n"u8.ToArray() : ":0\r\n"u8.ToArray(), correctionConnection);
             }
             if (replace) await Assert.That(async () => await response).Throws<RespireServerException>();
             else await Assert.That(async () => await response).Throws<OperationCanceledException>();
+            if (!replace)
+            {
+                await replacementIdentifying.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                await Assert.That(replacementCorrecting.Task.IsCompleted).IsFalse();
+                var identityIndex = server.ReceivedCommands.ToList().FindLastIndex(command => command == "CLIENT ID");
+                server.SuppressReply = null;
+                await server.SendRawAsync(":123\r\n"u8.ToArray(), server.ReceivedConnectionIds[identityIndex]);
+                await replacementCorrecting.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                // A round trip on the replacement drains its correction reply before teardown.
+                await client.PingAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            }
             var final = finals.Single();
             await Assert.That(final["error.type"]).IsEqualTo(replace
                 ? typeof(RespireServerException).FullName : typeof(OperationCanceledException).FullName);
@@ -442,8 +503,6 @@ public class CacheErrorMetricsTests
                         && arguments[index][0].AsSpan().SequenceEqual("EVAL"u8)
                         && Encoding.UTF8.GetString(arguments[index][1]) == RespireDistributedCache.CapRefreshedTtlScript.Source)
                     .ToArray();
-                var readIndex = server.ReceivedCommands.ToList().FindIndex(command =>
-                    command.StartsWith("EVALSHA ", StringComparison.Ordinal));
                 var connectionIds = server.ReceivedConnectionIds;
                 await Assert.That(correctionIndices.Any(index => connectionIds[index] != connectionIds[readIndex])).IsTrue();
             }

@@ -16,6 +16,8 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
     private readonly string _host = $"respire-fake-{Guid.NewGuid():N}";
     private readonly TimeProvider _clock;
     private readonly bool _createConsumersOnEmptyReads;
+    private readonly bool _autoClaimDeletesPendingEntries;
+    private readonly Version _streamWorkerVersion;
     private readonly Dictionary<byte[], Entry> _entries = new(BinaryKeyComparer.Instance);
     private readonly HashSet<Connection> _connections = [];
     private readonly List<Exception> _failures = [];
@@ -32,7 +34,25 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
     /// <param name="createConsumersOnEmptyReads">True models Redis 7.2 or later, which registers consumers
     /// on empty new-entry reads. False preserves Redis 7.0 behavior and is the default.</param>
     public RespireFakeServer(TimeProvider? clock, bool createConsumersOnEmptyReads)
-        => (_clock, _createConsumersOnEmptyReads) = (clock ?? TimeProvider.System, createConsumersOnEmptyReads);
+        : this(clock, createConsumersOnEmptyReads, autoClaimDeletesPendingEntries: true) { }
+
+    /// <summary>Creates a server with explicit stream consumer and deleted-entry claim semantics.</summary>
+    /// <param name="clock">Clock used for expiry and pending idle times, or wall-clock UTC when null.</param>
+    /// <param name="createConsumersOnEmptyReads">True registers consumers on empty reads, as Redis 7.2 or later does.</param>
+    /// <param name="autoClaimDeletesPendingEntries">True removes deleted pending IDs during XAUTOCLAIM, as Redis 7 or later does.
+    /// False models Redis 6.2, which retains them and returns null entries.</param>
+    public RespireFakeServer(TimeProvider? clock, bool createConsumersOnEmptyReads, bool autoClaimDeletesPendingEntries)
+        : this(clock, createConsumersOnEmptyReads, autoClaimDeletesPendingEntries, new Version(7, 0)) { }
+
+    /// <summary>Creates a server that models the built-in worker scripts for a specified Redis version.</summary>
+    /// <remarks>This version controls only worker CLAIM, Nack, and acknowledgement scripts; it does not enable arbitrary commands.</remarks>
+    public RespireFakeServer(TimeProvider? clock, bool createConsumersOnEmptyReads, bool autoClaimDeletesPendingEntries,
+        Version streamWorkerVersion)
+    {
+        ArgumentNullException.ThrowIfNull(streamWorkerVersion);
+        (_clock, _createConsumersOnEmptyReads, _autoClaimDeletesPendingEntries, _streamWorkerVersion)
+            = (clock ?? TimeProvider.System, createConsumersOnEmptyReads, autoClaimDeletesPendingEntries, streamWorkerVersion);
+    }
 
     /// <summary>Returns fresh options for this server. Clone them to configure protocol, serialization, prefixing, and timeouts.</summary>
     /// <remarks>Database zero is supported. TLS, authentication, Cluster, Sentinel and client-side tracking are unsupported.

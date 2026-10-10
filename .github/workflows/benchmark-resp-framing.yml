@@ -19,6 +19,9 @@ jobs:
       event-base-sha: ${{ github.event.pull_request.base.sha }}
       candidate-sha: ${{ github.sha }}
       expected-head-sha: ${{ github.event.pull_request.head.sha }}
+      # This recovery branch must meet #1136's original pre-reservation control.
+      # Other PRs retain the default comparison against their merge's first parent.
+      control-sha: ${{ github.event.pull_request.head.ref == 'issue-1136-integer-reservation' && 'de81b7ebaaf7ab8849868d11711f85d0bc9f6df0' || '' }}
       fixture: benchmarks/Respire.Benchmarks/RespFramingBenchmarks.cs
       filter: '*RespFraming*Benchmarks*'
       expected-case-count: 10

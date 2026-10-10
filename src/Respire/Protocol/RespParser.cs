@@ -48,7 +48,6 @@ internal static class RespParser
     internal static RespParseStatus TryParseValue(
         ReadOnlySpan<byte> buffer, ref int pos, out RespValue value, RespParseState? progressOwner)
     {
-        // A direct state reference avoids interface/delegate dispatch in the aggregate loop.
         value = default;
         if (pos >= buffer.Length)
             return RespParseStatus.NeedMoreData;
@@ -71,7 +70,7 @@ internal static class RespParser
         var remainingElements = (buffer.Length - pos) / 3;
         var deferredPayloadBytes = 0;
         var aggregateStatus = TryParseValue(buffer, ref pos, out value,
-            new ParseContext(0, ref remainingElements, ref deferredPayloadBytes, progressOwner), out var start);
+            new ParseContext(0, ref remainingElements, ref deferredPayloadBytes), progressOwner, out var start);
         if (aggregateStatus == RespParseStatus.Done)
         {
             if (deferredPayloadBytes != 0)
@@ -93,27 +92,22 @@ internal static class RespParser
         // entry points and has no aggregate budget for ForChildren/TryReserve.
         public static ParseContext ImmediateCopy => default;
         public bool DeferPayloads { get; }
-        public RespParseState? ProgressOwner { get; }
         public int DeferredPayloadBytes { get => _deferredPayloadBytes; set => _deferredPayloadBytes = value; }
 
-        public ParseContext(int depth, ref int remainingElements, ref int deferredPayloadBytes, RespParseState? progressOwner)
+        public ParseContext(int depth, ref int remainingElements, ref int deferredPayloadBytes)
         {
             Depth = depth;
             _remainingElements = ref remainingElements;
             _deferredPayloadBytes = ref deferredPayloadBytes;
             DeferPayloads = true;
-            ProgressOwner = progressOwner;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public ParseContext ForChildren()
         {
             Debug.Assert(DeferPayloads, "ImmediateCopy has no aggregate budget.");
-            return new(Depth + 1, ref _remainingElements, ref _deferredPayloadBytes, ProgressOwner);
+            return new(Depth + 1, ref _remainingElements, ref _deferredPayloadBytes);
         }
-
-        public ParseContext ForDiscardedAttribute()
-            => new(Depth, ref _remainingElements, ref _deferredPayloadBytes, progressOwner: null);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool TryReserve(int count)
@@ -129,7 +123,8 @@ internal static class RespParser
     }
 
     private static RespParseStatus TryParseValue(
-        ReadOnlySpan<byte> buffer, ref int pos, out RespValue value, ParseContext context, out int valueStart)
+        ReadOnlySpan<byte> buffer, ref int pos, out RespValue value, ParseContext context,
+        RespParseState? progressOwner, out int valueStart)
     {
         value = default;
         var cursor = pos;
@@ -150,7 +145,7 @@ internal static class RespParser
 
             var priorPayloadBytes = context.DeferredPayloadBytes;
             var attrStatus = TryParseAggregate(buffer, ref cursor, RespDataType.Map, pairCount: true,
-                out var attribute, context.ForDiscardedAttribute());
+                out var attribute, context, progressOwner: null);
             if (attrStatus != RespParseStatus.Done)
             {
                 return attrStatus;
@@ -161,14 +156,14 @@ internal static class RespParser
         }
 
         valueStart = cursor;
-        var status = TryParseCore(buffer, ref cursor, out value, context);
+        var status = TryParseCore(buffer, ref cursor, out value, context, progressOwner);
         // Completed attributes may advance to valueStart without adopting a frame.
         // Consuming an incomplete value itself requires owned aggregate progress.
         Debug.Assert(status != RespParseStatus.NeedMoreData || cursor == valueStart
-            || context.ProgressOwner is { IsIdle: false },
+            || progressOwner is { IsIdle: false },
             "An incomplete value can advance the cursor only after adopting progress.");
         if (status == RespParseStatus.Done
-            || (status == RespParseStatus.NeedMoreData && context.ProgressOwner is not null))
+            || (status == RespParseStatus.NeedMoreData && progressOwner is not null))
         {
             pos = cursor;
         }
@@ -300,20 +295,21 @@ internal static class RespParser
     }
 
     private static RespParseStatus TryParseCore(
-        ReadOnlySpan<byte> buffer, ref int cursor, out RespValue value, ParseContext context)
+        ReadOnlySpan<byte> buffer, ref int cursor, out RespValue value, ParseContext context,
+        RespParseState? progressOwner)
     {
         switch (buffer[cursor])
         {
             case (byte)'*':
-                return TryParseAggregate(buffer, ref cursor, RespDataType.Array, pairCount: false, out value, context);
+                return TryParseAggregate(buffer, ref cursor, RespDataType.Array, pairCount: false, out value, context, progressOwner);
             case (byte)'~':
-                return TryParseAggregate(buffer, ref cursor, RespDataType.Set, pairCount: false, out value, context);
+                return TryParseAggregate(buffer, ref cursor, RespDataType.Set, pairCount: false, out value, context, progressOwner);
             case (byte)'>':
-                return TryParseAggregate(buffer, ref cursor, RespDataType.Push, pairCount: false, out value, context);
+                return TryParseAggregate(buffer, ref cursor, RespDataType.Push, pairCount: false, out value, context, progressOwner);
             case (byte)'%':
-                return TryParseAggregate(buffer, ref cursor, RespDataType.Map, pairCount: true, out value, context);
+                return TryParseAggregate(buffer, ref cursor, RespDataType.Map, pairCount: true, out value, context, progressOwner);
             case (byte)'|':
-                return TryParseValue(buffer, ref cursor, out value, context, out _);
+                return TryParseValue(buffer, ref cursor, out value, context, progressOwner, out _);
             default:
                 return TryParseScalar(buffer, ref cursor, out value, context);
         }
@@ -438,7 +434,7 @@ internal static class RespParser
 
     private static RespParseStatus TryParseAggregate(
         ReadOnlySpan<byte> buffer, ref int cursor, RespDataType type, bool pairCount, out RespValue value,
-        ParseContext context)
+        ParseContext context, RespParseState? progressOwner)
     {
         value = default;
         var pos = cursor + 1;
@@ -490,7 +486,7 @@ internal static class RespParser
             }
             else
             {
-                status = TryParseCore(buffer, ref pos, out elements[i], childContext);
+                status = TryParseCore(buffer, ref pos, out elements[i], childContext, progressOwner);
             }
 
             if (status != RespParseStatus.Done)
@@ -499,29 +495,12 @@ internal static class RespParser
                 // Attributes may consume completed metadata. TryParseValue checks
                 // the following value against its own start after that metadata.
                 Debug.Assert(status != RespParseStatus.NeedMoreData || pos == childStart
-                    || context.ProgressOwner is { IsIdle: false }
+                    || progressOwner is { IsIdle: false }
                     || buffer[childStart] == (byte)'|',
                     "An incomplete child can consume value bytes only after adopting progress.");
 #endif
-                try
-                {
-                    // Nested frames transfer first. Even an empty parent must then join
-                    // that frame chain, so the resumed child completes into its parent.
-                    if (status == RespParseStatus.NeedMoreData
-                        && context.ProgressOwner is { } owner && (i != 0 || !owner.IsIdle))
-                    {
-                        owner.AdoptPartialAggregate(type, count, context.Depth, elements.AsSpan(0, i), buffer);
-                        cursor = pos;
-                    }
-                }
-                finally
-                {
-                    // Adoption clears each moved slot. Only unmoved children remain ours.
-                    for (var j = 0; j < i; j++)
-                        elements[j].Dispose();
-                    System.Array.Clear(elements, 0, i);
-                    RespirePools.ValueArrays.Return(elements);
-                }
+                ReleaseIncompleteAggregate(buffer, ref cursor, pos, type, count, context.Depth,
+                    elements, i, status, progressOwner);
                 return status;
             }
         }
@@ -529,6 +508,33 @@ internal static class RespParser
         value = RespValue.PooledAggregate(type, elements, count);
         cursor = pos;
         return RespParseStatus.Done;
+    }
+
+    // Keep exception handling and progress transfer off the fully buffered loop.
+    // The owner travels only through aggregate recursion, never scalar/payload contexts.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ReleaseIncompleteAggregate(
+        ReadOnlySpan<byte> buffer, ref int cursor, int pos, RespDataType type, int count, int depth,
+        RespValue[] elements, int completedCount, RespParseStatus status, RespParseState? progressOwner)
+    {
+        try
+        {
+            // Nested frames transfer first. Even an empty parent must join that chain.
+            if (status == RespParseStatus.NeedMoreData
+                && progressOwner is { } owner && (completedCount != 0 || !owner.IsIdle))
+            {
+                owner.AdoptPartialAggregate(type, count, depth, elements.AsSpan(0, completedCount), buffer);
+                cursor = pos;
+            }
+        }
+        finally
+        {
+            // Adoption clears moved slots. Only unmoved children remain ours.
+            for (var i = 0; i < completedCount; i++)
+                elements[i].Dispose();
+            System.Array.Clear(elements, 0, completedCount);
+            RespirePools.ValueArrays.Return(elements);
+        }
     }
 
     private static readonly ReadOnlyMemory<byte> InternedOk = "OK"u8.ToArray();

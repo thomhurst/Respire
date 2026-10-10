@@ -73,6 +73,132 @@ public class RespFramingTests
         }
     }
 
+    [Test]
+    [Arguments(0L)]
+    [Arguments(9L)]
+    [Arguments(10L)]
+    [Arguments(-99_999_999L)]
+    [Arguments(-100_000_000L)]
+    [Arguments(999_999_999L)]
+    [Arguments(1_000_000_000L)]
+    [Arguments(long.MinValue)]
+    [Arguments(long.MaxValue)]
+    public async Task ReservedIntegerFitsExactRemainingCapacity(long value)
+    {
+        var text = value.ToString(CultureInfo.InvariantCulture);
+        var expected = Encoding.ASCII.GetBytes($"${text.Length}\r\n{text}\r\n");
+        var buffer = new WriteBuffer(64);
+        try
+        {
+            var capacity = buffer.Capacity;
+            var prefix = new byte[capacity - expected.Length];
+            Array.Fill(prefix, (byte)0xA5);
+            buffer.Append(prefix);
+            WriteReservedInteger(buffer, value, expected.Length);
+            await Assert.That(buffer.Capacity).IsEqualTo(capacity);
+            await Assert.That(buffer.Count).IsEqualTo(capacity);
+            await Assert.That(buffer.WrittenMemory.Span[..prefix.Length].SequenceEqual(prefix)).IsTrue();
+            await Assert.That(buffer.WrittenMemory.Span[prefix.Length..].SequenceEqual(expected)).IsTrue();
+        }
+        finally { buffer.Release(); }
+    }
+
+    private static void WriteReservedInteger(WriteBuffer buffer, long value, int bound)
+    {
+        var published = buffer.Count;
+        var writer = new RespWriter(buffer, bound);
+        writer.WriteBulkInteger(value);
+        if (buffer.Count != published)
+            throw new InvalidOperationException("Integer serialization published an unfinished frame.");
+        writer.Complete();
+    }
+
+    [Test]
+    [Arguments(1024L, 24)]
+    [Arguments(1024L, 25)]
+    [Arguments(1024L, 26)]
+    [Arguments(-99_999_999L, 24)]
+    [Arguments(-100_000_000L, 24)]
+    [Arguments(999_999_999L, 24)]
+    [Arguments(1_000_000_000L, 24)]
+    [Arguments(long.MinValue, 27)]
+    [Arguments(long.MaxValue, 26)]
+    public async Task GrowingIntegerRetainsNearCapacityBuffer(long value, int remaining)
+    {
+        var text = value.ToString(CultureInfo.InvariantCulture);
+        var expected = Encoding.ASCII.GetBytes($"${text.Length}\r\n{text}\r\n");
+        var buffer = new WriteBuffer(64);
+        try
+        {
+            var capacity = buffer.Capacity;
+            var prefix = new byte[capacity - remaining];
+            Array.Fill(prefix, (byte)0xA5);
+            foreach (var publishPrefix in new[] { false, true })
+            {
+                buffer.Reset();
+                WriteGrowingInteger(buffer, prefix, value, publishPrefix);
+                await Assert.That(buffer.Capacity).IsEqualTo(capacity);
+                await Assert.That(buffer.Count).IsEqualTo(prefix.Length + expected.Length);
+                await Assert.That(buffer.WrittenMemory.Span[..prefix.Length].SequenceEqual(prefix)).IsTrue();
+                await Assert.That(buffer.WrittenMemory.Span[prefix.Length..].SequenceEqual(expected)).IsTrue();
+            }
+        }
+        finally { buffer.Release(); }
+    }
+
+    private static void WriteGrowingInteger(WriteBuffer buffer, byte[] prefix, long value, bool publishPrefix)
+    {
+        if (publishPrefix) buffer.Append(prefix);
+        var published = buffer.Count;
+        var writer = new RespWriter(buffer);
+        if (!publishPrefix) writer.WriteRaw(prefix);
+        writer.WriteBulkInteger(value);
+        if (buffer.Count != published)
+            throw new InvalidOperationException("Integer serialization published an unfinished frame.");
+        writer.Complete();
+    }
+
+    [Test]
+    [NotInParallel]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task WarmedIntegerPathsAllocateNothing(bool reserve)
+    {
+        var buffer = new WriteBuffer(256);
+        try
+        {
+            for (var index = 0; index < 32; index++)
+            {
+                MeasureIntegerFrames(buffer, reserve, false);
+                MeasureIntegerFrames(buffer, reserve, true);
+            }
+            var measured = AllocationMeasurement.WithoutConcurrentGc(() => (
+                Actual: MeasureIntegerFrames(buffer, reserve, false),
+                Control: MeasureIntegerFrames(buffer, reserve, true)));
+            await Assert.That(measured.Actual).IsEqualTo(0);
+            await Assert.That(measured.Control).IsGreaterThanOrEqualTo(37_000);
+        }
+        finally { buffer.Release(); }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long MeasureIntegerFrames(WriteBuffer buffer, bool reserve, bool allocate)
+    {
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        for (var index = 0; index < 1_000; index++)
+        {
+            buffer.Reset();
+            var writer = new RespWriter(buffer, reserve ? 4 * CommandWriteSizeHint.Bulk(20) : 0);
+            writer.WriteBulkInteger(0);
+            writer.WriteBulkInteger(1024);
+            writer.WriteBulkInteger(long.MaxValue);
+            writer.WriteBulkInteger(long.MinValue);
+            writer.Complete();
+            if (allocate) GC.KeepAlive(new byte[37]);
+        }
+        return GC.GetAllocatedBytesForCurrentThread() - before;
+    }
+
     /// <summary>Verifies fixed options serialize once and retain ordinary text identity through cache/routing inspection.</summary>
     [Test]
     [Arguments(0, "PX")]

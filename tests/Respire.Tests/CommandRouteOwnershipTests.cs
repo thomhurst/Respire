@@ -142,11 +142,16 @@ public class CommandRouteOwnershipTests
     public async Task SourceRoutesHaveDeclaredExecutableFinalOwners()
     {
         var repo = CommandRouteOwnership.FindRepository();
+        var cacheSource = Path.Combine(repo, "src", "Respire.Caching", "RespireDistributedCache.cs");
         var files = Directory.EnumerateFiles(Path.Combine(repo, "src", "Respire"), "*.cs", SearchOption.AllDirectories)
+            .Append(cacheSource)
             .Where(f => !Path.GetRelativePath(repo, f).Split(Path.DirectorySeparatorChar).Any(p => p is "bin" or "obj"))
+            .Append(Path.Combine(repo, "src", "Respire.Coordination", "RespireSemaphore.cs"))
             .Select(f => (File: Path.GetRelativePath(repo, f), Source: File.ReadAllText(f)));
         var source = CommandRouteOwnership.Discover(files);
         var declarations = Directory.EnumerateFiles(Path.Combine(repo, "src", "Respire"), "*.ownership.json", SearchOption.AllDirectories)
+            .Append(Path.Combine(repo, "src", "Respire.Coordination", "RespireSemaphore.cs.ownership.json"))
+            .Append(cacheSource + ".ownership.json")
             .Select(file => (File: Path.GetRelativePath(repo, file)[..^".ownership.json".Length],
                 Inventory: JsonSerializer.Deserialize<CommandRouteOwnership.Inventory>(File.ReadAllText(file))!)).ToArray();
         var inventories = declarations.Select(d => d.Inventory).ToArray();
@@ -529,15 +534,27 @@ public class CommandRouteOwnershipTests
     }
 
     private static readonly string[] RequiredBoundaries = [
+        "semaphore-acquire", "semaphore-renew", "semaphore-release", "semaphore-cleanup", "semaphore-disposal",
+        "cache-get-owner", "cache-mget-owner", "cache-hash-partial-read", "cache-correction-owner", "distributed-cache-correction", "cache-removal-owner",
+        "distributed-cache-wrapped-removal", "decorated-dispatch-borrower",
+        "blocking-dispatch-owner", "blocking-asking-transport",
         "dispatch-final-inspection", "dispatch-owner-start", "typed-dispatch-owner", "string-dispatch-owner", "bytes-dispatch-owner",
         "dispatch-write-outcome-borrower", "dispatch-discarded-reply-snapshot", "dispatch-cancelled-reply-drain",
         "dispatch-connect-borrower", "dispatch-gathered-admission",
+        "standalone-read-selection", "standalone-dedicated-read-selection", "standalone-cursor-read-selection",
+        "standalone-optional-hedge-selection", "cluster-read-selection", "cluster-optional-hedge-selection",
+        "cluster-cursor-read-selection", "sentinel-generation-selection", "hedged-read-owner",
+        "discarded-hedge-reply", "internal-failover-probe",
+        "standalone-nearest-selection", "cluster-nearest-selection", "hedged-read-leg", "internal-replica-reconnect",
         "native-pooled-inspection", "typed-converter-inspection", "string-result-inspection", "byte-result-inspection",
         "immediate-pooled-conversion", "pending-pooled-conversion", "raw-catalog-dispatch",
         "raw-dispatch-helper", "catalog-dispatch-helper", "interpolated-dispatch", "interpolated-helper",
         "connection-string-parsing", "connection-setup", "physical-connect-helper", "cache-producer", "cache-typed-producer",
         "cache-waiter", "cache-typed-waiter", "upload-payload-read", "download-payload-read", "fan-out", "fan-out-target",
+        "upload-dispatch-owner", "upload-cluster-borrower", "upload-frame-borrower", "upload-discarded-completion",
+        "download-payload-array-read", "download-payload-span-read", "download-payload-byte-read", "download-payload-legacy-read",
         "cache-aside-producer", "deferred-execution", "deferred-inspection", "deferred-awaiter", "transaction-commit",
-        "caller-cleanup", "internal-health-probe", "internal-topology-query"
+        "caller-cleanup", "internal-health-probe", "internal-topology-query",
+        "stream-continuous-read", "stream-iterator-final-inspection", "stream-options-group-iterator", "stream-legacy-group-iterator"
     ];
 }

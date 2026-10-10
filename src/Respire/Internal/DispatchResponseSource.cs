@@ -8,27 +8,46 @@ namespace Respire.Internal;
 // retry bookkeeping; the caller-facing response source retains final publication rights.
 internal interface IDispatchObservation
 {
+    bool IsOpen(long generation);
     int Attempts(long generation);
     void SetAttempts(long generation, int attempts);
-    void Handled(long generation, Exception error);
+    bool Handled(long generation, Exception error);
+    void Retry(long generation);
 }
 
 internal static class DispatchResponseSource
 {
+    private static AsyncLocal<RespireTelemetry.ErrorObservation>? _decoratedObservation;
+
+    // Only interface fallbacks establish this scope. Async decorators capture it with their
+    // ExecutionContext; restoring the caller's context does not end the borrowed generation.
+    internal static RespireTelemetry.ErrorObservation DecoratedObservation
+        => Volatile.Read(ref _decoratedObservation)?.Value ?? default;
+
+    internal static ValueTask<TResult> InvokeDecorated<TState, TResult>(TState state,
+        RespireTelemetry.ErrorObservation observation, Func<TState, ValueTask<TResult>> send)
+    {
+        var current = LazyInitializer.EnsureInitialized(ref _decoratedObservation);
+        var previous = current.Value;
+        current.Value = observation;
+        try { return send(state); }
+        finally { current.Value = previous; }
+    }
+
     internal static ValueTask Run<TState>(TState state,
         Func<TState, RespireTelemetry.ErrorObservation, ValueTask> send)
         => Complete(DispatchResponseSource<bool>.Run((State: state, Send: send),
             static (state, observation) => Await(state.Send(state.State, observation))));
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-    private static async ValueTask<bool> Await(ValueTask response)
+    internal static async ValueTask<bool> Await(ValueTask response)
     {
         await response.ConfigureAwait(false);
         return true;
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
-    private static async ValueTask Complete(ValueTask<bool> response)
+    internal static async ValueTask Complete(ValueTask<bool> response)
         => _ = await response.ConfigureAwait(false);
 }
 
@@ -80,6 +99,14 @@ internal sealed class DispatchResponseSource<TResult> : IValueTaskSource<TResult
         Pool.Return(this);
     }
 
+    // Detached recovery has no caller-facing failure. Its handled observations are
+    // complete only after the attempt's borrowers and cleanup have finished.
+    internal void CompleteInternal()
+    {
+        Finish(null);
+        Pool.Return(this);
+    }
+
     internal static ValueTask<TResult> Run<TState>(TState state,
         Func<TState, RespireTelemetry.ErrorObservation, ValueTask<TResult>> send)
     {
@@ -103,16 +130,21 @@ internal sealed class DispatchResponseSource<TResult> : IValueTaskSource<TResult
             return generation == _generation && !_closed ? _owner.RetryAttempts : 0;
     }
 
-    void IDispatchObservation.Handled(long generation, Exception error)
+    bool IDispatchObservation.IsOpen(long generation)
+    {
+        lock (_gate) return generation == _generation && !_closed;
+    }
+
+    bool IDispatchObservation.Handled(long generation, Exception error)
     {
         ErrorObservation.Borrower borrower;
         lock (_gate)
         {
-            if (generation != _generation || _closed) return;
+            if (generation != _generation || _closed) return false;
             if (_owner.IsEmpty) _owner = ErrorObservation.StartFailure();
             borrower = _owner.Borrow();
         }
-        try { borrower.RecordHandled(error); }
+        try { return borrower.RecordHandled(error); }
         finally { borrower.Complete(); }
     }
 
@@ -123,6 +155,16 @@ internal sealed class DispatchResponseSource<TResult> : IValueTaskSource<TResult
             if (generation != _generation || _closed || (attempts <= 0 && _owner.IsEmpty)) return;
             if (_owner.IsEmpty) _owner = ErrorObservation.StartFailure(attempts);
             else _owner.SetRetryAttempts(attempts);
+        }
+    }
+
+    void IDispatchObservation.Retry(long generation)
+    {
+        lock (_gate)
+        {
+            if (generation != _generation || _closed) return;
+            if (_owner.IsEmpty) _owner = ErrorObservation.StartFailure();
+            _owner.RecordRetry();
         }
     }
 

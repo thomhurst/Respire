@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Respire.VectorData</PackageId>
+    <Title>Respire.VectorData</Title>
+    <Description>AOT-friendly Microsoft.Extensions.VectorData collections using Respire and Redis Query Engine.</Description>
+    <PackageTags>$(PackageTags);vector;ai;redisearch</PackageTags>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Respire.VectorData.Tests" />
+    <ProjectReference Include="../Respire.Search/Respire.Search.csproj" />
+    <ProjectReference Include="../Respire.Json/Respire.Json.csproj" />
+    <PackageReference Include="Microsoft.Extensions.VectorData.Abstractions" />
+  </ItemGroup>
+</Project>

@@ -8,7 +8,7 @@
         "OnCompleted(Action):void",
         "UnsafeOnCompleted(Action):void"
       ],
-      "Contract": "Final inspection of this pending result belongs to its logical caller, including typed conversion. Repeated inspection publishes once; independent callers retain separate ownership."
+      "Contract": "Execution reports a terminal command failure once after cleanup. Inspection of a discarded queue, a not-ready pending, or a WATCH abort owns its lifecycle failure; repeated inspection does not republish it. Successful inspection rents no error lease."
     },
     {
       "Type": "Respire.RespirePending`1",
@@ -17,7 +17,7 @@
         "GetAwaiter():RespirePendingAwaiter<T>",
         "TryGetResult(out T):bool"
       ],
-      "Contract": "Final inspection of this pending result belongs to its logical caller, including typed conversion. Repeated inspection publishes once; independent callers retain separate ownership."
+      "Contract": "Execution reports a terminal command failure once after cleanup. Inspection of a discarded queue, a not-ready pending, or a WATCH abort owns its lifecycle failure; repeated inspection does not republish it. Successful inspection rents no error lease."
     }
   ],
   "Boundaries": [
@@ -26,7 +26,7 @@
       "Role": "final",
       "Member": "Respire.RespirePending`1.Result:T",
       "Owner": "Respire.RespirePending`1.Result:T",
-      "Contract": "Pending.Result owns caller final inspection. Repeated final inspection of one owner generation is harmless; independent callers remain distinct."
+      "Contract": "Execution reports a terminal command failure once after cleanup. Inspection of a discarded queue, a not-ready pending, or a WATCH abort owns its lifecycle failure; repeated inspection does not republish it. Successful inspection rents no error lease."
     },
     {
       "Name": "deferred-awaiter",
@@ -34,6 +34,13 @@
       "Member": "Respire.RespirePendingAwaiter`1.GetResult():T",
       "Owner": "Respire.RespirePending`1.Result:T",
       "Contract": "Delegate final inspection to pending Result without consuming or replacing the deferred result contract."
+    },
+    {
+      "Name": "deferred-error-publication",
+      "Role": "final",
+      "Member": "Respire.RespirePending`1.ReportError():bool",
+      "Owner": "Respire.RespirePending`1.ReportError():bool",
+      "Contract": "Publish each terminal command failure once only after execution and mutation cleanup. Preserve its original exception and complete retry count. Success releases retry storage without publishing."
     }
   ],
   "NonRoutes": []

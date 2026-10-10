@@ -206,15 +206,20 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         ReadOnlySpan<RespireValue> args,
         CancellationToken cancellationToken = default)
     {
-        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
-        RespireValue[] tail;
+        var borrowed = DispatchResponseSource.DecoratedObservation;
+        if (borrowed.IsOpen)
+        {
+            ArgumentNullException.ThrowIfNull(script);
+            return client.ExecuteScriptAsync(script, client.BuildScriptTailFromSpans(keys, args), cancellationToken, borrowed);
+        }
+        var owner = DispatchResponseSource<RespireResult>.Start();
         try
         {
             ArgumentNullException.ThrowIfNull(script);
-            tail = client.BuildScriptTailFromSpans(keys, args);
+            var tail = client.BuildScriptTailFromSpans(keys, args);
+            return owner.Attach(client.ExecuteScriptAsync(script, tail, cancellationToken, owner.Observation));
         }
-        catch (Exception error) { observation.Final(error); observation.Dispose(); throw; }
-        return client.ExecuteScriptAsync(script, tail, cancellationToken, observation);
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
@@ -240,15 +245,14 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         RespireScript script, RespireKey[]? keys, RespireValue[]? args,
         CancellationToken cancellationToken, Func<RespireResult, TResult> convert)
     {
-        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
-        RespireValue[] tail;
+        var owner = DispatchResponseSource<TResult>.Start();
         try
         {
             ArgumentNullException.ThrowIfNull(script);
-            tail = client.BuildScriptTail(keys, args);
+            var tail = client.BuildScriptTail(keys, args);
+            return owner.Attach(client.ExecuteScriptConvertedAsync(script, tail, cancellationToken, convert, owner.Observation));
         }
-        catch (Exception error) { observation.Final(error); observation.Dispose(); throw; }
-        return client.ExecuteScriptConvertedAsync(script, tail, cancellationToken, convert, observation);
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     public ValueTask<bool[]> ExistsAsync(params ReadOnlySpan<string> sha1s)
@@ -256,19 +260,33 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
 
     public ValueTask<bool[]> ExistsAsync(ReadOnlySpan<string> sha1s, CancellationToken cancellationToken)
     {
-        var command = new CmdN(Verbs.ScriptExists, MapDigests(sha1s));
-        return client.Core.Cluster is { } cluster
-            ? ExistsClusterAsync(cluster, command, cancellationToken)
-            : client.ConvertResponseAsync("SCRIPT EXISTS", command, cancellationToken, this,
-                static (ScriptCommands _, in RespValue value) => ResponseReader.FlagArray(in value));
+        var owner = DispatchResponseSource<bool[]>.Start();
+        try
+        {
+            var command = new CmdN(Verbs.ScriptExists, MapDigests(sha1s));
+            ObjectDisposedException.ThrowIf(client.Core.Disposed, client);
+            return owner.Attach(client.Core.Cluster is { } cluster
+                ? ExistsClusterAsync(cluster, command, cancellationToken, owner.Observation)
+                : client.ConvertResponseAsync("SCRIPT EXISTS", command, cancellationToken, this,
+                    static (ScriptCommands _, in RespValue value) => ResponseReader.FlagArray(in value), observation: owner.Observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     public ValueTask FlushAsync(ScriptFlushMode mode = ScriptFlushMode.Default, CancellationToken cancellationToken = default)
     {
-        var command = new Cmd(FlushVerb(mode));
-        return client.Core.Cluster is { } cluster
-            ? FlushClusterAsync(cluster, command, cancellationToken)
-            : client.OkAsync("SCRIPT FLUSH", command, cancellationToken);
+        var owner = DispatchResponseSource<bool>.Start();
+        try
+        {
+            var command = new Cmd(FlushVerb(mode));
+            ObjectDisposedException.ThrowIf(client.Core.Disposed, client);
+            var response = client.Core.Cluster is { } cluster
+                ? FlushClusterAsync(cluster, command, cancellationToken, owner.Observation)
+                : client.ConvertResponseAsync("SCRIPT FLUSH", command, cancellationToken, this,
+                    static (ScriptCommands _, in RespValue value) => ResponseReader.Ok(in value), observation: owner.Observation);
+            return DispatchResponseSource.Complete(owner.Attach(response));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     internal static RespireValue[] MapDigests(ReadOnlySpan<string> sha1s)
@@ -297,10 +315,10 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<bool[]> ExistsClusterAsync(
-        ClusterRouter cluster, CmdN command, CancellationToken cancellationToken)
+        ClusterRouter cluster, CmdN command, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         var results = await SendToPrimariesAsync(cluster, "SCRIPT EXISTS", command,
-            static (ScriptCommands _, in RespValue value) => ResponseReader.FlagArray(in value), cancellationToken,
+            static (ScriptCommands _, in RespValue value) => ResponseReader.FlagArray(in value), cancellationToken, observation,
             static results =>
             {
                 var result = results[0];
@@ -315,39 +333,46 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         return results[0];
     }
 
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
-    private async ValueTask FlushClusterAsync(
-        ClusterRouter cluster, Cmd command, CancellationToken cancellationToken)
-        => _ = await SendToPrimariesAsync(cluster, "SCRIPT FLUSH", command,
-            static (ScriptCommands _, in RespValue value) => ResponseReader.Ok(in value), cancellationToken)
+    // The boolean result lets SCRIPT FLUSH share the caller's generic response owner.
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private async ValueTask<bool> FlushClusterAsync(
+        ClusterRouter cluster, Cmd command, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+    {
+        _ = await SendToPrimariesAsync(cluster, "SCRIPT FLUSH", command,
+            static (ScriptCommands _, in RespValue value) => ResponseReader.Ok(in value), cancellationToken, observation)
             .ConfigureAwait(false);
+        return true;
+    }
 
     public ValueTask<string> LoadAsync(RespireScript script, CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(script);
-        if (client.Core.Cluster is { } cluster)
+        var owner = DispatchResponseSource<string>.Start();
+        try
         {
-            return LoadClusterAsync(cluster, script, cancellationToken);
+            ArgumentNullException.ThrowIfNull(script);
+            ObjectDisposedException.ThrowIf(client.Core.Disposed, client);
+            return owner.Attach(client.Core.Cluster is { } cluster
+                ? LoadClusterAsync(cluster, script, cancellationToken, owner.Observation)
+                : LoadSingleAsync(script, cancellationToken, owner.Observation));
         }
-
-        return LoadSingleAsync(script, cancellationToken);
+        catch (Exception error) { owner.Fail(error); throw; }
     }
 
     private ValueTask<string> LoadSingleAsync(
         RespireScript script,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         => client.ConvertResponseAsync(
             "SCRIPT LOAD", new Cmd1(Verbs.ScriptLoad, script.Source), cancellationToken, this,
-            static (ScriptCommands _, in RespValue value) => ResponseReader.String(in value));
+            static (ScriptCommands _, in RespValue value) => ResponseReader.String(in value), observation: observation);
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<string> LoadClusterAsync(
         ClusterRouter cluster,
         RespireScript script,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         var results = await SendToPrimariesAsync(cluster, "SCRIPT LOAD", new Cmd1(Verbs.ScriptLoad, script.Source),
-            static (ScriptCommands _, in RespValue value) => ResponseReader.String(in value), cancellationToken,
+            static (ScriptCommands _, in RespValue value) => ResponseReader.String(in value), cancellationToken, observation,
             static results =>
             {
                 for (var i = 1; i < results.Length; i++)
@@ -360,56 +385,30 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<TResult[]> SendToPrimariesAsync<TCommand, TResult>(
         ClusterRouter cluster, string operation, TCommand command,
-        ResponseConverter<ScriptCommands, TResult> convert, CancellationToken cancellationToken,
+        ResponseConverter<ScriptCommands, TResult> convert, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation,
         Action<TResult[]>? validate = null)
         where TCommand : struct, IRespCommand
     {
-        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
-        var targetsReportedFailure = false;
-        try
-        {
-            var masters = await cluster.GetMasterConnectionsAsync(cancellationToken, discovery: null).ConfigureAwait(false);
-            if (masters.Length == 0)
-                throw new RespireConnectionException($"{operation} did not reach any Redis Cluster primary.");
-            var responses = new Task<TResult>[masters.Length];
-            for (var i = 0; i < masters.Length; i++)
-                responses[i] = SendAndConvertAsync(operation, masters[i], command, convert, cancellationToken).AsTask();
-            TResult[] results;
-            try { results = await Task.WhenAll(responses).ConfigureAwait(false); }
-            catch
-            {
-                // Join every target before propagation. Each target owns its transport and
-                // conversion failures; the parent only owns discovery and result validation.
-                targetsReportedFailure = true;
-                throw;
-            }
-            validate?.Invoke(results);
-            return results;
-        }
-        catch (Exception error)
-        {
-            if (!targetsReportedFailure) observation.Final(error);
-            throw;
-        }
+        var masters = await cluster.GetMasterConnectionsAsync(cancellationToken, discovery: null).ConfigureAwait(false);
+        if (masters.Length == 0)
+            throw new RespireConnectionException($"{operation} did not reach any Redis Cluster primary.");
+        var responses = new Task<TResult>[masters.Length];
+        for (var i = 0; i < masters.Length; i++)
+            responses[i] = SendAndConvertAsync(operation, masters[i], command, convert, cancellationToken, observation).AsTask();
+        // Join every target and its reply cleanup before the caller publishes one failure.
+        var results = await Task.WhenAll(responses).ConfigureAwait(false);
+        validate?.Invoke(results);
+        return results;
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<TResult> SendAndConvertAsync<TCommand, TResult>(
         string operation, RespireConnection connection, TCommand command,
-        ResponseConverter<ScriptCommands, TResult> convert, CancellationToken cancellationToken)
+        ResponseConverter<ScriptCommands, TResult> convert, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         where TCommand : struct, IRespCommand
     {
-        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
-        try
-        {
-            using var reply = await client.SendToClusterTargetAsync(operation, connection, command, cancellationToken,
-                observeErrors: false, observation: observation).ConfigureAwait(false);
-            return convert(this, in reply);
-        }
-        catch (Exception error)
-        {
-            observation.Final(error);
-            throw;
-        }
+        using var reply = await client.SendToClusterTargetAsync(operation, connection, command, cancellationToken,
+            observeErrors: false, observation: observation).ConfigureAwait(false);
+        return convert(this, in reply);
     }
 }

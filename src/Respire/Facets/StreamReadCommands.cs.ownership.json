@@ -14,6 +14,21 @@
       "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
     }
   ],
-  "Boundaries": [],
+  "Boundaries": [
+    {
+      "Name": "stream-continuous-read",
+      "Role": "final",
+      "Member": "Respire.StreamCommands.ReadContinuouslyAsync((RespireKeyKey,RespireStreamIdAfter)[],int,CancellationToken):IAsyncEnumerable<RespireStreamReadEntry>",
+      "Owner": "Respire.StreamCommands.ReadContinuouslyAsync((RespireKeyKey,RespireStreamIdAfter)[],int,CancellationToken):IAsyncEnumerable<RespireStreamReadEntry>",
+      "Contract": "Begin iterator ownership before cursor copies, initial $ resolution, command construction and cancellation. All pages and recovery attempts borrow its failure-only lease; release after page cleanup or early iterator disposal. Initial resolution failures are final without recovery."
+    },
+    {
+      "Name": "stream-iterator-final-inspection",
+      "Role": "final",
+      "Member": "Respire.StreamCommands.FinishReadIterator(DispatchResponseSource<bool>,Exception?):void",
+      "Owner": "Respire.StreamCommands.FinishReadIterator(DispatchResponseSource<bool>,Exception?):void",
+      "Contract": "Complete iterator ownership in finally after all borrowed page conversion and cleanup. Publish a caller-visible failure once; successful enumeration and early disposal return the dispatch source without renting error observation storage."
+    }
+  ],
   "NonRoutes": []
 }

@@ -68,7 +68,7 @@ internal static class RawCommandKeyLayouts
         // the typed session queues rather than ordinary deferred raw execution.
         AddPrefixable(LayoutKind.First, "HIMPORT SET");
         Add(LayoutKind.None,
-            "PING", "ECHO", "TIME");
+            "PING", "ECHO", "TIME", "PUBLISH");
         Add(LayoutKind.First,
             "GET", "SET", "GETSET", "SETNX", "SETEX", "PSETEX", "GETDEL",
             "GETEX", "APPEND", "STRLEN", "GETRANGE", "SETRANGE", "INCR", "INCRBY", "DELEX", "DELIFEQ",
@@ -80,7 +80,7 @@ internal static class RawCommandKeyLayouts
             "RPOP", "LLEN", "LRANGE", "LINDEX", "LSET", "LINSERT", "LREM",
             "LTRIM", "LPOS", "SADD", "SREM", "SCARD", "SMEMBERS", "SISMEMBER",
             "SMISMEMBER", "SPOP", "SRANDMEMBER", "ZADD", "ZREM", "ZCARD", "ZSCORE",
-            "ZMSCORE", "ZINCRBY", "ZCOUNT", "ZLEXCOUNT", "ZRANGE", "ZREVRANGE", "ZRANGEBYSCORE",
+            "ZMSCORE", "ZINCRBY", "ZCOUNT", "ZLEXCOUNT", "ZSCAN", "ZRANGE", "ZREVRANGE", "ZRANGEBYSCORE",
             "ZREVRANGEBYSCORE", "ZRANGEBYLEX", "ZREVRANGEBYLEX", "ZRANK", "ZREVRANK", "ZREMRANGEBYRANK", "ZREMRANGEBYSCORE",
             "ZREMRANGEBYLEX", "ZPOPMIN", "ZPOPMAX", "ZRANDMEMBER", "GETBIT", "SETBIT", "BITCOUNT",
             "BITPOS", "BITFIELD", "BITFIELD_RO", "PFADD", "GEOADD", "GEODIST", "GEOHASH",

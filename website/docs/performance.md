@@ -9,6 +9,9 @@ import ComparisonBarChart from '@site/src/components/ComparisonBarChart';
 
 Respire is designed to make the default path fast under real concurrency, without requiring performance-specific application APIs.
 
+For per-attempt ownership limits and the pinned public-command comparison after streaming
+state-machine pooling, see [transport write evidence](./guides/transport-write-evidence).
+
 ## Automatic pipelining
 
 Concurrent callers write commands into shared buffers. A persistent flush loop coalesces available work into fewer socket writes, while a FIFO inflight ring matches responses to awaiting callers.

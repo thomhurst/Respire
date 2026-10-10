@@ -58,10 +58,11 @@ internal sealed class CorrectionCoordinator(ClientCore core)
 
     internal Task<bool> EnqueueFencedAsync(
         CorrectionFence fence, Func<CancellationToken, ValueTask> correct,
-        TimeSpan attemptTimeout, CleanupRetryPolicy retry, Action<string, string> onAbandoned)
+        TimeSpan attemptTimeout, CleanupRetryPolicy retry, Action<string, string> onAbandoned,
+        Action<Exception>? onFenceFailure = null)
         => EnqueueAsync(async cancellationToken =>
         {
-            var ordered = await fence.TryAsync(attemptTimeout, cancellationToken).ConfigureAwait(false);
+            var ordered = await fence.TryAsync(attemptTimeout, cancellationToken, onFenceFailure).ConfigureAwait(false);
             if (ordered != CleanupAttemptResult.Succeeded) return ordered;
             return await AttemptAsync(core, correct, attemptTimeout, cancellationToken).ConfigureAwait(false);
         }, null, retry, reason => onAbandoned(fence.IsAcknowledged ? "release" : "fence", reason));
@@ -218,9 +219,23 @@ internal sealed class CorrectionFence(
         }
     }
 
-    internal ValueTask<CleanupAttemptResult> TryAsync(TimeSpan timeout, CancellationToken stopping = default)
-        => IsAcknowledged ? new(CleanupAttemptResult.Succeeded)
-            : CorrectionCoordinator.AttemptAsync(owner, EnsureAsync, timeout, stopping, () => IsAcknowledged);
+    internal ValueTask<CleanupAttemptResult> TryAsync(TimeSpan timeout, CancellationToken stopping = default,
+        Action<Exception>? onFailure = null)
+    {
+        if (IsAcknowledged) return new(CleanupAttemptResult.Succeeded);
+        if (onFailure is null)
+            return CorrectionCoordinator.AttemptAsync(owner, EnsureAsync, timeout, stopping, () => IsAcknowledged);
+        return CorrectionCoordinator.AttemptAsync(owner, (Fence: this, OnFailure: onFailure),
+                static async (state, token) =>
+                {
+                    try { await state.Fence.EnsureAsync(token).ConfigureAwait(false); }
+                    catch (Exception error)
+                    {
+                        state.OnFailure?.Invoke(error);
+                        throw;
+                    }
+                }, timeout, stopping, () => IsAcknowledged);
+    }
 }
 
 internal readonly record struct CleanupRetryPolicy(TimeSpan Limit, TimeSpan InitialDelay, TimeSpan MaximumDelay);

@@ -2,7 +2,7 @@
   <PropertyGroup>
     <PackageId>Respire.StackExchangeCompat</PackageId>
     <Title>Respire.StackExchangeCompat</Title>
-    <Description>Binary-safe StackExchange.Redis value interop for incremental migration to native Respire APIs.</Description>
+    <Description>Binary-safe StackExchange.Redis interop and limited database compatibility for the official distributed cache and DataProtection integrations.</Description>
     <PackageTags>$(PackageTags);stackexchange;interop</PackageTags>
   </PropertyGroup>
   <ItemGroup>

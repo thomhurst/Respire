@@ -24,9 +24,11 @@ public partial class RespireHybridCacheCoherenceTests
         await writeCache.SetAsync(key, "old", LongLived);
         await Assert.That(await ReadAsync(readCache, key)).IsEqualTo("old");
         var cleanup = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         memory.OnRemove = () =>
         {
             cleanup.TrySetResult();
+            release.Task.WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
             throw new InvalidOperationException("invalidation memory cleanup failed");
         };
         try
@@ -34,6 +36,11 @@ public partial class RespireHybridCacheCoherenceTests
             await writeCache.SetAsync(key, "new", LongLived);
             await cleanup.Task.WaitAsync(TimeSpan.FromSeconds(10));
             await UntilAsync(() => coherent.ObservationCount == 0);
+            await Assert.That(coherent.HasPendingRetirementCleanup).IsTrue();
+            release.TrySetResult();
+            // Logical retirement precedes cleanup. Finish the injected failure before
+            // provider disposal, which must propagate failures from drains it joins.
+            await UntilAsync(() => !coherent.HasPendingRetirementCleanup);
             memory.OnRemove = null;
             await Assert.That(coherent.TrackingClient.IsConnected).IsTrue();
             await coherent.TrackingClient.PingAsync();
@@ -42,7 +49,12 @@ public partial class RespireHybridCacheCoherenceTests
             await UntilAsync(() => coherent.ObservationCount == 0);
             await Assert.That(await ReadAsync(readCache, key)).IsEqualTo("later");
         }
-        finally { memory.OnRemove = null; }
+        finally
+        {
+            release.TrySetResult();
+            memory.OnRemove = null;
+            await UntilAsync(() => !coherent.HasPendingRetirementCleanup);
+        }
     }
 
     [Test]

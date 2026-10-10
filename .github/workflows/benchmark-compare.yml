@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       event-base-sha:
-        description: Full event base SHA, retained for provenance; baseline is the merge's first parent
+        description: Full event base SHA, retained for provenance; default control is the merge's first parent
         required: true
         type: string
       candidate-sha:
@@ -14,6 +14,10 @@ on:
       expected-head-sha:
         description: Full PR head SHA, which must be the candidate's second parent
         required: true
+        type: string
+      control-sha:
+        description: Optional full historical control SHA; otherwise use the merge's first parent
+        default: ''
         type: string
       fixture:
         description: Candidate C# fixture under benchmarks/Respire.Benchmarks, copied unchanged to the baseline
@@ -86,7 +90,7 @@ jobs:
         framework: [net10.0]
     services:
       redis:
-        image: ${{ inputs.redis-server && 'redis:8.10@sha256:2c2dff791878316e3b083188be0d578423b24813cdda5de0e80ea4f7b3e6bfd6' || '' }}
+        image: ${{ inputs.redis-server && 'mirror.gcr.io/library/redis:8.10@sha256:2c2dff791878316e3b083188be0d578423b24813cdda5de0e80ea4f7b3e6bfd6' || '' }}
         ports: ['6379:6379']
         options: >-
           --health-cmd "redis-cli ping"
@@ -94,9 +98,12 @@ jobs:
           --health-timeout 3s
           --health-retries 10
     env:
+      REDIS_HOST: ${{ inputs.redis-server && '127.0.0.1' || '' }}
+      REDIS_PORT: 6379
       EVENT_BASE_SHA: ${{ inputs.event-base-sha }}
       HEAD_SHA: ${{ inputs.candidate-sha }}
       EXPECTED_HEAD_SHA: ${{ inputs.expected-head-sha }}
+      CONTROL_SHA: ${{ inputs.control-sha }}
       FIXTURE: ${{ inputs.fixture }}
       BENCH_FILTER: ${{ inputs.filter }}
       BENCH_JOB: ${{ inputs.job }}
@@ -109,6 +116,24 @@ jobs:
       RETAINED_MEMORY_STAGES: ${{ inputs.retained-memory-stages }}
       LARGE_SET_STRESS: ${{ inputs.large-set-stress }}
     steps:
+      # Load infrastructure from the workflow revision, independently of benchmark source revisions.
+      - name: Checkout Docker mirror action
+        id: docker-mirror-checkout
+        if: runner.os == 'Linux' && runner.environment == 'github-hosted'
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: docker-mirror
+          sparse-checkout: .github/actions/docker-hub-mirror
+          persist-credentials: false
+      - name: Use Docker Hub mirror
+        if: runner.os == 'Linux' && runner.environment == 'github-hosted' && steps.docker-mirror-checkout.outcome == 'success'
+        uses: ./docker-mirror/.github/actions/docker-hub-mirror
+      - name: Warn if Docker mirror action could not be loaded
+        if: steps.docker-mirror-checkout.outcome == 'failure'
+        shell: bash
+        run: echo '::warning::Could not load Docker mirror action; pulls go straight to Docker Hub'
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: |
@@ -131,12 +156,14 @@ jobs:
           parents = subprocess.check_output(['git', '-C', 'candidate', 'show', '-s', '--format=%P', 'HEAD'], text=True).split()
           assert len(parents) == 2, 'Candidate must be a two-parent PR merge'
           assert parents[1] == os.environ['EXPECTED_HEAD_SHA'], 'Wrong PR head'
+          control = os.environ['CONTROL_SHA'] or parents[0]
+          assert re.fullmatch(r'[0-9a-f]{40}', control), 'A pinned full control SHA is required'
           with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
-              print('baseline-sha=' + parents[0], file=stream)
+              print('baseline-sha=' + control, file=stream)
           with open(os.environ['GITHUB_ENV'], 'a') as stream:
-              print('BASE_SHA=' + parents[0], file=stream)
+              print('BASE_SHA=' + control, file=stream)
           with open('revisions.log', 'w') as stream:
-              print('merge=' + actual, 'baseline=' + parents[0],
+              print('merge=' + actual, 'baseline=' + control, 'merge-base=' + parents[0],
                     'head=' + parents[1], 'event-base=' + os.environ['EVENT_BASE_SHA'], sep='\n', file=stream)
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

@@ -188,6 +188,40 @@ new RespireFailoverCandidate(new RespireOptions
 }, Priority: 0);
 ```
 
+## Maintenance notifications
+
+Each candidate can opt into [maintenance notifications](../fundamentals/connections.md#maintenance-notifications)
+with `MaintenanceNotifications = RespireMaintenanceNotificationMode.Auto` or `Enabled` on
+its `RespireOptions`. `Enabled` requires RESP3 and server support; `Auto` tolerates servers
+that do not support the negotiation command.
+
+`MOVING` replaces connections inside that candidate's client. The group keeps the same
+`ActiveClient` and does not raise `EndpointSwitched` for the handoff. The candidate's command
+timeouts use its `MaintenanceRelaxedTimeout` during maintenance, as they do outside a group.
+Caller cancellation tokens still apply.
+
+For a candidate that has already passed a health probe, the group postpones probes while a
+maintenance window is active. A probe that fails after a window starts does not increment
+`ConsecutiveFailures`, open the group's circuit, or restart its failback grace period. This
+includes `FAILING_OVER`, `MIGRATING`, and `MOVING`. Maintenance cannot establish initial health
+or recover a candidate that is already unhealthy.
+Cluster slot migrations (`SMIGRATING` and `SMIGRATED`) retain command timeout relaxation but
+do not postpone health probes or suppress their failures. A slot migration cannot extend a
+handoff's probe suppression after the handoff completes.
+
+Windows remain observable after a socket closes or is replaced. `FAILED_OVER` and `MIGRATED`
+end their matching windows; overlapping windows must all finish before probes resume.
+Missing completions expire after the candidate's `MaintenanceWindowTimeout`. A `MOVING`
+window uses the smaller of its announced grace period and that timeout. Once windows end,
+normal health probes and circuit policy resume, so a real outage still switches deployments.
+An outage during an announced window can therefore take longer to detect. Window state is
+bounded to 256 connections per candidate; under greater concurrent maintenance, overflow
+retains a finite expiry and can delay resumption until that expiry even after completion.
+
+For standalone candidates, status and switch telemetry retain the configured deployment
+endpoint while `ActiveClient` uses the handoff target. This preserves the member's identity
+across its physical connection changes.
+
 ## Metrics
 
 The group records these instruments on the `Respire` meter:

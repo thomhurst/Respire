@@ -12,8 +12,8 @@ public sealed partial class RespireClient
         RespireTelemetry.ErrorObservation observation = default, bool observeErrors = true)
         where TCommand : struct, IRespCommand
     {
-        var ownsObservation = observation.IsEmpty;
-        if (observation.IsEmpty) observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        var owner = observation.IsEmpty ? DispatchResponseSource<RespValue>.Start() : null;
+        if (owner is not null) observation = owner.Observation;
         var callerAttempts = observation.Attempts;
         RespireConnection? connection = null;
         Exception? failure = null;
@@ -24,14 +24,14 @@ public sealed partial class RespireClient
             var cluster = _core.Cluster;
             var slot = command.TryGetClusterSlot(out var value) ? value : (int?)null;
             connection = cluster is null
-                ? await _core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken).ConfigureAwait(false)
+                ? await _core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken, observation).ConfigureAwait(false)
                 : await cluster.GetReadConnectionAsync(slot, _readFrom, cancellationToken, observation: observation).ConfigureAwait(false);
             // Selection belongs to the caller, before either independently owned hedge leg starts.
             callerAttempts = observation.Attempts;
             budget.RecordRead();
             // Either leg can outlive the caller. Its lease stays with that leg's FIFO reply,
             // while the caller copies the completed result leg's attempts into its own lease.
-            race.OriginalObservation = RespireTelemetry.ErrorObservation.Rent(force: true);
+            race.OriginalOwner = DispatchResponseSource<RespValue>.Start();
             // Advisory cached-topology check only: do not establish optional connections before
             // starting the original request. A newly discovered peer can serve a later read.
             if (!budget.HasCredit || !(cluster is null
@@ -94,7 +94,7 @@ public sealed partial class RespireClient
                     {
                         sent = true;
                         RespireTelemetry.RecordHedgeSent(alternative);
-                        race.HedgeObservation = RespireTelemetry.ErrorObservation.Rent(force: true);
+                        race.HedgeOwner = DispatchResponseSource<RespValue>.Start();
                         try
                         {
                             race.Hedge = SendHedgedReadLegAsync(operation, snapshot, alternative, flags, cancellationToken,
@@ -122,10 +122,10 @@ public sealed partial class RespireClient
         {
             race.DisposeLosers();
             if (connection is not null) RespireTelemetry.RecordHedgeExtraLoad(connection, sent);
-            if (ownsObservation)
+            if (owner is not null)
             {
-                if (observeErrors && failure is not null) observation.Final(failure);
-                observation.Dispose();
+                if (observeErrors && failure is not null) owner.Fail(failure);
+                else owner.CompleteInternal();
             }
         }
     }

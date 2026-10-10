@@ -1,0 +1,20 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "upload-dispatch-owner",
+      "Role": "final",
+      "Member": "Respire.RespireClient.SendStreamedUploadAsync`1(string,TCommand,CancellationToken,bool,RespireTelemetry.ErrorObservation):ValueTask<RespValue>",
+      "Owner": "Respire.RespireClient.SendStreamedUploadAsync`1(string,TCommand,CancellationToken,bool,RespireTelemetry.ErrorObservation):ValueTask<RespValue>",
+      "Contract": "Start failure-only ownership before preflight when no caller supplies it. Otherwise borrow the enclosing typed owner through acquisition, source reads, retries, reply parsing and mutation/lease cleanup. Successful uploads rent no error observation storage."
+    },
+    {
+      "Name": "upload-cluster-borrower",
+      "Role": "borrower",
+      "Member": "Respire.RespireClient.SendStreamedUploadClusterAsync`1(string,ClusterRouter,TCommand,CancellationToken,bool,RespireTelemetry.OperationStart,RespireTelemetry.ErrorObservation):ValueTask<RespValue>",
+      "Owner": "Respire.RespireClient.SendStreamedUploadAsync`1(string,TCommand,CancellationToken,bool,RespireTelemetry.ErrorObservation):ValueTask<RespValue>",
+      "Contract": "Borrow upload ownership through discovery, MOVED/ASK, retirement, replay reset and dedicated connection cleanup. Preserve completed retry counts."
+    }
+  ],
+  "NonRoutes": []
+}

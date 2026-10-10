@@ -406,6 +406,12 @@ public sealed record RespireVectorSearchRequest(string Field, ReadOnlyMemory<byt
 /// <param name="Limit">Maximum number of fused results.</param>
 public sealed record RespireHybridSearchQuery(RespireSearchExpression TextExpression, string VectorField, ReadOnlyMemory<byte> Vector, int K, int Limit = 10)
 {
+    /// <summary>Number of fused results to skip.</summary>
+    public int Skip { get; init; }
+
+    /// <summary>Optional escaped expression applied before vector ranking. Apply it to the text expression too when both legs require filtering.</summary>
+    public RespireSearchExpression? VectorFilter { get; init; }
+
     /// <summary>Reciprocal-rank-fusion constant.</summary>
     public int RrfConstant { get; init; } = 60;
 
@@ -431,6 +437,8 @@ public sealed record RespireHybridSearchQuery(RespireSearchExpression TextExpres
         if (Vector.IsEmpty) throw new ArgumentException("Vector bytes are required.", nameof(Vector));
         if (K <= 0) throw new ArgumentOutOfRangeException(nameof(K));
         if (Limit < 0) throw new ArgumentOutOfRangeException(nameof(Limit));
+        if (Skip < 0) throw new ArgumentOutOfRangeException(nameof(Skip));
+        VectorFilter?.RequireValid(nameof(VectorFilter));
         if (RrfConstant <= 0) throw new ArgumentOutOfRangeException(nameof(RrfConstant));
         if (RrfWindow is <= 0) throw new ArgumentOutOfRangeException(nameof(RrfWindow));
         if (TimeoutMilliseconds is <= 0) throw new ArgumentOutOfRangeException(nameof(TimeoutMilliseconds));
@@ -448,12 +456,18 @@ public sealed record RespireHybridSearchQuery(RespireSearchExpression TextExpres
             2,
             "K",
             K,
-            "COMBINE",
-            "RRF",
-            RrfWindow is null ? 2 : 4,
-            "CONSTANT",
-            RrfConstant,
         };
+        if (VectorFilter is { } filter)
+        {
+            args.Add("FILTER");
+            args.Add(1);
+            args.Add(filter.Value);
+        }
+        args.Add("COMBINE");
+        args.Add("RRF");
+        args.Add(RrfWindow is null ? 2 : 4);
+        args.Add("CONSTANT");
+        args.Add(RrfConstant);
         if (RrfWindow is { } window)
         {
             args.Add("WINDOW");
@@ -461,7 +475,7 @@ public sealed record RespireHybridSearchQuery(RespireSearchExpression TextExpres
         }
 
         args.Add("LIMIT");
-        args.Add(0);
+        args.Add(Skip);
         args.Add(Limit);
         if (LoadFields.Count > 0)
         {

@@ -14,6 +14,7 @@ public sealed partial class RespireFakeServer
         internal SortedDictionary<RespireStreamId, byte[][]> Entries { get; } = [];
         internal Dictionary<byte[], FakeStreamGroup> Groups { get; } = new(BinaryKeyComparer.Instance);
         internal RespireStreamId Last = new("0-0");
+        internal long EntriesAdded;
         internal int Duration = 100;
         internal int MaxSize = 100;
         internal Dictionary<byte[], List<StreamIdentity>> Producers { get; } = new(BinaryKeyComparer.Instance);
@@ -80,6 +81,7 @@ public sealed partial class RespireFakeServer
         internal byte[] Consumer = consumer;
         internal long DeliveredAt = deliveredAt;
         internal long DeliveryCount = 1;
+        internal bool IsReleased;
     }
 
     private sealed record StreamRequest(byte[]? Group, byte[]? Consumer, long Count, long MaxCount,
@@ -146,6 +148,7 @@ public sealed partial class RespireFakeServer
         else id = explicitId;
         if (id <= stream.Last) return FakeReply.Error("ERR The ID specified in XADD is equal or smaller than the target stream top item");
         stream.Entries.Add(id, args[(index + 1)..]);
+        stream.EntriesAdded++;
         stream.Last = id;
         if (idempotency is { } insert)
         {
@@ -239,7 +242,7 @@ public sealed partial class RespireFakeServer
                 : request.Ids[i] == RespireStreamId.New ? stream.Last : request.Ids[i];
             using var candidates = stream.Entries.Where(entry => entry.Key > cursor
                 && (!history || group!.Pending.TryGetValue(entry.Key, out var pending)
-                    && pending.Consumer.AsSpan().SequenceEqual(request.Consumer))).GetEnumerator();
+                    && !pending.IsReleased && pending.Consumer.AsSpan().SequenceEqual(request.Consumer))).GetEnumerator();
             var hasEntry = candidates.MoveNext();
             if (group is not null && (history || hasEntry)) group.Consumers.Add(request.Consumer!);
             if (!hasEntry && !history) continue;
@@ -298,7 +301,8 @@ public sealed partial class RespireFakeServer
         var pending = group.Pending.OrderBy(entry => entry.Key).ToArray();
         if (args.Length == 3)
         {
-            var consumers = group.Pending.Values.GroupBy(entry => entry.Consumer, BinaryKeyComparer.Instance)
+            var consumers = group.Pending.Values.Where(entry => !entry.IsReleased)
+                .GroupBy(entry => entry.Consumer, BinaryKeyComparer.Instance)
                 .OrderBy(entries => entries.Key, StreamConsumerOrder)
                 .Select(entries => FakeReply.Array([FakeReply.Bulk(entries.Key),
                     FakeReply.Text(entries.Count().ToString(CultureInfo.InvariantCulture))])).ToArray();
@@ -326,11 +330,11 @@ public sealed partial class RespireFakeServer
         return FakeReply.Array(pending.Where(entry =>
             (start.Exclusive ? entry.Key > start.Id : entry.Key >= start.Id)
             && (end.Exclusive ? entry.Key < end.Id : entry.Key <= end.Id)
-            && Math.Max(0, Now - entry.Value.DeliveredAt) >= minIdle
-            && (consumer is null || entry.Value.Consumer.AsSpan().SequenceEqual(consumer)))
+            && (entry.Value.IsReleased || Math.Max(0, Now - entry.Value.DeliveredAt) >= minIdle)
+            && (consumer is null || !entry.Value.IsReleased && entry.Value.Consumer.AsSpan().SequenceEqual(consumer)))
             .Take((int)Math.Min(count, int.MaxValue))
             .Select(entry => FakeReply.Array([FakeReply.Text(entry.Key.ToString()), FakeReply.Bulk(entry.Value.Consumer),
-                FakeReply.Integer(Math.Max(0, Now - entry.Value.DeliveredAt)), FakeReply.Integer(entry.Value.DeliveryCount)]))
+                FakeReply.Integer(entry.Value.IsReleased ? -1 : Math.Max(0, Now - entry.Value.DeliveredAt)), FakeReply.Integer(entry.Value.DeliveryCount)]))
             .ToArray());
     }
 
@@ -345,10 +349,9 @@ public sealed partial class RespireFakeServer
 
     private static long? EstimateStreamEntriesRead(FakeStream stream, RespireStreamId id)
     {
-        // This fake does not support deleting/trimming entries, so the first and last
-        // boundaries are sufficient for Redis's logical-counter estimate.
-        if (stream.Entries.Count == 0) return 0;
-        if (id == stream.Last) return stream.Entries.Count;
+        if (stream.EntriesAdded == 0) return 0;
+        if (id == stream.Last) return stream.EntriesAdded;
+        if (stream.Entries.Count == 0 || stream.EntriesAdded != stream.Entries.Count) return null;
         var first = stream.Entries.First().Key;
         if (id < first) return 0;
         return id == first ? 1 : null;
@@ -370,7 +373,7 @@ public sealed partial class RespireFakeServer
                 FakeReply.Text("last-delivered-id"), FakeReply.Text(group.Last.ToString()),
                 FakeReply.Text("entries-read"), group.EntriesRead is { } read ? FakeReply.Integer(read) : FakeReply.Null,
                 FakeReply.Text("lag"), entriesRead is { } logicalCount
-                    ? FakeReply.Integer(stream.Entries.Count - logicalCount) : FakeReply.Null];
+                    ? FakeReply.Integer(stream.EntriesAdded - logicalCount) : FakeReply.Null];
             return connection.Resp3 ? FakeReply.Map(fields) : FakeReply.Array(fields);
         }).ToArray());
     }

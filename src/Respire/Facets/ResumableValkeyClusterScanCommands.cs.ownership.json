@@ -1,0 +1,20 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "resumable-clusterscan-attempts",
+      "Role": "borrower",
+      "Member": "Respire.KeyCommands.SendValkeyScanWithRedirectsAsync(ClusterScanState,ScanTopology,ScanNode,string,ValkeyClusterScanCommand,int,bool,CancellationToken,ScanRecovery):ValueTask<ValkeyScanReply>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Pinned sends, ASK/MOVED recovery and unsupported-command fallbacks share the enclosing page's failure-only lease. Handled failures increment retries once; successful attempts retain the empty lease."
+    },
+    {
+      "Name": "resumable-clusterscan-conversion",
+      "Role": "helper",
+      "Member": "Respire.KeyCommands.ApplyValkeyScanPageAsync(ClusterScanState,ValkeyScanReply,int,bool,string?,CancellationToken,ClusterRouter.DiscoveryRound?,RespireTelemetry.ErrorObservation):ValueTask<RespireClusterScanPage>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "The enclosing page owns strict cursor decoding, key parsing, pass certification, cancellation, checkpoint construction and response disposal before final caller inspection."
+    }
+  ],
+  "NonRoutes": []
+}

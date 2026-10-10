@@ -1,0 +1,13 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "cluster-cursor-read-selection",
+      "Role": "borrower",
+      "Member": "Respire.Internal.ReadCursorAffinity.GetClusterConnectionAsync(ClusterRouter,int,RespireReadFrom,ReadAffinity?,bool,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<RespireConnection>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Cursor reselection borrows the logical caller and cannot publish a second final failure."
+    }
+  ],
+  "NonRoutes": []
+}

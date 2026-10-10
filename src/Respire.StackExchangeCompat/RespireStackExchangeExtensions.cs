@@ -4,7 +4,7 @@ using StackExchange.Redis;
 namespace Respire.StackExchangeCompat;
 
 /// <summary>Converts StackExchange.Redis boundary values for incremental native API migration.</summary>
-/// <remarks>This package does not yet implement StackExchange.Redis client interfaces.</remarks>
+/// <remarks>For the limited official cache and DataProtection adapter, see <see cref="RespireConnectionMultiplexer"/>.</remarks>
 public static class RespireStackExchangeExtensions
 {
     /// <summary>Converts a non-null key without decoding binary content.</summary>

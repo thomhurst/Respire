@@ -95,24 +95,27 @@ public sealed partial class RespireClient
     }
 
     private ValueTask<RespValue> SendBlockingOnConnectionAsync<TCommand>(
-        RespireConnection connection, TCommand command, CancellationToken cancellationToken, int errorAttempts = 0)
+        RespireConnection connection, TCommand command, CancellationToken cancellationToken, int errorAttempts = 0,
+        RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
         => _core.Circuits is not null
-            ? SendCircuitBlockingAsync(connection, command, cancellationToken, errorAttempts)
-            : connection.SendWithoutResponseTimeoutAsync(command, cancellationToken, errorAttempts);
+            ? SendCircuitBlockingAsync(connection, command, cancellationToken, errorAttempts, observation)
+            : connection.SendWithoutResponseTimeoutAsync(command, cancellationToken, errorAttempts, observation: observation);
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
     private async ValueTask<RespValue> SendCircuitBlockingAsync<TCommand>(
-        RespireConnection connection, TCommand command, CancellationToken cancellationToken, int errorAttempts)
+        RespireConnection connection, TCommand command, CancellationToken cancellationToken, int errorAttempts,
+        RespireTelemetry.ErrorObservation observation)
         where TCommand : struct, IRespCommand
     {
         connection.ThrowIfRetired();
         var admission = AcquireCircuit(connection, cancellationToken);
         try
         {
-            var response = await connection.SendWithoutResponseTimeoutAsync(command, cancellationToken, errorAttempts).ConfigureAwait(false);
+            var response = await connection.SendWithoutResponseTimeoutAsync(command, cancellationToken, errorAttempts,
+                observation: observation).ConfigureAwait(false);
             admission.Success();
             return response;
         }

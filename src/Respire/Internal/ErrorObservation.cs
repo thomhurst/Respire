@@ -9,15 +9,19 @@ namespace Respire.Internal;
 internal static class ErrorObservation
 {
     private static readonly ObjectPool<Observation, PoolPolicy> Pool = new(32);
+    // Allocation measurements cannot detect reuse of warmed pooled observations.
+    // Tests opt in; normal rentals never update a shared diagnostic counter.
+    internal static Action? RentalObserverForTests;
 
     internal static FinalOwner StartFailure(int retryAttempts = 0)
     {
         var observation = Pool.Rent();
+        Volatile.Read(ref RentalObserverForTests)?.Invoke();
         lock (observation.Gate)
         {
             observation.Generation = unchecked(observation.Generation + 1);
             observation.References = 1;
-            observation.RetryAttempts = retryAttempts;
+            observation.RetryAttempts = Math.Max(0, retryAttempts);
             observation.FinalPublished = false;
             return new(new Lease(observation, observation.Generation));
         }
@@ -50,6 +54,7 @@ internal static class ErrorObservation
 
         internal Borrower Borrow() => new(_lease?.Borrow());
         internal bool RecordHandled(Exception error) => _lease?.RecordHandled(error) ?? false;
+        internal bool RecordRetry() => _lease?.RecordRetry() ?? false;
         internal bool PublishFinal(Exception error) => _lease?.PublishFinal(error) ?? false;
         internal void Complete() => _lease?.Complete();
     }
@@ -89,7 +94,7 @@ internal static class ErrorObservation
         internal void SetRetryAttempts(int retryAttempts)
         {
             lock (observation.Gate)
-                if (IsOpen) observation.RetryAttempts = Math.Max(0, retryAttempts);
+                if (IsOpen) ErrorPublication.SetAttempts(ref observation.RetryAttempts, observation.FinalPublished, retryAttempts);
         }
 
         internal Lease? Borrow()
@@ -112,13 +117,21 @@ internal static class ErrorObservation
             lock (observation.Gate)
             {
                 if (!IsOpen) return false;
-                retryAttempts = observation.RetryAttempts;
-                if (observation.RetryAttempts < int.MaxValue) observation.RetryAttempts++;
+                if (!ErrorPublication.TryRecordHandled(ref observation.RetryAttempts, observation.FinalPublished, out retryAttempts)) return false;
             }
             // Never invoke an exporter while holding the ownership gate. The captured count
             // remains this event's count even if another retry, final inspection or reuse wins.
             RespireTelemetry.RecordError(error, internallyHandled: true, retryAttempts);
             return true;
+        }
+
+        internal bool RecordRetry()
+        {
+            lock (observation.Gate)
+            {
+                if (!IsOpen) return false;
+                return ErrorPublication.TryRecordRetry(ref observation.RetryAttempts, observation.FinalPublished);
+            }
         }
 
         internal bool PublishFinal(Exception error)
@@ -128,8 +141,7 @@ internal static class ErrorObservation
             lock (observation.Gate)
             {
                 if (!IsOpen) return false;
-                observation.FinalPublished = true;
-                retryAttempts = observation.RetryAttempts;
+                if (!ErrorPublication.TryPublishFinal(observation.RetryAttempts, ref observation.FinalPublished, out retryAttempts)) return false;
             }
             RespireTelemetry.RecordError(error, internallyHandled: false, retryAttempts);
             return true;

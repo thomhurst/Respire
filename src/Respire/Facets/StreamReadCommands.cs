@@ -55,11 +55,27 @@ internal sealed partial class StreamCommands
 {
     public ValueTask<RespireStreamEntry[]> ReadAsync(StreamReadOptions options, RespireKey key,
         RespireStreamId after = default, CancellationToken cancellationToken = default)
-        => ReadSingleAsync(BuildObservedReadCommand([(key, after)], options), options.WaitFor.HasValue, cancellationToken);
+    {
+        var owner = DispatchResponseSource<RespireStreamEntry[]>.Start();
+        try
+        {
+            var command = BuildReadCommand(client, [(key, after)], options);
+            return owner.Attach(ReadSingleAsync(command, options.WaitFor.HasValue, cancellationToken, owner.Observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
 
     public ValueTask<RespireStreamReadResult[]> ReadAsync(StreamReadOptions options,
         ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams, CancellationToken cancellationToken = default)
-        => ReadCoreAsync(BuildObservedReadCommand(streams, options), options.WaitFor.HasValue, cancellationToken);
+    {
+        var owner = DispatchResponseSource<RespireStreamReadResult[]>.Start();
+        try
+        {
+            var command = BuildReadCommand(client, streams, options);
+            return owner.Attach(ReadCoreAsync(command, options.WaitFor.HasValue, cancellationToken, owner.Observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
 
     public ValueTask<RespireStreamEntry[]> ReadAsync(RespireKey key, RespireStreamId after = default,
         int? count = null, TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
@@ -69,35 +85,23 @@ internal sealed partial class StreamCommands
         int? count = null, TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
         => ReadAsync(new StreamReadOptions { Count = count, WaitFor = waitFor }, streams, cancellationToken);
 
-    private StreamReadCommand BuildObservedReadCommand(
-        ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams, StreamReadOptions options,
-        string? group = null, string? consumer = null)
-    {
-        try { return BuildReadCommand(client, streams, options, group: group, consumer: consumer); }
-        catch (Exception error)
-        {
-            // Construction cannot retry or submit bytes. Report its final zero-attempt
-            // boundary directly, preserving the existing native converted-reply path.
-            RespireTelemetry.RecordError(error, internallyHandled: false);
-            throw;
-        }
-    }
-
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-    private async ValueTask<RespireStreamEntry[]> ReadSingleAsync(StreamReadCommand command, bool blocking, CancellationToken cancellationToken)
+    private async ValueTask<RespireStreamEntry[]> ReadSingleAsync(StreamReadCommand command, bool blocking,
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
-        var result = await ReadCoreAsync(command, blocking, cancellationToken).ConfigureAwait(false);
+        var result = await ReadCoreAsync(command, blocking, cancellationToken, observation).ConfigureAwait(false);
         return result.Length == 0 ? [] : result[0].Entries;
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-    private async ValueTask<RespireStreamReadResult[]> ReadCoreAsync(StreamReadCommand command, bool blocking, CancellationToken cancellationToken)
+    private async ValueTask<RespireStreamReadResult[]> ReadCoreAsync(StreamReadCommand command, bool blocking,
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         return await (blocking
             ? client.ConvertBlockingResponseAsync("XREAD", command, cancellationToken, client,
-                static (RespireClient owner, in RespValue reply) => ParseStreamRead(in reply, owner))
+                static (RespireClient owner, in RespValue reply) => ParseStreamRead(in reply, owner), observation)
             : client.ConvertResponseAsync("XREAD", command, cancellationToken, client,
-                static (RespireClient owner, in RespValue reply) => ParseStreamRead(in reply, owner)))
+                static (RespireClient owner, in RespValue reply) => ParseStreamRead(in reply, owner), observation: observation))
             .ConfigureAwait(false);
     }
 
@@ -196,6 +200,8 @@ internal sealed partial class StreamCommands
     public IAsyncEnumerable<RespireStreamReadEntry> ReadAllAsync(ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams,
         int batchSize = 64, CancellationToken cancellationToken = default)
     {
+        ErrorObservation.FinalOwner owner = default;
+        Exception? failure = null;
         try
         {
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batchSize);
@@ -203,81 +209,100 @@ internal sealed partial class StreamCommands
         }
         catch (Exception error)
         {
-            RespireTelemetry.RecordError(error, internallyHandled: false);
+            failure = error;
             throw;
         }
+        finally { ErrorObservation.FinishFinal(owner, failure); }
     }
 
     private async IAsyncEnumerable<RespireStreamReadEntry> ReadContinuouslyAsync(
         (RespireKey Key, RespireStreamId After)[] initial, int batchSize,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        // Each enumeration gets private cursors. Never re-evaluate $ after a transport failure.
-        var streams = initial.ToArray();
-        for (var i = 0; i < streams.Length; i++)
+        var owner = DispatchResponseSource<bool>.Start();
+        var observation = owner.Observation;
+        Exception? failure = null;
+        try
         {
-            if (streams[i].After != RespireStreamId.New) continue;
-            var newest = await RangeAsync(streams[i].Key, count: 1, descending: true,
-                cancellationToken: cancellationToken).ConfigureAwait(false);
-            streams[i].After = newest.Length == 0 ? RespireStreamId.Beginning : newest[0].Id;
-        }
-        var indexes = streams.Select((stream, index) => (stream.Key, index)).ToDictionary(x => x.Key, x => x.index);
-        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
-        StreamReadCommand command;
-        try { command = BuildReadCommand(client, streams, batchSize, TimeSpan.FromSeconds(1)); }
-        catch (Exception error) { observation.Final(error); throw; }
-        var failures = 0;
-        while (true)
-        {
-            RespireStreamReadResult[] results;
+            (RespireKey Key, RespireStreamId After)[] streams;
+            Dictionary<RespireKey, int> indexes;
+            StreamReadCommand command;
             try
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                results = await client.ConvertUnobservedResponseAsync("XREAD", command, cancellationToken, client,
-                    static (RespireClient owner, in RespValue reply) => ParseStreamRead(in reply, owner),
-                    observation, blocking: true).ConfigureAwait(false);
-                failures = 0;
+                // Each enumeration gets private cursors. Resolve $ once, under this owner.
+                streams = initial.ToArray();
+                for (var i = 0; i < streams.Length; i++)
+                {
+                    if (streams[i].After != RespireStreamId.New) continue;
+                    var newest = await client.ConvertUnobservedResponseAsync("XREVRANGE",
+                        new Cmd5(Verbs.XRevRange, client.Key(streams[i].Key), "+", "-", "COUNT", 1),
+                        cancellationToken, this,
+                        static (StreamCommands _, in RespValue reply) => ParseEntries(in reply, null, default, null),
+                        observation).ConfigureAwait(false);
+                    streams[i].After = newest.Length == 0 ? RespireStreamId.Beginning : newest[0].Id;
+                }
+                indexes = streams.Select((stream, index) => (stream.Key, index)).ToDictionary(x => x.Key, x => x.index);
+                command = BuildReadCommand(client, streams, batchSize, TimeSpan.FromSeconds(1));
             }
-            catch (Exception error) when (!cancellationToken.IsCancellationRequested && !client.Core.Disposed && CanRetryStreamRead(error))
+            catch (Exception error) { failure = error; throw; }
+            var failures = 0;
+            while (true)
             {
-                observation.Handled(error);
-                var delayMilliseconds = 100 * (1 << Math.Min(failures, 5));
-                failures = Math.Min(failures + 1, 6);
+                RespireStreamReadResult[] results;
                 try
                 {
-                    client.Core.Logger?.StreamReadRetry(delayMilliseconds, error);
-                    await Task.Delay(TimeSpan.FromMilliseconds(delayMilliseconds), cancellationToken).ConfigureAwait(false);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    results = await client.ConvertUnobservedResponseAsync("XREAD", command, cancellationToken, client,
+                        static (RespireClient owner, in RespValue reply) => ParseStreamRead(in reply, owner),
+                        observation, blocking: true).ConfigureAwait(false);
+                    failures = 0;
                 }
-                catch (Exception terminal) { observation.Final(terminal); throw; }
-                continue;
-            }
-            catch (Exception error) { observation.Final(error); throw; }
-            foreach (var result in results)
-            {
-                if (!indexes.TryGetValue(result.Key, out var index))
-                    throw ReportContinuousReadFailure(new RespireProtocolException("XREAD returned an unrequested stream."), observation);
-                foreach (var entry in result.Entries)
+                catch (Exception error) when (!cancellationToken.IsCancellationRequested && !client.Core.Disposed && CanRetryStreamRead(error))
                 {
+                    observation.Handled(error);
+                    var delayMilliseconds = 100 * (1 << Math.Min(failures, 5));
+                    failures = Math.Min(failures + 1, 6);
                     try
                     {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        if (entry.Id <= streams[index].After)
-                            throw new RespireProtocolException("XREAD returned a non-increasing entry id.");
-                        streams[index].After = entry.Id;
-                        command.SetAfter(index, entry.Id);
+                        client.Core.Logger?.StreamReadRetry(delayMilliseconds, error);
+                        await Task.Delay(TimeSpan.FromMilliseconds(delayMilliseconds), cancellationToken).ConfigureAwait(false);
                     }
-                    catch (Exception error) { observation.Final(error); throw; }
-                    yield return new RespireStreamReadEntry(result.Key, entry);
+                    catch (Exception terminal) { failure = terminal; throw; }
+                    continue;
+                }
+                catch (Exception error) { failure = error; throw; }
+                foreach (var result in results)
+                {
+                    if (!indexes.TryGetValue(result.Key, out var index))
+                    {
+                        failure = new RespireProtocolException("XREAD returned an unrequested stream.");
+                        throw failure;
+                    }
+                    foreach (var entry in result.Entries)
+                    {
+                        try
+                        {
+                            cancellationToken.ThrowIfCancellationRequested();
+                            if (entry.Id <= streams[index].After)
+                                throw new RespireProtocolException("XREAD returned a non-increasing entry id.");
+                            streams[index].After = entry.Id;
+                            command.SetAfter(index, entry.Id);
+                        }
+                        catch (Exception error) { failure = error; throw; }
+                        yield return new RespireStreamReadEntry(result.Key, entry);
+                    }
                 }
             }
         }
+        finally { FinishReadIterator(owner, failure); }
     }
 
-    private static RespireProtocolException ReportContinuousReadFailure(
-        RespireProtocolException error, RespireTelemetry.ErrorObservation observation)
+    private static void FinishReadIterator(DispatchResponseSource<bool> owner, Exception? failure)
     {
-        observation.Final(error);
-        return error;
+        // No caller-facing ValueTask escapes an iterator. Return the dispatch owner after
+        // page cleanup, including early disposal; only failures rent observation storage.
+        if (failure is not null) owner.Fail(failure);
+        else _ = owner.Attach(new ValueTask<bool>(true)).GetAwaiter().GetResult();
     }
 
     private static bool CanRetryStreamRead(Exception error)

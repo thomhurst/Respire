@@ -3,6 +3,7 @@ using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Respire.Commands;
 using Respire.Internal;
+using Respire.Networking;
 using Respire.Protocol;
 
 namespace Respire;
@@ -230,7 +231,10 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
             {
                 if (candidate is null) throw new ArgumentException("Failover candidates cannot contain null entries.", nameof(candidates));
                 ArgumentNullException.ThrowIfNull(candidate.Options);
-                var snapshot = candidate.Options.ValidateAndSnapshot();
+                var snapshot = candidate.Options.ValidateAndSnapshot() with
+                {
+                    FailoverMaintenance = new FailoverMaintenanceWindows(),
+                };
                 if (snapshot.ReconnectPolicy is { MaxAttempts: not null })
                 {
                     throw new RespireConfigurationException(
@@ -393,11 +397,17 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
 
     private async Task ProbeAsync(CandidateState candidate, CancellationToken cancellationToken)
     {
-        if (!candidate.TryAcquireProbe(out var permit)) return;
-        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        var owner = DispatchResponseSource<bool>.Start();
+        CircuitPermit permit = default;
         var outcome = CircuitOutcome.Ignored;
         try
         {
+            // Capture before checking the window so a complete handoff between these reads is retained.
+            var maintenanceGeneration = candidate.MaintenanceGeneration;
+            // Maintenance keeps the existing health decision; it cannot establish initial health.
+            if (candidate.IsHealthy && candidate.HasMaintenanceWindow) return;
+            if (!candidate.TryAcquireProbe(out permit)) return;
+            var observation = owner.Observation;
             cancellationToken.ThrowIfCancellationRequested();
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(_options.ProbeTimeout);
@@ -426,6 +436,10 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
             catch (Exception error)
             {
                 observation.Handled(error);
+                // A handoff can start and finish before the failed probe completes. Preserve that
+                // overlap rather than treating its stale failure as a deployment failure.
+                if (candidate.IsHealthy && (candidate.HasMaintenanceWindow
+                    || candidate.MaintenanceGeneration != maintenanceGeneration)) return;
                 outcome = candidate.MarkFailed(error, _clock.GetUtcNow(), _options, openCircuit: permit.ProbeSlot >= 0);
                 // Start the open period before synchronous observers can delay completion.
                 // Complete clears the permit, so the finally guard remains safe for earlier exceptions.
@@ -455,7 +469,8 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         }
         finally
         {
-            candidate.CompleteProbe(ref permit, outcome);
+            try { candidate.CompleteProbe(ref permit, outcome); }
+            finally { owner.CompleteInternal(); }
         }
     }
 
@@ -686,6 +701,8 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         private string? _lastErrorType;
 
         public RespireClient Client { get; } = client;
+        public bool HasMaintenanceWindow => Client.Core.Options.FailoverMaintenance?.IsActive == true;
+        public long MaintenanceGeneration => Client.Core.Options.FailoverMaintenance?.Generation ?? 0;
         public string? SentinelPrimaryName { get; } = sentinelPrimaryName;
         public bool IsSentinel => Client.Core.Sentinel is not null;
         /// <summary>Configured standalone endpoint or Cluster seeds; empty for a Sentinel candidate.</summary>

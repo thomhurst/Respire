@@ -9,6 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Hangfire.Redis.StackExchange" Version="1.12.0" />
     <PackageReference Include="Aspire.Respire" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Aspire.Respire.DistributedCaching" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Aspire.Respire.HybridCaching" Version="$(RespirePackageVersion)" />
@@ -35,9 +36,12 @@
     <PackageReference Include="Respire.Json" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.OutputCaching" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Search" Version="$(RespirePackageVersion)" />
+    <PackageReference Include="Respire.VectorData" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.TimeSeries" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Probabilistic" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="10.0.12" />
+    <PackageReference Include="Microsoft.AspNetCore.DataProtection.StackExchangeRedis" Version="10.0.12" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.12" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.12" />
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.19.1" />
@@ -46,6 +50,8 @@
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <Compile Include="$(GeneratedSnippetsPath)" Link="GeneratedSnippets.g.cs" />
+    <Compile Include="../../samples/Respire.Samples.VectorData/Movie.cs" Link="VectorDataMovie.cs" />
+    <Compile Include="../../samples/Respire.Samples.VectorData/JsonMovie.cs" Link="VectorDataJsonMovie.cs" />
   </ItemGroup>
 
   <Target Name="RecordExpectedRuntimeAssemblies" BeforeTargets="GetAssemblyAttributes">

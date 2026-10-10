@@ -1,0 +1,20 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "cluster-scan-page-recovery",
+      "Role": "borrower",
+      "Member": "Respire.KeyCommands.ScanClusterPageBorrowedAsync(RespireClusterScanCursor,string?,RespireKeyType?,int,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<RespireClusterScanPage>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "The public page starts its failure-only owner before checkpoint preflight. Recovery shares retry history through metadata, capability probes, pinned sends, cursor construction, reply cleanup and discovery completion. Recovered retirement is internal."
+    },
+    {
+      "Name": "cluster-scan-page-core",
+      "Role": "helper",
+      "Member": "Respire.KeyCommands.ScanClusterPageCoreAsync(RespireClusterScanCursor,string?,RespireKeyType?,int,CancellationToken,ScanRecovery):ValueTask<RespireClusterScanPage>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Validate and copy the checkpoint, parse legacy SCAN, and certify the pass inside the caller's page owner. Pinned transport and metadata never publish a second final error."
+    }
+  ],
+  "NonRoutes": []
+}

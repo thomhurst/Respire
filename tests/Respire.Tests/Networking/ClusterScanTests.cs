@@ -1,4 +1,6 @@
 using System.Text;
+using System.Collections.Concurrent;
+using System.Diagnostics.Metrics;
 using System.Reflection;
 using System.Threading.Channels;
 using Respire.Commands;
@@ -136,14 +138,17 @@ public class ClusterScanTests
     }
 
     [Test]
+    [NotInParallel]
     [Arguments(false)]
     [Arguments(true)]
     public async Task EnumerableBacksOffUntilMigrationSettlesOrCallerCancels(bool cancel)
     {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
         await using var cluster = new ScanCluster();
         cluster.First.Transitions = "[0->-second]";
         cluster.Second.Transitions = "[0-<-first]";
         await using var client = await cluster.ConnectAsync();
+        using var capture = new ScanErrorCapture();
         var clock = new ScanClock();
         var keys = new KeyCommands(client, clock);
         using var cancellation = new CancellationTokenSource();
@@ -163,8 +168,10 @@ public class ClusterScanTests
                 {
                     var commands = cluster.CommandCount;
                     cancellation.Cancel();
-                    await Assert.That(async () => await next.WaitAsync(TimeSpan.FromSeconds(10)))
+                    var error = await Assert.That(async () => await next.WaitAsync(TimeSpan.FromSeconds(10)))
                         .Throws<OperationCanceledException>();
+                    await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
+                    await AssertFinalCancellation(capture, error.GetType());
                     await Assert.That(cluster.CommandCount).IsEqualTo(commands);
                     return;
                 }
@@ -177,6 +184,69 @@ public class ClusterScanTests
         await Assert.That(enumerator.Current).IsEqualTo(KeyInSlot(0));
         await Assert.That(await enumerator.MoveNextAsync()).IsFalse();
         await Assert.That(clock.Created).IsEqualTo(5);
+        await Assert.That(capture.Items).IsEmpty();
+    }
+
+    [Test]
+    [NotInParallel]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task EnumerableCancellationBetweenKeysCountsOnce(bool abandon)
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        await using var cluster = new ScanCluster();
+        cluster.First.Scan = _ => Page("0", KeyInSlot(0), KeyInSlot(1));
+        await using var client = await cluster.ConnectAsync();
+        using var capture = new ScanErrorCapture();
+        using var cancellation = new CancellationTokenSource();
+        var enumerator = client.Keys.ScanAsync(cancellationToken: cancellation.Token).GetAsyncEnumerator();
+        try
+        {
+            await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
+            var commands = cluster.CommandCount;
+            cancellation.Cancel();
+            if (!abandon)
+            {
+                var error = await Assert.That(async () => _ = await enumerator.MoveNextAsync())
+                    .Throws<OperationCanceledException>();
+                await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
+            }
+            await Assert.That(cluster.CommandCount).IsEqualTo(commands);
+        }
+        finally { await enumerator.DisposeAsync(); }
+        if (abandon) await Assert.That(capture.Items).IsEmpty();
+        else await AssertFinalCancellation(capture, typeof(OperationCanceledException));
+    }
+
+    private static async Task AssertFinalCancellation(ScanErrorCapture capture, Type errorType)
+    {
+        var item = capture.Items.Single();
+        await Assert.That(item["error.type"]).IsEqualTo(errorType.FullName);
+        await Assert.That((bool)item["redis.client.errors.internal"]!).IsFalse();
+        await Assert.That(item["redis.client.operation.retry_attempts"]).IsEqualTo(0);
+    }
+
+    private sealed class ScanErrorCapture : IDisposable
+    {
+        private readonly MeterListener _listener = new();
+        internal ConcurrentQueue<Dictionary<string, object?>> Items { get; } = new();
+
+        internal ScanErrorCapture()
+        {
+            _listener.InstrumentPublished = (instrument, listener) =>
+            {
+                if (instrument.Meter.Name == "Respire" && instrument.Name == "redis.client.errors")
+                    listener.EnableMeasurementEvents(instrument);
+            };
+            _listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+            {
+                Items.Enqueue(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value));
+                throw new InvalidOperationException("Listener failure must remain isolated.");
+            });
+            _listener.Start();
+        }
+
+        public void Dispose() => _listener.Dispose();
     }
 
     [Test]

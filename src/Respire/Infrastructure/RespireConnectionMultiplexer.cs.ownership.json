@@ -1,0 +1,13 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "internal-replica-reconnect",
+      "Role": "internal",
+      "Member": "Respire.Infrastructure.RespireConnectionMultiplexer.ReconnectAsync(int,int,TimeSpan):Task",
+      "Owner": null,
+      "Contract": "Background reconnect counts each failure once after rejected replacement cleanup. Disable nested establishment observation and retain the existing reconnect attempt count."
+    }
+  ],
+  "NonRoutes": []
+}

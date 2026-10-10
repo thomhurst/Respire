@@ -7,7 +7,11 @@
         "PopAsync(ReadOnlySpan<RespireKey>,TimeSpan,ListSide,CancellationToken):ValueTask<RespireListPopResult?>",
         "PopManyAsync(ReadOnlySpan<RespireKey>,long,ListSide,TimeSpan?,CancellationToken):ValueTask<RespireListPopManyResult?>"
       ],
-      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
+      "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner. These migrated entries retain the failure-only dispatch owner through preflight, conversion and cleanup; synchronous construction failure completes its Fail boundary.",
+      "Overrides": {
+        "PopAsync(ReadOnlySpan<RespireKey>,TimeSpan,ListSide,CancellationToken):ValueTask<RespireListPopResult?>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "PopManyAsync(ReadOnlySpan<RespireKey>,long,ListSide,TimeSpan?,CancellationToken):ValueTask<RespireListPopManyResult?>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult"
+      }
     }
   ],
   "Boundaries": [],

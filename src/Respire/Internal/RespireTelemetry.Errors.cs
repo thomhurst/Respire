@@ -28,6 +28,38 @@ internal static partial class RespireTelemetry
     // Bound the cache independently of caller-supplied counts; larger counts retain their exact value.
     private static readonly object[] ErrorRetryCounts = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
 
+    // A physical close can fail handshake selection before that candidate is discarded.
+    // Remember only failure identities, weakly, so selection can retain logical retries
+    // without publishing the same physical failure twice. Successful routes never touch this.
+    private static class ConnectionErrorMarkers
+    {
+        internal static readonly ConditionalWeakTable<Exception, object> Table = new();
+        internal static readonly object Marker = new();
+    }
+
+    internal static void MarkConnectionError(Exception error)
+    {
+        try { ConnectionErrorMarkers.Table.GetValue(error, static _ => ConnectionErrorMarkers.Marker); }
+        catch (Exception) { /* Observation must preserve the original failure. */ }
+    }
+
+    internal static bool IsObservedConnectionError(Exception error)
+    {
+        try
+        {
+            for (var depth = 0; depth < 16; depth++)
+            {
+                if (ConnectionErrorMarkers.Table.TryGetValue(error, out _)) return true;
+                var cause = error is RespireException respire ? respire.ErrorCause
+                    : error is AggregateException { InnerExceptions.Count: 1 } aggregate ? aggregate.InnerExceptions[0] : null;
+                if (cause is null) return false;
+                error = cause;
+            }
+        }
+        catch (Exception) { /* Observation must preserve the original failure. */ }
+        return false;
+    }
+
     internal static bool ErrorsEnabled
     {
         get
@@ -46,6 +78,7 @@ internal static partial class RespireTelemetry
     internal readonly struct ErrorObservation : IDisposable
     {
         private static readonly ObjectPool<ObservationState, Policy> Pool = new(4096);
+        internal static Action? RentalObserverForTests;
         private readonly ObservationState? _state;
         private readonly long _generation;
         private readonly IDispatchObservation? _dispatch;
@@ -64,6 +97,16 @@ internal static partial class RespireTelemetry
 
         internal bool IsEmpty => _state is null && _dispatch is null;
 
+        internal bool IsOpen
+        {
+            get
+            {
+                if (_dispatch is not null) return _dispatch.IsOpen(_generation);
+                if (_state is null) return false;
+                lock (_state.Gate) return _state.Active && _state.Generation == _generation && !_state.Final;
+            }
+        }
+
         internal int Attempts
         {
             get
@@ -79,6 +122,7 @@ internal static partial class RespireTelemetry
         {
             if (!force && !ErrorsEnabled) return default;
             var state = Pool.Rent();
+            Volatile.Read(ref RentalObserverForTests)?.Invoke();
             lock (state.Gate)
             {
                 state.Generation = unchecked(state.Generation + 1);
@@ -89,17 +133,20 @@ internal static partial class RespireTelemetry
             }
         }
         internal void Handled(Exception error)
+            => _ = TryHandled(error);
+
+        internal bool TryHandled(Exception error)
         {
-            if (_dispatch is not null) { _dispatch.Handled(_generation, error); return; }
-            if (_state is null) return;
+            if (_dispatch is not null) return _dispatch.Handled(_generation, error);
+            if (_state is null) return false;
             int attempt;
             lock (_state.Gate)
             {
-                if (!IsActive(_state)) return;
-                attempt = _state.Attempts;
-                _state.Attempts = unchecked(attempt + 1);
+                if (!IsActive(_state)) return false;
+                if (!ErrorPublication.TryRecordHandled(ref _state.Attempts, _state.Final, out attempt)) return false;
             }
             RecordError(error, internallyHandled: true, attempt);
+            return true;
         }
         internal void Final(Exception error)
         {
@@ -109,9 +156,7 @@ internal static partial class RespireTelemetry
             int attempts;
             lock (_state.Gate)
             {
-                if (!IsActive(_state) || _state.Final) return;
-                _state.Final = true;
-                attempts = _state.Attempts;
+                if (!IsActive(_state) || !ErrorPublication.TryPublishFinal(_state.Attempts, ref _state.Final, out attempts)) return;
             }
             RecordError(error, internallyHandled: false, attempts);
         }
@@ -123,8 +168,18 @@ internal static partial class RespireTelemetry
             lock (_state.Gate)
             {
                 if (!IsActive(_state)) return;
-                _state.Attempts = Math.Max(0, attempts);
+                ErrorPublication.SetAttempts(ref _state.Attempts, _state.Final, attempts);
             }
+        }
+
+        // A socket can already own this failure's internal event. Retain the caller's
+        // retry without publishing again, atomically with parallel selection borrowers.
+        internal void Retry()
+        {
+            if (_dispatch is not null) { _dispatch.Retry(_generation); return; }
+            if (_state is null) return;
+            lock (_state.Gate)
+                if (IsActive(_state)) ErrorPublication.TryRecordRetry(ref _state.Attempts, _state.Final);
         }
 
         // Called under the storage gate, so validation and mutation cannot race a return/re-rent.

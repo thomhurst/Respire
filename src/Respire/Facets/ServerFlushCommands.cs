@@ -1,4 +1,5 @@
 using Respire.Commands;
+using Respire.Internal;
 
 namespace Respire;
 
@@ -23,18 +24,34 @@ internal sealed partial class ServerCommands
     private static readonly Verb FlushAllAsyncVerb = new(-1, "FLUSHALL", "ASYNC");
 
     public ValueTask FlushDatabaseAsync(ServerFlushMode mode, CancellationToken cancellationToken)
-        => FlushAsync("FLUSHDB", FlushVerb(false, mode), cancellationToken);
+    {
+        var owner = DispatchResponseSource<bool>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            return DispatchResponseSource.Complete(owner.Attach(FlushAsync("FLUSHDB", FlushVerb(false, mode), cancellationToken, observation: observation)));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
 
     public ValueTask FlushAllAsync(ServerFlushMode mode, CancellationToken cancellationToken)
-        => FlushAsync("FLUSHALL", FlushVerb(true, mode), cancellationToken);
+    {
+        var owner = DispatchResponseSource<bool>.Start();
+        var observation = owner.Observation;
+        try
+        {
+            return DispatchResponseSource.Complete(owner.Attach(FlushAsync("FLUSHALL", FlushVerb(true, mode), cancellationToken, observation: observation)));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
 
-    private ValueTask FlushAsync(string operation, Verb verb, CancellationToken cancellationToken)
+    private ValueTask<bool> FlushAsync(string operation, Verb verb, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
     {
         EnsureAdminAllowed(operation);
         var command = new Cmd(verb);
         return client.Core.Cluster is null
-            ? client.OkAsync(operation, command, cancellationToken)
-            : FlushClusterAsync(operation, command, cancellationToken);
+            ? client.OkResultAsync(operation, command, cancellationToken, observation: observation)
+            : DispatchResponseSource.Await(FlushClusterAsync(operation, command, cancellationToken, observation: observation));
     }
 
     internal static Verb FlushVerb(bool allDatabases, ServerFlushMode mode) => (allDatabases, mode) switch

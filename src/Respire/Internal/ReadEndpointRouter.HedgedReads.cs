@@ -15,12 +15,28 @@ internal sealed partial class ReadEndpointRouter
     internal async ValueTask<RespireConnection?> GetHedgeConnectionAsync(RespireReadFrom readFrom,
         RespireConnection original, CancellationToken cancellationToken)
     {
+        var owner = DispatchResponseSource<bool>.Start();
+        try
+        {
+            return await GetHedgeConnectionCoreAsync(readFrom, original, cancellationToken, owner.Observation).ConfigureAwait(false);
+        }
+        catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
+        {
+            owner.Observation.Handled(error);
+            throw;
+        }
+        finally { owner.CompleteInternal(); }
+    }
+
+    private async ValueTask<RespireConnection?> GetHedgeConnectionCoreAsync(RespireReadFrom readFrom,
+        RespireConnection original, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+    {
         ThrowIfDisposed();
         if (readFrom == RespireReadFrom.Primary) return null;
         var endpoints = await GetReplicaEndpointsAsync(cancellationToken, waitForUnknown: false).ConfigureAwait(false);
         try
         {
-            var selected = await GetReplicaFromEndpointsAsync(endpoints, cancellationToken, readFrom, original).ConfigureAwait(false);
+            var selected = await GetReplicaFromEndpointsAsync(endpoints, cancellationToken, readFrom, original, observation: observation).ConfigureAwait(false);
             if (selected.Replica is { } replica
                 ? IsCurrent(replica) && replica.IsRoleEligible(selected.Connection)
                 : ReferenceEquals(selected.Primary, Core.Multiplexer)) return selected.Connection;

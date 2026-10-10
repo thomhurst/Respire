@@ -1089,7 +1089,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// <summary>Sends an intentionally blocking command without applying the receive watchdog
     /// or the command deadline (a BLPOP-style wait may legitimately outlast both).</summary>
     internal async ValueTask<RespValue> SendWithoutResponseTimeoutAsync<TCommand>(
-        TCommand command, CancellationToken cancellationToken = default, int errorAttempts = 0, bool pinToConnection = false)
+        TCommand command, CancellationToken cancellationToken = default, int errorAttempts = 0, bool pinToConnection = false,
+        RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
     {
         Interlocked.Increment(ref _responseTimeoutSuppressions);
@@ -1097,7 +1098,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             return await SendCoreAsync(
                     in command, discardRepliesBefore: 0, throwOnError: false, cancellationToken,
-                    commandName: null, armCommandDeadline: false, errorAttempts: errorAttempts, pinToConnection: pinToConnection)
+                    commandName: null, armCommandDeadline: false, errorAttempts: errorAttempts, pinToConnection: pinToConnection,
+                    observation: observation)
                 .ConfigureAwait(false);
         }
         finally
@@ -1128,6 +1130,30 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             Interlocked.Decrement(ref _responseTimeoutSuppressions);
         }
+    }
+
+    // Blocking ASK must retain the ASKING error and drain both replies. Its logical
+    // caller owns final inspection; native response metadata keeps a retry-count copy.
+    internal async ValueTask<RespValue> SendValidatedPrefixedWithoutResponseTimeoutAsync<TPrefix, TCommand>(
+        TPrefix prefix, TCommand command, CancellationToken cancellationToken,
+        int errorAttempts = 0, bool pinToConnection = false,
+        RespireTelemetry.ErrorObservation observation = default)
+        where TPrefix : struct, IRespCommand
+        where TCommand : struct, IRespCommand
+    {
+        if (_inflight.Capacity < 2)
+            throw new InvalidOperationException(
+                $"A validated prefixed command needs 2 in-flight slots, but this connection allows {_inflight.Capacity}.");
+        Interlocked.Increment(ref _responseTimeoutSuppressions);
+        try
+        {
+            return await SendMultiReplyCoreAsync(
+                new PrefixedCommand<TPrefix, TCommand>(prefix, command, _cacheMutationAdmission),
+                repliesBeforeFinal: 1, firstQueueReply: 0, cancellationToken, "(command)",
+                pinToConnection: pinToConnection, observation: observation, errorAttempts: errorAttempts,
+                armCommandDeadline: false).ConfigureAwait(false);
+        }
+        finally { Interlocked.Decrement(ref _responseTimeoutSuppressions); }
     }
 
     /// <summary>Sends a command and translates a RESP error reply when its result is consumed.</summary>
@@ -1635,10 +1661,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         CommandDeadline commandDeadline = default,
         string? preferredZone = null,
         bool pinToConnection = false, RespireTelemetry.ErrorObservation observation = default, int errorAttempts = 0,
-        CommandWriteObservation? writeObservation = null)
+        CommandWriteObservation? writeObservation = null, bool armCommandDeadline = true)
         where TCommand : struct, IRespCommand
     {
-        if (!commandDeadline.IsSet) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
+        if (!commandDeadline.IsSet && armCommandDeadline) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
         var replyCount = repliesBeforeFinal + 1;
         var source = MultiReplyPendingResponseSource.Rent(replyCount, firstQueueReply, commandName);
         source.ErrorAttempts = (observation.IsEmpty ? errorAttempts : observation.Attempts);
@@ -1659,7 +1685,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             else observation.Handled(error);
             return target.SendMultiReplyCoreAsync(in command, repliesBeforeFinal,
                 firstQueueReply, cancellationToken, commandName, cancellationTimeout, callerCancellationToken,
-                rerouted, preferredZone, pinToConnection, observation, errorAttempts + 1, writeObservation);
+                rerouted, preferredZone, pinToConnection, observation, errorAttempts + 1, writeObservation, armCommandDeadline);
         }
         catch
         {
@@ -1672,7 +1698,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             return SendMultiReplySlowAsync(
                 command, source, repliesBeforeFinal, firstQueueReply, replyCount, cancellationToken,
                 commandName, cancellationTimeout, callerCancellationToken, commandDeadline, preferredZone, pinToConnection,
-                observation, errorAttempts, writeObservation);
+                observation, errorAttempts, writeObservation, armCommandDeadline);
         }
 
         source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
@@ -1747,6 +1773,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             commandName, armCommandDeadline, commandDeadline, pinToConnection, preferredZone, observation, errorAttempts, writeObservation);
     }
 
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
     private async ValueTask<RespValue> SendStreamingCoreAsync<TCommand>(
         TCommand command, CancellationToken cancellationToken, CommandDeadline commandDeadline, bool pinToConnection,
         bool allowConnectionReroute, DedicatedStreamRoute streamingRoute, bool throwOnError,
@@ -2257,7 +2286,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         TimeSpan? cancellationTimeout, CancellationToken callerCancellationToken,
         CommandDeadline commandDeadline, string? preferredZone,
         bool pinToConnection, RespireTelemetry.ErrorObservation observation, int errorAttempts,
-        CommandWriteObservation? writeObservation = null)
+        CommandWriteObservation? writeObservation = null, bool armCommandDeadline = true)
         where TCommand : struct, IRespCommand
     {
         bool startedBatch;
@@ -2294,7 +2323,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             else observation.Handled(error);
             return await target.SendMultiReplyCoreAsync(in command, repliesBeforeFinal,
                 firstQueueReply, cancellationToken, commandName, cancellationTimeout, callerCancellationToken,
-                rerouted, preferredZone, pinToConnection, observation, errorAttempts + 1, writeObservation).ConfigureAwait(false);
+                rerouted, preferredZone, pinToConnection, observation, errorAttempts + 1, writeObservation, armCommandDeadline).ConfigureAwait(false);
         }
         catch
         {
@@ -3950,6 +3979,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 return false;
             }
 
+            // Publish physical observation ownership before failed writers or handshake
+            // waiters can reach a candidate fallback on another thread.
+            if (observeErrors && reason is not null and not RespireConnectionRetiredException)
+                RespireTelemetry.MarkConnectionError(reason);
             _dead = true;
             _abortReason = reason;
             // The flush loop owns an in-progress send: it completes that buffer when the socket
@@ -4033,7 +4066,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             return new RespireConnectionClosedBeforeSendException($"Connection to {Host}:{Port} is closed.", null);
         }
 
-        return reason switch
+        Exception failure = reason switch
         {
             RespireAuthenticationException authentication => MarkNotSubmitted(authentication),
             RespireReconnectLimitException reconnectLimit => MarkNotSubmitted(reconnectLimit),
@@ -4042,6 +4075,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 => new RespireConnectionClosedBeforeSendException(connection.Message, connection.InnerException),
             _ => new RespireConnectionClosedBeforeSendException(reason.Message, reason),
         };
+
+        // Keep physical observation ownership on the per-command copy. A handshake
+        // can enqueue its next step after the receive loop has already closed the socket.
+        if (RespireTelemetry.IsObservedConnectionError(reason))
+            RespireTelemetry.MarkConnectionError(failure);
+        return failure;
     }
 
     private static RespireAuthenticationException MarkNotSubmitted(RespireAuthenticationException reason)
@@ -4261,6 +4300,7 @@ internal sealed record RespireConnectionOptions
     internal RespireMaintenanceNotificationMode MaintenanceNotifications { get; init; }
     internal TimeSpan MaintenanceRelaxedTimeout { get; init; } = TimeSpan.FromSeconds(30);
     internal TimeSpan MaintenanceWindowTimeout { get; init; } = TimeSpan.FromSeconds(60);
+    internal FailoverMaintenanceWindows? FailoverMaintenance { get; init; }
 
     /// <summary>
     /// Receives out-of-band frames on connections built from these options (see

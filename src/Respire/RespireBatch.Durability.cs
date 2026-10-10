@@ -28,14 +28,22 @@ public sealed partial class RespireBatch
     public ValueTask<long> ExecuteAndWaitForReplicationAsync(
         int replicas, TimeSpan timeout, CancellationToken cancellationToken = default)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(replicas);
-        var command = new Cmd2(WaitVerb, replicas, DurabilityTimeoutMilliseconds(timeout));
-        return ExecuteWithAcknowledgementAsync("WAIT", command, static value =>
+        try
         {
-            var count = ResponseReader.Integer(in value);
-            if (count < 0) throw new RespireProtocolException("WAIT returned a negative replica count.");
-            return count;
-        }, cancellationToken);
+            ArgumentOutOfRangeException.ThrowIfNegative(replicas);
+            var command = new Cmd2(WaitVerb, replicas, DurabilityTimeoutMilliseconds(timeout));
+            return ExecuteWithAcknowledgementAsync("WAIT", command, static value =>
+            {
+                var count = ResponseReader.Integer(in value);
+                if (count < 0) throw new RespireProtocolException("WAIT returned a negative replica count.");
+                return count;
+            }, cancellationToken);
+        }
+        catch (Exception error)
+        {
+            ErrorObservation.FinishFinal(default, error);
+            throw;
+        }
     }
 
     /// <summary>Executes this batch and then WAITAOF on the same dedicated connection. Redis 7.2+.</summary>
@@ -48,18 +56,26 @@ public sealed partial class RespireBatch
     public ValueTask<RespireAofAcknowledgement> ExecuteAndWaitForAofAsync(
         bool requireLocal, int replicas, TimeSpan timeout, CancellationToken cancellationToken = default)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(replicas);
-        var command = new Cmd3(WaitAofVerb, requireLocal ? 1 : 0, replicas, DurabilityTimeoutMilliseconds(timeout));
-        return ExecuteWithAcknowledgementAsync("WAITAOF", command, static value =>
+        try
         {
-            var counts = value.AsArray();
-            if (counts.Length != 2) throw new RespireProtocolException("WAITAOF must return two acknowledgement counts.");
-            var local = ResponseReader.Integer(in counts[0]);
-            var replicaCount = ResponseReader.Integer(in counts[1]);
-            if (local is < 0 or > 1 || replicaCount < 0)
-                throw new RespireProtocolException("WAITAOF returned invalid acknowledgement counts.");
-            return new RespireAofAcknowledgement(local, replicaCount);
-        }, cancellationToken);
+            ArgumentOutOfRangeException.ThrowIfNegative(replicas);
+            var command = new Cmd3(WaitAofVerb, requireLocal ? 1 : 0, replicas, DurabilityTimeoutMilliseconds(timeout));
+            return ExecuteWithAcknowledgementAsync("WAITAOF", command, static value =>
+            {
+                var counts = value.AsArray();
+                if (counts.Length != 2) throw new RespireProtocolException("WAITAOF must return two acknowledgement counts.");
+                var local = ResponseReader.Integer(in counts[0]);
+                var replicaCount = ResponseReader.Integer(in counts[1]);
+                if (local is < 0 or > 1 || replicaCount < 0)
+                    throw new RespireProtocolException("WAITAOF returned invalid acknowledgement counts.");
+                return new RespireAofAcknowledgement(local, replicaCount);
+            }, cancellationToken);
+        }
+        catch (Exception error)
+        {
+            ErrorObservation.FinishFinal(default, error);
+            throw;
+        }
     }
 
     private static long DurabilityTimeoutMilliseconds(TimeSpan timeout)
@@ -142,23 +158,18 @@ public sealed partial class RespireBatch
             }
             finally
             {
-                try
-                {
-                    if (operationError is not null)
-                    {
-                        var pendingErrors = false;
-                        foreach (var op in _ops) pendingErrors |= op.ReportError();
-                        if (!pendingErrors) RespireTelemetry.RecordError(operationError, internallyHandled: false);
-                    }
-                    if (connection is null && operationError is not null)
-                        RespireTelemetry.RecordUnroutedBatchFailure(operation, _ops, static op => op.Operation,
-                            core.Options.Database, started, operationError,
-                            endpoint: pool?.Endpoint ?? (core.Cluster is null && core.Sentinel is null
-                                ? core.Multiplexer.ActiveConnectionEndpoint : (RespireEndpoint?)null));
-                    telemetry.Complete(core, telemetryOperation, error: operationError, connection: connection,
-                        batchSize: _ops.Count == 1 ? null : _ops.Count);
-                }
-                finally { cache?.CompleteMutation(in mutationFence); }
+                cache?.CompleteMutation(in mutationFence);
+                var pendingErrors = false;
+                foreach (var op in _ops) pendingErrors |= op.ReportError();
+                if (operationError is not null && !pendingErrors)
+                    ErrorObservation.FinishFinal(default, operationError);
+                if (connection is null && operationError is not null)
+                    RespireTelemetry.RecordUnroutedBatchFailure(operation, _ops, static op => op.Operation,
+                        core.Options.Database, started, operationError,
+                        endpoint: pool?.Endpoint ?? (core.Cluster is null && core.Sentinel is null
+                            ? core.Multiplexer.ActiveConnectionEndpoint : (RespireEndpoint?)null));
+                telemetry.Complete(core, telemetryOperation, error: operationError, connection: connection,
+                    batchSize: _ops.Count == 1 ? null : _ops.Count);
             }
         }
     }
@@ -192,7 +203,7 @@ public sealed partial class RespireBatch
         {
             // Execution has not begun. Report the caller's rejection without completing or
             // reporting queued results that never reached transport.
-            RespireTelemetry.RecordError(error, internallyHandled: false);
+            ErrorObservation.FinishFinal(default, error);
             throw;
         }
     }
