@@ -186,52 +186,60 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             observation.Outcome = await DeadLetterAsync(delivery, consumer, "delivery-limit", "").ConfigureAwait(false);
             return;
         }
-        await using var scope = scopeFactory.CreateAsyncScope();
-        var handler = scope.ServiceProvider.GetRequiredService<THandler>();
-        RespireStreamWorkerResult result;
-        var reason = "nack";
-        var failureType = "";
+        var scope = scopeFactory.CreateAsyncScope();
         try
         {
-            result = await handler.HandleAsync(deserialize(delivery.Entry), _handlers.Token).ConfigureAwait(false);
-            if (result is not (RespireStreamWorkerResult.Ack or RespireStreamWorkerResult.Nack or RespireStreamWorkerResult.DeadLetter))
-                throw new InvalidOperationException("The stream handler returned an unknown completion result.");
-            if (result == RespireStreamWorkerResult.DeadLetter && options.DeadLetterStream is null)
-                throw new InvalidOperationException("DeadLetter completion requires a configured dead-letter stream.");
-        }
-        catch (OperationCanceledException) when (_handlers.IsCancellationRequested)
-        { observation.Outcome = "canceled"; return; }
-        catch (Exception error)
-        {
-            observation.ProcessingFailed = true;
-            // Exception messages may contain payloads. Do not pass them to the logger by default.
-            var exceptionType = error.GetType();
-            failureType = exceptionType.FullName ?? exceptionType.Name;
-            HandlerFailed(logger, failureType);
-            reason = "processing-failed";
-            result = RespireStreamWorkerResult.Nack;
-        }
+            var handler = scope.ServiceProvider.GetRequiredService<THandler>();
+            RespireStreamWorkerResult result;
+            var reason = "nack";
+            var failureType = "";
+            try
+            {
+                result = await handler.HandleAsync(deserialize(delivery.Entry), _handlers.Token).ConfigureAwait(false);
+                if (result is not (RespireStreamWorkerResult.Ack or RespireStreamWorkerResult.Nack or RespireStreamWorkerResult.DeadLetter))
+                    throw new InvalidOperationException("The stream handler returned an unknown completion result.");
+                if (result == RespireStreamWorkerResult.DeadLetter && options.DeadLetterStream is null)
+                    throw new InvalidOperationException("DeadLetter completion requires a configured dead-letter stream.");
+            }
+            catch (OperationCanceledException) when (_handlers.IsCancellationRequested)
+            { observation.Outcome = "canceled"; return; }
+            catch (Exception error)
+            {
+                observation.ProcessingFailed = true;
+                // Exception messages may contain payloads. Do not pass them to the logger by default.
+                var exceptionType = error.GetType();
+                failureType = exceptionType.FullName ?? exceptionType.Name;
+                HandlerFailed(logger, failureType);
+                reason = "processing-failed";
+                result = RespireStreamWorkerResult.Nack;
+            }
 
-        if (_handlers.IsCancellationRequested) { observation.Outcome = "canceled"; return; }
-        if (result == RespireStreamWorkerResult.Ack)
-        {
-            // ConsumeAsync treats acknowledgement cancellation as expected only after
-            // readers stop. StopAsync and Dispose must therefore cancel readers first.
-            var acknowledged = await client.Scripts.ExecuteIntegerAsync(options.DeleteAcknowledgedEntries
-                    ? StreamWorkerScripts.AckAndDelete : StreamWorkerScripts.Ack, [stream],
-                [group, consumer, delivery.Entry.Id.Value, delivery.Attempt], _handlers.Token).ConfigureAwait(false);
-            observation.Outcome = acknowledged == 1 ? "ack" : "stale";
+            if (_handlers.IsCancellationRequested) { observation.Outcome = "canceled"; return; }
+            if (result == RespireStreamWorkerResult.Ack)
+            {
+                // ConsumeAsync treats acknowledgement cancellation as expected only after
+                // readers stop. StopAsync and Dispose must therefore cancel readers first.
+                var acknowledged = await client.Scripts.ExecuteIntegerAsync(options.DeleteAcknowledgedEntries
+                        ? StreamWorkerScripts.AckAndDelete : StreamWorkerScripts.Ack, [stream],
+                    [group, consumer, delivery.Entry.Id.Value, delivery.Attempt], _handlers.Token).ConfigureAwait(false);
+                observation.Outcome = acknowledged == 1 ? "ack" : "stale";
+            }
+            else if (result == RespireStreamWorkerResult.DeadLetter)
+                observation.Outcome = await DeadLetterAsync(delivery, consumer, "explicit", "").ConfigureAwait(false);
+            else if (options.DeliveryLimit is { } deliveryLimit && delivery.Attempt >= deliveryLimit)
+                observation.Outcome = await DeadLetterAsync(delivery, consumer, reason, failureType).ConfigureAwait(false);
+            else
+            {
+                await client.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.Nack, [stream],
+                    [group, consumer, delivery.Entry.Id.Value, delivery.Attempt,
+                        (long)Math.Ceiling(options.MinimumIdleTime.TotalMilliseconds)], _handlers.Token).ConfigureAwait(false);
+                observation.Outcome = "nack";
+            }
         }
-        else if (result == RespireStreamWorkerResult.DeadLetter)
-            observation.Outcome = await DeadLetterAsync(delivery, consumer, "explicit", "").ConfigureAwait(false);
-        else if (options.DeliveryLimit is { } deliveryLimit && delivery.Attempt >= deliveryLimit)
-            observation.Outcome = await DeadLetterAsync(delivery, consumer, reason, failureType).ConfigureAwait(false);
-        else
+        finally
         {
-            await client.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.Nack, [stream],
-                [group, consumer, delivery.Entry.Id.Value, delivery.Attempt,
-                    (long)Math.Ceiling(options.MinimumIdleTime.TotalMilliseconds)], _handlers.Token).ConfigureAwait(false);
-            observation.Outcome = "nack";
+            try { await scope.DisposeAsync().ConfigureAwait(false); }
+            catch { observation.CleanupFailed = true; throw; }
         }
     }
 
@@ -263,16 +271,25 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
     public override void Dispose()
     {
         _telemetry.StopPublishing();
-        base.Dispose();
-        CancelHandlers();
-        var running = Volatile.Read(ref _consumerDrain) ?? ExecuteTask;
-        if (running is not { IsCompleted: false })
-            _handlers.Dispose();
-        else
-            _ = running.ContinueWith(static (_, state) => ((CancellationTokenSource)state!).Dispose(), _handlers,
-                CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
-        // External teardown callbacks may block, so cancel and arrange handler cleanup first.
-        _telemetry.Dispose();
+        try
+        {
+            try { base.Dispose(); }
+            finally { CancelHandlers(); }
+        }
+        finally
+        {
+            try
+            {
+                var running = Volatile.Read(ref _consumerDrain) ?? ExecuteTask;
+                if (running is not { IsCompleted: false })
+                    _handlers.Dispose();
+                else
+                    _ = running.ContinueWith(static (_, state) => ((CancellationTokenSource)state!).Dispose(), _handlers,
+                        CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            }
+            // External teardown callbacks may block, so cancel and arrange handler cleanup first.
+            finally { _telemetry.Dispose(); }
+        }
     }
 
     private void CancelHandlers()

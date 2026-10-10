@@ -107,6 +107,41 @@ public partial class StreamWorkerTests
     }
 
     [Test, NotInParallel]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task TelemetryScopeCleanupRetainsAcknowledgementAndReportsFailure(bool cleanupThrows)
+    {
+        using var metrics = new WorkerMetrics();
+        var stopped = new ConcurrentQueue<Activity>();
+        using var tracing = ListenToWorker(stopped.Enqueue);
+        var failure = new InvalidOperationException("private cleanup payload");
+        var state = new State { DisposeScope = () => cleanupThrows
+            ? ValueTask.FromException(failure) : ValueTask.CompletedTask };
+        await using var fixture = await Fixture.CreateAsync(state: state, options: new() { TelemetryName = WorkerName });
+        await fixture.AddAsync(0);
+        await fixture.StartAsync();
+        if (cleanupThrows)
+        {
+            var actual = await Assert.That(async () => await fixture.Service.ExecuteTask!.WaitAsync(Deadline))
+                .ThrowsExactly<InvalidOperationException>();
+            await Assert.That(actual).IsSameReferenceAs(failure);
+        }
+        else
+        {
+            await UntilAsync(() => Task.FromResult(stopped.Count == 1));
+            await fixture.StopAsync();
+            await Assert.That(fixture.Service.ExecuteTask!.IsCompletedSuccessfully).IsTrue();
+        }
+        var activity = stopped.Single();
+        await Assert.That(activity.Status).IsEqualTo(cleanupThrows ? ActivityStatusCode.Error : ActivityStatusCode.Unset);
+        await Assert.That(activity.StatusDescription).IsNull();
+        await Assert.That(activity.GetTagItem("respire.worker.outcome")).IsEqualTo("ack");
+        await Assert.That(metrics.Duration.Single().Tags["respire.worker.outcome"]).IsEqualTo("ack");
+        await Assert.That((await fixture.View.Streams.PendingSummaryAsync("events", "workers")).Count).IsEqualTo(0);
+        await Assert.That(state.DisposedScopes).IsEqualTo(1);
+    }
+
+    [Test, NotInParallel]
     [Arguments("bad", "vendor=value", false)]
     [Arguments("00-00000000000000000000000000000000-0123456789abcdef-01", "vendor=value", false)]
     [Arguments("00-0123456789ABCDEF0123456789ABCDEF-0123456789abcdef-01", "vendor=value", false)]
@@ -519,6 +554,55 @@ public partial class StreamWorkerTests
             release.Set();
             if (disposing is not null) await disposing.WaitAsync(Deadline);
         }
+    }
+
+    [Test, NotInParallel]
+    public async Task TelemetryThrowingHandlerCancellationStillTearsDownResources()
+    {
+        var completed = 0;
+        using var meter = new MeterListener
+        {
+            InstrumentPublished = (instrument, listener) =>
+            {
+                if (instrument.Meter.Name == RespireStreamWorkerTelemetry.MeterName
+                    && instrument.Name == "respire.stream.worker.processing.duration")
+                    listener.EnableMeasurementEvents(instrument);
+            },
+            MeasurementsCompleted = (_, _) => Interlocked.Increment(ref completed),
+        };
+        meter.Start();
+        using var tracing = ListenToWorker(_ => { });
+        var entered = NewSignal();
+        var release = NewSignal();
+        var failure = new InvalidOperationException("callback failure");
+        ActivitySource? source = null;
+        var state = new State { Handle = async (_, token) =>
+        {
+            using var callback = token.Register(() => throw failure);
+            source = Activity.Current!.Source;
+            entered.TrySetResult();
+            await release.Task;
+            return RespireStreamWorkerResult.Ack;
+        } };
+        await using var fixture = await Fixture.CreateAsync(state: state, options: new() { TelemetryName = WorkerName });
+        try
+        {
+            await fixture.AddAsync(0);
+            await fixture.StartAsync();
+            await entered.Task.WaitAsync(Deadline);
+            var actual = await Assert.That(fixture.Service.Dispose).ThrowsExactly<AggregateException>();
+            await Assert.That(actual!.InnerExceptions.Single()).IsSameReferenceAs(failure);
+            await Assert.That(completed).IsEqualTo(1);
+            await Assert.That(source!.HasListeners()).IsFalse();
+            release.TrySetResult();
+            await fixture.Service.ExecuteTask!.WaitAsync(Deadline);
+            await Assert.That(fixture.Service.ExecuteTask.IsCompletedSuccessfully).IsTrue();
+            await Assert.That(state.DisposedScopes).IsEqualTo(1);
+            await Assert.That((await fixture.View.Streams.PendingSummaryAsync("events", "workers")).Count).IsEqualTo(1);
+            fixture.Service.Dispose();
+            await Assert.That(completed).IsEqualTo(1);
+        }
+        finally { release.TrySetResult(); }
     }
 
     [Test, NotInParallel]

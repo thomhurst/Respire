@@ -672,6 +672,7 @@ public partial class StreamWorkerTests
         public int Peak;
         public int DisposedScopes;
         public int WarningCount;
+        public Func<ValueTask>? DisposeScope { get; set; }
         public ConcurrentBag<(string Message, Exception? Exception, KeyValuePair<string, object?>[] Fields)> Warnings { get; } = [];
     }
 
@@ -681,7 +682,7 @@ public partial class StreamWorkerTests
         public ValueTask DisposeAsync()
         {
             Interlocked.Increment(ref state.DisposedScopes);
-            return ValueTask.CompletedTask;
+            return state.DisposeScope?.Invoke() ?? ValueTask.CompletedTask;
         }
     }
 
