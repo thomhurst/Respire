@@ -56,6 +56,14 @@ jobs:
         run: >-
           dotnet run --project tests/Respire.VectorData.Tests -c Release -f ${{ matrix.framework }} --
           --minimum-expected-tests 198 --report-trx --results-directory "$GITHUB_WORKSPACE/TestResults/vector-data"
+      - name: Run the pinned official collection lifecycle suite on both backends and protocols
+        if: matrix.framework == 'net10.0'
+        env:
+          RESPIRE_VECTOR_CONFORMANCE_CONNECTION: redis://127.0.0.1:${{ job.services.redis.ports['6379'] }}
+        run: >-
+          dotnet run --project tests/Respire.VectorData.Conformance.Tests -c Release -f net10.0 --
+          --minimum-expected-tests 24 --fail-skips on --report-xunit-trx
+          --results-directory "$GITHUB_WORKSPACE/TestResults/vector-data-official"
       - name: Install NativeAOT prerequisites
         run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
       - name: Publish native sample with trimming warnings as errors
@@ -70,7 +78,9 @@ jobs:
         if: always()
         with:
           name: vector-data-contracts-${{ matrix.framework }}
-          path: TestResults/vector-data
+          path: |
+            TestResults/vector-data
+            TestResults/vector-data-official
 
   stackexchange-interop:
     name: StackExchange compatibility (${{ matrix.framework }})

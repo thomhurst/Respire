@@ -70,6 +70,7 @@
     <Project Path="tests/Respire.Streaming.Tests/Respire.Streaming.Tests.csproj" />
     <Project Path="tests/Respire.StackExchangeCompat.Tests/Respire.StackExchangeCompat.Tests.csproj" />
     <Project Path="tests/Respire.VectorData.Tests/Respire.VectorData.Tests.csproj" />
+    <Project Path="tests/Respire.VectorData.Conformance.Tests/Respire.VectorData.Conformance.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/Respire.StressTests/Respire.StressTests.csproj" />

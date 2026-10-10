@@ -189,6 +189,9 @@ public partial class CacheErrorMetricsTests
     [Arguments(true, true)]
     public async Task SuccessfulDelayedReadReportsCorrectionFailureOnce(bool refresh, bool retry)
     {
+        // Metrics are process-wide; retain every error from this operation's execution
+        // context, including its retries, without counting another test's detached work.
+        var metricScope = new AsyncLocal<bool> { Value = true };
         var previous = RespireMetrics.Configuration;
         RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Resiliency });
         try
@@ -227,6 +230,7 @@ public partial class CacheErrorMetricsTests
             {
                 // Keep the publisher with its tags so a rare extra physical or detached error
                 // can be distinguished from duplicate correction publication in CI.
+                if (!metricScope.Value) return;
                 items.Enqueue((tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value),
                     string.Join(Environment.NewLine, Environment.StackTrace.Split(Environment.NewLine).Take(20))));
                 throw new InvalidOperationException("Listener failure must remain isolated.");
@@ -236,6 +240,16 @@ public partial class CacheErrorMetricsTests
             await reading.Task.WaitAsync(TimeSpan.FromSeconds(5));
             try
             {
+                // Detached work from an earlier test can publish after its foreground wait
+                // ends, even though this class is NotInParallel. Reproduce that publication
+                // on a context that does not belong to this cache operation.
+                Task unrelatedPublication;
+                using (ExecutionContext.SuppressFlow())
+                {
+                    unrelatedPublication = Task.Run(() => RespireTelemetry.RecordError(
+                        new ObjectDisposedException("earlier test"), internallyHandled: true, retryAttempts: 1));
+                }
+                await unrelatedPublication;
                 // Exceed the production tolerance while the successful read reply is parked.
                 await Task.Delay(TimeSpan.FromMilliseconds(1100));
             }
