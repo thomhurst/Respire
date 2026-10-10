@@ -68,7 +68,9 @@ Server and protocol requirements vary by feature; each linked guide describes it
 - [VectorData hash and JSON collections](guides/vector-data.md) with explicit AOT-friendly mapping and KNN search.
   JSON mapping uses generated serializer metadata and supports nested schema paths.
   Hash collections also support expression filters and filtered retrieval. Both support capability-aware
-  FT.HYBRID search on Redis 8.4+. JSON filters and
+  FT.HYBRID search on Redis 8.4+. Applicable official JSON model, CRUD, vector, distance/index and hybrid
+  contracts run on RESP2 and RESP3 with explicit generated metadata; exclusions are listed in the guide.
+  JSON filters and
   full upstream conformance remain tracked by
   [the VectorData connector epic](https://github.com/thomhurst/Respire/issues/887).
 
