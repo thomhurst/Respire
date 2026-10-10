@@ -46,8 +46,8 @@ Server and protocol requirements vary by feature; each linked guide describes it
   use dedicated connections where needed to keep multiplexed traffic moving.
 - [Hosted stream consumers](guides/stream-workers.md) support bounded concurrency, scoped typed handlers,
   explicit attempt-fenced acknowledgement, automatic idle recovery, delivery limits,
-  atomic dead-letter completion and graceful draining.
-  Worker telemetry and newer stream capabilities remain tracked by [#891](https://github.com/thomhurst/Respire/issues/891).
+  atomic dead-letter completion, graceful draining, bounded group metrics and W3C trace propagation.
+  Newer stream capabilities and producer deduplication remain tracked by [#891](https://github.com/thomhurst/Respire/issues/891).
 - [Batches, transactions, and `WATCH`](guides/batches-and-transactions.md), plus
   [durability acknowledgements](guides/durability-acknowledgements.md).
 - [Pub/sub](guides/pub-sub.md), pattern and sharded subscriptions, and delivery-gap reporting.

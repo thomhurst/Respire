@@ -17,6 +17,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
     private readonly string _identity = options.ConsumerName ?? Guid.NewGuid().ToString("N");
     private readonly TaskCompletionSource _firstFailure = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Task? _consumerDrain;
+    private readonly StreamWorkerTelemetry _telemetry = new(options.TelemetryName);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -38,9 +39,10 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
         }
         catch { readers.Dispose(); throw; }
 
-        var consumers = new Task[options.ConsumerCount];
-        for (var i = 0; i < consumers.Length; i++)
+        var consumers = new Task[options.ConsumerCount + 1];
+        for (var i = 0; i < options.ConsumerCount; i++)
             consumers[i] = ConsumeAsync($"{_identity}-{i}", readers);
+        consumers[^1] = PollGroupAsync(readers.Token);
         var drain = DrainConsumersAsync(consumers, readers);
         Volatile.Write(ref _consumerDrain, drain);
         // A failed reader must reach the host even if a sibling ignores cancellation.
@@ -51,11 +53,44 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
         if (_firstFailure.Task.IsCompleted) await _firstFailure.Task.ConfigureAwait(false);
     }
 
-    private static async Task DrainConsumersAsync(Task[] consumers, CancellationTokenSource readers)
+    private async Task DrainConsumersAsync(Task[] consumers, CancellationTokenSource readers)
     {
         try { await Task.WhenAll(consumers).ConfigureAwait(false); }
         catch { /* ConsumeAsync has already published the first fault to the host. */ }
-        finally { readers.Dispose(); }
+        finally { _telemetry.StopPolling(); readers.Dispose(); }
+    }
+
+    private async Task PollGroupAsync(CancellationToken token)
+    {
+        try
+        {
+            while (!token.IsCancellationRequested)
+            {
+                if (_telemetry.NeedsGroupPoll)
+                {
+                    using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+                    deadline.CancelAfter(options.MetricsPollTimeout);
+                    try
+                    {
+                        var groups = await client.Streams.GroupInfoAsync(stream, deadline.Token).ConfigureAwait(false);
+                        if (!deadline.IsCancellationRequested)
+                        {
+                            RespireStreamGroupInfo? match = null;
+                            foreach (var info in groups)
+                                if (info.Name == group) { match = info; break; }
+                            _telemetry.SetGroup(match);
+                        }
+                        else _telemetry.SetGroup(null);
+                    }
+                    catch { _telemetry.SetGroup(null); /* Telemetry queries must not fault consumers. */ }
+                }
+                else _telemetry.SetGroup(null);
+                // Delay after completion prevents overlapping queries and failure hot loops.
+                await Task.Delay(options.MetricsPollInterval, token).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+        finally { _telemetry.StopPolling(); }
     }
 
     private async Task ConsumeAsync(string consumer, CancellationTokenSource readers)
@@ -143,11 +178,12 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
 
     private async Task ProcessAsync(Delivery delivery, string consumer)
     {
+        using var observation = _telemetry.Begin(delivery.Entry, options);
         if (options.DeadLetterStream is not null && delivery.Entry.Fields.Count > StreamWorkerScripts.MaximumDeadLetterFields)
             throw new InvalidOperationException("Dead-letter-enabled workers support at most 1024 field/value pairs per entry.");
         if (options.DeliveryLimit is { } limit && delivery.Attempt > limit)
         {
-            await DeadLetterAsync(delivery, consumer, "delivery-limit", "").ConfigureAwait(false);
+            observation.Outcome = await DeadLetterAsync(delivery, consumer, "delivery-limit", "").ConfigureAwait(false);
             return;
         }
         await using var scope = scopeFactory.CreateAsyncScope();
@@ -163,7 +199,8 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             if (result == RespireStreamWorkerResult.DeadLetter && options.DeadLetterStream is null)
                 throw new InvalidOperationException("DeadLetter completion requires a configured dead-letter stream.");
         }
-        catch (OperationCanceledException) when (_handlers.IsCancellationRequested) { return; }
+        catch (OperationCanceledException) when (_handlers.IsCancellationRequested)
+        { observation.Outcome = "canceled"; return; }
         catch (Exception error)
         {
             // Exception messages may contain payloads. Do not pass them to the logger by default.
@@ -174,33 +211,42 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             result = RespireStreamWorkerResult.Nack;
         }
 
-        if (_handlers.IsCancellationRequested) return;
+        if (_handlers.IsCancellationRequested) { observation.Outcome = "canceled"; return; }
         if (result == RespireStreamWorkerResult.Ack)
+        {
             // ConsumeAsync treats acknowledgement cancellation as expected only after
             // readers stop. StopAsync and Dispose must therefore cancel readers first.
-            await client.Scripts.ExecuteIntegerAsync(options.DeleteAcknowledgedEntries
+            var acknowledged = await client.Scripts.ExecuteIntegerAsync(options.DeleteAcknowledgedEntries
                     ? StreamWorkerScripts.AckAndDelete : StreamWorkerScripts.Ack, [stream],
                 [group, consumer, delivery.Entry.Id.Value, delivery.Attempt], _handlers.Token).ConfigureAwait(false);
+            observation.Outcome = acknowledged == 1 ? "ack" : "stale";
+        }
         else if (result == RespireStreamWorkerResult.DeadLetter)
-            await DeadLetterAsync(delivery, consumer, "explicit", "").ConfigureAwait(false);
+            observation.Outcome = await DeadLetterAsync(delivery, consumer, "explicit", "").ConfigureAwait(false);
         else if (options.DeliveryLimit is { } deliveryLimit && delivery.Attempt >= deliveryLimit)
-            await DeadLetterAsync(delivery, consumer, reason, failureType).ConfigureAwait(false);
+            observation.Outcome = await DeadLetterAsync(delivery, consumer, reason, failureType).ConfigureAwait(false);
         else
+        {
             await client.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.Nack, [stream],
                 [group, consumer, delivery.Entry.Id.Value, delivery.Attempt,
                     (long)Math.Ceiling(options.MinimumIdleTime.TotalMilliseconds)], _handlers.Token).ConfigureAwait(false);
+            observation.Outcome = "nack";
+        }
     }
 
-    private async Task DeadLetterAsync(Delivery delivery, string consumer, string reason, string failureType)
+    private async Task<string> DeadLetterAsync(Delivery delivery, string consumer, string reason, string failureType)
     {
-        if (_handlers.IsCancellationRequested) return;
-        await client.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.DeadLetter, [stream, options.DeadLetterStream!],
+        if (_handlers.IsCancellationRequested) return "canceled";
+        var completed = await client.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.DeadLetter, [stream, options.DeadLetterStream!],
             [group, consumer, delivery.Entry.Id.Value, delivery.Attempt, reason, failureType],
             _handlers.Token).ConfigureAwait(false);
+        if (completed == 1) _telemetry.DeadLetter(reason);
+        return completed switch { 1 => "dead-letter", -1 => "deleted", _ => "stale" };
     }
 
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
+        _telemetry.StopPolling();
         // BackgroundService cancels readers immediately. Handlers keep a separate token while draining.
         var stopping = base.StopAsync(cancellationToken);
         using var abort = cancellationToken.UnsafeRegister(static state =>
@@ -215,6 +261,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
 
     public override void Dispose()
     {
+        _telemetry.Dispose();
         base.Dispose();
         CancelHandlers();
         var running = Volatile.Read(ref _consumerDrain) ?? ExecuteTask;

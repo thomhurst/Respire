@@ -142,7 +142,8 @@ internal static class StreamWorkerScripts
         if #pending ~= 1 or pending[1][2] ~= ARGV[2] or tostring(pending[1][4]) ~= ARGV[4] then return 0 end
         local entries = redis.call('XRANGE', KEYS[1], ARGV[3], ARGV[3])
         -- The body can be deleted while its fenced delivery is still pending.
-        if #entries ~= 1 then return redis.call('XACK', KEYS[1], ARGV[1], ARGV[3]) end
+        -- Distinguish a removed body from a confirmed dead-letter append for worker telemetry.
+        if #entries ~= 1 then return -redis.call('XACK', KEYS[1], ARGV[1], ARGV[3]) end
         if #entries[1][2] > 2048 then
             return redis.error_reply('ERR dead-letter entries support at most 1024 field/value pairs')
         end
