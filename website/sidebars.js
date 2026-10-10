@@ -58,6 +58,7 @@ const sidebars = {
         'guides/batches-and-transactions',
         'guides/hash-import',
         'guides/durability-acknowledgements',
+        'guides/transport-write-evidence',
         'guides/raw-commands',
         'guides/stackexchange-interop',
         'guides/hangfire-acceptance',
