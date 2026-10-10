@@ -93,7 +93,8 @@ public class HybridSearchTests(HybridRedisVersions fixture)
         try
         {
             await collection.EnsureCollectionExistsAsync();
-            await collection.UpsertAsync(new Movie[] { new("1", "nourishing", new float[] { 1, 0 }), new("2", "tangy", new float[] { 1, 0 }), new("3", "grapes", new float[] { 1, 0 }) });
+            // Distinct text relevance and vector distances keep the reused threshold stable across queries.
+            await collection.UpsertAsync(new Movie[] { new("1", "nourishing nourishing", new float[] { 1, 0 }), new("2", "tangy", new float[] { 1.1f, 0 }), new("3", "grapes", new float[] { 1.2f, 0 }) });
             await WaitForIndex(collection, 3);
             var results = await Collect(collection.HybridSearchAsync(new float[] { 1, 0 }, ["tangy", "nourishing"], 3));
             results.Take(2).Select(hit => hit.Record.Id).Should().BeEquivalentTo(new[] { "1", "2" });
