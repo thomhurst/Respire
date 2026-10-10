@@ -186,19 +186,9 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
         else if (options.DeliveryLimit is { } deliveryLimit && delivery.Attempt >= deliveryLimit)
             await DeadLetterAsync(delivery, consumer, reason, failureType).ConfigureAwait(false);
         else
-            await NackAsync(delivery, consumer).ConfigureAwait(false);
-    }
-
-    private async Task NackAsync(Delivery delivery, string consumer)
-    {
-        while (!_handlers.IsCancellationRequested)
-        {
-            var remaining = await client.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.Nack, [stream],
+            await client.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.Nack, [stream],
                 [group, consumer, delivery.Entry.Id.Value, delivery.Attempt,
                     (long)Math.Ceiling(options.MinimumIdleTime.TotalMilliseconds)], _handlers.Token).ConfigureAwait(false);
-            if (remaining == 0) return;
-            await Task.Delay(TimeSpan.FromMilliseconds(remaining), _handlers.Token).ConfigureAwait(false);
-        }
     }
 
     private async Task DeadLetterAsync(Delivery delivery, string consumer, string reason, string failureType)

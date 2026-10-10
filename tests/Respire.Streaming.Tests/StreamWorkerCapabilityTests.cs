@@ -10,21 +10,42 @@ namespace Respire.Streaming.Tests;
 public partial class StreamWorkerTests
 {
     [Test]
-    public async Task NativeNackDelayDoesNotLoopAndShutdownLeavesDeliveryPending()
+    [Arguments(1, false)]
+    [Arguments(3, false)]
+    [Arguments(1, true)]
+    [Arguments(3, true)]
+    public async Task NativeNackFreesReadersWithoutRetryingYoungFailures(int consumers, bool throws)
     {
         var clock = new RespireFakeClock(DateTimeOffset.UtcNow);
-        var state = new State { Handle = (_, _) => ValueTask.FromResult(RespireStreamWorkerResult.Nack) };
+        var state = new State { Handle = (entry, _) =>
+        {
+            if (int.Parse(entry.GetString("payload")!) >= consumers)
+                return ValueTask.FromResult(RespireStreamWorkerResult.Ack);
+            if (throws) throw new InvalidOperationException("downstream unavailable");
+            return ValueTask.FromResult(RespireStreamWorkerResult.Nack);
+        } };
         await using var fixture = await Fixture.CreateAsync(state: state, clock: clock, workerVersion: new Version(8, 8),
-            options: new() { MinimumIdleTime = TimeSpan.FromSeconds(30), RecoveryPollInterval = TimeSpan.FromMilliseconds(10) });
-        await fixture.AddAsync(0);
+            options: new() { ConsumerCount = consumers, BatchSize = 1,
+                MinimumIdleTime = TimeSpan.FromSeconds(30), RecoveryPollInterval = TimeSpan.FromMilliseconds(10) });
+        for (var i = 0; i < consumers; i++) await fixture.AddAsync(i);
         await fixture.StartAsync();
-        await state.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
-        using var stopped = new CancellationTokenSource();
-        stopped.Cancel();
-        await fixture.Service.StopAsync(stopped.Token).WaitAsync(Deadline);
-        await fixture.Service.ExecuteTask!.WaitAsync(Deadline);
-        await Assert.That(state.ScopeIds.Count).IsEqualTo(1);
-        await Assert.That((await fixture.View.Streams.PendingSummaryAsync("events", "workers")).Count).IsEqualTo(1);
+        for (var i = 0; i < consumers; i++)
+            await state.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
+        for (var i = consumers; i < consumers * 2; i++) await fixture.AddAsync(i);
+        for (var i = 0; i < consumers; i++)
+        {
+            var success = await state.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
+            await Assert.That(int.Parse(success.GetString("payload")!)).IsGreaterThanOrEqualTo(consumers);
+        }
+        await UntilAsync(async () => (await fixture.View.Streams.PendingSummaryAsync("events", "workers")).Count == consumers);
+        await fixture.StopAsync();
+        await Assert.That(state.ScopeIds.Count).IsEqualTo(consumers * 2);
+        var pending = await fixture.View.Streams.PendingAsync("events", "workers");
+        foreach (var delivery in pending)
+        {
+            await Assert.That(delivery.DeliveryCount).IsEqualTo(1);
+            await Assert.That(delivery.Consumer).IsNotEqualTo("");
+        }
     }
 
     [Test]
@@ -81,6 +102,72 @@ public class StreamWorkerCapabilityScriptTests
 {
     [Test]
     [Arguments(2, 0)]
+    [Arguments(3, 4)]
+    [Arguments(2, 8)]
+    public async Task RecoveryRemovesDeletedPendingEntriesOnlyFromItsGroup(int protocol, int minor)
+    {
+        await using var fake = new RespireFakeServer(null, false, true, new Version(8, minor));
+        await using var client = await RespireClient.ConnectAsync(fake.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await DeletedPendingScenarioAsync(client);
+    }
+
+    internal static async Task DeletedPendingScenarioAsync(RespireClient client)
+    {
+        await client.Streams.AddAsync("deleted", new StreamAddOptions { Id = "1-0" }, ("f", "deleted"));
+        await client.Streams.AddAsync("deleted", new StreamAddOptions { Id = "2-0" }, ("f", "live"));
+        await client.Streams.CreateGroupAsync("deleted", "g", RespireStreamId.Beginning);
+        await client.Streams.CreateGroupAsync("deleted", "other", RespireStreamId.Beginning);
+        await client.Streams.ReadGroupOnceAsync("deleted", "g", "old", new StreamReadOptions { Count = 2 });
+        await client.Streams.ReadGroupOnceAsync("deleted", "other", "other-owner", new StreamReadOptions { Count = 2 });
+        await client.Streams.RemoveAsync("deleted", new RespireStreamId("1-0"));
+        using (var reply = await client.Scripts.ExecuteAsync(StreamWorkerScripts.CapabilityClaim, ["deleted"],
+            ["g", "new", 0, "0-0", 2]))
+        {
+            await Assert.That(reply[1].Count).IsEqualTo(1);
+            await Assert.That(reply[1][0][0].AsString()).IsEqualTo("2-0");
+            await Assert.That(reply[1][0][2].AsString()).IsEqualTo("2");
+        }
+        await Assert.That((await client.Streams.PendingSummaryAsync("deleted", "g")).Count).IsEqualTo(1);
+        await client.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.Ack, ["deleted"], ["g", "new", "2-0", 2]);
+        using (var reply = await client.Scripts.ExecuteAsync(StreamWorkerScripts.CapabilityClaim, ["deleted"],
+            ["g", "new", 0, "0-0", 2]))
+            await Assert.That(reply[1].Count).IsEqualTo(0);
+        await Assert.That((await client.Streams.PendingSummaryAsync("deleted", "g")).Count).IsEqualTo(0);
+        await Assert.That((await client.Streams.PendingSummaryAsync("deleted", "other")).Count).IsEqualTo(2);
+    }
+
+    [Test]
+    [Arguments(4)]
+    [Arguments(8)]
+    public async Task NativeCleanupCursorPassesLiveEntriesAndResetsAfterDeletedEntries(int minor)
+    {
+        await using var fake = new RespireFakeServer(null, false, true, new Version(8, minor));
+        await using var client = await RespireClient.ConnectAsync(fake.CreateOptions());
+        await CleanupCursorScenarioAsync(client);
+    }
+
+    internal static async Task CleanupCursorScenarioAsync(RespireClient client)
+    {
+        for (var i = 1; i <= 3; i++)
+            await client.Streams.AddAsync("cleanup-cursor", new StreamAddOptions { Id = $"{i}-0" }, ("f", "v"));
+        await client.Streams.CreateGroupAsync("cleanup-cursor", "g", RespireStreamId.Beginning);
+        await client.Streams.ReadGroupOnceAsync("cleanup-cursor", "g", "old", new StreamReadOptions { Count = 3 });
+        await client.Streams.RemoveAsync("cleanup-cursor", new RespireStreamId("2-0"), new RespireStreamId("3-0"));
+        var cursor = "0-0";
+        foreach (var expected in new[] { "2-0", "3-0", "0-0" })
+        {
+            using var reply = await client.Scripts.ExecuteAsync(StreamWorkerScripts.CapabilityClaim, ["cleanup-cursor"],
+                ["g", "new", 0, cursor, 1]);
+            cursor = reply[0].AsString();
+            await Assert.That(cursor).IsEqualTo(expected);
+        }
+        var pending = await client.Streams.PendingAsync("cleanup-cursor", "g");
+        await Assert.That(pending.Length).IsEqualTo(1);
+        await Assert.That(pending[0].Id.Value).IsEqualTo("1-0");
+    }
+
+    [Test]
+    [Arguments(2, 0)]
     [Arguments(3, 2)]
     [Arguments(2, 4)]
     [Arguments(3, 8)]
@@ -109,9 +196,10 @@ public class StreamWorkerCapabilityScriptTests
             ["g", "old", "1-0", 1, 0])).IsEqualTo(0);
         await Assert.That((await client.Streams.PendingAsync("events", "g", RespireStreamId.Min, RespireStreamId.Max, 1))[0].Consumer)
             .IsEqualTo("new");
-        var remaining = await client.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.Nack, ["events"],
-            ["g", "new", "1-0", 2, 60000]);
-        await Assert.That(remaining > 0).IsEqualTo(minor >= 8);
+        await Assert.That(await client.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.Nack, ["events"],
+            ["g", "new", "1-0", 2, 60000])).IsEqualTo(0);
+        await Assert.That((await client.Streams.PendingAsync("events", "g", RespireStreamId.Min, RespireStreamId.Max, 1))[0].Consumer)
+            .IsEqualTo("new");
         clock?.Advance(TimeSpan.FromMinutes(1));
         await client.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.Nack, ["events"], ["g", "new", "1-0", 2, 0]);
         var pending = (await client.Streams.PendingAsync("events", "g", RespireStreamId.Min, RespireStreamId.Max, 1)).Single();

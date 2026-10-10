@@ -63,6 +63,8 @@ public class StreamWorkerCapabilityIntegrationTests(RedisTestContainer redis)
         var minor = version.Major < 8 ? 0 : version.Major > 8 ? int.MaxValue : version.Minor;
         await StreamWorkerCapabilityScriptTests.CapabilityScenarioAsync(client, null, minor);
         await StreamWorkerCapabilityScriptTests.ClaimMixScenarioAsync(client, minor);
+        await StreamWorkerCapabilityScriptTests.DeletedPendingScenarioAsync(client);
+        if (minor >= 4) await StreamWorkerCapabilityScriptTests.CleanupCursorScenarioAsync(client);
     }
 
     [Test]

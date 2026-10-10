@@ -139,13 +139,19 @@ new-entry wait is capped by the next recovery poll; recovery pauses while that r
 its current batch. On Redis 8.4 or later, recovery uses `XREADGROUP CLAIM` and may fill a
 page with new entries after eligible pending entries. Its delivery-count metadata
 describes previous attempts; the worker adds this delivery before applying `DeliveryLimit`.
+Because `CLAIM` can omit deleted bodies, each native recovery poll also inspects at most
+`BatchSize` pending IDs with `XPENDING` and `XRANGE`, acknowledging only IDs whose bodies
+are gone. This cleanup needs `XRANGE` and `XACK` permission. Its independent cursor advances
+past live entries and resets at the end of the PEL, so deleted IDs cannot remain hidden
+behind live entries. The scan and cleanup run atomically with the recovery read.
 
-On Redis 8.8 or later, unsuccessful processing releases the fenced delivery with `XNACK FAIL`,
+On Redis 8.8 or later, unsuccessful processing can release the fenced delivery with `XNACK FAIL`,
 preserving its delivery count. Since Redis makes released entries immediately claimable,
-the reader waits until the delivery's `MinimumIdleTime` has elapsed before releasing it.
-This wait occupies that reader; other readers can continue. Ownership and attempt are checked
-again after waiting, so a recovered delivery cannot be released by its stale handler.
-On older servers, `Nack` leaves the entry pending for ordinary idle recovery.
+the worker releases only when that delivery's `MinimumIdleTime` has already elapsed.
+Otherwise it leaves the entry pending for ordinary idle recovery and immediately frees
+the reader to process more work. Ownership and attempt are checked atomically before release,
+so a recovered delivery cannot be released by its stale handler. On older servers, `Nack`
+always leaves the entry pending for ordinary idle recovery.
 
 A configured stable
 `ConsumerName` replays that consumer's own pending IDs once at startup, in bounded pages,

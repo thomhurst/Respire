@@ -97,8 +97,7 @@ public sealed partial class RespireFakeServer
             if (script == StreamWorkerScripts.Nack)
             {
                 if (_streamWorkerVersion < new Version(8, 8)) return FakeReply.Integer(0);
-                var remaining = Integer(args[8]) - Math.Max(0, Now - pending.DeliveredAt);
-                if (remaining > 0) return FakeReply.Integer(remaining);
+                if (Math.Max(0, Now - pending.DeliveredAt) < Integer(args[8])) return FakeReply.Integer(0);
                 pending.Consumer = [];
                 pending.DeliveredAt = 0;
                 return FakeReply.Integer(0);
@@ -154,23 +153,32 @@ public sealed partial class RespireFakeServer
         var count = (int)Math.Min(Integer(args[8]), int.MaxValue);
         if (idle < 0 || count <= 0) return Syntax("XREADGROUP");
         var entries = new List<FakeReply>();
-        foreach (var (id, pending) in group.Pending.OrderBy(pair => pair.Value.DeliveredAt).ThenBy(pair => pair.Key))
+        var selected = 0;
+        foreach (var (id, pending) in group.Pending.OrderBy(pair => pair.Value.DeliveredAt).ThenBy(pair => pair.Key).ToArray())
         {
-            if (entries.Count == count) break;
-            if (Math.Max(0, Now - pending.DeliveredAt) < idle || !stream.Entries.TryGetValue(id, out var fields)) continue;
+            if (selected == count) break;
+            if (Math.Max(0, Now - pending.DeliveredAt) < idle) continue;
+            selected++;
+            if (!stream.Entries.TryGetValue(id, out var fields)) continue;
             pending.Consumer = args[5];
             pending.DeliveredAt = Now;
             pending.DeliveryCount++;
             entries.Add(StreamFields(id, fields));
         }
-        foreach (var (id, fields) in stream.Entries.Where(pair => pair.Key > group.Last).Take(count - entries.Count))
+        foreach (var (id, fields) in stream.Entries.Where(pair => pair.Key > group.Last).Take(count - selected))
         {
             group.Last = id;
             group.Pending[id] = new(args[5], Now);
             entries.Add(StreamFields(id, fields));
         }
         group.Consumers.Add(args[5]);
-        return FakeReply.Array([FakeReply.Text("0-0"), FakeReply.Array(entries.ToArray())]);
+        var start = StreamId(args[7]);
+        var cleanup = group.Pending.Where(pair => pair.Key >= start).OrderBy(pair => pair.Key)
+            .Take((int)Math.Min((long)count + 1, int.MaxValue)).Select(pair => pair.Key).ToArray();
+        foreach (var id in cleanup.Take(count))
+            if (!stream.Entries.ContainsKey(id)) group.Pending.Remove(id);
+        var cursor = cleanup.Length > count ? cleanup[count].Value : "0-0";
+        return FakeReply.Array([FakeReply.Text(cursor), FakeReply.Array(entries.ToArray())]);
     }
 
     private FakeReply StreamDeadLetter(byte[][] args)

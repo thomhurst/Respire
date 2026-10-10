@@ -80,10 +80,23 @@ internal static class StreamWorkerScripts
                         -- CLAIM reports the count BEFORE this delivery. New entries omit it.
                         if entry[2] then
                             table.insert(entries, {entry[1], entry[2], tostring(entry[4] and entry[4] + 1 or 1)})
+                        else
+                            -- Match XAUTOCLAIM cleanup when a pending body has been deleted.
+                            redis.call('XACK', KEYS[1], ARGV[1], entry[1])
                         end
                     end
                 end
-                return {'0-0', entries}
+                -- CLAIM may omit deleted entries entirely. Scan a bounded PEL page
+                -- independently, retaining its cursor so live low IDs cannot hide them.
+                local count = tonumber(ARGV[5])
+                local pending = redis.call('XPENDING', KEYS[1], ARGV[1], ARGV[4], '+', count + 1)
+                for i = 1, math.min(#pending, count) do
+                    local id = pending[i][1]
+                    if #redis.call('XRANGE', KEYS[1], id, id) == 0 then
+                        redis.call('XACK', KEYS[1], ARGV[1], id)
+                    end
+                end
+                return {pending[count + 1] and pending[count + 1][1] or '0-0', entries}
             end
         end
 
@@ -95,7 +108,7 @@ internal static class StreamWorkerScripts
         if supports(2) then
             local reply = redis.pcall('XACKDEL', KEYS[1], ARGV[1], 'ACKED', 'IDS', 1, ARGV[3])
             if not unavailable(reply) then
-                if reply.err then return reply end
+                if type(reply) == 'table' and reply.err then return reply end
                 return 1
             end
         end
@@ -106,10 +119,9 @@ internal static class StreamWorkerScripts
         if not supports(8) then return 0 end
         local pending = redis.call('XPENDING', KEYS[1], ARGV[1], ARGV[3], ARGV[3], 1)
         if #pending ~= 1 or pending[1][2] ~= ARGV[2] or tostring(pending[1][4]) ~= ARGV[4] then return 0 end
-        -- XNACK bypasses every CLAIM idle threshold. Release only once the configured
-        -- visibility timeout has elapsed, so poison entries cannot loop immediately.
-        local remaining = tonumber(ARGV[5]) - pending[1][3]
-        if remaining > 0 then return remaining end
+        -- XNACK bypasses every CLAIM idle threshold. Leave young failures pending
+        -- for ordinary recovery without holding a reader until they become eligible.
+        if pending[1][3] < tonumber(ARGV[5]) then return 0 end
         local reply = redis.pcall('XNACK', KEYS[1], ARGV[1], 'FAIL', 'IDS', 1, ARGV[3])
         if unavailable(reply) then return 0 end
         if type(reply) == 'table' and reply.err then return reply end
