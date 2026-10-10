@@ -118,6 +118,8 @@ acceptance criteria, dependencies, and current status:
   messaging, caching, and other libraries that currently depend on StackExchange.Redis.
 - [Higher-level capabilities](https://github.com/thomhurst/Respire/issues/860): stream workers,
   source-generated object mapping and field-level caching research.
+  [Stream workers](./guides/stream-workers) include serving-server capability discovery for
+  CLAIM recovery, delayed fenced XNACK release, and optional XACKDEL ACKED completion.
   [Generated hash codecs](./guides/generated-hash-codecs) provide scalar model conversion, key templates,
   Redis hash writes/full reads, explicit partial reads, field TTL and change tracking. The remaining
   [object mapper work](https://github.com/thomhurst/Respire/issues/895) includes

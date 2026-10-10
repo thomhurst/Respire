@@ -80,7 +80,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                 }
                 else if (recoveryClock.Elapsed >= options.RecoveryPollInterval)
                 {
-                    var page = await ReadPageAsync(StreamWorkerScripts.Claim,
+                    var page = await ReadPageAsync(StreamWorkerScripts.CapabilityClaim,
                         [group, consumer, (long)Math.Ceiling(options.MinimumIdleTime.TotalMilliseconds),
                             recoveryCursor.Value, options.BatchSize], readers.Token).ConfigureAwait(false);
                     recoveryCursor = page.Cursor; // Keep the cursor even when no entries were claimable.
@@ -178,12 +178,17 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
         if (result == RespireStreamWorkerResult.Ack)
             // ConsumeAsync treats acknowledgement cancellation as expected only after
             // readers stop. StopAsync and Dispose must therefore cancel readers first.
-            await client.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.Ack, [stream],
+            await client.Scripts.ExecuteIntegerAsync(options.DeleteAcknowledgedEntries
+                    ? StreamWorkerScripts.AckAndDelete : StreamWorkerScripts.Ack, [stream],
                 [group, consumer, delivery.Entry.Id.Value, delivery.Attempt], _handlers.Token).ConfigureAwait(false);
         else if (result == RespireStreamWorkerResult.DeadLetter)
             await DeadLetterAsync(delivery, consumer, "explicit", "").ConfigureAwait(false);
         else if (options.DeliveryLimit is { } deliveryLimit && delivery.Attempt >= deliveryLimit)
             await DeadLetterAsync(delivery, consumer, reason, failureType).ConfigureAwait(false);
+        else
+            await client.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.Nack, [stream],
+                [group, consumer, delivery.Entry.Id.Value, delivery.Attempt,
+                    (long)Math.Ceiling(options.MinimumIdleTime.TotalMilliseconds)], _handlers.Token).ConfigureAwait(false);
     }
 
     private async Task DeadLetterAsync(Delivery delivery, string consumer, string reason, string failureType)
