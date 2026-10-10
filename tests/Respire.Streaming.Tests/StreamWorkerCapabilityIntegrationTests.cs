@@ -10,6 +10,45 @@ namespace Respire.Streaming.Tests;
 public class StreamWorkerCapabilityIntegrationTests(RedisTestContainer redis)
 {
     [Test]
+    [Arguments("xrange")]
+    [Arguments("xack")]
+    public async Task NativeCleanupPermissionFailureUsesCompatibleClaimBeforeMutating(string deniedCommand)
+    {
+        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { AllowAdmin = true });
+        var info = await admin.Server.InfoAsync("server");
+        var line = info.Split('\n').Single(value => value.StartsWith("redis_version:"));
+        var version = Version.Parse(line["redis_version:".Length..].Trim().Split('-')[0]);
+        if (version < new Version(8, 4)) return;
+        var user = "worker_" + Guid.NewGuid().ToString("N");
+        var key = "restricted-claim:" + user;
+        try
+        {
+            await admin.Streams.AddAsync(key, new StreamAddOptions { Id = "1-0" }, ("f", "pending"));
+            await admin.Streams.CreateGroupAsync(key, "g", RespireStreamId.Beginning);
+            await admin.Streams.ReadGroupOnceAsync(key, "g", "old");
+            await admin.Streams.AddAsync(key, new StreamAddOptions { Id = "2-0" }, ("f", "deleted"));
+            await admin.Streams.ReadGroupOnceAsync(key, "g", "old");
+            using (await admin.ExecuteAsync("XDEL", [key, "2-0"])) { }
+            await admin.Streams.AddAsync(key, new StreamAddOptions { Id = "3-0" }, ("f", "unread"));
+            await admin.Server.AclSetUserAsync(user, ["on", ">password", "~*", "+@all", "-" + deniedCommand]);
+            await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+                with { Username = user, Password = "password" });
+            using var reply = await client.Scripts.ExecuteAsync(StreamWorkerScripts.CapabilityClaim, [key],
+                ["g", "new", 0, "0-0", 3]);
+            await Assert.That(reply[1].Count).IsEqualTo(1);
+            await Assert.That(reply[1][0][0].AsString()).IsEqualTo("1-0");
+            await Assert.That(reply[1][0][2].AsString()).IsEqualTo("2");
+            var pending = (await admin.Streams.PendingAsync(key, "g")).Single();
+            await Assert.That(pending.Consumer).IsEqualTo("new");
+            await Assert.That(pending.DeliveryCount).IsEqualTo(2);
+            // Compatible recovery must not consume unread entries or claim twice.
+            var unread = await admin.Streams.ReadGroupOnceAsync(key, "g", "reader");
+            await Assert.That(unread.Single().Id.ToString()).IsEqualTo("3-0");
+        }
+        finally { await admin.Server.AclDeleteUsersAsync([user]); }
+    }
+
+    [Test]
     [Arguments("ack-delete", 2)]
     [Arguments("nack", 8)]
     public async Task DisabledNativeCommandUsesCompatibleCompletion(string completion, int minimumMinor)

@@ -18,7 +18,8 @@ public sealed record RespireStreamWorkerOptions
     public TimeSpan ReadWait { get; init; } = TimeSpan.FromSeconds(5);
 
     /// <summary>Positive visibility timeout before pending entries can be recovered. Defaults to one minute.</summary>
-    /// <remarks>On Redis 8.8 or later, unsuccessful processing waits out this delivery's timeout before fenced XNACK release.</remarks>
+    /// <remarks>On Redis 8.8 or later, unsuccessful processing uses fenced XNACK release only after this delivery's timeout has elapsed.
+    /// Younger failures remain pending for ordinary recovery without holding a reader.</remarks>
     public TimeSpan MinimumIdleTime { get; init; } = TimeSpan.FromMinutes(1);
 
     /// <summary>Positive interval between bounded recovery scans per reader. Defaults to five seconds.</summary>

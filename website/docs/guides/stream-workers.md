@@ -141,7 +141,8 @@ page with new entries after eligible pending entries. Its delivery-count metadat
 describes previous attempts; the worker adds this delivery before applying `DeliveryLimit`.
 Because `CLAIM` can omit deleted bodies, each native recovery poll also inspects at most
 `BatchSize` pending IDs with `XPENDING` and `XRANGE`, acknowledging only IDs whose bodies
-are gone. This cleanup needs `XRANGE` and `XACK` permission. Its independent cursor advances
+are gone. This cleanup needs `XRANGE` and `XACK` permission. Recovery checks both permissions
+before claiming and uses `XAUTOCLAIM` instead when either is denied. Its independent cursor advances
 past live entries and resets at the end of the PEL, so deleted IDs cannot remain hidden
 behind live entries. The scan and cleanup run atomically with the recovery read.
 
@@ -257,8 +258,9 @@ reuse an attempt token. Consumer-name uniqueness remains required even with atte
 Capability discovery runs inside each atomic operation on its serving server. It uses
 `INFO SERVER`, without caching across reconnects, redirects, or mixed-version deployments.
 Denied or unavailable discovery and non-Redis servers retain the compatible path. Unsupported
-native commands also fall back; ACL, transport, and other operational failures fault the
-worker instead of repeating a possibly executed write.
+native commands also fall back. Denied native cleanup permissions use compatible recovery;
+other ACL failures, including denied `XNACK` or `XACKDEL`, fault the worker. Transport and
+other operational failures also fault the worker instead of repeating a possibly executed write.
 
 Set `DeleteAcknowledgedEntries = true` to use fenced `XACKDEL ACKED` on Redis 8.2 or later.
 `ACKED` deletes a body only after every existing group has read and acknowledged it,

@@ -70,7 +70,10 @@ internal static class StreamWorkerScripts
         """;
 
     internal const string CapabilityClaimSource = CapabilitySource + """
-        if supports(4) then
+        -- Cleanup permissions are additional to compatible recovery. Check them
+        -- before CLAIM mutates the PEL: Lua errors cannot roll back those writes.
+        if supports(4) and redis.acl_check_cmd('XRANGE', KEYS[1], '0-0', '0-0')
+            and redis.acl_check_cmd('XACK', KEYS[1], ARGV[1], '0-0') then
             local page = redis.pcall('XREADGROUP', 'GROUP', ARGV[1], ARGV[2], 'COUNT', ARGV[5],
                 'CLAIM', ARGV[3], 'STREAMS', KEYS[1], '>')
             if not unavailable(page) then
