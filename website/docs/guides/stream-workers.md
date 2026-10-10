@@ -128,18 +128,29 @@ and dispatch time. There is
 no lease extension: a long-running handler can overlap a recovery attempt. Handlers must
 be idempotent and consumer identities must be unique among active hosts and registrations.
 
-Each existing reader runs at most one `XAUTOCLAIM` page per polling interval and fetches
+Each existing reader runs at most one recovery page per polling interval and fetches
 at most `BatchSize` recovered entries with their fields. Delivery counts increase on each
-claim. The scan examines at most ten times `BatchSize` pending IDs per page. Its cursor
+claim. On compatible servers, `XAUTOCLAIM` examines at most ten times `BatchSize` pending
+IDs per page. Its cursor
 survives empty batches and deleted pending IDs and resets only at the end of the scan.
 A full scan can therefore take several polling intervals. Recovery does not create another
 queue or increase handler concurrency or the number of prefetched entries. The blocking
 new-entry wait is capped by the next recovery poll; recovery pauses while that reader handles
-its current batch. `Nack` leaves the entry pending rather than making it immediately claimable.
+its current batch. On Redis 8.4 or later, recovery uses `XREADGROUP CLAIM` and may fill a
+page with new entries after eligible pending entries. Its delivery-count metadata
+describes previous attempts; the worker adds this delivery before applying `DeliveryLimit`.
+
+On Redis 8.8 or later, unsuccessful processing releases the fenced delivery with `XNACK FAIL`,
+preserving its delivery count. Since Redis makes released entries immediately claimable,
+the reader waits until the delivery's `MinimumIdleTime` has elapsed before releasing it.
+This wait occupies that reader; other readers can continue. Ownership and attempt are checked
+again after waiting, so a recovered delivery cannot be released by its stale handler.
+On older servers, `Nack` leaves the entry pending for ordinary idle recovery.
 
 A configured stable
 `ConsumerName` replays that consumer's own pending IDs once at startup, in bounded pages,
-before reading new entries. A Nack during this replay remains pending and is not retried in
+before reading new entries. A Nack during this replay follows the same visibility timeout
+and is not retried in
 a hot loop; normal idle recovery retries it later. Random identities recover previous
 processes' deliveries after the visibility timeout but accumulate consumer metadata across
 restarts. Remove unused consumers only after their pending deliveries have been recovered.
@@ -237,8 +248,22 @@ Lua even when no idle entries exist. External tools must not reset delivery coun
 `XCLAIM RETRYCOUNT`, rewind the group with `XGROUP SETID`, recreate a live group, or otherwise
 reuse an attempt token. Consumer-name uniqueness remains required even with attempt fencing.
 
+Capability discovery runs inside each atomic operation on its serving server. It uses
+`INFO SERVER`, without caching across reconnects, redirects, or mixed-version deployments.
+Denied or unavailable discovery and non-Redis servers retain the compatible path. Unsupported
+native commands also fall back; ACL, transport, and other operational failures fault the
+worker instead of repeating a possibly executed write.
+
+Set `DeleteAcknowledgedEntries = true` to use fenced `XACKDEL ACKED` on Redis 8.2 or later.
+`ACKED` deletes a body only after every existing group has read and acknowledged it,
+preserving unread entries and entries pending in other groups. Older servers use `XACK`
+and retain the body. By default, acknowledgements retain entries on every version.
+Atomic dead-letter completion always uses `XACK` and retains the source body.
+See Redis documentation for [CLAIM](https://redis.io/docs/latest/commands/xreadgroup/),
+[XNACK](https://redis.io/docs/latest/commands/xnack/), and
+[XACKDEL](https://redis.io/docs/latest/commands/xackdel/).
+
 The remaining reliable worker features are tracked independently:
-[capability-aware CLAIM/XNACK/XACKDEL (#1231)](https://github.com/thomhurst/Respire/issues/1231),
 [worker metrics and tracing (#1232)](https://github.com/thomhurst/Respire/issues/1232), and
 [producer retry deduplication (#892)](https://github.com/thomhurst/Respire/issues/892).
 The full feature remains open in [#891](https://github.com/thomhurst/Respire/issues/891).
@@ -251,4 +276,5 @@ Use `new RespireFakeServer(clock: null, createConsumersOnEmptyReads: true)` to m
 or later registering consumers on empty new-entry reads. Pass `autoClaimDeletesPendingEntries: false`
 to the three-argument constructor to model Redis 6.2 returning null claimed entries for deleted
 pending IDs. The worker skips those entries and retains the scan cursor. Compatibility tests against real
-Redis remain necessary.
+Redis remain necessary. The four-argument constructor's `streamWorkerVersion` models
+these built-in worker scripts for a selected Redis version; other command support is unchanged.

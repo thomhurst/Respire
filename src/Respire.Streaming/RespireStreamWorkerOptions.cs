@@ -18,10 +18,16 @@ public sealed record RespireStreamWorkerOptions
     public TimeSpan ReadWait { get; init; } = TimeSpan.FromSeconds(5);
 
     /// <summary>Positive visibility timeout before pending entries can be recovered. Defaults to one minute.</summary>
+    /// <remarks>On Redis 8.8 or later, unsuccessful processing waits out this delivery's timeout before fenced XNACK release.</remarks>
     public TimeSpan MinimumIdleTime { get; init; } = TimeSpan.FromMinutes(1);
 
     /// <summary>Positive interval between bounded recovery scans per reader. Defaults to five seconds.</summary>
     public TimeSpan RecoveryPollInterval { get; init; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>Delete acknowledged entries when every group has read and acknowledged them. Defaults to false.</summary>
+    /// <remarks>Uses fenced XACKDEL ACKED on Redis 8.2 or later. Older servers acknowledge with XACK and retain the body.
+    /// Dead-letter completion always retains the source body for other groups.</remarks>
+    public bool DeleteAcknowledgedEntries { get; init; }
 
     /// <summary>Logical stream key for atomic dead-letter completion. Must share the source's resolved Cluster slot.</summary>
     /// <remarks>Enabling dead-letter completion limits each source entry to 1024 field/value pairs.

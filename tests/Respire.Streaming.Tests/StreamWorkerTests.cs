@@ -743,9 +743,10 @@ public partial class StreamWorkerTests
 
         public static async Task<Fixture> CreateAsync(int protocol = 3, bool prefix = false, State? state = null,
             RespireStreamWorkerOptions? options = null, int registrations = 1, bool typed = false,
-            bool deserializeFailure = false, TimeProvider? clock = null, string? keyPrefix = null)
+            bool deserializeFailure = false, TimeProvider? clock = null, string? keyPrefix = null, Version? workerVersion = null)
         {
-            var server = new RespireFakeServer(clock);
+            var server = workerVersion is null ? new RespireFakeServer(clock)
+                : new RespireFakeServer(clock, false, true, workerVersion);
             var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
             var view = keyPrefix is not null ? client.WithKeyPrefix(keyPrefix)
                 : prefix ? client.WithKeyPrefix("tenant:") : client;

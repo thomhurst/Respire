@@ -51,6 +51,75 @@ internal static class StreamWorkerScripts
     internal static readonly RespireScript Claim = RespireScript.Create(ClaimSource);
     internal static readonly RespireScript Ack = RespireScript.Create(AckSource);
 
+    // Discovery executes inside the operation's script, on its actual serving server.
+    // No capability evidence survives a redirect, failover, or reconnect. Denied INFO
+    // and non-Redis implementations conservatively retain the compatible path.
+    private const string CapabilitySource = """
+        local function supports(minor)
+            local info = redis.pcall('INFO', 'SERVER')
+            if type(info) ~= 'string' or string.find(info, 'valkey_version:', 1, true) then return false end
+            local major, version = string.match(info, 'redis_version:(%d+)%.(%d+)%.')
+            return major and (tonumber(major) > 8 or (tonumber(major) == 8 and tonumber(version) >= minor))
+        end
+        local function unavailable(reply)
+            return type(reply) == 'table' and reply.err
+                and (string.find(reply.err, 'unknown command', 1, true) or reply.err == 'ERR syntax error')
+        end
+
+        """;
+
+    internal const string CapabilityClaimSource = CapabilitySource + """
+        if supports(4) then
+            local page = redis.pcall('XREADGROUP', 'GROUP', ARGV[1], ARGV[2], 'COUNT', ARGV[5],
+                'CLAIM', ARGV[3], 'STREAMS', KEYS[1], '>')
+            if not unavailable(page) then
+                if type(page) == 'table' and page.err then return page end
+                local entries = {}
+                if page and page[1] then
+                    for _, entry in ipairs(page[1][2]) do
+                        -- CLAIM reports the count BEFORE this delivery. New entries omit it.
+                        if entry[2] then
+                            table.insert(entries, {entry[1], entry[2], tostring(entry[4] and entry[4] + 1 or 1)})
+                        end
+                    end
+                end
+                return {'0-0', entries}
+            end
+        end
+
+        """ + ClaimSource;
+
+    internal const string AckAndDeleteSource = CapabilitySource + """
+        local pending = redis.call('XPENDING', KEYS[1], ARGV[1], ARGV[3], ARGV[3], 1)
+        if #pending ~= 1 or pending[1][2] ~= ARGV[2] or tostring(pending[1][4]) ~= ARGV[4] then return 0 end
+        if supports(2) then
+            local reply = redis.pcall('XACKDEL', KEYS[1], ARGV[1], 'ACKED', 'IDS', 1, ARGV[3])
+            if not unavailable(reply) then
+                if reply.err then return reply end
+                return 1
+            end
+        end
+        return redis.call('XACK', KEYS[1], ARGV[1], ARGV[3])
+        """;
+
+    internal const string NackSource = CapabilitySource + """
+        if not supports(8) then return 0 end
+        local pending = redis.call('XPENDING', KEYS[1], ARGV[1], ARGV[3], ARGV[3], 1)
+        if #pending ~= 1 or pending[1][2] ~= ARGV[2] or tostring(pending[1][4]) ~= ARGV[4] then return 0 end
+        -- XNACK bypasses every CLAIM idle threshold. Release only once the configured
+        -- visibility timeout has elapsed, so poison entries cannot loop immediately.
+        local remaining = tonumber(ARGV[5]) - pending[1][3]
+        if remaining > 0 then return remaining end
+        local reply = redis.pcall('XNACK', KEYS[1], ARGV[1], 'FAIL', 'IDS', 1, ARGV[3])
+        if unavailable(reply) then return 0 end
+        if type(reply) == 'table' and reply.err then return reply end
+        return 0
+        """;
+
+    internal static readonly RespireScript CapabilityClaim = RespireScript.Create(CapabilityClaimSource);
+    internal static readonly RespireScript AckAndDelete = RespireScript.Create(AckAndDeleteSource);
+    internal static readonly RespireScript Nack = RespireScript.Create(NackSource);
+
     internal const string DeadLetterSource = """
         if KEYS[1] == KEYS[2] then return redis.error_reply('ERR source and dead-letter keys must differ') end
         local pending = redis.call('XPENDING', KEYS[1], ARGV[1], ARGV[3], ARGV[3], 1)
