@@ -9,8 +9,8 @@ using Respire.Search;
 
 namespace Respire.VectorData;
 
-/// <summary>String-keyed Redis hash or JSON records and FLOAT32 KNN search.</summary>
-public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollection<string, TRecord> where TRecord : class
+/// <summary>String-keyed Redis hash or JSON records, FLOAT32 KNN search and full-text/vector hybrid search.</summary>
+public sealed partial class RespireVectorStoreCollection<TRecord> : VectorStoreCollection<string, TRecord>, IKeywordHybridSearchable<TRecord> where TRecord : class
 {
     // One script replaces the complete hash atomically, including absent optional fields.
     private static readonly RespireScript Replace = RespireScript.Create("redis.call('DEL',KEYS[1]); for i=1,#ARGV,2 do redis.call('HSET',KEYS[1],ARGV[i],ARGV[i+1]); end; return 1");
@@ -26,6 +26,7 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
     private readonly RespireVectorDataVectorField[] _vectors;
     private readonly RespireSearchField[] _fields;
     private readonly RespireVectorDataFilterField[] _filterFields;
+    private readonly RespireVectorDataTextField[] _textFields;
     private volatile bool _disposed;
 
     internal RespireVectorStoreCollection(IRespireClient client, string name, string index, string prefix, RespireVectorDataMapper<TRecord> mapper)
@@ -97,6 +98,18 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
             });
         }
         _fields = fields.ToArray();
+        _textFields = mapper.TextFields.ToArray();
+        var textProperties = new HashSet<string>(StringComparer.Ordinal);
+        var textNames = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var text in _textFields)
+        {
+            ArgumentNullException.ThrowIfNull(text);
+            ArgumentException.ThrowIfNullOrWhiteSpace(text.PropertyName);
+            ValidateFieldName(text.StorageName);
+            if (!textProperties.Add(text.PropertyName) || !textNames.Add(text.StorageName)
+                || !_fields.Any(field => field.Type == RespireSearchFieldType.Text && !field.NoIndex && (field.Alias ?? field.Identifier) == text.StorageName))
+                throw new ArgumentException("Text mappings require unique properties and existing indexed TEXT fields in DataFields.", nameof(mapper));
+        }
     }
 
     /// <inheritdoc />
@@ -295,8 +308,14 @@ public sealed class RespireVectorStoreCollection<TRecord> : VectorStoreCollectio
             var key = RespireVectorDataOperations.DecodeName(document.Id[_prefix.Length..], nameof(SearchAsync), Name);
             hits.Add((key, score));
         }
+        await foreach (var hit in ReadHitsAsync(hits, options?.IncludeVectors ?? false, cancellationToken).ConfigureAwait(false))
+            yield return hit;
+    }
+
+    private async IAsyncEnumerable<VectorSearchResult<TRecord>> ReadHitsAsync(List<(string Key, double Score)> hits, bool includeVectors, [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
         const int batchSize = 32;
-        var retrievalOptions = new RecordRetrievalOptions { IncludeVectors = options?.IncludeVectors ?? false };
+        var retrievalOptions = new RecordRetrievalOptions { IncludeVectors = includeVectors };
         for (var offset = 0; offset < hits.Count; offset += batchSize)
         {
             cancellationToken.ThrowIfCancellationRequested();

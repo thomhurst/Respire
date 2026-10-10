@@ -14,6 +14,8 @@ public sealed class MovieMapper : RespireVectorDataHashMapper<Movie>
     public override IReadOnlyList<RespireSearchField> DataFields { get; } =
         [new("title", RespireSearchFieldType.Text), new("tag", RespireSearchFieldType.Tag)];
 
+    public override IReadOnlyList<RespireVectorDataTextField> TextFields => [new(nameof(Movie.Title), "title")];
+
     public override IReadOnlyList<RespireVectorDataFilterField> FilterFields { get; } =
         [new(nameof(Movie.Title), "filter_title", RespireVectorDataFilterKind.String),
          new(nameof(Movie.Tag), "filter_tag", RespireVectorDataFilterKind.String)];

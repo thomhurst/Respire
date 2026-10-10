@@ -6,6 +6,10 @@ namespace Respire.VectorData;
 
 internal static class RespireVectorDataOperations
 {
+    internal static double ReadHybridScore(RespireSearchDocument document, string collectionName)
+        => document.Score is { } score && double.IsFinite(score) ? score
+            : throw CreateException(new InvalidOperationException("Hybrid search returned a missing or non-finite fusion score."), "HybridSearchAsync", collectionName);
+
     internal static string DecodeName(string encoded, string operationName, string? collectionName = null)
     {
         try
