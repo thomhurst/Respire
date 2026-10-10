@@ -101,6 +101,40 @@ public partial class StreamWorkerTests
 public class StreamWorkerCapabilityScriptTests
 {
     [Test]
+    public async Task ReleasedDeliveryReportsNativeIdleAndBypassesClaimThresholdNearEpoch()
+    {
+        await using var fake = new RespireFakeServer(new RespireFakeClock(), false, true, new Version(8, 8));
+        await using var client = await RespireClient.ConnectAsync(fake.CreateOptions());
+        await ReleasedPendingScenarioAsync(client);
+    }
+
+    internal static async Task ReleasedPendingScenarioAsync(RespireClient client)
+    {
+        await client.Streams.AddAsync("released", new StreamAddOptions { Id = "1-0" }, ("f", "v"));
+        await client.Streams.CreateGroupAsync("released", "g", RespireStreamId.Beginning);
+        await client.Streams.ReadGroupOnceAsync("released", "g", "owner");
+        await client.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.Nack, ["released"], ["g", "owner", "1-0", 1, 0]);
+        var released = (await client.Streams.PendingAsync("released", "g")).Single();
+        await Assert.That(released.Consumer).IsEqualTo("");
+        await Assert.That(released.IdleTime).IsEqualTo(TimeSpan.FromMilliseconds(-1));
+        using (var reply = await client.Scripts.ExecuteAsync(StreamWorkerScripts.CapabilityClaim, ["released"],
+            ["g", "new", 60000, "0-0", 1]))
+        {
+            await Assert.That(reply[1].Count).IsEqualTo(1);
+            await Assert.That(reply[1][0][2].AsString()).IsEqualTo("2");
+        }
+        var claimed = (await client.Streams.PendingAsync("released", "g")).Single();
+        await Assert.That(claimed.Consumer).IsEqualTo("new");
+        await Assert.That(claimed.IdleTime).IsGreaterThanOrEqualTo(TimeSpan.Zero);
+        await client.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.Nack, ["released"], ["g", "new", "1-0", 2, 0]);
+        var automatic = await client.Streams.ClaimPendingAsync("released", "g", "latest", TimeSpan.FromMinutes(1));
+        await Assert.That(automatic.Entries.Length).IsEqualTo(1);
+        var final = (await client.Streams.PendingAsync("released", "g")).Single();
+        await Assert.That(final.Consumer).IsEqualTo("latest");
+        await Assert.That(final.DeliveryCount).IsEqualTo(3);
+    }
+
+    [Test]
     [Arguments(2, 0)]
     [Arguments(3, 4)]
     [Arguments(2, 8)]

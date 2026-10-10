@@ -50,10 +50,11 @@ public sealed partial class RespireFakeServer
                 deleted.Add(FakeReply.Text(id.Value));
                 continue;
             }
-            if (Math.Max(0, Now - delivery.DeliveredAt) < minIdle) continue;
+            if (!delivery.IsReleased && Math.Max(0, Now - delivery.DeliveredAt) < minIdle) continue;
             group.Consumers.Add(args[3]);
             delivery.Consumer = args[3];
             delivery.DeliveredAt = Now;
+            delivery.IsReleased = false;
             if (!justIds) delivery.DeliveryCount++;
             var entry = justIds ? FakeReply.Text(id.Value) : FakeReply.Null;
             if (!justIds && hasBody) entry = StreamFields(id, fields!);
@@ -97,9 +98,10 @@ public sealed partial class RespireFakeServer
             if (script == StreamWorkerScripts.Nack)
             {
                 if (_streamWorkerVersion < new Version(8, 8)) return FakeReply.Integer(0);
-                if (Math.Max(0, Now - pending.DeliveredAt) < Integer(args[8])) return FakeReply.Integer(0);
+                if (pending.IsReleased || Math.Max(0, Now - pending.DeliveredAt) < Integer(args[8])) return FakeReply.Integer(0);
                 pending.Consumer = [];
                 pending.DeliveredAt = 0;
+                pending.IsReleased = true;
                 return FakeReply.Integer(0);
             }
             group.Pending.Remove(id);
@@ -124,7 +126,8 @@ public sealed partial class RespireFakeServer
             var count = Integer(args[6]);
             if (count <= 0) return Syntax("EVAL");
             group.Consumers.Add(args[5]);
-            var owned = group.Pending.Where(pair => pair.Key > cursor && pair.Value.Consumer.AsSpan().SequenceEqual(args[5]))
+            var owned = group.Pending.Where(pair => pair.Key > cursor && !pair.Value.IsReleased
+                && pair.Value.Consumer.AsSpan().SequenceEqual(args[5]))
                 .OrderBy(pair => pair.Key).Take((int)Math.Min(count, int.MaxValue)).ToArray();
             var entries = new List<FakeReply>();
             foreach (var (id, pending) in owned)
@@ -154,14 +157,16 @@ public sealed partial class RespireFakeServer
         if (idle < 0 || count <= 0) return Syntax("XREADGROUP");
         var entries = new List<FakeReply>();
         var selected = 0;
-        foreach (var (id, pending) in group.Pending.OrderBy(pair => pair.Value.DeliveredAt).ThenBy(pair => pair.Key).ToArray())
+        foreach (var (id, pending) in group.Pending.OrderBy(pair => !pair.Value.IsReleased)
+            .ThenBy(pair => pair.Value.DeliveredAt).ThenBy(pair => pair.Key).ToArray())
         {
             if (selected == count) break;
-            if (Math.Max(0, Now - pending.DeliveredAt) < idle) continue;
+            if (!pending.IsReleased && Math.Max(0, Now - pending.DeliveredAt) < idle) continue;
             selected++;
             if (!stream.Entries.TryGetValue(id, out var fields)) continue;
             pending.Consumer = args[5];
             pending.DeliveredAt = Now;
+            pending.IsReleased = false;
             pending.DeliveryCount++;
             entries.Add(StreamFields(id, fields));
         }
