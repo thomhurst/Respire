@@ -458,6 +458,70 @@ public partial class StreamWorkerTests
     }
 
     [Test, NotInParallel]
+    public async Task TelemetryBlockedTeardownDoesNotDelayWorkerCancellation()
+    {
+        using var metrics = new WorkerMetrics();
+        using var release = new ManualResetEventSlim();
+        var entered = NewSignal();
+        var canceled = NewSignal();
+        using var listener = new MeterListener
+        {
+            InstrumentPublished = (instrument, meter) =>
+            {
+                if (instrument.Meter.Name == RespireStreamWorkerTelemetry.MeterName
+                    && instrument.Name == "respire.stream.worker.processing.duration")
+                    meter.EnableMeasurementEvents(instrument);
+            },
+            MeasurementsCompleted = (_, _) =>
+            {
+                entered.TrySetResult();
+                release.Wait();
+            },
+        };
+        listener.Start();
+        var state = new State { Handle = async (_, token) =>
+        {
+            try { await Task.Delay(Timeout.Infinite, token); }
+            catch (OperationCanceledException) when (token.IsCancellationRequested) { canceled.TrySetResult(); throw; }
+            return RespireStreamWorkerResult.Ack;
+        } };
+        await using var fixture = await Fixture.CreateAsync(state: state, options: new()
+        {
+            TelemetryName = WorkerName, ConsumerCount = 2, MetricsPollInterval = TimeSpan.FromMilliseconds(20),
+        });
+        Task? disposing = null;
+        try
+        {
+            await fixture.AddAsync(0);
+            await fixture.StartAsync();
+            await state.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
+            await UntilAsync(() =>
+            {
+                metrics.Listener.RecordObservableInstruments();
+                return Task.FromResult(metrics.Pending.Any(sample => sample.Value == 1));
+            });
+            disposing = Task.Run(fixture.Service.Dispose);
+            await entered.Task.WaitAsync(Deadline);
+            await canceled.Task.WaitAsync(Deadline);
+            await fixture.Service.ExecuteTask!.WaitAsync(Deadline);
+            await Assert.That(disposing.IsCompleted).IsFalse();
+            metrics.Lag.Clear();
+            metrics.Pending.Clear();
+            metrics.Listener.RecordObservableInstruments();
+            await Assert.That(metrics.Duration.Count + metrics.Lag.Count + metrics.Pending.Count + metrics.DeadLetters.Count)
+                .IsEqualTo(0);
+            await Assert.That(state.DisposedScopes).IsEqualTo(1);
+            await Assert.That(fixture.Service.ExecuteTask.IsCompletedSuccessfully).IsTrue();
+            await Assert.That((await fixture.View.Streams.PendingSummaryAsync("events", "workers")).Count).IsEqualTo(1);
+        }
+        finally
+        {
+            release.Set();
+            if (disposing is not null) await disposing.WaitAsync(Deadline);
+        }
+    }
+
+    [Test, NotInParallel]
     public async Task TelemetryThrowingListenersCannotReplaceAcknowledgementFailure()
     {
         using var meter = new MeterListener

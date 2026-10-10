@@ -32,6 +32,7 @@ internal sealed class StreamWorkerTelemetry : IDisposable
     private long? _pending;
     private volatile bool _disposed;
     private volatile bool _pollingStopped;
+    private int _teardownStarted;
 
     internal StreamWorkerTelemetry(string name)
     {
@@ -148,14 +149,19 @@ internal sealed class StreamWorkerTelemetry : IDisposable
         }
     }
 
-    public void Dispose()
+    internal void StopPublishing()
     {
         lock (_gate)
         {
-            if (_disposed) return;
             _disposed = true;
             _lag = _pending = null;
         }
+    }
+
+    public void Dispose()
+    {
+        StopPublishing();
+        if (Interlocked.Exchange(ref _teardownStarted, 1) != 0) return;
         // Meter teardown may invoke listeners. Already-running callbacks can finish independently.
         try { _meter.Dispose(); } catch { /* Ignore listener failures during teardown. */ }
         try { _source?.Dispose(); } catch { /* Ignore tracing failures during teardown. */ }

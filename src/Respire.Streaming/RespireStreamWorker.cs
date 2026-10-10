@@ -262,7 +262,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
 
     public override void Dispose()
     {
-        _telemetry.Dispose();
+        _telemetry.StopPublishing();
         base.Dispose();
         CancelHandlers();
         var running = Volatile.Read(ref _consumerDrain) ?? ExecuteTask;
@@ -271,6 +271,8 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
         else
             _ = running.ContinueWith(static (_, state) => ((CancellationTokenSource)state!).Dispose(), _handlers,
                 CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        // External teardown callbacks may block, so cancel and arrange handler cleanup first.
+        _telemetry.Dispose();
     }
 
     private void CancelHandlers()
