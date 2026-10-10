@@ -23,7 +23,7 @@ jobs:
         framework: [net10.0]
     services:
       redis:
-        image: redis:8.10@sha256:2c2dff791878316e3b083188be0d578423b24813cdda5de0e80ea4f7b3e6bfd6
+        image: mirror.gcr.io/library/redis:8.10@sha256:2c2dff791878316e3b083188be0d578423b24813cdda5de0e80ea4f7b3e6bfd6
         ports: [6379:6379, 6380:6380]
         options: >-
           --health-cmd "redis-cli ping"
@@ -38,6 +38,24 @@ jobs:
       EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
       EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
+      # Load infrastructure from the workflow revision, independently of benchmark source revisions.
+      - name: Checkout Docker mirror action
+        id: docker-mirror-checkout
+        if: runner.os == 'Linux' && runner.environment == 'github-hosted'
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: docker-mirror
+          sparse-checkout: .github/actions/docker-hub-mirror
+          persist-credentials: false
+      - name: Use Docker Hub mirror
+        if: runner.os == 'Linux' && runner.environment == 'github-hosted' && steps.docker-mirror-checkout.outcome == 'success'
+        uses: ./docker-mirror/.github/actions/docker-hub-mirror
+      - name: Warn if Docker mirror action could not be loaded
+        if: steps.docker-mirror-checkout.outcome == 'failure'
+        shell: bash
+        run: echo '::warning::Could not load Docker mirror action; pulls go straight to Docker Hub'
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: |
