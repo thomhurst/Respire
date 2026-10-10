@@ -28,9 +28,9 @@ Server and protocol requirements vary by feature; each linked guide describes it
   [maintenance notifications and handoffs](fundamentals/connections.md#maintenance-notifications),
   and health-checked [failover groups](guides/failover-groups.md) across deployments, with
   member-local maintenance handoffs and bounded pauses in health failure counting.
-- [Opt-in circuit breakers](guides/circuit-breakers.md) reject standalone and Cluster immediate,
-  batch, and transaction commands during endpoint failures, with independent Cluster data-node
-  histories and bounded half-open probes. Sentinel and remaining resilience integration stay
+- [Opt-in endpoint circuit breakers](guides/circuit-breakers.md) reject standalone, Sentinel and Cluster
+  immediate, batch, and transaction commands during endpoint failures, with independent data-endpoint
+  histories and bounded half-open probes. Remaining resilience integration stays
   tracked by [the circuit epic](https://github.com/thomhurst/Respire/issues/1255).
 - [Renewable credentials](guides/renewable-credentials.md), independent Sentinel authentication,
   and [Azure Managed Redis](guides/azure-managed-redis.md) / [AWS IAM](guides/aws-iam-credentials.md) adapters.

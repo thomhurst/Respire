@@ -4,10 +4,11 @@ title: Failover groups
 
 :::note Endpoint circuit breaker foundation
 
-[Circuit breakers](circuit-breakers.md) support standalone and Cluster data-node
-command admission through `RespireOptions.CircuitBreaker`. Sentinel admission and
-remaining resilience work stay tracked by [#863](https://github.com/thomhurst/Respire/issues/863).
-Failover-group configuration below remains the health-checked switching API across deployments.
+[Endpoint command circuit breaking](circuit-breakers.md) is available for standalone,
+Sentinel and Cluster data endpoints through `RespireOptions.CircuitBreaker`. Remaining
+resilience work stays tracked by [#863](https://github.com/thomhurst/Respire/issues/863).
+Failover-group configuration below controls health-checked switching across deployments
+independently of application command admission.
 
 The endpoint foundation retains the most recent `MaximumSampleCount` completed
 outcomes whose age is less than `SamplingWindow`: 1024 outcomes and 30 seconds by

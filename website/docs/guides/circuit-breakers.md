@@ -1,11 +1,11 @@
 ---
-title: Circuit breakers
+title: Endpoint circuit breakers
 description: Opt-in endpoint admission, bounded recovery probes, and command health outcomes.
 ---
 
-# Circuit breakers
+# Endpoint circuit breakers
 
-Set `RespireOptions.CircuitBreaker` to stop new standalone or Redis Cluster commands from entering an unhealthy
+Set `RespireOptions.CircuitBreaker` to stop new standalone, Sentinel or Redis Cluster commands from entering an unhealthy
 endpoint. The default is `null`: the client creates no circuit registry or per-command permit,
 and retains its existing response sources and queue behavior.
 
@@ -46,8 +46,8 @@ handshakes, and explicit health-check probes retain their existing lifecycle.
 A maintenance handoff can move a command only before its frame is accepted. The old admission
 is released as ignored, and the replacement endpoint requires fresh admission under the
 original command deadline. An open replacement circuit rejects without writing there. The
-registry retains at most 16 idle endpoint histories unless more entries are needed by current routing
-or outstanding admissions. Only idle, non-current histories can be evicted; returning to an
+registry retains at most 16 idle endpoint histories unless more entries are needed by current or retiring routing
+or outstanding admissions. Only idle histories outside current and retiring routing can be evicted; returning to an
 evicted endpoint starts fresh history. DNS changes reuse the configured hostname.
 
 An operation already accepted by the transport remains in its FIFO position when another
@@ -102,11 +102,13 @@ returns failures in original queue order; `ExecuteAsync` throws the first failur
 every pending. Successful pending results retain their existing ownership.
 
 A batch can dispatch partially: admitted commands can execute while later entries are rejected,
-including when all half-open slots are occupied. Rejected entries are not retried or replayed.
+including when all half-open slots are occupied. Entries rejected by circuit admission are not retried or replayed.
 Accepted replies remain in FIFO order, including after cancellation releases a permit. Circuit
 admission does not make a pipeline atomic. Standalone circuit-enabled batches stay on their selected
 connection rather than moving individual entries during a maintenance handoff. Cluster batches
 retain their existing recovery for commands rejected before acceptance; each new target requires admission.
+Sentinel generation changes are different: a never-accepted ordinary entry can select the current validated primary
+and acquire fresh admission, as described below.
 
 A nonempty transaction acquires one permit for the entire MULTI/EXEC sequence immediately before
 dispatch. Open rejection sends neither MULTI nor its queued commands nor EXEC, and faults all
@@ -168,12 +170,28 @@ after the open delay when a submitted transport failure reopened the node.
 
 ## Current scope
 
-This option covers standalone immediate typed, raw, interpolated, fire-and-forget, cache-miss,
+This option covers standalone and Sentinel immediate typed, raw, interpolated, fire-and-forget, cache-miss,
 blocking, streamed, batch, and transaction command dispatch.
 
-Redis Cluster data dispatch is also supported as described above. Configuration with Sentinel
-or standalone replica endpoints is rejected. Sentinel circuit admission remains separate work.
-This option does not change
+Redis Cluster data dispatch is also supported as described above.
+
+In Sentinel mode, circuit state belongs to the actual data endpoint, including discovered
+replica endpoints when read routing selects them. Sentinel monitor connections, discovery,
+and primary ROLE validation do not use application circuits. They can discover a healthy
+replacement while the old primary's circuit is open. The replacement has independent state;
+key-prefixed and cache-bypass views share that state across its data connections.
+Removed replica endpoints retain their histories while previously selected reads finish during
+retirement grace and accepted replies drain. Their idle histories become trimmable after retirement completes.
+
+When a generation retires before a command is accepted, ordinary immediate sends, batch
+entries, and unwatched transactions can select the current validated primary and acquire
+fresh endpoint admission. Accepted commands are never replayed. Cancellation completes an
+admitted probe as ignored, releases recovery capacity, and retains the accepted frame's
+FIFO response placeholder. A failed recovery probe reopens only that endpoint's circuit.
+Scan cursor pages, WATCH state, import sessions, and durability acknowledgements keep their connection affinity.
+They cannot move to another primary to bypass circuit rejection or retirement.
+
+Configuration with standalone replica endpoints is rejected. This option does not change
 `RespireFailoverGroup` probe/failback behavior. The wider
 [resilience work](https://github.com/thomhurst/Respire/issues/863) remains open for retry and
 telemetry integration.

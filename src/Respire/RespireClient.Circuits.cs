@@ -24,6 +24,25 @@ public sealed partial class RespireClient
         => deadline.IsSet || _core.Options.CommandTimeout is not { } timeout
             ? deadline : CommandDeadline.After(Math.Max(1L, (long)timeout.TotalMilliseconds));
 
+    // Only retirement rejection reaches this helper: no application frame was accepted.
+    // A Sentinel generation cannot reroute inside its retired multiplexer. Select the
+    // freshly validated generation, then let the next dispatch acquire its own circuit.
+    internal bool TryRerouteCircuit(RespireConnection connection, CommandDeadline deadline,
+        out RespireConnection target, out CommandDeadline reroutedDeadline, string? preferredZone)
+    {
+        if (connection.TryReroute(false, deadline, out target, out reroutedDeadline, preferredZone)) return true;
+        if (_core.Sentinel is not null
+            && connection.Multiplexer?.Options.Generation is SentinelRouter.Generation { IsRetired: true }
+            && _core.TryGetReadyPrimaryMultiplexer(out var current)
+            && !ReferenceEquals(current, connection.Multiplexer))
+        {
+            target = preferredZone is null ? current.GetConnection() : current.GetConnectionForZone(preferredZone);
+            reroutedDeadline = connection.GetReroutedCommandDeadline(deadline);
+            return true;
+        }
+        return false;
+    }
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private RespireConnection GetCircuitAwareConnection(RespireConnectionMultiplexer multiplexer, CancellationToken cancellationToken)
         => _core.Circuits is null || _snapshotPrefixedBinaryKeys
@@ -34,10 +53,30 @@ public sealed partial class RespireClient
     {
         while (true)
         {
+            if (_core.Sentinel is not null && _core.TryGetReadyPrimaryMultiplexer(out var current))
+                multiplexer = current;
             var routing = multiplexer.CaptureMovingPublication();
             try { return multiplexer.GetConnection(); }
+            catch (RespireConnectionRetiredException) when (_core.Sentinel is not null
+                && _core.TryGetReadyPrimaryMultiplexer(out var replacement)
+                && !ReferenceEquals(multiplexer, replacement))
+            {
+                multiplexer = replacement;
+                cancellationToken.ThrowIfCancellationRequested();
+            }
             catch (RespireConnectionException error)
             {
+                if (_core.Sentinel is not null && _core.TryGetReadyPrimaryMultiplexer(out var replacement)
+                    && !ReferenceEquals(multiplexer, replacement))
+                {
+                    multiplexer = replacement;
+                    cancellationToken.ThrowIfCancellationRequested();
+                    continue;
+                }
+                // A retired Sentinel generation is a stale route, not endpoint health evidence.
+                // Ready queue selection catches retirement and enters validated discovery.
+                if (multiplexer.Options.Generation is SentinelRouter.Generation { IsRetired: true })
+                    throw new RespireConnectionRetiredException(multiplexer.Host, multiplexer.Port);
                 // A handoff can publish after selection observes the dead source. Retry that
                 // stale selection before rejecting or recording availability for either endpoint.
                 if (!ReferenceEquals(routing.Publication, multiplexer.MovingPublication))
@@ -71,6 +110,7 @@ public sealed partial class RespireClient
         RespireTelemetry.ErrorObservation observation)
         where TCommand : struct, IRespCommand
     {
+        connection.ThrowIfRetired();
         var admission = AcquireCircuit(connection, cancellationToken);
         try
         {
@@ -117,7 +157,7 @@ public sealed partial class RespireClient
                     break;
                 }
                 catch (RespireConnectionRetiredException error) when (allowStreamingConnectionReroute
-                    && connection.TryReroute(false, commandDeadline, out var target, out var rerouted, GetTransportReadZone(in command)))
+                    && TryRerouteCircuit(connection, commandDeadline, out var target, out var rerouted, GetTransportReadZone(in command)))
                 {
                     observation.Handled(error);
                     connection = target;
@@ -180,7 +220,7 @@ public sealed partial class RespireClient
                     admission.Success();
                     return response;
                 }
-                catch (RespireConnectionRetiredException error) when (connection.TryReroute(false, commandDeadline,
+                catch (RespireConnectionRetiredException error) when (TryRerouteCircuit(connection, commandDeadline,
                     out var target, out var rerouted, GetTransportReadZone(in command)))
                 {
                     observation.Handled(error);
@@ -250,7 +290,7 @@ public sealed partial class RespireClient
                 admission.Success();
                 return response;
             }
-            catch (RespireConnectionRetiredException error) when (connection.TryReroute(false, commandDeadline,
+            catch (RespireConnectionRetiredException error) when (TryRerouteCircuit(connection, commandDeadline,
                 out var target, out var rerouted, GetTransportReadZone(in command)))
             {
                 observation.Handled(error);
@@ -287,7 +327,7 @@ public sealed partial class RespireClient
                 // Queue acceptance cannot establish endpoint health without observing its reply.
                 return;
             }
-            catch (RespireConnectionRetiredException error) when (connection.TryReroute(false, commandDeadline,
+            catch (RespireConnectionRetiredException error) when (TryRerouteCircuit(connection, commandDeadline,
                 out var target, out var rerouted, GetTransportReadZone(in command)))
             {
                 observation.Handled(error);

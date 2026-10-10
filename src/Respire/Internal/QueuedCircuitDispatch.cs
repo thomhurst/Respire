@@ -14,25 +14,40 @@ internal static class QueuedCircuitDispatch
 #endif
     internal static async ValueTask<RespValue> SendAsync<TCommand>(StandaloneCircuitRegistry circuits,
         RespireConnection connection, TCommand command, string operation, CancellationToken cancellationToken,
-        RespireTelemetry.ErrorObservation observation, bool withoutResponseTimeout = false)
+        RespireTelemetry.ErrorObservation observation, bool withoutResponseTimeout = false, RespireClient? client = null)
         where TCommand : struct, IRespCommand
     {
-        var admission = circuits.Acquire(new(connection.Host, connection.Port), cancellationToken);
-        try
+        var deadline = client?.Core.Options.CommandTimeout is { } timeout
+            ? CommandDeadline.After(Math.Max(1L, (long)timeout.TotalMilliseconds)) : default;
+        while (true)
         {
-            var reply = withoutResponseTimeout
-                ? await connection.SendWithoutResponseTimeoutAsync(command, cancellationToken, pinToConnection: true).ConfigureAwait(false)
-                : await connection.SendAsync(in command, cancellationToken, commandName: operation,
-                    pinToConnection: true, observation: observation).ConfigureAwait(false);
-            admission.Success();
-            return reply;
+            CircuitAdmission admission = default;
+            try
+            {
+                connection.ThrowIfRetired();
+                admission = circuits.Acquire(new(connection.Host, connection.Port), cancellationToken);
+                var reply = withoutResponseTimeout
+                    ? await connection.SendWithoutResponseTimeoutAsync(command, cancellationToken, pinToConnection: true).ConfigureAwait(false)
+                    : await connection.SendAsync(in command, cancellationToken, commandName: operation,
+                        commandDeadline: deadline, pinToConnection: true, observation: observation).ConfigureAwait(false);
+                admission.Success();
+                return reply;
+            }
+            catch (RespireConnectionRetiredException error) when (!withoutResponseTimeout
+                && command.ReadKind != ReadCommandKind.CursorRead && client?.Core.Sentinel is not null
+                && client.TryRerouteCircuit(connection, deadline, out var target, out var rerouted, preferredZone: null))
+            {
+                observation.Handled(error);
+                connection = target;
+                deadline = rerouted;
+            }
+            catch (Exception error)
+            {
+                admission.Failed(error, cancellationToken);
+                throw;
+            }
+            finally { admission.Dispose(); }
         }
-        catch (Exception error)
-        {
-            admission.Failed(error, cancellationToken);
-            throw;
-        }
-        finally { admission.Dispose(); }
     }
 
 #if NET
@@ -40,27 +55,52 @@ internal static class QueuedCircuitDispatch
 #endif
     internal static async ValueTask<ValueTask<RespValue>> EnqueueAsync<TCommand>(StandaloneCircuitRegistry circuits,
         RespireConnection connection, TCommand command, string operation, CancellationToken cancellationToken,
-        RespireTelemetry.ErrorObservation observation = default, CommandDeadline deadline = default)
+        RespireTelemetry.ErrorObservation observation = default, CommandDeadline deadline = default, RespireClient? client = null)
+        where TCommand : struct, IRespCommand
+        => (await EnqueueWithConnectionAsync(circuits, connection, command, operation, cancellationToken,
+            observation, deadline, client).ConfigureAwait(false)).Reply;
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    internal static async ValueTask<(ValueTask<RespValue> Reply, RespireConnection Connection)> EnqueueWithConnectionAsync<TCommand>(
+        StandaloneCircuitRegistry circuits, RespireConnection connection, TCommand command, string operation,
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default,
+        CommandDeadline deadline = default, RespireClient? client = null)
         where TCommand : struct, IRespCommand
     {
-        var admission = circuits.Acquire(new(connection.Host, connection.Port), cancellationToken);
-        var transferred = false;
-        try
+        if (!deadline.IsSet) deadline = connection.CreateCommandDeadline();
+        while (true)
         {
-            var reply = await connection.EnqueuePinnedAsync(command, cancellationToken, operation,
-                observation, deadline: deadline).ConfigureAwait(false);
-            // ObserveAsync starts eagerly and owns reply completion even before the caller
-            // awaits its returned result. Connection failure/cancellation also completes it.
-            var guarded = ObserveAsync(reply, admission, cancellationToken);
-            transferred = true;
-            return guarded;
+            CircuitAdmission admission = default;
+            var transferred = false;
+            try
+            {
+                connection.ThrowIfRetired();
+                admission = circuits.Acquire(new(connection.Host, connection.Port), cancellationToken);
+                var reply = await connection.EnqueuePinnedAsync(command, cancellationToken, operation,
+                    observation, deadline: deadline).ConfigureAwait(false);
+                // ObserveAsync starts eagerly and owns reply completion even before the caller
+                // awaits its returned result. Connection failure/cancellation also completes it.
+                var guarded = ObserveAsync(reply, admission, cancellationToken);
+                transferred = true;
+                return (guarded, connection);
+            }
+            catch (RespireConnectionRetiredException error) when (command.ReadKind != ReadCommandKind.CursorRead
+                && client?.Core.Sentinel is not null
+                && client.TryRerouteCircuit(connection, deadline, out var target, out var rerouted, preferredZone: null))
+            {
+                observation.Handled(error);
+                connection = target;
+                deadline = rerouted;
+            }
+            catch (Exception error)
+            {
+                admission.Failed(error, cancellationToken);
+                throw;
+            }
+            finally { if (!transferred) admission.Dispose(); }
         }
-        catch (Exception error)
-        {
-            admission.Failed(error, cancellationToken);
-            throw;
-        }
-        finally { if (!transferred) admission.Dispose(); }
     }
 
 #if NET

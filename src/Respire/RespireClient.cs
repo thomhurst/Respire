@@ -2790,7 +2790,9 @@ public sealed partial class RespireClient : IRespireClient
                 affinity is null && CursorCommandMetadata.IsCursorContinuation(in command),
                 cancellationToken, observation).ConfigureAwait(false)
             : await _core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken, observation).ConfigureAwait(false);
-        return await SendOnConnectionAsync(operation, connection, command, cancellationToken, observation: observation).ConfigureAwait(false);
+        return await SendOnConnectionAsync(operation, connection, command, cancellationToken,
+            allowStreamingConnectionReroute: readKind != ReadCommandKind.CursorRead,
+            observation: observation).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -3953,7 +3955,7 @@ public sealed partial class RespireClient : IRespireClient
                     break;
                 }
                 catch (RespireConnectionRetiredException error) when (core.Circuits is not null
-                    && connection.TryReroute(false, commandDeadline, out var target, out var rerouted, GetTransportReadZone(in command)))
+                    && TryRerouteCircuit(connection, commandDeadline, out var target, out var rerouted, GetTransportReadZone(in command)))
                 {
                     observation.Handled(error);
                     circuitCompletion?.Ignore();
@@ -4513,18 +4515,27 @@ public sealed partial class RespireClient : IRespireClient
             return cluster.TryAcquireReadyConnection(slot, cancellationToken);
 
         var multiplexer = _core.Multiplexer;
-        // Queues must report lost standalone availability even before dispatch can acquire
-        // a permit. Use the immediate selection guard once initial connection setup is done.
-        if (_core.Circuits is not null && multiplexer.IsInitialized)
-            return GetCircuitConnectionSlow(multiplexer, cancellationToken);
         if (_core.Sentinel is { } sentinel)
         {
             if (sentinel.Current is not { IsRetired: false } generation) return null;
             multiplexer = generation.Multiplexer;
         }
-        if (multiplexer is not { IsConnected: true }) return null;
-        try { return multiplexer.GetConnection(); }
-        catch (Exception error) when (error is RespireConnectionException or RespireConnectionRetiredException)
+        return TryAcquireReadyConnection(multiplexer, cancellationToken);
+    }
+
+    private RespireConnection? TryAcquireReadyConnection(
+        RespireConnectionMultiplexer multiplexer, CancellationToken cancellationToken)
+    {
+        // Queues use the same current endpoint and availability guard as immediate sends.
+        try
+        {
+            if (_core.Circuits is not null && multiplexer.IsInitialized)
+                return GetCircuitConnectionSlow(multiplexer, cancellationToken);
+            if (multiplexer is not { IsConnected: true }) return null;
+            return multiplexer.GetConnection();
+        }
+        catch (Exception error) when (error is RespireConnectionRetiredException
+            || _core.Circuits is null && error is RespireConnectionException)
         {
             // Retirement can race the ready snapshot. The common cold path selects its replacement.
             return null;
@@ -4559,7 +4570,7 @@ public sealed partial class RespireClient : IRespireClient
         }
 
         await _core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-        return _core.Multiplexer.GetConnection();
+        return GetCircuitAwareConnection(_core.Multiplexer, cancellationToken);
     }
 
     // Wire-level primitives for the caching package (see InternalsVisibleTo). Keyed operations
