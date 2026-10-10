@@ -1773,6 +1773,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             commandName, armCommandDeadline, commandDeadline, pinToConnection, preferredZone, observation, errorAttempts, writeObservation);
     }
 
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
     private async ValueTask<RespValue> SendStreamingCoreAsync<TCommand>(
         TCommand command, CancellationToken cancellationToken, CommandDeadline commandDeadline, bool pinToConnection,
         bool allowConnectionReroute, DedicatedStreamRoute streamingRoute, bool throwOnError,

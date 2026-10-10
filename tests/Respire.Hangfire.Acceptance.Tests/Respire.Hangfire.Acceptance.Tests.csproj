@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- The pinned package grants its official suite access to internal storage types. -->
+    <AssemblyName>Hangfire.Redis.Tests</AssemblyName>
+    <IsTestProject>true</IsTestProject>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="Testcontainers.Redis" />
+    <PackageReference Include="xunit.assert" />
+    <PackageReference Include="Moq" />
+    <PackageReference Include="Hangfire.Redis.StackExchange" />
+    <ProjectReference Include="../../src/Respire.StackExchangeCompat/Respire.StackExchangeCompat.csproj" />
+    <Compile Include="../RedisTestContainer.cs" Link="RedisTestContainer.cs" />
+    <Using Include="Respire.Testing" />
+  </ItemGroup>
+</Project>

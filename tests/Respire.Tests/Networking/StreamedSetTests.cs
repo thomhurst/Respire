@@ -1109,6 +1109,9 @@ public sealed class StreamedSetTests
     }
 
     [Test]
+    // The blocking callback deliberately occupies a worker until this test releases it.
+    // Isolate both cases so concurrent blocked reads cannot starve abort continuations.
+    [NotInParallel]
     [Arguments(false)]
     [Arguments(true)]
     public async Task AbortDoesNotRunSourceCancellationCallbacksInline(bool blockCallback)

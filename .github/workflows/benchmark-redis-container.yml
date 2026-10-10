@@ -21,6 +21,24 @@ jobs:
         framework: [net10.0]
     
     steps:
+      # Load infrastructure from the workflow revision, independently of benchmark source revisions.
+      - name: Checkout Docker mirror action
+        id: docker-mirror-checkout
+        if: runner.os == 'Linux' && runner.environment == 'github-hosted'
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: docker-mirror
+          sparse-checkout: .github/actions/docker-hub-mirror
+          persist-credentials: false
+      - name: Use Docker Hub mirror
+        if: runner.os == 'Linux' && runner.environment == 'github-hosted' && steps.docker-mirror-checkout.outcome == 'success'
+        uses: ./docker-mirror/.github/actions/docker-hub-mirror
+      - name: Warn if Docker mirror action could not be loaded
+        if: steps.docker-mirror-checkout.outcome == 'failure'
+        shell: bash
+        run: echo '::warning::Could not load Docker mirror action; pulls go straight to Docker Hub'
       - name: Checkout code
         uses: actions/checkout@v7
       

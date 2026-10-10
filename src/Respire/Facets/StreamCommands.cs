@@ -212,6 +212,12 @@ public readonly record struct RespireStreamEntry
         return _client.FlagAsync(
             "XACK", new Cmd3(Verbs.XAck, _resolvedKey, _group, Id.Value), cancellationToken);
     }
+
+    // The constructor always retains this owned array. Reuse its bytes while removing
+    // the raw XACK path from entries delivered by the attempt-fenced hosted worker.
+    internal RespireStreamEntry WithoutAcknowledgement()
+        => new(Id, (KeyValuePair<string, byte[]>[])Fields,
+            previousIdleTime: PreviousIdleTime, previousDeliveryCount: PreviousDeliveryCount);
 }
 
 /// <summary>A consumer and its pending-entry count from Redis XPENDING.</summary>

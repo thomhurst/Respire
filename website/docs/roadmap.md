@@ -45,8 +45,9 @@ Server and protocol requirements vary by feature; each linked guide describes it
 - [Blocking queues](guides/blocking-queues.md) and [streamed string transfers](commands/strings-and-keys.md)
   use dedicated connections where needed to keep multiplexed traffic moving.
 - [Hosted stream consumers](guides/stream-workers.md) support bounded concurrency, scoped typed handlers,
-  explicit acknowledgement and graceful draining. Automatic idle recovery, delivery limits,
-  dead-letter handling and worker telemetry remain tracked by [#891](https://github.com/thomhurst/Respire/issues/891).
+  explicit attempt-fenced acknowledgement, automatic idle recovery, delivery limits,
+  atomic dead-letter completion and graceful draining.
+  Worker telemetry and newer stream capabilities remain tracked by [#891](https://github.com/thomhurst/Respire/issues/891).
 - [Batches, transactions, and `WATCH`](guides/batches-and-transactions.md), plus
   [durability acknowledgements](guides/durability-acknowledgements.md).
 - [Pub/sub](guides/pub-sub.md), pattern and sharded subscriptions, and delivery-gap reporting.
@@ -97,8 +98,11 @@ deferred MULTI/EXEC, the inventoried Hangfire notification calls, and documented
 WATCH conditions, including synchronous Execute and repeat execution after aborts.
 The adapter also provides endpoint discovery, physical server INFO/TIME/ROLE,
 atomic token locks, and literal callback subscriptions used by RedisStorage.
-General StackExchange.Redis interface parity and SignalR/Hangfire
-acceptance remain planned under [#889](https://github.com/thomhurst/Respire/issues/889).
+[Pinned Hangfire acceptance](./guides/hangfire-acceptance) exercises 93 upstream
+facts and two real worker lifecycle cases on .NET 8/.NET 10 and RESP2/RESP3,
+with explicit exclusions and limitations. General StackExchange.Redis interface
+parity and combined Microsoft/SignalR/Hangfire acceptance remain planned under
+[#889](https://github.com/thomhurst/Respire/issues/889).
 
 These open epics track remaining work, not release commitments. Follow their linked issues for
 acceptance criteria, dependencies, and current status:

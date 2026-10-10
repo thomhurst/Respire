@@ -104,10 +104,28 @@ public class BoundaryTests(RedisTestContainer fixture)
     public async Task BridgePreservesNativeCancellationAndServerErrors(int protocol)
     {
         await using var client = await ConnectAsync(protocol);
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "HELLO 3"
+                ? "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray() : null,
+            SuppressReply = command =>
+            {
+                if (command != "ECHO value") return false;
+                received.TrySetResult();
+                return true;
+            },
+        };
+        await using var cancellationClient = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = (RespProtocol)protocol, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+        });
         using var cancellation = new CancellationTokenSource();
+        var pending = cancellationClient.ExecuteStackExchangeAsync("ECHO", ["value"], cancellationToken: cancellation.Token).AsTask();
+        await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
         cancellation.Cancel();
         OperationCanceledException? failure = null;
-        try { await client.ExecuteStackExchangeAsync("ECHO", ["value"], cancellationToken: cancellation.Token); }
+        try { await pending.WaitAsync(TimeSpan.FromSeconds(10)); }
         catch (OperationCanceledException error) { failure = error; }
         await Assert.That(failure is not null).IsTrue();
         await Assert.That(failure!.CancellationToken).IsEqualTo(cancellation.Token);

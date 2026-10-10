@@ -13,7 +13,8 @@ This page compares the two and maps common StackExchange.Redis code to Respire.
 For call sites that still pass `RedisKey`/`RedisValue` or consume `RedisResult`,
 use the [incremental migration boundary](./guides/stackexchange-interop).
 The boundary also includes a limited database adapter for the official distributed cache
-and DataProtection integrations. General interface parity, SignalR, and Hangfire acceptance
+and DataProtection integrations, with [pinned Hangfire acceptance](./guides/hangfire-acceptance).
+General interface parity and combined Microsoft/SignalR/Hangfire acceptance
 remain pending under [#889](https://github.com/thomhurst/Respire/issues/889).
 
 The published comparison benchmarks and feature table below describe StackExchange.Redis

@@ -14,6 +14,7 @@ public sealed partial class RespireFakeServer
         internal SortedDictionary<RespireStreamId, byte[][]> Entries { get; } = [];
         internal Dictionary<byte[], FakeStreamGroup> Groups { get; } = new(BinaryKeyComparer.Instance);
         internal RespireStreamId Last = new("0-0");
+        internal long EntriesAdded;
         internal int Duration = 100;
         internal int MaxSize = 100;
         internal Dictionary<byte[], List<StreamIdentity>> Producers { get; } = new(BinaryKeyComparer.Instance);
@@ -146,6 +147,7 @@ public sealed partial class RespireFakeServer
         else id = explicitId;
         if (id <= stream.Last) return FakeReply.Error("ERR The ID specified in XADD is equal or smaller than the target stream top item");
         stream.Entries.Add(id, args[(index + 1)..]);
+        stream.EntriesAdded++;
         stream.Last = id;
         if (idempotency is { } insert)
         {
@@ -345,10 +347,9 @@ public sealed partial class RespireFakeServer
 
     private static long? EstimateStreamEntriesRead(FakeStream stream, RespireStreamId id)
     {
-        // This fake does not support deleting/trimming entries, so the first and last
-        // boundaries are sufficient for Redis's logical-counter estimate.
-        if (stream.Entries.Count == 0) return 0;
-        if (id == stream.Last) return stream.Entries.Count;
+        if (stream.EntriesAdded == 0) return 0;
+        if (id == stream.Last) return stream.EntriesAdded;
+        if (stream.Entries.Count == 0 || stream.EntriesAdded != stream.Entries.Count) return null;
         var first = stream.Entries.First().Key;
         if (id < first) return 0;
         return id == first ? 1 : null;
@@ -370,7 +371,7 @@ public sealed partial class RespireFakeServer
                 FakeReply.Text("last-delivered-id"), FakeReply.Text(group.Last.ToString()),
                 FakeReply.Text("entries-read"), group.EntriesRead is { } read ? FakeReply.Integer(read) : FakeReply.Null,
                 FakeReply.Text("lag"), entriesRead is { } logicalCount
-                    ? FakeReply.Integer(stream.Entries.Count - logicalCount) : FakeReply.Null];
+                    ? FakeReply.Integer(stream.EntriesAdded - logicalCount) : FakeReply.Null];
             return connection.Resp3 ? FakeReply.Map(fields) : FakeReply.Array(fields);
         }).ToArray());
     }

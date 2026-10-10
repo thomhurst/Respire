@@ -1,0 +1,55 @@
+name: Use Docker Hub mirror
+description: >-
+  Routes Docker Hub pulls on GitHub-hosted Linux runners through mirror.gcr.io, so Testcontainers,
+  Aspire and docker run do not hit the unauthenticated Docker Hub pull rate limit shared by the
+  runner pool. The daemon falls back to Docker Hub when the mirror does not hold an image.
+
+runs:
+  using: composite
+  steps:
+    # registry-mirrors is a live-reloadable daemon option: SIGHUP applies it without restarting
+    # dockerd, so service containers that the job already started keep running. The mirror is an
+    # optimisation, so every failure here degrades to a warning instead of failing the job.
+    - name: Configure Docker Hub mirror
+      if: runner.os == 'Linux' && runner.environment == 'github-hosted'
+      shell: bash
+      run: |
+        set +e
+        config=/etc/docker/daemon.json
+        if ! updated=$(mktemp); then
+          echo "::warning::Could not create temporary Docker config; pulls go straight to Docker Hub"
+          exit 0
+        fi
+        trap 'rm -f "$updated"' EXIT
+        if ! {
+          if [ -e "$config" ]; then
+            sudo cat "$config"
+          else
+            echo '{}'
+          fi
+        } | jq -s '(.[0] // {}) | ."registry-mirrors" = ((."registry-mirrors" // []) + ["https://mirror.gcr.io"] | unique)' \
+          > "$updated"; then
+          echo "::warning::Could not read or parse $config; pulls go straight to Docker Hub"
+          exit 0
+        fi
+        if ! sudo install -m 644 "$updated" "$config"; then
+          echo "::warning::Could not install $config; pulls go straight to Docker Hub"
+          exit 0
+        fi
+        read -r -a pids <<< "$(pidof dockerd || true)"
+        if [ ${#pids[@]} -eq 0 ]; then
+          echo "::warning::dockerd is not running; pulls go straight to Docker Hub"
+          exit 0
+        fi
+        if ! sudo kill -HUP "${pids[@]}"; then
+          echo "::warning::Could not reload dockerd; pulls go straight to Docker Hub"
+          exit 0
+        fi
+        for _ in $(seq 1 10); do
+          if docker info --format '{{json .RegistryConfig.Mirrors}}' | grep -q mirror.gcr.io; then
+            echo "Docker Hub pulls use mirror.gcr.io"
+            exit 0
+          fi
+          sleep 1
+        done
+        echo "::warning::Docker did not report mirror.gcr.io; pulls go straight to Docker Hub"
