@@ -80,12 +80,10 @@ internal sealed class StreamWorkerTelemetry : IDisposable
 
     internal void DeadLetter(string reason)
     {
-        lock (_gate)
-        {
-            if (_disposed) return;
-            try { _deadLetters?.Add(1, _workerTag, new("respire.worker.reason", reason)); }
-            catch { /* Listeners cannot change completion outcomes. */ }
-        }
+        if (_disposed) return;
+        // Listener callbacks must not hold the snapshot gate or delay reader cancellation.
+        try { _deadLetters?.Add(1, _workerTag, new("respire.worker.reason", reason)); }
+        catch { /* Listeners cannot change completion outcomes. */ }
     }
 
     internal Attempt Begin(RespireStreamEntry entry, RespireStreamWorkerOptions options)
@@ -127,14 +125,11 @@ internal sealed class StreamWorkerTelemetry : IDisposable
 
         public void Dispose()
         {
-            lock (telemetry._gate)
+            if (!telemetry._disposed)
             {
-                if (!telemetry._disposed)
-                {
-                    try { telemetry._duration?.Record(Stopwatch.GetElapsedTime(_started).TotalSeconds,
-                        telemetry._workerTag, new("respire.worker.outcome", Outcome)); }
-                    catch { /* Listeners cannot replace handler or transport exceptions. */ }
-                }
+                try { telemetry._duration?.Record(Stopwatch.GetElapsedTime(_started).TotalSeconds,
+                    telemetry._workerTag, new("respire.worker.outcome", Outcome)); }
+                catch { /* Listeners cannot replace handler or transport exceptions. */ }
             }
             try
             {
@@ -151,10 +146,12 @@ internal sealed class StreamWorkerTelemetry : IDisposable
     {
         lock (_gate)
         {
+            if (_disposed) return;
             _disposed = true;
             _lag = _pending = null;
-            try { _meter.Dispose(); } catch { /* Ignore listener failures during teardown. */ }
-            try { _source?.Dispose(); } catch { /* Ignore tracing failures during teardown. */ }
         }
+        // Meter teardown may invoke listeners. Already-running callbacks can finish independently.
+        try { _meter.Dispose(); } catch { /* Ignore listener failures during teardown. */ }
+        try { _source?.Dispose(); } catch { /* Ignore tracing failures during teardown. */ }
     }
 }

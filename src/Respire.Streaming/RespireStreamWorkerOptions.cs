@@ -49,10 +49,10 @@ public sealed record RespireStreamWorkerOptions
     /// <remarks>Use a fixed application role, never a message, tenant or consumer identifier.</remarks>
     public string TelemetryName { get; init; } = "default";
 
-    /// <summary>Positive interval between group metric polls. No queries run without a gauge listener.</summary>
+    /// <summary>Interval of at least one millisecond between group metric polls. No queries run without a gauge listener.</summary>
     public TimeSpan MetricsPollInterval { get; init; } = TimeSpan.FromSeconds(30);
 
-    /// <summary>Positive deadline for each group metric query. Failures do not stop message processing.</summary>
+    /// <summary>Deadline of at least one millisecond for each group metric query. Failures do not stop message processing.</summary>
     public TimeSpan MetricsPollTimeout { get; init; } = TimeSpan.FromSeconds(5);
 
     /// <summary>Stream field containing a W3C version-00 traceparent. Null disables parent extraction.</summary>
@@ -91,7 +91,7 @@ public sealed record RespireStreamWorkerOptions
 
     private static void ValidatePollTime(TimeSpan value, string name)
     {
-        if (value <= TimeSpan.Zero || value > TimeSpan.FromMilliseconds(int.MaxValue))
-            throw new ArgumentOutOfRangeException(name, "Metric polling times must be positive and at most Int32.MaxValue milliseconds.");
+        if (value < TimeSpan.FromMilliseconds(1) || value > TimeSpan.FromMilliseconds(int.MaxValue))
+            throw new ArgumentOutOfRangeException(name, "Metric polling times must be at least one and at most Int32.MaxValue milliseconds.");
     }
 }

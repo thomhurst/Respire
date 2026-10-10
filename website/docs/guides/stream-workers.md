@@ -312,7 +312,7 @@ The counter therefore measures confirmed appends rather than a durable audit tot
 
 Each registration runs one serial polling loop, independent of handler count. It queries
 only when either gauge has a listener. `MetricsPollInterval` defaults to 30 seconds;
-`MetricsPollTimeout` defaults to five seconds. Both must be positive and at most
+`MetricsPollTimeout` defaults to five seconds. Both must be at least one millisecond and at most
 `Int32.MaxValue` milliseconds. A new interval starts after the previous query completes,
 so requests never overlap or retry in a hot loop. `XINFO GROUPS` returns all groups on the
 source stream, so response size depends on the number of groups; only the registered
@@ -320,7 +320,10 @@ group's snapshot is retained. Poll failures, missing groups and timeouts clear t
 Older Redis servers, or Redis groups with indeterminate lag, have no lag measurement;
 unknown lag is never reported as zero. Gauges are snapshots, not exact per-message events.
 Stopping cancels polling and clears samples immediately. Disposal removes the worker's
-meter and rejects late query results and measurements from handlers still draining.
+meter and rejects late query results and new measurements from handlers still draining.
+Listener callbacks already running may finish after disposal. Metric callbacks do not
+hold the group snapshot lock, so shutdown can cancel readers and honor its deadline
+while a callback is still running.
 Telemetry listener exceptions do not change message acknowledgement, recovery, handler
 failure policy or transport exceptions.
 

@@ -331,6 +331,8 @@ public partial class StreamWorkerTests
     [Test]
     [Arguments(0)]
     [Arguments(-1)]
+    [Arguments(1)]
+    [Arguments(TimeSpan.TicksPerMillisecond - 1)]
     [Arguments(long.MaxValue)]
     public async Task TelemetryPollingOptionsAreValidated(long ticks)
     {
@@ -338,6 +340,85 @@ public partial class StreamWorkerTests
             new() { MetricsPollInterval = TimeSpan.FromTicks(ticks) })).Throws<ArgumentOutOfRangeException>();
         await Assert.That(() => new ServiceCollection().AddRespireStreamWorker<EntryHandler>("s", "g",
             new() { MetricsPollTimeout = TimeSpan.FromTicks(ticks) })).Throws<ArgumentOutOfRangeException>();
+    }
+
+    [Test]
+    public async Task TelemetryPollingOptionsAcceptOneMillisecond()
+    {
+        var services = new ServiceCollection();
+        services.AddRespireStreamWorker<EntryHandler>("s", "g", new()
+        {
+            MetricsPollInterval = TimeSpan.FromMilliseconds(1),
+            MetricsPollTimeout = TimeSpan.FromMilliseconds(1),
+        });
+        await Assert.That(services.Count).IsGreaterThan(0);
+    }
+
+    [Test, NotInParallel]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task TelemetryBlockedMeasurementDoesNotBlockShutdownDeadline(bool deadLetter)
+    {
+        using var metrics = new WorkerMetrics();
+        using var release = new ManualResetEventSlim();
+        var entered = NewSignal();
+        var canceled = NewSignal();
+        using var listener = new MeterListener
+        {
+            InstrumentPublished = (instrument, meter) =>
+            {
+                if (instrument.Meter.Name == RespireStreamWorkerTelemetry.MeterName && instrument.Name ==
+                    (deadLetter ? "respire.stream.worker.dead_letters" : "respire.stream.worker.processing.duration"))
+                    meter.EnableMeasurementEvents(instrument);
+            },
+        };
+        void Block()
+        {
+            entered.TrySetResult();
+            release.Wait();
+        }
+        listener.SetMeasurementEventCallback<double>((_, _, _, _) => Block());
+        listener.SetMeasurementEventCallback<long>((_, _, _, _) => Block());
+        listener.Start();
+        var state = new State { Handle = async (entry, token) =>
+        {
+            if (entry.GetString("payload") == "0")
+                return deadLetter ? RespireStreamWorkerResult.DeadLetter : RespireStreamWorkerResult.Ack;
+            try { await Task.Delay(Timeout.Infinite, token); }
+            catch (OperationCanceledException) when (token.IsCancellationRequested) { canceled.TrySetResult(); throw; }
+            return RespireStreamWorkerResult.Ack;
+        } };
+        await using var fixture = await Fixture.CreateAsync(state: state, keyPrefix: "{worker}tenant:", options: new()
+        {
+            TelemetryName = WorkerName, ConsumerCount = 2, DeadLetterStream = "dlq",
+            MetricsPollInterval = TimeSpan.FromMilliseconds(20),
+        });
+        Task? stopping = null;
+        try
+        {
+            await fixture.AddAsync(0);
+            await fixture.AddAsync(1);
+            await fixture.StartAsync();
+            await state.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
+            await state.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
+            await entered.Task.WaitAsync(Deadline);
+            stopping = Task.Run(() => fixture.Service.StopAsync(new CancellationToken(canceled: true)));
+            await stopping.WaitAsync(Deadline);
+            await canceled.Task.WaitAsync(Deadline);
+            metrics.Lag.Clear();
+            metrics.Pending.Clear();
+            await Task.Run(metrics.Listener.RecordObservableInstruments).WaitAsync(Deadline);
+            await Assert.That(metrics.Lag.Count + metrics.Pending.Count).IsEqualTo(0);
+            await Assert.That(fixture.Service.ExecuteTask!.IsCompleted).IsFalse();
+        }
+        finally
+        {
+            release.Set();
+            if (stopping is not null) await stopping.WaitAsync(Deadline);
+        }
+        await fixture.Service.ExecuteTask!.WaitAsync(Deadline);
+        await Assert.That(fixture.Service.ExecuteTask.IsCompletedSuccessfully).IsTrue();
+        await Assert.That((await fixture.View.Streams.PendingSummaryAsync("events", "workers")).Count).IsEqualTo(1);
     }
 
     [Test, NotInParallel]
