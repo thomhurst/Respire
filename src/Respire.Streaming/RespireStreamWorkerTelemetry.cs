@@ -127,6 +127,7 @@ internal sealed class StreamWorkerTelemetry : IDisposable
     {
         private readonly long _started = Stopwatch.GetTimestamp();
         internal string Outcome { get; set; } = "error";
+        internal bool ProcessingFailed { get; set; }
 
         public void Dispose()
         {
@@ -139,7 +140,7 @@ internal sealed class StreamWorkerTelemetry : IDisposable
             try
             {
                 activity?.SetTag("respire.worker.outcome", Outcome);
-                if (Outcome == "error") activity?.SetStatus(ActivityStatusCode.Error);
+                if (ProcessingFailed || Outcome == "error") activity?.SetStatus(ActivityStatusCode.Error);
                 activity?.Dispose();
             }
             catch { /* ActivityStopped listeners cannot change worker behavior. */ }

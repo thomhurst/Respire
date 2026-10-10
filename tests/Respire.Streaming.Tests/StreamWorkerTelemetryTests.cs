@@ -53,7 +53,11 @@ public partial class StreamWorkerTests
             await Assert.That(activity.Kind).IsEqualTo(ActivityKind.Consumer);
             await Assert.That(activity.Duration).IsGreaterThan(TimeSpan.Zero);
             await Assert.That(children.Contains(activity.SpanId)).IsTrue();
+            await Assert.That(activity.Status).IsEqualTo(handlerThrows ? ActivityStatusCode.Error : ActivityStatusCode.Unset);
+            await Assert.That(activity.StatusDescription).IsNull();
         }
+        await Assert.That(stopped.Select(activity => activity.GetTagItem("respire.worker.outcome")))
+            .IsEquivalentTo(new object?[] { "nack", "nack", "dead-letter" });
         await Assert.That(metrics.Duration.Select(sample => sample.Tags["respire.worker.outcome"]))
             .IsEquivalentTo(new object?[] { "nack", "nack", "dead-letter" });
         await Assert.That(metrics.DeadLetters.Single().Value).IsEqualTo(1);
@@ -68,6 +72,38 @@ public partial class StreamWorkerTests
             await Assert.That(sample.Tags.Count).IsEqualTo(2);
             await Assert.That(sample.Tags.Values.Contains("private payload")).IsFalse();
         }
+    }
+
+    [Test, NotInParallel]
+    public async Task TelemetryDeserializationFailuresKeepErrorStatusAndCompletionOutcome()
+    {
+        using var metrics = new WorkerMetrics();
+        var stopped = new ConcurrentQueue<Activity>();
+        using var tracing = ListenToWorker(stopped.Enqueue);
+        await using var fixture = await Fixture.CreateAsync(deserializeFailure: true, keyPrefix: "{worker}tenant:", options: new()
+        {
+            TelemetryName = WorkerName, DeadLetterStream = "dlq", DeliveryLimit = 3,
+            MinimumIdleTime = TimeSpan.FromMilliseconds(20), RecoveryPollInterval = TimeSpan.FromMilliseconds(10),
+        });
+        await fixture.AddAsync(0);
+        await fixture.StartAsync();
+        await UntilAsync(() => Task.FromResult(metrics.Duration.Count == 3 && stopped.Count == 3));
+        await fixture.StopAsync();
+        foreach (var activity in stopped)
+        {
+            await Assert.That(activity.Status).IsEqualTo(ActivityStatusCode.Error);
+            await Assert.That(activity.StatusDescription).IsNull();
+        }
+        await Assert.That(stopped.Select(activity => activity.GetTagItem("respire.worker.outcome")))
+            .IsEquivalentTo(new object?[] { "nack", "nack", "dead-letter" });
+        await Assert.That(metrics.Duration.Select(sample => sample.Tags["respire.worker.outcome"]))
+            .IsEquivalentTo(new object?[] { "nack", "nack", "dead-letter" });
+        await Assert.That(metrics.DeadLetters.Single().Tags["respire.worker.reason"]).IsEqualTo("processing-failed");
+        await Assert.That((await fixture.View.Streams.PendingSummaryAsync("events", "workers")).Count).IsEqualTo(0);
+        await Assert.That(await fixture.View.Streams.CountAsync("dlq")).IsEqualTo(1);
+        await Assert.That(fixture.State.WarningCount).IsEqualTo(3);
+        await Assert.That(fixture.State.ScopeIds.Count).IsEqualTo(0);
+        await Assert.That(fixture.State.DisposedScopes).IsEqualTo(3);
     }
 
     [Test, NotInParallel]

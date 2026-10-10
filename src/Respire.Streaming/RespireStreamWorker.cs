@@ -203,6 +203,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
         { observation.Outcome = "canceled"; return; }
         catch (Exception error)
         {
+            observation.ProcessingFailed = true;
             // Exception messages may contain payloads. Do not pass them to the logger by default.
             var exceptionType = error.GetType();
             failureType = exceptionType.FullName ?? exceptionType.Name;
