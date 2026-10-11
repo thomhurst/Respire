@@ -436,11 +436,13 @@ internal static partial class RespireTelemetry
     {
         if (!ErrorsEnabled) return;
         var relevant = error;
+        var notSubmitted = false;
         // Unwrap transport wrappers without losing explicit authentication or timeout meaning.
         // Sixteen is a defensive work bound for arbitrarily nested external exception chains,
         // not a protocol limit. At the cap, classify the remaining wrapper without guessing its cause.
         for (var depth = 0; depth < 16; depth++)
         {
+            notSubmitted |= relevant is RespireCommandNotSubmittedException;
             if (relevant is RespireException { ErrorCause: { } cause }) relevant = cause;
             else if (relevant is AggregateException { InnerExceptions.Count: 1 } aggregate)
                 relevant = aggregate.InnerExceptions[0];
@@ -456,6 +458,10 @@ internal static partial class RespireTelemetry
         // rejected endpoint. A route observation can still name an earlier selection (for
         // example the primary before Nearest picked a replica), so the circuit wins.
         if (relevant is RespireCircuitOpenException circuit) endpoint = circuit.Endpoint;
+        // Cancellation before admission (capacity, streaming or credential waits) never reached
+        // a node, so it must not keep the endpoint that routing retained for the attempt.
+        notSubmitted |= relevant is RespireCommandNotSubmittedException;
+        if (notSubmitted) endpoint = null;
         var category = relevant switch
         {
             // This boundary cannot infer the initiator from an exception token. Count

@@ -208,6 +208,32 @@ public partial class ErrorMetricsTests
     }
 
     [Test]
+    public async Task CapacityWaitCancellationNamesNoNode()
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            SuppressReply = command => command.StartsWith("GET held", StringComparison.Ordinal),
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
+        });
+        // The unanswered GET fills the only in-flight slot, so the next command waits for capacity.
+        var held = client.Strings.GetStringAsync("held");
+        using var capture = new Capture();
+        using var cancelled = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+        await Assert.That(async () => await client.Strings.GetStringAsync("queued", cancelled.Token))
+            .Throws<OperationCanceledException>();
+        await Assert.That(held.IsCompleted).IsFalse();
+        var item = capture.Items.Single();
+        await Assert.That(item.Tags["redis.client.errors.category"]).IsEqualTo("cancelled");
+        await Assert.That(item.Tags.ContainsKey("server.address")).IsFalse();
+        await Assert.That(item.Tags.ContainsKey("server.port")).IsFalse();
+    }
+
+    [Test]
     public async Task TransactionCapacityPreflightNamesNoNode()
     {
         await using var server = new FakeRespServer();

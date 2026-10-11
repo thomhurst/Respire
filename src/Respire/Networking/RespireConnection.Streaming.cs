@@ -112,7 +112,9 @@ internal sealed partial class RespireConnection
             error, cancellationToken, timeoutCancellation, StreamedSetPhase.NotStarted) is { } translated)
         {
             // A deadline here means another streamed SET held the frame for the whole timeout.
-            throw translated;
+            // Caller cancellation here never reached the socket, like an in-flight capacity wait.
+            throw translated is OperationCanceledException cancelled and not RespireCommandNotSubmittedException
+                ? new RespireCommandNotSubmittedException(cancelled) : translated;
         }
 
         PendingResponseSource source;
