@@ -9,12 +9,13 @@ namespace Respire.IntegrationTests;
 // Pin the minimum feature family rather than allowing redis:8 to advance past the compatibility floor.
 public sealed class StreamReferenceRedisContainer : IAsyncInitializer, IAsyncDisposable
 {
-    private readonly IContainer _container = new ContainerBuilder("redis:8.2-alpine")
+    private IContainer? _container;
+    private IContainer Container => _container ?? throw new InvalidOperationException("Redis container has not been initialized.");
+    public string ConnectionString => $"redis://{Container.Hostname}:{Container.GetMappedPublicPort(6379)}";
+    public async Task InitializeAsync() => _container = await ContainerStartRetry.StartAsync(() => new ContainerBuilder("redis:8.2-alpine")
         .WithPortBinding(6379, true)
-        .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build();
-    public string ConnectionString => $"redis://{_container.Hostname}:{_container.GetMappedPublicPort(6379)}";
-    public Task InitializeAsync() => _container.StartAsync();
-    public ValueTask DisposeAsync() => _container.DisposeAsync();
+        .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), [6379]);
+    public ValueTask DisposeAsync() => _container?.DisposeAsync() ?? ValueTask.CompletedTask;
 }
 
 [Category(TestCategories.ProtocolIndependent)]

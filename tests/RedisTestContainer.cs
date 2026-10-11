@@ -76,20 +76,10 @@ public class RedisTestContainer : IAsyncInitializer, IAsyncDisposable
         {
             image = "redis:7.0.15";
         }
-        var container = new RedisBuilder(image)
+        // A failed start is removed by the retry helper, which also replaces it after a host-port bind collision.
+        _container = await ContainerStartRetry.StartAsync(() => new RedisBuilder(image)
             .WithCommand(["redis-server", "--databases", DatabaseCount.ToString(), .. _serverArguments])
-            .Build();
-        _container = container;
-
-        try
-        {
-            await container.StartAsync().ConfigureAwait(false);
-        }
-        catch
-        {
-            await ResetContainerAsync().ConfigureAwait(false);
-            throw;
-        }
+            .Build(), [RedisPort]).ConfigureAwait(false);
     }
 
     public async ValueTask DisposeAsync()

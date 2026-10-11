@@ -121,7 +121,10 @@ public sealed class ClusterKeyNotificationIntegrationTests(ClusterKeyNotificatio
 public sealed class ClusterKeyNotificationRedisCluster : IAsyncInitializer, IAsyncDisposable
 {
     private const string NotificationFlags = "KEAmoncSTIV";
-    private readonly IContainer _container = new ContainerBuilder("redis:8.8-alpine")
+    private IContainer? _container;
+    private IContainer Container => _container ?? throw new InvalidOperationException("Cluster has not been initialized.");
+
+    private static IContainer CreateContainer() => new ContainerBuilder("redis:8.8-alpine")
         .WithPortBinding(7000, true).WithPortBinding(7001, true).WithPortBinding(7002, true)
         .WithEntrypoint("sh", "-c")
         .WithCommand("for port in 7000 7001 7002; do mkdir -p /data/$port; redis-server --port $port --dir /data/$port --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 1000 --cluster-announce-ip 127.0.0.1 --appendonly no --protected-mode no --enable-debug-command yes & done; wait")
@@ -130,7 +133,7 @@ public sealed class ClusterKeyNotificationRedisCluster : IAsyncInitializer, IAsy
         .Build();
     private readonly string[] _nodeIds = new string[3];
 
-    internal int Port(int node) => _container.GetMappedPublicPort(7000 + node);
+    internal int Port(int node) => Container.GetMappedPublicPort(7000 + node);
     internal RespireOptions Options(int protocol) => new()
     {
         UseCluster = true,
@@ -141,7 +144,7 @@ public sealed class ClusterKeyNotificationRedisCluster : IAsyncInitializer, IAsy
 
     public async Task InitializeAsync()
     {
-        await _container.StartAsync();
+        _container = await ContainerStartRetry.StartAsync(CreateContainer, [7000, 7001, 7002]);
         try
         {
             for (var node = 0; node < 3; node++)
@@ -182,7 +185,7 @@ public sealed class ClusterKeyNotificationRedisCluster : IAsyncInitializer, IAsy
     {
         // SHUTDOWN drops the connection before redis-cli reads a reply, so its exit code is
         // not meaningful. The restart below is checked instead.
-        _ = await _container.ExecAsync(["redis-cli", "--raw", "-p", (7000 + node).ToString(CultureInfo.InvariantCulture), "SHUTDOWN", "NOSAVE"]);
+        _ = await Container.ExecAsync(["redis-cli", "--raw", "-p", (7000 + node).ToString(CultureInfo.InvariantCulture), "SHUTDOWN", "NOSAVE"]);
         var internalPort = 7000 + node;
         _ = await ExecAsync([
             "redis-server", "--port", internalPort.ToString(CultureInfo.InvariantCulture),
@@ -220,7 +223,7 @@ public sealed class ClusterKeyNotificationRedisCluster : IAsyncInitializer, IAsy
 
     private async Task<string> ExecAsync(string[] arguments)
     {
-        var result = await _container.ExecAsync(arguments);
+        var result = await Container.ExecAsync(arguments);
         if (result.ExitCode != 0)
             throw new InvalidOperationException($"Cluster fixture command failed: {string.Join(' ', arguments)}; {result.Stdout} {result.Stderr}");
         return result.Stdout;
@@ -235,5 +238,5 @@ public sealed class ClusterKeyNotificationRedisCluster : IAsyncInitializer, IAsy
         }
     }
 
-    public ValueTask DisposeAsync() => _container.DisposeAsync();
+    public ValueTask DisposeAsync() => _container?.DisposeAsync() ?? ValueTask.CompletedTask;
 }

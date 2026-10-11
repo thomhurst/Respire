@@ -10,19 +10,20 @@ namespace Respire.IntegrationTests;
 // Redis 8.8 stream tests share this server; every test uses its own database.
 public sealed class KeyNotificationRedisContainer : IAsyncInitializer, IAsyncDisposable
 {
-    private readonly RedisContainer _container = new RedisBuilder("redis:8.8-alpine")
-        .WithCommand("redis-server", "--databases", "4096", "--notify-keyspace-events", "KEAmoncSTIV")
-        .Build();
+    private RedisContainer? _container;
+    private RedisContainer Container => _container ?? throw new InvalidOperationException("Redis container has not been initialized.");
     public RespireOptions Options(int protocol) => new()
     {
-        Endpoints = [new(_container.Hostname, _container.GetMappedPublicPort(6379))],
+        Endpoints = [new(Container.Hostname, Container.GetMappedPublicPort(6379))],
         Database = TestContext.Current!.Isolation.UniqueId,
         Protocol = (RespProtocol)protocol, Connections = 1, AllowAdmin = true,
     };
     public string ConnectionString =>
-        $"redis://{_container.Hostname}:{_container.GetMappedPublicPort(6379)}/{TestContext.Current!.Isolation.UniqueId}";
-    public Task InitializeAsync() => _container.StartAsync();
-    public ValueTask DisposeAsync() => _container.DisposeAsync();
+        $"redis://{Container.Hostname}:{Container.GetMappedPublicPort(6379)}/{TestContext.Current!.Isolation.UniqueId}";
+    public async Task InitializeAsync() => _container = await ContainerStartRetry.StartAsync(() => new RedisBuilder("redis:8.8-alpine")
+        .WithCommand("redis-server", "--databases", "4096", "--notify-keyspace-events", "KEAmoncSTIV")
+        .Build(), [RedisBuilder.RedisPort]);
+    public ValueTask DisposeAsync() => _container?.DisposeAsync() ?? ValueTask.CompletedTask;
 }
 
 [Category(TestCategories.ProtocolIndependent)]
@@ -234,11 +235,12 @@ public class KeyNotificationIntegrationTests(KeyNotificationRedisContainer fixtu
 
 public sealed class KeyNotificationLegacyRedisContainer : IAsyncInitializer, IAsyncDisposable
 {
-    private readonly RedisContainer _container = new RedisBuilder("redis:7.0.15")
-        .WithCommand("redis-server", "--notify-keyspace-events", "KEA").Build();
-    public string ConnectionString => $"redis://{_container.Hostname}:{_container.GetMappedPublicPort(6379)}";
-    public Task InitializeAsync() => _container.StartAsync();
-    public ValueTask DisposeAsync() => _container.DisposeAsync();
+    private RedisContainer? _container;
+    private RedisContainer Container => _container ?? throw new InvalidOperationException("Redis container has not been initialized.");
+    public string ConnectionString => $"redis://{Container.Hostname}:{Container.GetMappedPublicPort(6379)}";
+    public async Task InitializeAsync() => _container = await ContainerStartRetry.StartAsync(() => new RedisBuilder("redis:7.0.15")
+        .WithCommand("redis-server", "--notify-keyspace-events", "KEA").Build(), [RedisBuilder.RedisPort]);
+    public ValueTask DisposeAsync() => _container?.DisposeAsync() ?? ValueTask.CompletedTask;
 }
 
 [Category(TestCategories.ProtocolIndependent)]
