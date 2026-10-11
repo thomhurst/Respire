@@ -158,9 +158,29 @@ declared minimum core dependency. A new health package requires a core version t
 need not implement the new interface: single-node PING fallback and explicit unsupported
 all-node behavior remain available.
 
-The core retains the original internal health entry point and friend-assembly permission
-for older `Respire.HealthChecks` binaries. New integrations must use the public contract.
-Removal at the next major version is tracked in [#950](https://github.com/thomhurst/Respire/issues/950).
+Starting with Respire 1.0.0, the core no longer grants `Respire.HealthChecks` internal access
+or provides the legacy `RespireClient.CaptureHealthConnections` entry point. This is a
+major-version binary compatibility boundary: an older health binary that calls that entry
+point cannot run against the 1.x core. The compatibility surface remains in the 0.x line;
+its removal must not be backported to a minor or patch release.
+
+| Core | Health package | Supported pairing |
+| --- | --- | --- |
+| 0.x with the legacy entry point | Legacy package using internal connections | Yes, subject to the package's declared minimum core version. |
+| 0.x defining `IRespireHealthProbe` | 0.x package using the public contract | Yes, subject to the package's declared minimum core version. |
+| 0.x without `IRespireHealthProbe` | Package requiring the public contract | No. Upgrade the core and health package together. |
+| 1.x | Matching 1.x health release | Yes. The health package uses only the public contract. |
+| 1.x | Legacy package using internal connections | No. Upgrade the health package before running against the new core. |
+| 1.x | 0.x package using the public contract | Outside the supported matrix. Use matching 1.x releases. |
+
+When migrating to 1.x, update both package references together and rebuild the application.
+The ASP.NET Core health registration and `RespireNodeHealth` diagnostic shape do not change.
+Custom integrations must replace internal connection capture and direct transport PINGs
+with `IRespireHealthProbe.ProbeHealthAsync`, as shown above. Use the returned endpoint,
+connection state, latency, and error observations; do not retain or expose transport objects.
+Custom clients without the optional contract retain single-node PING fallback and explicit
+unsupported all-node behavior.
+
 Future optional probe capabilities require a separate opt-in interface rather than adding
 abstract members to `IRespireHealthProbe`. The contract does not transfer client ownership
 or promise access to transport implementation types.
