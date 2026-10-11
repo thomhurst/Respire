@@ -14,7 +14,7 @@ namespace Respire.Tests.Networking;
 public class ClusterCircuitDispatchTests
 {
     [Test]
-    [NotInParallel(TestConstraints.MetricConfiguration)]
+    [NotInParallel]
     [Arguments("string")]
     [Arguments("bytes")]
     [Arguments("integer")]
@@ -75,7 +75,7 @@ public class ClusterCircuitDispatchTests
     }
 
     [Test]
-    [NotInParallel(TestConstraints.MetricConfiguration)]
+    [NotInParallel]
     [Arguments("MOVED", "string", false)]
     [Arguments("MOVED", "converted", true)]
     [Arguments("MOVED", "batch", true)]
@@ -554,7 +554,7 @@ public class ClusterCircuitDispatchTests
     }
 
     [Test]
-    [NotInParallel(TestConstraints.MetricConfiguration)]
+    [NotInParallel]
     public async Task ConverterFailureKeepsHealthyOutcomeAndNeverReplays()
     {
         using var metrics = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.None });

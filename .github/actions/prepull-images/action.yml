@@ -22,6 +22,7 @@ runs:
         log="$RUNNER_TEMP/prepull-images.log"
         # The runner keeps background processes alive until the job ends; output goes to a log so
         # it cannot interleave with later steps. Four pulls at a time leave the build most of the CPU.
+        # IMAGES must contain trusted, whitespace-safe image references from the workflow.
         nohup bash -c 'printf "%s\n" $IMAGES | xargs -r -P 4 -I{} sh -c "docker pull --quiet {} || echo \"Pre-pull of {} failed; the test pulls it instead.\""' \
           > "$log" 2>&1 < /dev/null &
         echo "Pulling in the background; log: $log"

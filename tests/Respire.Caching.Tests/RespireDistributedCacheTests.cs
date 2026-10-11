@@ -300,44 +300,44 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     public async Task RemoveAsync_WrappedClient_CancellationStopsTheWait()
     {
         var keys = new BlockingUnlinkKeyCommands(Client.Keys);
+        var removalStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseRemoval = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var removalResult = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
         var wrappedClient = new ScriptInterceptingClient(Client, async (_, send) =>
         {
+            removalStarted.TrySetResult();
             await releaseRemoval.Task;
             var result = await send();
             removalResult.TrySetResult(result.AsInteger());
             return result;
         }, keys, ignoreScriptCancellation: true);
         await using var cache = new RespireDistributedCache(wrappedClient);
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+        using var cts = new CancellationTokenSource();
+        var removal = cache.RemoveAsync("cancel-wrapped-remove", cts.Token);
 
-        var cancelled = false;
         try
         {
-            await cache.RemoveAsync("cancel-wrapped-remove", cts.Token).WaitAsync(TimeSpan.FromSeconds(2));
-        }
-        catch (OperationCanceledException)
-        {
-            cancelled = true;
-        }
-        catch (TimeoutException)
-        {
-            Assert.Fail("Wrapped removal did not honor cancellation.");
+            // Cancel only once the wrapped script is pending. A startup timer can expire
+            // during lease placement on a loaded runner, before there is a late send to test.
+            await removalStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            cts.Cancel();
+            await Assert.That(async () => await removal.WaitAsync(TimeSpan.FromSeconds(2)))
+                .Throws<OperationCanceledException>();
+            keys.Complete();
+            await Cache.SetAsync("cancel-wrapped-remove", [2], new DistributedCacheEntryOptions());
+
+            releaseRemoval.TrySetResult();
+            await Assert.That(await removalResult.Task.WaitAsync(TimeSpan.FromSeconds(2))).IsEqualTo(0);
+            var survivor = await Cache.GetAsync("cancel-wrapped-remove");
+            await Assert.That(survivor).IsNotNull();
+            await Assert.That(survivor!.SequenceEqual(new byte[] { 2 })).IsTrue();
         }
         finally
         {
+            cts.Cancel();
             keys.Complete();
+            releaseRemoval.TrySetResult();
         }
-
-        await Assert.That(cancelled).IsTrue();
-        await Cache.SetAsync("cancel-wrapped-remove", [2], new DistributedCacheEntryOptions());
-
-        releaseRemoval.TrySetResult();
-        await Assert.That(await removalResult.Task.WaitAsync(TimeSpan.FromSeconds(2))).IsEqualTo(0);
-        var survivor = await Cache.GetAsync("cancel-wrapped-remove");
-        await Assert.That(survivor).IsNotNull();
-        await Assert.That(survivor!.SequenceEqual(new byte[] { 2 })).IsTrue();
     }
 
     [Test]

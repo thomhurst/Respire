@@ -25,7 +25,7 @@ internal sealed class NodeCommandSessions(string host) : IAsyncDisposable
                 session = await TestRespSession.ConnectAsync(new RespireOptions
                 {
                     Endpoints = [new(host, port)], Protocol = RespProtocol.Resp2,
-                }).WaitAsync(cancellationToken);
+                }, cancellationToken);
                 _sessions.Add(port, session);
             }
             RespValue reply;

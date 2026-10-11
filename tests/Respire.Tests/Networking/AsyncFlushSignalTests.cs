@@ -176,7 +176,7 @@ public class AsyncFlushSignalTests
 
     // Check both global (non-pool producer) and local (pool producer) dispatch queues.
     // The measurement runs in a child process, which isolates its pool, GC and no-GC region.
-    [Test, ParallelLimiter<ChildProcessProbes>]
+    [Test, NotInParallel]
     [Arguments(false)]
     [Arguments(true)]
     public async Task DispatchedWakeAllocatesNothing(bool poolProducer)

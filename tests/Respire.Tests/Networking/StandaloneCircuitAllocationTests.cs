@@ -10,7 +10,7 @@ public class StandaloneCircuitAllocationTests
     private const string ProbeMode = "RESPIRE_CIRCUIT_DISABLED_ALLOCATION_PROBE";
 
     [Test]
-    [ParallelLimiter<ChildProcessProbes>]
+    [NotInParallel]
     [Arguments(false)]
     [Arguments(true)]
     public async Task DisabledDispatchAddsNoAllocation(bool raw)
