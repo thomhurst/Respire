@@ -409,6 +409,7 @@ public partial class RespireHybridCacheCoherenceTests
             };
             // Revoke only this owned user's SUBSCRIBE permission so reconnect cannot close
             // the publication gap before the shared marker is changed.
+            var gapsBeforeReconnect = Coherent(reader).TagGapsConsumed;
             using (var denied = await admin.ExecuteAsync("ACL", "SETUSER", username, "-subscribe")) { }
             using (var killed = await admin.ExecuteAsync("CLIENT", "KILL", "ID", subscription.Id.ToString(System.Globalization.CultureInfo.InvariantCulture))) { }
             await disconnected.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -418,15 +419,11 @@ public partial class RespireHybridCacheCoherenceTests
             await Assert.That(Coherent(reader).ObservationCount).IsEqualTo(0);
             using (var restored = await admin.ExecuteAsync("ACL", "SETUSER", username, "+subscribe")) { }
             await connected.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            // The resubscribe acknowledgement also queues a reconnect Gap message. The tag worker
-            // consumes it asynchronously and conservatively retires observations, so it can retire
-            // an observation made just after reconnect. Every read must be fresh, and observation
-            // must resume once the gap has been consumed.
-            await UntilAsync(async () =>
-            {
-                await Assert.That(await FreshTaggedAsync(read, key, tag, "fresh after reconnect")).IsEqualTo("fresh after reconnect");
-                return Coherent(reader).ObservationCount == 1;
-            });
+            // The resubscribe acknowledgement queues a reconnect Gap message that the tag worker
+            // consumes asynchronously, retiring every observation. Read only after the worker has
+            // applied it, so the gap cannot retire the observation this read creates.
+            await UntilAsync(() => Coherent(reader).TagGapsConsumed > gapsBeforeReconnect);
+            await Assert.That(await FreshTaggedAsync(read, key, tag, "fresh after reconnect")).IsEqualTo("fresh after reconnect");
             await Assert.That(Coherent(reader).ObservationCount).IsEqualTo(1);
             using var pong = await source.ExecuteAsync("PING");
             await Assert.That(pong.AsString()).IsEqualTo("PONG");
