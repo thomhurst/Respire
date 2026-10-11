@@ -608,10 +608,7 @@ internal sealed partial class ClusterRouter
                 // connection failure. Only subsequent recovery starts a backoff episode.
                 if (immediateRedirect) return;
                 if (_episode == 0) _episode = Interlocked.Increment(ref _nextDiscoveryEpisode);
-                // A MOVED or ASK reply names a reachable owner, so following it still spends an
-                // attempt but never waits. Only a failure at the redirect target backs off.
-                var delay = failure is RespireServerException { Code: RespireErrorCodes.Moved or RespireErrorCodes.Ask }
-                    ? TimeSpan.Zero : policy.GetDelay(_attempts);
+                var delay = policy.GetDelay(_attempts);
                 if (maximumDelay is { } maximum && delay > maximum) delay = maximum;
                 Publish(RespireConnectionState.Reconnecting, failure, delay);
                 if (delay > TimeSpan.Zero)
