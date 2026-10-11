@@ -31,6 +31,28 @@ public partial class ErrorMetricsTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CircuitRejectionOverridesAnEarlierSelectedEndpoint(bool observed)
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        using var capture = new Capture();
+        // Nearest can retain the primary's endpoint and then pick a replica whose circuit is open.
+        var primary = new RespireEndpoint("primary.example", 6380);
+        var rejected = new RespireCircuitOpenException(new RespireEndpoint("replica.example", 6381), retryAfter: null);
+        if (observed)
+        {
+            using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+            observation.UseEndpoint(primary);
+            observation.Final(rejected);
+        }
+        else RespireTelemetry.RecordError(rejected, internallyHandled: false, endpoint: primary);
+        var item = capture.Items.Single();
+        await Assert.That(item.Tags["server.address"]).IsEqualTo("replica.example");
+        await Assert.That(item.Tags["server.port"]).IsEqualTo(6381);
+    }
+
+    [Test]
     [MatrixDataSource]
     public async Task CommandFailuresCarryTheirOwnServerPort(
         [Matrix("string", "bytes", "raw")] string surface, [Matrix(false, true)] bool commandMetrics)

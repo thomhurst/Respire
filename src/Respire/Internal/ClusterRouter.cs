@@ -943,9 +943,10 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
     internal ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> RentDedicatedConnectionAsync(
         DedicatedConnectionPool pool, DedicatedRoute route, CancellationToken cancellationToken, DiscoveryRound? discovery,
-        bool reuseIdle = true, DedicatedLeaseKind kind = DedicatedLeaseKind.Ordinary, string? preferredZone = null)
+        bool reuseIdle = true, DedicatedLeaseKind kind = DedicatedLeaseKind.Ordinary, string? preferredZone = null,
+        RespireTelemetry.ErrorObservation observation = default)
         => DedicatedLeaseAcquisition.RentAsync(pool, new DedicatedLeaseRoute(this, route, discovery, preferredZone),
-            cancellationToken, reuseIdle, kind, preferredZone, _circuits);
+            cancellationToken, reuseIdle, kind, preferredZone, _circuits, observation);
 
     private struct DedicatedLeaseRoute(ClusterRouter owner, DedicatedRoute route, DiscoveryRound? discovery,
         string? preferredZone) : IDedicatedLeaseRoute

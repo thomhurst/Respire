@@ -1016,10 +1016,13 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         RespireConnection? replacement = null;
         var reconnectGuardReleased = false;
         var publish = false;
+        // A MOVING handoff can replace the active endpoint while this attempt runs. Handled
+        // errors name the endpoint this attempt dialled, not the configured or a newer one.
+        var endpoint = Volatile.Read(ref _activeEndpoint);
         try
         {
             if (delay > TimeSpan.Zero) await Task.Delay(delay, _stopConnecting.Token).ConfigureAwait(false);
-            var endpoint = Volatile.Read(ref _activeEndpoint);
+            endpoint = Volatile.Read(ref _activeEndpoint);
             // Initial replica setup can observe discarded candidates. Reconnect owns
             // its failed attempts and must not inherit that establishment observer.
             var reconnectOptions = _options with { ObserveEstablishmentErrors = false };
@@ -1070,7 +1073,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
             }
             if (IsOperational)
             {
-                RespireTelemetry.RecordError(ex, internallyHandled: true, attempt, new(Host, Port));
+                RespireTelemetry.RecordError(ex, internallyHandled: true, attempt, new(endpoint.Host, endpoint.Port));
                 lock (_lifecycleGate)
                 {
                     if (IsOperational && _connections[slot] is { IsAcceptingCommands: true })

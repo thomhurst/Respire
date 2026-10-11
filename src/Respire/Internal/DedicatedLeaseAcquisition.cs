@@ -48,7 +48,7 @@ internal static class DedicatedLeaseAcquisition
     internal static async ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> RentAsync<TRoute>(
         DedicatedConnectionPool pool, TRoute route, CancellationToken cancellationToken,
         bool reuseIdle, DedicatedLeaseKind kind, string? preferredZone = null,
-        StandaloneCircuitRegistry? circuits = null)
+        StandaloneCircuitRegistry? circuits = null, RespireTelemetry.ErrorObservation observation = default)
         where TRoute : struct, IDedicatedLeaseRoute
     {
         try
@@ -58,6 +58,9 @@ internal static class DedicatedLeaseAcquisition
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 route.ThrowIfDisposed();
+                // A failed private handshake belongs to the pool being rented, including a
+                // replacement selected after retirement or a rejected read candidate.
+                observation.UseEndpoint(pool.Endpoint);
                 try
                 {
                     // A stale selection must reselect before consulting the old endpoint's history.

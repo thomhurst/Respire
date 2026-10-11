@@ -389,8 +389,9 @@ internal static partial class RespireTelemetry
             _ => null,
         };
         // Circuit rejection happens before transport dispatch but carries the exact
-        // rejected endpoint. No route inference is needed at the final observer.
-        if (endpoint is null && relevant is RespireCircuitOpenException circuit) endpoint = circuit.Endpoint;
+        // rejected endpoint. A route observation can still name an earlier selection (for
+        // example the primary before Nearest picked a replica), so the circuit wins.
+        if (relevant is RespireCircuitOpenException circuit) endpoint = circuit.Endpoint;
         var category = relevant switch
         {
             // This boundary cannot infer the initiator from an exception token. Count

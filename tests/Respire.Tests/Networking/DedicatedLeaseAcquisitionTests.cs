@@ -118,6 +118,39 @@ public class DedicatedLeaseAcquisitionTests
     }
 
     [Test]
+    public async Task HandshakeObservationNamesEachRentedPool()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var replacement = new DedicatedConnectionPool("127.0.0.1", 9002,
+            new RespireConnectionOptions
+            {
+                TestingStreamFactory = async (_, _, cancellationToken) =>
+                {
+                    entered.TrySetResult();
+                    await Task.Delay(Timeout.Infinite, cancellationToken);
+                    throw new InvalidOperationException("Unreachable.");
+                },
+            }, null);
+        await using var original = new DedicatedConnectionPool("127.0.0.1", 9001, RespireConnectionOptions.Default, null);
+        await original.RetireAsync();
+        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        try
+        {
+            // A redirect source or an earlier selection must not own a later pool's handshake failure.
+            observation.UseEndpoint(new("source.example", 6380));
+            using var cancellation = new CancellationTokenSource();
+            var pending = DedicatedLeaseAcquisition.RentAsync(original, new TestRoute(new RouteState(replacement)),
+                cancellation.Token, reuseIdle: true, DedicatedLeaseKind.Ordinary, observation: observation).AsTask();
+            await entered.Task.WaitAsync(Limit);
+            await Assert.That(observation.Endpoint).IsEqualTo(replacement.Endpoint);
+            cancellation.Cancel();
+            await Assert.That(async () => await pending.WaitAsync(Limit)).Throws<OperationCanceledException>();
+            await Assert.That(observation.Endpoint).IsEqualTo(replacement.Endpoint);
+        }
+        finally { observation.Dispose(); }
+    }
+
+    [Test]
     public async Task SelectingSameStoppedPoolPreservesFailureAndStops()
     {
         await using var pool = new DedicatedConnectionPool("127.0.0.1", 6379, RespireConnectionOptions.Default, null);

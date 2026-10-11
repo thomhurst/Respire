@@ -4359,7 +4359,7 @@ public sealed partial class RespireClient : IRespireClient
                     {
                         (pool, connection) = await cluster.RentDedicatedConnectionAsync(
                             pool, new ClusterRouter.DedicatedRoute(slot, readFrom, askRedirect, askingSource),
-                            cancellationToken, discovery, preferredZone: preferredZone).ConfigureAwait(false);
+                            cancellationToken, discovery, preferredZone: preferredZone, observation: observation).ConfigureAwait(false);
                     }
                     catch (Exception error) when (askRedirect is null && fallback.OriginalFailure is not null
                         && ReadEndpointRouter.IsReadCandidateFailure(error, cancellationToken))

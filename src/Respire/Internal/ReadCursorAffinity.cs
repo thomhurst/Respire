@@ -96,7 +96,7 @@ internal sealed class ReadCursorAffinity
             try { return await cluster.GetPinnedReadConnectionAsync(slot, sharedNode, cancellationToken, revalidate: !isContinuation, readFrom: shared.ReadFrom).ConfigureAwait(false); }
             catch (Exception error) when (ReadEndpointRouter.IsUnavailable(error, cancellationToken))
             {
-                if (!isContinuation) ReadEndpointRouter.RecordCandidateFailure(observation, error);
+                if (!isContinuation) ReadEndpointRouter.RecordCandidateFailure(observation, error, sharedNode.ActiveConnectionEndpoint);
                 _clusterShared.TryRemove(new KeyValuePair<(RespireReadFrom, int), ReadAffinity>(key, shared));
             }
         }
@@ -114,7 +114,7 @@ internal sealed class ReadCursorAffinity
                 try { return await cluster.GetPinnedReadConnectionAsync(slot, currentNode, cancellationToken, revalidate: true, readFrom: shared.ReadFrom).ConfigureAwait(false); }
                 catch (Exception error) when (ReadEndpointRouter.IsUnavailable(error, cancellationToken))
                 {
-                    ReadEndpointRouter.RecordCandidateFailure(observation, error);
+                    ReadEndpointRouter.RecordCandidateFailure(observation, error, currentNode.ActiveConnectionEndpoint);
                     _clusterShared.TryRemove(new KeyValuePair<(RespireReadFrom, int), ReadAffinity>(key, shared));
                 }
             }
@@ -162,10 +162,13 @@ internal sealed class ReadCursorAffinity
         if (affinity.Replica is { } replica) return router.IsCurrent(replica);
         // An unreachable or replaced primary invalidates the pin so the policy can reselect.
         var core = router.Core;
+        // Without Sentinel the pinned primary is the active endpoint. Sentinel resolution
+        // failures name no data node, so they stay untagged.
+        var pinned = core.Sentinel is null ? core.Multiplexer.ActiveConnectionEndpoint : (RespireEndpoint?)null;
         try { await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false); }
         catch (Exception error) when (ReadEndpointRouter.IsUnavailable(error, cancellationToken))
         {
-            ReadEndpointRouter.RecordCandidateFailure(observation, error);
+            ReadEndpointRouter.RecordCandidateFailure(observation, error, pinned);
             return false;
         }
         return ReferenceEquals(core.Multiplexer, affinity.Primary);
