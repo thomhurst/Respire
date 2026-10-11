@@ -43,7 +43,7 @@ public sealed partial class RespireClient
                     return await SendHedgedReadLegAsync(operation, command, connection, flags, cancellationToken,
                         observation: race.OriginalObservation).ConfigureAwait(false);
                 }
-                finally { observation.SetAttempts(callerAttempts + race.OriginalObservation.Attempts); }
+                finally { observation.CopyCompletedAttempts(callerAttempts, race.OriginalObservation); }
             }
 
             // Either leg may outlive its caller. Own the argument bytes before dispatching either
@@ -54,7 +54,7 @@ public sealed partial class RespireClient
                 observation: race.OriginalObservation);
             if (pending.IsCompletedSuccessfully)
             {
-                observation.SetAttempts(callerAttempts + race.OriginalObservation.Attempts);
+                observation.CopyCompletedAttempts(callerAttempts, race.OriginalObservation);
                 return pending.Result;
             }
             var original = pending.AsTask();

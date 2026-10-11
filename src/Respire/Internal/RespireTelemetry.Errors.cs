@@ -160,7 +160,11 @@ internal static partial class RespireTelemetry
             }
             RecordError(error, internallyHandled: false, attempts);
         }
-        // A hedge race copies only its completed result leg's count into the caller's lease.
+        // Copy while the independently owned result leg is still live. Preserve the
+        // caller's prefix and nested retry history without overflowing into a zero count.
+        internal void CopyCompletedAttempts(int prefix, ErrorObservation completed)
+            => SetAttempts((int)Math.Min((long)Math.Max(0, prefix) + completed.Attempts, int.MaxValue));
+
         internal void SetAttempts(int attempts)
         {
             if (_dispatch is not null) { _dispatch.SetAttempts(_generation, attempts); return; }
