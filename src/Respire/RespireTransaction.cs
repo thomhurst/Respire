@@ -30,6 +30,8 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
     private readonly List<TxOp> _ops = [];
     private int _clusterSlot;
     private bool _hasClusterSlot;
+    // A queued cursor continuation is server-local, so a retired generation cannot replay it elsewhere.
+    private bool _hasCursorContinuation;
     private bool _completed;
 
     // The transport records the accepting socket after any pre-admission maintenance reroute.
@@ -503,6 +505,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             var importSubmissionAttempted = false;
             ClusterRouter.DiscoveryRound? discovery = null;
             var discoveryPending = false;
+            var sentinelTelemetryStarted = false;
             try
             {
                 var cluster = core.Cluster;
@@ -516,9 +519,16 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                     acquisition.Dispose();
                     acquisition.CheckDeadline("MULTI/EXEC", core, ConnectionPolicy.ImportConnection);
                     if (core.Sentinel is not null)
-                        telemetry = RespireTelemetry.StartBatchOperation(
-                            "MULTI", _ops, static op => op.Operation,
-                            connection.Host, connection.Port, core.Options.Database, out telemetryOperation, sentinelStarted);
+                    {
+                        if (!sentinelTelemetryStarted)
+                        {
+                            telemetry = RespireTelemetry.StartBatchOperation(
+                                "MULTI", _ops, static op => op.Operation,
+                                connection.Host, connection.Port, core.Options.Database, out telemetryOperation, sentinelStarted);
+                            sentinelTelemetryStarted = true;
+                        }
+                        else telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
+                    }
                     RespValue reply;
                     CircuitAdmission admission = default;
                     try
@@ -560,8 +570,8 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                             importTransactionStarted = false;
                     }
                     catch (RespireConnectionRetiredException retirement) when (core.Circuits is not null
-                        && ConnectionPolicy.CanReplayRejectedCommands
-                        && connection.TryReroute(false, deadline, out var target, out var rerouted, preferredZone: null))
+                        && ConnectionPolicy.CanReplayRejectedCommands && !_hasCursorContinuation
+                        && _client.TryRerouteCircuit(connection, deadline, out var target, out var rerouted, preferredZone: null))
                     {
                         // Retirement rejected every frame before dispatch. Release this permit
                         // as ignored; the replacement endpoint owns its own health outcome.
@@ -751,6 +761,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             throw;
         }
 
+        if (CursorCommandMetadata.IsServerCursorContinuation(in command)) _hasCursorContinuation = true;
         var pending = new RespirePending<T>();
         _ops.Add(ScriptingEngineInfo.IsScriptingCommand(operation)
             ? new ScriptingTxOp<T>(operation, pending, convert, ScriptingEngineInfo.ExpectedEngine(in command, operation))

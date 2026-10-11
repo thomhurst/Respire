@@ -170,14 +170,26 @@ public class RedlockWireTests
     [Test]
     public async Task CallerCancellationDuringRenewalEndsLeaseAndCleansUpEveryNode()
     {
-        await using var nodes = await Nodes.StartAsync(static (_, _) => null, delayReleaseMs: 500);
-        var group = new RespireRedlockGroup(nodes.Clients, new RespireRedlockOptions { NodeTimeout = TimeSpan.FromSeconds(5) });
+        await using var nodes = await Nodes.StartAsync(static (_, _) => null, untimedCommands: true);
+        var group = new RespireRedlockGroup(nodes.Clients, new RespireRedlockOptions { NodeTimeout = RespireRedlockNodes.MaxNodeTimeout });
         await using var attempt = await group.TryAcquireAsync("redlock:renew-cancel", TimeSpan.FromSeconds(10));
         await Assert.That(attempt.Acquired).IsTrue();
 
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
-        await Assert.That(async () => await attempt.Lock.ResetExpiryAsync(TimeSpan.FromSeconds(10), cancellation.Token))
-            .Throws<OperationCanceledException>();
+        // Hold the renewal SET replies until the test has cancelled. A wall-clock cancel could
+        // fire before renewal contacts any node, and then nothing would end the lease.
+        var renewalReplies = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        foreach (var server in nodes.Servers) server.GateCommand("SET ", renewalReplies.Task);
+        using var cancellation = new CancellationTokenSource();
+        var renewal = attempt.Lock.ResetExpiryAsync(TimeSpan.FromSeconds(10), cancellation.Token).AsTask();
+        // The limit only bounds a failing run; a passing run never depends on it.
+        using (var limit = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
+        {
+            while (!nodes.Servers.All(static server => server.ReceivedCommands.Count(static c => c.StartsWith("SET ", StringComparison.Ordinal)) == 2))
+                await Task.Delay(1, limit.Token);
+        }
+        cancellation.Cancel();
+        renewalReplies.SetResult();
+        await Assert.That(async () => await renewal).Throws<OperationCanceledException>();
         await Assert.That(attempt.Lock.IsReleased).IsTrue();
         foreach (var server in nodes.Servers)
             await Assert.That(server.ReceivedCommands.Count(static command => command.StartsWith("DELEX ", StringComparison.Ordinal))).IsEqualTo(1);
@@ -251,22 +263,56 @@ public class RedlockWireTests
     {
         await using var nodes = await Nodes.StartAsync(static (_, _) => null);
         nodes.Servers[2].SuppressReply = static command => command.StartsWith("SET ", StringComparison.Ordinal);
-        var group = new RespireRedlockGroup(nodes.Clients, new RespireRedlockOptions { NodeTimeout = TimeSpan.FromMilliseconds(100) });
+        // The timeout must also cover the healthy nodes' first SET, which can take more than
+        // 100 ms when JIT and parallel tests load the runner. A healthy node that times out
+        // would cost the quorum.
+        var nodeTimeout = TimeSpan.FromSeconds(1);
+        var group = new RespireRedlockGroup(nodes.Clients, new RespireRedlockOptions { NodeTimeout = nodeTimeout });
         await using var attempt = await group.TryAcquireAsync("redlock:silent", TimeSpan.FromSeconds(10));
         await Assert.That(attempt.Acquired).IsTrue();
-        await Assert.That(attempt.Lock.Validity < TimeSpan.FromSeconds(10) - TimeSpan.FromMilliseconds(100)).IsTrue();
+        await Assert.That(attempt.Lock.Validity < TimeSpan.FromSeconds(10) - nodeTimeout).IsTrue();
     }
 
     [Test]
     public async Task CallerCancellationDuringAcquisitionReleasesEveryNode()
     {
-        await using var nodes = await Nodes.StartAsync(static (_, _) => null, delayAcquireMs: 500);
-        var group = new RespireRedlockGroup(nodes.Clients, new RespireRedlockOptions { NodeTimeout = TimeSpan.FromSeconds(5) });
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
-        await Assert.That(async () => await group.TryAcquireAsync("redlock:cancel", TimeSpan.FromSeconds(10), cancellation.Token))
-            .Throws<OperationCanceledException>();
+        // Every node withholds its SET reply until the test has cancelled, so acquisition is
+        // still in flight when Cancel runs however long the runner stalls in between. The gated
+        // clients have no command timeout and the node timeout is the maximum, so only the
+        // caller's cancellation can end the SET wait; a timeout would start cleanup early.
+        var setReplies = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var nodes = await Nodes.StartAsync(static (_, _) => null, untimedCommands: true);
+        foreach (var server in nodes.Servers) server.GateCommand("SET ", setReplies.Task);
+        var group = new RespireRedlockGroup(nodes.Clients, new RespireRedlockOptions { NodeTimeout = RespireRedlockNodes.MaxNodeTimeout });
+        using var cancellation = new CancellationTokenSource();
+        var acquisition = group.TryAcquireAsync("redlock:cancel", TimeSpan.FromSeconds(10), cancellation.Token).AsTask();
+        // Cancel only once every node holds the SET. A wall-clock cancel could fire before
+        // acquisition starts on a slow runner; no node is contacted then, so none needs a release.
+        // The limit only bounds a failing run; a passing run never depends on it.
+        using (var limit = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
+        {
+            while (!nodes.Servers.All(static server => server.ReceivedCommands.Any(static c => c.StartsWith("SET ", StringComparison.Ordinal))))
+                await Task.Delay(1, limit.Token);
+        }
+        cancellation.Cancel();
+        // The late SET replies now land on cancelled waiters; the gate also holds the DELEX
+        // that follows on each single-connection node, so cleanup needs it open.
+        setReplies.SetResult();
+        await Assert.That(async () => await acquisition).Throws<OperationCanceledException>();
         foreach (var server in nodes.Servers)
             await Assert.That(server.ReceivedCommands.Count(static c => c.StartsWith("DELEX ", StringComparison.Ordinal))).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task CancellationBeforeAcquisitionContactsNoNode()
+    {
+        await using var nodes = await Nodes.StartAsync(static (_, _) => null);
+        var group = new RespireRedlockGroup(nodes.Clients, new RespireRedlockOptions { NodeTimeout = TimeSpan.FromSeconds(5) });
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        await Assert.That(async () => await group.TryAcquireAsync("redlock:precancel", TimeSpan.FromSeconds(10), cancellation.Token))
+            .Throws<OperationCanceledException>();
+        await Assert.That(nodes.CommandsSeen).IsEqualTo(0);
     }
 
     [Test]
@@ -290,7 +336,7 @@ public class RedlockWireTests
         public RespireClient[] Clients { get; }
         public int CommandsSeen => Servers.Sum(static server => server.CommandsSeen);
 
-        public static async Task<Nodes> StartAsync(Func<int, string, byte[]?> reply, int delayReleaseMs = 0, int delayAcquireMs = 0)
+        public static async Task<Nodes> StartAsync(Func<int, string, byte[]?> reply, int delayReleaseMs = 0, bool untimedCommands = false)
         {
             var servers = new FakeRespServer[3];
             var clients = new RespireClient[3];
@@ -302,9 +348,17 @@ public class RedlockWireTests
                     ReplyOverride = (_, command) => reply(node, command)
                         ?? (command.StartsWith("DELEX ", StringComparison.Ordinal) ? One : Ok),
                 };
-                if (delayAcquireMs > 0) servers[i].DelayReply(0, delayAcquireMs);
                 if (delayReleaseMs > 0) servers[i].DelayReply(1, delayReleaseMs);
-                clients[i] = await FakeRespServer.ConnectClientAsync(servers[i].Port);
+                clients[i] = !untimedCommands
+                    ? await FakeRespServer.ConnectClientAsync(servers[i].Port)
+                    // A gated command waits for the test, not the clock: disable the command timeout.
+                    : await RespireClient.ConnectAsync(new RespireOptions
+                    {
+                        Protocol = RespProtocol.Resp2,
+                        Endpoints = { new RespireEndpoint("127.0.0.1", servers[i].Port) },
+                        Connections = 1,
+                        CommandTimeout = null,
+                    });
             }
 
             return new Nodes(servers, clients);

@@ -418,7 +418,15 @@ public partial class RespireHybridCacheCoherenceTests
             await Assert.That(Coherent(reader).ObservationCount).IsEqualTo(0);
             using (var restored = await admin.ExecuteAsync("ACL", "SETUSER", username, "+subscribe")) { }
             await connected.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            await Assert.That(await FreshTaggedAsync(read, key, tag, "fresh after reconnect")).IsEqualTo("fresh after reconnect");
+            // The resubscribe acknowledgement also queues a reconnect Gap message. The tag worker
+            // consumes it asynchronously and conservatively retires observations, so it can retire
+            // an observation made just after reconnect. Every read must be fresh, and observation
+            // must resume once the gap has been consumed.
+            await UntilAsync(async () =>
+            {
+                await Assert.That(await FreshTaggedAsync(read, key, tag, "fresh after reconnect")).IsEqualTo("fresh after reconnect");
+                return Coherent(reader).ObservationCount == 1;
+            });
             await Assert.That(Coherent(reader).ObservationCount).IsEqualTo(1);
             using var pong = await source.ExecuteAsync("PING");
             await Assert.That(pong.AsString()).IsEqualTo("PONG");
