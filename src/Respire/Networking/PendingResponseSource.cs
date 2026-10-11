@@ -73,9 +73,9 @@ internal abstract partial class PendingResponse
     internal static bool IsCompleted(long state) => (state & 1) != 0;
 
     /// <summary>Called after rent, before source is published anywhere. Zero selects two-owner state tracking.</summary>
-    /// <remarks>Explicit counts require a <see cref="ReleaseRef"/> override using <see cref="ReleaseRefAtomic"/>.</remarks>
     internal void PrepareForUse(int receiveReferences = 0)
     {
+        Debug.Assert(receiveReferences >= 0 && receiveReferences < int.MaxValue);
         _refs = receiveReferences == 0 ? -1 : receiveReferences + 1;
         ErrorAttempts = 0;
     }
@@ -242,9 +242,21 @@ internal abstract partial class PendingResponse
 
     /// <summary>Returns source to its pool after caller and receive loop both release it.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal virtual void ReleaseRef()
+    internal void ReleaseRef()
     {
-        Debug.Assert(_refs == -1, "Only a live two-owner source can use state-based release.");
+        var references = Volatile.Read(ref _refs);
+        if (references >= 0)
+        {
+            Debug.Assert(references >= 1, "Only a live owner can release a response reference.");
+            // Counts never increase while rented. One therefore belongs exclusively to
+            // this owner; all previous releases are their owners' final source access.
+            if (references == 1) _refs = 0;
+            else if (Interlocked.Decrement(ref _refs) != 0) return;
+            ReturnToPool(Volatile.Read(ref _state));
+            return;
+        }
+
+        Debug.Assert(references == -1, "Only a live two-owner source can use state-based release.");
         var state = Volatile.Read(ref _state);
         while ((state & OwnerReleased) == 0)
         {
@@ -262,15 +274,12 @@ internal abstract partial class PendingResponse
         ReturnToPool(state);
     }
 
-    protected void ReleaseRefAtomic()
-    {
-        Debug.Assert(Volatile.Read(ref _refs) >= 1, "Only a live owner can release a response reference.");
-        if (Interlocked.Decrement(ref _refs) == 0)
-            ReturnToPool(Volatile.Read(ref _state));
-    }
-
     private void ReturnToPool(long state)
     {
+        // A published source reaches final release only after caller completion has been
+        // consumed, or the discard source's FIFO reply has claimed completion. Its completed
+        // bit is already set, so a deadline CAS cannot win between capture and this store.
+        // Unpublished reclamation has no ring slot for the deadline sweep to inspect.
         // Clear the deadline before the epoch store publishes this source as reusable. The
         // sweep reads State before Deadline, so the release/acquire pairing on _state
         // guarantees that a sweep observing the new epoch can no longer read the previous
@@ -366,10 +375,6 @@ internal sealed class MultiReplyPendingResponseSource : PendingResponse, IValueT
     }
 
     internal override string? CommandName => _commandName;
-
-    // Multi-reply operations release one reference per reply. Keep their intermediate
-    // releases on the original atomic path rather than adding a final-owner probe.
-    internal override void ReleaseRef() => ReleaseRefAtomic();
 
     internal ValueTask<RespValue> Task => new(this, _core.Version);
 

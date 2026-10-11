@@ -9,6 +9,43 @@ namespace Respire.Tests.Networking;
 public class PendingResponseLifetimeTests
 {
     [Test]
+    [Arguments(1, false)]
+    [Arguments(1, true)]
+    [Arguments(3, false)]
+    [Arguments(3, true)]
+    [Arguments(64, false)]
+    [Arguments(64, true)]
+    public async Task ExplicitCountsDoNotRequireASubclassReleaseOverride(int receiveReferences, bool callerFirst)
+    {
+        var source = new CountedSource();
+        source.PrepareForUse(receiveReferences);
+        var observedState = source.State;
+        source.TrySetResult(default);
+        if (callerFirst) source.ReleaseCaller();
+        for (var i = 0; i < receiveReferences; i++)
+        {
+            await Assert.That(source.Returns).IsEqualTo(0);
+            await Assert.That(source.InspectForTests().ReferenceCount).IsEqualTo(receiveReferences + (callerFirst ? 0 : 1) - i);
+            await Assert.That(source.State).IsEqualTo(observedState | 1);
+            source.ReleaseRef();
+        }
+        if (!callerFirst)
+        {
+            await Assert.That(source.Returns).IsEqualTo(0);
+            await Assert.That(source.InspectForTests().ReferenceCount).IsEqualTo(1);
+            source.ReleaseCaller();
+        }
+        await Assert.That(source.Returns).IsEqualTo(1);
+        await Assert.That(source.InspectForTests().ReferenceCount).IsEqualTo(0);
+        await Assert.That(source.State).IsEqualTo(observedState + 4);
+        source.PrepareForUse(receiveReferences);
+        RespireTimeoutDiagnostics? diagnostics = null;
+        await Assert.That(source.TrySetTimedOut(observedState, TimeSpan.FromSeconds(1), ref diagnostics, null)).IsFalse();
+        for (var i = 0; i <= receiveReferences; i++) source.ReleaseRef();
+        await Assert.That(source.Returns).IsEqualTo(2);
+    }
+
+    [Test]
     [Arguments(false, 0)]
     [Arguments(true, 0)]
     [Arguments(false, 1)]
@@ -281,6 +318,15 @@ public class PendingResponseLifetimeTests
                 using var value = task.GetAwaiter().GetResult();
             }
         }
+    }
+
+    private sealed class CountedSource : PendingResponse
+    {
+        internal int Returns { get; private set; }
+        internal void ReleaseCaller() => ReleaseCallerRef();
+        protected override void SetResultCore(in RespValue result) { }
+        protected override void SetExceptionCore(Exception exception) { }
+        protected override void ResetAndReturn() => Returns++;
     }
 
     private static async Task ConsumeAsync(ValueTask<RespValue> pending, int outcome)
