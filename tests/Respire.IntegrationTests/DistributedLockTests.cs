@@ -139,10 +139,12 @@ public class DistributedLockTests(RedisTestContainer fixture)
         var renewalStopped = keepAlive.CancellationToken;
         try
         {
-            var renewedTtl = await WaitForLeaseRenewalAsync(lease);
+            var (previousTtl, renewedTtl) = await WaitForLeaseRenewalAsync(lease);
 
-            // Redis reset the expiry to a full lease, well past what the original lease had left.
-            await Assert.That(renewedTtl).IsGreaterThan(lease * 0.75);
+            // Without a renewal PTTL only falls, so a rise between two samples proves Redis reset
+            // the expiry. No fixed freshness threshold: a delayed poll can read the renewed TTL
+            // after much of it has already elapsed.
+            await Assert.That(renewedTtl).IsGreaterThan(previousTtl);
             await Assert.That(keepAlive.OwnershipLost).IsFalse();
             await Assert.That(renewalStopped.IsCancellationRequested).IsFalse();
             await Assert.That(keepAlive.Failure).IsNull();
@@ -160,16 +162,16 @@ public class DistributedLockTests(RedisTestContainer fixture)
     }
 
     /// <summary>
-    /// Polls the lock key's PTTL until it rises well above the lowest value seen, which only a
-    /// renewal can cause, and returns the renewed TTL. Fails if the key disappears or no renewal
-    /// lands within two leases.
+    /// Polls the lock key's PTTL until a sample is higher than the one before it, which only a
+    /// renewal can cause, and returns both samples. A poll delayed past a renewal and most of the
+    /// renewed lease may miss the rise; the next renewal is then caught instead. Fails if the key
+    /// disappears or no rise is seen within three leases.
     /// </summary>
-    private async Task<TimeSpan> WaitForLeaseRenewalAsync(TimeSpan lease)
+    private async Task<(TimeSpan Previous, TimeSpan Renewed)> WaitForLeaseRenewalAsync(TimeSpan lease)
     {
-        var jump = lease / 4;
-        var lowest = TimeSpan.MaxValue;
+        TimeSpan? previous = null;
         var timeout = Stopwatch.StartNew();
-        while (timeout.Elapsed < lease * 2)
+        while (timeout.Elapsed < lease * 3)
         {
             var ttl = await Db.KeyTimeToLiveAsync(Key);
             if (ttl is null)
@@ -178,20 +180,16 @@ public class DistributedLockTests(RedisTestContainer fixture)
                     "The lock key expired or was deleted before a renewal was observed.");
             }
 
-            if (ttl.Value - jump > lowest)
+            if (previous is { } prior && ttl.Value > prior)
             {
-                return ttl.Value;
+                return (prior, ttl.Value);
             }
 
-            if (ttl.Value < lowest)
-            {
-                lowest = ttl.Value;
-            }
-
+            previous = ttl.Value;
             await Task.Delay(TimeSpan.FromMilliseconds(50));
         }
 
-        throw new TimeoutException($"No lease renewal was observed within {lease * 2} (lowest PTTL {lowest}).");
+        throw new TimeoutException($"No lease renewal was observed within {lease * 3} (last PTTL {previous}).");
     }
 
     [Test]
