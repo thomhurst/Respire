@@ -646,9 +646,11 @@ public sealed class SentinelCircuitDispatchTests
         var execution = Task.Run(async () =>
         {
             observed.Value = true;
+            // The test host can own an ambient activity; the operation must restore it, not leak its own.
+            var ambient = Activity.Current;
             if (transactional) await transaction.CommitAsync();
             else await batch.ExecuteAsync();
-            await Assert.That(Activity.Current).IsNull();
+            await Assert.That(Activity.Current).IsSameReferenceAs(ambient);
             observed.Value = false;
         });
         try

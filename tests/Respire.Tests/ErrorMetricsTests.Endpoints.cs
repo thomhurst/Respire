@@ -107,7 +107,9 @@ public partial class ErrorMetricsTests
         using var capture = new Capture();
         await Assert.That(async () => await client.ExecuteFireAndForgetAsync("SCRIPT", ["FLUSH"])).Throws<Exception>();
         if (retirement is not null) await retirement;
-        await Assert.That(healthy.ReceivedCommands).Contains("SCRIPT FLUSH");
+        // Fire-and-forget completes once written, so the healthy server can parse it afterwards.
+        using var received = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!healthy.ReceivedCommands.Contains("SCRIPT FLUSH")) await Task.Delay(1, received.Token);
         var final = capture.Items.Single(item => !(bool)item.Tags["redis.client.errors.internal"]!);
         await Assert.That(final.Tags["server.port"]).IsEqualTo(rejecting.Port);
     }
