@@ -603,7 +603,10 @@ public class HashFieldLeaseWireTests
         var generation = client.Core.Sentinel!.Current!;
         using var rejection = Respire.Protocol.RespValue.Error("READONLY replica");
         generation.ObserveResponse(generation.Multiplexer.GetConnection(), "SET", in rejection);
-        await client.PingAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        // Rediscover without a data command. The cleanup probe can write its EVAL to the promoted
+        // primary first; when that primary suppresses the reply, its answer to a later PING would be
+        // matched to the EVAL and the PING would never complete.
+        await client.Core.Sentinel.GetGenerationAsync(CancellationToken.None).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         using var promotedTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (!promotedPrimary.ReceivedCommands.Any(command => command.StartsWith("EVAL ", StringComparison.Ordinal)))
             await Task.Delay(5, promotedTimeout.Token);
@@ -612,7 +615,7 @@ public class HashFieldLeaseWireTests
         var secondGeneration = client.Core.Sentinel!.Current!;
         using var secondRejection = Respire.Protocol.RespValue.Error("READONLY replica");
         secondGeneration.ObserveResponse(secondGeneration.Multiplexer.GetConnection(), "SET", in secondRejection);
-        await client.PingAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await client.Core.Sentinel.GetGenerationAsync(CancellationToken.None).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         while (!secondPromotedPrimary.ReceivedCommands.Any(command => command.StartsWith("EVAL ", StringComparison.Ordinal)))
             await Task.Delay(5, promotedTimeout.Token);
         await cleanup.WaitAsync(TimeSpan.FromSeconds(5));
