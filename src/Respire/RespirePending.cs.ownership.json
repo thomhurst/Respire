@@ -40,7 +40,7 @@
       "Role": "final",
       "Member": "Respire.RespirePending`1.ReportError():bool",
       "Owner": "Respire.RespirePending`1.ReportError():bool",
-      "Contract": "Publish each terminal command failure once only after execution and mutation cleanup. Preserve its original exception and complete retry count. Success releases retry storage without publishing."
+      "Contract": "Publish each terminal command failure once only after execution and mutation cleanup. Preserve its original exception and complete retry count. Added retries saturate at int.MaxValue and never reduce the count; final publication rejects later count updates. Success releases retry storage without publishing."
     }
   ],
   "NonRoutes": []

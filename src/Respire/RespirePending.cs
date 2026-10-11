@@ -69,7 +69,7 @@ public sealed class RespirePending<T> : IDispatchObservation
         try
         {
             if ((Volatile.Read(ref _state) & ObservationClosed) != 0) return;
-            _errorAttempts = Math.Max(0, attempts);
+            ErrorPublication.SetAttempts(ref _errorAttempts, finalPublished: false, attempts);
             if (_failure is RetryObservation retry) retry.Owner.SetRetryAttempts(_errorAttempts);
         }
         finally { ExitObservationGate(); }
@@ -82,7 +82,7 @@ public sealed class RespirePending<T> : IDispatchObservation
         {
             if ((Volatile.Read(ref _state) & ObservationClosed) != 0) return;
             if (_failure is RetryObservation retry) retry.Owner.RecordRetry();
-            else if (_errorAttempts < int.MaxValue) _errorAttempts++;
+            else ErrorPublication.TryRecordRetry(ref _errorAttempts, finalPublished: false);
         }
         finally { ExitObservationGate(); }
     }
@@ -214,7 +214,8 @@ public sealed class RespirePending<T> : IDispatchObservation
         try
         {
             if ((Volatile.Read(ref _state) & ObservationClosed) != 0) return;
-            _errorAttempts = ErrorAttempts + attempts;
+            _errorAttempts = ErrorAttempts;
+            ErrorPublication.TryAddAttempts(ref _errorAttempts, finalPublished: false, attempts);
             if (_failure is RetryObservation retry) retry.Owner.SetRetryAttempts(_errorAttempts);
         }
         finally { ExitObservationGate(); }
