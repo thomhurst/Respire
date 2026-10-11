@@ -180,7 +180,7 @@ internal sealed class ReadCursorAffinity
         if (ReferenceEquals(core.Multiplexer, affinity.Primary)) return true;
         // Connecting recorded the replacement generation. A lost continuation belongs to the
         // pin's retired owner; a fresh selection records its own node afterwards.
-        observation.UseEndpoint(affinity.Primary?.ActiveConnectionEndpoint);
+        observation.UseEndpoint(affinity.Primary?.ActiveConnectionEndpoint, cancellationToken);
         return false;
     }
 

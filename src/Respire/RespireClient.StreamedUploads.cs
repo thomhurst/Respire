@@ -286,6 +286,7 @@ public sealed partial class RespireClient
                             // The source reply completed; no redirected command has been accepted yet.
                             cluster.RecordRejection(ref discovery, connection, error);
                             observation.Handled(error);
+                            var redirectSource = new RespireEndpoint(connection.Host, connection.Port);
                             acquiringRedirectPool = true;
                             commandDeadline = connection.GetReroutedCommandDeadline(commandDeadline);
                             acquisitionToken = ArmDedicatedAcquisition(acquisitionCancellation, commandDeadline, cancellationToken);
@@ -297,7 +298,9 @@ public sealed partial class RespireClient
                             returned = true;
                             (pool, routeVersion, asking) = redirect;
                             // Release the source lease before invoking user-controlled replay reset.
-                            ResetUploadSourceForReplay(in command, error);
+                            // A failed reset rethrows the redirect, which only the source node received.
+                            try { ResetUploadSourceForReplay(in command, error); }
+                            catch { observation.UseEndpoint(redirectSource); throw; }
                             continue;
                         }
 

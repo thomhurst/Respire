@@ -538,6 +538,64 @@ public partial class ErrorMetricsTests
     }
 
     [Test]
+    public async Task CancelledFreshCursorOverReplacedSharedPinNamesNoNode()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        await using var replica = new FakeRespServer(
+            "*5\r\n$5\r\nslave\r\n$9\r\n127.0.0.1\r\n:6379\r\n$9\r\nconnected\r\n:0\r\n"u8.ToArray());
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+        });
+        await using var replaced = RespireConnectionMultiplexer.Create("127.0.0.1", 1);
+        client.Core.ReadRouter.Cursors.PinShared(RespireReadFrom.PrimaryPreferred, new ReadAffinity { Primary = replaced });
+        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+        // A fresh cursor rejects the stale pin, then cancellation wins before reselection sends anything.
+        await Assert.That(async () => await client.Core.ReadRouter.GetCursorConnectionAsync(
+                RespireReadFrom.PrimaryPreferred, affinity: null, isContinuation: false, cancelled.Token, observation))
+            .Throws<OperationCanceledException>();
+        await Assert.That(observation.Endpoint).IsNull();
+    }
+
+    [Test]
+    public async Task ReplayResetFailureNamesTheRedirectSource()
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        const string key = "reset-failure-key";
+        var slot = ClusterHash.GetSlot(key);
+        await using var target = new FakeRespServer(2, FakeRespServer.OkReply);
+        await using var seed = new FakeRespServer(2, FakeRespServer.OkReply);
+        var topology = Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*1\r\n*2\r\n$9\r\n127.0.0.1\r\n:{seed.Port}\r\n");
+        var redirect = Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n");
+        seed.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology
+            : command.StartsWith("SET ", StringComparison.Ordinal) ? redirect : null;
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, UseCluster = true, Endpoints = [new("127.0.0.1", seed.Port)],
+        });
+        await using var stream = new ResetFailingStream([1, 2, 3]);
+        using var capture = new Capture();
+        // The redirect target is acquired, but the failed replay reset means it never receives the SET.
+        await Assert.That(async () => await client.Strings.SetAsync(key, stream, 3)).Throws<RespireServerException>();
+        await Assert.That(target.ReceivedCommands).IsEmpty();
+        var final = capture.Items.Single(item => !(bool)item.Tags["redis.client.errors.internal"]!);
+        await Assert.That(final.Tags["server.port"]).IsEqualTo(seed.Port);
+    }
+
+    private sealed class ResetFailingStream(byte[] value) : MemoryStream(value)
+    {
+        public override long Position
+        {
+            get => base.Position;
+            set => throw new IOException("Stream position reset failed.");
+        }
+    }
+
+    [Test]
     public async Task MixedCursorWriteGroupRejectionNamesNoNode()
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
