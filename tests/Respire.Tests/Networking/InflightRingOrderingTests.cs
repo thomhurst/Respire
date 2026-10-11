@@ -11,37 +11,6 @@ public class InflightRingOrderingTests
 {
 #if DEBUG
     [Test]
-    public async Task ConsumerAcquiresProducerTailOncePerPublishedBatch()
-    {
-        var ring = new InflightRing(8);
-        var source = new PendingResponseSource();
-        for (var i = 0; i < 8; i++)
-            await Assert.That(ring.TryEnqueue(source, i + 1)).IsTrue();
-
-        for (var i = 0; i < 8; i++)
-        {
-            for (var peek = 0; peek < 3; peek++)
-                await Assert.That(ring.TryPeekConsumer(out _)).IsTrue();
-            var dequeued = i % 2 == 0
-                ? ring.TryDequeue(out _)
-                : ring.TryDequeue(out _, out _, out _);
-            await Assert.That(dequeued).IsTrue();
-            await Assert.That(ring.ConsumerTailReadsForTests).IsEqualTo(1);
-        }
-
-        // Positive control: draining the snapshot requires another acquire, even when empty.
-        await Assert.That(ring.TryPeekConsumer(out _)).IsFalse();
-        await Assert.That(ring.ConsumerTailReadsForTests).IsEqualTo(2);
-        await Assert.That(ring.TryEnqueue(source, 9)).IsTrue();
-        // Exact inspection does not write the consumer-owned cache.
-        await Assert.That(ring.TryPeek(out _)).IsTrue();
-        await Assert.That(ring.ConsumerTailReadsForTests).IsEqualTo(2);
-        await Assert.That(ring.TryDequeue(out _)).IsTrue();
-        await Assert.That(ring.ConsumerTailReadsForTests).IsEqualTo(3);
-        await Assert.That(ring.CompletedWriteEnd).IsEqualTo(9L);
-    }
-
-    [Test]
     public async Task CapacityHintAvoidsConsumerHeadWhileCachedCapacitySuffices()
     {
         var ring = new InflightRing(8);
@@ -92,8 +61,6 @@ public class InflightRingOrderingTests
     [Arguments("Tail", "CompletedWriteEnd")]
     [Arguments("CachedHead", "Head")]
     [Arguments("CachedHead", "CompletedWriteEnd")]
-    [Arguments("Tail", "CachedTail")]
-    [Arguments("CachedHead", "CachedTail")]
     public async Task ProducerAndConsumerCounterRangesHaveCacheLineSeparation(string producer, string consumer)
     {
         var positions = typeof(InflightRing).GetNestedType("Positions", BindingFlags.NonPublic)
@@ -106,15 +73,11 @@ public class InflightRingOrderingTests
     }
 
     [Test]
-    [Arguments(1, false)]
-    [Arguments(1, true)]
-    [Arguments(2, false)]
-    [Arguments(2, true)]
-    [Arguments(8, false)]
-    [Arguments(8, true)]
-    [Arguments(256, false)]
-    [Arguments(256, true)]
-    public async Task ConcurrentPublicationPreservesSourcesOffsetsAndDiscardMetadata(int capacity, bool peekBeforeDequeue)
+    [Arguments(1)]
+    [Arguments(2)]
+    [Arguments(8)]
+    [Arguments(256)]
+    public async Task ConcurrentPublicationPreservesSourcesOffsetsAndDiscardMetadata(int capacity)
     {
         const int count = 50_000;
         var ring = new InflightRing(capacity);
@@ -147,28 +110,10 @@ public class InflightRingOrderingTests
                 PendingResponse source;
                 string? operation;
                 int retryAttempts;
-                if (peekBeforeDequeue)
+                while (!ring.TryDequeue(out source, out operation, out retryAttempts))
                 {
-                    PendingResponse peeked;
-                    while (!ring.TryPeekConsumer(out peeked))
-                    {
-                        token.ThrowIfCancellationRequested();
-                        spin.SpinOnce(sleep1Threshold: -1);
-                    }
-                    if (!ring.TryDequeue(out source, out operation, out retryAttempts)
-                        || !ReferenceEquals(source, peeked))
-                    {
-                        cancellation.Cancel();
-                        throw new InvalidOperationException($"Published reply disappeared at {i}.");
-                    }
-                }
-                else
-                {
-                    while (!ring.TryDequeue(out source, out operation, out retryAttempts))
-                    {
-                        token.ThrowIfCancellationRequested();
-                        spin.SpinOnce(sleep1Threshold: -1);
-                    }
+                    token.ThrowIfCancellationRequested();
+                    spin.SpinOnce(sleep1Threshold: -1);
                 }
                 spin.Reset();
                 var expected = i % 3 == 0 ? InflightRing.DiscardSentinel : sources[i % sources.Length];
@@ -186,35 +131,6 @@ public class InflightRingOrderingTests
         await Assert.That(ring.Count).IsEqualTo(0);
         await Assert.That(ring.ConsumerPosition).IsEqualTo((long)count);
         await Assert.That(ring.CompletedWriteEnd).IsEqualTo((long)count);
-    }
-
-    [Test]
-    [Arguments(1)]
-    [Arguments(2)]
-    [Arguments(8)]
-    public async Task ConsumerRefreshesDrainedSnapshotsAcrossSlotReuse(int capacity)
-    {
-        var ring = new InflightRing(capacity);
-        var sources = Enumerable.Range(0, capacity).Select(_ => new PendingResponseSource()).ToArray();
-        for (var cycle = 0; cycle < 100; cycle++)
-        {
-            await Assert.That(ring.TryPeekConsumer(out _)).IsFalse();
-            await Assert.That(ring.TryDequeue(out _, out _, out _)).IsFalse();
-            for (var i = 0; i < capacity; i++)
-                await Assert.That(ring.TryEnqueue(sources[i], cycle * capacity + i + 1)).IsTrue();
-            for (var i = 0; i < capacity; i++)
-            {
-                await Assert.That(ring.TryPeekConsumer(out var peeked)).IsTrue();
-                await Assert.That(ReferenceEquals(peeked, sources[i])).IsTrue();
-                var dequeued = i % 2 == 0
-                    ? ring.TryDequeue(out var source)
-                    : ring.TryDequeue(out source, out _, out _);
-                await Assert.That(dequeued).IsTrue();
-                await Assert.That(ReferenceEquals(source, peeked)).IsTrue();
-                await Assert.That(ring.CompletedWriteEnd).IsEqualTo((long)(cycle * capacity + i + 1));
-            }
-            await Assert.That(ring.Count).IsEqualTo(0);
-        }
     }
 
     [Test]
