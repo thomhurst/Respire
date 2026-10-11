@@ -473,10 +473,15 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             finally
             {
                 var attempts = observation.Attempts;
+                // An empty WATCH commit has no queued owner, but still sends MULTI/EXEC on its
+                // pinned connection. Capture the node before ReportErrors closes the owners.
+                RespireEndpoint? finalEndpoint = observation.IsEmpty
+                    ? connection is { } attempted ? new RespireEndpoint(attempted.Host, attempted.Port) : (RespireEndpoint?)null
+                    : observation.Endpoint;
                 DeferredOperation.ShareEndpoint(_ops, observation);
                 var pendingErrors = DeferredOperation.ReportErrors(_ops, attempts) != 0;
                 if (operationError is not null && !pendingErrors)
-                    ErrorObservation.FinishFinal(default, operationError, retryAttempts: attempts);
+                    ErrorObservation.FinishFinal(default, operationError, retryAttempts: attempts, endpoint: finalEndpoint);
                 if (connection is null && operationError is not null)
                     RespireTelemetry.RecordUnroutedBatchFailure("MULTI", _ops, static op => op.Operation,
                         core.Options.Database, sentinelStarted, operationError);

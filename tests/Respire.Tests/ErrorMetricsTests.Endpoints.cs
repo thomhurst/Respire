@@ -420,6 +420,63 @@ public partial class ErrorMetricsTests
     }
 
     [Test]
+    public async Task FanOutValidationFailureNamesNoNode()
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        await using var first = new FakeRespServer(16, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("SCRIPT EXISTS", StringComparison.Ordinal)
+                ? "*1\r\n:1\r\n"u8.ToArray() : null,
+        };
+        await using var second = new FakeRespServer(16, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("SCRIPT EXISTS", StringComparison.Ordinal)
+                ? "*2\r\n:1\r\n:1\r\n"u8.ToArray() : null,
+        };
+        var topology = Encoding.ASCII.GetBytes(
+            $"*2\r\n*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{first.Port}\r\n" +
+            $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{second.Port}\r\n");
+        await using var seed = new FakeRespServer(16, topology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, UseCluster = true,
+            ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", seed.Port)],
+        });
+        using var capture = new Capture();
+        // Both legs succeed; only the cross-primary comparison fails, so no single node owns it.
+        await Assert.That(async () => await client.Scripts.ExistsAsync("0123456789abcdef0123456789abcdef01234567"))
+            .Throws<RespireProtocolException>();
+        var final = capture.Items.Single(item => !(bool)item.Tags["redis.client.errors.internal"]!);
+        await Assert.That(final.Tags.ContainsKey("server.address")).IsFalse();
+        await Assert.That(final.Tags.ContainsKey("server.port")).IsFalse();
+    }
+
+    [Test]
+    public async Task EmptyWatchedCommitFailureNamesTheWatchConnection()
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        // WATCH and MULTI/EXEC run on a second, dedicated connection.
+        await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("EXEC", StringComparison.Ordinal)
+                ? "-ERR transactions disabled\r\n"u8.ToArray() : null,
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+        });
+        await using var transaction = await client.CreateTransactionAsync(["balance"]);
+        using var capture = new Capture();
+        // A read-only retry callback still validates WATCH with an empty MULTI/EXEC. No command is
+        // queued, so the final publication has no pending owner to name the node.
+        await Assert.That(async () => await transaction.CommitWithWatchValidationAsync(CancellationToken.None))
+            .Throws<Exception>();
+        var final = capture.Items.Single(item => !(bool)item.Tags["redis.client.errors.internal"]!);
+        await Assert.That(final.Tags["server.address"]).IsEqualTo("127.0.0.1");
+        await Assert.That(final.Tags["server.port"]).IsEqualTo(server.Port);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task ColdClusterSeedFailureNamesTheSeed(bool clusterWide)
