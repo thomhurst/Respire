@@ -45,9 +45,6 @@ public class StandaloneReplicaReadyTests
     [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_replicas")]
     private static extern ref RespireEndpoint[] PublishedReplicas(ReadEndpointRouter router);
 
-    [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_refs")]
-    private static extern ref int OwnerReferences(PendingResponse source);
-
     [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_nextReplica")]
     private static extern ref int ReplicaCursor(ReadEndpointRouter router);
 
@@ -386,7 +383,7 @@ public class StandaloneReplicaReadyTests
             var response = typeof(T) == typeof(long) ? ":5\r\n"u8.ToArray() : "$5\r\nhello\r\n"u8.ToArray();
             server.SendRawAsync(response).GetAwaiter().GetResult();
             // Complete both ownership transitions before the next measured rental.
-            if (!SpinWait.SpinUntil(() => pending.IsCompleted && Volatile.Read(ref OwnerReferences(source!)) <= 1,
+            if (!SpinWait.SpinUntil(() => pending.IsCompleted && source!.InspectForTests().ReferenceCount <= 1,
                 TimeSpan.FromSeconds(10)))
                 throw new TimeoutException("Replica completion did not release receive ownership.");
             GC.KeepAlive(pending.GetAwaiter().GetResult());
