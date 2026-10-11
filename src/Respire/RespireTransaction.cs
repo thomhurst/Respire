@@ -346,9 +346,11 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             if (result.IsNull)
             {
                 result.Dispose();
-                if (ConnectionPolicy.IsImportSession)
+                if (ConnectionPolicy.IsImportSession || this is RespireTransaction)
                 {
-                    var error = new RespireProtocolException("An unwatched hash import EXEC unexpectedly returned a null reply.");
+                    var error = new RespireProtocolException(ConnectionPolicy.IsImportSession
+                        ? "An unwatched hash import EXEC unexpectedly returned a null reply."
+                        : "An unwatched EXEC unexpectedly returned a null reply.");
                     operationError = error;
                     foreach (var op in _ops) op.Fail(error);
                     throw error;
@@ -469,12 +471,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             finally
             {
                 var attempts = observation.Attempts;
-                var pendingErrors = false;
-                foreach (var op in _ops)
-                {
-                    op.Observation.SetAttempts(attempts);
-                    pendingErrors |= op.ReportError();
-                }
+                var pendingErrors = DeferredOperation.ReportErrors(_ops, attempts) != 0;
                 if (operationError is not null && !pendingErrors)
                     ErrorObservation.FinishFinal(default, operationError, retryAttempts: attempts);
                 if (connection is null && operationError is not null)
@@ -834,22 +831,11 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
         }
     }
 
-    private abstract class TxOp
+    private abstract class TxOp(string operation) : DeferredOperation(operation)
     {
-        protected TxOp(string operation) => Operation = operation;
-
-        public string Operation { get; }
-
         public virtual string? ExpectedEngine => null;
 
         public abstract Exception? Complete(RespireClient client, in RespValue element);
-        public abstract bool IsCompleted { get; }
-
-        public abstract void Fail(Exception error);
-        public abstract bool ReportError();
-        public abstract void AllowErrorInspection();
-        public abstract RespireTelemetry.ErrorObservation Observation { get; }
-
         public abstract void Abort();
     }
 
@@ -919,10 +905,7 @@ public sealed class RespireTransaction : RespireTransactionBase
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
     public async ValueTask CommitAsync(CancellationToken cancellationToken = default)
     {
-        if (!await CommitCoreAsync(cancellationToken).ConfigureAwait(false))
-        {
-            throw new RespireProtocolException("An unwatched EXEC unexpectedly returned a null reply.");
-        }
+        _ = await CommitCoreAsync(cancellationToken).ConfigureAwait(false);
     }
 }
 

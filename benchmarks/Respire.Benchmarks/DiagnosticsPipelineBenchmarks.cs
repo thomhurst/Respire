@@ -74,6 +74,24 @@ public class DiagnosticsPipelineBenchmarks
         return errors;
     }
 
+    // Runtime errors in EXEC fault the deferred results without throwing from commit.
+    // Measure final publication and later inspection with the same fixture in every revision.
+    [Benchmark(OperationsPerInvoke = CommandCount)]
+    public async Task<int> TimedTransactionServerErrors()
+    {
+        await using var transaction = _client.CreateTransaction();
+        for (var i = 0; i < CommandCount; i++) _pending[i] = transaction.Strings.Increment(_key);
+        await transaction.CommitAsync();
+        var errors = 0;
+        foreach (var pending in _pending)
+        {
+            try { _ = pending.Result; }
+            catch (RespireServerException error) when (error.Code == "ERR") { errors++; }
+        }
+        if (errors != CommandCount) throw new InvalidOperationException("Expected one Redis ERR per command.");
+        return errors;
+    }
+
     // One completed pending owner per invocation, including its failure-only storage
     // when a recovered error is observed. The same fixture runs against both revisions.
     [Benchmark]
