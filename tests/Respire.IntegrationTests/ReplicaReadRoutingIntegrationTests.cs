@@ -8,11 +8,16 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
+/// <remarks>
+/// Tests that leave the topology unchanged share one Sentinel deployment per server family and
+/// use unique keys; their routing listeners filter by trace, so parallel cases cannot mix
+/// observations. Tests that stop a node or need a different topology own their deployment.
+/// </remarks>
 [Category(TestCategories.ProtocolIndependent)]
-public class ReplicaReadRoutingIntegrationTests
+[ClassDataSource<SharedReplicaTopologies>(Shared = SharedType.PerClass)]
+public class ReplicaReadRoutingIntegrationTests(SharedReplicaTopologies topologies)
 {
     [Test]
-    [NotInParallel]
     [Arguments(RespireContainerServer.Redis, RespProtocol.Resp2)]
     [Arguments(RespireContainerServer.Redis, RespProtocol.Resp3)]
     [Arguments(RespireContainerServer.Valkey, RespProtocol.Resp2)]
@@ -20,10 +25,7 @@ public class ReplicaReadRoutingIntegrationTests
     public async Task PreparedStandaloneReplicaKeepsTypedAndStreamedReplies(
         RespireContainerServer server, RespProtocol protocol)
     {
-        await using var fixture = await RespireContainerFixture.StartAsync(new()
-        {
-            Server = server, Topology = RespireContainerTopology.Sentinel,
-        });
+        var fixture = await topologies.GetAsync(server);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [fixture.DataEndpoints[0]], ReplicaEndpoints = [fixture.DataEndpoints[1]],
@@ -31,7 +33,7 @@ public class ReplicaReadRoutingIntegrationTests
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
         });
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        const string key = "prepared-replica";
+        var key = $"prepared-replica:{Guid.NewGuid():N}";
         await client.SetAsync(key, "hello", cancellationToken: deadline.Token);
         var reader = client.WithReadFrom(RespireReadFrom.Replica);
         while (await reader.GetStringAsync(key, deadline.Token) != "hello")
@@ -49,7 +51,6 @@ public class ReplicaReadRoutingIntegrationTests
 
     /// <summary>Proves commands from a different trace cannot contaminate routing assertions.</summary>
     [Test]
-    [NotInParallel]
     public void RouteListenerIgnoresUnrelatedCommandTraces()
     {
         using var scope = StartRoutingScope();
@@ -74,7 +75,6 @@ public class ReplicaReadRoutingIntegrationTests
 
     /// <summary>Checks eligible nearest reads and primary writes on Redis and Valkey replica topologies.</summary>
     [Test]
-    [ParallelLimiter<DockerHeavy>]
     [Arguments(RespireContainerServer.Redis, true, RespProtocol.Resp2)]
     [Arguments(RespireContainerServer.Redis, true, RespProtocol.Resp3)]
     [Arguments(RespireContainerServer.Redis, false, RespProtocol.Resp2)]
@@ -86,11 +86,7 @@ public class ReplicaReadRoutingIntegrationTests
     public async Task NearestUsesEligibleEndpointsAndKeepsWritesOnPrimary(
         RespireContainerServer server, bool useSentinel, RespProtocol protocol)
     {
-        await using var fixture = await RespireContainerFixture.StartAsync(new()
-        {
-            Server = server,
-            Topology = RespireContainerTopology.Sentinel,
-        });
+        var fixture = await topologies.GetAsync(server);
         var options = useSentinel ? fixture.CreateOptions() : new RespireOptions
         {
             Endpoints = [fixture.DataEndpoints[0]],
@@ -101,19 +97,19 @@ public class ReplicaReadRoutingIntegrationTests
         using var scope = StartRoutingScope();
         using var listener = Listen(routes, scope.TraceId);
         var reader = client.WithReadFrom(RespireReadFrom.Nearest);
-        await reader.SetAsync("nearest-key", "value");
+        var key = $"nearest-key:{Guid.NewGuid():N}";
+        await reader.SetAsync(key, "value");
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        while (await reader.GetStringAsync("nearest-key", deadline.Token) != "value")
+        while (await reader.GetStringAsync(key, deadline.Token) != "value")
             await Task.Delay(50, deadline.Token);
         routes["SET"].Last().Should().Be(fixture.DataEndpoints[0]);
         routes["GET"].Should().OnlyContain(endpoint => fixture.DataEndpoints.Contains(endpoint));
         await Task.Delay(TimeSpan.FromMilliseconds(1_100), deadline.Token);
-        (await reader.GetStringAsync("nearest-key", deadline.Token)).Should().Be("value");
+        (await reader.GetStringAsync(key, deadline.Token)).Should().Be("value");
     }
 
     /// <summary>Checks that prefixed read views route catalog reads to a validated replica while writes remain primary.</summary>
     [Test]
-    [ParallelLimiter<DockerHeavy>]
     [Arguments(RespireContainerServer.Redis, true)]
     [Arguments(RespireContainerServer.Valkey, true)]
     [Arguments(RespireContainerServer.Redis, false)]
@@ -121,11 +117,7 @@ public class ReplicaReadRoutingIntegrationTests
     public async Task ReadViewRoutesCatalogReadsToValidatedReplicaAndKeepsWritesOnPrimary(
         RespireContainerServer server, bool useSentinel)
     {
-        await using var fixture = await RespireContainerFixture.StartAsync(new()
-        {
-            Server = server,
-            Topology = RespireContainerTopology.Sentinel,
-        });
+        var fixture = await topologies.GetAsync(server);
         var options = useSentinel
             ? fixture.CreateOptions()
             : new RespireOptions
@@ -141,10 +133,11 @@ public class ReplicaReadRoutingIntegrationTests
         var routes = new ConcurrentDictionary<string, ConcurrentQueue<RespireEndpoint>>(StringComparer.Ordinal);
         using var scope = StartRoutingScope();
         using var listener = Listen(routes, scope.TraceId);
-        var prefixed = client.WithKeyPrefix("replica-read:");
+        var prefix = $"replica-read:{Guid.NewGuid():N}:";
+        var prefixed = client.WithKeyPrefix(prefix);
         await prefixed.SetAsync("key", "value");
         (await prefixed.GetStringAsync("key")).Should().Be("value");
-        var reader = client.WithReadFrom(RespireReadFrom.Replica).WithKeyPrefix("replica-read:");
+        var reader = client.WithReadFrom(RespireReadFrom.Replica).WithKeyPrefix(prefix);
         (await reader.GetStringAsync("key")).Should().Be("value");
 
         routes["SET"].Last().Should().Be(fixture.DataEndpoints[0]);
@@ -204,16 +197,11 @@ public class ReplicaReadRoutingIntegrationTests
     }
 
     [Test]
-    [ParallelLimiter<DockerHeavy>]
     [Arguments(RespireContainerServer.Redis)]
     [Arguments(RespireContainerServer.Valkey)]
     public async Task StrictReplicaPolicyRejectsConfiguredEndpointWithPrimaryRole(RespireContainerServer server)
     {
-        await using var fixture = await RespireContainerFixture.StartAsync(new()
-        {
-            Server = server,
-            Topology = RespireContainerTopology.Sentinel,
-        });
+        var fixture = await topologies.GetAsync(server);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [fixture.DataEndpoints[1]],
@@ -246,5 +234,32 @@ public class ReplicaReadRoutingIntegrationTests
         };
         ActivitySource.AddActivityListener(listener);
         return listener;
+    }
+}
+
+/// <summary>
+/// One Sentinel deployment per server family, started on first use, for tests that never stop a
+/// node, fail over, or change server configuration.
+/// </summary>
+public sealed class SharedReplicaTopologies : IAsyncDisposable
+{
+    private readonly Lazy<Task<RespireContainerFixture>> _redis = new(() => StartAsync(RespireContainerServer.Redis));
+    private readonly Lazy<Task<RespireContainerFixture>> _valkey = new(() => StartAsync(RespireContainerServer.Valkey));
+
+    public Task<RespireContainerFixture> GetAsync(RespireContainerServer server)
+        => server == RespireContainerServer.Redis ? _redis.Value : _valkey.Value;
+
+    private static Task<RespireContainerFixture> StartAsync(RespireContainerServer server)
+        => RespireContainerFixture.StartAsync(new() { Server = server, Topology = RespireContainerTopology.Sentinel });
+
+    public async ValueTask DisposeAsync()
+    {
+        foreach (var fixture in new[] { _redis, _valkey })
+        {
+            if (!fixture.IsValueCreated) continue;
+            // A failed start already removed its container and reported the error to its tests.
+            try { await (await fixture.Value).DisposeAsync(); }
+            catch (Exception) when (fixture.Value.IsFaulted) { }
+        }
     }
 }
