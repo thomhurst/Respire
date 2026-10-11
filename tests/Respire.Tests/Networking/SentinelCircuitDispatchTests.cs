@@ -277,6 +277,52 @@ public sealed class SentinelCircuitDispatchTests
     }
 
     [Test]
+    [Arguments("raw")]
+    [Arguments("typed")]
+    public async Task ReadPolicyFreshScanRetirementReselectsAndRepinsCursor(string shape)
+    {
+        // A non-primary read policy pins cursor pages to the selected server. A fresh scan
+        // retired before dispatch must move with its pin, so its continuation reaches the new server.
+        await using var first = Primary();
+        await using var second = Primary();
+        var port = first.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        await using var client = await Connect(sentinel);
+        var view = (RespireClient)client.WithReadFrom(RespireReadFrom.PrimaryPreferred);
+        await using var enumerator = view.Keys.ScanAsync().GetAsyncEnumerator();
+        var (circuit, _) = Prepare(client, first);
+        using var clock = new AdmissionGateClock();
+        CircuitClock(circuit) = clock;
+        clock.Arm();
+        var pending = Task.Run(async () =>
+        {
+            if (shape == "typed") await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
+            else { using var page = await view.ExecuteAsync(RespireCommands.Key.SCAN, ["0"]); }
+        });
+        try
+        {
+            await clock.Selected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Volatile.Write(ref port, second.Port);
+            await client.Core.Sentinel!.GetGenerationAsync(default, forceDiscovery: true);
+        }
+        finally { clock.Release(); }
+        await pending.WaitAsync(TimeSpan.FromSeconds(5));
+
+        if (shape == "typed")
+        {
+            await Assert.That(enumerator.Current).IsEqualTo("first");
+            await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
+            await Assert.That(enumerator.Current).IsEqualTo("second");
+        }
+        else { using var page = await view.ExecuteAsync(RespireCommands.Key.SCAN, ["7"]); }
+        await Assert.That(first.ReceivedCommands.Any(command => command.StartsWith("SCAN "))).IsFalse();
+        await Assert.That(second.ReceivedCommands.Count(command => command.StartsWith("SCAN 0"))).IsEqualTo(1);
+        await Assert.That(second.ReceivedCommands.Count(command => command.StartsWith("SCAN 7"))).IsEqualTo(1);
+        await Assert.That(circuit.Snapshot().FailureCount).IsEqualTo(0);
+        await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(0);
+    }
+
+    [Test]
     [Arguments("raw", "7")]
     [Arguments("typed", "7")]
     [Arguments("raw", "0")]

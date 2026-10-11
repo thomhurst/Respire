@@ -2789,14 +2789,34 @@ public sealed partial class RespireClient : IRespireClient
     {
         // Scan cursors are server-local, so successive pages must reach the server that issued them.
         // A raw command's own cursor argument says whether it starts a scan or continues one.
-        var connection = readKind == ReadCommandKind.CursorRead
-            ? await _core.ReadRouter.GetCursorConnectionAsync(_readFrom, affinity,
-                affinity is null && CursorCommandMetadata.IsCursorContinuation(in command),
-                cancellationToken, observation).ConfigureAwait(false)
-            : await _core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken, observation).ConfigureAwait(false);
-        return await SendOnConnectionAsync(operation, connection, command, cancellationToken,
-            allowStreamingConnectionReroute: !CursorCommandMetadata.HasServerCursor(in command),
-            observation: observation).ConfigureAwait(false);
+        var continuation = CursorCommandMetadata.IsServerCursorContinuation(in command);
+        // A server-cursor command never moves inside the transport: its read pin names the selected
+        // server. A fresh scan instead reselects below, so the pin follows the server that answers.
+        var pinned = CursorCommandMetadata.HasServerCursor(in command);
+        for (var attempt = 0; ; attempt++)
+        {
+            var connection = readKind == ReadCommandKind.CursorRead
+                ? await _core.ReadRouter.GetCursorConnectionAsync(_readFrom, affinity,
+                    affinity is null && continuation, cancellationToken, observation).ConfigureAwait(false)
+                : await _core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken, observation).ConfigureAwait(false);
+            try
+            {
+                return await SendOnConnectionAsync(operation, connection, command, cancellationToken,
+                    allowStreamingConnectionReroute: !pinned, observation: observation).ConfigureAwait(false);
+            }
+            catch (RespireConnectionRetiredException error) when (pinned && !continuation && attempt == 0
+                && _core.Circuits is not null && !cancellationToken.IsCancellationRequested)
+            {
+                // Retirement rejected the fresh scan before dispatch. No server issued its cursor
+                // yet, so drop the stale pin and select again under the same read policy.
+                observation.Handled(error);
+                if (affinity is not null)
+                {
+                    affinity.Replica = null;
+                    affinity.Primary = null;
+                }
+            }
+        }
     }
 
     /// <summary>
@@ -3959,6 +3979,7 @@ public sealed partial class RespireClient : IRespireClient
                     break;
                 }
                 catch (RespireConnectionRetiredException error) when (core.Circuits is not null
+                    && !CursorCommandMetadata.IsServerCursorContinuation(in command)
                     && TryRerouteCircuit(connection, commandDeadline, out var target, out var rerouted, GetTransportReadZone(in command)))
                 {
                     observation.Handled(error);
