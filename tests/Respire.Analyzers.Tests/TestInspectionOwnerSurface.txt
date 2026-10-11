@@ -189,11 +189,12 @@ Respire.Networking.MultiReplyPendingResponseSource | method TryReserveResult() :
 Respire.Networking.MultiReplyPendingResponseSource | method TrySetResult(in RespValue) : bool
 Respire.Networking.MultiReplyPendingResponseSource | property CommandName [internal; get] : string?
 Respire.Networking.MultiReplyPendingResponseSource | property Task [internal; get] : ValueTask<RespValue>
-# Count: Respire.Networking.PendingResponse | 27
+# Count: Respire.Networking.PendingResponse | 28
 Respire.Networking.PendingResponse | field WriteEnd : long
 Respire.Networking.PendingResponse | field WriteStart : long
 Respire.Networking.PendingResponse | method CompleteCallerInspection(ErrorObservation.FinalOwner, Exception?, bool) : void
 Respire.Networking.PendingResponse | method CompleteReservedResult(in RespValue) : bool
+Respire.Networking.PendingResponse | method DisposeResponse(ref RespValue, ref bool) : void
 # Designated test-inspection factory. New inspection access belongs in its nested view.
 Respire.Networking.PendingResponse | method InspectForTests() : TestInspection
 Respire.Networking.PendingResponse | method IsCompleted(long) : bool
