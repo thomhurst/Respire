@@ -222,6 +222,98 @@ public sealed class SentinelCircuitDispatchTests
     }
 
     [Test]
+    [Arguments("raw")]
+    [Arguments("queued")]
+    [Arguments("ordered")]
+    [Arguments("batch")]
+    public async Task ArrayScanRetirementAfterSelectionReroutes(string shape)
+    {
+        // ARSCAN pages are index ranges with no server cursor, so retirement can move them.
+        await using var first = Primary();
+        await using var second = Primary();
+        var port = first.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        await using var client = await Connect(sentinel);
+        var view = (RespireClient)client.WithReadFrom(RespireReadFrom.PrimaryPreferred);
+        using (await view.ExecuteAsync(RespireCommands.Array.ARSCAN, ["array", "0", "10"])) { }
+
+        var issuingConnection = client.Core.Multiplexer.GetConnection();
+        var (circuit, _) = Prepare(client, first);
+        using var clock = new AdmissionGateClock();
+        CircuitClock(circuit) = clock;
+        using var batch = client.CreateBatch();
+        var command = new CatalogCommand(RespireCommands.Array.ARSCAN, ["array", "1", "10"]);
+        var batched = shape == "batch" ? ((IPendingSink)batch).Add("ARSCAN", command, static (_, _) => true) : null;
+        clock.Arm();
+        var pending = Task.Run(async () =>
+        {
+            if (shape == "batch") await batch.ExecuteAsync();
+            else if (shape is "queued" or "ordered")
+            {
+                var response = shape == "ordered"
+                    ? await QueuedCircuitDispatch.EnqueueAsync(client.Core.Circuits!, issuingConnection,
+                        command, "ARSCAN", default, client: client)
+                    : QueuedCircuitDispatch.SendAsync(client.Core.Circuits!, issuingConnection,
+                        command, "ARSCAN", default, default, client: client);
+                using var page = await response;
+            }
+            else { using var page = await view.ExecuteAsync(RespireCommands.Array.ARSCAN, ["array", "1", "10"]); }
+        });
+        try
+        {
+            // Pause admission after selection of the original primary connection.
+            await clock.Selected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Volatile.Write(ref port, second.Port);
+            await client.Core.Sentinel!.GetGenerationAsync(default, forceDiscovery: true);
+        }
+        finally { clock.Release(); }
+
+        await pending.WaitAsync(TimeSpan.FromSeconds(5));
+        if (batched is not null) await Assert.That(await batched).IsTrue();
+        await Assert.That(first.ReceivedCommands.Contains("ARSCAN array 1 10")).IsFalse();
+        await Assert.That(second.ReceivedCommands.Count(value => value == "ARSCAN array 1 10")).IsEqualTo(1);
+        await Assert.That(circuit.Snapshot().FailureCount).IsEqualTo(0);
+        await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task TransactionCursorContinuationDoesNotRerouteAfterRetirement()
+    {
+        await using var first = Primary();
+        await using var second = Primary();
+        var port = first.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        await using var client = await Connect(sentinel);
+        var (circuit, _) = Prepare(client, first);
+        using var clock = new AdmissionGateClock();
+        CircuitClock(circuit) = clock;
+        await using var transaction = client.CreateTransaction();
+        var value = transaction.Strings.GetString("healthy");
+        var page = ((IPendingSink)transaction).Add("SCAN",
+            new CatalogCommand(RespireCommands.Key.SCAN, ["7"]), static (_, _) => true);
+        clock.Arm();
+        var execution = Task.Run(async () => await transaction.CommitAsync());
+        try
+        {
+            await clock.Selected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Volatile.Write(ref port, second.Port);
+            await client.Core.Sentinel!.GetGenerationAsync(default, forceDiscovery: true);
+        }
+        finally { clock.Release(); }
+
+        // The old primary issued cursor 7, so the whole MULTI/EXEC must not replay on its replacement.
+        await Assert.That(await Failure(async () => await execution.WaitAsync(TimeSpan.FromSeconds(5))))
+            .IsTypeOf<RespireConnectionRetiredException>();
+        await Assert.That(value.Error).IsNotNull();
+        await Assert.That(page.Error).IsNotNull();
+        await Assert.That(first.ReceivedCommands.Any(command => command.StartsWith("SCAN "))).IsFalse();
+        await Assert.That(second.ReceivedCommands.Contains("MULTI")).IsFalse();
+        await Assert.That(second.ReceivedCommands.Any(command => command.StartsWith("SCAN "))).IsFalse();
+        await Assert.That(circuit.Snapshot().FailureCount).IsEqualTo(0);
+        await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(0);
+    }
+
+    [Test]
     [Arguments("string")]
     [Arguments("bytes")]
     [Arguments("converted")]
@@ -601,6 +693,7 @@ public sealed class SentinelCircuitDispatchTests
             "EXEC" => "*1\r\n$7\r\nhealthy\r\n"u8.ToArray(),
             _ when command.StartsWith("SCAN 0") => "*2\r\n$1\r\n7\r\n*1\r\n$5\r\nfirst\r\n"u8.ToArray(),
             _ when command.StartsWith("SCAN 7") => "*2\r\n$1\r\n0\r\n*1\r\n$6\r\nsecond\r\n"u8.ToArray(),
+            _ when command.StartsWith("ARSCAN ") => "*0\r\n"u8.ToArray(),
             _ when command.StartsWith("GET ") => Bulk(command[4..]),
             _ when command.StartsWith("STRLEN ") => ":5\r\n"u8.ToArray(),
             _ => null,

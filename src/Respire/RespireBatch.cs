@@ -711,7 +711,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             || command.GetCacheMutation(Operation) == RespireCacheMutation.ReadOnly;
 
         public override bool AllowsReadRouting => command.ReadKind != ReadCommandKind.None;
-        public override bool IsCursorRead => command.ReadKind == ReadCommandKind.CursorRead;
+        public override bool IsCursorRead => CursorCommandMetadata.HasServerCursor(in command);
 
         // ARSCAN pages are index ranges without an issuing server cursor. They can follow
         // same-slot writes on the primary while the catalog retains its CursorRead classification.

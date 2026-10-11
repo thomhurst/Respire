@@ -30,6 +30,8 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
     private readonly List<TxOp> _ops = [];
     private int _clusterSlot;
     private bool _hasClusterSlot;
+    // A queued cursor continuation is server-local, so a retired generation cannot replay it elsewhere.
+    private bool _hasCursorContinuation;
     private bool _completed;
 
     // The transport records the accepting socket after any pre-admission maintenance reroute.
@@ -567,7 +569,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                             importTransactionStarted = false;
                     }
                     catch (RespireConnectionRetiredException retirement) when (core.Circuits is not null
-                        && ConnectionPolicy.CanReplayRejectedCommands
+                        && ConnectionPolicy.CanReplayRejectedCommands && !_hasCursorContinuation
                         && _client.TryRerouteCircuit(connection, deadline, out var target, out var rerouted, preferredZone: null))
                     {
                         // Retirement rejected every frame before dispatch. Release this permit
@@ -758,6 +760,8 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             throw;
         }
 
+        if (CursorCommandMetadata.HasServerCursor(in command) && CursorCommandMetadata.IsCursorContinuation(in command))
+            _hasCursorContinuation = true;
         var pending = new RespirePending<T>();
         _ops.Add(ScriptingEngineInfo.IsScriptingCommand(operation)
             ? new ScriptingTxOp<T>(operation, pending, convert, ScriptingEngineInfo.ExpectedEngine(in command, operation))

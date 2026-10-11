@@ -17,4 +17,12 @@ internal static class CursorCommandMetadata
         if (index < 0 || !command.TryGetArgument(index, out var cursor)) return false;
         return !(cursor.TryGetInt64(out var value) && value == 0);
     }
+
+    /// <summary>
+    /// True when a cursor read carries a server-issued cursor argument, so a retired connection must
+    /// not move it to another server. <c>ARSCAN</c> pages are index ranges with no server cursor.
+    /// </summary>
+    internal static bool HasServerCursor<TCommand>(in TCommand command)
+        where TCommand : struct, IRespCommand
+        => command.ReadKind == ReadCommandKind.CursorRead && command.CursorArgumentIndex >= 0;
 }

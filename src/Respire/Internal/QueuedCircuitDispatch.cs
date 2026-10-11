@@ -34,7 +34,7 @@ internal static class QueuedCircuitDispatch
                 return reply;
             }
             catch (RespireConnectionRetiredException error) when (!withoutResponseTimeout
-                && command.ReadKind != ReadCommandKind.CursorRead && client?.Core.Sentinel is not null
+                && !CursorCommandMetadata.HasServerCursor(in command) && client?.Core.Sentinel is not null
                 && client.TryRerouteCircuit(connection, deadline, out var target, out var rerouted, preferredZone: null))
             {
                 observation.Handled(error);
@@ -86,7 +86,7 @@ internal static class QueuedCircuitDispatch
                 transferred = true;
                 return (guarded, connection);
             }
-            catch (RespireConnectionRetiredException error) when (command.ReadKind != ReadCommandKind.CursorRead
+            catch (RespireConnectionRetiredException error) when (!CursorCommandMetadata.HasServerCursor(in command)
                 && client?.Core.Sentinel is not null
                 && client.TryRerouteCircuit(connection, deadline, out var target, out var rerouted, preferredZone: null))
             {
