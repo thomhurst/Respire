@@ -38,8 +38,6 @@
     <InternalsVisibleTo Include="Respire.Testing" />
     <InternalsVisibleTo Include="Respire.Streaming" />
     <InternalsVisibleTo Include="Respire.Streaming.Tests" />
-    <!-- Binary compatibility for older health packages; the current package uses IRespireHealthProbe only. -->
-    <InternalsVisibleTo Include="Respire.HealthChecks" />
     <!-- Tests inspect transport reuse. -->
     <InternalsVisibleTo Include="Respire.HealthChecks.Tests" />
     <!-- Reuses the existing TCP wire fixture for Aspire registration and health-check tests. -->
