@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using DotNet.Testcontainers.Builders;
 using DotNet.Testcontainers.Containers;
@@ -40,12 +41,19 @@ public class ClusterAtomicMigrationIntegrationTests
 
         var taskId = await destination.ClusterMigrationImportAsync([new(0, 0), new(2, 2)], token);
         taskId.Should().NotBeNullOrEmpty();
+        // "failed" is not terminal at the destination: Redis records the attempt's last_error and retries
+        // the import about a second later (retries increments). A transient sync failure on a busy runner
+        // must not fail the test; only a task that never completes before the deadline does.
         RespireClusterMigrationTask completed;
+        var lastFailure = "";
+        var importDeadline = Stopwatch.StartNew();
         while (true)
         {
             completed = (await destination.ClusterMigrationStatusAsync(taskId, token)).Should().ContainSingle().Which;
             if (completed.State == "completed") break;
-            completed.State.Should().NotBe("failed");
+            if (completed.State == "failed") lastFailure = $"{completed.LastError} (retries {completed.Retries})";
+            if (importDeadline.Elapsed > TimeSpan.FromSeconds(30))
+                throw new TimeoutException($"Import {taskId} stayed {completed.State}; last failure: {lastFailure}");
             await Task.Delay(50, token);
         }
         completed.Operation.Should().Be("import");
