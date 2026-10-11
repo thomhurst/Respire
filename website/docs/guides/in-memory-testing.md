@@ -61,6 +61,7 @@ An error consumes exactly one response slot, so later valid commands still work.
 | Strings | `GET`, `SET` with `NX`, `XX`, `GET`, `KEEPTTL`, `EX`, `PX`, `EXAT`, `PXAT`; `MGET`, `MSET`, `MSETNX`, `GETDEL`, `GETSET`, `GETEX`, `STRLEN`, `APPEND` |
 | Integer strings | `INCR`, `DECR`, `INCRBY`, `DECRBY`, with checked signed 64-bit arithmetic |
 | Extended counters | `INCREX` with integer/floating increments, bounds, `SATURATE`, expiry, and `ENX`; integer arithmetic preserves the full signed 64-bit range |
+| Sparse arrays | `ARCOUNT`, `ARLEN`, `ARGET`, `ARMGET`, `ARSET`, `ARMSET`, `ARDEL`, `ARDELRANGE`, `ARGETRANGE`, `ARSCAN`, `ARSEEK`, `ARNEXT`, `ARINSERT`, `ARRING`, `ARLASTITEMS`, `ARINFO`, `AROP`, `ARGREP`; see [sparse-array testing limits](../commands/arrays.md#batches-transactions-and-the-fake-server) |
 | Hashes | `HSET`, `HSETNX`, `HMSET`, `HGET`, `HMGET`, `HGETALL`, `HDEL`, `HEXISTS`, `HLEN`, `HKEYS`, `HVALS`, `HSTRLEN`, `HINCRBY` |
 | Lists | `LPUSH`, `RPUSH`, `LPUSHX`, `RPUSHX`, `LPOP`/`RPOP` with optional count, `LLEN`, `LRANGE`, `LINDEX`, `LSET`, `LTRIM`, `LREM`, `LINSERT BEFORE/AFTER`, `LPOS RANK/COUNT/MAXLEN` |
 | Sets | `SADD`, `SREM`, `SMEMBERS`, `SCARD`, `SISMEMBER`, `SMISMEMBER`, `SMOVE`, `SINTER`, `SUNION`, `SDIFF`, their `STORE` forms, and `SINTERCARD` with `LIMIT` |

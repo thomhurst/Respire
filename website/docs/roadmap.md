@@ -40,6 +40,13 @@ Server and protocol requirements vary by feature; each linked guide describes it
 - Typed string, key, collection, stream, bitmap, HyperLogLog, geo, script, and server facets;
   an audited [command catalog and raw/interpolated execution](guides/raw-commands.md), plus
   [source-generated custom commands](guides/generated-commands.md).
+- [Typed Redis 8.10 / Valkey 9.1 command coverage](guides/raw-commands.md#finding-typed-apis),
+  including [sparse arrays](commands/arrays.md), bounded counters, multi-element list moves,
+  set cardinalities, [hash import sessions](guides/hash-import.md), stream configuration and
+  consumer recovery options. Availability depends on the serving server and command version.
+- [Explicit-node lifecycle and Cluster administration](guides/server-node-lifecycle.md),
+  [typed Sentinel administration](guides/sentinel-administration.md), and
+  [client filters](guides/client-administration.md#filtering-and-closing-clients).
 - [Typed LCS index matches](commands/strings-and-keys.md#longest-common-subsequence), with
   inclusive byte ranges, match-length filtering, and batch/transaction parity.
 - [Blocking queues](guides/blocking-queues.md) and [streamed string transfers](commands/strings-and-keys.md)
@@ -122,8 +129,6 @@ acceptance criteria, dependencies, and current status:
   circuit breaker integration for topology routing, and further connection/API work.
 - [Error telemetry ownership hardening](https://github.com/thomhurst/Respire/issues/1046): strengthen
   stale-observation checks, consolidate reporting ownership, and independently audit command coverage.
-- [Typed command coverage](https://github.com/thomhurst/Respire/issues/858): Redis 8.10 / Valkey 9.1
-  commands, missing options, and module/admin APIs.
 - [Ecosystem integrations](https://github.com/thomhurst/Respire/issues/859): Aspire, ASP.NET Core,
   messaging, caching, and other libraries that currently depend on StackExchange.Redis.
 - [Higher-level capabilities](https://github.com/thomhurst/Respire/issues/860): stream workers,
