@@ -116,7 +116,7 @@ public class StreamDeadLetterIntegrationTests(RedisTestContainer redis)
             await Assert.That(await CompleteAsync(client, "old", 1)).IsEqualTo(0);
             await Assert.That(await CompleteAsync(client, "owner", 2)).IsEqualTo(0);
             await Assert.That((await client.Streams.PendingSummaryAsync("s", "g")).Count).IsEqualTo(1);
-            await Assert.That(await CompleteAsync(client, "owner", 1)).IsEqualTo(1);
+            await Assert.That(await CompleteAsync(client, "owner", 1)).IsEqualTo(-1);
             await Assert.That((await client.Streams.PendingSummaryAsync("s", "g")).Count).IsEqualTo(0);
             await Assert.That(await client.Streams.CountAsync("dlq")).IsEqualTo(0);
         }
@@ -168,7 +168,7 @@ public class StreamDeadLetterIntegrationTests(RedisTestContainer redis)
             await Assert.That(async () => await CompleteAsync(restricted, "owner", 1)).Throws<RespireServerException>();
             await Assert.That((await admin.Streams.PendingSummaryAsync("s", "g")).Count).IsEqualTo(1);
             await Assert.That(await admin.Streams.CountAsync("dlq")).IsEqualTo(0);
-            await Assert.That(await CompleteAsync(admin, "owner", 1)).IsEqualTo(1);
+            await Assert.That(await CompleteAsync(admin, "owner", 1)).IsEqualTo(deletedSource ? -1 : 1);
         }
         finally { using var deleted = await admin.ExecuteAsync("ACL DELUSER", [username]); }
     }

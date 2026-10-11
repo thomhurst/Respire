@@ -9,6 +9,43 @@ namespace Respire.Tests.Networking;
 public class PendingResponseLifetimeTests
 {
     [Test]
+    [Arguments(1, false)]
+    [Arguments(1, true)]
+    [Arguments(3, false)]
+    [Arguments(3, true)]
+    [Arguments(64, false)]
+    [Arguments(64, true)]
+    public async Task ExplicitCountsDoNotRequireASubclassReleaseOverride(int receiveReferences, bool callerFirst)
+    {
+        var source = new CountedSource();
+        source.PrepareForUse(receiveReferences);
+        var observedState = source.State;
+        source.TrySetResult(default);
+        if (callerFirst) source.ReleaseCaller();
+        for (var i = 0; i < receiveReferences; i++)
+        {
+            await Assert.That(source.Returns).IsEqualTo(0);
+            await Assert.That(source.InspectForTests().ReferenceCount).IsEqualTo(receiveReferences + (callerFirst ? 0 : 1) - i);
+            await Assert.That(source.State).IsEqualTo(observedState | 1);
+            source.ReleaseRef();
+        }
+        if (!callerFirst)
+        {
+            await Assert.That(source.Returns).IsEqualTo(0);
+            await Assert.That(source.InspectForTests().ReferenceCount).IsEqualTo(1);
+            source.ReleaseCaller();
+        }
+        await Assert.That(source.Returns).IsEqualTo(1);
+        await Assert.That(source.InspectForTests().ReferenceCount).IsEqualTo(0);
+        await Assert.That(source.State).IsEqualTo(observedState + 2);
+        source.PrepareForUse(receiveReferences);
+        RespireTimeoutDiagnostics? diagnostics = null;
+        await Assert.That(source.TrySetTimedOut(observedState, TimeSpan.FromSeconds(1), ref diagnostics, null)).IsFalse();
+        for (var i = 0; i <= receiveReferences; i++) source.ReleaseRef();
+        await Assert.That(source.Returns).IsEqualTo(2);
+    }
+
+    [Test]
     [Arguments(false, 0)]
     [Arguments(true, 0)]
     [Arguments(false, 1)]
@@ -29,9 +66,11 @@ public class PendingResponseLifetimeTests
         else if (outcome == 1) source.TrySetException(new InvalidOperationException("failure"));
         else source.TrySetCanceled(new CancellationToken(true));
         await ready.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(source.InspectForTests().ReferenceCount).IsEqualTo(2);
 
         if (callerFirst) await ConsumeAsync(pending, outcome);
         else source.ReleaseRef();
+        await Assert.That(source.InspectForTests().ReferenceCount).IsEqualTo(1);
         var other = pool.Rent();
         await Assert.That(ReferenceEquals(source, other)).IsFalse();
         // Keep the other source checked out, so the only available pool entry is the source
@@ -90,19 +129,27 @@ public class PendingResponseLifetimeTests
 
     [Test]
     [NotInParallel]
-    public async Task ConcurrentCallerAndReceiveReleaseRecycleExactlyOnce()
+    [Arguments(0)]
+    [Arguments(1)]
+    [Arguments(2)]
+    public async Task ConcurrentCallerAndReceiveReleaseRecycleExactlyOnce(int outcome)
     {
         var pool = new PendingResponsePool(2);
         for (var iteration = 0; iteration < 100; iteration++)
         {
             var source = pool.Rent();
             var pending = source.Task;
-            source.TrySetResult(RespValue.Integer(42));
+            var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            pending.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(() => ready.TrySetResult());
+            if (outcome == 0) source.TrySetResult(RespValue.Integer(42));
+            else if (outcome == 1) source.TrySetException(new InvalidOperationException("failure"));
+            else source.TrySetCanceled(new CancellationToken(true));
+            await ready.Task.WaitAsync(TimeSpan.FromSeconds(5));
             using var barrier = new Barrier(2);
-            var caller = Task.Run(() =>
+            var caller = Task.Run(async () =>
             {
                 if (!barrier.SignalAndWait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Receive owner did not arrive.");
-                using var reply = pending.GetAwaiter().GetResult();
+                await ConsumeAsync(pending, outcome);
             });
             var receiver = Task.Run(() =>
             {
@@ -116,6 +163,82 @@ public class PendingResponseLifetimeTests
             await Assert.That(ReferenceEquals(first, source) || ReferenceEquals(second, source)).IsTrue();
             Finish(first);
             Finish(second);
+        }
+    }
+
+    [Test]
+    public async Task ReceiveReleaseDoesNotInvalidateACapturedDeadlineForTheLiveCaller()
+    {
+        var pool = new PendingResponsePool(1);
+        var source = pool.Rent();
+        var pending = source.Task;
+        var observedState = source.State;
+        source.ReleaseRef();
+        RespireTimeoutDiagnostics? diagnostics = null;
+        await Assert.That(source.TrySetTimedOut(observedState, TimeSpan.FromSeconds(1), ref diagnostics, null)).IsTrue();
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        pending.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(() => ready.TrySetResult());
+        await ready.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var other = pool.Rent();
+        await Assert.That(ReferenceEquals(source, other)).IsFalse();
+        await Assert.That(() => pending.GetAwaiter().GetResult()).ThrowsExactly<RespireTimeoutException>();
+        var recycled = pool.Rent();
+        await Assert.That(ReferenceEquals(recycled, source)).IsTrue();
+        await Assert.That(recycled.InspectForTests().ReferenceCount).IsEqualTo(2);
+        await Assert.That(recycled.TrySetTimedOut(observedState, TimeSpan.FromSeconds(1), ref diagnostics, null)).IsFalse();
+        Finish(recycled);
+        Finish(other);
+    }
+
+    [Test]
+    [NotInParallel]
+    [Arguments(0)]
+    [Arguments(1)]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task ReceiveReleaseRacesCompletionWithoutLosingTheCaller(int outcome)
+    {
+        var pool = new PendingResponsePool(1);
+        for (var iteration = 0; iteration < 100; iteration++)
+        {
+            var source = pool.Rent();
+            var pending = source.Task;
+            using var cancellation = new CancellationTokenSource();
+            source.RegisterCancellation(cancellation.Token);
+            var observedState = source.State;
+            var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            pending.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(() => ready.TrySetResult());
+            using var barrier = new Barrier(2);
+            var completion = Task.Run(() =>
+            {
+                if (!barrier.SignalAndWait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Receive owner did not arrive.");
+                if (outcome == 0) source.TrySetResult(RespValue.Integer(42));
+                else if (outcome == 1) source.TrySetException(new InvalidOperationException("failure"));
+                else if (outcome == 2) cancellation.Cancel();
+                else
+                {
+                    RespireTimeoutDiagnostics? diagnostics = null;
+                    source.TrySetTimedOut(observedState, TimeSpan.FromSeconds(1), ref diagnostics, null);
+                }
+            });
+            var receiver = Task.Run(() =>
+            {
+                if (!barrier.SignalAndWait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Completer did not arrive.");
+                source.ReleaseRef();
+            });
+            await Task.WhenAll(completion, receiver).WaitAsync(TimeSpan.FromSeconds(10));
+            await ready.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var other = pool.Rent();
+            await Assert.That(ReferenceEquals(other, source)).IsFalse();
+            if (outcome == 3)
+                await Assert.That(() => pending.GetAwaiter().GetResult()).ThrowsExactly<RespireTimeoutException>();
+            else await ConsumeAsync(pending, outcome);
+            var recycled = pool.Rent();
+            await Assert.That(ReferenceEquals(recycled, source)).IsTrue();
+            cancellation.Cancel();
+            await Assert.That(PendingResponse.IsCompleted(recycled.State)).IsFalse();
+            Finish(recycled);
+            Finish(other);
         }
     }
 
@@ -195,6 +318,15 @@ public class PendingResponseLifetimeTests
                 using var value = task.GetAwaiter().GetResult();
             }
         }
+    }
+
+    private sealed class CountedSource : PendingResponse
+    {
+        internal int Returns { get; private set; }
+        internal void ReleaseCaller() => ReleaseCallerRef();
+        protected override void SetResultCore(in RespValue result) { }
+        protected override void SetExceptionCore(Exception exception) { }
+        protected override void ResetAndReturn() => Returns++;
     }
 
     private static async Task ConsumeAsync(ValueTask<RespValue> pending, int outcome)
