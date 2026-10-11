@@ -8,6 +8,9 @@ namespace Respire.Tests.Networking;
 
 public class FunctionClusterTests
 {
+    // Shorter than the production five-second ceiling so tests that outlast it stay fast.
+    private static readonly TimeSpan PropagationLimit = TimeSpan.FromMilliseconds(1500);
+
     [Test]
     public async Task AdministrationMutationsVisitEveryPrimary()
     {
@@ -114,6 +117,7 @@ public class FunctionClusterTests
         {
             CommandTimeout = disabled ? null : TimeSpan.FromMilliseconds(100),
             ClusterTopologyRefreshInterval = null,
+            FunctionPropagationLimit = PropagationLimit,
         });
         var function = RespireFunctionLibrary.Create(source).Function("function", readOnly: true);
         using var cancellation = new CancellationTokenSource();
@@ -123,7 +127,7 @@ public class FunctionClusterTests
         {
             var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(10)))
                 .Throws<RespireTimeoutException>();
-            await Assert.That(error!.Timeout).IsEqualTo(disabled ? TimeSpan.FromSeconds(5) : TimeSpan.FromMilliseconds(100));
+            await Assert.That(error!.Timeout).IsEqualTo(disabled ? PropagationLimit : TimeSpan.FromMilliseconds(100));
             await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("FCALL_RO", StringComparison.Ordinal))).IsFalse();
         }
         finally
@@ -227,6 +231,7 @@ public class FunctionClusterTests
             ClientSideCache = outcome == "MOVED" ? new() : null,
             CommandTimeout = null,
             ClusterTopologyRefreshInterval = null,
+            FunctionPropagationLimit = PropagationLimit,
         });
         if (outcome == "MOVED")
         {
@@ -248,7 +253,7 @@ public class FunctionClusterTests
 
         // Start the wait after Redis has observed the retry (or its ASK-prefixed replacement).
         // The response stays gated until the whole admission budget has certainly elapsed.
-        await Task.Delay(FunctionCommands.FunctionPropagationLimit + TimeSpan.FromMilliseconds(250));
+        await Task.Delay(PropagationLimit + TimeSpan.FromMilliseconds(250));
         await Assert.That(pending.IsCompleted).IsFalse();
         var continuityFlushes = client.ClientSideCache?.GetStatistics().ContinuityFlushes ?? 0;
         if (outcome == "MOVED") await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);

@@ -69,7 +69,7 @@ public interface IFunctionCommands
 
 internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
 {
-    internal static readonly TimeSpan FunctionPropagationLimit = TimeSpan.FromSeconds(5);
+    internal static readonly TimeSpan DefaultFunctionPropagationLimit = TimeSpan.FromSeconds(5);
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
@@ -174,8 +174,9 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
         string operation, BatchScriptCommand command, CancellationToken cancellationToken, TimeSpan? timeout,
         RespireServerException lastMissingFunction, RespireTelemetry.ErrorObservation observation)
     {
-        var propagationTimeout = timeout is { } configuredTimeout && configuredTimeout < FunctionPropagationLimit
-            ? configuredTimeout : FunctionPropagationLimit;
+        var limit = client.Core.Options.FunctionPropagationLimit;
+        var propagationTimeout = timeout is { } configuredTimeout && configuredTimeout < limit
+            ? configuredTimeout : limit;
         var started = Stopwatch.GetTimestamp();
         using var admission = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         admission.CancelAfter(propagationTimeout);
@@ -186,10 +187,10 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 if (Stopwatch.GetElapsedTime(started) >= propagationTimeout)
-                    throw RespireTimeoutException.FunctionPropagation(operation, propagationTimeout, lastMissingFunction);
+                    throw RespireTimeoutException.FunctionPropagation(operation, propagationTimeout, limit, lastMissingFunction);
                 try
                 {
-                    var retry = new FunctionRetryCommand(command, operation, started, propagationTimeout,
+                    var retry = new FunctionRetryCommand(command, operation, started, propagationTimeout, limit,
                         lastMissingFunction, cancellationToken);
                     return await client.SendForCorrectionAsync(operation, retry, admission.Token, observation).ConfigureAwait(false);
                 }
@@ -211,12 +212,12 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
         catch (OperationCanceledException error) when (error.CancellationToken == admission.Token
             && admission.IsCancellationRequested)
         {
-            throw RespireTimeoutException.FunctionPropagation(operation, propagationTimeout, lastMissingFunction);
+            throw RespireTimeoutException.FunctionPropagation(operation, propagationTimeout, limit, lastMissingFunction);
         }
     }
 
     private readonly struct FunctionRetryCommand(BatchScriptCommand command, string operation, long started,
-        TimeSpan budget, RespireServerException lastMissingFunction, CancellationToken callerToken) : IRespCommandWrapper
+        TimeSpan budget, TimeSpan limit, RespireServerException lastMissingFunction, CancellationToken callerToken) : IRespCommandWrapper
     {
         public int GetWriteSizeHint() => command.GetWriteSizeHint();
         public bool IsConnectionProtocol => false;
@@ -237,7 +238,7 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
             // Check the clock at publication as well as using a timer for parked acquisition.
             // A delayed timer callback must never admit an expired retry.
             if (Stopwatch.GetElapsedTime(started) >= budget)
-                throw RespireTimeoutException.FunctionPropagation(operation, budget, lastMissingFunction);
+                throw RespireTimeoutException.FunctionPropagation(operation, budget, limit, lastMissingFunction);
         }
     }
 
