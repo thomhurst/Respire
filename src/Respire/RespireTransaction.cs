@@ -760,8 +760,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             throw;
         }
 
-        if (CursorCommandMetadata.HasServerCursor(in command) && CursorCommandMetadata.IsCursorContinuation(in command))
-            _hasCursorContinuation = true;
+        if (CursorCommandMetadata.IsServerCursorContinuation(in command)) _hasCursorContinuation = true;
         var pending = new RespirePending<T>();
         _ops.Add(ScriptingEngineInfo.IsScriptingCommand(operation)
             ? new ScriptingTxOp<T>(operation, pending, convert, ScriptingEngineInfo.ExpectedEngine(in command, operation))

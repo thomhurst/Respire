@@ -25,4 +25,12 @@ internal static class CursorCommandMetadata
     internal static bool HasServerCursor<TCommand>(in TCommand command)
         where TCommand : struct, IRespCommand
         => command.ReadKind == ReadCommandKind.CursorRead && command.CursorArgumentIndex >= 0;
+
+    /// <summary>
+    /// True when a command continues a server-issued cursor, so a retired connection must not replay
+    /// it on another server. A fresh scan (cursor <c>0</c>) can start anywhere.
+    /// </summary>
+    internal static bool IsServerCursorContinuation<TCommand>(in TCommand command)
+        where TCommand : struct, IRespCommand
+        => HasServerCursor(in command) && IsCursorContinuation(in command);
 }

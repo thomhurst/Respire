@@ -277,6 +277,56 @@ public sealed class SentinelCircuitDispatchTests
     }
 
     [Test]
+    [Arguments("raw", "7")]
+    [Arguments("typed", "7")]
+    [Arguments("raw", "0")]
+    public async Task PrimaryCursorRetirementAfterSelectionReroutesOnlyFreshScans(string shape, string cursor)
+    {
+        // The default Primary policy sends cursor pages through the ready circuit paths, not SendReadFromAsync.
+        await using var first = Primary();
+        await using var second = Primary();
+        var port = first.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        await using var client = await Connect(sentinel);
+        await using var enumerator = client.Keys.ScanAsync().GetAsyncEnumerator();
+        if (shape == "typed") await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
+        else { using var page = await client.ExecuteAsync(RespireCommands.Key.SCAN, ["0"]); }
+
+        var (circuit, _) = Prepare(client, first);
+        using var clock = new AdmissionGateClock();
+        CircuitClock(circuit) = clock;
+        clock.Arm();
+        var pending = Task.Run(async () =>
+        {
+            if (shape == "typed") await enumerator.MoveNextAsync();
+            else { using var page = await client.ExecuteAsync(RespireCommands.Key.SCAN, [cursor]); }
+        });
+        try
+        {
+            await clock.Selected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Volatile.Write(ref port, second.Port);
+            await client.Core.Sentinel!.GetGenerationAsync(default, forceDiscovery: true);
+        }
+        finally { clock.Release(); }
+
+        if (cursor == "0")
+        {
+            // A fresh scan has no issuing server yet, so it may start on the replacement primary.
+            await pending.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(second.ReceivedCommands.Count(command => command.StartsWith("SCAN 0"))).IsEqualTo(1);
+        }
+        else
+        {
+            await Assert.That(await Failure(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5))))
+                .IsTypeOf<RespireConnectionRetiredException>();
+            await Assert.That(first.ReceivedCommands.Any(command => command.StartsWith("SCAN 7"))).IsFalse();
+            await Assert.That(second.ReceivedCommands.Any(command => command.StartsWith("SCAN "))).IsFalse();
+        }
+        await Assert.That(circuit.Snapshot().FailureCount).IsEqualTo(0);
+        await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task TransactionCursorContinuationDoesNotRerouteAfterRetirement()
     {
         await using var first = Primary();

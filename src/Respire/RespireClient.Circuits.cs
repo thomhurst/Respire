@@ -157,6 +157,7 @@ public sealed partial class RespireClient
                     break;
                 }
                 catch (RespireConnectionRetiredException error) when (allowStreamingConnectionReroute
+                    && !CursorCommandMetadata.IsServerCursorContinuation(in command)
                     && TryRerouteCircuit(connection, commandDeadline, out var target, out var rerouted, GetTransportReadZone(in command)))
                 {
                     observation.Handled(error);
@@ -220,7 +221,9 @@ public sealed partial class RespireClient
                     admission.Success();
                     return response;
                 }
-                catch (RespireConnectionRetiredException error) when (TryRerouteCircuit(connection, commandDeadline,
+                // A cursor continuation is server-local; another generation cannot resume it.
+                catch (RespireConnectionRetiredException error) when (!CursorCommandMetadata.IsServerCursorContinuation(in command)
+                    && TryRerouteCircuit(connection, commandDeadline,
                     out var target, out var rerouted, GetTransportReadZone(in command)))
                 {
                     observation.Handled(error);
@@ -290,7 +293,8 @@ public sealed partial class RespireClient
                 admission.Success();
                 return response;
             }
-            catch (RespireConnectionRetiredException error) when (TryRerouteCircuit(connection, commandDeadline,
+            catch (RespireConnectionRetiredException error) when (!CursorCommandMetadata.IsServerCursorContinuation(in command)
+                && TryRerouteCircuit(connection, commandDeadline,
                 out var target, out var rerouted, GetTransportReadZone(in command)))
             {
                 observation.Handled(error);
@@ -327,7 +331,8 @@ public sealed partial class RespireClient
                 // Queue acceptance cannot establish endpoint health without observing its reply.
                 return;
             }
-            catch (RespireConnectionRetiredException error) when (TryRerouteCircuit(connection, commandDeadline,
+            catch (RespireConnectionRetiredException error) when (!CursorCommandMetadata.IsServerCursorContinuation(in command)
+                && TryRerouteCircuit(connection, commandDeadline,
                 out var target, out var rerouted, GetTransportReadZone(in command)))
             {
                 observation.Handled(error);
