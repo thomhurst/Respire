@@ -29,10 +29,11 @@ public class PendingResponseLifetimeTests
         else if (outcome == 1) source.TrySetException(new InvalidOperationException("failure"));
         else source.TrySetCanceled(new CancellationToken(true));
         await ready.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(source.InspectForTests().ReferenceCount).IsEqualTo(2);
 
         if (callerFirst) await ConsumeAsync(pending, outcome);
         else source.ReleaseRef();
-        if (callerFirst) await Assert.That(source.InspectForTests().ReferenceCount).IsEqualTo(1);
+        await Assert.That(source.InspectForTests().ReferenceCount).IsEqualTo(1);
         var other = pool.Rent();
         await Assert.That(ReferenceEquals(source, other)).IsFalse();
         // Keep the other source checked out, so the only available pool entry is the source

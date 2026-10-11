@@ -101,7 +101,7 @@ public class StandaloneCircuitAllocationTests
             if (!connection.InspectForTests().Inflight.TryPeek(out var source)) throw new InvalidOperationException("Missing reply source.");
             if (!SpinWait.SpinUntil(() => server.CommandsSeen > commands, TimeSpan.FromSeconds(5))) throw new TimeoutException();
             server.SendRawAsync(":5\r\n"u8.ToArray()).GetAwaiter().GetResult();
-            if (!SpinWait.SpinUntil(() => (raw ? rawPending.IsCompleted : pending.IsCompleted) && Volatile.Read(ref ResponseReferences(source!)) <= 1,
+            if (!SpinWait.SpinUntil(() => (raw ? rawPending.IsCompleted : pending.IsCompleted) && source!.InspectForTests().ReferenceCount <= 1,
                 TimeSpan.FromSeconds(5))) throw new TimeoutException();
             if (raw)
             {
@@ -123,7 +123,4 @@ public class StandaloneCircuitAllocationTests
         if (control) GC.KeepAlive(new byte[37]);
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
-
-    [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_refs")]
-    private static extern ref int ResponseReferences(PendingResponse source);
 }
