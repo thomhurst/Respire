@@ -21,6 +21,7 @@ public class DispatchResponseObservationTests
     private const string NativeProbe = "RESPIRE_NATIVE_DISPATCH_PROBE";
 
     [Test]
+    [NotInParallel(TestConstraints.IsolatedProbe)]
     [Arguments("raw", "success")]
     [Arguments("string", "success")]
     [Arguments("bytes", "success")]
@@ -147,6 +148,7 @@ public class DispatchResponseObservationTests
     }
 
     [Test]
+    [NotInParallel(TestConstraints.IsolatedProbe)]
     public async Task DirectNativeConverterRunsAtConsumptionAndPreservesFailureThroughThrowingListener()
         => await RunNativeProbeAsync("converter");
 
@@ -182,6 +184,7 @@ public class DispatchResponseObservationTests
     }
 
     [Test]
+    [NotInParallel(TestConstraints.IsolatedProbe)]
     public async Task FullNativeRingTransfersCapacityWaitToDispatchOwner()
         => await RunNativeProbeAsync("capacity");
 
@@ -215,6 +218,7 @@ public class DispatchResponseObservationTests
     }
 
     [Test]
+    [NotInParallel(TestConstraints.IsolatedProbe)]
     [Arguments("raw")]
     [Arguments("string")]
     [Arguments("bytes")]
