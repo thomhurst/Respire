@@ -12,8 +12,11 @@ namespace Respire.VectorData;
 /// <summary>String-keyed Redis hash or JSON records, FLOAT32 KNN search and full-text/vector hybrid search.</summary>
 public sealed partial class RespireVectorStoreCollection<TRecord> : VectorStoreCollection<string, TRecord>, IKeywordHybridSearchable<TRecord> where TRecord : class
 {
-    // One script replaces the complete hash atomically, including absent optional fields.
-    private static readonly RespireScript Replace = RespireScript.Create("redis.call('DEL',KEYS[1]); for i=1,#ARGV,2 do redis.call('HSET',KEYS[1],ARGV[i],ARGV[i+1]); end; return 1");
+    // One script replaces the complete hash atomically, including absent optional fields. RediSearch reindexes the
+    // document on every write command, so all fields go in one HSET: a per-field HSET assigned a new document id per
+    // field and left deleted ids that shifted BM25 scores when index GC ran. Records with more than 3500 fields are
+    // written in chunks of 7000 arguments to stay below the Lua unpack stack limit.
+    private static readonly RespireScript Replace = RespireScript.Create("redis.call('DEL',KEYS[1]); local n=#ARGV; for i=1,n,7000 do redis.call('HSET',KEYS[1],unpack(ARGV,i,math.min(i+6999,n))); end; return 1");
     private static readonly UTF8Encoding FilterUtf8 = new(false, true);
     // JSON.SET replaces the root without deleting first, so a server rejection preserves the previous record.
     private static readonly RespireScript ReplaceJson = RespireScript.Create("redis.call('JSON.SET',KEYS[1],'$',ARGV[1]); redis.call('PERSIST',KEYS[1]); return 1");
