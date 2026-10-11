@@ -627,9 +627,17 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     {
         // Park only CLIENT ID. RESP2/database 0 needs no wire handshake, so the 50ms
         // command deadline cannot expire during unrelated HELLO/SELECT setup on a busy runner.
+        // The server records a command before consulting SuppressReply, so this signal means
+        // CLIENT ID is already in ReceivedCommands.
+        var clientIdReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(FakeRespServer.PongReply)
         {
-            SuppressReply = command => command == "CLIENT ID",
+            SuppressReply = command =>
+            {
+                if (command != "CLIENT ID") return false;
+                clientIdReceived.TrySetResult();
+                return true;
+            },
         };
         await using var timeoutClient = await RespireClient.ConnectAsync(
             new RespireOptions
@@ -656,6 +664,9 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         await Assert.That(failure!.CommandName).IsEqualTo("CLIENT ID / CLIENT KILL");
         await Assert.That(failure.Timeout).IsEqualTo(TimeSpan.FromMilliseconds(50));
         await Assert.That(Stopwatch.GetElapsedTime(started)).IsLessThan(TimeSpan.FromSeconds(1));
+        // The 50ms deadline can expire before a loaded runner's server reads the send. The
+        // timed-out command is still written, so wait for it rather than racing the server.
+        await clientIdReceived.Task.WaitAsync(TimeSpan.FromSeconds(10));
         await Assert.That(server.ReceivedCommands.SequenceEqual(["CLIENT ID"])).IsTrue();
         // A late identity reply still drains through FIFO; no cache mutation reached this peer.
         await server.SendRawAsync(":123\r\n"u8.ToArray());
