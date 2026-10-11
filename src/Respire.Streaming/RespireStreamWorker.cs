@@ -180,10 +180,12 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
     {
         using var observation = _telemetry.Begin(delivery.Entry, options);
         try { await ProcessAsync(delivery, consumer, observation).ConfigureAwait(false); }
-        catch (OperationCanceledException) when (_handlers.IsCancellationRequested)
+        catch (OperationCanceledException) when (_handlers.IsCancellationRequested && !observation.CleanupFailed)
         {
             // StopAsync's deadline or Dispose canceled an in-flight completion request.
             // ConsumeAsync treats this as shutdown, so the attempt is canceled, not an error.
+            // Cancellation thrown by scope cleanup must not replace an outcome that already
+            // completed (for example a confirmed ack); the span reports cleanup as an error.
             observation.Outcome = "canceled";
             throw;
         }

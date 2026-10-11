@@ -845,6 +845,42 @@ public partial class StreamWorkerTests
         await Assert.That(metrics.DeadLetters.Count).IsEqualTo(0);
     }
 
+    [Test, NotInParallel]
+    public async Task TelemetryCleanupCancellationKeepsConfirmedAcknowledgement()
+    {
+        using var metrics = new WorkerMetrics();
+        var stopped = new ConcurrentQueue<Activity>();
+        using var tracing = ListenToWorker(stopped.Enqueue);
+        var handlerToken = CancellationToken.None;
+        var cleaning = NewSignal();
+        var state = new State
+        {
+            Handle = (_, token) =>
+            {
+                handlerToken = token;
+                return ValueTask.FromResult(RespireStreamWorkerResult.Ack);
+            },
+            // Scope cleanup observes the handler token after the acknowledgement has committed.
+            DisposeScope = async () =>
+            {
+                cleaning.TrySetResult();
+                await Task.Delay(Timeout.Infinite, handlerToken);
+            },
+        };
+        await using var fixture = await Fixture.CreateAsync(state: state, options: new() { TelemetryName = WorkerName });
+        await fixture.AddAsync(0);
+        await fixture.StartAsync();
+        await cleaning.Task.WaitAsync(Deadline);
+        await fixture.Service.StopAsync(new CancellationToken(canceled: true)).WaitAsync(Deadline);
+        await fixture.Service.ExecuteTask!.WaitAsync(Deadline);
+        await UntilAsync(() => Task.FromResult(metrics.Duration.Count == 1 && stopped.Count == 1));
+        await Assert.That(fixture.Service.ExecuteTask.IsCompletedSuccessfully).IsTrue();
+        await Assert.That(metrics.Duration.Single().Tags["respire.worker.outcome"]).IsEqualTo("ack");
+        await Assert.That(stopped.Single().GetTagItem("respire.worker.outcome")).IsEqualTo("ack");
+        await Assert.That(stopped.Single().Status).IsEqualTo(ActivityStatusCode.Error);
+        await Assert.That((await fixture.View.Streams.PendingSummaryAsync("events", "workers")).Count).IsEqualTo(0);
+    }
+
     private static ActivityListener ListenToWorker(Action<Activity> stopped)
     {
         var listener = new ActivityListener
