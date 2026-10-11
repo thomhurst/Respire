@@ -1,0 +1,56 @@
+name: List slowest tests
+description: >-
+  Writes the slowest tests from the TRX reports in a directory to the job summary, so the
+  tests that set a CI job's duration are visible without downloading artifacts.
+
+inputs:
+  results-directory:
+    description: Directory searched recursively for .trx reports.
+    required: true
+  count:
+    description: Number of tests to list.
+    required: false
+    default: '25'
+
+runs:
+  using: composite
+  steps:
+    - name: Summarize test durations
+      shell: python
+      env:
+        RESULTS_DIRECTORY: ${{ inputs.results-directory }}
+        COUNT: ${{ inputs.count }}
+      run: |
+        import os
+        from pathlib import Path
+        import xml.etree.ElementTree as ET
+
+        def seconds(duration):
+            hours, minutes, rest = duration.split(":")
+            return int(hours) * 3600 + int(minutes) * 60 + float(rest)
+
+        results = []
+        for report in Path(os.environ["RESULTS_DIRECTORY"]).rglob("*.trx"):
+            for result in ET.parse(report).getroot().iterfind(".//{*}UnitTestResult"):
+                if "duration" in result.attrib:
+                    results.append((seconds(result.attrib["duration"]), result.attrib.get("outcome", ""), result.attrib["testName"]))
+
+        lines = []
+        if results:
+            total = sum(duration for duration, _, _ in results)
+            results.sort(reverse=True)
+            lines.append(f"### Slowest tests in {os.environ['RESULTS_DIRECTORY']}")
+            lines.append("")
+            lines.append(f"{len(results)} tests, {total:.0f}s summed test time (tests run in parallel).")
+            lines.append("")
+            lines.append("| Seconds | Outcome | Test |")
+            lines.append("| ---: | --- | --- |")
+            for duration, outcome, name in results[: int(os.environ["COUNT"])]:
+                lines.append(f"| {duration:.1f} | {outcome} | `{name.replace('|', '/')}` |")
+        else:
+            lines.append(f"No TRX reports found in {os.environ['RESULTS_DIRECTORY']}.")
+
+        text = "\n".join(lines) + "\n"
+        print(text)
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+            summary.write(text + "\n")

@@ -11,14 +11,21 @@ public class SearchProfileIntegrationTests(ModernRedisTestContainer fixture)
     private static readonly RespireSearchExpression All = RespireSearchExpression.FromRaw("*");
     private static readonly byte[] Vector = BitConverter.GetBytes(1f).Concat(BitConverter.GetBytes(0f)).ToArray();
 
-    [Test]
+    [ClassDataSource<SearchProfileHybridContainer>(Shared = SharedType.PerTestSession)]
+    public required SearchProfileHybridContainer HybridServer { get; init; }
+
+    // Redis 8.10 can briefly leave a live, fully indexed document out of FT.HYBRID while FT.DROPINDEX
+    // drops another index on the same server. Many tests drop indexes on the shared fixture, so these
+    // exact hybrid counts run on their own server, one at a time (each case drops its index on exit).
+    [Test, NotInParallel(nameof(SearchProfileHybridContainer))]
     [Arguments(2, false)]
     [Arguments(2, true)]
     [Arguments(3, false)]
     [Arguments(3, true)]
     public async Task AllProfileFormsKeepResultsAndServerTrees(int protocol, bool limited)
     {
-        await using var client = await ConnectAsync(protocol);
+        await using var client = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(HybridServer.ConnectionString) with { Protocol = (RespProtocol)protocol });
         var search = client.Search;
         var index = "profile:" + Guid.NewGuid().ToString("N");
         await search.CreateIndexAsync(index, new()
@@ -178,3 +185,6 @@ public class SearchProfileIntegrationTests(ModernRedisTestContainer fixture)
 
 /// <summary>Dedicated tracking fixture for Search profile cache tests.</summary>
 public sealed class SearchProfileCacheContainer() : StandaloneRedisTestContainer("redis:8.10-alpine");
+
+/// <summary>Dedicated server for the exact FT.HYBRID profile counts, isolated from other tests' index drops.</summary>
+public sealed class SearchProfileHybridContainer() : StandaloneRedisTestContainer("redis:8.10-alpine");

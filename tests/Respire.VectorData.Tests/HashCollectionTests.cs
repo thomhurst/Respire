@@ -36,6 +36,76 @@ public class HashCollectionTests(ModernRedisTestContainer fixture)
     }
 
     [Test, Arguments(2), Arguments(3)]
+    public async Task UpsertReindexesEachRecordOnce(int protocol)
+    {
+        await using var client = await Connect(protocol);
+        using var store = Store(client);
+        using var collection = store.GetHashCollection<Movie>("movies");
+        try
+        {
+            await collection.EnsureCollectionExistsAsync();
+            await WaitForInitialScan(client, store.IndexName(collection.Name));
+            await collection.UpsertAsync([Movie("1", 1, 0), Movie("2", 0, 1), Movie("3", 1, 1)]);
+            (await MaxDocumentId(client, store.IndexName(collection.Name))).Should().Be(3);
+            await collection.UpsertAsync(Movie("2", 1, 1));
+            (await MaxDocumentId(client, store.IndexName(collection.Name))).Should().Be(4);
+            (await collection.GetAsync("2", new() { IncludeVectors = true }))!.Vector.ToArray().Should().Equal(1f, 1f);
+        }
+        finally { await collection.EnsureCollectionDeletedAsync(); }
+    }
+
+    [Test, Arguments(2), Arguments(3)]
+    public async Task UpsertWritesRecordsWiderThanOneHsetChunk(int protocol)
+    {
+        await using var client = await Connect(protocol);
+        using var store = new RespireVectorStore(client, "test:vector:" + Guid.NewGuid().ToString("N") + ":");
+        var mapper = new WideMapper(5000);
+        store.RegisterMapper(mapper);
+        using var collection = store.GetHashCollection<Movie>("wide");
+        try
+        {
+            await collection.EnsureCollectionExistsAsync();
+            await collection.UpsertAsync(Movie("wide", 1, 0));
+            (await collection.GetAsync("wide", new() { IncludeVectors = true }))!.Vector.ToArray().Should().Equal(1f, 0f);
+            mapper.LastReadFieldCount.Should().Be(new MovieMapper().Write(Movie("wide", 1, 0)).Count + 5000);
+        }
+        finally { await collection.EnsureCollectionDeletedAsync(); }
+    }
+
+    private sealed class WideMapper(int extraFields) : RespireVectorDataHashMapper<Movie>
+    {
+        private readonly MovieMapper _inner = new();
+        public int LastReadFieldCount { get; private set; }
+        public override IReadOnlyList<RespireVectorDataVectorField> VectorFields => _inner.VectorFields;
+        public override IReadOnlyList<RespireSearchField> DataFields => _inner.DataFields;
+        public override IReadOnlyList<RespireVectorDataTextField> TextFields => _inner.TextFields;
+        public override IReadOnlyList<RespireVectorDataFilterField> FilterFields => _inner.FilterFields;
+        public override string GetKey(Movie record) => _inner.GetKey(record);
+        public override IReadOnlyDictionary<string, ReadOnlyMemory<byte>> Write(Movie record)
+        {
+            var fields = new Dictionary<string, ReadOnlyMemory<byte>>(_inner.Write(record), StringComparer.Ordinal);
+            for (var i = 0; i < extraFields; i++) fields["extra" + i] = new byte[] { (byte)'x' };
+            return fields;
+        }
+        public override Movie Read(string key, IReadOnlyDictionary<string, ReadOnlyMemory<byte>> fields)
+        {
+            LastReadFieldCount = fields.Count;
+            return _inner.Read(key, fields);
+        }
+    }
+
+    // FT.CREATE scans existing keys in the background, and a scan racing a write can index that hash twice.
+    internal static async Task WaitForInitialScan(RespireClient client, string index)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        while ((await client.Search.GetIndexInfoAsync(index, deadline.Token)).Properties["indexing"].Scalar != "0")
+            await Task.Delay(20, deadline.Token);
+    }
+
+    internal static async Task<long> MaxDocumentId(RespireClient client, string index)
+        => long.Parse((await client.Search.GetIndexInfoAsync(index)).Properties["max_doc_id"].Scalar!, System.Globalization.CultureInfo.InvariantCulture);
+
+    [Test, Arguments(2), Arguments(3)]
     public async Task LifecycleAndStoreNamespaces(int protocol)
     {
         await using var client = await Connect(protocol);

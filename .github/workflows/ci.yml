@@ -2,7 +2,8 @@ name: CI
 
 # The single PR test workflow. Each job builds only the projects it runs, for one framework;
 # the Modular Pipeline workflow compiles the whole solution for every framework and verifies the packages.
-#   - net10.0 runs the full suite (RESP3). A second job reruns Respire.IntegrationTests on RESP2 so the
+#   - net10.0 runs the full suite (RESP3), split into parallel unit-shard, integration and component jobs;
+#     "Build and Test (net10.0)" gates on them and merges coverage. A second job reruns Respire.IntegrationTests on RESP2 so the
 #     shared typed scenarios parse both reply shapes; tests that pin a protocol already cover the
 #     other suites' protocol-specific behavior, so those suites run once.
 #   - net8.0 runs a smoke set: the framework-conditional code paths, the fake-server
@@ -56,13 +57,13 @@ jobs:
         run: >-
           dotnet run --project tests/Respire.VectorData.Tests -c Release -f ${{ matrix.framework }} --
           --minimum-expected-tests 198 --report-trx --results-directory "$GITHUB_WORKSPACE/TestResults/vector-data"
-      - name: Run pinned official lifecycle and JSON backend conformance on RESP2 and RESP3
+      - name: Run pinned official hash and JSON conformance on RESP2 and RESP3
         if: matrix.framework == 'net10.0'
         env:
           RESPIRE_VECTOR_CONFORMANCE_CONNECTION: redis://127.0.0.1:${{ job.services.redis.ports['6379'] }}
         run: >-
           dotnet run --project tests/Respire.VectorData.Conformance.Tests -c Release -f net10.0 --
-          --minimum-expected-tests 110 --fail-skips on --report-xunit-trx
+          --filter-not-trait 'Unsupported=*' --minimum-expected-tests 358 --fail-skips on --report-xunit-trx
           --results-directory "$GITHUB_WORKSPACE/TestResults/vector-data-official"
       - name: Install NativeAOT prerequisites
         run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
@@ -173,6 +174,29 @@ jobs:
           python -B -m unittest discover -s scripts/workflows -p '*Tests.py'
           python -B -m unittest discover -s scripts/benchmarks -p '*Tests.py'
           python scripts/workflows/BenchmarkWorkflowPolicy.py
+
+  repository-tooling:
+    name: Repository tooling checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # These checks need no .NET build, so they run beside the test jobs instead of inside one.
+      - name: Verify command catalog generation
+        shell: pwsh
+        run: ./scripts/Test-CommandCatalog.ps1
+
+      - name: Run Python probe regression tests
+        run: python3 -m unittest discover -s scripts/probes -v
+
+      - name: Verify worktree cleanup safety
+        shell: pwsh
+        run: |
+          foreach ($test in @('Test-MergedWorktreeSweep', 'Test-WorktreeCleanup', 'Test-WorkflowArtifactCleanup', 'Test-MergePr', 'Test-MergePrLifecycle', 'Test-ReleasedWorktreeCleanup')) {
+            & pwsh -NoProfile -File "./scripts/$test.ps1"
+            if ($LASTEXITCODE -ne 0) { throw "$test failed" }
+          }
 
   observability-sample:
     name: Prometheus dashboard smoke (${{ matrix.framework }})
@@ -287,14 +311,30 @@ jobs:
           name: aspnet-sample-${{ matrix.framework }}
           path: aspnet-sample.log
 
-  build-and-test-net10:
-    # The name is a required status check.
-    name: Build and Test (net10.0)
+  # The net10.0 suite runs as parallel jobs; "Build and Test (net10.0)" below gates on all of them.
+  net10-unit:
+    name: Unit Tests (net10.0, ${{ matrix.shard.name }})
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # The shards are disjoint and together cover every class except the telemetry suites,
+        # which run isolated in the circuit-dispatch shard. Most of the suite's wall time is
+        # [NotInParallel] tests, so the shards balance serial time rather than test count:
+        # StandaloneCircuitDispatchTests alone holds about half of it.
+        shard:
+          - name: circuit-dispatch
+            filter: '/*/*/StandaloneCircuitDispatchTests/*'
+          - name: networking
+            filter: '/*/Respire.Tests.Networking/(!StandaloneCircuitDispatchTests)/*'
+          - name: core
+            filter: '/*/(!Respire.Tests.Networking)/(!MetricSelectionTests)&(!ErrorMetricsTests)/*'
     env:
       RESPIRE_TEST_PROTOCOL: '3'
       DOCKER_HOST: unix:///var/run/docker.sock
+      # Core tests own their listeners; the HTML reporter installs a process-wide listener.
+      TUNIT_DISABLE_HTML_REPORTER: 'true'
 
     steps:
       - name: Checkout code
@@ -304,45 +344,21 @@ jobs:
         uses: ./.github/actions/setup-dotnet
 
       - name: Build
-        run: |
-          for project in \
-            tests/Aspire.Respire.Tests \
-            tests/Respire.Tests \
-            tests/Respire.HealthChecks.Tests \
-            tests/Respire.Analyzers.Tests \
-            tests/Respire.IntegrationTests \
-            tests/Respire.Coordination.Tests \
-            tests/Respire.Azure.Tests \
-            tests/Respire.DataProtection.Tests \
-            tests/Respire.Caching.Tests \
-            tests/Respire.Caching.Hybrid.Tests \
-            tests/Respire.FusionCache.Tests \
-            tests/Respire.SignalR.Tests \
-            tests/Respire.Streaming.Tests \
-            samples/Respire.Samples.Testing \
-            samples/Respire.Samples.Cluster \
-            samples/Respire.Samples.Sentinel \
-            samples/Respire.Samples.Azure
-          do
-            dotnet build "$project" -c Release -f net10.0
-          done
+        run: dotnet build tests/Respire.Tests -c Release -f net10.0
 
       - name: Run Unit Tests
-        env:
-          # Core tests own their listeners; the HTML reporter installs a process-wide listener.
-          TUNIT_DISABLE_HTML_REPORTER: 'true'
-        run: |
-          dotnet run --project tests/Respire.Tests -c Release -f net10.0 --no-build -- \
-            --treenode-filter '/*/*/(!MetricSelectionTests)&(!ErrorMetricsTests)/*' \
-            --results-directory "$GITHUB_WORKSPACE/TestResults" \
-            --coverage \
-            --coverage-output coverage.cobertura.xml \
-            --coverage-output-format cobertura
+        run: >-
+          dotnet run --project tests/Respire.Tests -c Release -f net10.0 --no-build --
+          --treenode-filter '${{ matrix.shard.filter }}'
+          --results-directory "$GITHUB_WORKSPACE/TestResults/unit"
+          --report-trx --report-trx-filename unit-${{ matrix.shard.name }}.trx
+          --coverage
+          --coverage-output coverage.cobertura.xml
+          --coverage-output-format cobertura
 
       # These tests control process-wide listener state; the HTML reporter adds its own listener.
       - name: Run telemetry and direct-path regressions without external tracing
-        env:
-          TUNIT_DISABLE_HTML_REPORTER: 'true'
+        if: matrix.shard.name == 'circuit-dispatch'
         run: |
           dotnet run --project tests/Respire.Tests -c Release -f net10.0 --no-build -- \
             --treenode-filter '/*/*/(HedgedReadTests)|(BytesResponseTests)/*'
@@ -355,6 +371,85 @@ jobs:
             --coverage-output coverage.cobertura.xml \
             --coverage-output-format cobertura
 
+      - name: List slowest tests
+        if: always()
+        uses: ./.github/actions/slowest-tests
+        with:
+          results-directory: TestResults/unit
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: coverage-net10.0-unit-${{ matrix.shard.name }}
+          path: TestResults/**/coverage.cobertura.xml
+          retention-days: 1
+
+  net10-integration:
+    name: Integration Tests (net10.0, RESP3)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RESPIRE_TEST_PROTOCOL: '3'
+      DOCKER_HOST: unix:///var/run/docker.sock
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up .NET
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Build
+        run: dotnet build tests/Respire.IntegrationTests -c Release -f net10.0
+
+      - name: Run Integration Tests
+        run: >-
+          dotnet run --project tests/Respire.IntegrationTests -c Release -f net10.0 --no-build --
+          --results-directory "$GITHUB_WORKSPACE/TestResults/integration"
+          --report-trx --report-trx-filename integration.trx
+
+      - name: Verify typed cluster replies during slot migration without external tracing
+        env:
+          TUNIT_DISABLE_HTML_REPORTER: 'true'
+        run: >-
+          dotnet run --project tests/Respire.IntegrationTests -c Release -f net10.0 --no-build --
+          --treenode-filter '/*/*/ClusterReadyReplyIntegrationTests/*' --minimum-expected-tests 12
+          --report-trx --results-directory TestResults/cluster-ready
+
+      - name: List slowest tests
+        if: always()
+        uses: ./.github/actions/slowest-tests
+        with:
+          results-directory: TestResults/integration
+
+      - name: Upload TUnit HTML reports
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: tunit-reports-net10.0-integration
+          path: '**/TestResults/**/*-report.html'
+          retention-days: 14
+
+  net10-components:
+    name: Component Tests (net10.0)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RESPIRE_TEST_PROTOCOL: '3'
+      DOCKER_HOST: unix:///var/run/docker.sock
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up .NET
+        uses: ./.github/actions/setup-dotnet
+
+      # One solution-filter build lets MSBuild compile independent projects in parallel.
+      - name: Build
+        run: dotnet build .github/ci/net10-components.slnf -c Release -f net10.0
+
       - name: Run Health Check Tests
         run: dotnet run --project tests/Respire.HealthChecks.Tests -c Release -f net10.0 --no-build
 
@@ -365,17 +460,6 @@ jobs:
 
       - name: Run Analyzer Tests
         run: dotnet run --project tests/Respire.Analyzers.Tests -c Release -f net10.0 --no-build
-
-      - name: Run Integration Tests
-        run: dotnet run --project tests/Respire.IntegrationTests -c Release -f net10.0 --no-build
-
-      - name: Verify typed cluster replies during slot migration without external tracing
-        env:
-          TUNIT_DISABLE_HTML_REPORTER: 'true'
-        run: >-
-          dotnet run --project tests/Respire.IntegrationTests -c Release -f net10.0 --no-build --
-          --treenode-filter '/*/*/ClusterReadyReplyIntegrationTests/*' --minimum-expected-tests 12
-          --report-trx --results-directory TestResults/cluster-ready
 
       - name: Run Coordination Tests
         run: dotnet run --project tests/Respire.Coordination.Tests -c Release -f net10.0 --no-build
@@ -414,8 +498,46 @@ jobs:
         with:
           framework: net10.0
 
-      - name: Generate Code Coverage Report
+      - name: Upload TUnit HTML reports
+        uses: actions/upload-artifact@v7
         if: always()
+        with:
+          name: tunit-reports-net10.0
+          path: '**/TestResults/*-report.html'
+          retention-days: 14
+
+  build-and-test-net10:
+    # The name is a required status check. It passes only when every net10.0 job passed,
+    # and it merges their coverage into one report.
+    name: Build and Test (net10.0)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [net10-unit, net10-integration, net10-components]
+    if: always()
+
+    steps:
+      - name: Require every net10.0 job to pass
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "net10.0 job results: $RESULTS"
+          for result in $RESULTS; do
+            if [ "$result" != success ]; then exit 1; fi
+          done
+
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up .NET
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Download coverage
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: coverage-net10.0-*
+          path: TestResults
+
+      - name: Generate Code Coverage Report
         run: |
           dotnet tool install -g dotnet-reportgenerator-globaltool
           reportgenerator \
@@ -427,17 +549,8 @@ jobs:
             cat CoverageReport/SummaryGithub.md >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Upload TUnit HTML reports
-        uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: tunit-reports-net10.0
-          path: '**/TestResults/*-report.html'
-          retention-days: 14
-
       - name: Upload coverage report
         uses: actions/upload-artifact@v7
-        if: always()
         with:
           name: coverage-report
           path: CoverageReport/
@@ -494,40 +607,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      # Repository tooling checks need no .NET build; they ride along in the lightest job.
-      - name: Verify command catalog generation
-        shell: pwsh
-        run: ./scripts/Test-CommandCatalog.ps1
-
-      - name: Run Python probe regression tests
-        run: python3 -m unittest discover -s scripts/probes -v
-
-      - name: Verify worktree cleanup safety
-        shell: pwsh
-        run: |
-          foreach ($test in @('Test-MergedWorktreeSweep', 'Test-WorktreeCleanup', 'Test-WorkflowArtifactCleanup', 'Test-MergePr', 'Test-MergePrLifecycle', 'Test-ReleasedWorktreeCleanup')) {
-            & pwsh -NoProfile -File "./scripts/$test.ps1"
-            if ($LASTEXITCODE -ne 0) { throw "$test failed" }
-          }
-
       - name: Set up .NET
         uses: ./.github/actions/setup-dotnet
 
+      # One solution-filter build lets MSBuild compile independent projects in parallel.
       - name: Build
-        run: |
-          for project in \
-            tests/Aspire.Respire.Tests \
-            tests/Respire.Tests \
-            tests/Respire.FusionCache.Tests \
-            tests/Respire.SignalR.Tests \
-            tests/Respire.Streaming.Tests \
-            samples/Respire.Samples.Testing \
-            samples/Respire.Samples.Cluster \
-            samples/Respire.Samples.Sentinel \
-            samples/Respire.Samples.Azure
-          do
-            dotnet build "$project" -c Release -f net8.0
-          done
+        run: dotnet build .github/ci/net8-smoke.slnf -c Release -f net8.0
 
       - name: Run Aspire Client Tests
         env:

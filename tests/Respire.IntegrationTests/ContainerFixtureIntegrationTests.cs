@@ -207,13 +207,15 @@ public class ContainerFixtureIntegrationTests
     }
 
     [Test]
-    [Arguments(RespireContainerServer.Redis)]
-    [Arguments(RespireContainerServer.Valkey)]
-    public async Task StandaloneBindCollisionRecoversWithUsableFreshContainer(RespireContainerServer server)
+    [Arguments(RespireContainerServer.Redis, StandaloneStartupRetryTests.BindFailure)]
+    [Arguments(RespireContainerServer.Valkey, StandaloneStartupRetryTests.BindFailure)]
+    [Arguments(RespireContainerServer.Redis, StandaloneStartupRetryTests.TcpListenFailure)]
+    [Arguments(RespireContainerServer.Valkey, StandaloneStartupRetryTests.TcpListenFailure)]
+    public async Task StandaloneBindCollisionRecoversWithUsableFreshContainer(RespireContainerServer server, string message)
     {
         var options = new RespireContainerOptions { Server = server };
         var failed = ContainerStartupRetryTests.ContainerProbe.Create(_ =>
-            Task.FromException(StandaloneStartupRetryTests.ApiError(StandaloneStartupRetryTests.BindFailure)));
+            Task.FromException(StandaloneStartupRetryTests.ApiError(message)));
         var probe = (ContainerStartupRetryTests.ContainerProbe)failed;
         var attempts = 0;
         var createdIds = new List<string>();
