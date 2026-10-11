@@ -84,6 +84,10 @@ public class NativeDispatchOwnershipTests
             }
             else if (outcome == "success") await pending;
         }
+        // The RESP2 client sends no handshake, so ConnectAsync can finish while the socket still
+        // sits in the listener backlog. On Windows, stopping the listener then neither resets nor
+        // closes that socket, so an idle client never sees the disconnect. Close the socket only after the fixture owns it.
+        await server.ConnectionAccepted.WaitAsync(TimeSpan.FromSeconds(5));
         await server.DisposeAsync();
         await connection.Closed.WaitAsync(TimeSpan.FromSeconds(5));
         Exception? callerError = null;
