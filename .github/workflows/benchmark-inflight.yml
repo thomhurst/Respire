@@ -122,7 +122,7 @@ jobs:
               assert reports, f"Missing benchmark results: {phase}"
               for report in reports:
                   benchmarks = json.loads(report.read_text())["Benchmarks"]
-                  expected = 3 if "DiagnosticsPipelineBenchmarks" in report.name else 1
+                  expected = 5 if "DiagnosticsPipelineBenchmarks" in report.name else 1
                   assert len(benchmarks) == expected, f"Expected {expected} benchmark cases: {report}"
                   for benchmark in benchmarks:
                       statistics = benchmark.get("Statistics")
