@@ -97,8 +97,10 @@ Retry requires a Docker API HTTP 500 response with a known port-allocation or TC
 address-in-use bind message naming one of the selected `127.0.0.1` ports, or the recognized
 Linux TCP socket bind format that omits the address. Standalone recognizes the specific
 Linux networking error with an empty loopback host port and an IPv4 container destination
-on port 6379 (`127.0.0.1::<container-address>:6379/tcp: address already in use`). The recognized
-selected-port formats also include the complete Linux networking error ending in
+on port 6379 (`127.0.0.1::<container-address>:6379/tcp: address already in use`). It also recognizes
+the complete Linux networking error ending in
+`failed to listen on TCP socket: address already in use`, which omits both addresses and ports.
+The recognized selected-port formats also include the complete Linux networking error ending in
 `failed to bind host port 127.0.0.1:<selected-port>/tcp: address already in use`, without `for`
 or a container destination. The selected host port must match exactly.
 Recognized formats cover Moby's allocator/Linux bind errors and Docker Desktop's TCP bind errors on
