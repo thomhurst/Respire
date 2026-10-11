@@ -8,7 +8,6 @@ using TUnit.Core;
 
 namespace Respire.Analyzers.Tests;
 
-[NotInParallel]
 public class GeneratedMapperAotConformanceTests
 {
     [Test]
@@ -77,13 +76,9 @@ public class GeneratedMapperAotConformanceTests
 
     private static CSharpCompilation CreateCompilation(string source)
     {
-        var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
-            .Append(typeof(RespireHashAttribute).Assembly.Location).Append(typeof(RespireJsonAttribute).Assembly.Location)
-            .Append(typeof(RespireSearchAttribute).Assembly.Location).Distinct(StringComparer.OrdinalIgnoreCase)
-            .Select(path => MetadataReference.CreateFromFile(path));
         return CSharpCompilation.Create("MapperConformance", [CSharpSyntaxTree.ParseText(
             "#nullable enable\nusing System; using Respire; using Respire.Json; using Respire.Search;\n" + source, ParseOptions)],
-            references, new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary,
+            GeneratorTestReferences.All, new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary,
                 nullableContextOptions: NullableContextOptions.Enable));
     }
 }

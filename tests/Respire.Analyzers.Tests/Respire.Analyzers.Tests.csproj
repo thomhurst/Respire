@@ -26,6 +26,9 @@
         <PackageReference Include="Microsoft.CodeAnalysis.NetAnalyzers" GeneratePathProperty="true" IncludeAssets="none" PrivateAssets="all" />
         <Reference Include="Microsoft.CodeAnalysis.NetAnalyzers"
                    HintPath="$(PkgMicrosoft_CodeAnalysis_NetAnalyzers)/analyzers/dotnet/cs/Microsoft.CodeAnalysis.NetAnalyzers.dll" />
+        <!-- ReferenceAssemblies.Net.Net80 resolves this exact package. Restoring it into the global
+             packages folder (cached by CI) stops the harness downloading it at test time. -->
+        <PackageDownload Include="Microsoft.NETCore.App.Ref" Version="[8.0.0]" />
     </ItemGroup>
 
     <ItemGroup>
