@@ -76,6 +76,20 @@
   ],
   "Boundaries": [
     {
+      "Name": "script-connection-fallback",
+      "Role": "borrower",
+      "Member": "Respire.RespireClient.ExecuteScriptOnConnectionCoreAsync(RespireConnection,RespireScript,RespireValue[],CancellationToken,ClientSideCacheCoordinator.MutationFence,RespireTelemetry.ErrorObservation,TrackedScriptExecution?):ValueTask<RespireResult>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Keep transport retries and NOSCRIPT fallback in the same public or tracked caller observation. Result construction does not publish a final error; mutation cleanup and any joined correction finish first."
+    },
+    {
+      "Name": "tracked-script-direct-consumption",
+      "Role": "final",
+      "Member": "Respire.RespireClient.TrackedScriptExecution.ConsumeResponseAsync():ValueTask<RespireResult>",
+      "Owner": "Respire.RespireClient.TrackedScriptExecution.ConsumeResponseAsync():ValueTask<RespireResult>",
+      "Contract": "A direct reader consumes once after mutation cleanup. Correction callers instead borrow the raw response and transfer final completion to ExecuteWithCorrectionAsync; these completion paths must not both consume the response."
+    },
+    {
       "Name": "cache-get-owner",
       "Role": "helper",
       "Member": "Respire.RespireClient.CachedGetAsync`1(RespireKey,CancellationToken,ResponseConverter<RespireClient,TResult>,bool,RespireTelemetry.ErrorObservation):ValueTask<TResult>",

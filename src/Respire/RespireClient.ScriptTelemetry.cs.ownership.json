@@ -1,0 +1,13 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "script-telemetry-retry-fallback",
+      "Role": "internal",
+      "Member": "Respire.RespireClient.ClusterScriptTelemetry.RecordRetry(Exception):void",
+      "Owner": null,
+      "Contract": "Legacy telemetry-only fallback publishes handled retries with saturating shared bookkeeping. A supplied caller observation takes precedence; this fallback never owns caller final publication."
+    }
+  ],
+  "NonRoutes": []
+}
