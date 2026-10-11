@@ -15,12 +15,12 @@ using TUnit.Core;
 
 namespace Respire.Tests;
 
-[NotInParallel]
 public class DispatchResponseObservationTests
 {
     private const string NativeProbe = "RESPIRE_NATIVE_DISPATCH_PROBE";
 
     [Test]
+    [ParallelLimiter<ChildProcessProbes>]
     [Arguments("raw", "success")]
     [Arguments("string", "success")]
     [Arguments("bytes", "success")]
@@ -42,6 +42,8 @@ public class DispatchResponseObservationTests
 
     // The test runner installs a global ActivityListener. Run before its startup so
     // the production no-tracing gate and the original native ValueTask can be tested.
+    // Each probe owns its process, so probes need no runner-wide isolation; tests that
+    // install listeners or measure in this process remain [NotInParallel].
     private static async Task RunNativeProbeAsync(string mode)
     {
         var start = AsyncFlushSignalTests.CreateProbeStartInfo(Environment.ProcessPath,
@@ -147,6 +149,7 @@ public class DispatchResponseObservationTests
     }
 
     [Test]
+    [ParallelLimiter<ChildProcessProbes>]
     public async Task DirectNativeConverterRunsAtConsumptionAndPreservesFailureThroughThrowingListener()
         => await RunNativeProbeAsync("converter");
 
@@ -182,6 +185,7 @@ public class DispatchResponseObservationTests
     }
 
     [Test]
+    [ParallelLimiter<ChildProcessProbes>]
     public async Task FullNativeRingTransfersCapacityWaitToDispatchOwner()
         => await RunNativeProbeAsync("capacity");
 
@@ -215,6 +219,7 @@ public class DispatchResponseObservationTests
     }
 
     [Test]
+    [ParallelLimiter<ChildProcessProbes>]
     [Arguments("raw")]
     [Arguments("string")]
     [Arguments("bytes")]
@@ -293,6 +298,7 @@ public class DispatchResponseObservationTests
     }
 
     [Test]
+    [NotInParallel]
     [Arguments("synchronous")]
     [Arguments("pending")]
     [Arguments("cancelled")]
@@ -366,6 +372,7 @@ public class DispatchResponseObservationTests
     }
 
     [Test]
+    [NotInParallel]
     public async Task PendingStatusChecksAvoidRedundantNativeQueries()
     {
         var native = new CountedResponseSource();
@@ -380,6 +387,7 @@ public class DispatchResponseObservationTests
     }
 
     [Test]
+    [NotInParallel]
     public async Task SuccessDuringStatusInspectionIsNotReportedAsFaulted()
     {
         var native = new CountedResponseSource { CompleteAfterFirstQuery = true };
@@ -389,6 +397,7 @@ public class DispatchResponseObservationTests
     }
 
     [Test]
+    [NotInParallel]
     public async Task WarmConcurrentBurstRetainsEveryDispatchOwner()
     {
         var pending = new ValueTask<BurstResult>[10000];
@@ -416,6 +425,7 @@ public class DispatchResponseObservationTests
     private readonly record struct BurstResult(int Value);
 
     [Test]
+    [NotInParallel]
     public async Task SynchronousThrowAfterBorrowRejectsLateRetryAfterReuse()
     {
         using var configuration = new MetricConfigurationScope();
@@ -448,6 +458,7 @@ public class DispatchResponseObservationTests
     }
 
     [Test]
+    [NotInParallel]
     public async Task RetryBorrowersShareOneFinalOwnerUntilCallerInspection()
     {
         using var configuration = new MetricConfigurationScope();
@@ -475,6 +486,7 @@ public class DispatchResponseObservationTests
     }
 
     [Test]
+    [NotInParallel]
     public async Task NativeConverterRunsOnlyWhenCallerConsumesAndFinishesAfterCleanup()
     {
         using var configuration = new MetricConfigurationScope();
@@ -503,6 +515,7 @@ public class DispatchResponseObservationTests
     }
 
     [Test]
+    [NotInParallel]
     public async Task CancellationKeepsTaskStatusAndOriginalTokenAfterRetries()
     {
         using var configuration = new MetricConfigurationScope();
@@ -523,6 +536,7 @@ public class DispatchResponseObservationTests
     }
 
     [Test]
+    [NotInParallel]
     [Arguments("string")]
     [Arguments("bytes")]
     [Arguments("integer")]
@@ -557,6 +571,7 @@ public class DispatchResponseObservationTests
     }
 
     [Test]
+    [NotInParallel]
     public async Task CancelledDiscardRetainsImmutableRetriesAfterDispatchOwnerReuse()
     {
         using var configuration = new MetricConfigurationScope();
@@ -626,6 +641,7 @@ public class DispatchResponseObservationTests
     }
 
     [Test]
+    [NotInParallel]
     public async Task WarmSuccessAllocatesNothingWithMetricsDisabledOrEnabled()
     {
         using var configuration = new MetricConfigurationScope();

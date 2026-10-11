@@ -5,7 +5,6 @@ using TUnit.Core;
 
 namespace Respire.Analyzers.Tests;
 
-[NotInParallel]
 public class RespireHashGeneratorTests
 {
     [Test]
@@ -179,11 +178,8 @@ public class RespireHashGeneratorTests
 
     private static CSharpCompilation CreateCompilation(string source)
     {
-        var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
-            .Append(typeof(RespireHashAttribute).Assembly.Location).Distinct(StringComparer.OrdinalIgnoreCase)
-            .Select(path => MetadataReference.CreateFromFile(path));
         return CSharpCompilation.Create("HashConsumer", [CSharpSyntaxTree.ParseText(
-            "#nullable enable\nusing Respire; using System;\n" + source, ParseOptions)], references,
+            "#nullable enable\nusing Respire; using System;\n" + source, ParseOptions)], GeneratorTestReferences.All,
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
     }
 

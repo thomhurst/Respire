@@ -6,7 +6,6 @@ using TUnit.Core;
 
 namespace Respire.Analyzers.Tests;
 
-[NotInParallel]
 public class RespireJsonGeneratorTests
 {
     [Test]
@@ -135,11 +134,8 @@ public class RespireJsonGeneratorTests
 
     private static CSharpCompilation CreateCompilation(string source)
     {
-        var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
-            .Append(typeof(RespireJsonAttribute).Assembly.Location).Append(typeof(RespireHashAttribute).Assembly.Location).Distinct(StringComparer.OrdinalIgnoreCase)
-            .Select(path => MetadataReference.CreateFromFile(path));
         return CSharpCompilation.Create("JsonConsumer", [CSharpSyntaxTree.ParseText(
-            "#nullable enable\nusing Respire; using Respire.Json; using System;\n" + source, ParseOptions)], references,
+            "#nullable enable\nusing Respire; using Respire.Json; using System;\n" + source, ParseOptions)], GeneratorTestReferences.All,
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
     }
 

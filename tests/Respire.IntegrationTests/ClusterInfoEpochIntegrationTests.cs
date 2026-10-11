@@ -6,7 +6,7 @@ using TUnit.Core;
 namespace Respire.IntegrationTests;
 
 [Category(TestCategories.ProtocolIndependent)]
-[NotInParallel]
+[ParallelLimiter<DockerHeavy>]
 public class ClusterInfoEpochIntegrationTests
 {
     [Test]

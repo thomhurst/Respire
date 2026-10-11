@@ -1,0 +1,19 @@
+{
+  "solution": {
+    "path": "../../Respire.slnx",
+    "projects": [
+      "tests/Respire.Tests/Respire.Tests.csproj",
+      "tests/Respire.HealthChecks.Tests/Respire.HealthChecks.Tests.csproj",
+      "tests/Respire.IntegrationTests/Respire.IntegrationTests.csproj",
+      "tests/Respire.Coordination.Tests/Respire.Coordination.Tests.csproj",
+      "tests/Respire.Azure.Tests/Respire.Azure.Tests.csproj",
+      "tests/Respire.DataProtection.Tests/Respire.DataProtection.Tests.csproj",
+      "tests/Respire.Caching.Tests/Respire.Caching.Tests.csproj",
+      "tests/Respire.Caching.Hybrid.Tests/Respire.Caching.Hybrid.Tests.csproj",
+      "tests/Respire.FusionCache.Tests/Respire.FusionCache.Tests.csproj",
+      "tests/Respire.SignalR.Tests/Respire.SignalR.Tests.csproj",
+      "tests/Respire.VectorData.Tests/Respire.VectorData.Tests.csproj",
+      "tests/Respire.Streaming.Tests/Respire.Streaming.Tests.csproj"
+    ]
+  }
+}

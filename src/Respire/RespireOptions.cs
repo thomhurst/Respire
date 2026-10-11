@@ -330,6 +330,9 @@ public sealed record RespireOptions
     // Test seam: advances READONLY recovery phases independently of socket setup.
     internal TimeProvider ClusterRecoveryClock { get; init; } = TimeProvider.System;
 
+    // Test seam: ceiling on replica missing-function retries, before any shorter CommandTimeout.
+    internal TimeSpan FunctionPropagationLimit { get; init; } = FunctionCommands.DefaultFunctionPropagationLimit;
+
     /// <summary>Use TLS. Enabled automatically for <c>rediss://</c> connection strings.</summary>
     public bool UseTls { get; init; }
 

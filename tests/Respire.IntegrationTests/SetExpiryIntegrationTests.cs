@@ -50,9 +50,10 @@ public class SetExpiryIntegrationTests(RedisTestContainer fixture)
         await client.SetAsync(key, "value", RespireExpiry.At(DateTimeOffset.UtcNow.AddMilliseconds(300)));
         (await client.GetStringAsync(key)).Should().Be("value");
 
-        await Task.Delay(TimeSpan.FromSeconds(1));
-
-        (await client.GetStringAsync(key)).Should().BeNull();
+        // GET expires the key lazily, so it observes the deadline without waiting for active expiry.
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (await client.GetStringAsync(key, deadline.Token) is not null)
+            await Task.Delay(25, deadline.Token);
     }
 
     [Test]

@@ -112,6 +112,8 @@ public class ClusterScanIntegrationTests
     private sealed class ScanCluster(IContainer container, int basePort) : IAsyncDisposable
     {
         private readonly string[] _ids = new string[6];
+        // Each node publishes its container port unchanged on IPv4 loopback.
+        private readonly NodeCommandSessions _nodes = new(IPAddress.Loopback.ToString());
         internal string Host => container.Hostname;
         internal int Port(int node) => container.GetMappedPublicPort(basePort + node);
 
@@ -271,13 +273,12 @@ public class ClusterScanIntegrationTests
                 await CommandAsync(node, "CLUSTER", "SETSLOT", slot.ToString(), "NODE", _ids[target]);
         }
 
-        private async Task<string> CommandAsync(int node, params string[] arguments)
-        {
-            var result = await container.ExecAsync(["redis-cli", "-e", "--raw", "-p", (basePort + node).ToString(), .. arguments]);
-            if (result.ExitCode != 0) throw new InvalidOperationException($"Cluster fixture command failed: {result.Stdout} {result.Stderr}");
-            return result.Stdout;
-        }
+        private Task<string> CommandAsync(int node, params string[] arguments) => _nodes.CommandAsync(basePort + node, arguments);
 
-        public ValueTask DisposeAsync() => container.DisposeAsync();
+        public async ValueTask DisposeAsync()
+        {
+            await _nodes.DisposeAsync();
+            await container.DisposeAsync();
+        }
     }
 }

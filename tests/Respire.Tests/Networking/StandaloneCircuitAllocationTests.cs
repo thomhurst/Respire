@@ -4,12 +4,13 @@ using TUnit.Core;
 
 namespace Respire.Tests.Networking;
 
-[NotInParallel]
+// The allocation measurement runs in a child process, which provides the isolation.
 public class StandaloneCircuitAllocationTests
 {
     private const string ProbeMode = "RESPIRE_CIRCUIT_DISABLED_ALLOCATION_PROBE";
 
     [Test]
+    [NotInParallel]
     [Arguments(false)]
     [Arguments(true)]
     public async Task DisabledDispatchAddsNoAllocation(bool raw)

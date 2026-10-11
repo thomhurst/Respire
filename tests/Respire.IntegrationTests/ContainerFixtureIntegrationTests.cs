@@ -14,6 +14,7 @@ namespace Respire.IntegrationTests;
 public class ContainerFixtureIntegrationTests
 {
     [Test]
+    [ParallelLimiter<DockerHeavy>]
     [Arguments(RespireContainerServer.Redis, RespireContainerTopology.Standalone)]
     [Arguments(RespireContainerServer.Redis, RespireContainerTopology.Cluster)]
     [Arguments(RespireContainerServer.Redis, RespireContainerTopology.Sentinel)]
@@ -123,6 +124,9 @@ public class ContainerFixtureIntegrationTests
             new RespireContainerOptions { Topology = (RespireContainerTopology)99 },
             new RespireContainerOptions { Server = (RespireContainerServer)99 },
             new RespireContainerOptions { Image = " " },
+            new RespireContainerOptions { SentinelDownAfter = TimeSpan.Zero },
+            new RespireContainerOptions { SentinelFailoverTimeout = TimeSpan.FromMilliseconds(0.5) },
+            new RespireContainerOptions { SentinelFailoverTimeout = TimeSpan.FromDays(30) },
         })
         {
             Func<Task> start = async () => await RespireContainerFixture.StartAsync(options);
@@ -168,6 +172,7 @@ public class ContainerFixtureIntegrationTests
     }
 
     [Test]
+    [ParallelLimiter<DockerHeavy>]
     [Arguments(RespireContainerServer.Redis, RespireContainerTopology.Cluster)]
     [Arguments(RespireContainerServer.Redis, RespireContainerTopology.Sentinel)]
     [Arguments(RespireContainerServer.Valkey, RespireContainerTopology.Cluster)]

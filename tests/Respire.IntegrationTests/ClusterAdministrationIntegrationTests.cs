@@ -8,7 +8,7 @@ using TUnit.Core;
 namespace Respire.IntegrationTests;
 
 [Category("ProtocolIndependent")]
-[NotInParallel]
+[ParallelLimiter<DockerHeavy>]
 public class ClusterAdministrationIntegrationTests
 {
     [Test]

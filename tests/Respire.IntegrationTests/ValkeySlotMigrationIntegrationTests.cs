@@ -87,6 +87,7 @@ public class ValkeySlotMigrationIntegrationTests
 
     private sealed class OwnedCluster(IContainer container) : IAsyncDisposable
     {
+        private NodeCommandSessions? _nodes;
         internal string[] NodeIds { get; } = new string[3];
         internal RespireEndpoint Endpoint(int index) => new(container.Hostname, container.GetMappedPublicPort(7000 + index));
 
@@ -124,11 +125,14 @@ public class ValkeySlotMigrationIntegrationTests
         {
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
             deadline.CancelAfter(TimeSpan.FromSeconds(10));
-            var result = await container.ExecAsync(["valkey-cli", "-e", "--raw", "-p", (7000 + node).ToString(CultureInfo.InvariantCulture), .. arguments], deadline.Token);
-            if (result.ExitCode != 0) throw new InvalidOperationException($"Owned cluster command failed: {result.Stdout} {result.Stderr}");
-            return result.Stdout;
+            _nodes ??= new(container.Hostname);
+            return await _nodes.CommandAsync(Endpoint(node).Port, arguments, deadline.Token);
         }
 
-        public ValueTask DisposeAsync() => container.DisposeAsync();
+        public async ValueTask DisposeAsync()
+        {
+            if (_nodes is not null) await _nodes.DisposeAsync();
+            await container.DisposeAsync();
+        }
     }
 }
