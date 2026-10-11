@@ -52,7 +52,7 @@ public class GeneratedHashCodecTests
     }
 
     [Test]
-    [NotInParallel]
+    // CurrentCulture is async-local, so this change cannot reach concurrently running tests.
     public async Task NumericAndTimestampEncodingsIgnoreCurrentCulture()
     {
         var previous = CultureInfo.CurrentCulture;

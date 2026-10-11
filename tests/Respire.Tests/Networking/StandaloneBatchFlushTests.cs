@@ -49,7 +49,8 @@ public class StandaloneBatchFlushTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         // Fixed wall-clock warmup gives background tiered compilation time to finish.
         // Do not choose the stopping point from allocation samples.
-        for (var warmup = 0; warmup < 128; warmup++)
+        var warmStart = System.Diagnostics.Stopwatch.GetTimestamp();
+        for (var warmup = 0; warmup < 32 || System.Diagnostics.Stopwatch.GetElapsedTime(warmStart) < TimeSpan.FromSeconds(2); warmup++)
         {
             using var warm = CreateBatch(client, 100);
             _ = MeasureStart(warm, warmup % 2 == 0, out var execution);
@@ -202,7 +203,7 @@ public class StandaloneBatchFlushTests
         {
             Protocol = RespProtocol.Resp2, Connections = 1,
             MaxInflightCommands = boundedRing ? 2 : 128,
-            CommandTimeout = TimeSpan.FromSeconds(2),
+            CommandTimeout = TimeSpan.FromSeconds(1),
             CircuitBreaker = circuitEnabled ? new() : null,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
         });
@@ -242,11 +243,11 @@ public class StandaloneBatchFlushTests
                 await Assert.That(started.Task.IsCompleted).IsFalse();
                 await Task.Delay(1, guard.Token);
             }
-            await Task.Delay(TimeSpan.FromMilliseconds(2_100));
+            await Task.Delay(TimeSpan.FromMilliseconds(1_100));
             release.Set();
             var execution = await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            // An expired budget must not become another full two-second timeout after admission.
-            await Assert.That(async () => await execution.WaitAsync(TimeSpan.FromSeconds(1)))
+            // An expired budget must not become another full one-second timeout after admission.
+            await Assert.That(async () => await execution.WaitAsync(TimeSpan.FromMilliseconds(750)))
                 .ThrowsExactly<RespireTimeoutException>();
             foreach (var result in pending)
             {
