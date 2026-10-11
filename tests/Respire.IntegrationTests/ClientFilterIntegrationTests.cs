@@ -4,7 +4,8 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
-[NotInParallel]
+// Every case owns its server and pins its protocol, so RESPIRE_TEST_PROTOCOL does not apply.
+[Category(TestCategories.ProtocolIndependent)]
 public class ClientFilterIntegrationTests
 {
     [Test]
