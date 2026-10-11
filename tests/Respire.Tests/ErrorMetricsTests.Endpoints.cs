@@ -659,6 +659,54 @@ public partial class ErrorMetricsTests
     }
 
     [Test]
+    public async Task ColdTransactionCapacityRejectionNamesNoNode()
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
+        });
+        await using var transaction = client.CreateTransaction();
+        var queued = transaction.Set("key", "value");
+        using var capture = new Capture();
+        // Acquisition connects and records the node, then MULTI/SET/EXEC cannot fit one slot.
+        await Assert.That(async () => await transaction.CommitAsync()).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await queued).Throws<ArgumentOutOfRangeException>();
+        var finals = capture.Items.Where(item => !(bool)item.Tags["redis.client.errors.internal"]!).ToArray();
+        await Assert.That(finals).IsNotEmpty();
+        await Assert.That(finals.Any(item => item.Tags.ContainsKey("server.address"))).IsFalse();
+    }
+
+    [Test]
+    public async Task FireAndForgetCapacityWaitCancellationNamesNoNode()
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            SuppressReply = command => command.StartsWith("GET held", StringComparison.Ordinal),
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
+        });
+        // The unanswered GET fills the only in-flight slot, so the fire-and-forget command waits for capacity.
+        var held = client.Strings.GetStringAsync("held");
+        using var capture = new Capture();
+        using var cancelled = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+        await Assert.That(async () => await client.ExecuteFireAndForgetAsync(
+                RespireCommands.Key.DEL, ["queued"], cancelled.Token))
+            .Throws<OperationCanceledException>();
+        await Assert.That(held.IsCompleted).IsFalse();
+        var item = capture.Items.Single();
+        await Assert.That(item.Tags["redis.client.errors.category"]).IsEqualTo("cancelled");
+        await Assert.That(item.Tags.ContainsKey("server.address")).IsFalse();
+        await Assert.That(item.Tags.ContainsKey("server.port")).IsFalse();
+    }
+
+    [Test]
     public async Task CancelledWatchValidationBeforeSubmissionNamesNoNode()
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });

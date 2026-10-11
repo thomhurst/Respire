@@ -2442,6 +2442,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 observation, errorAttempts + 1, pinToConnection).ConfigureAwait(false);
             return;
         }
+        catch (OperationCanceledException)
+        {
+            // Cancellation before ring admission never reached this node.
+            observation.UseEndpoint(null);
+            throw;
+        }
 
         ScheduleFlush(startedBatch);
         await WaitForWriteAsync(writeTask, cancellationToken).ConfigureAwait(false);
