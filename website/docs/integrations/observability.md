@@ -1044,6 +1044,24 @@ later handled events or count updates, including reentrant exporter callbacks. T
 not suppress late native replies: discarded replies retain their own copied attempt count
 and publish internal errors independently after the caller observation has closed.
 
+Native raw, string, byte and typed response inspection shares final-error publication
+after response cleanup and caller-reference release. Conversion still runs when the
+caller consumes the result. If cleanup also fails, the original conversion or cancellation
+error wins, including its cancellation token. Native transport cancellation keeps its
+canceled task status. A cleanup failure
+without an earlier error remains the caller's final failure. Response ownership is cleared
+before disposal so a failed disposal cannot make pool reset dispose the same response again.
+Successful inspection does not rent error observation storage.
+
+Physical setup borrows the connection caller's boundary. A physical disconnect records one
+independent internal error, with zero logical retries. It does not invent a final failure
+for an idle socket, a successful caller, or an already-canceled caller. Pending callers
+retain their own final failure after cleanup. Cancellation releases the caller reference
+but keeps the native receive reference until the original FIFO reply drains or the socket
+closes. A late server error remains an internal event and cannot answer the next command
+or publish a second final caller failure. Raw, catalog and interpolated dispatch follow
+these same lifetime rules.
+
 Streaming uploads retain the caller boundary through dedicated lease acquisition, source
 reads, transparent retries, replay reset, reply inspection and mutation/lease cleanup.
 A source failure preserves its original exception and independent cancellation token.

@@ -200,8 +200,22 @@ internal abstract partial class PendingResponse
     {
         var errorAttempts = ErrorAttempts;
         try { ReleaseCallerRef(); }
-        catch (Exception error) { failure = error; throw; }
+        catch (Exception error)
+        {
+            if (failure is null) { failure = error; throw; }
+        }
         finally { ErrorObservation.FinishFinal(observation, failure, observeErrors, errorAttempts); }
+    }
+
+    // Drop response ownership before disposal can throw. Pool reset must never dispose
+    // the same response again; disposal still precedes caller release and publication.
+    protected static void DisposeResponse(ref RespValue response, ref bool hasResponse)
+    {
+        if (!hasResponse) return;
+        var owned = response;
+        response = default;
+        hasResponse = false;
+        owned.Dispose();
     }
 
     /// <summary>Returns source to its pool after caller and receive loop both release it.</summary>
@@ -517,7 +531,8 @@ internal sealed class PendingResponseSource : PendingResponse, IValueTaskSource<
             }
 
             var error = ResponseReader.ServerError(in response, _commandName);
-            response.Dispose();
+            try { response.Dispose(); }
+            catch { /* Preserve the original server error if response cleanup also fails. */ }
             throw error;
         }
         catch (Exception error) { failure = error; throw; }
@@ -660,7 +675,10 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
         finally
         {
             try { ClearResponse(); }
-            catch (Exception error) { failure = error; throw; }
+            catch (Exception error)
+            {
+                if (failure is null) { failure = error; throw; }
+            }
             finally
             {
                 CompleteCallerInspection(observation, failure, observeErrors);
@@ -681,21 +699,20 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
 
     private void ClearResponse()
     {
-        if (_hasResponse)
+        try { DisposeResponse(ref _response, ref _hasResponse); }
+        finally
         {
-            _response.Dispose();
+            _response = default;
+            _state = default!;
+            _converter = null;
+            _hasResponse = false;
+            _transferOwnership = false;
+            _observation = default;
+            _observeErrors = false;
+            _duration = default;
+            // The receive loop still needs the operation when a canceled caller finishes first.
+            // Clear it only after both references are released and the source returns to its pool.
         }
-
-        _response = default;
-        _state = default!;
-        _converter = null;
-        _hasResponse = false;
-        _transferOwnership = false;
-        _observation = default;
-        _observeErrors = false;
-        _duration = default;
-        // The receive loop still needs the operation when a canceled caller finishes first.
-        // Clear it only after both references are released and the source returns to its pool.
     }
 
     private readonly struct PoolPolicy : IPooledObjectPolicy<ConvertedPendingResponseSource<TState, TResult>>
@@ -704,9 +721,12 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
 
         public bool TryReset(ConvertedPendingResponseSource<TState, TResult> source)
         {
-            source.ClearResponse();
-            source._commandName = null;
-            source._core.Reset();
+            try { source.ClearResponse(); }
+            finally
+            {
+                source._commandName = null;
+                source._core.Reset();
+            }
             return true;
         }
     }
@@ -816,7 +836,10 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
         finally
         {
             try { Clear(); }
-            catch (Exception error) { failure = error; throw; }
+            catch (Exception error)
+            {
+                if (failure is null) { failure = error; throw; }
+            }
             finally
             {
                 CompleteCallerInspection(observation, failure, observeErrors);
@@ -837,18 +860,18 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
 
     private void Clear()
     {
-        if (_hasResponse)
+        try { DisposeResponse(ref _response, ref _hasResponse); }
+        finally
         {
-            _response.Dispose();
+            _response = default;
+            _directResult = null;
+            _hasResponse = false;
+            _hasDirectResult = false;
+            _observeErrors = false;
+            _observation = default;
+            _duration = default;
+            // Keep the operation until the receive reference releases a canceled reply.
         }
-
-        _response = default;
-        _directResult = null;
-        _hasResponse = false;
-        _hasDirectResult = false;
-        _observeErrors = false;
-        _observation = default;
-        // Keep the operation until the receive reference releases a canceled reply.
     }
 
     private readonly struct PoolPolicy : IPooledObjectPolicy<StringPendingResponseSource>
@@ -857,10 +880,12 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
 
         public bool TryReset(StringPendingResponseSource source)
         {
-            source.Clear();
-            source._commandName = null;
-            source._duration = default;
-            source._core.Reset();
+            try { source.Clear(); }
+            finally
+            {
+                source._commandName = null;
+                source._core.Reset();
+            }
             return true;
         }
     }
