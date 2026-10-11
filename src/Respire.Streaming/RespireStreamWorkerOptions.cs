@@ -45,8 +45,38 @@ public sealed record RespireStreamWorkerOptions
     /// <summary>Initial position for a newly created group. Defaults to the beginning.</summary>
     public RespireStreamId GroupStart { get; init; } = RespireStreamId.Beginning;
 
+    /// <summary>Low-cardinality registration label matching [A-Za-z0-9._-]{1,128} for worker metrics and traces.</summary>
+    /// <remarks>Names are case-sensitive and must be unique within the service collection, including the default.
+    /// Use a fixed application role, never a message, tenant or consumer identifier.</remarks>
+    public string TelemetryName { get; init; } = "default";
+
+    /// <summary>Interval of at least one millisecond between group metric polls. No queries run without a gauge listener.</summary>
+    public TimeSpan MetricsPollInterval { get; init; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>Deadline of at least one millisecond for each group metric query. Failures do not stop message processing.</summary>
+    public TimeSpan MetricsPollTimeout { get; init; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>Stream field containing a W3C version-00 traceparent. Null disables parent extraction.</summary>
+    public string? TraceParentField { get; init; } = "traceparent";
+
+    /// <summary>Optional stream field containing W3C tracestate. Invalid state is ignored.</summary>
+    public string? TraceStateField { get; init; } = "tracestate";
+
     internal void Validate()
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(TelemetryName);
+        if (TelemetryName.Length > 128) throw new ArgumentOutOfRangeException(nameof(TelemetryName));
+        foreach (var character in TelemetryName)
+        {
+            if (character is not (>= 'A' and <= 'Z' or >= 'a' and <= 'z' or >= '0' and <= '9' or '.' or '_' or '-'))
+                throw new ArgumentException("Telemetry names must match [A-Za-z0-9._-]{1,128}.", nameof(TelemetryName));
+        }
+        if (TraceParentField is not null) ArgumentException.ThrowIfNullOrWhiteSpace(TraceParentField);
+        if (TraceStateField is not null) ArgumentException.ThrowIfNullOrWhiteSpace(TraceStateField);
+        if (TraceParentField is not null && TraceParentField == TraceStateField)
+            throw new ArgumentException("Trace context fields must have distinct names.");
+        ValidatePollTime(MetricsPollInterval, nameof(MetricsPollInterval));
+        ValidatePollTime(MetricsPollTimeout, nameof(MetricsPollTimeout));
         if (ConsumerName is not null) ArgumentException.ThrowIfNullOrWhiteSpace(ConsumerName);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(ConsumerCount);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(BatchSize);
@@ -63,5 +93,11 @@ public sealed record RespireStreamWorkerOptions
             throw new ArgumentOutOfRangeException(nameof(MinimumIdleTime), "Minimum idle time must be positive and at most Int32.MaxValue milliseconds.");
         if (RecoveryPollInterval <= TimeSpan.Zero || RecoveryPollInterval > TimeSpan.FromMilliseconds(int.MaxValue))
             throw new ArgumentOutOfRangeException(nameof(RecoveryPollInterval), "Recovery polling must be positive and at most Int32.MaxValue milliseconds.");
+    }
+
+    private static void ValidatePollTime(TimeSpan value, string name)
+    {
+        if (value < TimeSpan.FromMilliseconds(1) || value > TimeSpan.FromMilliseconds(int.MaxValue))
+            throw new ArgumentOutOfRangeException(name, "Metric polling times must be at least one and at most Int32.MaxValue milliseconds.");
     }
 }

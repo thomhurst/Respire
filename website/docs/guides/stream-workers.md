@@ -271,8 +271,119 @@ See Redis documentation for [CLAIM](https://redis.io/docs/latest/commands/xreadg
 [XNACK](https://redis.io/docs/latest/commands/xnack/), and
 [XACKDEL](https://redis.io/docs/latest/commands/xackdel/).
 
+## Metrics and distributed tracing
+
+Subscribe to the `Respire.Streaming` meter and activity source using your application's
+OpenTelemetry provider. Install `OpenTelemetry.Extensions.Hosting` and your chosen
+exporter in the host application:
+
+```csharp
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Trace;
+using Respire.Streaming;
+
+builder.Services.AddOpenTelemetry()
+    .WithMetrics(metrics => metrics.AddMeter(RespireStreamWorkerTelemetry.MeterName))
+    .WithTracing(tracing => tracing.AddSource(RespireStreamWorkerTelemetry.ActivitySourceName));
+```
+
+The package creates instruments and activities, not a provider or exporter. Worker telemetry
+is independent of the core client's `RespireMetrics` selection. Configure a fixed,
+low-cardinality `TelemetryName` for each application role, such as `"order-processing"`.
+The default is `"default"`; names must match `[A-Za-z0-9._-]{1,128}`. Names are
+case-sensitive and must be unique within the service collection, including the default.
+Duplicate names fail during registration, even before a telemetry listener is attached,
+so each worker's lag and pending gauges have distinct metric dimensions. Separate hosts
+can reuse names. Do not put tenant, message or consumer identifiers in this name.
+No metric includes stream keys, group names, consumer names,
+message IDs, attempt numbers, exception text or payload fields.
+
+| Instrument | Kind / unit | Meaning |
+| --- | --- | --- |
+| `respire.stream.worker.processing.duration` | Histogram / `s` | Each delivery attempt, including deserialization, scope lifetime and fenced completion. |
+| `respire.stream.worker.group.lag` | Observable gauge / `{message}` | Latest known undelivered group count from `XINFO GROUPS`. |
+| `respire.stream.worker.group.pending` | Observable gauge / `{message}` | Latest group pending count from the same query. |
+| `respire.stream.worker.dead_letters` | Counter / `{message}` | Confirmed atomic dead-letter appends. |
+
+Every measurement has only `respire.worker.name`, plus a bounded
+`respire.worker.outcome` on duration or `respire.worker.reason` on the dead-letter counter.
+Outcomes are `ack`, `nack`, `dead-letter`, `deleted`, `stale`, `canceled` or `error`.
+Reasons are `explicit`, `nack`, `processing-failed` or `delivery-limit`.
+Deleted source bodies are acknowledged without increasing the dead-letter counter.
+Lost replies are uncertain and are not counted, even when Redis committed the append.
+The counter therefore measures confirmed appends rather than a durable audit total.
+
+Each registration runs one serial polling loop, independent of handler count. It queries
+only when either gauge has a listener. `MetricsPollInterval` defaults to 30 seconds;
+`MetricsPollTimeout` defaults to five seconds. Both must be at least one millisecond and at most
+`Int32.MaxValue` milliseconds. A new interval starts after the previous query completes,
+so requests never overlap or retry in a hot loop. `XINFO GROUPS` returns all groups on the
+source stream, so response size depends on the number of groups; only the registered
+group's snapshot is retained. Poll failures, missing groups and timeouts clear the sample.
+Older Redis servers, or Redis groups with indeterminate lag, have no lag measurement;
+unknown lag is never reported as zero. Gauges are snapshots, not exact per-message events.
+Stopping cancels polling and clears samples immediately. Disposal removes the worker's
+meter and rejects late query results and new measurements from handlers still draining.
+Listener callbacks already running may finish after disposal. Metric callbacks do not
+hold the group snapshot lock, so shutdown can cancel readers and honor its deadline
+while a callback is still running.
+Telemetry listener exceptions do not change message acknowledgement, recovery, handler
+failure policy or transport exceptions.
+
+By default the worker extracts `traceparent` and optional `tracestate` stream fields before
+deserialization and handler invocation. Configure `TraceParentField` and `TraceStateField`
+to use other names; set `TraceParentField = null` to disable extraction or
+`TraceStateField = null` to ignore vendor state. Names must be distinct when both are set.
+The producer must supply each field at most once. The supported parent format is the
+[W3C version-00 trace context](https://www.w3.org/TR/trace-context/):
+
+```text
+traceparent = 00-<32 lowercase hex trace ID>-<16 lowercase hex span ID>-<2 lowercase hex flags>
+tracestate  = vendor=value,other=value
+```
+
+Trace and span IDs must be nonzero. Parent bytes must be exactly 55 printable ASCII bytes.
+Vendor state is optional, at most 512 ASCII bytes and 32 W3C list members with distinct keys.
+Spaces and horizontal tabs around members, including whitespace-only members, are accepted;
+tabs inside keys or values and other control characters are rejected.
+Invalid, oversized or duplicate parent fields start a new root; invalid vendor state is
+discarded without discarding a valid parent or rejecting the message. No baggage or
+arbitrary payload fields are copied into activities. Treat propagated trace state as
+untrusted input and apply application privacy policy when choosing vendor state.
+
+For example, a producer can write the currently sampled W3C context with the payload:
+
+```csharp
+using System.Diagnostics;
+using Respire.Streaming;
+
+await using var client = await RespireClient.ConnectAsync("localhost:6379");
+using var producerSource = new ActivitySource("Orders");
+using var publish = producerSource.StartActivity("publish order", ActivityKind.Producer);
+var parent = publish ?? Activity.Current;
+var fields = new List<(string Field, RespireValue Value)> { ("payload", orderJson) };
+if (parent is { IdFormat: ActivityIdFormat.W3C, Id: { } traceparent })
+{
+    fields.Add(("traceparent", traceparent));
+    if (!string.IsNullOrEmpty(parent.TraceStateString))
+        fields.Add(("tracestate", parent.TraceStateString));
+}
+await client.Streams.AddAsync("{orders}:events", fields.ToArray());
+```
+
+Subscribe your tracing provider to `"Orders"` as well to create the producer activity.
+Without a producer activity or ambient context the fields are omitted. The worker creates
+a `Consumer` activity named `"stream process"` for every attempt when sampled, including
+startup replay, idle retries and delivery-limit completion. Retries are sibling activities
+with the original producer parent and distinct span IDs. Handler child activities inherit
+that attempt. Missing or invalid context creates a root rather than inheriting a host
+startup activity. Host context stays suppressed during unsampled attempts too, so handler
+activities start a new root when there is no worker activity. Each attempt disposes its
+activity and restores the prior ambient activity, including when a listener throws.
+An uncooperative handler retains its activity
+until that attempt actually completes, just as it retains its handler scope.
+
 The remaining reliable worker features are tracked independently:
-[worker metrics and tracing (#1232)](https://github.com/thomhurst/Respire/issues/1232), and
 [producer retry deduplication (#892)](https://github.com/thomhurst/Respire/issues/892).
 The full feature remains open in [#891](https://github.com/thomhurst/Respire/issues/891).
 
