@@ -2,7 +2,8 @@ using Respire.Internal;
 
 namespace Respire.Tests;
 
-// Call only in an unkeyed NotInParallel test: configuration is process-wide.
+// Configuration is process-wide. Call only in an unkeyed NotInParallel test, or in one keyed
+// with TestConstraints.MetricConfiguration that asserts no configuration-selected measurement.
 internal sealed class MetricConfigurationScope : IDisposable
 {
     private readonly RespireMetricsOptions _previous = RespireMetrics.Configuration;
