@@ -168,13 +168,13 @@ internal sealed class ReadCursorAffinity
         if (affinity.Replica is { } replica) return router.IsCurrent(replica);
         // An unreachable or replaced primary invalidates the pin so the policy can reselect.
         var core = router.Core;
-        // Without Sentinel the pinned primary is the active endpoint. Sentinel resolution
-        // failures name no data node, so they stay untagged.
+        // Without Sentinel the pinned primary is the active endpoint. Sentinel records each
+        // resolved primary before dialling it and clears the endpoint while querying Sentinels.
         var pinned = core.Sentinel is null ? core.Multiplexer.ActiveConnectionEndpoint : (RespireEndpoint?)null;
         try { await core.EnsureConnectedAsync(cancellationToken, observation).ConfigureAwait(false); }
         catch (Exception error) when (ReadEndpointRouter.IsUnavailable(error, cancellationToken))
         {
-            ReadEndpointRouter.RecordCandidateFailure(observation, error, pinned);
+            ReadEndpointRouter.RecordCandidateFailure(observation, error, core.Sentinel is null ? pinned : observation.Endpoint);
             return false;
         }
         return ReferenceEquals(core.Multiplexer, affinity.Primary);

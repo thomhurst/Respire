@@ -1143,10 +1143,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         where TPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
     {
-        observation.UseEndpoint(new(Host, Port), cancellationToken);
+        // Capacity preflight submits nothing, so it must not name this node.
         if (_inflight.Capacity < 2)
             throw new InvalidOperationException(
                 $"A validated prefixed command needs 2 in-flight slots, but this connection allows {_inflight.Capacity}.");
+        observation.UseEndpoint(new(Host, Port), cancellationToken);
         Interlocked.Increment(ref _responseTimeoutSuppressions);
         try
         {
@@ -1580,12 +1581,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         where TPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
     {
-        observation.UseEndpoint(new(Host, Port), cancellationToken);
+        // Capacity preflight submits nothing, so it must not name this node.
         if (_inflight.Capacity < 2)
         {
             throw new InvalidOperationException(
                 $"A prefixed command needs 2 in-flight slots, but this connection allows {_inflight.Capacity}.");
         }
+        observation.UseEndpoint(new(Host, Port), cancellationToken);
 
         return SendCoreAsync(
             new PrefixedCommand<TPrefix, TCommand>(prefix, command, _cacheMutationAdmission),
@@ -1615,12 +1617,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         where TPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
     {
-        observation.UseEndpoint(new(Host, Port), cancellationToken);
+        // Capacity preflight submits nothing, so it must not name this node.
         if (_inflight.Capacity < 2)
         {
             throw new InvalidOperationException(
                 $"A validated prefixed command needs 2 in-flight slots, but this connection allows {_inflight.Capacity}.");
         }
+        observation.UseEndpoint(new(Host, Port), cancellationToken);
 
         return SendMultiReplyCoreAsync(
             new PrefixedCommand<TPrefix, TCommand>(prefix, command, _cacheMutationAdmission),
@@ -1644,12 +1647,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         where TSecondPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
     {
-        observation.UseEndpoint(new(Host, Port), cancellationToken);
+        // Capacity preflight submits nothing, so it must not name this node.
         if (_inflight.Capacity < 3)
         {
             throw new InvalidOperationException(
                 $"A doubly prefixed command needs 3 in-flight slots, but this connection allows {_inflight.Capacity}.");
         }
+        observation.UseEndpoint(new(Host, Port), cancellationToken);
 
         return SendMultiReplyCoreAsync(
             new PrefixedCommand<TFirstPrefix, PrefixedCommand<TSecondPrefix, TCommand>>(

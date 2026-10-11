@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net.Sockets;
 using System.Text;
+using Respire.Commands;
 using Respire.Internal;
 using Respire.Tests.Networking;
 using TUnit.Assertions;
@@ -216,6 +217,34 @@ public partial class ErrorMetricsTests
         // More queued commands than the connection can hold fail locally before any frame is sent.
         await Assert.That(async () => await connection.SendTransactionAsync(ReadOnlyMemory<byte>.Empty,
             int.MaxValue - 1, observation: observation)).Throws<Exception>();
+        await Assert.That(observation.Endpoint).IsNull();
+    }
+
+    [Test]
+    [Arguments("prefixed")]
+    [Arguments("validated")]
+    [Arguments("validated-blocking")]
+    [Arguments("doubly-validated")]
+    public async Task PrefixedCapacityPreflightNamesNoNode(string path)
+    {
+        await using var server = new FakeRespServer();
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
+        });
+        var connection = client.Core.Multiplexer.GetConnection();
+        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        var command = new Cmd(Verbs.RandomKey);
+        // A one-slot connection cannot hold the prelude and command, so nothing is sent.
+        await Assert.That(async () => _ = path switch
+        {
+            "prefixed" => await connection.SendPrefixedAsync(command, command, throwOnError: true, observation: observation),
+            "validated" => await connection.SendValidatedPrefixedAsync(command, command, observation: observation),
+            "validated-blocking" => await connection.SendValidatedPrefixedWithoutResponseTimeoutAsync(command, command,
+                CancellationToken.None, observation: observation),
+            _ => await connection.SendValidatedPrefixedAsync(command, command, command, observation: observation),
+        }).Throws<InvalidOperationException>();
         await Assert.That(observation.Endpoint).IsNull();
     }
 

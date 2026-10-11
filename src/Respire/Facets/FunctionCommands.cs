@@ -419,8 +419,9 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
         catch (RespireServerException error) when (!library.Replace
             && error.Message == $"ERR Library '{library.Name}' already exists")
         {
-            // Parallel legs share the observation; name this leg's node explicitly.
-            observation.Handled(error, new RespireEndpoint(connection.Host, connection.Port));
+            // Each leg owns its observation, which retains the node that answered LOAD,
+            // including a MOVING replacement.
+            observation.Handled(error);
             // Another client/process may load after our LIST. Accept only identical source;
             // never replace, retry LOAD, or hide a conflicting library's original error.
             matching = await FindMatchingLibraryAsync(connection, library, cancellationToken, observation).ConfigureAwait(false);

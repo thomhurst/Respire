@@ -317,7 +317,9 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 if (!(attempt ??= new()).TryAdd(lease.Pool?.Endpoint
                         ?? new RespireEndpoint(selection.Connection.Host, selection.Connection.Port), error, primaryAlias))
                     attempt.ThrowFirstFailure();
-                RecordCandidateFailure(observation, error, lease.Pool?.Endpoint);
+                // Sentinel discovery can fail after dialling a resolved primary but before
+                // returning its pool; keep the candidate it recorded.
+                RecordCandidateFailure(observation, error, lease.Pool?.Endpoint ?? observation.Endpoint);
                 if (readFrom == RespireReadFrom.Nearest)
                 {
                     continue;
