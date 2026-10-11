@@ -248,7 +248,7 @@ public partial class StandaloneCircuitDispatchTests
             : shape == "import-transaction" ? session!.CreateTransaction() : client.CreateTransaction();
         using var batch = shape == "import-batch" ? session!.CreateBatch() : client.CreateBatch();
         IRespireCommandQueue queue = shape.Contains("transaction", StringComparison.Ordinal) || shape == "watched" ? transaction : batch;
-        await Trip(client, server);
+        Open(client, server);
         var commands = server.CommandsSeen;
         var pending = session is null ? queue.Strings.GetString("transaction") : null;
         var prepared = session is not null ? queue.Hashes.PrepareImport("schema", "field") : null;
@@ -574,6 +574,7 @@ public partial class StandaloneCircuitDispatchTests
         await Assert.That(circuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Closed);
     }
 
+    // Records one endpoint failure directly, opening the circuit without a real timeout.
     private static void Open(RespireClient client, FakeRespServer server)
     {
         var admission = client.Core.Circuits!.Acquire(new("127.0.0.1", server.Port), default);

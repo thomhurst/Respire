@@ -13,6 +13,9 @@ public class AsyncFlushSignalTests
     private const int Wakes = 200;
     private const string AllocationProbeMode = "RESPIRE_TEST_FLUSH_ALLOCATION_PROBE";
     private const string AllocationProbeRuntime = "RESPIRE_TEST_FLUSH_ALLOCATION_RUNTIME";
+    private const string ProbeReadyMarker = "RESPIRE_TEST_FLUSH_PROBE_READY";
+    // Bounds runtime and coverage startup of a child on loaded CI workers.
+    private static readonly TimeSpan ProbeStartupBudget = TimeSpan.FromSeconds(30);
 
     [Test]
     [Arguments(false)]
@@ -172,7 +175,8 @@ public class AsyncFlushSignalTests
     }
 
     // Check both global (non-pool producer) and local (pool producer) dispatch queues.
-    [Test, NotInParallel]
+    // The measurement runs in a child process, which isolates its pool, GC and no-GC region.
+    [Test, ParallelLimiter<ChildProcessProbes>]
     [Arguments(false)]
     [Arguments(true)]
     public async Task DispatchedWakeAllocatesNothing(bool poolProducer)
@@ -230,7 +234,7 @@ public class AsyncFlushSignalTests
             Path.GetFullPath("Respire.Tests.dll"))).Throws<InvalidOperationException>();
     }
 
-    [Test, NotInParallel]
+    [Test, ParallelLimiter<ChildProcessProbes>]
     [Arguments(false)]
     [Arguments(true)]
     public async Task ProbeFailuresIncludeBothOutputStreams(bool timeout)
@@ -238,9 +242,21 @@ public class AsyncFlushSignalTests
         var start = CreateProbeStartInfo(Environment.ProcessPath,
             Environment.GetEnvironmentVariable("DOTNET_HOST_PATH"), typeof(AsyncFlushSignalTests).Assembly.Location);
         start.Environment[AllocationProbeMode] = timeout ? "timeout-control" : "failure-control";
-        // Leave room for runtime and coverage startup on loaded CI workers.
-        var error = await Assert.That(() => RunProbeAsync(start, TimeSpan.FromSeconds(30)))
-            .Throws<InvalidOperationException>();
+        // The timeout control reports when both streams are written. Only then does its short
+        // exit deadline start, so startup time on loaded CI workers cannot decide the outcome.
+        var marker = timeout ? Path.Combine(Path.GetTempPath(), $"respire-probe-ready-{Guid.NewGuid():N}") : null;
+        if (marker is not null) start.Environment[ProbeReadyMarker] = marker;
+        Exception? error;
+        try
+        {
+            error = await Assert.That(() => RunProbeAsync(start,
+                    timeout ? TimeSpan.FromMilliseconds(250) : ProbeStartupBudget, marker))
+                .Throws<InvalidOperationException>();
+        }
+        finally
+        {
+            if (marker is not null) File.Delete(marker);
+        }
         await Assert.That(error!.Message).Contains("probe control stdout");
         await Assert.That(error.Message).Contains("probe control stderr");
         await Assert.That(error.Message).Contains($"{Environment.NewLine}stderr: probe control stderr");
@@ -248,7 +264,9 @@ public class AsyncFlushSignalTests
         else await Assert.That(error.Message).Contains("code 17");
     }
 
-    internal static async Task RunProbeAsync(ProcessStartInfo start, TimeSpan timeout)
+    // readyMarker: a file the child creates once it is running. When given, the exit timeout
+    // starts only after the marker exists (startup itself is bounded by ProbeStartupBudget).
+    internal static async Task RunProbeAsync(ProcessStartInfo start, TimeSpan timeout, string? readyMarker = null)
     {
         using var process = Process.Start(start)!;
         using var readDeadline = new CancellationTokenSource();
@@ -257,6 +275,8 @@ public class AsyncFlushSignalTests
         Exception? failure = null;
         try
         {
+            if (readyMarker is not null)
+                await WaitForMarkerAsync(process, readyMarker).WaitAsync(ProbeStartupBudget);
             await process.WaitForExitAsync().WaitAsync(timeout);
         }
         catch (Exception error) { failure = error; }
@@ -284,6 +304,11 @@ public class AsyncFlushSignalTests
             throw new InvalidOperationException($"Isolated probe exited with code {process.ExitCode}. {diagnostics}");
     }
 
+    private static async Task WaitForMarkerAsync(Process process, string marker)
+    {
+        while (!File.Exists(marker) && !process.HasExited) await Task.Delay(10);
+    }
+
     internal static int? RunIsolatedAllocationProbe()
     {
         var mode = Environment.GetEnvironmentVariable(AllocationProbeMode);
@@ -292,6 +317,8 @@ public class AsyncFlushSignalTests
             // Neither stream supplies a newline: the parent must separate their diagnostics.
             Console.Write("probe control stdout");
             Console.Error.Write("probe control stderr");
+            if (Environment.GetEnvironmentVariable(ProbeReadyMarker) is { Length: > 0 } marker)
+                File.WriteAllText(marker, "");
             if (mode == "timeout-control") Thread.Sleep(Timeout.Infinite);
             return 17;
         }
