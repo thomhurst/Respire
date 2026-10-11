@@ -262,11 +262,31 @@ public class RedlockWireTests
     {
         await using var nodes = await Nodes.StartAsync(static (_, _) => null, delayAcquireMs: 500);
         var group = new RespireRedlockGroup(nodes.Clients, new RespireRedlockOptions { NodeTimeout = TimeSpan.FromSeconds(5) });
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
-        await Assert.That(async () => await group.TryAcquireAsync("redlock:cancel", TimeSpan.FromSeconds(10), cancellation.Token))
-            .Throws<OperationCanceledException>();
+        using var cancellation = new CancellationTokenSource();
+        var acquisition = group.TryAcquireAsync("redlock:cancel", TimeSpan.FromSeconds(10), cancellation.Token).AsTask();
+        // Cancel only once every node holds the SET. A wall-clock cancel could fire before
+        // acquisition starts on a slow runner; no node is contacted then, so none needs a release.
+        using (var limit = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+        {
+            while (!nodes.Servers.All(static server => server.ReceivedCommands.Any(static c => c.StartsWith("SET ", StringComparison.Ordinal))))
+                await Task.Delay(1, limit.Token);
+        }
+        cancellation.Cancel();
+        await Assert.That(async () => await acquisition).Throws<OperationCanceledException>();
         foreach (var server in nodes.Servers)
             await Assert.That(server.ReceivedCommands.Count(static c => c.StartsWith("DELEX ", StringComparison.Ordinal))).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task CancellationBeforeAcquisitionContactsNoNode()
+    {
+        await using var nodes = await Nodes.StartAsync(static (_, _) => null);
+        var group = new RespireRedlockGroup(nodes.Clients, new RespireRedlockOptions { NodeTimeout = TimeSpan.FromSeconds(5) });
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        await Assert.That(async () => await group.TryAcquireAsync("redlock:precancel", TimeSpan.FromSeconds(10), cancellation.Token))
+            .Throws<OperationCanceledException>();
+        await Assert.That(nodes.CommandsSeen).IsEqualTo(0);
     }
 
     [Test]
