@@ -116,6 +116,9 @@ public class ContainerFixtureIntegrationTests
             new RespireContainerOptions { Topology = (RespireContainerTopology)99 },
             new RespireContainerOptions { Server = (RespireContainerServer)99 },
             new RespireContainerOptions { Image = " " },
+            new RespireContainerOptions { SentinelDownAfter = TimeSpan.Zero },
+            new RespireContainerOptions { SentinelFailoverTimeout = TimeSpan.FromMilliseconds(0.5) },
+            new RespireContainerOptions { SentinelFailoverTimeout = TimeSpan.FromDays(30) },
         })
         {
             Func<Task> start = async () => await RespireContainerFixture.StartAsync(options);

@@ -21,6 +21,12 @@ public class SentinelFailoverIntegrationTests
         {
             Server = serverFamily,
             Topology = RespireContainerTopology.Sentinel,
+            // The aborted-election case retries after twice the failover timeout (six seconds
+            // instead of twenty); three seconds still leaves promotion, which Sentinels confirm
+            // through one-second INFO polls, ample room. A one-second down-after proved too short:
+            // a loaded host delayed the promoted primary's replies and Sentinels failed back.
+            SentinelDownAfter = TimeSpan.FromSeconds(3),
+            SentinelFailoverTimeout = TimeSpan.FromSeconds(3),
         });
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(90));
         using var logger = new FailoverLogger();
