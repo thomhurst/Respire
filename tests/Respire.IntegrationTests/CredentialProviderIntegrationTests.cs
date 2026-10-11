@@ -97,6 +97,10 @@ public class CredentialProviderIntegrationTests
                 var current = await ConnectionsAsync(administrators);
                 return current.Count == initial.Count && current.All(pair => initial.ContainsKey(pair.Key) && pair.Value == "auth");
             });
+            // CLIENT LIST reports cmd=auth once Redis has processed AUTH, before the client has
+            // read the reply. The renewal flushes the client cache only after that reply, off the
+            // reply worker, so wait for the client-side flushes rather than asserting them at once.
+            await UntilAsync(() => Task.FromResult(client.ClientSideCache.GetStatistics().ContinuityFlushes >= 2));
             client.ClientSideCache.Count.Should().Be(0);
             client.ClientSideCache.GetStatistics().ContinuityFlushes.Should().BeGreaterThanOrEqualTo(2);
             foreach (var key in new[] { "{a}:credential", "{b}:credential", "{c}:credential" })
