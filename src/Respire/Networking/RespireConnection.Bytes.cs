@@ -12,7 +12,7 @@ internal sealed partial class RespireConnection
         RespireTelemetry.ErrorObservation observation = default, RespireTelemetry.OperationStart durationStarted = default, bool pinToConnection = false)
         where TCommand : struct, IRespCommand
     {
-        if (!cancellationToken.IsCancellationRequested) observation.UseEndpoint(new(Host, Port));
+        observation.UseEndpoint(new(Host, Port), cancellationToken);
         if (observation.IsEmpty)
             return DispatchResponseSource<byte[]?>.Run(
                 (Connection: this, Command: command, Token: cancellationToken, Name: commandName,

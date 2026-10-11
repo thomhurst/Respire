@@ -1048,7 +1048,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         CommandDeadline deadline = default)
         where TCommand : struct, IRespCommand
     {
-        if (!cancellationToken.IsCancellationRequested) observation.UseEndpoint(new(Host, Port));
+        observation.UseEndpoint(new(Host, Port), cancellationToken);
         if (cancellationToken.IsCancellationRequested)
             throw new RespireCommandNotSubmittedException(new OperationCanceledException(cancellationToken));
         if (command is IStreamingRespCommand)
@@ -1094,7 +1094,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
     {
-        if (!cancellationToken.IsCancellationRequested) observation.UseEndpoint(new(Host, Port));
+        observation.UseEndpoint(new(Host, Port), cancellationToken);
         Interlocked.Increment(ref _responseTimeoutSuppressions);
         try
         {
@@ -1143,7 +1143,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         where TPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
     {
-        if (!cancellationToken.IsCancellationRequested) observation.UseEndpoint(new(Host, Port));
+        observation.UseEndpoint(new(Host, Port), cancellationToken);
         if (_inflight.Capacity < 2)
             throw new InvalidOperationException(
                 $"A validated prefixed command needs 2 in-flight slots, but this connection allows {_inflight.Capacity}.");
@@ -1198,7 +1198,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         RespireTelemetry.ErrorObservation observation = default, RespireTelemetry.OperationStart durationStarted = default, bool pinToConnection = false)
         where TCommand : struct, IRespCommand
     {
-        if (!cancellationToken.IsCancellationRequested) observation.UseEndpoint(new(Host, Port));
+        observation.UseEndpoint(new(Host, Port), cancellationToken);
         if (observation.IsEmpty)
             return DispatchResponseSource<TResult>.Run(
                 (Connection: this, Command: command, State: state, Converter: converter, Transfer: transferOwnership,
@@ -1291,7 +1291,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         RespireTelemetry.ErrorObservation observation = default, RespireTelemetry.OperationStart durationStarted = default, bool pinToConnection = false)
         where TCommand : struct, IRespCommand
     {
-        if (!cancellationToken.IsCancellationRequested) observation.UseEndpoint(new(Host, Port));
+        observation.UseEndpoint(new(Host, Port), cancellationToken);
         if (observation.IsEmpty)
             return DispatchResponseSource<string?>.Run(
                 (Connection: this, Command: command, Token: cancellationToken, Name: commandName,
@@ -1380,7 +1380,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         string? preferredZone = null, RespireTelemetry.ErrorObservation observation = default, int errorAttempts = 0, bool pinToConnection = false)
         where TCommand : struct, IRespCommand
     {
-        if (!cancellationToken.IsCancellationRequested) observation.UseEndpoint(new(Host, Port));
+        observation.UseEndpoint(new(Host, Port), cancellationToken);
         if (!commandDeadline.IsSet) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
         source.ErrorAttempts = (observation.IsEmpty ? errorAttempts : observation.Attempts);
         bool enqueued;
@@ -1522,8 +1522,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         RespireTelemetry.ErrorObservation observation = default,
         ClientSideCacheCoordinator.MutationFence mutationFence = default, bool pinToConnection = false)
     {
-        if (!cancellationToken.IsCancellationRequested) observation.UseEndpoint(new(Host, Port));
+        // Capacity preflight submits nothing, so it must not name this node.
         ValidateTransactionCapacity(commandCount, includeMulti);
+        observation.UseEndpoint(new(Host, Port), cancellationToken);
         var prefixReplies = includeMulti ? 1 : 0;
         return SendMultiReplyCoreAsync(
             new TransactionCommand(serializedCommands, includeMulti, transaction, mutationFence), repliesBeforeFinal: commandCount + prefixReplies,
@@ -1579,7 +1580,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         where TPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
     {
-        if (!cancellationToken.IsCancellationRequested) observation.UseEndpoint(new(Host, Port));
+        observation.UseEndpoint(new(Host, Port), cancellationToken);
         if (_inflight.Capacity < 2)
         {
             throw new InvalidOperationException(
@@ -1614,7 +1615,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         where TPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
     {
-        if (!cancellationToken.IsCancellationRequested) observation.UseEndpoint(new(Host, Port));
+        observation.UseEndpoint(new(Host, Port), cancellationToken);
         if (_inflight.Capacity < 2)
         {
             throw new InvalidOperationException(
@@ -1643,7 +1644,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         where TSecondPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
     {
-        if (!cancellationToken.IsCancellationRequested) observation.UseEndpoint(new(Host, Port));
+        observation.UseEndpoint(new(Host, Port), cancellationToken);
         if (_inflight.Capacity < 3)
         {
             throw new InvalidOperationException(
@@ -1674,7 +1675,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         CommandWriteObservation? writeObservation = null, bool armCommandDeadline = true)
         where TCommand : struct, IRespCommand
     {
-        if (!cancellationToken.IsCancellationRequested) observation.UseEndpoint(new(Host, Port));
+        observation.UseEndpoint(new(Host, Port), cancellationToken);
         if (!commandDeadline.IsSet && armCommandDeadline) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
         var replyCount = repliesBeforeFinal + 1;
         var source = MultiReplyPendingResponseSource.Rent(replyCount, firstQueueReply, commandName);
@@ -1738,7 +1739,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         CommandWriteObservation? writeObservation = null, bool deferFlush = false)
         where TCommand : struct, IRespCommand
     {
-        if (!cancellationToken.IsCancellationRequested) observation.UseEndpoint(new(Host, Port));
+        observation.UseEndpoint(new(Host, Port), cancellationToken);
         if (!commandDeadline.IsSet && armCommandDeadline) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
         // TCommand is always a struct, so the JIT specializes this method per command type and
         // folds both type tests to constants; they cost nothing on the ordinary command hot path.
@@ -1795,7 +1796,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         CommandWriteObservation? writeObservation = null)
         where TCommand : struct, IRespCommand
     {
-        if (!cancellationToken.IsCancellationRequested) observation.UseEndpoint(new(Host, Port));
+        observation.UseEndpoint(new(Host, Port), cancellationToken);
         if (!allowConnectionReroute)
             return await SendStreamingAsync(in command, cancellationToken, commandDeadline, streamingRoute,
                 throwOnError, (observation.IsEmpty ? errorAttempts : observation.Attempts), writeObservation)
@@ -1827,7 +1828,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         RespireTelemetry.ErrorObservation observation = default, int errorAttempts = 0, bool pinToConnection = false)
         where TCommand : struct, IRespCommand
     {
-        if (!cancellationToken.IsCancellationRequested) observation.UseEndpoint(new(Host, Port));
+        observation.UseEndpoint(new(Host, Port), cancellationToken);
         if (observation.IsEmpty)
             return DispatchResponseSource.Run(
                 (Connection: this, Command: command, Token: cancellationToken, Name: commandName,

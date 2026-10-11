@@ -3697,7 +3697,12 @@ public sealed partial class RespireClient : IRespireClient
                 var failedNodes = 0;
                 foreach (var connection in connections)
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        // Cancelled before this target was attempted: the failure names no node.
+                        observation.UseEndpoint(null);
+                        cancellationToken.ThrowIfCancellationRequested();
+                    }
                     var leg = new RespireTelemetry.FanOutLegObservation(observation);
                     try
                     {
@@ -3723,7 +3728,14 @@ public sealed partial class RespireClient : IRespireClient
                             }
                         }
                     }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    catch (OperationCanceledException)
+                    {
+                        // Cancellation ends the fan-out at this target. Its leg names the node only
+                        // if the send was dispatched; pre-dispatch cancellation left it empty.
+                        observation.UseEndpoint(leg.LegEndpoint);
+                        throw;
+                    }
+                    catch (Exception ex)
                     {
                         // A later target may still succeed; retain this target's discovery
                         // failure before continuing, without classifying application failures.

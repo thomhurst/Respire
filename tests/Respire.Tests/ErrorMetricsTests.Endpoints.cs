@@ -110,6 +110,41 @@ public partial class ErrorMetricsTests
         await Assert.That(final.Tags["server.port"]).IsEqualTo(rejecting.Port);
     }
     [Test]
+    public async Task ClusterWideFireAndForgetCancellationNamesNoOtherMaster()
+    {
+        using var configuration = new MetricConfigurationScope(new()
+            { Groups = RespireMetricGroups.Resiliency | RespireMetricGroups.Command });
+        await using var first = new FakeRespServer(16, FakeRespServer.OkReply);
+        await using var second = new FakeRespServer(16, FakeRespServer.OkReply);
+        var topology = Encoding.ASCII.GetBytes(
+            $"*2\r\n*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{first.Port}\r\n" +
+            $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{second.Port}\r\n");
+        await using var seed = new FakeRespServer(16, topology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, UseCluster = true, ThreadPoolMonitoring = false,
+            ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", seed.Port)],
+        });
+        using var cancellation = new CancellationTokenSource();
+        // Discovery visits every master; cancellation then wins before the first target dispatches.
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "Respire",
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+            ActivityStarted = activity =>
+            {
+                if (activity.GetTagItem("db.operation.name")?.ToString() == "SCRIPT") cancellation.Cancel();
+            },
+        };
+        ActivitySource.AddActivityListener(listener);
+        using var capture = new Capture();
+        await Assert.That(async () => await client.ExecuteFireAndForgetAsync("SCRIPT", ["FLUSH"], cancellation.Token))
+            .Throws<OperationCanceledException>();
+        var final = capture.Items.Single(item => !(bool)item.Tags["redis.client.errors.internal"]!);
+        await Assert.That(final.Tags.ContainsKey("server.port")).IsFalse();
+    }
+
+    [Test]
     [Arguments("transaction")]
     [Arguments("durability")]
     public async Task QueuedCommandsShareTheAttemptedEndpoint(string route)
@@ -147,6 +182,41 @@ public partial class ErrorMetricsTests
         var finals = capture.Items.Where(item => !(bool)item.Tags["redis.client.errors.internal"]!).ToArray();
         await Assert.That(finals.Length).IsGreaterThanOrEqualTo(2);
         foreach (var item in finals) await Assert.That(item.Tags["server.port"]).IsEqualTo(port);
+    }
+
+    [Test]
+    [Arguments("send")]
+    [Arguments("pinned")]
+    public async Task TransportCancellationClearsARetainedEndpoint(string route)
+    {
+        await using var server = new FakeRespServer();
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var connection = client.Core.Multiplexer.GetConnection();
+        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        // Routing selected another node earlier; cancellation then won before dispatch.
+        observation.UseEndpoint(new("routed.example", 6390));
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        var command = new Commands.RawCommand(FakeRespServer.PingFrame);
+        await Assert.That(async () =>
+        {
+            if (route == "send") using (await connection.SendAsync(command, cancelled.Token, observation: observation)) { }
+            else _ = await connection.EnqueuePinnedAsync(command, cancelled.Token, "PING", observation);
+        }).Throws<Exception>();
+        await Assert.That(observation.Endpoint).IsNull();
+    }
+
+    [Test]
+    public async Task TransactionCapacityPreflightNamesNoNode()
+    {
+        await using var server = new FakeRespServer();
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var connection = client.Core.Multiplexer.GetConnection();
+        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        // More queued commands than the connection can hold fail locally before any frame is sent.
+        await Assert.That(async () => await connection.SendTransactionAsync(ReadOnlyMemory<byte>.Empty,
+            int.MaxValue - 1, observation: observation)).Throws<Exception>();
+        await Assert.That(observation.Endpoint).IsNull();
     }
 
     [Test]
