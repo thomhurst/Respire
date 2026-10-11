@@ -251,7 +251,9 @@ internal static partial class RespireTelemetry
         internal void CopyCompletedAttempts(int prefix, ErrorObservation completed)
         {
             SetAttempts((int)Math.Min((long)Math.Max(0, prefix) + completed.Attempts, int.MaxValue));
-            if (completed.Endpoint is { } endpoint) UseEndpoint(endpoint);
+            // A leg cancelled before dispatch has no endpoint; that must clear the caller's
+            // earlier routing selection rather than leave it on a failure that reached no node.
+            UseEndpoint(completed.Endpoint);
         }
 
         internal void SetAttempts(int attempts)

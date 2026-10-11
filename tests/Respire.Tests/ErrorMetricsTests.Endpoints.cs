@@ -54,6 +54,17 @@ public partial class ErrorMetricsTests
     }
 
     [Test]
+    public async Task HedgeLegWithoutEndpointClearsTheCallersSelection()
+    {
+        using var caller = RespireTelemetry.ErrorObservation.Rent(force: true);
+        using var leg = RespireTelemetry.ErrorObservation.Rent(force: true);
+        // Routing selected a server, but the winning leg was cancelled before it dispatched.
+        caller.UseEndpoint(new("selected.example", 6380));
+        caller.CopyCompletedAttempts(0, leg);
+        await Assert.That(caller.Endpoint).IsNull();
+    }
+
+    [Test]
     public async Task CancelledColdRequestNamesNoNode()
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
