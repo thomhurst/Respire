@@ -101,7 +101,10 @@ internal sealed class BytesPendingResponseSource : PendingResponse, IValueTaskSo
         finally
         {
             try { Clear(); }
-            catch (Exception error) { failure = error; throw; }
+            catch (Exception error)
+            {
+                if (failure is null) { failure = error; throw; }
+            }
             finally
             {
                 CompleteCallerInspection(observation, failure, observeErrors);
@@ -122,10 +125,7 @@ internal sealed class BytesPendingResponseSource : PendingResponse, IValueTaskSo
 
     private void Clear()
     {
-        if (_hasResponse)
-        {
-            _response.Dispose();
-        }
+        DisposeResponse(ref _response, ref _hasResponse);
 
         _response = default;
         _directResult = null;

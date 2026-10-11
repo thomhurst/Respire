@@ -14,6 +14,73 @@ namespace Respire.Tests;
 public class NativeResponseErrorTests
 {
     [Test]
+    [Arguments("converted")]
+    [Arguments("string")]
+    [Arguments("bytes")]
+    public async Task NativeCleanupFailureWithoutEarlierErrorPublishesOnce(string shape)
+    {
+        using var configuration = new MetricConfigurationScope();
+        using var capture = new Capture();
+        var (source, consume) = Rent(shape, true);
+        source.TrySetResult(RespValue.PooledAggregate(RespDataType.Array, new RespValue[1], 2));
+        try { await Assert.That(consume).ThrowsExactly<IndexOutOfRangeException>(); }
+        finally { source.ReleaseRef(); }
+        await Assert.That(capture.Items.Count).IsEqualTo(1);
+        await Assert.That(source.InspectForTests().ReferenceCount).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments("raw")]
+    [Arguments("converted")]
+    [Arguments("cancel")]
+    [Arguments("string")]
+    [Arguments("bytes")]
+    public async Task NativeCleanupPreservesOriginalFailureAndRecyclesSource(string shape)
+    {
+        using var configuration = new MetricConfigurationScope();
+        using var capture = new Capture();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        Exception expected = shape == "cancel" ? new OperationCanceledException(cancellation.Token)
+            : new RespireProtocolException("conversion failure");
+        PendingResponse source;
+        Task consume;
+        if (shape is "converted" or "cancel")
+        {
+            var converted = ConvertedPendingResponseSource<Exception, int>.Rent(expected,
+                static (Exception error, in RespValue _) => throw error, false, "GET");
+            source = converted;
+            consume = converted.Task.AsTask();
+        }
+        else
+        {
+            var rental = Rent(shape, true);
+            source = rental.Source;
+            consume = rental.Consume();
+        }
+        // Invalid element count makes response disposal fail after conversion has failed.
+        source.TrySetResult(RespValue.PooledAggregate(
+            shape is "raw" or "string" or "bytes" ? RespDataType.Error : RespDataType.Array, new RespValue[1], 2));
+        Exception? actual = null;
+        try { await consume; }
+        catch (Exception error) { actual = error; }
+        finally { source.ReleaseRef(); }
+        if (shape is "converted" or "cancel")
+            await Assert.That(ReferenceEquals(actual, expected)).IsTrue();
+        else await Assert.That(actual).IsTypeOf<RespireServerException>();
+        if (shape == "cancel")
+        {
+            await Assert.That(((OperationCanceledException)actual!).CancellationToken).IsEqualTo(cancellation.Token);
+        }
+        await Assert.That(capture.Items.Count).IsEqualTo(1);
+        await Assert.That(capture.Items.Single().Category).IsEqualTo(shape switch
+        {
+            "cancel" => "cancelled", "raw" or "string" or "bytes" => "server", _ => "other",
+        });
+        await Assert.That(source.InspectForTests().ReferenceCount).IsEqualTo(0);
+    }
+
+    [Test]
     [Arguments("raw")]
     [Arguments("converted")]
     [Arguments("string")]

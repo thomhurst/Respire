@@ -200,8 +200,22 @@ internal abstract partial class PendingResponse
     {
         var errorAttempts = ErrorAttempts;
         try { ReleaseCallerRef(); }
-        catch (Exception error) { failure = error; throw; }
+        catch (Exception error)
+        {
+            if (failure is null) { failure = error; throw; }
+        }
         finally { ErrorObservation.FinishFinal(observation, failure, observeErrors, errorAttempts); }
+    }
+
+    // Drop response ownership before disposal can throw. Pool reset must never dispose
+    // the same response again; disposal still precedes caller release and publication.
+    protected static void DisposeResponse(ref RespValue response, ref bool hasResponse)
+    {
+        if (!hasResponse) return;
+        var owned = response;
+        response = default;
+        hasResponse = false;
+        owned.Dispose();
     }
 
     /// <summary>Returns source to its pool after caller and receive loop both release it.</summary>
@@ -517,7 +531,8 @@ internal sealed class PendingResponseSource : PendingResponse, IValueTaskSource<
             }
 
             var error = ResponseReader.ServerError(in response, _commandName);
-            response.Dispose();
+            try { response.Dispose(); }
+            catch { /* Preserve the original server error if response cleanup also fails. */ }
             throw error;
         }
         catch (Exception error) { failure = error; throw; }
@@ -660,7 +675,10 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
         finally
         {
             try { ClearResponse(); }
-            catch (Exception error) { failure = error; throw; }
+            catch (Exception error)
+            {
+                if (failure is null) { failure = error; throw; }
+            }
             finally
             {
                 CompleteCallerInspection(observation, failure, observeErrors);
@@ -681,10 +699,7 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
 
     private void ClearResponse()
     {
-        if (_hasResponse)
-        {
-            _response.Dispose();
-        }
+        DisposeResponse(ref _response, ref _hasResponse);
 
         _response = default;
         _state = default!;
@@ -816,7 +831,10 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
         finally
         {
             try { Clear(); }
-            catch (Exception error) { failure = error; throw; }
+            catch (Exception error)
+            {
+                if (failure is null) { failure = error; throw; }
+            }
             finally
             {
                 CompleteCallerInspection(observation, failure, observeErrors);
@@ -837,10 +855,7 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
 
     private void Clear()
     {
-        if (_hasResponse)
-        {
-            _response.Dispose();
-        }
+        DisposeResponse(ref _response, ref _hasResponse);
 
         _response = default;
         _directResult = null;

@@ -13,7 +13,28 @@
       "Role": "borrower",
       "Member": "Respire.Networking.RespireConnection.ConnectAsync(string,int,RespireConnectionOptions?,ILogger?,CancellationToken,bool):Task<RespireConnection>",
       "Owner": "Respire.RespireClient.ConnectAsync(RespireOptions,CancellationToken):ValueTask<RespireClient>",
-      "Contract": "Physical attempts borrow setup ownership. Recovered connection attempts are handled retries; pool generations do not create caller ownership."
+      "Contract": "Physical attempts borrow setup ownership. Recovered connection attempts are handled retries; pool generations do not create caller ownership. Caller cancellation preserves its token and is not an independent physical error. Handshake and validation cleanup preserve the original failure."
+    },
+    {
+      "Name": "physical-testing-connect-helper",
+      "Role": "borrower",
+      "Member": "Respire.Networking.RespireConnection.ConnectTestingStreamAsync(string,int,RespireConnectionOptions,ILogger?,CancellationToken,bool):Task<RespireConnection>",
+      "Owner": "Respire.RespireClient.ConnectAsync(RespireOptions,CancellationToken):ValueTask<RespireClient>",
+      "Contract": "Testing transport setup follows the same caller boundary as socket setup. Factory, handshake and validation cleanup preserve original errors and cancellation tokens; an observed physical close does not create another setup caller."
+    },
+    {
+      "Name": "physical-disconnect-publication",
+      "Role": "final",
+      "Member": "Respire.Networking.RespireConnection.Abort(Exception?,bool,bool):bool",
+      "Owner": "Respire.Networking.RespireConnection.Abort(Exception?,bool,bool):bool",
+      "Contract": "Only the winning physical close publishes one internal error, outside the write gate. This physical event is independent of logical caller retry counts. Idle sockets, successful calls and already-cancelled callers acquire no additional final caller failure."
+    },
+    {
+      "Name": "physical-pending-drain",
+      "Role": "helper",
+      "Member": "Respire.Networking.RespireConnection.FailAllPending(Exception):void",
+      "Owner": "Respire.Networking.RespireConnection.Abort(Exception?,bool,bool):bool",
+      "Contract": "Drain each FIFO slot once after admission closes. Offer the original physical error to pending completions and release only the native receive reference. A completed caller rejects replacement; caller inspection keeps its own final publication and original cancellation token."
     }
   ],
   "NonRoutes": []
