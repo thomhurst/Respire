@@ -14,6 +14,10 @@ internal sealed partial class RespireCoherentHybridCache
     private int _tagReady;
     private int _tagContinuityLost;
     private int _maxTagsPerEntry;
+    private long _tagGapsConsumed;
+
+    /// <summary>Gap messages the tag worker has fully applied. Tests synchronize on it.</summary>
+    internal long TagGapsConsumed => Interlocked.Read(ref _tagGapsConsumed);
 
     private void StartTagPropagation(RespireHybridCacheCoherenceOptions options)
     {
@@ -43,6 +47,9 @@ internal sealed partial class RespireCoherentHybridCache
                     if (message.Kind == RespireMessageKind.Gap)
                     {
                         ResetTagContinuity();
+                        // Published after the reset retires observations, so a reader that sees
+                        // the count knows this gap can no longer retire later observations.
+                        Interlocked.Increment(ref _tagGapsConsumed);
                         continue;
                     }
                     if (!_tagMessage!.TryDecode(message.Payload.Span, out var sender, out var tag, out var timestamp)
