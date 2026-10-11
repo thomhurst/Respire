@@ -1014,6 +1014,27 @@ later handled events or count updates, including reentrant exporter callbacks. T
 not suppress late native replies: discarded replies retain their own copied attempt count
 and publish internal errors independently after the caller observation has closed.
 
+Streaming uploads retain the caller boundary through dedicated lease acquisition, source
+reads, transparent retries, replay reset, reply inspection and mutation/lease cleanup.
+A source failure preserves its original exception and independent cancellation token.
+An incomplete frame is closed before caller failure is published; a failed first fill
+reclaims the unpublished response. Cleanup never disposes the caller's source stream.
+Replay reset runs after releasing the source lease; a reset failure preserves the
+original server rejection. Caller cancellation can finish while a detached source fill
+still runs. That fill retains its buffer until the fill settles and cannot publish a
+second caller failure.
+
+Streaming downloads have independent header, transport-frame and payload-read lifetimes.
+The GET header boundary ends when the stream is returned. Copy its completed retry
+count through circuit wrappers to the payload before returning observation storage.
+Later observation reuse cannot change payload retry tags. The receive loop owns frame
+validation and FIFO draining independently of caller inspection. A producer failure is
+not a caller failure until a read observes it. Repeated reads of that terminal failure
+publish once across all read overloads. Canceling an individual read preserves that
+read's token and does not close payload ownership: later reads can succeed, cancel
+independently or observe a producer failure. Invalid stream arguments and early disposal
+do not count as Redis payload failures. Exporter exceptions cannot replace any failure.
+
 When adding a command path, declare its public boundary and delegated final owner in
 the independent route inventory. Helper, borrower, transport, and cleanup observations
 must remain distinct from the caller's final publication. Preserve checked native
