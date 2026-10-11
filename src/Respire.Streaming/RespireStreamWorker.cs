@@ -179,6 +179,18 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
     private async Task ProcessAsync(Delivery delivery, string consumer)
     {
         using var observation = _telemetry.Begin(delivery.Entry, options);
+        try { await ProcessAsync(delivery, consumer, observation).ConfigureAwait(false); }
+        catch (OperationCanceledException) when (_handlers.IsCancellationRequested)
+        {
+            // StopAsync's deadline or Dispose canceled an in-flight completion request.
+            // ConsumeAsync treats this as shutdown, so the attempt is canceled, not an error.
+            observation.Outcome = "canceled";
+            throw;
+        }
+    }
+
+    private async Task ProcessAsync(Delivery delivery, string consumer, StreamWorkerTelemetry.Attempt observation)
+    {
         if (options.DeadLetterStream is not null && delivery.Entry.Fields.Count > StreamWorkerScripts.MaximumDeadLetterFields)
             throw new InvalidOperationException("Dead-letter-enabled workers support at most 1024 field/value pairs per entry.");
         if (options.DeliveryLimit is { } limit && delivery.Attempt > limit)

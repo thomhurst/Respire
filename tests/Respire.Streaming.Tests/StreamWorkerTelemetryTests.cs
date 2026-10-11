@@ -804,6 +804,47 @@ public partial class StreamWorkerTests
         finally { gate.Release(); }
     }
 
+    [Test, NotInParallel]
+    [Arguments(RespireStreamWorkerResult.Ack)]
+    [Arguments(RespireStreamWorkerResult.Nack)]
+    [Arguments(RespireStreamWorkerResult.DeadLetter)]
+    public async Task TelemetryInFlightCompletionCancellationIsCanceled(RespireStreamWorkerResult result)
+    {
+        using var metrics = new WorkerMetrics();
+        var stopped = new ConcurrentQueue<Activity>();
+        using var tracing = ListenToWorker(stopped.Enqueue);
+        var state = new State { Handle = (_, _) => ValueTask.FromResult(result) };
+        await using var fixture = await Fixture.CreateAsync(state: state, keyPrefix: "{worker}tenant:", options: new()
+        {
+            TelemetryName = WorkerName, DeadLetterStream = "dlq",
+        });
+        var source = result switch
+        {
+            RespireStreamWorkerResult.Ack => StreamWorkerScripts.AckSource,
+            RespireStreamWorkerResult.Nack => StreamWorkerScripts.NackSource,
+            _ => StreamWorkerScripts.DeadLetterSource,
+        };
+        var gate = new RespireFakeGate();
+        using var fault = fixture.Server.InjectFault("EVAL", RespireFakeFault.Pause(gate),
+            firstArgument: System.Text.Encoding.UTF8.GetBytes(source));
+        try
+        {
+            await fixture.AddAsync(0);
+            await fixture.StartAsync();
+            await fault.Matched.WaitAsync(Deadline);
+            // The deadline has passed, so StopAsync cancels the handler token while the completion is in flight.
+            await fixture.Service.StopAsync(new CancellationToken(canceled: true)).WaitAsync(Deadline);
+            await fixture.Service.ExecuteTask!.WaitAsync(Deadline);
+        }
+        finally { gate.Release(); }
+        await UntilAsync(() => Task.FromResult(metrics.Duration.Count == 1 && stopped.Count == 1));
+        await Assert.That(fixture.Service.ExecuteTask.IsCompletedSuccessfully).IsTrue();
+        await Assert.That(metrics.Duration.Single().Tags["respire.worker.outcome"]).IsEqualTo("canceled");
+        await Assert.That(stopped.Single().GetTagItem("respire.worker.outcome")).IsEqualTo("canceled");
+        await Assert.That(stopped.Single().Status).IsEqualTo(ActivityStatusCode.Unset);
+        await Assert.That(metrics.DeadLetters.Count).IsEqualTo(0);
+    }
+
     private static ActivityListener ListenToWorker(Action<Activity> stopped)
     {
         var listener = new ActivityListener
