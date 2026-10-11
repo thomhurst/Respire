@@ -403,7 +403,10 @@ public partial class StandaloneCircuitDispatchTests
             ClientSideCache = shape == "cache" ? new() : null,
         });
         var (sourceCircuit, clock) = await Prepare(client, source);
-        await Trip(client, source);
+        // Set up circuit recovery without waiting for a wire command timeout. This test
+        // covers admission during MOVING; transport timeout failures are covered separately.
+        Open(client, source);
+        await Assert.That(sourceCircuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Open);
         clock.Advance(TimeSpan.FromMinutes(1));
         var original = client.Core.Multiplexer.GetConnection();
         source.SuppressReply = command => command == "GET parked";
@@ -431,6 +434,9 @@ public partial class StandaloneCircuitDispatchTests
                 await pending.WaitAsync(TimeSpan.FromSeconds(5));
                 await Received(target, shape == "integer" ? "STRLEN routed" : "GET routed");
             }
+            // Dispatch must finish while the old socket still has accepted work to drain.
+            await Assert.That(first.IsCompleted).IsFalse();
+            await Assert.That(second.IsCompleted).IsFalse();
             await Assert.That(sourceCircuit.Snapshot().ActiveProbes).IsEqualTo(0);
             await Assert.That(sourceCircuit.Snapshot().State).IsEqualTo(EndpointCircuitState.HalfOpen);
             await Assert.That(targetCircuit.Snapshot().State).IsEqualTo(targetOpen ? EndpointCircuitState.Open : EndpointCircuitState.Closed);
