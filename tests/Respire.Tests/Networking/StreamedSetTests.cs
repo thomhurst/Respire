@@ -1054,6 +1054,18 @@ public sealed class StreamedSetTests
     }
 
     [Test]
+    public async Task FinalFrameWriteFailurePreservesOriginalException()
+    {
+        var write = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var original = new IOException("Injected final-frame write failure.");
+        var wait = RespireConnection.WaitForFinalFrameWriteAsync(write.Task, CancellationToken.None).AsTask();
+        write.SetException(original);
+        var error = await Assert.That(async () => await wait.WaitAsync(TimeSpan.FromSeconds(5)))
+            .ThrowsExactly<IOException>();
+        await Assert.That(ReferenceEquals(error, original)).IsTrue();
+    }
+
+    [Test]
     public async Task FinalFrameWriteStillPendingAtCancellationThrows()
     {
         var write = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
