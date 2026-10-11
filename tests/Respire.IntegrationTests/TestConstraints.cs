@@ -32,8 +32,10 @@ public static class TestCategories
 /// <summary>
 /// Caps concurrent tests that start their own multi-node topology (cluster, Sentinel, replicas),
 /// which each run several server processes and are sensitive to timing under heavy load.
+/// The limited queue drains after the other tests finish, so it sets the end of the run; most
+/// of each topology's server processes sit idle, so five at once still leaves CPU headroom.
 /// </summary>
 public sealed class DockerHeavy : IParallelLimit
 {
-    public int Limit => 3;
+    public int Limit => 5;
 }

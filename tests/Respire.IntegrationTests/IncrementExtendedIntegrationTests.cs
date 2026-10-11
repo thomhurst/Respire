@@ -4,6 +4,8 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
+// Every case owns its server or fake and pins its protocol.
+[Category(TestCategories.ProtocolIndependent)]
 public class IncrementExtendedIntegrationTests
 {
     [Test]

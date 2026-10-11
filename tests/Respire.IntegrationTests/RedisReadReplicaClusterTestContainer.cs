@@ -7,8 +7,10 @@ using Respire.Testing.Containers;
 
 namespace Respire.IntegrationTests;
 
-internal sealed class RedisReadReplicaClusterTestContainer(IContainer container, int[] ports, string cli) : IAsyncDisposable
+internal sealed class RedisReadReplicaClusterTestContainer(IContainer container, int[] ports) : IAsyncDisposable
 {
+    // Every node publishes its container port unchanged on IPv4 loopback.
+    private readonly NodeCommandSessions _nodes = new(IPAddress.Loopback.ToString());
     internal string Host => container.Hostname;
     internal int Port(int node) => container.GetMappedPublicPort(ports[node]);
     internal Task<string> ClusterSlotsAsync() => CommandAsync(0, "CLUSTER", "SLOTS");
@@ -19,8 +21,7 @@ internal sealed class RedisReadReplicaClusterTestContainer(IContainer container,
     internal static async Task<RedisReadReplicaClusterTestContainer> StartAsync(RespireContainerServer server = RespireContainerServer.Redis)
     {
         var (container, ports) = await StartContainerAsync(server);
-        var cluster = new RedisReadReplicaClusterTestContainer(container, ports,
-            server == RespireContainerServer.Valkey ? "valkey-cli" : "redis-cli");
+        var cluster = new RedisReadReplicaClusterTestContainer(container, ports);
         try
         {
             var ids = new string[6];
@@ -192,13 +193,7 @@ internal sealed class RedisReadReplicaClusterTestContainer(IContainer container,
         }
     }
 
-    private async Task<string> CommandAsync(int node, params string[] arguments)
-    {
-        var result = await container.ExecAsync([cli, "-e", "--raw", "-p", ports[node].ToString(), .. arguments]);
-        if (result.ExitCode != 0)
-            throw new InvalidOperationException($"Replica cluster setup failed: {result.Stdout} {result.Stderr}");
-        return result.Stdout;
-    }
+    private Task<string> CommandAsync(int node, params string[] arguments) => _nodes.CommandAsync(ports[node], arguments);
 
     private static int GetAvailablePort(HashSet<int> excludedPorts)
     {
@@ -222,5 +217,9 @@ internal sealed class RedisReadReplicaClusterTestContainer(IContainer container,
         }
     }
 
-    public ValueTask DisposeAsync() => container.DisposeAsync();
+    public async ValueTask DisposeAsync()
+    {
+        await _nodes.DisposeAsync();
+        await container.DisposeAsync();
+    }
 }

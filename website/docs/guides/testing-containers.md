@@ -65,6 +65,18 @@ connection time. This fixture does not add automatic Sentinel failover to the cl
 
 The Sentinel fixture uses a 5-second down detection interval and a 10-second failover timeout
 so a failed election can retry within bounded test deadlines instead of waiting six minutes.
+Failover tests can shorten both with `SentinelDownAfter` and `SentinelFailoverTimeout`. Sentinels
+retry an aborted election after twice the failover timeout. Very short values trade speed for
+false failovers on an overloaded host, so keep the defaults for tests that do not fail over.
+
+```csharp
+await using var fixture = await RespireContainerFixture.StartAsync(new()
+{
+    Topology = RespireContainerTopology.Sentinel,
+    SentinelDownAfter = TimeSpan.FromSeconds(3),
+    SentinelFailoverTimeout = TimeSpan.FromSeconds(3)
+});
+```
 
 ## Docker networking and limits
 
@@ -112,7 +124,7 @@ no replicas. These are unauthenticated development servers; do not put sensitive
 
 Startup waits for PING, complete Cluster membership/slot coverage, or replication plus Sentinel
 quorum and discovery of the healthy replica by every Sentinel. Readiness polling backs off
-from 100 ms to one second. One `StartupTimeout` covers image pull, every collision retry,
+from 100 ms to 200 ms. One `StartupTimeout` covers image pull, every collision retry,
 and readiness; it is never restarted for a replacement container. Caller cancellation is preserved;
 an elapsed startup deadline reports the stage and latest readiness reply. Cleanup is awaited
 even after the startup deadline expires.

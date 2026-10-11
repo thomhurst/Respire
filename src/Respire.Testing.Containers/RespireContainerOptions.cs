@@ -32,4 +32,13 @@ public sealed record RespireContainerOptions
     public string? Image { get; init; }
     /// <summary>Maximum total startup and readiness time, including image pull and up to two retries for recognized host-port collisions. Defaults to two minutes.</summary>
     public TimeSpan StartupTimeout { get; init; } = TimeSpan.FromMinutes(2);
+    /// <summary>How long Sentinels wait for an unresponsive primary before marking it subjectively down. Defaults to five seconds.</summary>
+    /// <remarks>Applies only to the Sentinel topology and is truncated to whole milliseconds. Shorter values make failover tests
+    /// faster, but a heavily loaded host can then delay replies enough to trigger a failover the test did not request.</remarks>
+    public TimeSpan SentinelDownAfter { get; init; } = TimeSpan.FromSeconds(5);
+    /// <summary>The Sentinel failover timeout. Defaults to ten seconds, instead of the server's three minutes.</summary>
+    /// <remarks>Applies only to the Sentinel topology and is truncated to whole milliseconds. Sentinels retry a failed or
+    /// aborted election after twice this value, and abandon a promotion that takes longer than it. The default keeps
+    /// that retry within bounded test deadlines.</remarks>
+    public TimeSpan SentinelFailoverTimeout { get; init; } = TimeSpan.FromSeconds(10);
 }
