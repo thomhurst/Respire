@@ -177,7 +177,11 @@ internal sealed class ReadCursorAffinity
             ReadEndpointRouter.RecordCandidateFailure(observation, error, core.Sentinel is null ? pinned : observation.Endpoint);
             return false;
         }
-        return ReferenceEquals(core.Multiplexer, affinity.Primary);
+        if (ReferenceEquals(core.Multiplexer, affinity.Primary)) return true;
+        // Connecting recorded the replacement generation. A lost continuation belongs to the
+        // pin's retired owner; a fresh selection records its own node afterwards.
+        observation.UseEndpoint(affinity.Primary?.ActiveConnectionEndpoint);
+        return false;
     }
 
     // The pinned node is known before any connection work, so its failure names it.

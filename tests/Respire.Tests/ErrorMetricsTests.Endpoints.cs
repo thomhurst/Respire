@@ -514,6 +514,58 @@ public partial class ErrorMetricsTests
     }
 
     [Test]
+    public async Task ReplacedSharedCursorPrimaryNamesThePinOwner()
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        await using var replica = new FakeRespServer(
+            "*5\r\n$5\r\nslave\r\n$9\r\n127.0.0.1\r\n:6379\r\n$9\r\nconnected\r\n:0\r\n"u8.ToArray());
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+        });
+        // Models a failover: the shared pin records a primary multiplexer that has since been replaced.
+        await using var replaced = RespireConnectionMultiplexer.Create("127.0.0.1", 1);
+        client.Core.ReadRouter.Cursors.PinShared(RespireReadFrom.PrimaryPreferred, new ReadAffinity { Primary = replaced });
+        using var capture = new Capture();
+        await Assert.That(async () => await client.WithReadFrom(RespireReadFrom.PrimaryPreferred)
+                .ExecuteAsync(RespireCommands.Key.SCAN, ["5"]))
+            .Throws<RespireConnectionException>();
+        // Connecting recorded the live primary; the lost continuation belongs to the pin's owner.
+        var final = capture.Items.Single(item => !(bool)item.Tags["redis.client.errors.internal"]!);
+        await Assert.That(final.Tags["server.port"]).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task MixedCursorWriteGroupRejectionNamesNoNode()
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        await using var primary = new FakeRespServer(16, FakeRespServer.OkReply);
+        await using var replica = new FakeRespServer(16, FakeRespServer.OkReply);
+        var topology = Encoding.ASCII.GetBytes(
+            $"*1\r\n*4\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{primary.Port}\r\n" +
+            $"*2\r\n$9\r\n127.0.0.1\r\n:{replica.Port}\r\n");
+        await using var seed = new FakeRespServer(16, topology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, UseCluster = true,
+            ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", seed.Port)],
+        });
+        using var batch = client.WithReadFrom(RespireReadFrom.Replica).CreateBatch();
+        var page = batch.Hashes.ScanFieldsPage("{foo}:hash");
+        var write = batch.Set("{foo}:key", "value");
+        using var capture = new Capture();
+        // The replica cursor page and the write share a slot group, which is rejected before submission.
+        await batch.TryExecuteAsync();
+        await Assert.That(page.Error).IsTypeOf<NotSupportedException>();
+        await Assert.That(write.Error).IsTypeOf<NotSupportedException>();
+        var finals = capture.Items.Where(item => !(bool)item.Tags["redis.client.errors.internal"]!).ToArray();
+        await Assert.That(finals).IsNotEmpty();
+        await Assert.That(finals.Any(item => item.Tags.ContainsKey("server.address"))).IsFalse();
+    }
+
+    [Test]
     [Arguments("{foo}:key")]
     [Arguments("{bar}:key")]
     public async Task MissingClusterFunctionKeepsTheCallingNode(string key)
