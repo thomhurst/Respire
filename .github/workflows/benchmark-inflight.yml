@@ -16,13 +16,16 @@ concurrency:
 jobs:
   inflight-comparison:
     if: github.event.label.name == 'run-inflight-benchmarks'
-    name: Compare in-flight FIFO (${{ matrix.error-metrics }}, informational)
+    name: Compare in-flight FIFO (${{ matrix.suite }}, ${{ matrix.error-metrics }}, informational)
     strategy:
       fail-fast: false
       matrix:
         error-metrics: [disabled, enabled]
+        # Keep all three controls for each suite on one runner, within the same timeout.
+        suite: [ring, pipeline]
     env:
       RESPIRE_BENCH_ERRORS: ${{ matrix.error-metrics }}
+      RESPIRE_BENCH_SUITE: ${{ matrix.suite }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -93,13 +96,14 @@ jobs:
             source=baseline
             job=Medium
             filter='*InflightRingBenchmarks.EnqueueAndDequeue'
+            if [ "$RESPIRE_BENCH_SUITE" = pipeline ]; then filter='*DiagnosticsPipelineBenchmarks*'; fi
             if [ "$phase" = candidate ] || [ "$phase" = validation ]; then source=candidate; fi
-            if [ "$phase" = validation ]; then job=Dry; filter='*InflightRingBenchmarks*'; fi
+            if [ "$phase" = validation ]; then job=Dry; fi
             (
               cd "$source"
               git rev-parse HEAD
               dotnet run --project benchmarks/Respire.Benchmarks -c Release -f net10.0 -- \
-                --filter "$filter" '*DiagnosticsPipelineBenchmarks*' --job "$job" --exporters json markdown --disasm --disasmDepth 3 \
+                --filter "$filter" --job "$job" --exporters json markdown --disasm --disasmDepth 3 \
                 --artifacts "$GITHUB_WORKSPACE/results/$phase"
             ) > "$GITHUB_WORKSPACE/$phase.log" 2>&1
           done
@@ -109,24 +113,29 @@ jobs:
           import json
           import os
           from pathlib import Path
+          suite = os.environ["RESPIRE_BENCH_SUITE"]
+          benchmark_type = "DiagnosticsPipelineBenchmarks" if suite == "pipeline" else "InflightRingBenchmarks"
+          expected = 6 if suite == "pipeline" else 1
           for phase in ("validation", "baseline-a", "candidate", "baseline-b"):
               log = Path(f"{phase}.log").read_text()
-              enabled = os.environ["RESPIRE_BENCH_ERRORS"] == "enabled"
-              marker = f"ERROR_METRICS requested={enabled}; published="
-              assert marker in log, f"Missing metric selection evidence: {phase}"
-              if phase in ("validation", "candidate"):
-                  assert marker + "True" in log, f"Candidate errors instrument was not published: {phase}"
-              assert "Assembly listing for method Respire.Benchmarks.InflightRingBenchmarks:EnqueueAndDequeue" in log, \
-                  f"Missing process JIT diagnostics: {phase}"
-              reports = list(Path("results", phase, "results").glob("*-report*.json"))
-              assert reports, f"Missing benchmark results: {phase}"
-              for report in reports:
-                  benchmarks = json.loads(report.read_text())["Benchmarks"]
-                  expected = 6 if "DiagnosticsPipelineBenchmarks" in report.name else 1
-                  assert len(benchmarks) == expected, f"Expected {expected} benchmark cases: {report}"
-                  for benchmark in benchmarks:
-                      statistics = benchmark.get("Statistics")
-                      assert statistics and statistics["Mean"] > 0, f"Failed benchmark: {report}"
+              if suite == "pipeline":
+                  enabled = os.environ["RESPIRE_BENCH_ERRORS"] == "enabled"
+                  marker = f"ERROR_METRICS requested={enabled}; published="
+                  assert marker in log, f"Missing metric selection evidence: {phase}"
+                  if phase in ("validation", "candidate"):
+                      assert marker + "True" in log, f"Candidate errors instrument was not published: {phase}"
+              else:
+                  assert "Assembly listing for method Respire.Benchmarks.InflightRingBenchmarks:EnqueueAndDequeue" in log, \
+                      f"Missing process JIT diagnostics: {phase}"
+              reports = list(Path("results", phase, "results").glob("*-report-full-compressed.json"))
+              assert len(reports) == 1, f"Expected one {suite} report: {phase}"
+              report = reports[0]
+              assert benchmark_type in report.name, f"Wrong suite report: {report}"
+              benchmarks = json.loads(report.read_text())["Benchmarks"]
+              assert len(benchmarks) == expected, f"Expected {expected} benchmark cases: {report}"
+              for benchmark in benchmarks:
+                  statistics = benchmark.get("Statistics")
+                  assert statistics and statistics["Mean"] > 0, f"Failed benchmark: {report}"
       - name: Summarize candidate deltas against both controls
         shell: python
         run: |
@@ -136,8 +145,8 @@ jobs:
           phases = {}
           for phase in ("baseline-a", "candidate", "baseline-b"):
               reports = list(Path("results", phase, "results").glob("*-report-full-compressed.json"))
-              assert len(reports) == 2, f"Expected ring and pipeline reports: {phase}"
-              cases = [case for report in reports for case in json.loads(report.read_text())["Benchmarks"]]
+              assert len(reports) == 1, f"Expected one suite report: {phase}"
+              cases = json.loads(reports[0].read_text())["Benchmarks"]
               phases[phase] = {(case["Type"] + "." + case["Method"], case["Parameters"]): case for case in cases}
           assert phases["baseline-a"].keys() == phases["candidate"].keys() == phases["baseline-b"].keys()
           lines = ["## Candidate versus both baseline controls", "",
@@ -186,7 +195,7 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
-          name: inflight-fifo-comparison-${{ matrix.error-metrics }}
+          name: inflight-fifo-comparison-${{ matrix.suite }}-${{ matrix.error-metrics }}
           path: |
             results/
             *.log
