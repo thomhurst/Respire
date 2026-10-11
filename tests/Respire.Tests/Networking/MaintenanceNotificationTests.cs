@@ -631,7 +631,7 @@ public class MaintenanceNotificationTests
     private static ValueTask<DedicatedConnectionPool> MaintenancePoolAsync(RespireClient client, string key)
         => client.Core.Cluster is { } cluster
             ? cluster.GetDedicatedPoolAsync(ClusterHash.GetSlot(key), CancellationToken.None, discovery: null, observation: default)
-            : client.Core.GetDedicatedPoolAsync(CancellationToken.None);
+            : client.Core.GetDedicatedPoolAsync(CancellationToken.None, observation: default);
 
     private sealed class PausedFirstReadStream() : MemoryStream("payload"u8.ToArray())
     {
@@ -1992,7 +1992,7 @@ public class MaintenanceNotificationTests
         using var initialization = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var pool = cluster
             ? await client.Core.Cluster!.GetDedicatedPoolAsync(null, initialization.Token, discovery: null, observation: default)
-            : await client.Core.GetDedicatedPoolAsync(initialization.Token);
+            : await client.Core.GetDedicatedPoolAsync(initialization.Token, observation: default);
         var blocking = await pool.RentAsync(initialization.Token, armHandshakeDeadline: false);
         pool.Return(blocking);
         var connection = await pool.RentAsync(initialization.Token, armHandshakeDeadline: false, kind: DedicatedLeaseKind.Streaming);
@@ -2025,7 +2025,7 @@ public class MaintenanceNotificationTests
     {
         await using var server = Server(maxConnections: 8);
         await using var client = RespireClient.Create(Options(server));
-        var pool = await client.Core.GetDedicatedPoolAsync(CancellationToken.None);
+        var pool = await client.Core.GetDedicatedPoolAsync(CancellationToken.None, observation: default);
         var kind = streaming ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary;
         var connections = new RespireConnection[4];
         for (var index = 0; index < connections.Length; index++)
@@ -2048,7 +2048,7 @@ public class MaintenanceNotificationTests
         await using var server = Server(maxConnections: 8);
         server.ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : FakeRespServer.OkReply;
         await using var client = RespireClient.Create(Options(server));
-        var pool = await client.Core.GetDedicatedPoolAsync(CancellationToken.None);
+        var pool = await client.Core.GetDedicatedPoolAsync(CancellationToken.None, observation: default);
         var first = new RespireConnection[4];
         for (var index = 0; index < first.Length; index++)
             first[index] = await pool.RentAsync(CancellationToken.None, kind: streamingFirst ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary);

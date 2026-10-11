@@ -98,7 +98,7 @@ public sealed partial class RespireClient
                 for (var attempt = 0; ; attempt++)
                 {
                     var acquisitionToken = ArmDedicatedAcquisition(acquisitionCancellation, commandDeadline, cancellationToken);
-                    pool = await core.GetDedicatedPoolAsync(acquisitionToken).ConfigureAwait(false);
+                    pool = await core.GetDedicatedPoolAsync(acquisitionToken, observation).ConfigureAwait(false);
                     (pool, connection) = await core.RentDedicatedConnectionAsync(pool, acquisitionToken, observation,
                         kind: DedicatedLeaseKind.Streaming).ConfigureAwait(false);
                     acquisitionCancellation?.Disarm();

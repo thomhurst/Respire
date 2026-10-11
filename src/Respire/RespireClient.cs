@@ -1633,7 +1633,7 @@ public sealed partial class RespireClient : IRespireClient
         {
             ObjectDisposedException.ThrowIf(_core.Disposed, this);
             var cluster = _core.Cluster;
-            var pool = cluster is null ? await _core.GetDedicatedPoolAsync(cancellationToken).ConfigureAwait(false)
+            var pool = cluster is null ? await _core.GetDedicatedPoolAsync(cancellationToken, observation).ConfigureAwait(false)
                 : await cluster.GetDedicatedPoolAsync(slot, cancellationToken, discovery: null, observation).ConfigureAwait(false);
             // The owning pool must follow the lease through commit/disposal, even if topology changes.
             RespireConnection connection;
@@ -4232,7 +4232,7 @@ public sealed partial class RespireClient : IRespireClient
                     }
                     else
                     {
-                        pool = await core.GetDedicatedPoolAsync(cancellationToken).ConfigureAwait(false);
+                        pool = await core.GetDedicatedPoolAsync(cancellationToken, observation).ConfigureAwait(false);
                         (pool, connection) = await core.RentDedicatedConnectionAsync(pool, cancellationToken, observation,
                             preferredZone: preferredZone).ConfigureAwait(false);
                     }
@@ -4935,7 +4935,7 @@ public sealed partial class RespireClient : IRespireClient
             else
             {
                 var multiplexer = core.Sentinel is { } sentinel
-                    ? (await sentinel.GetGenerationAsync(cancellationToken).ConfigureAwait(false)).Multiplexer
+                    ? (await sentinel.GetGenerationAsync(cancellationToken, observation: observation).ConfigureAwait(false)).Multiplexer
                     : core.Multiplexer;
                 if (requiresIdentity && core.Sentinel is null && !multiplexer.HasReliableCorrectionOrdering)
                 {

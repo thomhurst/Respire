@@ -174,7 +174,7 @@ public sealed class StreamedSetTests
             Protocol = RespProtocol.Resp2,
             CommandTimeout = TimeSpan.FromSeconds(10),
         });
-        var pool = await client.Core.GetDedicatedPoolAsync(timeout.Token);
+        var pool = await client.Core.GetDedicatedPoolAsync(timeout.Token, observation: default);
         var connection = await pool.RentAsync(timeout.Token, kind: Respire.Internal.DedicatedLeaseKind.Streaming);
         using (await connection.SendCheckedAsync(new Cmd(new Verb("PING")), timeout.Token)) { }
         pool.Return(connection);

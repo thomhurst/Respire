@@ -124,7 +124,7 @@ public sealed partial class RespireClient
             else if (requireIdentity)
             {
                 var multiplexer = core.Sentinel is { } sentinel
-                    ? (await sentinel.GetGenerationAsync(cancellationToken).ConfigureAwait(false)).Multiplexer
+                    ? (await sentinel.GetGenerationAsync(cancellationToken, observation: observation).ConfigureAwait(false)).Multiplexer
                     : core.Multiplexer;
                 connection = await GetTrackedConnectionAsync(multiplexer, cancellationToken).ConfigureAwait(false);
             }

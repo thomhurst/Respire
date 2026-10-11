@@ -71,7 +71,7 @@ public partial class ReadDedicatedRoutingTests
         // The primary helper must rediscover before it can return a pool.
         generation.TryRetire();
         using var caller = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        var first = await router.TryRentPrimaryReadAsync(caller.Token, default, allowFallback: true,
+        var first = await router.TryRentPrimaryReadAsync(caller.Token, observation: default, attempt: default, allowFallback: true,
             preferredZone: null, nearestPrimary: selected.Primary);
         await Assert.That(first.Pool).IsNull();
         await Assert.That(first.Failure).IsTypeOf<RespireConnectionException>();

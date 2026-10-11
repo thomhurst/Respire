@@ -107,7 +107,7 @@ public sealed partial class RespireBatch
             foreach (var op in _ops) op.MutationFence = mutationFence;
             pool = core.Cluster is { } cluster
                 ? await cluster.GetDedicatedPoolAsync(slot, cancellationToken, discovery: null, observation: default).ConfigureAwait(false)
-                : await core.GetDedicatedPoolAsync(cancellationToken).ConfigureAwait(false);
+                : await core.GetDedicatedPoolAsync(cancellationToken, observation: default).ConfigureAwait(false);
             // WAIT uses connection-local replication history, including when this batch only reads.
             if (core.Cluster is { } router)
                 (pool, connection) = await router.RentDedicatedConnectionAsync(

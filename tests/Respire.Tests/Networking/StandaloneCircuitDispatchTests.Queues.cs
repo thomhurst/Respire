@@ -135,7 +135,7 @@ public partial class StandaloneCircuitDispatchTests
             CircuitBreaker = Options(server).CircuitBreaker! with { HalfOpenProbeCount = 1 },
         });
         var (circuit, clock) = await Prepare(client, server);
-        var pool = await client.Core.GetDedicatedPoolAsync(default);
+        var pool = await client.Core.GetDedicatedPoolAsync(default, observation: default);
         var connection = await pool.RentAsync(default);
         pool.Return(connection);
         Open(client, server);
@@ -172,7 +172,7 @@ public partial class StandaloneCircuitDispatchTests
         await using var server = QueueServer();
         await using var client = await RespireClient.ConnectAsync(Options(server));
         await Prepare(client, server);
-        var pool = await client.Core.GetDedicatedPoolAsync(default);
+        var pool = await client.Core.GetDedicatedPoolAsync(default, observation: default);
         var connection = await pool.RentAsync(default);
         pool.Return(connection);
         server.ReplyOverride = (_, command) => command == "WATCH watched" ? "-ERR injected WATCH failure\r\n"u8.ToArray() : null;

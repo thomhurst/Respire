@@ -113,7 +113,8 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
     }
 
     // Background discovery (notifications, pub/sub, coordination) has no logical owner and passes
-    // no observation. Owned connects come through ClientCore.EnsureConnectedAsync(ct, observation).
+    // no observation. Owners pass theirs: every resolved candidate is recorded before it is dialled,
+    // and every successful return names the generation the owner will use.
     internal async ValueTask<Generation> GetGenerationAsync(CancellationToken cancellationToken, bool forceDiscovery = false,
         SentinelHint? notificationHint = null, bool observeEstablishmentErrors = false,
         RespireTelemetry.ErrorObservation observation = default)
@@ -122,7 +123,11 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
         // An unexpected close retires a Sentinel generation, even when that multiplexer
         // could reconnect. Reconnecting the former primary alone cannot establish that it
         // is still the elected primary; discovery and ROLE validation select a new generation.
-        if (!forceDiscovery && Current is { IsRetired: false } current && current.Multiplexer.IsConnected) return current;
+        if (!forceDiscovery && Current is { IsRetired: false } current && current.Multiplexer.IsConnected)
+        {
+            observation.UseEndpoint(current.Multiplexer.ActiveConnectionEndpoint);
+            return current;
+        }
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
         var acquired = false;
         Generation? unpublished = null;
@@ -136,7 +141,11 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
             if (previous is { IsRetired: false } && previous.Multiplexer.IsConnected
                 && (!forceDiscovery || notificationHint is { StartupSubscriptionVersion: > 0 } startup
                     && startup.ReportingSentinel is { } reporter
-                    && !Monitoring.NeedsStartupValidation(reporter, startup.StartupSubscriptionVersion))) return previous;
+                    && !Monitoring.NeedsStartupValidation(reporter, startup.StartupSubscriptionVersion)))
+            {
+                observation.UseEndpoint(previous.Multiplexer.ActiveConnectionEndpoint);
+                return previous;
+            }
             var subscriptionVersion = Monitoring.SubscriptionVersion;
             RespireEndpoint? acceptedReporter = null;
             // Classify against the generation current after acquiring discovery ownership:
@@ -169,6 +178,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
                         throw new RespireConnectionException("Sentinel primary changed while it was being revalidated.");
                     if (acceptedReporter is { } validatedReporter) Monitoring.Validated(validatedReporter, subscriptionVersion);
                 }
+                observation.UseEndpoint(replacement.Multiplexer.ActiveConnectionEndpoint);
                 return replacement;
             }
             unpublished = replacement;
@@ -186,6 +196,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
                     && old.Multiplexer.AllCurrentPeersMatch(replacementPeer.Host, replacementPeer.Port))
                 {
                     if (acceptedReporter is { } validatedReporter) Monitoring.Validated(validatedReporter, subscriptionVersion);
+                    observation.UseEndpoint(old.Multiplexer.ActiveConnectionEndpoint);
                     return old;
                 }
                 if (old is not null) Invalidate(old);
@@ -201,6 +212,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
                 Monitoring.Published();
                 if (acceptedReporter is { } publishedReporter) Monitoring.Validated(publishedReporter, subscriptionVersion);
             }
+            observation.UseEndpoint(replacement.Multiplexer.ActiveConnectionEndpoint);
             return replacement;
         }
         catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(

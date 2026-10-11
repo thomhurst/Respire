@@ -54,6 +54,29 @@ public partial class ErrorMetricsTests
     }
 
     [Test]
+    public async Task CancelledColdRequestNamesNoNode()
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        await using var server = new FakeRespServer();
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+            Endpoints = [new("127.0.0.1", server.Port)],
+        });
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        using var capture = new Capture();
+        await Assert.That(async () => await client.Strings.GetStringAsync("key", cancelled.Token))
+            .Throws<OperationCanceledException>();
+        // A request cancelled before connecting never contacted Redis.
+        foreach (var item in capture.Items)
+        {
+            await Assert.That(item.Tags.ContainsKey("server.address")).IsFalse();
+            await Assert.That(item.Tags.ContainsKey("server.port")).IsFalse();
+        }
+    }
+
+    [Test]
     public async Task FanOutJoinNamesTheLegWhoseExceptionPropagates()
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });

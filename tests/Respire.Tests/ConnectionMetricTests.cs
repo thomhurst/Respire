@@ -670,7 +670,7 @@ public class ConnectionMetricTests
         await using var client = await RespireClient.ConnectAsync(options);
         var pool = client.Core.Cluster is { } cluster
             ? await cluster.GetDedicatedPoolAsync(ClusterHash.GetSlot("lease"), default, discovery: null, observation: default)
-            : await client.Core.GetDedicatedPoolAsync(default);
+            : await client.Core.GetDedicatedPoolAsync(default, observation: default);
         var idle = await pool.RentAsync(default);
         var borrowed = await pool.RentAsync(default, reuseIdle: false);
         var streaming = await pool.RentAsync(default, kind: DedicatedLeaseKind.Streaming);
@@ -800,7 +800,7 @@ public class ConnectionMetricTests
         await using var client = await RespireClient.ConnectAsync(options);
         var pool = client.Core.Cluster is { } cluster
             ? await cluster.GetDedicatedPoolAsync(ClusterHash.GetSlot("lease"), default, discovery: null, observation: default)
-            : await client.Core.GetDedicatedPoolAsync(default);
+            : await client.Core.GetDedicatedPoolAsync(default, observation: default);
         var multiplexer = pool.MovingOwner!;
         var originalOptions = multiplexer.Options;
         var fenceEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

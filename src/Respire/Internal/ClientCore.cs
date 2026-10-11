@@ -170,7 +170,8 @@ internal sealed class ClientCore : IAsyncDisposable
     {
         if (Sentinel is not null) return EnsureSentinelConnectedAsync(cancellationToken, observation);
         if (Cluster is { } cluster) return cluster.EnsureConnectedAsync(cancellationToken, discovery: null, observation);
-        observation.UseEndpoint(Multiplexer.ActiveConnectionEndpoint);
+        // A caller that is already cancelled never dials, so its failure names no node.
+        if (!cancellationToken.IsCancellationRequested) observation.UseEndpoint(Multiplexer.ActiveConnectionEndpoint);
         return Multiplexer.EnsureConnectedAsync(cancellationToken, observeEstablishmentErrors: false);
     }
 
@@ -180,11 +181,12 @@ internal sealed class ClientCore : IAsyncDisposable
         observation.UseEndpoint(generation.Multiplexer.ActiveConnectionEndpoint);
     }
 
-    internal async ValueTask<DedicatedConnectionPool> GetDedicatedPoolAsync(CancellationToken cancellationToken)
+    internal async ValueTask<DedicatedConnectionPool> GetDedicatedPoolAsync(CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation)
     {
         if (TestingDedicatedPoolOverride is { } testingPool) return testingPool;
         if (Sentinel is { } sentinel)
-            return (await sentinel.GetGenerationAsync(cancellationToken).ConfigureAwait(false)).Pool;
+            return (await sentinel.GetGenerationAsync(cancellationToken, observation: observation).ConfigureAwait(false)).Pool;
         // Read the published endpoint here too: a new upload can race the handoff callback.
         RefreshStandaloneDedicatedPool();
         return Volatile.Read(ref _dedicatedPool);
@@ -203,7 +205,7 @@ internal sealed class ClientCore : IAsyncDisposable
         public void RecordRetirement(Exception error, int attempt) { }
         public ValueTask<DedicatedConnectionPool> SelectReplacementAsync(CancellationToken cancellationToken,
             RespireTelemetry.ErrorObservation observation)
-            => owner.GetDedicatedPoolAsync(cancellationToken);
+            => owner.GetDedicatedPoolAsync(cancellationToken, observation);
         public void SetTerminalError(Exception error) { }
         public void Dispose() { }
     }

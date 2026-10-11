@@ -240,7 +240,7 @@ public class DedicatedLeaseAcquisitionTests
         {
             Protocol = RespProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, UseCluster = cluster,
         });
-        var pool = await client.Core.GetDedicatedPoolAsync(CancellationToken.None);
+        var pool = await client.Core.GetDedicatedPoolAsync(CancellationToken.None, observation: default);
         var connection = await pool.RentAsync(CancellationToken.None);
         pool.Return(connection);
         Measure(client.Core, pool, false);

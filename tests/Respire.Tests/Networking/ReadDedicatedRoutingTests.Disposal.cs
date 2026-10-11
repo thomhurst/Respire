@@ -15,7 +15,7 @@ public partial class ReadDedicatedRoutingTests
         await using var primary = Node("primary", false);
         await using var replica = Node("replica", true);
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], RespireReadFrom.PrimaryPreferred));
-        var pool = await client.Core.GetDedicatedPoolAsync(CancellationToken.None);
+        var pool = await client.Core.GetDedicatedPoolAsync(CancellationToken.None, observation: default);
         await pool.RetireAsync();
         using var caller = new CancellationTokenSource(TimeSpan.FromSeconds(1));
         await Assert.That(async () => await client.Core.ReadRouter.RentDedicatedConnectionAsync(

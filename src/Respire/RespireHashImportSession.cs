@@ -66,7 +66,7 @@ public sealed class RespireHashImportSession : IAsyncDisposable
         var core = client.Core;
         var cluster = core.Cluster;
         var pool = cluster is null
-            ? await core.GetDedicatedPoolAsync(cancellationToken).ConfigureAwait(false)
+            ? await core.GetDedicatedPoolAsync(cancellationToken, observation: default).ConfigureAwait(false)
             : await cluster.GetDedicatedPoolAsync(slot, cancellationToken, discovery: null, observation: default).ConfigureAwait(false);
         RespireConnection connection;
         if (cluster is null)

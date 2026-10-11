@@ -273,7 +273,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             };
             if (selection.Replica is not { } replica)
             {
-                var lease = await TryRentPrimaryReadAsync(cancellationToken, attempt,
+                var lease = await TryRentPrimaryReadAsync(cancellationToken, observation, attempt,
                     allowFallback: replicaOnly is null && (readFrom is RespireReadFrom.PrimaryPreferred or RespireReadFrom.Nearest
                         || ReadFallbackPolicy.UsesAvailabilityZone(readFrom)), preferredZone,
                     nearestPrimary: readFrom == RespireReadFrom.Nearest ? selection.Primary : null)
@@ -342,16 +342,17 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         DedicatedConnectionPool? Pool, RespireConnection? Connection, Exception? Failure, bool Retired = false);
 
     internal async ValueTask<PrimaryReadLease> TryRentPrimaryReadAsync(
-        CancellationToken cancellationToken, ReadAttempt? attempt, bool allowFallback, string? preferredZone,
-        RespireConnectionMultiplexer? nearestPrimary = null)
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, ReadAttempt? attempt,
+        bool allowFallback, string? preferredZone, RespireConnectionMultiplexer? nearestPrimary = null)
     {
         DedicatedConnectionPool? pool = null;
         try
         {
-            pool = await core.GetDedicatedPoolAsync(cancellationToken).ConfigureAwait(false);
+            pool = await core.GetDedicatedPoolAsync(cancellationToken, observation).ConfigureAwait(false);
             ObjectDisposedException.ThrowIf(core.Disposed, core);
             cancellationToken.ThrowIfCancellationRequested();
             attempt?.ThrowIfFailed(pool.Endpoint);
+            observation.UseEndpoint(pool.Endpoint);
             var connection = await pool.RentAsync(cancellationToken, preferredZone: preferredZone).ConfigureAwait(false);
             return new(pool, connection, null);
         }
