@@ -52,14 +52,24 @@ public sealed class RespireContainerFixture : IAsyncDisposable
         _container = container;
     }
 
-    internal static IContainer BuildContainer(RespireContainerOptions options, int[] ports)
+    internal static IContainer BuildContainer(RespireContainerOptions options, int[] ports,
+        Func<ContainerBuilder, ContainerBuilder>? configure = null)
     {
         var image = options.Image ?? (options.Server == RespireContainerServer.Redis ? DefaultRedisImage : DefaultValkeyImage);
+        var reservedPorts = options.Topology == RespireContainerTopology.Cluster
+            ? ports.Concat(Enumerable.Range(ClusterBusPortStart, ClusterPrimaryCount))
+            : ports;
+        var reservation = string.Join(',', reservedPorts.Order().Select(Number));
         var builder = new ContainerBuilder(image)
             .WithCreateParameterModifier(parameters =>
             {
                 var hostConfig = parameters.HostConfig!;
                 hostConfig.Init = true;
+                // Replicas and Sentinels connect before all daemons have bound their
+                // ports. Exclude every listener from automatic source-port allocation
+                // in this container's network namespace, including the cluster bus.
+                hostConfig.Sysctls ??= new Dictionary<string, string>();
+                hostConfig.Sysctls["net.ipv4.ip_local_reserved_ports"] = reservation;
                 foreach (var bindings in hostConfig.PortBindings.Values)
                     foreach (var binding in bindings)
                         binding.HostIP = "127.0.0.1";
@@ -71,7 +81,7 @@ public sealed class RespireContainerFixture : IAsyncDisposable
             builder = options.Topology == RespireContainerTopology.Standalone
                 ? builder.WithPortBinding(port, assignRandomHostPort: true)
                 : builder.WithPortBinding(port, port);
-        return builder.Build();
+        return (configure?.Invoke(builder) ?? builder).Build();
     }
 
     /// <summary>The owned container ID, for diagnostics.</summary>
