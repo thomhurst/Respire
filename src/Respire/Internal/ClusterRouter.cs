@@ -514,7 +514,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         }
 
         if (slot is { } refreshSlot
-            && await TryRefreshSlotThroughKnownMastersAsync(refreshSlot, failedOwner, cancellationToken, discovery).ConfigureAwait(false)
+            && await TryRefreshSlotThroughKnownMastersAsync(refreshSlot, failedOwner, cancellationToken, discovery, observation).ConfigureAwait(false)
                 is { } refreshedNode)
         {
             observation.UseEndpoint(refreshedNode.ActiveConnectionEndpoint, cancellationToken);
@@ -804,7 +804,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         }
 
         if (slot is { } refreshSlot
-            && await TryRefreshSlotThroughKnownMastersAsync(refreshSlot, failedOwner, cancellationToken, discovery).ConfigureAwait(false)
+            && await TryRefreshSlotThroughKnownMastersAsync(refreshSlot, failedOwner, cancellationToken, discovery, observation).ConfigureAwait(false)
                 is { } refreshedNode)
         {
             observation.UseEndpoint(refreshedNode.ActiveConnectionEndpoint, cancellationToken);
@@ -1596,7 +1596,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     private async ValueTask<RespireConnectionMultiplexer?> TryRefreshSlotThroughKnownMastersAsync(
         int slot,
         RespireConnectionMultiplexer? failedOwner,
-        CancellationToken cancellationToken, DiscoveryRound? discovery, bool keepUncoveredOwners = false)
+        CancellationToken cancellationToken, DiscoveryRound? discovery, RespireTelemetry.ErrorObservation observation = default,
+        bool keepUncoveredOwners = false)
     {
         var snapshotBatch = new object();
         var expectedTopologyVersion = CaptureTopologyVersion();
@@ -1605,6 +1606,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             // A failed owner can still own other slots. Spend fallback budget on a distinct
             // generation instead of immediately retrying the already rejected connection.
             if (ReferenceEquals(master, failedOwner) || discovery?.HasRejected(master) == true) continue;
+            // Each contacted node names a failure that escapes this refresh.
+            observation.UseEndpoint(master.ActiveConnectionEndpoint, cancellationToken);
             var refreshed = await TryRefreshTopologyAsync(master, cancellationToken, discovery, expectedTopologyVersion, snapshotBatch,
                     keepUncoveredOwners, requiredSlot: keepUncoveredOwners ? slot : null).ConfigureAwait(false);
             if (!refreshed)
@@ -1620,6 +1623,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
             try
             {
+                observation.UseEndpoint(owner.ActiveConnectionEndpoint, cancellationToken);
                 await EnsureRouteNodeConnectedAsync(owner, cancellationToken, discovery).ConfigureAwait(false);
                 SetSeed(master);
                 return owner;

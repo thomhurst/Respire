@@ -1143,10 +1143,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         where TPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
     {
-        // Capacity preflight submits nothing, so it must not name this node.
+        // Capacity preflight submits nothing, so a rejection clears any endpoint retained from routing.
         if (_inflight.Capacity < 2)
+        {
+            observation.UseEndpoint(null);
             throw new InvalidOperationException(
                 $"A validated prefixed command needs 2 in-flight slots, but this connection allows {_inflight.Capacity}.");
+        }
         observation.UseEndpoint(new(Host, Port), cancellationToken);
         Interlocked.Increment(ref _responseTimeoutSuppressions);
         try
@@ -1523,8 +1526,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         RespireTelemetry.ErrorObservation observation = default,
         ClientSideCacheCoordinator.MutationFence mutationFence = default, bool pinToConnection = false)
     {
-        // Capacity preflight submits nothing, so it must not name this node.
-        ValidateTransactionCapacity(commandCount, includeMulti);
+        // Capacity preflight submits nothing, so a rejection clears any endpoint retained from routing.
+        try { ValidateTransactionCapacity(commandCount, includeMulti); }
+        catch { observation.UseEndpoint(null); throw; }
         observation.UseEndpoint(new(Host, Port), cancellationToken);
         var prefixReplies = includeMulti ? 1 : 0;
         return SendMultiReplyCoreAsync(
@@ -1581,9 +1585,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         where TPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
     {
-        // Capacity preflight submits nothing, so it must not name this node.
+        // Capacity preflight submits nothing, so a rejection clears any endpoint retained from routing.
         if (_inflight.Capacity < 2)
         {
+            observation.UseEndpoint(null);
             throw new InvalidOperationException(
                 $"A prefixed command needs 2 in-flight slots, but this connection allows {_inflight.Capacity}.");
         }
@@ -1617,9 +1622,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         where TPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
     {
-        // Capacity preflight submits nothing, so it must not name this node.
+        // Capacity preflight submits nothing, so a rejection clears any endpoint retained from routing.
         if (_inflight.Capacity < 2)
         {
+            observation.UseEndpoint(null);
             throw new InvalidOperationException(
                 $"A validated prefixed command needs 2 in-flight slots, but this connection allows {_inflight.Capacity}.");
         }
@@ -1647,9 +1653,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         where TSecondPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
     {
-        // Capacity preflight submits nothing, so it must not name this node.
+        // Capacity preflight submits nothing, so a rejection clears any endpoint retained from routing.
         if (_inflight.Capacity < 3)
         {
+            observation.UseEndpoint(null);
             throw new InvalidOperationException(
                 $"A doubly prefixed command needs 3 in-flight slots, but this connection allows {_inflight.Capacity}.");
         }

@@ -163,9 +163,12 @@ public sealed partial class RespireBatch
             {
                 cache?.CompleteMutation(in mutationFence);
                 DeferredOperation.ShareEndpoint(_ops, observation);
+                // ReportErrors closes the queued observations, so capture the node for an
+                // acknowledgement failure that only the final publication below reports.
+                var finalEndpoint = observation.Endpoint;
                 var pendingErrors = DeferredOperation.ReportErrors(_ops) != 0;
                 if (operationError is not null && !pendingErrors)
-                    ErrorObservation.FinishFinal(default, operationError);
+                    ErrorObservation.FinishFinal(default, operationError, endpoint: finalEndpoint);
                 if (connection is null && operationError is not null)
                     RespireTelemetry.RecordUnroutedBatchFailure(operation, _ops, static op => op.Operation,
                         core.Options.Database, started, operationError,

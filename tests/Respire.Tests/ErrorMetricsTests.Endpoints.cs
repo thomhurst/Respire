@@ -214,6 +214,8 @@ public partial class ErrorMetricsTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var connection = client.Core.Multiplexer.GetConnection();
         using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        // Routing or pool acquisition can already have named a node, such as an ASK target.
+        observation.UseEndpoint(new("retained.example", 1));
         // More queued commands than the connection can hold fail locally before any frame is sent.
         await Assert.That(async () => await connection.SendTransactionAsync(ReadOnlyMemory<byte>.Empty,
             int.MaxValue - 1, observation: observation)).Throws<Exception>();
@@ -235,6 +237,8 @@ public partial class ErrorMetricsTests
         });
         var connection = client.Core.Multiplexer.GetConnection();
         using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        // Routing or pool acquisition can already have named a node, such as an ASK target.
+        observation.UseEndpoint(new("retained.example", 1));
         var command = new Cmd(Verbs.RandomKey);
         // A one-slot connection cannot hold the prelude and command, so nothing is sent.
         await Assert.That(async () => _ = path switch
@@ -416,6 +420,39 @@ public partial class ErrorMetricsTests
         var final = capture.Items.Single(item => !(bool)item.Tags["redis.client.errors.internal"]!);
         await Assert.That(final.Tags["server.address"]).IsEqualTo("127.0.0.1");
         await Assert.That(final.Tags["server.port"]).IsEqualTo(port);
+    }
+
+    [Test]
+    [Arguments(false, "-ERR replication unavailable\r\n")]
+    [Arguments(true, "-ERR replication unavailable\r\n")]
+    [Arguments(true, "*1\r\n:1\r\n")]
+    public async Task DurabilityAcknowledgementFailureNamesTheDedicatedConnection(bool aof, string reply)
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        // WAIT runs on a second, dedicated connection.
+        await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command.StartsWith(aof ? "WAITAOF " : "WAIT ", StringComparison.Ordinal)
+                ? Encoding.ASCII.GetBytes(reply) : null,
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+        });
+        using var batch = client.CreateBatch();
+        var queued = batch.Set("key", "value");
+        using var capture = new Capture(serverPort: server.Port);
+        // Every queued command succeeds, so only the final publication reports the acknowledgement failure.
+        await Assert.That(async () =>
+        {
+            if (aof) await batch.ExecuteAndWaitForAofAsync(true, 1, TimeSpan.Zero);
+            else await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.Zero);
+        }).Throws<Exception>();
+        await Assert.That(queued.Result).IsTrue();
+        var item = capture.Items.Single();
+        await Assert.That((bool)item.Tags["redis.client.errors.internal"]!).IsFalse();
+        await Assert.That(item.Tags["server.address"]).IsEqualTo("127.0.0.1");
+        await Assert.That(item.Tags["server.port"]).IsEqualTo(server.Port);
     }
 
     [Test]
