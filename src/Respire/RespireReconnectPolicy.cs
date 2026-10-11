@@ -26,6 +26,9 @@ public sealed record RespireReconnectPolicy
     /// before exhaustion. Each dedicated rent starts a new budget, so exhaustion does not disable the pool.
     /// Cluster discovery counts fallbacks after a failed candidate or a rejected route. Successful
     /// required node connections do not consume fallback attempts. New rounds start fresh.
+    /// The first MOVED/ASK redirect in a fresh round consumes an attempt without backoff or
+    /// a discovery Reconnecting event. A failed redirect target still publishes Disconnected.
+    /// Later redirects and candidate failures apply the shared policy delay.
     /// Pub/sub exhaustion ends live subscriptions and prevents new subscriptions in that group.
     /// Cluster sharded subscriptions use a separate group from regular channel/pattern subscriptions.
     /// Leave null for long-lived clients that must keep trying after an outage.

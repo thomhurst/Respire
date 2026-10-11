@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text;
 using Microsoft.Extensions.Logging;
 using Respire.Internal;
@@ -102,13 +103,12 @@ public class ClusterShardedPubSubTests
         await using var cluster = new Cluster(protocol);
         cluster.SecondOverride = (_, command) => command == "SSUBSCRIBE foo"
             ? Encoding.ASCII.GetBytes($"-MOVED {ClusterHash.GetSlot("foo")} 127.0.0.1:{cluster.First.Port}\r\n") : null;
-        // With a configured policy, the redirect is recorded as a discovery failure and the
-        // router waits one policy delay before following it. Skip that wait; the 30-second
-        // policy still makes any unwanted pub/sub recovery exceed the deadline below.
+        // The first redirect must be immediate; the policy delay makes unwanted
+        // pub/sub recovery exceed the deadline below.
         await using var client = cluster.CreateClient(new()
         {
             InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30), JitterRatio = 0,
-        }, discoveryClock: new ImmediateDiscoveryClock());
+        });
         await using var subscription = await client.SubscribeShardedAsync("foo").AsTask().WaitAsync(Deadline);
         await using var added = await client.SubscribeShardedAsync("bar").AsTask().WaitAsync(Deadline);
         await Assert.That(cluster.First.ReceivedCommands.Count(command => command == "SSUBSCRIBE foo")).IsEqualTo(1);
@@ -123,14 +123,158 @@ public class ClusterShardedPubSubTests
         await using var cluster = new Cluster(protocol);
         cluster.SecondOverride = (_, command) => command == "SSUBSCRIBE foo"
             ? Encoding.ASCII.GetBytes($"-ASK {ClusterHash.GetSlot("foo")} 127.0.0.1:{cluster.First.Port}\r\n") : null;
-        await using var client = cluster.CreateClient();
-        await using var subscription = await client.SubscribeShardedAsync("foo");
+        await using var client = cluster.CreateClient(new()
+        {
+            InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30), JitterRatio = 0,
+        });
+        await using var subscription = await client.SubscribeShardedAsync("foo").AsTask().WaitAsync(Deadline);
         var commands = cluster.First.ReceivedCommands;
         var asking = commands.ToList().IndexOf("ASKING");
         var subscribe = commands.ToList().IndexOf("SSUBSCRIBE foo");
         await Assert.That(asking).IsGreaterThanOrEqualTo(0);
         await Assert.That(subscribe).IsGreaterThan(asking);
         await Assert.That(cluster.Second.ReceivedCommands.Contains("SSUBSCRIBE foo")).IsTrue();
+    }
+
+    [Test]
+    [Arguments(2, "MOVED", false)]
+    [Arguments(3, "MOVED", false)]
+    [Arguments(2, "ASK", false)]
+    [Arguments(3, "ASK", false)]
+    [Arguments(2, "MOVED", true)]
+    [Arguments(3, "MOVED", true)]
+    [Arguments(2, "ASK", true)]
+    [Arguments(3, "ASK", true)]
+    public async Task RepeatedSubscriptionRedirectsShareBackoffAndBudget(int protocol, string code, bool exhaust)
+    {
+        await using var cluster = new Cluster(protocol);
+        cluster.SecondOverride = (_, command) => command == "SSUBSCRIBE foo"
+            ? Encoding.ASCII.GetBytes($"-{code} {ClusterHash.GetSlot("foo")} 127.0.0.1:{cluster.First.Port}\r\n") : null;
+        cluster.FirstOverride = (_, command) => command == "SSUBSCRIBE foo"
+            ? Encoding.ASCII.GetBytes($"-{code} {ClusterHash.GetSlot("foo")} 127.0.0.1:{cluster.Second.Port}\r\n") : null;
+        await using var client = cluster.CreateClient(new()
+        {
+            InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30),
+            JitterRatio = 0, MaxAttempts = exhaust ? 1 : 2,
+        });
+        using var deadline = new CancellationTokenSource(Deadline);
+        await client.Core.Cluster!.EnsureConnectedAsync(deadline.Token, discovery: null);
+        var scheduled = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.ReconnectSource == RespireReconnectSource.ClusterDiscovery
+                && (exhaust ? change.ReconnectExhausted : change.NextReconnectDelay is not null))
+                scheduled.TrySetResult(change);
+        };
+        using var caller = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
+        var pending = client.SubscribeShardedAsync("foo", cancellationToken: caller.Token).AsTask();
+        if (exhaust)
+        {
+            // Redirect discovery preserves the last server rejection for the caller.
+            var rejection = await Assert.That(async () => await pending).ThrowsExactly<RespireServerException>();
+            await Assert.That(rejection!.Code).IsEqualTo(code);
+        }
+        var change = await scheduled.Task.WaitAsync(deadline.Token);
+        await Assert.That(change.ReconnectAttempt).IsEqualTo(exhaust ? 1 : 2);
+        await Assert.That(change.ReconnectEpisodeId is > 0).IsTrue();
+        await Assert.That(cluster.Second.ReceivedCommands.Count(command => command == "SSUBSCRIBE foo")).IsEqualTo(1);
+        await Assert.That(cluster.First.ReceivedCommands.Count(command => command == "SSUBSCRIBE foo")).IsEqualTo(1);
+        if (!exhaust)
+        {
+            await Assert.That(change.NextReconnectDelay).IsEqualTo(TimeSpan.FromSeconds(30));
+            await Assert.That(pending.IsCompleted).IsFalse();
+            await caller.CancelAsync();
+            await Assert.That(async () => await pending).Throws<OperationCanceledException>();
+        }
+    }
+
+    [Test]
+    [Arguments(2, "MOVED", false)]
+    [Arguments(3, "MOVED", false)]
+    [Arguments(2, "ASK", false)]
+    [Arguments(3, "ASK", false)]
+    [Arguments(2, "MOVED", true)]
+    [Arguments(3, "MOVED", true)]
+    [Arguments(2, "ASK", true)]
+    [Arguments(3, "ASK", true)]
+    public async Task PostRedirectApplicationFailureDoesNotFailDiscovery(int protocol, string code, bool cancel)
+    {
+        await using var cluster = new Cluster(protocol);
+        cluster.SecondOverride = (_, command) => command == "SSUBSCRIBE foo"
+            ? Encoding.ASCII.GetBytes($"-{code} {ClusterHash.GetSlot("foo")} 127.0.0.1:{cluster.First.Port}\r\n") : null;
+        cluster.FirstOverride = (_, command) => command == "SSUBSCRIBE foo" ? "-NOPERM denied\r\n"u8.ToArray() : null;
+        cluster.First.SuppressReply = command => cancel && command == "SSUBSCRIBE foo";
+        await using var client = cluster.CreateClient(new()
+        {
+            InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30), JitterRatio = 0,
+        });
+        using var deadline = new CancellationTokenSource(Deadline);
+        var router = client.Core.Cluster!;
+        await router.EnsureConnectedAsync(deadline.Token, discovery: null);
+        var changes = new ConcurrentQueue<RespireConnectionStateChange>();
+        var barrier = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var barrierEndpoint = new RespireEndpoint("unused.invalid");
+        router.DiscoveryStateChanged += change =>
+        {
+            changes.Enqueue(change);
+            if (change.Endpoint == barrierEndpoint && change.SourceState == RespireConnectionState.Connected)
+                barrier.TrySetResult();
+        };
+        using var caller = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
+        var pending = client.SubscribeShardedAsync("foo", cancellationToken: caller.Token).AsTask();
+        if (cancel)
+        {
+            await WaitAsync(() => cluster.First.ReceivedCommands.Contains("SSUBSCRIBE foo"));
+            await caller.CancelAsync();
+            var error = await Assert.That(async () => await pending.WaitAsync(deadline.Token)).Throws<OperationCanceledException>();
+            await Assert.That(error!.CancellationToken).IsEqualTo(caller.Token);
+        }
+        else
+        {
+            var error = await Assert.That(async () => await pending.WaitAsync(deadline.Token)).ThrowsExactly<RespireServerException>();
+            await Assert.That(error!.Code).IsEqualTo("NOPERM");
+        }
+        // Flush earlier discovery notifications through the same FIFO queue.
+        var next = new ClusterRouter.DiscoveryRound(router, new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0 });
+        next.Failed(barrierEndpoint, new IOException());
+        await next.BeforeCandidateAsync(barrierEndpoint, deadline.Token);
+        next.Finish();
+        await barrier.Task.WaitAsync(deadline.Token);
+        await Assert.That(changes.All(change => change.Endpoint == barrierEndpoint)).IsTrue();
+        await Assert.That(cluster.First.ReceivedCommands).Contains("SSUBSCRIBE foo");
+        await Assert.That(await client.PublishShardedAsync("bar", "still live", deadline.Token)).IsEqualTo(1L);
+    }
+
+    [Test]
+    [Arguments(2, "MOVED")]
+    [Arguments(3, "MOVED")]
+    [Arguments(2, "ASK")]
+    [Arguments(3, "ASK")]
+    public async Task FailedRedirectSelectionStillFailsDiscovery(int protocol, string code)
+    {
+        await using var cluster = new Cluster(protocol);
+        await using var unavailable = new FakeRespServer(FakeRespServer.OkReply);
+        await unavailable.DisposeAsync();
+        cluster.SecondOverride = (_, command) => command == "SSUBSCRIBE foo"
+            ? Encoding.ASCII.GetBytes($"-{code} {ClusterHash.GetSlot("foo")} 127.0.0.1:{unavailable.Port}\r\n") : null;
+        await using var client = cluster.CreateClient(new()
+        {
+            InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30), JitterRatio = 0,
+        });
+        using var deadline = new CancellationTokenSource(Deadline);
+        await client.Core.Cluster!.EnsureConnectedAsync(deadline.Token, discovery: null);
+        var terminal = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.Core.Cluster.DiscoveryStateChanged += change =>
+        {
+            if (change.SourceState == RespireConnectionState.Disconnected) terminal.TrySetResult(change);
+        };
+        await Assert.That(async () => await client.SubscribeShardedAsync("foo", cancellationToken: deadline.Token))
+            .ThrowsExactly<RespireServerException>();
+        var failed = await terminal.Task.WaitAsync(deadline.Token);
+        await Assert.That(failed.Endpoint.Port).IsEqualTo(unavailable.Port);
+        await Assert.That(failed.Error).IsNotNull();
+        await Assert.That(failed.ReconnectAttempt).IsEqualTo(1);
+        await Assert.That(failed.ReconnectEpisodeId is > 0).IsTrue();
     }
 
     [Test]
@@ -179,11 +323,10 @@ public class ClusterShardedPubSubTests
         await using var cluster = new Cluster(protocol);
         cluster.SecondOverride = (_, command) => command == "SSUBSCRIBE foo"
             ? Encoding.ASCII.GetBytes($"-ASK {ClusterHash.GetSlot("foo")} 127.0.0.1:{cluster.First.Port}\r\n") : null;
-        // The ASK redirect waits one discovery policy delay before it is followed; skip it.
         await using var client = cluster.CreateClient(new()
         {
             InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30), JitterRatio = 0,
-        }, discoveryClock: new ImmediateDiscoveryClock());
+        });
         var clock = new RecoveryClock();
         await using var hub = new SubscriptionHub(client.Core, clock);
         await using var redirected = await hub.SubscribeAsync(SubscriptionKind.Sharded, ["foo"], new(), CancellationToken.None)
@@ -609,13 +752,6 @@ public class ClusterShardedPubSubTests
         internal Task<RecoveryTimer> NextAsync() => _timers.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
     }
 
-    // Completes every cluster discovery backoff at once, leaving other clocks on real time.
-    private sealed class ImmediateDiscoveryClock : TimeProvider
-    {
-        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
-            => System.CreateTimer(callback, state, TimeSpan.Zero, Timeout.InfiniteTimeSpan);
-    }
-
     private sealed class RecoveryTimer(TimerCallback callback, object? state) : ITimer
     {
         private int _finished;
@@ -753,14 +889,12 @@ public class ClusterShardedPubSubTests
         }
         internal RespireClient CreateClient(
             RespireReconnectPolicy? policy = null, ILoggerFactory? logger = null,
-            int maxInflightCommands = 16 * 1024, IRespireCredentialProvider? credentialProvider = null,
-            TimeProvider? discoveryClock = null)
+            int maxInflightCommands = 16 * 1024, IRespireCredentialProvider? credentialProvider = null)
             => RespireClient.Create(new RespireOptions
         {
             UseCluster = true, Protocol = (RespProtocol)_protocol, Connections = 1, ReconnectPolicy = policy,
             LoggerFactory = logger, MaxInflightCommands = maxInflightCommands, CredentialProvider = credentialProvider,
             Endpoints = { new RespireEndpoint("127.0.0.1", First.Port) }, ConnectTimeout = TimeSpan.FromSeconds(1),
-            ClusterDiscoveryClock = discoveryClock ?? TimeProvider.System,
         });
         private byte[] Reply(string command)
         {

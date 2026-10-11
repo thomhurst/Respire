@@ -1,7 +1,9 @@
 using System.Diagnostics;
 using System.Text;
 using Microsoft.Extensions.Caching.Distributed;
+using Respire.Commands;
 using Respire.Infrastructure;
+using Respire.Networking;
 using Respire.Tests.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -639,6 +641,8 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
                 return true;
             },
         };
+        // Recovery checks FIFO draining, not the short identity deadline.
+        server.DelayCommand("PING", 100);
         await using var timeoutClient = await RespireClient.ConnectAsync(
             new RespireOptions
             {
@@ -672,7 +676,11 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         await Assert.That(server.ReceivedCommands.SequenceEqual(["CLIENT ID"])).IsTrue();
         // A late identity reply still drains through FIFO; no cache mutation reached this peer.
         await server.SendRawAsync(":123\r\n"u8.ToArray());
-        await timeoutClient.PingAsync();
+        // Use the same connection with a separate recovery budget. The 50ms deadline
+        // above tests CLIENT ID setup, not scheduling of the follow-up PING on busy CI.
+        using var pong = await timeoutClient.Core.Multiplexer.GetConnection().SendCheckedAsync(
+            new RawCommand(FakeRespServer.PingFrame), commandName: "PING", commandDeadline: CommandDeadline.After(5_000));
+        await Assert.That(pong.AsString()).IsEqualTo("PONG");
         await Assert.That(server.ReceivedCommands.SequenceEqual(["CLIENT ID", "PING"])).IsTrue();
     }
 
