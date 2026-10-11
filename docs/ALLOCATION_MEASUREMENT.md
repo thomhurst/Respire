@@ -215,3 +215,25 @@ pending probe's own slot still joins that probe.
 `CoveredSlotsDoNotAllocate` checks 1,000 already-covered lookups with the same
 no-GC boundary and an escaping allocation positive control. Healthy replica
 selection bypasses the unknown-slot coordinator entirely.
+
+## Cached caller attribution
+
+`SuccessfulCachedCallersAllocateNothingWithErrorsEnabled` already used the boundary
+above when it failed twice on net8.0 in the isolated telemetry step on 2026-10-11:
+98,352 bytes on PR #1412 ([run 38122499608](https://github.com/thomhurst/Respire/actions/runs/38122499608))
+and 49,200 bytes on docs-only PR #1413 ([run 38130458868](https://github.com/thomhurst/Respire/actions/runs/38130458868)).
+Neither PR changes the cached read path, and no recent main commit does.
+
+Local net8.0 and net10.0 runs did not reproduce the delta. These included Windows,
+Linux containers limited to 2 or 4 CPUs, the CI test filter, 2,500 in-process
+repetitions, tiering variations (`TC_CallCountingDelayMs`, `TieredPGO=0`,
+`ReadyToRun=0`), and background pool churn. Both values are multiples of 48 bytes.
+That pattern does not identify a source.
+
+The test keeps the exact zero-byte requirement. The measured method now reads the
+thread counter after each caller. A failure reports the bytes for `GetAsync<int>`,
+`GetStringAsync`, both `GetOrSetAsync` calls and the control slot, the first
+allocating iteration, and the GC collection counts around the region. A late
+iteration from a single caller points at that caller's path. A delta spread across
+callers points at measurement or runtime activity. The positive control must still
+record at least 37,000 bytes in its own slot.
