@@ -24,8 +24,10 @@
 #   - otherwise           -> the only agent CLI on PATH; Codex when both are present.
 #
 # Each run gets its own lock owner (the *_AGENT_LOCK_OWNER_ID variable that
-# scripts/AgentLocks.ps1 reads), so ownership never leaks between units. The agent ends
-# with a `RESULT: ...` line (see the skill's single-unit mode). When nothing is
+# scripts/AgentLocks.ps1 reads), so ownership never leaks between units. Claude units
+# stream JSON events: each event goes to the unit log and each tool call prints one
+# progress line, because plain `claude -p` prints nothing until the unit exits. The agent
+# ends with a `RESULT: ...` line (see the skill's single-unit mode). When nothing is
 # actionable the loop waits -IdleSeconds before the next survey, because pending CI and
 # reviews make new work appear later.
 #
@@ -68,6 +70,30 @@ function Resolve-Agent([string]$Requested) {
     if ($hasCodex) { return 'codex' }
     if ($hasClaude) { return 'claude' }
     throw 'Neither codex nor claude is on PATH. Install one or pass -Agent.'
+}
+
+# Appends one stream-json line to the log, prints a progress line for each tool call,
+# and returns the final answer text from the `result` event.
+function Write-ClaudeEvent([string]$Line, [string]$Log) {
+    Add-Content -LiteralPath $Log -Value $Line
+    try { $streamEvent = $Line | ConvertFrom-Json -ErrorAction Stop }
+    catch {
+        # stderr and other non-JSON output.
+        if ($Line.Trim()) { Write-Host "  $Line" }
+        return
+    }
+    if ($streamEvent.type -eq 'result') { return [string]$streamEvent.result }
+    if ($streamEvent.type -ne 'assistant') { return }
+    foreach ($block in @($streamEvent.message.content)) {
+        if ($block.type -ne 'tool_use') { continue }
+        $toolInput = $block.input
+        $detail = @($toolInput.description, $toolInput.command, $toolInput.file_path, $toolInput.pattern, $toolInput.skill, $toolInput.prompt) |
+            Where-Object { $_ } |
+            Select-Object -First 1
+        $detail = ([string]$detail -replace '\s+', ' ').Trim()
+        if ($detail.Length -gt 120) { $detail = $detail.Substring(0, 117) + '...' }
+        Write-Host ('  {0:HH:mm:ss} {1}: {2}' -f (Get-Date), $block.name, $detail)
+    }
 }
 
 $repo = git -C $PSScriptRoot rev-parse --show-toplevel
@@ -274,18 +300,28 @@ function Get-Prompt($Item) {
     }
 }
 
+# Runs one agent unit and returns its exit code and final answer text.
 function Invoke-Agent([string]$Prompt, [string]$Effort, [string]$Log) {
+    $finalText = $null
     if ($selected -eq 'codex') {
         $effortArgs = if ($Effort) { @('-c', "model_reasoning_effort=$Effort") } else { @() }
-        codex exec --dangerously-bypass-approvals-and-sandbox @effortArgs -C $repo -o $Log $Prompt
+        # Out-Host keeps Codex progress on the console instead of in this function's output.
+        codex exec --dangerously-bypass-approvals-and-sandbox @effortArgs -C $repo -o $Log $Prompt | Out-Host
+        $exitCode = $LASTEXITCODE
+        if (Test-Path -LiteralPath $Log) { $finalText = Get-Content -LiteralPath $Log -Raw }
     }
     else {
         $effortArgs = if ($Effort) { @('--effort', $Effort) } else { @() }
         Push-Location $repo
-        try { claude -p $Prompt --dangerously-skip-permissions @effortArgs *> $Log }
+        try {
+            # The empty pipe closes stdin; otherwise claude waits 3 s for piped input.
+            $finalText = @() | claude -p $Prompt --dangerously-skip-permissions @effortArgs --output-format stream-json --verbose 2>&1 |
+                ForEach-Object { Write-ClaudeEvent -Line "$_" -Log $Log }
+            $exitCode = $LASTEXITCODE
+        }
         finally { Pop-Location }
     }
-    return $LASTEXITCODE
+    return [pscustomobject]@{ ExitCode = $exitCode; Text = ($finalText -join "`n") }
 }
 
 function Wait-Backoff([string]$Reason) {
@@ -344,14 +380,11 @@ while (-not (Test-Path -LiteralPath $stopFile)) {
     $units++
     $effort = if ($item.Light) { $LightEffort } else { $HeavyEffort }
     Write-Host "issue-pr-loop: unit $units ($runId) $($item.Label)$(if ($effort) { " effort=$effort" })"
-    $exitCode = Invoke-Agent (Get-Prompt $item) $effort $log
-
-    $result = $null
-    if (Test-Path -LiteralPath $log) {
-        $result = Select-String -LiteralPath $log -Pattern '^\s*RESULT:\s*(.+)$' |
-            Select-Object -Last 1 |
-            ForEach-Object { $_.Matches[0].Groups[1].Value.Trim() }
-    }
+    $run = Invoke-Agent (Get-Prompt $item) $effort $log
+    $exitCode = $run.ExitCode
+    $result = [regex]::Matches([string]$run.Text, '(?m)^\s*RESULT:\s*(.+)$') |
+        Select-Object -Last 1 |
+        ForEach-Object { $_.Groups[1].Value.Trim() }
 
     if ($item.Kind -ne 'recovery') {
         $status = Invoke-Locks @('status', '-LockName', $item.LockName)
