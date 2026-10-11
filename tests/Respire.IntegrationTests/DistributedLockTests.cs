@@ -128,20 +128,70 @@ public class DistributedLockTests(RedisTestContainer fixture)
     [Test]
     public async Task KeepAlive_RenewsUntilItsScopeStops()
     {
-        // Renewal starts halfway through the lease, so a two-second lease leaves a one-second margin.
-        await using var mutex = await Client.Locks.AcquireOrThrowAsync(Key, TimeSpan.FromSeconds(2));
-        await using (var keepAlive = await mutex.KeepAliveAsync())
+        // Renewal fires halfway through the lease, so the lease minus that point is the slack a
+        // stalled runner gets before the renewal deadline marks ownership lost. A six-second lease
+        // gives three seconds of slack. The test waits for the server-side PTTL to jump back up
+        // rather than sleeping past a fixed margin, so a slow runner only delays the observation.
+        var lease = TimeSpan.FromSeconds(6);
+        await using var mutex = await Client.Locks.AcquireOrThrowAsync(Key, lease);
+        var keepAlive = await mutex.KeepAliveAsync();
+        // Captured up front: the scope disposes its token source when it stops.
+        var renewalStopped = keepAlive.CancellationToken;
+        try
         {
-            // Outlive the original lease: only renewals can keep the lock held after this.
-            await Task.Delay(TimeSpan.FromSeconds(2.5));
+            var renewedTtl = await WaitForLeaseRenewalAsync(lease);
 
+            // Redis reset the expiry to a full lease, well past what the original lease had left.
+            await Assert.That(renewedTtl).IsGreaterThan(lease * 0.75);
             await Assert.That(keepAlive.OwnershipLost).IsFalse();
-            await Assert.That(keepAlive.CancellationToken.IsCancellationRequested).IsFalse();
+            await Assert.That(renewalStopped.IsCancellationRequested).IsFalse();
             await Assert.That(keepAlive.Failure).IsNull();
             await Assert.That(await mutex.VerifyStillHeldAsync()).IsTrue();
         }
+        finally
+        {
+            await keepAlive.DisposeAsync();
+        }
 
+        // Disposing the scope stops renewal without treating the lock as lost.
+        await Assert.That(renewalStopped.IsCancellationRequested).IsTrue();
+        await Assert.That(keepAlive.OwnershipLost).IsFalse();
         await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
+    }
+
+    /// <summary>
+    /// Polls the lock key's PTTL until it rises well above the lowest value seen, which only a
+    /// renewal can cause, and returns the renewed TTL. Fails if the key disappears or no renewal
+    /// lands within two leases.
+    /// </summary>
+    private async Task<TimeSpan> WaitForLeaseRenewalAsync(TimeSpan lease)
+    {
+        var jump = lease / 4;
+        var lowest = TimeSpan.MaxValue;
+        var timeout = Stopwatch.StartNew();
+        while (timeout.Elapsed < lease * 2)
+        {
+            var ttl = await Db.KeyTimeToLiveAsync(Key);
+            if (ttl is null)
+            {
+                throw new InvalidOperationException(
+                    "The lock key expired or was deleted before a renewal was observed.");
+            }
+
+            if (ttl.Value - jump > lowest)
+            {
+                return ttl.Value;
+            }
+
+            if (ttl.Value < lowest)
+            {
+                lowest = ttl.Value;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(50));
+        }
+
+        throw new TimeoutException($"No lease renewal was observed within {lease * 2} (lowest PTTL {lowest}).");
     }
 
     [Test]
