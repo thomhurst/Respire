@@ -313,7 +313,6 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             {
                 // The connection sweep owns EXEC's timeout. Acquisition alone needs a timer
                 // when it cannot use a ready connection; both stages share one absolute budget.
-                sendAttempted = true;
                 result = await SendAsync().ConfigureAwait(false);
 
                 // SendTransactionAsync drains through EXEC before completing, including when it
@@ -559,6 +558,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                             // This lease is exclusive: confirm MULTI before any import can
                             // reach Redis, including when ACLs allow HIMPORT but deny MULTI.
                             importSubmissionAttempted = true;
+                            sendAttempted = true;
                             // Import-only MULTI cannot reroute; keep this decision in the shared policy.
                             using var multi = await _client.SendOnConnectionAsync("MULTI", connection,
                                 new ProtocolCommand<Cmd>(new Cmd(RespireCommands.Transaction.MULTI.Verb)), cancellationToken, commandDeadline: deadline,
@@ -567,6 +567,8 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                             ResponseReader.ExpectOk(in multi);
                             importTransactionStarted = true;
                         }
+                        // Only reaching transport submission lets an empty commit name this node.
+                        sendAttempted = true;
                         reply = await connection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count,
                                 cancellationToken, includeMulti: !ConnectionPolicy.IsImportSession, commandDeadline: deadline,
                                 transaction: this, observation: observation, mutationFence: mutationFence,

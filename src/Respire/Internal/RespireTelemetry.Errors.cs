@@ -431,6 +431,11 @@ internal static partial class RespireTelemetry
     // One owner reports each final boundary: pooled typed sources, routing/script scopes,
     // cache waiters, or deferred execution owners after cleanup. Never wrap one of these
     // with another final observer. Retry producers may be shared by several caller boundaries.
+    // Other not-submitted failures (authentication, reconnect limits) were rejected by a node,
+    // so only waits that end before ring admission drop the endpoint.
+    private static bool IsBeforeAdmission(Exception error)
+        => error is RespireCommandNotSubmittedException or RespireTimeoutException { IsCommandNotSubmitted: true };
+
     internal static void RecordError(Exception error, bool internallyHandled, int retryAttempts = 0,
         RespireEndpoint? endpoint = null)
     {
@@ -442,7 +447,7 @@ internal static partial class RespireTelemetry
         // not a protocol limit. At the cap, classify the remaining wrapper without guessing its cause.
         for (var depth = 0; depth < 16; depth++)
         {
-            notSubmitted |= relevant is RespireCommandNotSubmittedException;
+            notSubmitted |= IsBeforeAdmission(relevant);
             if (relevant is RespireException { ErrorCause: { } cause }) relevant = cause;
             else if (relevant is AggregateException { InnerExceptions.Count: 1 } aggregate)
                 relevant = aggregate.InnerExceptions[0];
@@ -458,10 +463,9 @@ internal static partial class RespireTelemetry
         // rejected endpoint. A route observation can still name an earlier selection (for
         // example the primary before Nearest picked a replica), so the circuit wins.
         if (relevant is RespireCircuitOpenException circuit) endpoint = circuit.Endpoint;
-        // Cancellation before admission (capacity, streaming or credential waits) never reached
-        // a node, so it must not keep the endpoint that routing retained for the attempt.
-        notSubmitted |= relevant is RespireCommandNotSubmittedException;
-        if (notSubmitted) endpoint = null;
+        // Cancellation or a capacity timeout before admission (capacity, streaming or credential
+        // waits) never reached a node, so it must not keep the endpoint routing retained.
+        else if (notSubmitted || IsBeforeAdmission(relevant)) endpoint = null;
         var category = relevant switch
         {
             // This boundary cannot infer the initiator from an exception token. Count

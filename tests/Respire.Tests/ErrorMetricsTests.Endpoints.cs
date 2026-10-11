@@ -587,6 +587,78 @@ public partial class ErrorMetricsTests
     }
 
     [Test]
+    public async Task FreshCursorOverRemovedReplicaPinDoesNotNameIt()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        // The configured replica reports a primary role, so replica selection finds no eligible node.
+        await using var replica = new FakeRespServer(16,
+            "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray());
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+        });
+        var router = client.Core.ReadRouter;
+        // A first selection marks the only replica unhealthy, so the next one fails without contacting it.
+        await Assert.That(async () => await router.GetCursorConnectionAsync(
+                RespireReadFrom.Replica, affinity: null, isContinuation: false, CancellationToken.None, observation: default))
+            .Throws<RespireConnectionException>();
+        await using var removed = new ReadEndpointRouter.Entry(new("removed.example", 6390), client.Core, router);
+        router.Cursors.PinShared(RespireReadFrom.Replica, new ReadAffinity { Replica = removed });
+        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        await Assert.That(async () => await router.GetCursorConnectionAsync(
+                RespireReadFrom.Replica, affinity: null, isContinuation: false, CancellationToken.None, observation))
+            .Throws<Exception>();
+        await Assert.That(observation.Endpoint?.Host).IsNotEqualTo("removed.example");
+    }
+
+    [Test]
+    public async Task CapacityTimeoutNamesNoNode()
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            SuppressReply = command => command.StartsWith("GET held", StringComparison.Ordinal),
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
+            CommandTimeout = TimeSpan.FromMilliseconds(300), Endpoints = [new("127.0.0.1", server.Port)],
+        });
+        // The unanswered GET fills the only in-flight slot until the next command's deadline expires.
+        var held = client.Strings.GetStringAsync("held").AsTask();
+        using var capture = new Capture();
+        var error = await Assert.That(async () => await client.Strings.GetStringAsync("queued"))
+            .Throws<RespireTimeoutException>();
+        await Assert.That(error!.IsCommandNotSubmitted).IsTrue();
+        await Assert.That(async () => await held).Throws<Exception>();
+        // The held GET reached the node and keeps its endpoint; the queued timeout never did.
+        var finals = capture.Items.Where(item => !(bool)item.Tags["redis.client.errors.internal"]!).ToArray();
+        await Assert.That(finals.Count(item => !item.Tags.ContainsKey("server.address")
+            && !item.Tags.ContainsKey("server.port"))).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task CancelledWatchValidationBeforeSubmissionNamesNoNode()
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        await using var server = new FakeRespServer(2, FakeRespServer.OkReply);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+        });
+        await using var transaction = await client.CreateTransactionAsync(["balance"]);
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+        using var capture = new Capture();
+        // WATCH validation enters the send path, but cancellation wins before MULTI/EXEC is submitted.
+        await Assert.That(async () => await transaction.CommitWithWatchValidationAsync(cancelled.Token))
+            .Throws<OperationCanceledException>();
+        var final = capture.Items.Single(item => !(bool)item.Tags["redis.client.errors.internal"]!);
+        await Assert.That(final.Tags.ContainsKey("server.address")).IsFalse();
+    }
+
+    [Test]
     public async Task ReplayResetFailureNamesTheRedirectSource()
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });

@@ -56,6 +56,8 @@ internal sealed class ReadCursorAffinity
 
         // The server that issued this cursor is gone, so no other server can continue it.
         if (isContinuation) throw CursorLost();
+        // A fresh cursor reselects; the stale pin's node must not name a later selection failure.
+        observation.UseEndpoint(null);
 
         await _sharedGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -65,6 +67,7 @@ internal sealed class ReadCursorAffinity
                 if (await IsPinCurrentAsync(router, shared, cancellationToken, observation).ConfigureAwait(false))
                     return await GetSharedPinnedConnectionAsync(router, readFrom, shared, cancellationToken, observation).ConfigureAwait(false);
                 _shared.TryRemove(new KeyValuePair<RespireReadFrom, ReadAffinity>(readFrom, shared));
+                observation.UseEndpoint(null);
             }
 
             var selection = await router.SelectAsync(readFrom, cancellationToken, observation).ConfigureAwait(false);
