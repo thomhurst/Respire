@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text;
 using Microsoft.Extensions.Logging;
 using Respire.Internal;
@@ -185,6 +186,95 @@ public class ClusterShardedPubSubTests
             await caller.CancelAsync();
             await Assert.That(async () => await pending).Throws<OperationCanceledException>();
         }
+    }
+
+    [Test]
+    [Arguments(2, "MOVED", false)]
+    [Arguments(3, "MOVED", false)]
+    [Arguments(2, "ASK", false)]
+    [Arguments(3, "ASK", false)]
+    [Arguments(2, "MOVED", true)]
+    [Arguments(3, "MOVED", true)]
+    [Arguments(2, "ASK", true)]
+    [Arguments(3, "ASK", true)]
+    public async Task PostRedirectApplicationFailureDoesNotFailDiscovery(int protocol, string code, bool cancel)
+    {
+        await using var cluster = new Cluster(protocol);
+        cluster.SecondOverride = (_, command) => command == "SSUBSCRIBE foo"
+            ? Encoding.ASCII.GetBytes($"-{code} {ClusterHash.GetSlot("foo")} 127.0.0.1:{cluster.First.Port}\r\n") : null;
+        cluster.FirstOverride = (_, command) => command == "SSUBSCRIBE foo" ? "-NOPERM denied\r\n"u8.ToArray() : null;
+        cluster.First.SuppressReply = command => cancel && command == "SSUBSCRIBE foo";
+        await using var client = cluster.CreateClient(new()
+        {
+            InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30), JitterRatio = 0,
+        });
+        using var deadline = new CancellationTokenSource(Deadline);
+        var router = client.Core.Cluster!;
+        await router.EnsureConnectedAsync(deadline.Token, discovery: null);
+        var changes = new ConcurrentQueue<RespireConnectionStateChange>();
+        var barrier = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var barrierEndpoint = new RespireEndpoint("unused.invalid");
+        router.DiscoveryStateChanged += change =>
+        {
+            changes.Enqueue(change);
+            if (change.Endpoint == barrierEndpoint && change.SourceState == RespireConnectionState.Connected)
+                barrier.TrySetResult();
+        };
+        using var caller = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
+        var pending = client.SubscribeShardedAsync("foo", cancellationToken: caller.Token).AsTask();
+        if (cancel)
+        {
+            await WaitAsync(() => cluster.First.ReceivedCommands.Contains("SSUBSCRIBE foo"));
+            await caller.CancelAsync();
+            var error = await Assert.That(async () => await pending.WaitAsync(deadline.Token)).Throws<OperationCanceledException>();
+            await Assert.That(error!.CancellationToken).IsEqualTo(caller.Token);
+        }
+        else
+        {
+            var error = await Assert.That(async () => await pending.WaitAsync(deadline.Token)).ThrowsExactly<RespireServerException>();
+            await Assert.That(error!.Code).IsEqualTo("NOPERM");
+        }
+        // Flush earlier discovery notifications through the same FIFO queue.
+        var next = new ClusterRouter.DiscoveryRound(router, new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0 });
+        next.Failed(barrierEndpoint, new IOException());
+        await next.BeforeCandidateAsync(barrierEndpoint, deadline.Token);
+        next.Finish();
+        await barrier.Task.WaitAsync(deadline.Token);
+        await Assert.That(changes.All(change => change.Endpoint == barrierEndpoint)).IsTrue();
+        await Assert.That(cluster.First.ReceivedCommands).Contains("SSUBSCRIBE foo");
+        await Assert.That(await client.PublishShardedAsync("bar", "still live", deadline.Token)).IsEqualTo(1L);
+    }
+
+    [Test]
+    [Arguments(2, "MOVED")]
+    [Arguments(3, "MOVED")]
+    [Arguments(2, "ASK")]
+    [Arguments(3, "ASK")]
+    public async Task FailedRedirectSelectionStillFailsDiscovery(int protocol, string code)
+    {
+        await using var cluster = new Cluster(protocol);
+        await using var unavailable = new FakeRespServer(FakeRespServer.OkReply);
+        await unavailable.DisposeAsync();
+        cluster.SecondOverride = (_, command) => command == "SSUBSCRIBE foo"
+            ? Encoding.ASCII.GetBytes($"-{code} {ClusterHash.GetSlot("foo")} 127.0.0.1:{unavailable.Port}\r\n") : null;
+        await using var client = cluster.CreateClient(new()
+        {
+            InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30), JitterRatio = 0,
+        });
+        using var deadline = new CancellationTokenSource(Deadline);
+        await client.Core.Cluster!.EnsureConnectedAsync(deadline.Token, discovery: null);
+        var terminal = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.Core.Cluster.DiscoveryStateChanged += change =>
+        {
+            if (change.SourceState == RespireConnectionState.Disconnected) terminal.TrySetResult(change);
+        };
+        await Assert.That(async () => await client.SubscribeShardedAsync("foo", cancellationToken: deadline.Token))
+            .ThrowsExactly<RespireServerException>();
+        var failed = await terminal.Task.WaitAsync(deadline.Token);
+        await Assert.That(failed.Endpoint.Port).IsEqualTo(unavailable.Port);
+        await Assert.That(failed.Error).IsNotNull();
+        await Assert.That(failed.ReconnectAttempt).IsEqualTo(1);
+        await Assert.That(failed.ReconnectEpisodeId is > 0).IsTrue();
     }
 
     [Test]

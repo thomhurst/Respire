@@ -132,13 +132,16 @@ internal sealed partial class SubscriptionHub
         }
         RespireConnectionMultiplexer? askSource = null;
         ClusterRouter.DiscoveryRound? discovery = null;
+        var discoveryPending = false;
         try
         {
             for (var redirect = 0; ; redirect++)
             {
+                discoveryPending = true;
                 var primary = askSource is not null
                     ? await CreatePrimaryConnectionAsync(commandConnection.Multiplexer!, askSource, cancellationToken).ConfigureAwait(false)
                     : await GetPrimaryConnectionAsync(commandConnection.Multiplexer!, cancellationToken).ConfigureAwait(false);
+                discoveryPending = false;
                 PrimarySubscriptionConnection? previous;
                 lock (_gate)
                 {
@@ -179,8 +182,10 @@ internal sealed partial class SubscriptionHub
                     }
                     else RespireTelemetry.RecordError(error, internallyHandled: true, retryAttempts: redirect);
                     core.Cluster.RecordRejection(ref discovery, primary.Connection!, error);
+                    discoveryPending = true;
                     commandConnection = await core.Cluster.GetRedirectConnectionAsync(error, primary.Connection!, cancellationToken, slot, discovery)
                         .ConfigureAwait(false);
+                    discoveryPending = false;
                     if (primary.IsAskConnection)
                         await ClosePrimaryAsync(primary).ConfigureAwait(false);
                     askSource = error.Code == RespireErrorCodes.Ask ? primary.AskSource ?? primary.Owner : null;
@@ -205,7 +210,7 @@ internal sealed partial class SubscriptionHub
         }
         catch (Exception error)
         {
-            discovery?.RecordCommandFailure(error, discoveryPending: true, callerToken: cancellationToken);
+            discovery?.RecordCommandFailure(error, discoveryPending, slot, callerToken: cancellationToken);
             if (recovering)
                 lock (_gate) _shardedRecoveryEndpoints.Add(new(commandConnection.Host, commandConnection.Port));
             throw;
