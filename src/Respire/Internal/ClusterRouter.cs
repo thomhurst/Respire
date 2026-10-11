@@ -562,7 +562,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         using var scope = BeginDiscovery(discovery);
         discovery = scope.Round;
         if (error.Code != RespireErrorCodes.ReadOnly && discovery is { HasPendingFailure: false })
-            discovery.Failed(new RespireEndpoint(source.Host, source.Port), error);
+            discovery.Rejected(new RespireEndpoint(source.Host, source.Port), error);
         try
         {
             if (error.Code == RespireErrorCodes.ReadOnly)
@@ -808,7 +808,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         using var scope = BeginDiscovery(discovery);
         discovery = scope.Round;
         if (discovery is { HasPendingFailure: false })
-            discovery.Failed(new RespireEndpoint(source.Host, source.Port), error);
+            discovery.Rejected(new RespireEndpoint(source.Host, source.Port), error);
         try
         {
             if (error.Code == RespireErrorCodes.ReadOnly)

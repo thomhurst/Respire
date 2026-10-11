@@ -102,13 +102,12 @@ public class ClusterShardedPubSubTests
         await using var cluster = new Cluster(protocol);
         cluster.SecondOverride = (_, command) => command == "SSUBSCRIBE foo"
             ? Encoding.ASCII.GetBytes($"-MOVED {ClusterHash.GetSlot("foo")} 127.0.0.1:{cluster.First.Port}\r\n") : null;
-        // With a configured policy, the redirect is recorded as a discovery failure and the
-        // router waits one policy delay before following it. Skip that wait; the 30-second
-        // policy still makes any unwanted pub/sub recovery exceed the deadline below.
+        // The first redirect must be immediate; the policy delay makes unwanted
+        // pub/sub recovery exceed the deadline below.
         await using var client = cluster.CreateClient(new()
         {
             InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30), JitterRatio = 0,
-        }, discoveryClock: new ImmediateDiscoveryClock());
+        });
         await using var subscription = await client.SubscribeShardedAsync("foo").AsTask().WaitAsync(Deadline);
         await using var added = await client.SubscribeShardedAsync("bar").AsTask().WaitAsync(Deadline);
         await Assert.That(cluster.First.ReceivedCommands.Count(command => command == "SSUBSCRIBE foo")).IsEqualTo(1);
@@ -123,8 +122,11 @@ public class ClusterShardedPubSubTests
         await using var cluster = new Cluster(protocol);
         cluster.SecondOverride = (_, command) => command == "SSUBSCRIBE foo"
             ? Encoding.ASCII.GetBytes($"-ASK {ClusterHash.GetSlot("foo")} 127.0.0.1:{cluster.First.Port}\r\n") : null;
-        await using var client = cluster.CreateClient();
-        await using var subscription = await client.SubscribeShardedAsync("foo");
+        await using var client = cluster.CreateClient(new()
+        {
+            InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30), JitterRatio = 0,
+        });
+        await using var subscription = await client.SubscribeShardedAsync("foo").AsTask().WaitAsync(Deadline);
         var commands = cluster.First.ReceivedCommands;
         var asking = commands.ToList().IndexOf("ASKING");
         var subscribe = commands.ToList().IndexOf("SSUBSCRIBE foo");

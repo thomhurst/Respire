@@ -401,7 +401,7 @@ internal sealed partial class ClusterRouter
     {
         if (_options.ReconnectPolicy is not { } policy) return;
         round ??= new DiscoveryRound(this, policy);
-        round.Failed(endpoint, error);
+        round.Rejected(endpoint, error);
     }
 
     internal sealed class DiscoveryRoundUsageException() : InvalidOperationException(
@@ -482,6 +482,7 @@ internal sealed partial class ClusterRouter
         // Only the sequential consumer reads or writes retry/outcome fields. The lifecycle gate
         // excludes overlapping consumers and hands a concurrent Finish to the active transition.
         private Exception? _failure;
+        private bool _failureIsRedirect;
         private HashSet<RespireConnectionMultiplexer>? _rejectedNodes;
         internal bool HasRejected(RespireConnectionMultiplexer node) => _rejectedNodes?.Contains(node) == true;
         internal void FailedNode(RespireConnectionMultiplexer node, Exception error)
@@ -547,18 +548,24 @@ internal sealed partial class ClusterRouter
             try
             {
                 _failure = error;
+                _failureIsRedirect = false;
                 if (Exhaustion is null && ReferenceEquals(_terminalError, error)) _terminalError = null;
             }
             finally { Exit(); }
         }
 
-        internal void Failed(RespireEndpoint endpoint, Exception error, RespireConnectionMultiplexer? rejectedNode = null)
+        internal void Rejected(RespireEndpoint endpoint, Exception error)
+            => Failed(endpoint, error, routingRedirect: error is RespireServerException rejection && IsRedirect(rejection));
+
+        internal void Failed(RespireEndpoint endpoint, Exception error, RespireConnectionMultiplexer? rejectedNode = null,
+            bool routingRedirect = false)
         {
             Enter(error);
             try
             {
                 _endpoint = endpoint;
                 _failure = error;
+                _failureIsRedirect = routingRedirect;
                 // Track generation identity, not its address: a replacement at that address
                 // remains eligible. Allocate only after an actual cold-path rejection.
                 if (rejectedNode is not null)
@@ -584,16 +591,22 @@ internal sealed partial class ClusterRouter
                 }
                 if (policy.IsExhausted(_attempts))
                 {
+                    if (_episode == 0) _episode = Interlocked.Increment(ref _nextDiscoveryEpisode);
                     Exhaustion = new RespireReconnectLimitException(
                         $"Redis Cluster discovery exhausted {_attempts} fallback attempts.", _failure);
                     Publish(RespireConnectionState.Disconnected, _failure, exhausted: true);
                     throw Exhaustion;
                 }
                 var failure = _failure;
+                var immediateRedirect = _failureIsRedirect && _attempts == 0;
                 _failure = null;
+                _failureIsRedirect = false;
                 _endpoint = endpoint;
                 // Unlimited policies must not wrap the backoff index during long-lived recovery.
                 if (_attempts < int.MaxValue) _attempts++;
+                // A first MOVED/ASK consumes the shared budget but does not imply a
+                // connection failure. Only subsequent recovery starts a backoff episode.
+                if (immediateRedirect) return;
                 if (_episode == 0) _episode = Interlocked.Increment(ref _nextDiscoveryEpisode);
                 // A MOVED or ASK reply names a reachable owner, so following it still spends an
                 // attempt but never waits. Only a failure at the redirect target backs off.
@@ -648,9 +661,9 @@ internal sealed partial class ClusterRouter
 
         private void CompleteFinish()
         {
-            // No scheduled fallback means no discovery episode was started; physical
-            // connection health still reports the initial candidate's failure.
-            if (_attempts == 0 || Exhaustion is not null || Volatile.Read(ref owner._disposed) != 0) return;
+            // An immediate redirect does not start a discovery episode. Physical
+            // connection health still reports failures without a scheduled backoff.
+            if (_episode == 0 || Exhaustion is not null || Volatile.Read(ref owner._disposed) != 0) return;
             // Pending failure is retry bookkeeping, not the operation's outcome: another
             // caller may have connected the shared seed before we acquired its gate.
             // Owning scopes and command recovery record terminal errors when selection fails.

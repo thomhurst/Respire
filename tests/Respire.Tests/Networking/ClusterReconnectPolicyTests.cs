@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using System.Text;
 using Respire.Internal;
+using Respire.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -372,9 +373,11 @@ public class ClusterReconnectPolicyTests
     }
 
     [Test]
-    [Arguments("MOVED")]
-    [Arguments("ASK")]
-    public async Task SuccessfulRedirectKeepsPermanentAndTemporaryRouting(string code)
+    [Arguments("MOVED", false)]
+    [Arguments("ASK", false)]
+    [Arguments("MOVED", true)]
+    [Arguments("ASK", true)]
+    public async Task SuccessfulRedirectKeepsPermanentAndTemporaryRouting(string code, bool connectedTarget)
     {
         await using var target = new FakeRespServer(FakeRespServer.OkReply)
         {
@@ -387,12 +390,141 @@ public class ClusterReconnectPolicyTests
             ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? "*0\r\n"u8.ToArray()
                 : command.StartsWith("GET ") ? redirect : null,
         };
-        await using var client = await RespireClient.ConnectAsync(Options(seed.Port));
-        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
-        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
+        var clock = new GatedDiscoveryClock();
+        await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with
+        {
+            ReconnectPolicy = new() { InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30),
+                MaxAttempts = 1, JitterRatio = 0 },
+            ClusterDiscoveryClock = clock,
+        });
+        if (connectedTarget)
+            await client.Core.Cluster!.GetMultiplexer(new("127.0.0.1", target.Port)).EnsureConnectedAsync();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await Assert.That(await client.GetStringAsync("key", deadline.Token)).IsEqualTo("value");
+        await Assert.That(await client.GetStringAsync("key", deadline.Token)).IsEqualTo("value");
+        await Assert.That(clock.Created.Task.IsCompleted).IsFalse();
         await Assert.That(seed.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(code == "ASK" ? 2 : 1);
         await Assert.That(target.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(2);
         await Assert.That(target.ReceivedCommands.Count(command => command == "ASKING")).IsEqualTo(code == "ASK" ? 2 : 0);
+    }
+
+    [Test]
+    [Arguments("MOVED", "command")]
+    [Arguments("ASK", "command")]
+    [Arguments("MOVED", "tracked")]
+    [Arguments("ASK", "tracked")]
+    [Arguments("MOVED", "dedicated")]
+    [Arguments("ASK", "dedicated")]
+    public async Task HealthyRedirectDoesNotStartDiscoveryEpisode(string code, string path)
+    {
+        await using var target = new FakeRespServer(FakeRespServer.OkReply);
+        await using var seed = new FakeRespServer(FakeRespServer.OkReply, "*0\r\n"u8.ToArray());
+        var clock = new GatedDiscoveryClock();
+        await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with
+        {
+            ReconnectPolicy = new() { InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30),
+                MaxAttempts = 1, JitterRatio = 0 },
+            ClusterDiscoveryClock = clock,
+        });
+        var router = client.Core.Cluster!;
+        var source = await router.GetConnectionAsync(null, default, discovery: null);
+        var changes = new ConcurrentQueue<RespireConnectionStateChange>();
+        var barrier = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var barrierEndpoint = new RespireEndpoint("unused.invalid");
+        router.DiscoveryStateChanged += change =>
+        {
+            changes.Enqueue(change);
+            if (change.Endpoint == barrierEndpoint && change.SourceState == RespireConnectionState.Connected)
+                barrier.TrySetResult();
+        };
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var original = new RespireServerException($"{code} 42 127.0.0.1:{target.Port}");
+        switch (path)
+        {
+            case "command": await router.GetRedirectConnectionAsync(original, source, deadline.Token, 42, discovery: null); break;
+            case "tracked": await router.GetTrackedRedirectConnectionAsync(original, source, true, deadline.Token, 42, discovery: null); break;
+            case "dedicated": await router.GetRedirectDedicatedPoolAsync(original, source, deadline.Token, 42, discovery: null); break;
+            default: throw new ArgumentOutOfRangeException(nameof(path));
+        }
+        await Assert.That(clock.Created.Task.IsCompleted).IsFalse();
+        // Discovery notifications are asynchronous. A later episode supplies a FIFO barrier.
+        var next = new ClusterRouter.DiscoveryRound(router, new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0 });
+        next.Failed(barrierEndpoint, new IOException());
+        await next.BeforeCandidateAsync(barrierEndpoint, deadline.Token);
+        next.Finish();
+        await barrier.Task.WaitAsync(deadline.Token);
+        await Assert.That(changes.All(change => change.Endpoint == barrierEndpoint)).IsTrue();
+    }
+
+    [Test]
+    [Arguments("MOVED", "redirect")]
+    [Arguments("ASK", "redirect")]
+    [Arguments("MOVED", "failure")]
+    [Arguments("ASK", "failure")]
+    [Arguments("MOVED", "retirement")]
+    [Arguments("ASK", "retirement")]
+    public async Task ImmediateRedirectSharesBudgetAndBackoffWithLaterRecovery(string code, string recovery)
+    {
+        var clock = new GatedDiscoveryClock();
+        await using var client = RespireClient.Create(Options(1) with { ClusterDiscoveryClock = clock });
+        var router = client.Core.Cluster!;
+        var endpoint = new RespireEndpoint("unused.invalid");
+        var round = new ClusterRouter.DiscoveryRound(router, new()
+        {
+            InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30),
+            MaxAttempts = 2, JitterRatio = 0,
+        });
+        var scheduled = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
+        router.DiscoveryStateChanged += change =>
+        {
+            if (change.NextReconnectDelay is not null) scheduled.TrySetResult(change);
+        };
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        try
+        {
+            round.Rejected(endpoint, new RespireServerException($"{code} 42 target.invalid:6379"));
+            await round.BeforeCandidateAsync(endpoint, deadline.Token);
+            await Assert.That(clock.Created.Task.IsCompleted).IsFalse();
+            if (recovery == "redirect") round.Rejected(endpoint, new RespireServerException($"{code} 42 target.invalid:6380"));
+            else if (recovery == "failure") round.Failed(endpoint, new IOException("target unavailable"));
+            else round.Failed(new RespireConnectionRetiredException(endpoint.Host, endpoint.Port));
+            var pending = round.BeforeCandidateAsync(endpoint, deadline.Token).AsTask();
+            var timer = await clock.Created.Task.WaitAsync(deadline.Token);
+            var change = await scheduled.Task.WaitAsync(deadline.Token);
+            await Assert.That(change.ReconnectAttempt).IsEqualTo(2);
+            await Assert.That(change.NextReconnectDelay).IsEqualTo(TimeSpan.FromSeconds(30));
+            await Assert.That(change.ReconnectEpisodeId is > 0).IsTrue();
+            await Assert.That(pending.IsCompleted).IsFalse();
+            timer.Fire();
+            await pending.WaitAsync(deadline.Token);
+            var last = new RespireServerException($"{code} 42 target.invalid:6381");
+            round.Rejected(endpoint, last);
+            var exhaustion = await Assert.That(async () => await round.BeforeCandidateAsync(endpoint, deadline.Token))
+                .ThrowsExactly<RespireReconnectLimitException>();
+            await Assert.That(exhaustion!.InnerException).IsSameReferenceAs(last);
+        }
+        finally { round.Finish(); }
+    }
+
+    [Test]
+    [Arguments("MOVED")]
+    [Arguments("ASK")]
+    public async Task ImmediateRedirectCannotRestartExhaustedBudget(string code)
+    {
+        await using var client = RespireClient.Create(Options(1));
+        var round = new ClusterRouter.DiscoveryRound(client.Core.Cluster!, new() { MaxAttempts = 1 });
+        var endpoint = new RespireEndpoint("unused.invalid");
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        try
+        {
+            var redirect = new RespireServerException($"{code} 42 target.invalid:6379");
+            round.Rejected(endpoint, redirect);
+            await round.BeforeCandidateAsync(endpoint, deadline.Token);
+            round.Rejected(endpoint, redirect);
+            await Assert.That(async () => await round.BeforeCandidateAsync(endpoint, deadline.Token))
+                .ThrowsExactly<RespireReconnectLimitException>();
+        }
+        finally { round.Finish(); }
     }
 
     [Test]
@@ -411,23 +543,16 @@ public class ClusterReconnectPolicyTests
             ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? "*0\r\n"u8.ToArray()
                 : command.StartsWith("GET ") ? redirect : null,
         };
-        await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with { ReconnectPolicy = SlowPolicy });
-        var discovery = new ConcurrentQueue<RespireConnectionStateChange>();
-        var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        client.ConnectionStateChanged += change =>
+        var clock = new GatedDiscoveryClock();
+        await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with
         {
-            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery) return;
-            discovery.Enqueue(change);
-            if (change.SourceState == RespireConnectionState.Connected) finished.TrySetResult();
-        };
+            ReconnectPolicy = SlowPolicy,
+            ClusterDiscoveryClock = clock,
+        });
         // One configured backoff would exceed this bound six times over.
         await Assert.That(await client.GetStringAsync("key").AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo("value");
         await Assert.That(target.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
-        // The redirect still spends one discovery attempt, scheduled without a delay.
-        await finished.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        var scheduled = discovery.Where(change => change.SourceState == RespireConnectionState.Reconnecting).ToArray();
-        await Assert.That(scheduled.Length).IsEqualTo(1);
-        await Assert.That(scheduled[0].NextReconnectDelay).IsEqualTo(TimeSpan.Zero);
+        await Assert.That(clock.Created.Task.IsCompleted).IsFalse();
     }
 
     [Test]
