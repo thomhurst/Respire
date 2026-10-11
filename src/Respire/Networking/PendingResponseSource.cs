@@ -20,19 +20,11 @@ internal abstract partial class PendingResponse
 {
     private CancellationTokenRegistration _cancellationRegistration;
 
-    private const long OwnerReleased = 2;
-    private const long EpochMask = ~3L;
-
-    // Low bit: completed. Next bit: one of the two single-reply owners has released.
-    // The remaining 62 bits hold the reuse epoch, advanced by four on pool return.
-    // Completion is a CAS on the whole word so the deadline sweep — which peeks
+    // Low bit: completed. Upper bits: reuse epoch, bumped every time the source goes back to
+    // its pool. Completion is a CAS on the whole word so the deadline sweep — which peeks
     // ring slots without holding a reference — can never complete a recycled source: its
     // captured state carries the old epoch and the CAS fails.
     private long _state;
-
-    // -1 marks a live two-owner source; zero marks retirement for borrowed inspection.
-    // Explicit receive-reference counts use positive values and atomic decrements;
-    // their intermediate replies must not change the completion/epoch word.
     private int _refs;
     private ClientSideCacheCoordinator.MutationReference _mutationReference;
 
@@ -72,11 +64,10 @@ internal abstract partial class PendingResponse
 
     internal static bool IsCompleted(long state) => (state & 1) != 0;
 
-    /// <summary>Called after rent, before source is published anywhere. Zero selects two-owner state tracking.</summary>
-    internal void PrepareForUse(int receiveReferences = 0)
+    /// <summary>Called after rent, before source is published anywhere.</summary>
+    internal void PrepareForUse(int receiveReferences = 1)
     {
-        Debug.Assert(receiveReferences >= 0 && receiveReferences < int.MaxValue);
-        _refs = receiveReferences == 0 ? -1 : receiveReferences + 1;
+        _refs = receiveReferences + 1;
         ErrorAttempts = 0;
     }
 
@@ -147,16 +138,9 @@ internal abstract partial class PendingResponse
     internal bool TrySetTimedOut(long observedState, TimeSpan timeout,
         ref RespireTimeoutDiagnostics? diagnostics, RespireConnection? connection)
     {
-        if (IsCompleted(observedState)) return false;
-        var state = observedState;
-        while (true)
+        if (Interlocked.CompareExchange(ref _state, observedState | 1, observedState) != observedState)
         {
-            var previous = Interlocked.CompareExchange(ref _state, state | 1, state);
-            if (previous == state) break;
-            // A release alone cannot invalidate a deadline for this incarnation. Any
-            // completion or epoch change must still reject the sweep's captured state.
-            if ((previous ^ state) != OwnerReleased) return false;
-            state = previous;
+            return false;
         }
 
         diagnostics ??= connection?.CaptureTimeoutDiagnostics() ?? RespireTimeoutDiagnostics.Capture();
@@ -165,19 +149,13 @@ internal abstract partial class PendingResponse
         return true;
     }
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private bool TryAcquireCompletion()
     {
         // Callers hold a reference, so the epoch cannot move under them; the only race is
-        // against another completer or the first owner release. Retry a release-only race.
+        // against another completer, and losing that CAS means the source already completed.
         var state = Volatile.Read(ref _state);
-        while (!IsCompleted(state))
-        {
-            var previous = Interlocked.CompareExchange(ref _state, state | 1, state);
-            if (previous == state) return true;
-            state = previous;
-        }
-        return false;
+        return (state & 1) == 0
+            && Interlocked.CompareExchange(ref _state, state | 1, state) == state;
     }
 
     /// <summary>
@@ -241,54 +219,42 @@ internal abstract partial class PendingResponse
     }
 
     /// <summary>Returns source to its pool after caller and receive loop both release it.</summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal void ReleaseRef()
+    internal virtual void ReleaseRef()
     {
-        var references = Volatile.Read(ref _refs);
-        if (references >= 0)
+        Debug.Assert(Volatile.Read(ref _refs) >= 1, "Only a live owner can release a response reference.");
+        // References are initialized before publication and never added while rented. A
+        // count of one therefore belongs exclusively to this owner; the other owners have
+        // finished touching the source. Concurrent releases still use the atomic decrement.
+        if (Volatile.Read(ref _refs) == 1)
         {
-            Debug.Assert(references >= 1, "Only a live owner can release a response reference.");
-            // Counts never increase while rented. One therefore belongs exclusively to
-            // this owner; all previous releases are their owners' final source access.
-            if (references == 1) _refs = 0;
-            else if (Interlocked.Decrement(ref _refs) != 0) return;
-            ReturnToPool(Volatile.Read(ref _state));
+            _refs = 0;
+        }
+        else if (Interlocked.Decrement(ref _refs) != 0)
+        {
             return;
         }
 
-        Debug.Assert(references == -1, "Only a live two-owner source can use state-based release.");
-        var state = Volatile.Read(ref _state);
-        while ((state & OwnerReleased) == 0)
-        {
-            var previous = Interlocked.CompareExchange(ref _state, state | OwnerReleased, state);
-            if (previous == state) return;
-            state = previous;
-        }
-
-        // The first owner makes the release bit its final source access. The second
-        // owner is therefore exclusive, including when both raced the CAS. Keep the
-        // receive/runner owner until delivery (and any inline consumer) has returned.
-        // Its captured word also supplies the epoch without another state load.
-        // Preserve the retired marker for borrowed inspection of unpooled sources.
-        _refs = 0;
-        ReturnToPool(state);
+        ReturnToPool();
     }
 
-    private void ReturnToPool(long state)
+    protected void ReleaseRefAtomic()
     {
-        // A published source reaches final release only after caller completion has been
-        // consumed, or the discard source's FIFO reply has claimed completion. Its completed
-        // bit is already set, so a deadline CAS cannot win between capture and this store.
-        // Unpublished reclamation has no ring slot for the deadline sweep to inspect.
+        Debug.Assert(Volatile.Read(ref _refs) >= 1, "Only a live owner can release a response reference.");
+        if (Interlocked.Decrement(ref _refs) == 0)
+            ReturnToPool();
+    }
+
+    private void ReturnToPool()
+    {
         // Clear the deadline before the epoch store publishes this source as reusable. The
         // sweep reads State before Deadline, so the release/acquire pairing on _state
         // guarantees that a sweep observing the new epoch can no longer read the previous
         // command's expired deadline and time out the next incarnation.
         Deadline = CommandDeadline.None;
 
-        // Bump the reuse epoch and clear both ownership bits in one atomic store, invalidating
+        // Bump the reuse epoch and clear the completed bit in one atomic store, invalidating
         // any state the deadline sweep captured for this incarnation.
-        Volatile.Write(ref _state, unchecked((state + 4) & EpochMask));
+        Volatile.Write(ref _state, ((Volatile.Read(ref _state) >> 1) + 1) << 1);
         if (_mutationReference.IsRequired)
         {
             try { RetireMutationFence(); }
@@ -375,6 +341,10 @@ internal sealed class MultiReplyPendingResponseSource : PendingResponse, IValueT
     }
 
     internal override string? CommandName => _commandName;
+
+    // Multi-reply operations release one reference per reply. Keep their intermediate
+    // releases on the original atomic path rather than adding a final-owner probe.
+    internal override void ReleaseRef() => ReleaseRefAtomic();
 
     internal ValueTask<RespValue> Task => new(this, _core.Version);
 
