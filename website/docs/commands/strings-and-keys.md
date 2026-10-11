@@ -378,6 +378,20 @@ bool renamed = await redis.Keys.TryRenameAsync("draft", "published");
 bool copied = await redis.Keys.CopyAsync("template", "working-copy", replace: true);
 ```
 
+To copy into another database, pass `destinationDatabase` (Redis 6.2+ `COPY DB`):
+
+```csharp
+bool copied = await redis.Keys.CopyAsync("template", "working-copy",
+    destinationDatabase: 1, replace: true);
+```
+
+`batch.Keys.Copy` and `transaction.Keys.Copy` accept the same database and replacement
+options, returning a pending Boolean. A missing source or an existing destination without
+`replace: true` returns false. Both keys receive the client prefix. Negative database
+indexes fail locally; unsupported or out-of-range databases retain the server error.
+Cluster keys must share a hash slot, and the serving server must support the requested
+database. The operation does not change the client's selected database.
+
 ## Scan safely
 
 `ScanAsync` manages Redis cursors and returns an async stream:

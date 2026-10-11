@@ -13,8 +13,7 @@ public class ServerPubSubIntegrationTests
     public async Task InspectLiteralPatternAndShardedSubscriptions(int protocol)
     {
         // Pub/sub is not database-isolated. Own the server so global NUMPAT assertions are exact.
-        await using var container = new RedisBuilder("redis:7.0.15").Build();
-        await container.StartAsync();
+        await using var container = await ContainerStartRetry.StartAsync(() => new RedisBuilder("redis:7.0.15").Build(), [6379]);
         var connectionString = $"redis://{container.Hostname}:{container.GetMappedPublicPort(6379)}?protocol={protocol}";
         await using var first = await RespireClient.ConnectAsync(connectionString);
         await using var second = await RespireClient.ConnectAsync(connectionString);

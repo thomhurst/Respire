@@ -197,6 +197,8 @@ public partial class CacheErrorMetricsTests
     private sealed class CacheErrorCapture : IDisposable
     {
         private readonly MeterListener _listener = new();
+        // Set on the constructing test's execution context; detached work from an earlier test does not carry it.
+        private readonly AsyncLocal<bool> _scope = new() { Value = true };
         internal ConcurrentQueue<Dictionary<string, object?>> Items { get; } = new();
         internal CacheErrorCapture()
         {
@@ -207,6 +209,7 @@ public partial class CacheErrorMetricsTests
             };
             _listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
             {
+                if (!_scope.Value) return;
                 Items.Enqueue(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value));
                 throw new InvalidOperationException("Listener must not replace the caller failure.");
             });

@@ -16,8 +16,7 @@ public class ServerAclIntegrationTests
     public async Task AdministerIsolatedUsersAndInspectNodeLocalResults(int protocol, bool modern)
     {
         // ACL state and logs are global to a server, so this test owns the entire server.
-        await using var container = new RedisBuilder(modern ? "redis:7.2-alpine" : "redis:6.2.14-alpine").Build();
-        await container.StartAsync();
+        await using var container = await ContainerStartRetry.StartAsync(() => new RedisBuilder(modern ? "redis:7.2-alpine" : "redis:6.2.14-alpine").Build(), [6379]);
         var address = $"redis://{container.Hostname}:{container.GetMappedPublicPort(6379)}?protocol={protocol}";
         await using var client = await RespireClient.ConnectAsync(address + "&allowAdmin=true");
         var server = client.WithKeyPrefix("ignored:").Server;

@@ -406,6 +406,9 @@ internal sealed partial class RespireConnection
     /// must not abort the connection: the reply is already published and its caller token,
     /// deadline and the connection abort settle it like any other in-flight command.
     /// </summary>
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+#endif
     internal static async ValueTask WaitForFinalFrameWriteAsync(Task finalWrite, CancellationToken cancellationToken)
     {
         try

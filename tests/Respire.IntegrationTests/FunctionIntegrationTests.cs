@@ -20,8 +20,7 @@ public class FunctionIntegrationTests
     [Arguments(3)]
     public async Task AdministrationAndDeferredCallsRoundTrip(int protocol)
     {
-        await using var server = new RedisBuilder("redis:7.0.15").Build();
-        await server.StartAsync();
+        await using var server = await ContainerStartRetry.StartAsync(() => new RedisBuilder("redis:7.0.15").Build(), [6379]);
         await using var owner = await RespireClient.ConnectAsync($"redis://{server.Hostname}:{server.GetMappedPublicPort(6379)}?protocol={protocol}");
         var client = owner.WithKeyPrefix("tenant:");
         var library = RespireFunctionLibrary.Create(Source);
@@ -96,8 +95,7 @@ public class FunctionIntegrationTests
     [Arguments(3)]
     public async Task ReusableLibrariesReloadConcurrentlyAndRespectReplacement(int protocol)
     {
-        await using var server = new RedisBuilder("redis:7.0.15").Build();
-        await server.StartAsync();
+        await using var server = await ContainerStartRetry.StartAsync(() => new RedisBuilder("redis:7.0.15").Build(), [6379]);
         await using var client = await RespireClient.ConnectAsync($"redis://{server.Hostname}:{server.GetMappedPublicPort(6379)}?protocol={protocol}");
         await using var secondClient = await RespireClient.ConnectAsync($"redis://{server.Hostname}:{server.GetMappedPublicPort(6379)}?protocol={protocol}");
         var library = RespireFunctionLibrary.Create(Source);

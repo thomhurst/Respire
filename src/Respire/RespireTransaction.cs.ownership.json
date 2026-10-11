@@ -43,7 +43,7 @@
       "Role": "final",
       "Member": "Respire.RespireTransaction.CommitAsync(CancellationToken):ValueTask",
       "Owner": "Respire.RespireTransaction.CommitAsync(CancellationToken):ValueTask",
-      "Contract": "Start before commit preflight and cancellation. Each pending borrows the shared transaction retry history through replies, conversion, UNWATCH and dedicated cleanup. Publish terminal failures once after cleanup, without a successful-path error rental."
+      "Contract": "Start before commit preflight and cancellation. Each pending borrows the shared transaction retry history through replies, conversion, UNWATCH and dedicated cleanup. The shared deferred-operation helper snapshots that history before closing any pending and publishes terminal failures once after cleanup, without a successful-path error rental. An unwatched null EXEC faults every pending with the original protocol error inside this boundary; a watched null EXEC remains an abort. Physical teardown alone creates no logical failure."
     }
   ],
   "NonRoutes": []

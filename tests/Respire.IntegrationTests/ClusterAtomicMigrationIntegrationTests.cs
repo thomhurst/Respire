@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using DotNet.Testcontainers.Builders;
 using DotNet.Testcontainers.Containers;
@@ -40,12 +41,19 @@ public class ClusterAtomicMigrationIntegrationTests
 
         var taskId = await destination.ClusterMigrationImportAsync([new(0, 0), new(2, 2)], token);
         taskId.Should().NotBeNullOrEmpty();
+        // "failed" is not terminal at the destination: Redis records the attempt's last_error and retries
+        // the import about a second later (retries increments). A transient sync failure on a busy runner
+        // must not fail the test; only a task that never completes before the deadline does.
         RespireClusterMigrationTask completed;
+        var lastFailure = "";
+        var importDeadline = Stopwatch.StartNew();
         while (true)
         {
             completed = (await destination.ClusterMigrationStatusAsync(taskId, token)).Should().ContainSingle().Which;
             if (completed.State == "completed") break;
-            completed.State.Should().NotBe("failed");
+            if (completed.State == "failed") lastFailure = $"{completed.LastError} (retries {completed.Retries})";
+            if (importDeadline.Elapsed > TimeSpan.FromSeconds(30))
+                throw new TimeoutException($"Import {taskId} stayed {completed.State}; last failure: {lastFailure}");
             await Task.Delay(50, token);
         }
         completed.Operation.Should().Be("import");
@@ -80,22 +88,22 @@ public class ClusterAtomicMigrationIntegrationTests
 
     private sealed class OwnedCluster(IContainer container) : IAsyncDisposable
     {
+        private NodeCommandSessions? _nodes;
         internal string[] NodeIds { get; } = new string[3];
         internal RespireEndpoint Endpoint(int index) => new(container.Hostname, container.GetMappedPublicPort(7000 + index));
 
         internal static async Task<OwnedCluster> StartAsync(string image)
         {
-            var container = new ContainerBuilder(image)
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            var container = await ContainerStartRetry.StartAsync(() => new ContainerBuilder(image)
                 .WithPortBinding(7000, true).WithPortBinding(7001, true).WithPortBinding(7002, true)
                 .WithEntrypoint("sh", "-c")
                 .WithCommand("for port in 7000 7001 7002; do mkdir -p /data/$port; redis-server --port $port --dir /data/$port --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 1000 --cluster-announce-ip 127.0.0.1 --appendonly no --protected-mode no & done; wait")
                 .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(7000)
-                    .UntilInternalTcpPortIsAvailable(7001).UntilInternalTcpPortIsAvailable(7002)).Build();
+                    .UntilInternalTcpPortIsAvailable(7001).UntilInternalTcpPortIsAvailable(7002)).Build(), [7000, 7001, 7002], deadline.Token);
             var cluster = new OwnedCluster(container);
-            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
             try
             {
-                await container.StartAsync(deadline.Token);
                 for (var node = 0; node < 3; node++)
                 {
                     await cluster.CommandAsync(node, deadline.Token, "CLUSTER", "SET-CONFIG-EPOCH", (node + 1).ToString(CultureInfo.InvariantCulture));
@@ -118,11 +126,14 @@ public class ClusterAtomicMigrationIntegrationTests
         {
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
             deadline.CancelAfter(TimeSpan.FromSeconds(10));
-            var result = await container.ExecAsync(["redis-cli", "-e", "--raw", "-p", (7000 + node).ToString(CultureInfo.InvariantCulture), .. arguments], deadline.Token);
-            if (result.ExitCode != 0) throw new InvalidOperationException($"Owned cluster command failed: {result.Stdout} {result.Stderr}");
-            return result.Stdout;
+            _nodes ??= new(container.Hostname);
+            return await _nodes.CommandAsync(Endpoint(node).Port, arguments, deadline.Token);
         }
 
-        public ValueTask DisposeAsync() => container.DisposeAsync();
+        public async ValueTask DisposeAsync()
+        {
+            if (_nodes is not null) await _nodes.DisposeAsync();
+            await container.DisposeAsync();
+        }
     }
 }

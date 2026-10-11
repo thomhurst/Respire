@@ -19,9 +19,8 @@ public class ServerNodeIntegrationTests
     {
         string[] command = ["redis-server", "--latency-monitor-threshold", "1"];
         if (keyFlagsSupported) command = [.. command, "--enable-debug-command", "yes"];
-        await using var container = new ContainerBuilder(image).WithCommand(command).WithPortBinding(6379, true)
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build();
-        await container.StartAsync();
+        await using var container = await ContainerStartRetry.StartAsync(() => new ContainerBuilder(image).WithCommand(command).WithPortBinding(6379, true)
+            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), [6379]);
         var endpoint = new RespireEndpoint(container.Hostname, container.GetMappedPublicPort(6379));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
@@ -74,10 +73,9 @@ public class ServerNodeIntegrationTests
     public async Task KillWorksDuringBusyWithSingleConfiguredClientConnection(string image, int protocol, bool function)
     {
         const string password = "issue880-owned-fixture";
-        await using var container = new ContainerBuilder(image)
+        await using var container = await ContainerStartRetry.StartAsync(() => new ContainerBuilder(image)
             .WithCommand("redis-server", "--lua-time-limit", "100", "--requirepass", password)
-            .WithPortBinding(6379, true).WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build();
-        await container.StartAsync();
+            .WithPortBinding(6379, true).WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), [6379]);
         var endpoint = new RespireEndpoint(container.Hostname, container.GetMappedPublicPort(6379));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {

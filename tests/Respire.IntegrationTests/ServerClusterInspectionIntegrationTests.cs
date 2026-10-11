@@ -16,12 +16,11 @@ public class ServerClusterInspectionIntegrationTests
     [Arguments(3, true, "redis:8.10-alpine")]
     public async Task InspectAnIsolatedClusterWithoutChangingItsTopology(int protocol, bool modern, string image)
     {
-        await using var container = new ContainerBuilder(image)
+        await using var container = await ContainerStartRetry.StartAsync(() => new ContainerBuilder(image)
             .WithPortBinding(6379, true)
             .WithCommand("redis-server", "--cluster-enabled", "yes", "--cluster-config-file", "nodes.conf",
                 "--cluster-announce-ip", "127.0.0.1", "--appendonly", "no")
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build();
-        await container.StartAsync();
+            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), [6379]);
         var port = container.GetMappedPublicPort(6379);
         await Run(["CONFIG", "SET", "cluster-announce-port", port.ToString()]);
         await Run(["CLUSTER", "ADDSLOTSRANGE", "0", "16383"]);
@@ -107,8 +106,7 @@ public class ServerClusterInspectionIntegrationTests
     [Arguments(3)]
     public async Task StandaloneErrorsRemainServerErrors(int protocol)
     {
-        await using var container = new Testcontainers.Redis.RedisBuilder("redis:7.0.15").Build();
-        await container.StartAsync();
+        await using var container = await ContainerStartRetry.StartAsync(() => new Testcontainers.Redis.RedisBuilder("redis:7.0.15").Build(), [6379]);
         await using var client = await RespireClient.ConnectAsync($"redis://{container.Hostname}:{container.GetMappedPublicPort(6379)}?protocol={protocol}");
         Func<Task> operation = async () => await client.Server.ClusterShardsAsync();
         await operation.Should().ThrowAsync<RespireServerException>().WithMessage("*cluster support disabled*");

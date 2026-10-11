@@ -1254,6 +1254,9 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         private readonly RespireClientSideCacheOptions _options;
         private readonly Action<CacheRemoval> _recordRemoval;
         private int _trimming;
+        // Publish before the first insertion and never reset after removals. A zero value
+        // lets write-only clients skip store gates; the coordinator still fences pending reads.
+        private int _hasPublishedEntries;
         private long _sizeBytes;
         // Read and transition only under _removalLock; Retire is the only transition.
         private StoreState _state;
@@ -1407,6 +1410,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             lock (_removalLock)
             {
                 if (_state == StoreState.Retired) return null;
+                if (_hasPublishedEntries == 0) Volatile.Write(ref _hasPublishedEntries, 1);
                 if (_entries.TryGetValue(key, out var previous))
                 {
                     if (_entries.TryUpdate(key, entry, previous))
@@ -1459,6 +1463,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             lock (_removalLock)
             {
                 if (_state == StoreState.Retired) return false;
+                if (_hasPublishedEntries == 0) Volatile.Write(ref _hasPublishedEntries, 1);
                 if (_queries.TryGetValue(query, out var previous))
                 {
                     if (!_queries.TryUpdate(query, entry, previous))
@@ -1502,6 +1507,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         // publishes telemetry after this method releases all cache locks.
         public int Invalidate(in RespireKey key)
         {
+            if (Volatile.Read(ref _hasPublishedEntries) == 0) return 0;
             var removed = 0;
             CacheEntry? entry;
             bool reportRemoval;

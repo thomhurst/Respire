@@ -36,6 +36,11 @@ internal sealed class CircuitStreamCompletion
 
 internal sealed class CircuitCompletionStream(Stream inner, CircuitStreamCompletion completion) : Stream
 {
+    // Header ownership ends after this wrapper is returned. Copy its completed retry
+    // history to the payload without retaining a pooled header observation.
+    internal void SetErrorAttempts(int attempts)
+        => Networking.RespBulkPayloadPipe.SetErrorAttempts(inner, attempts);
+
     public override bool CanRead => inner.CanRead;
     public override bool CanSeek => inner.CanSeek;
     public override bool CanWrite => inner.CanWrite;

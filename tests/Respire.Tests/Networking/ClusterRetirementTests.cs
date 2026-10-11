@@ -448,8 +448,9 @@ public class ClusterRetirementTests
                 && !command.StartsWith("EVALSHA ", StringComparison.Ordinal)
                 && !command.StartsWith("BLPOP ", StringComparison.Ordinal)) return null;
             var final = Interlocked.Increment(ref attempts) > ClusterRouter.RedirectLimit;
-            // Five successful reselections start one episode. The last route still rejects
-            // the command, including READONLY after selection no longer has a pending failure.
+            // The first reselection is immediate; the next four start one episode.
+            // The last route still rejects the command, including READONLY after
+            // selection no longer has a pending failure.
             var rejection = final ? code : "MOVED";
             return System.Text.Encoding.ASCII.GetBytes(rejection == "READONLY"
                 ? "-READONLY demoted\r\n" : $"-{rejection} {slot} 127.0.0.1:{server.Port}\r\n");
@@ -471,7 +472,9 @@ public class ClusterRetirementTests
         await Assert.That(terminal.ReconnectAttempt).IsEqualTo(5);
         await Assert.That(terminal.ReconnectExhausted).IsFalse();
         await Assert.That(attempts).IsEqualTo(6);
-        await Assert.That(changes.Count).IsEqualTo(6);
+        await Assert.That(changes.Count).IsEqualTo(5);
+        await Assert.That(changes.Take(4).Select(change => change.ReconnectAttempt)).IsEquivalentTo([2, 3, 4, 5]);
+        await Assert.That(changes.Take(4).All(change => change.SourceState == RespireConnectionState.Reconnecting)).IsTrue();
         await Assert.That(changes.Select(change => change.ReconnectEpisodeId).Distinct().Count()).IsEqualTo(1);
 
         async Task SendAsync()
@@ -604,7 +607,7 @@ public class ClusterRetirementTests
             var terminal = await exhausted.Task.WaitAsync(timeout.Token);
             await Assert.That(terminal.ReconnectAttempt).IsEqualTo(1);
             var events = changes.ToArray();
-            await Assert.That(events.Length).IsEqualTo(2);
+            await Assert.That(events.Length).IsEqualTo(code == "READONLY" ? 2 : 1);
             await Assert.That(events[0].ReconnectEpisodeId).IsEqualTo(terminal.ReconnectEpisodeId);
             await Assert.That(second.ReceivedCommands.Count(command => command == "SET key value")).IsEqualTo(0);
             await Assert.That(last.CommandsSeen).IsEqualTo(0);
@@ -673,7 +676,7 @@ public class ClusterRetirementTests
             var terminal = await exhausted.Task.WaitAsync(timeout.Token);
             await Assert.That(terminal.ReconnectAttempt).IsEqualTo(1);
             var events = changes.ToArray();
-            await Assert.That(events.Length).IsEqualTo(2);
+            await Assert.That(events.Length).IsEqualTo(code == "READONLY" ? 2 : 1);
             await Assert.That(events[0].ReconnectEpisodeId).IsEqualTo(terminal.ReconnectEpisodeId);
             await Assert.That(second.ReceivedCommands.Any(command => command.StartsWith("BLPOP "))).IsFalse();
             await Assert.That(last.CommandsSeen).IsEqualTo(0);

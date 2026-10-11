@@ -534,6 +534,11 @@ public class CommandRouteOwnershipTests
     }
 
     private static readonly string[] RequiredBoundaries = [
+        "script-typed-conversion", "script-primary-fan-out", "script-primary-conversion",
+        "script-connection-fallback", "tracked-script-direct-consumption", "script-correction-borrower",
+        "script-telemetry-retry-fallback",
+        "function-execution", "function-mutation-fan-out", "function-target", "function-query",
+        "function-library-reload", "function-library-target", "function-propagation-retry",
         "semaphore-acquire", "semaphore-renew", "semaphore-release", "semaphore-cleanup", "semaphore-disposal",
         "cache-get-owner", "cache-mget-owner", "cache-hash-partial-read", "cache-correction-owner", "distributed-cache-correction", "cache-removal-owner",
         "distributed-cache-wrapped-removal", "decorated-dispatch-borrower",
@@ -549,7 +554,9 @@ public class CommandRouteOwnershipTests
         "native-pooled-inspection", "typed-converter-inspection", "string-result-inspection", "byte-result-inspection",
         "immediate-pooled-conversion", "pending-pooled-conversion", "raw-catalog-dispatch",
         "raw-dispatch-helper", "catalog-dispatch-helper", "interpolated-dispatch", "interpolated-helper",
-        "connection-string-parsing", "connection-setup", "physical-connect-helper", "cache-producer", "cache-typed-producer",
+        "connection-string-parsing", "connection-setup", "physical-connect-helper",
+        "physical-testing-connect-helper", "physical-disconnect-publication", "physical-pending-drain",
+        "cache-producer", "cache-typed-producer",
         "cache-waiter", "cache-typed-waiter", "upload-payload-read", "download-payload-read", "fan-out", "fan-out-target",
         "upload-dispatch-owner", "upload-cluster-borrower", "upload-frame-borrower", "upload-discarded-completion",
         "download-payload-array-read", "download-payload-span-read", "download-payload-byte-read", "download-payload-legacy-read",

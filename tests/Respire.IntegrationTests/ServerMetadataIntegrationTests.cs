@@ -17,11 +17,10 @@ public class ServerMetadataIntegrationTests(VersionedServerFixture servers)
     {
         // CONFIG REWRITE and persistence affect the whole server. This test owns its server,
         // writable configuration and ephemeral /data; no shared fixture is mutated.
-        await using var container = new RedisBuilder(modern ? "redis:7.2-alpine" : "redis:6.2.14-alpine")
+        await using var container = await ContainerStartRetry.StartAsync(() => new RedisBuilder(modern ? "redis:7.2-alpine" : "redis:6.2.14-alpine")
             .WithEntrypoint("/bin/sh")
             .WithCommand("-c", "printf 'bind 0.0.0.0\nprotected-mode no\ndir /data\nsave \"\"\nappendonly yes\n' > /data/metadata.conf; exec redis-server /data/metadata.conf")
-            .Build();
-        await container.StartAsync();
+            .Build(), [6379]);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new(container.Hostname, container.GetMappedPublicPort(6379))], Connections = 1,

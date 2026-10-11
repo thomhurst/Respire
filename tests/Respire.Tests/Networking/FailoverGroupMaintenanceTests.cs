@@ -297,7 +297,12 @@ public class FailoverGroupMaintenanceTests
             });
         var original = group.ActiveClient;
         var switches = 0;
-        group.EndpointSwitched += _ => Interlocked.Increment(ref switches);
+        var switched = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        group.EndpointSwitched += _ =>
+        {
+            Interlocked.Increment(ref switches);
+            switched.TrySetResult();
+        };
         var multiplexer = ((RespireClient)original).Core.Multiplexer;
         var originalConnection = multiplexer.GetConnection();
         target.DelayCommand("HELLO", 200);
@@ -313,7 +318,10 @@ public class FailoverGroupMaintenanceTests
         await Assert.That(group.GetEndpointStatuses()[0].ConsecutiveFailures).IsEqualTo(0);
 
         await target.DisposeAsync();
-        await WaitUntilAsync(() => !ReferenceEquals(group.ActiveClient, original));
+        // The group publishes ActiveClient before it raises EndpointSwitched outside its gate,
+        // so wait for the handler itself rather than for the new client.
+        await switched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(ReferenceEquals(group.ActiveClient, original)).IsFalse();
         await Assert.That(group.ActiveClient.Endpoint.Port).IsEqualTo(fallback.Port);
         await Assert.That(Volatile.Read(ref switches)).IsEqualTo(1);
     }

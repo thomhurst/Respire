@@ -23,6 +23,27 @@
   ],
   "Boundaries": [
     {
+      "Name": "function-library-reload",
+      "Role": "borrower",
+      "Member": "Respire.FunctionCommands.EnsureLibraryAsync(RespireFunctionLibrary,string,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<bool>",
+      "Owner": "Respire.FunctionCommands.ExecuteSpanAsync(RespireFunction,ReadOnlySpan<RespireKey>,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<RespireResult>",
+      "Contract": "Join every library inspection and reload target before releasing the library gate. The gate and generation coordinate callers without sharing their error owner, retry count or final publication."
+    },
+    {
+      "Name": "function-library-target",
+      "Role": "borrower",
+      "Member": "Respire.FunctionCommands.EnsureOnConnectionAsync(RespireConnection,RespireFunctionLibrary,string,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<bool>",
+      "Owner": "Respire.FunctionCommands.ExecuteSpanAsync(RespireFunction,ReadOnlySpan<RespireKey>,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<RespireResult>",
+      "Contract": "Borrow only the current caller's observation through LIST, LOAD collision recovery and revalidation. Concurrent targets contribute nested retries to that caller; another caller retains independent completion."
+    },
+    {
+      "Name": "function-propagation-retry",
+      "Role": "borrower",
+      "Member": "Respire.FunctionCommands.RetryUntilFunctionAvailableAsync(string,BatchScriptCommand,CancellationToken,TimeSpan?,RespireServerException,RespireTelemetry.ErrorObservation):ValueTask<RespValue>",
+      "Owner": "Respire.FunctionCommands.ExecuteSpanAsync(RespireFunction,ReadOnlySpan<RespireKey>,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<RespireResult>",
+      "Contract": "Retain reload and transport retry history through bounded replica propagation. Preserve the caller cancellation token and final missing-function cause without an independent final publication."
+    },
+    {
       "Member": "Respire.FunctionCommands.ExecuteWithLibraryAsync(RespireFunction,BatchScriptCommand,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<RespireResult>",
       "Role": "borrower",
       "Contract": "Borrow the caller owner through FCALL retries, library verification, all reload targets, result construction and mutation cleanup. Typed callers retain their owner through scalar conversion and result disposal.",

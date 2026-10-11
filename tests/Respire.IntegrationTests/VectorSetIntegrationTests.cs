@@ -19,6 +19,69 @@ public class VectorSetIntegrationTests(VersionedServerFixture servers)
     [Test]
     [Arguments(2)]
     [Arguments(3)]
+    public async Task SimilarityCollectionEvaluationPreservesReplacementScoresAndLifecycle(int protocol)
+    {
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(Redis8.ConnectionString) with
+        {
+            Connections = 1,
+            Protocol = (RespProtocol)protocol,
+        });
+        var key = $"vector-evaluation:{Guid.NewGuid():N}";
+        var options = new RespireVectorAddOptions
+        {
+            Quantization = RespireVectorQuantization.None,
+            AttributesJson = "{\"category\":\"old\",\"removed\":true}",
+        };
+        try
+        {
+            (await client.VectorSets.AddAsync(key, new float[] { 0, 1, 0 }, "same", options)).Should().BeTrue();
+            (await client.VectorSets.AddAsync(key, new float[] { 1, 0, 0 }, "same", options with
+            {
+                AttributesJson = "{\"category\":\"tools\",\"number\":5}",
+            })).Should().BeFalse(); // VADD reports insertion, not whether replacement succeeded.
+            (await client.VectorSets.EmbeddingAsync(key, "same")).Should().Equal(1f, 0f, 0f);
+            var attributes = await client.VectorSets.GetAttributesJsonAsync(key, "same");
+            using var json = JsonDocument.Parse(attributes!);
+            json.RootElement.GetProperty("category").GetString().Should().Be("tools");
+            json.RootElement.TryGetProperty("removed", out _).Should().BeFalse();
+
+            var noAttributes = options with { AttributesJson = default };
+            await client.VectorSets.AddAsync(key, new float[] { 0, 1, 0 }, "orthogonal", noAttributes);
+            await client.VectorSets.AddAsync(key, new float[] { -1, 0, 0 }, "opposite", noAttributes);
+            var search = new RespireVectorSearchOptions { Count = 3, IncludeScores = true, Exact = true, NoThread = true };
+            var hits = await client.VectorSets.SearchAsync(key, new float[] { 1, 0, 0 }, search);
+            hits.Select(hit => Encoding.UTF8.GetString(hit.Member)).Should().Equal("same", "orthogonal", "opposite");
+            hits.Select(hit => hit.Score).Should().Equal(1d, 0.5d, 0d);
+            // VectorData cosine similarity is 2*s-1; cosine distance is 2*(1-s).
+            hits.Select(hit => 2 * hit.Score - 1).Should().Equal(1d, 0d, -1d);
+            hits.Select(hit => 2 * (1 - hit.Score)).Should().Equal(0d, 1d, 2d);
+            var filtered = await client.VectorSets.SearchAsync(key, new float[] { 1, 0, 0 }, search with
+            {
+                Filter = ".category == \"tools\" && .number >= 5",
+            });
+            filtered.Should().ContainSingle();
+            Encoding.UTF8.GetString(filtered[0].Member).Should().Be("same");
+
+            Func<Task> invalidReplacement = async () =>
+                await client.VectorSets.AddAsync(key, new float[] { 1, 0 }, "same", noAttributes);
+            await invalidReplacement.Should().ThrowAsync<RespireServerException>();
+            (await client.VectorSets.CountAsync(key)).Should().Be(3);
+            (await client.VectorSets.EmbeddingAsync(key, "same")).Should().Equal(1f, 0f, 0f);
+            (await client.VectorSets.GetAttributesJsonAsync(key, "same")).Should().Equal(attributes!);
+            foreach (var member in new[] { "same", "orthogonal", "opposite" })
+                (await client.VectorSets.RemoveAsync(key, member)).Should().BeTrue();
+            (await client.Keys.ExistsAsync(key)).Should().BeFalse();
+            (await client.VectorSets.SearchAsync(key, new float[] { 1, 0, 0 }, search)).Should().BeEmpty();
+        }
+        finally
+        {
+            await client.Keys.DeleteAsync(key);
+        }
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
     public async Task RedisVectorSetsRoundTripEveryCommandAndDeferredSurface(int protocol)
     {
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(Redis8.ConnectionString) with

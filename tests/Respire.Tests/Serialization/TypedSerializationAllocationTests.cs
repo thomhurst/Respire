@@ -13,6 +13,7 @@ namespace Respire.Tests.Serialization;
 public class TypedSerializationAllocationTests
 {
     private const int Count = 128;
+    private const int MeasuredRounds = 3;
     private static object? _escape;
 
     [Test]
@@ -61,9 +62,18 @@ public class TypedSerializationAllocationTests
             _ = await Sample(baseline: false, allocate: warmup == 3);
             _ = await Sample(baseline: true, allocate: false);
         }
-        var actual = await Sample(baseline: false, allocate: false);
-        var baseline = await Sample(baseline: true, allocate: false);
-        var rawControl = await Sample(baseline: true, allocate: false);
+        // Each sample runs on whichever pool thread resumes it, so a one-off lazy runtime
+        // allocation (a few hundred bytes, not a per-command cost) can land in any single
+        // sample. CI saw typed exceed raw by 400-416 of ~175,000 bytes. Compare steady
+        // state: the minimum of interleaved rounds. A per-command regression still shows
+        // in every round, and the control proves the measurement sees 37 bytes per command.
+        long actual = long.MaxValue, baseline = long.MaxValue, rawControl = long.MaxValue;
+        for (var round = 0; round < MeasuredRounds; round++)
+        {
+            actual = Math.Min(actual, await Sample(baseline: false, allocate: false));
+            baseline = Math.Min(baseline, await Sample(baseline: true, allocate: false));
+            rawControl = Math.Min(rawControl, await Sample(baseline: true, allocate: false));
+        }
         var control = await Sample(baseline: false, allocate: true);
         _ = MeasurePayloadArrays(payloadLength);
         var ownedBytes = AllocationMeasurement.WithoutConcurrentGc(() => MeasurePayloadArrays(payloadLength));

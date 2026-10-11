@@ -13,6 +13,9 @@ public class AsyncFlushSignalTests
     private const int Wakes = 200;
     private const string AllocationProbeMode = "RESPIRE_TEST_FLUSH_ALLOCATION_PROBE";
     private const string AllocationProbeRuntime = "RESPIRE_TEST_FLUSH_ALLOCATION_RUNTIME";
+    private const string ProbeReadyMarker = "RESPIRE_TEST_FLUSH_PROBE_READY";
+    // Bounds runtime and coverage startup of a child on loaded CI workers.
+    private static readonly TimeSpan ProbeStartupBudget = TimeSpan.FromSeconds(30);
 
     [Test]
     [Arguments(false)]
@@ -123,38 +126,62 @@ public class AsyncFlushSignalTests
     [Arguments(true)]
     public async Task ConcurrentSignalsCoalesceWhileParkedWaiterIsResuming(bool preferInline)
     {
+        const int signalers = 8;
+        const int signalsPerThread = 25;
         var signal = new AsyncFlushSignal();
         var pending = signal.WaitAsync();
+        var resumeCount = 0;
+        var resumeThread = -1;
+        var resumeOnPool = false;
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var resumed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var release = new ManualResetEventSlim();
+        // The continuation records the wake and returns without consuming it (no GetResult), so
+        // the waiter stays "resuming" — woken but with the signal unconsumed — while no thread
+        // is held. Blocking the waking thread here instead starved the 1-CPU thread pool: the
+        // blocked worker owned the queued `entered` continuation and the pool grew too slowly.
         pending.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(() =>
         {
-            try
-            {
-                entered.TrySetResult();
-                if (!release.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("Waiter was not released.");
-                pending.ConfigureAwait(false).GetAwaiter().GetResult();
-                resumed.TrySetResult();
-            }
-            catch (Exception error) { resumed.TrySetException(error); }
+            resumeThread = Environment.CurrentManagedThreadId;
+            resumeOnPool = Thread.CurrentThread.IsThreadPoolThread;
+            Interlocked.Increment(ref resumeCount);
+            entered.TrySetResult();
         });
-        var wake = Task.Run(() => signal.Signal(preferInline));
-        try
+        // Dedicated threads keep the wake and the signal storm independent of pool capacity.
+        var wakeThread = StartSignalThread(() => signal.Signal(preferInline));
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        if (preferInline) await Assert.That(resumeThread).IsEqualTo(wakeThread.Thread.ManagedThreadId);
+        else await Assert.That(resumeOnPool).IsTrue();
+
+        using var start = new ManualResetEventSlim();
+        var storm = Enumerable.Range(0, signalers).Select(_ => StartSignalThread(() =>
         {
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            await Task.WhenAll(Enumerable.Range(0, 50).Select(_ => Task.Run(() => signal.Signal(preferInline))));
-        }
-        finally
-        {
-            release.Set();
-            await Task.WhenAll(wake, resumed.Task).WaitAsync(TimeSpan.FromSeconds(5));
-        }
+            start.Wait();
+            for (var i = 0; i < signalsPerThread; i++) signal.Signal(preferInline);
+        })).ToArray();
+        start.Set();
+        await Task.WhenAll(storm.Select(s => s.Done).Append(wakeThread.Done)).WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Every signal raced the unconsumed wake: none may resume the waiter again or queue a
+        // second wake (a second SetResult would throw on its pool thread).
+        await Assert.That(Volatile.Read(ref resumeCount)).IsEqualTo(1);
+        pending.ConfigureAwait(false).GetAwaiter().GetResult();
 
         var next = signal.WaitAsync();
         await Assert.That(next.IsCompleted).IsFalse();
         signal.Signal(preferInline);
         await next.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(Volatile.Read(ref resumeCount)).IsEqualTo(1);
+    }
+
+    private static (Thread Thread, Task Done) StartSignalThread(Action body)
+    {
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var thread = new Thread(() =>
+        {
+            try { body(); done.TrySetResult(); }
+            catch (Exception error) { done.TrySetException(error); }
+        }) { IsBackground = true, Name = "AsyncFlushSignalTests signaler" };
+        thread.Start();
+        return (thread, done.Task);
     }
 
     [Test]
@@ -172,6 +199,7 @@ public class AsyncFlushSignalTests
     }
 
     // Check both global (non-pool producer) and local (pool producer) dispatch queues.
+    // The measurement runs in a child process, which isolates its pool, GC and no-GC region.
     [Test, NotInParallel]
     [Arguments(false)]
     [Arguments(true)]
@@ -230,7 +258,7 @@ public class AsyncFlushSignalTests
             Path.GetFullPath("Respire.Tests.dll"))).Throws<InvalidOperationException>();
     }
 
-    [Test, NotInParallel]
+    [Test, ParallelLimiter<ChildProcessProbes>]
     [Arguments(false)]
     [Arguments(true)]
     public async Task ProbeFailuresIncludeBothOutputStreams(bool timeout)
@@ -238,9 +266,21 @@ public class AsyncFlushSignalTests
         var start = CreateProbeStartInfo(Environment.ProcessPath,
             Environment.GetEnvironmentVariable("DOTNET_HOST_PATH"), typeof(AsyncFlushSignalTests).Assembly.Location);
         start.Environment[AllocationProbeMode] = timeout ? "timeout-control" : "failure-control";
-        // Leave room for runtime and coverage startup on loaded CI workers.
-        var error = await Assert.That(() => RunProbeAsync(start, TimeSpan.FromSeconds(30)))
-            .Throws<InvalidOperationException>();
+        // The timeout control reports when both streams are written. Only then does its short
+        // exit deadline start, so startup time on loaded CI workers cannot decide the outcome.
+        var marker = timeout ? Path.Combine(Path.GetTempPath(), $"respire-probe-ready-{Guid.NewGuid():N}") : null;
+        if (marker is not null) start.Environment[ProbeReadyMarker] = marker;
+        Exception? error;
+        try
+        {
+            error = await Assert.That(() => RunProbeAsync(start,
+                    timeout ? TimeSpan.FromMilliseconds(250) : ProbeStartupBudget, marker))
+                .Throws<InvalidOperationException>();
+        }
+        finally
+        {
+            if (marker is not null) File.Delete(marker);
+        }
         await Assert.That(error!.Message).Contains("probe control stdout");
         await Assert.That(error.Message).Contains("probe control stderr");
         await Assert.That(error.Message).Contains($"{Environment.NewLine}stderr: probe control stderr");
@@ -248,7 +288,9 @@ public class AsyncFlushSignalTests
         else await Assert.That(error.Message).Contains("code 17");
     }
 
-    internal static async Task RunProbeAsync(ProcessStartInfo start, TimeSpan timeout)
+    // readyMarker: a file the child creates once it is running. When given, the exit timeout
+    // starts only after the marker exists (startup itself is bounded by ProbeStartupBudget).
+    internal static async Task RunProbeAsync(ProcessStartInfo start, TimeSpan timeout, string? readyMarker = null)
     {
         using var process = Process.Start(start)!;
         using var readDeadline = new CancellationTokenSource();
@@ -257,6 +299,8 @@ public class AsyncFlushSignalTests
         Exception? failure = null;
         try
         {
+            if (readyMarker is not null)
+                await WaitForMarkerAsync(process, readyMarker).WaitAsync(ProbeStartupBudget);
             await process.WaitForExitAsync().WaitAsync(timeout);
         }
         catch (Exception error) { failure = error; }
@@ -284,6 +328,11 @@ public class AsyncFlushSignalTests
             throw new InvalidOperationException($"Isolated probe exited with code {process.ExitCode}. {diagnostics}");
     }
 
+    private static async Task WaitForMarkerAsync(Process process, string marker)
+    {
+        while (!File.Exists(marker) && !process.HasExited) await Task.Delay(10);
+    }
+
     internal static int? RunIsolatedAllocationProbe()
     {
         var mode = Environment.GetEnvironmentVariable(AllocationProbeMode);
@@ -292,6 +341,8 @@ public class AsyncFlushSignalTests
             // Neither stream supplies a newline: the parent must separate their diagnostics.
             Console.Write("probe control stdout");
             Console.Error.Write("probe control stderr");
+            if (Environment.GetEnvironmentVariable(ProbeReadyMarker) is { Length: > 0 } marker)
+                File.WriteAllText(marker, "");
             if (mode == "timeout-control") Thread.Sleep(Timeout.Infinite);
             return 17;
         }

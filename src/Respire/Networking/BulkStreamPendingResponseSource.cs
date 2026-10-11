@@ -285,6 +285,7 @@ internal sealed class RespBulkPayloadPipe : IDisposable
     internal static void SetErrorAttempts(Stream? stream, int attempts)
     {
         if (stream is ProgressTrackingStream tracked) tracked.SetErrorAttempts(attempts);
+        else if (stream is CircuitCompletionStream guarded) guarded.SetErrorAttempts(attempts);
     }
 
     private void RecordReadError(Exception error, CancellationToken readCancellation = default)

@@ -38,7 +38,7 @@ public class CommandWriteOutcomeTests
             new ArraySegment<byte>(bytes), lease);
         CommandAttemptResult attempt;
         try { attempt = await connection.SendAttemptAsync(command, commandName: "SET"); }
-        finally { await lease.FinishOperation().AsTask().WaitAsync(Guard); }
+        finally { await lease.CompleteResponseAsync(ValueTask.FromResult(true)).AsTask().WaitAsync(Guard); }
         using var response = attempt.GetResult();
         await Assert.That(response.AsString()).IsEqualTo("OK");
         await Assert.That(server.ReceivedArguments[0][2].AsSpan().SequenceEqual(bytes)).IsTrue();

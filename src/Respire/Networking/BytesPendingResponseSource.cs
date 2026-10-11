@@ -101,7 +101,10 @@ internal sealed class BytesPendingResponseSource : PendingResponse, IValueTaskSo
         finally
         {
             try { Clear(); }
-            catch (Exception error) { failure = error; throw; }
+            catch (Exception error)
+            {
+                if (failure is null) { failure = error; throw; }
+            }
             finally
             {
                 CompleteCallerInspection(observation, failure, observeErrors);
@@ -122,19 +125,18 @@ internal sealed class BytesPendingResponseSource : PendingResponse, IValueTaskSo
 
     private void Clear()
     {
-        if (_hasResponse)
+        try { DisposeResponse(ref _response, ref _hasResponse); }
+        finally
         {
-            _response.Dispose();
+            _response = default;
+            _directResult = null;
+            _hasResponse = false;
+            _hasDirectResult = false;
+            _observeErrors = false;
+            _observation = default;
+            // Keep the operation until the receive reference releases a canceled reply.
+            _duration = default;
         }
-
-        _response = default;
-        _directResult = null;
-        _hasResponse = false;
-        _hasDirectResult = false;
-        _observeErrors = false;
-        _observation = default;
-        // Keep the operation until the receive reference releases a canceled reply.
-        _duration = default;
     }
 
     private readonly struct PoolPolicy : IPooledObjectPolicy<BytesPendingResponseSource>
@@ -143,9 +145,12 @@ internal sealed class BytesPendingResponseSource : PendingResponse, IValueTaskSo
 
         public bool TryReset(BytesPendingResponseSource source)
         {
-            source.Clear();
-            source._commandName = null;
-            source._core.Reset();
+            try { source.Clear(); }
+            finally
+            {
+                source._commandName = null;
+                source._core.Reset();
+            }
             return true;
         }
     }

@@ -65,6 +65,20 @@ connection time. This fixture does not add automatic Sentinel failover to the cl
 
 The Sentinel fixture uses a 5-second down detection interval and a 10-second failover timeout
 so a failed election can retry within bounded test deadlines instead of waiting six minutes.
+Failover tests can shorten both with `SentinelDownAfter` and `SentinelFailoverTimeout`. Sentinels
+retry an aborted election after twice the failover timeout. Very short values trade speed for
+false failovers on an overloaded host, so keep the defaults for tests that do not fail over.
+
+```csharp
+using Respire.Testing.Containers;
+
+await using var fixture = await RespireContainerFixture.StartAsync(new()
+{
+    Topology = RespireContainerTopology.Sentinel,
+    SentinelDownAfter = TimeSpan.FromSeconds(3),
+    SentinelFailoverTimeout = TimeSpan.FromSeconds(3)
+});
+```
 
 ## Docker networking and limits
 
@@ -85,8 +99,10 @@ Retry requires a Docker API HTTP 500 response with a known port-allocation or TC
 address-in-use bind message naming one of the selected `127.0.0.1` ports, or the recognized
 Linux TCP socket bind format that omits the address. Standalone recognizes the specific
 Linux networking error with an empty loopback host port and an IPv4 container destination
-on port 6379 (`127.0.0.1::<container-address>:6379/tcp: address already in use`). The recognized
-selected-port formats also include the complete Linux networking error ending in
+on port 6379 (`127.0.0.1::<container-address>:6379/tcp: address already in use`). It also recognizes
+the complete Linux networking error ending in
+`failed to listen on TCP socket: address already in use`, which omits both addresses and ports.
+The recognized selected-port formats also include the complete Linux networking error ending in
 `failed to bind host port 127.0.0.1:<selected-port>/tcp: address already in use`, without `for`
 or a container destination. The selected host port must match exactly.
 Recognized formats cover Moby's allocator/Linux bind errors and Docker Desktop's TCP bind errors on
@@ -112,7 +128,7 @@ no replicas. These are unauthenticated development servers; do not put sensitive
 
 Startup waits for PING, complete Cluster membership/slot coverage, or replication plus Sentinel
 quorum and discovery of the healthy replica by every Sentinel. Readiness polling backs off
-from 100 ms to one second. One `StartupTimeout` covers image pull, every collision retry,
+from 100 ms to 200 ms. One `StartupTimeout` covers image pull, every collision retry,
 and readiness; it is never restarted for a replacement container. Caller cancellation is preserved;
 an elapsed startup deadline reports the stage and latest readiness reply. Cleanup is awaited
 even after the startup deadline expires.

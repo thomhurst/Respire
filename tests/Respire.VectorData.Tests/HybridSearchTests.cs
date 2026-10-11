@@ -25,6 +25,11 @@ public sealed class HybridRedisVersions : IAsyncInitializer, IAsyncDisposable
     public async ValueTask DisposeAsync() { await _floor.DisposeAsync(); await _current.DisposeAsync(); await _missing.DisposeAsync(); }
 }
 
+// Redis 8.4 and 8.10 can briefly leave a live document out of FT.HYBRID while FT.DROPINDEX DD drops
+// another index on the same server: one hit is missing and the fused ranks close over the gap, then
+// the same query returns every hit again. Each test drops its collection on exit, so the tests that
+// share these servers run one at a time.
+[NotInParallel(nameof(HybridRedisVersions))]
 [ClassDataSource<HybridRedisVersions>(Shared = SharedType.PerTestSession)]
 public class HybridSearchTests(HybridRedisVersions fixture)
 {

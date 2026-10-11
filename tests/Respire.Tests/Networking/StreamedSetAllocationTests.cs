@@ -13,6 +13,44 @@ public sealed class StreamedSetAllocationTests
 {
     [Test]
     [NotInParallel]
+    public async Task SuspendedFinalFrameWaitReusesItsStateMachine()
+    {
+        MeasureFinalFrameWaits(64, false);
+        MeasureFinalFrameWaits(4, true);
+        var allocation = AllocationMeasurement.WithoutConcurrentGc(() => MeasureFinalFrameWaits(16, false));
+        var control = AllocationMeasurement.WithoutConcurrentGc(() => MeasureFinalFrameWaits(16, true));
+        Console.WriteLine($"Suspended final-frame waits: {allocation / 16} B/op; positive control: {control / 16} B/op");
+        await Assert.That(allocation).IsEqualTo(0);
+        await Assert.That(control).IsGreaterThanOrEqualTo(16 * 37);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long MeasureFinalFrameWaits(int count, bool allocateControl)
+    {
+        long allocated = 0;
+        for (var index = 0; index < count; index++)
+        {
+            var write = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var before = GC.GetAllocatedBytesForCurrentThread();
+            var pending = RespireConnection.WaitForFinalFrameWriteAsync(write.Task, CancellationToken.None);
+            var anchor = allocateControl ? new byte[37] : null;
+            allocated += GC.GetAllocatedBytesForCurrentThread() - before;
+            GC.KeepAlive(anchor);
+            if (pending.IsCompleted) throw new InvalidOperationException("The final write wait did not suspend.");
+            var awaiter = pending.GetAwaiter();
+            awaiter.UnsafeOnCompleted(() => completed.TrySetResult());
+            write.SetResult();
+            if (!completed.Task.Wait(TimeSpan.FromSeconds(10)))
+                throw new TimeoutException("The final write wait did not complete.");
+            // Consume on the measured thread so the pooled box returns to that thread's cache.
+            awaiter.GetResult();
+        }
+        return allocated;
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task SuspendedUploadReusesItsStateMachine()
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
