@@ -75,41 +75,55 @@ internal static partial class RespireTelemetry
     // retry counts; they never borrow another logical owner's pooled lease.
     // Copies retain their generation. Returning storage cannot give old borrowers access
     // to a later renter, and the private storage gate makes validation/mutation atomic.
-    /// <summary>Per-leg endpoints for a concurrent fan-out that shares one caller observation.</summary>
-    /// <remarks>
-    /// Legs run in parallel, so the shared observation's retained endpoint is whichever leg wrote
-    /// last. Each leg records its own target here; <see cref="JoinAsync{T}"/> copies the endpoint of
-    /// the leg whose exception surfaces into the caller's observation before rethrowing.
-    /// </remarks>
-    internal sealed class FanOutEndpoints(int count)
+    /// <summary>
+    /// One leg of a concurrent fan-out. It borrows the caller's retry history and handled-error
+    /// publication, but keeps its own endpoint, so parallel legs (and transport reroutes inside a
+    /// leg) never overwrite each other's node.
+    /// </summary>
+    internal sealed class FanOutLegObservation(ErrorObservation caller) : IDispatchObservation
     {
-        private readonly RespireEndpoint?[] _legs = new RespireEndpoint?[count];
+        private readonly Lock _gate = new();
+        private RespireEndpoint? _endpoint;
 
-        internal FanOutLeg Leg(int index) => new(this, index);
+        internal ErrorObservation Observation => new(this, 0);
 
-        // Each slot has one writer (its leg); the lock only publishes the multi-word value.
-        internal void Set(int index, RespireEndpoint? endpoint) { lock (_legs) _legs[index] = endpoint; }
+        internal RespireEndpoint? LegEndpoint { get { lock (_gate) return _endpoint; } }
 
-        internal RespireEndpoint? Get(int index) { lock (_legs) return _legs[index]; }
+        public bool IsOpen(long generation) => caller.IsOpen;
+        public int Attempts(long generation) => caller.Attempts;
+        public RespireEndpoint? Endpoint(long generation) => LegEndpoint;
+        public void UseEndpoint(long generation, RespireEndpoint? endpoint) { lock (_gate) _endpoint = endpoint; }
+        public void SetAttempts(long generation, int attempts) => caller.SetAttempts(attempts);
+        public void Retry(long generation) => caller.Retry();
 
-        // Task.WhenAll surfaces the first faulted task in array order, or a cancellation when none faulted.
-        internal async Task<T[]> JoinAsync<T>(Task<T>[] tasks, ErrorObservation observation)
+        // Handled errors always name this leg's node, never the caller's shared retained endpoint.
+        public bool Handled(long generation, Exception error, RespireEndpoint? endpoint, bool overrideEndpoint)
+            => caller.TryHandled(error, overrideEndpoint ? endpoint : LegEndpoint, overrideEndpoint: true);
+
+        internal static FanOutLegObservation[] Create(int count, ErrorObservation caller)
+        {
+            var legs = new FanOutLegObservation[count];
+            for (var i = 0; i < legs.Length; i++) legs[i] = new(caller);
+            return legs;
+        }
+
+        /// <summary>
+        /// Joins every leg, then names the caller's final error with the endpoint of the leg whose
+        /// exception actually propagates (matched by reference, not inferred from task order).
+        /// </summary>
+        internal static async Task<T[]> JoinAsync<T>(Task<T>[] tasks, FanOutLegObservation[] legs, ErrorObservation caller)
         {
             try { return await Task.WhenAll(tasks).ConfigureAwait(false); }
-            catch
+            catch (Exception propagated)
             {
-                var surfaced = Array.FindIndex(tasks, static task => task.IsFaulted);
-                if (surfaced < 0) surfaced = Array.FindIndex(tasks, static task => task.IsCanceled);
-                if (surfaced >= 0) observation.UseEndpoint(Get(surfaced));
+                var surfaced = Array.FindIndex(tasks, task => task.Exception?.InnerExceptions.Any(
+                    inner => ReferenceEquals(inner, propagated)) == true);
+                if (surfaced < 0 && propagated is OperationCanceledException)
+                    surfaced = Array.FindIndex(tasks, static task => task.IsCanceled);
+                if (surfaced >= 0) caller.UseEndpoint(legs[surfaced].LegEndpoint);
                 throw;
             }
         }
-    }
-
-    /// <summary>One fan-out leg's endpoint slot. The default value is not a fan-out leg.</summary>
-    internal readonly struct FanOutLeg(FanOutEndpoints? owner, int index)
-    {
-        internal void Use(RespireEndpoint? endpoint) => owner?.Set(index, endpoint);
     }
 
     internal readonly struct ErrorObservation : IDisposable

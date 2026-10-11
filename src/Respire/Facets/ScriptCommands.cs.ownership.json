@@ -33,7 +33,7 @@
       "Role": "borrower"
     },
     {
-      "Member": "Respire.ScriptCommands.SendAndConvertAsync`2(string,RespireConnection,TCommand,ResponseConverter<ScriptCommands,TResult>,CancellationToken,RespireTelemetry.ErrorObservation,RespireTelemetry.FanOutLeg):ValueTask<TResult>",
+      "Member": "Respire.ScriptCommands.SendAndConvertAsync`2(string,RespireConnection,TCommand,ResponseConverter<ScriptCommands,TResult>,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<TResult>",
       "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
       "Contract": "Borrow the enclosing SCRIPT caller owner for target transport retries, reply conversion and disposal. Never publish an independent final target failure.",
       "Name": "script-primary-conversion",

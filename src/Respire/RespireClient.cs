@@ -4010,8 +4010,7 @@ public sealed partial class RespireClient : IRespireClient
     // Do not use this for WATCH or connection-scoped CLIENT operations, whose socket is part of their contract.
     internal async ValueTask<RespValue> SendToClusterTargetAsync<TCommand>(
         string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken,
-        bool observeErrors = true, RespireTelemetry.ErrorObservation observation = default,
-        RespireTelemetry.FanOutLeg leg = default)
+        bool observeErrors = true, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
     {
         var cluster = _core.Cluster;
@@ -4026,7 +4025,6 @@ public sealed partial class RespireClient : IRespireClient
             {
                 try
                 {
-                    leg.Use(new RespireEndpoint(connection.Host, connection.Port));
                     return await SendOnConnectionAsync(operation, connection, command, cancellationToken,
                         observation: observation).ConfigureAwait(false);
                 }

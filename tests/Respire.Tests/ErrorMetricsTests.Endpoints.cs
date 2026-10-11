@@ -54,6 +54,34 @@ public partial class ErrorMetricsTests
     }
 
     [Test]
+    public async Task FanOutJoinNamesTheLegWhoseExceptionPropagates()
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        using var caller = RespireTelemetry.ErrorObservation.Rent(force: true);
+        var legs = RespireTelemetry.FanOutLegObservation.Create(2, caller);
+        var first = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var second = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        // The first leg's transport rerouted from its original node to a replacement.
+        legs[0].Observation.UseEndpoint(new("original.example", 6380));
+        legs[0].Observation.UseEndpoint(new("replacement.example", 6381));
+        legs[1].Observation.UseEndpoint(new("second.example", 6382));
+        var join = RespireTelemetry.FanOutLegObservation.JoinAsync([first.Task, second.Task], legs, caller);
+        // The later leg faults first; whichever exception propagates must name its own leg.
+        var secondFailure = new IOException("second");
+        var firstFailure = new IOException("first");
+        second.SetException(secondFailure);
+        first.SetException(firstFailure);
+        var propagated = await Assert.That(async () => await join).Throws<IOException>();
+        var expected = ReferenceEquals(propagated, firstFailure)
+            ? new RespireEndpoint("replacement.example", 6381) : new RespireEndpoint("second.example", 6382);
+        await Assert.That(caller.Endpoint).IsEqualTo(expected);
+        // Handled errors inside a leg name that leg, not the caller's retained endpoint.
+        using var capture = new Capture();
+        legs[1].Observation.Handled(new RespireServerException("MOVED 1 other.example:1"));
+        await Assert.That(capture.Items.Single().Tags["server.port"]).IsEqualTo(6382);
+    }
+
+    [Test]
     public async Task SentinelPrimaryConnectFailureNamesTheResolvedPrimary()
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });

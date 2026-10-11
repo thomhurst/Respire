@@ -393,11 +393,11 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         if (masters.Length == 0)
             throw new RespireConnectionException($"{operation} did not reach any Redis Cluster primary.");
         var responses = new Task<TResult>[masters.Length];
-        var legs = new RespireTelemetry.FanOutEndpoints(masters.Length);
+        var legs = RespireTelemetry.FanOutLegObservation.Create(masters.Length, observation);
         for (var i = 0; i < masters.Length; i++)
-            responses[i] = SendAndConvertAsync(operation, masters[i], command, convert, cancellationToken, observation, legs.Leg(i)).AsTask();
+            responses[i] = SendAndConvertAsync(operation, masters[i], command, convert, cancellationToken, legs[i].Observation).AsTask();
         // Join every target and its reply cleanup before the caller publishes one failure, named by its own leg.
-        var results = await legs.JoinAsync(responses, observation).ConfigureAwait(false);
+        var results = await RespireTelemetry.FanOutLegObservation.JoinAsync(responses, legs, observation).ConfigureAwait(false);
         validate?.Invoke(results);
         return results;
     }
@@ -405,12 +405,11 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<TResult> SendAndConvertAsync<TCommand, TResult>(
         string operation, RespireConnection connection, TCommand command,
-        ResponseConverter<ScriptCommands, TResult> convert, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation,
-        RespireTelemetry.FanOutLeg leg = default)
+        ResponseConverter<ScriptCommands, TResult> convert, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         where TCommand : struct, IRespCommand
     {
         using var reply = await client.SendToClusterTargetAsync(operation, connection, command, cancellationToken,
-            observeErrors: false, observation: observation, leg: leg).ConfigureAwait(false);
+            observeErrors: false, observation: observation).ConfigureAwait(false);
         return convert(this, in reply);
     }
 }
