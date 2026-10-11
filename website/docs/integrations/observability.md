@@ -1111,6 +1111,11 @@ Deferred command failures are reported once after execution cleanup. Inspecting 
 before execution, after a WATCH abort, or after its queue is discarded counts that lifecycle
 failure once; repeated `Result` or awaiter inspection does not count it again. A later
 execution failure remains a separate boundary from an earlier not-ready inspection.
+Deferred results use the shared bounded retry transitions both before and after they
+acquire failure-only storage. Added retries saturate at `int.MaxValue`; zero or negative
+additions do not reduce completed retry history. Final execution reporting freezes that
+count. Copied observations and later `Result` or awaiter inspection retain the original
+exception and cancellation token without publishing a second terminal failure.
 
 ## Sentinel primary changes
 
