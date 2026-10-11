@@ -251,27 +251,38 @@ public class RedlockWireTests
     {
         await using var nodes = await Nodes.StartAsync(static (_, _) => null);
         nodes.Servers[2].SuppressReply = static command => command.StartsWith("SET ", StringComparison.Ordinal);
-        var group = new RespireRedlockGroup(nodes.Clients, new RespireRedlockOptions { NodeTimeout = TimeSpan.FromMilliseconds(100) });
+        // The timeout must also cover the healthy nodes' first SET, which can take more than
+        // 100 ms when JIT and parallel tests load the runner. A healthy node that times out
+        // would cost the quorum.
+        var nodeTimeout = TimeSpan.FromSeconds(1);
+        var group = new RespireRedlockGroup(nodes.Clients, new RespireRedlockOptions { NodeTimeout = nodeTimeout });
         await using var attempt = await group.TryAcquireAsync("redlock:silent", TimeSpan.FromSeconds(10));
         await Assert.That(attempt.Acquired).IsTrue();
-        await Assert.That(attempt.Lock.Validity < TimeSpan.FromSeconds(10) - TimeSpan.FromMilliseconds(100)).IsTrue();
+        await Assert.That(attempt.Lock.Validity < TimeSpan.FromSeconds(10) - nodeTimeout).IsTrue();
     }
 
     [Test]
     public async Task CallerCancellationDuringAcquisitionReleasesEveryNode()
     {
-        await using var nodes = await Nodes.StartAsync(static (_, _) => null, delayAcquireMs: 500);
-        var group = new RespireRedlockGroup(nodes.Clients, new RespireRedlockOptions { NodeTimeout = TimeSpan.FromSeconds(5) });
+        // Every node withholds its SET reply until the test has cancelled, so acquisition is
+        // still in flight when Cancel runs however long the runner stalls in between.
+        var setReplies = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var nodes = await Nodes.StartAsync(static (_, _) => null, acquireGate: setReplies.Task);
+        var group = new RespireRedlockGroup(nodes.Clients, new RespireRedlockOptions { NodeTimeout = TimeSpan.FromSeconds(30) });
         using var cancellation = new CancellationTokenSource();
         var acquisition = group.TryAcquireAsync("redlock:cancel", TimeSpan.FromSeconds(10), cancellation.Token).AsTask();
         // Cancel only once every node holds the SET. A wall-clock cancel could fire before
         // acquisition starts on a slow runner; no node is contacted then, so none needs a release.
-        using (var limit = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+        // The limit only bounds a failing run; a passing run never depends on it.
+        using (var limit = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
         {
             while (!nodes.Servers.All(static server => server.ReceivedCommands.Any(static c => c.StartsWith("SET ", StringComparison.Ordinal))))
                 await Task.Delay(1, limit.Token);
         }
         cancellation.Cancel();
+        // The late SET replies now land on cancelled waiters; the gate also holds the DELEX
+        // that follows on each single-connection node, so cleanup needs it open.
+        setReplies.SetResult();
         await Assert.That(async () => await acquisition).Throws<OperationCanceledException>();
         foreach (var server in nodes.Servers)
             await Assert.That(server.ReceivedCommands.Count(static c => c.StartsWith("DELEX ", StringComparison.Ordinal))).IsEqualTo(1);
@@ -310,7 +321,7 @@ public class RedlockWireTests
         public RespireClient[] Clients { get; }
         public int CommandsSeen => Servers.Sum(static server => server.CommandsSeen);
 
-        public static async Task<Nodes> StartAsync(Func<int, string, byte[]?> reply, int delayReleaseMs = 0, int delayAcquireMs = 0)
+        public static async Task<Nodes> StartAsync(Func<int, string, byte[]?> reply, int delayReleaseMs = 0, Task? acquireGate = null)
         {
             var servers = new FakeRespServer[3];
             var clients = new RespireClient[3];
@@ -322,7 +333,7 @@ public class RedlockWireTests
                     ReplyOverride = (_, command) => reply(node, command)
                         ?? (command.StartsWith("DELEX ", StringComparison.Ordinal) ? One : Ok),
                 };
-                if (delayAcquireMs > 0) servers[i].DelayReply(0, delayAcquireMs);
+                if (acquireGate is not null) servers[i].GateCommand("SET ", acquireGate);
                 if (delayReleaseMs > 0) servers[i].DelayReply(1, delayReleaseMs);
                 clients[i] = await FakeRespServer.ConnectClientAsync(servers[i].Port);
             }
