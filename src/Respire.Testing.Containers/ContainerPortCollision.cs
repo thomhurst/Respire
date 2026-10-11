@@ -15,12 +15,7 @@ internal static class ContainerPortCollision
         var message = DockerMessage(error);
         if (message is null) return false;
         var networkingFailure = message.StartsWith(NetworkingPrefix, StringComparison.Ordinal);
-        // Recent Linux engines omit the host address in this libnetwork TCP bind error.
-        // The fixture calls this only for StartAsync failures with explicit port mappings;
-        // retain the complete networking prefix and TCP bind suffix, not a generic match.
-        if (selectedPorts.Length != 0
-            && networkingFailure
-            && message.EndsWith("): failed to listen on TCP socket: address already in use", StringComparison.Ordinal))
+        if (selectedPorts.Length != 0 && IsAddresslessTcpBindCollision(message))
             return true;
         foreach (var port in selectedPorts)
         {
@@ -48,9 +43,17 @@ internal static class ContainerPortCollision
         return false;
     }
 
-    /// <summary>Recognizes the standalone TCP bind collision with an empty random host port and a selected container port.</summary>
+    /// <summary>Recognizes standalone TCP bind collisions for Docker-assigned host ports.</summary>
     internal static bool IsStandaloneBindCollision(Exception error, int[] containerPorts)
-        => DockerMessage(error) is { } message && IsRandomHostPortCollision(message, containerPorts);
+        => containerPorts.Length != 0 && DockerMessage(error) is { } message
+            && (IsAddresslessTcpBindCollision(message) || IsRandomHostPortCollision(message, containerPorts));
+
+    // Recent Linux engines omit the host address for both fixed and random port mappings.
+    // Callers use this only for container StartAsync failures while publishing TCP ports.
+    // Require the complete networking prefix and TCP bind suffix, not a generic match.
+    private static bool IsAddresslessTcpBindCollision(string message)
+        => message.StartsWith(NetworkingPrefix, StringComparison.Ordinal)
+            && message.EndsWith("): failed to listen on TCP socket: address already in use", StringComparison.Ordinal);
 
     private static string? DockerMessage(Exception error)
     {

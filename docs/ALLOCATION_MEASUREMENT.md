@@ -224,16 +224,56 @@ above when it failed twice on net8.0 in the isolated telemetry step on 2026-10-1
 and 49,200 bytes on docs-only PR #1413 ([run 38130458868](https://github.com/thomhurst/Respire/actions/runs/38130458868)).
 Neither PR changes the cached read path, and no recent main commit does.
 
-Local net8.0 and net10.0 runs did not reproduce the delta. These included Windows,
-Linux containers limited to 2 or 4 CPUs, the CI test filter, 2,500 in-process
-repetitions, tiering variations (`TC_CallCountingDelayMs`, `TieredPGO=0`,
-`ReadyToRun=0`), and background pool churn. Both values are multiples of 48 bytes.
-That pattern does not identify a source.
+Per-caller attribution in [run 38133929691](https://github.com/thomhurst/Respire/actions/runs/38133929691)
+put all 24,624 bytes on `GetStringAsync`, in the first measured iteration.
 
-The test keeps the exact zero-byte requirement. The measured method now reads the
-thread counter after each caller. A failure reports the bytes for `GetAsync<int>`,
-`GetStringAsync`, both `GetOrSetAsync` calls and the control slot, the first
-allocating iteration, and the GC collection counts around the region. A late
-iteration from a single caller points at that caller's path. A delta spread across
-callers points at measurement or runtime activity. The positive control must still
-record at least 37,000 bytes in its own slot.
+### Root cause: the runtime cast cache
+
+The CI step reproduces in a Linux container (.NET SDK 10.0.401 with the 8.0.31 runtime,
+4 CPUs) with the exact `--treenode-filter` from `ci.yml`: 10 of 10 runs failed.
+The measured bytes are the runtime's cast cache table, not a Respire allocation.
+
+- On .NET 8 the cast cache is a managed `int[]` (`CastHelpers.s_table`). Each entry
+  is 24 bytes (six `int`s), and the table holds one extra entry for its header.
+  Reflection in the reproduction read lengths of 12,294 and 24,582 `int`s, which are
+  2,049 and 4,097 entries. The array sizes are 24 + 4 × length bytes: 49,200 and
+  98,352 bytes. A 1,025-entry table is 24,624 bytes. These are the three CI values.
+- `GC.TryStartNoGCRegion` starts with a blocking full GC. After it, the table was
+  sometimes replaced by a sentinel, which shows as a different table identity before
+  the region and after the measurement. In the reproduction this happened in about
+  half of the runs. The replacement is not synchronous with the GC: a priming cast
+  run straight after `TryStartNoGCRegion` still left the cache empty for a later cast
+  in 5 of 6 flushed runs. Waiting for the finalizer pass first closed that gap, which
+  is consistent with the flush running on the finalizer thread after the GC.
+- After a flush, the next cast that misses the cache allocates a new table at the
+  previous size. The allocating thread pays for it. On the measured paths that cast
+  is in `DispatchResponseSource<string?>.Run`: `string?` code is shared canonical
+  generic code, so its type checks go through the cast cache helper. The `int`
+  instantiations use exact type checks, so `GetAsync<int>` never triggered it.
+- Probes inside the region recorded 0 bytes for `DispatchResponseSource<string?>`
+  `Start` and `CompleteInternal`, 0 bytes for `TryGetString`, and the full table size
+  for a `Run` with a trivial callback. When a failing `object is object[]` cast ran
+  first, it took the table allocation instead, and `Run` then allocated only its
+  first-use delegate. A successful `string[]` to `object[]` cast did not refill the cache.
+
+The table size grows with the number of distinct cast pairs the process has seen,
+so the value depends on the tests that ran earlier in the same process. That fits a
+failure that appeared without a change to the cached read path. This investigation
+did not establish why flushes became frequent on CI after 2026-10-11 07:00Z.
+
+### Boundary change
+
+`AllocationMeasurement.WithoutConcurrentGc` now calls `GC.WaitForPendingFinalizers`
+inside the region, after the region's GC, and then runs one failing
+`object is object[]` cast before `measure`. If the GC led to a flush, the cast
+reallocates the table outside the measured interval. If it did not, the cast hits
+the cache and allocates nothing. In 14 reproduction runs with the change, 8 had a
+flush; in all 14 the measured `Run` probe allocated only its 64-byte first-use
+delegate and the measured callers allocated 0 bytes. Every caller keeps
+its exact zero-byte assertion and its positive control. The fix does not skip,
+retry or tolerate a sample.
+
+The test still reports per-caller bytes, the first allocating iteration and the
+GC collection counts around the region. A late iteration from a single caller points
+at that caller's path. A delta on the first iteration right after the region's GC
+points at runtime state that GC reset.
