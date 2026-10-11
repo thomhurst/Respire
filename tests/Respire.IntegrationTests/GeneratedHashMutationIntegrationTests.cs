@@ -27,8 +27,11 @@ public class GeneratedHashMutationIntegrationTests(ModernRedisTestContainer fixt
         await tracker.UpdateAsync(value);
         var ttl = await client.Hashes.ExpiryAsync(key, "Token");
         await Assert.That(ttl[0].HasExpiry && ttl[0].TimeToLive!.Value.TotalMilliseconds <= 500).IsTrue();
-        await Task.Delay(700);
-        await Assert.That(await client.Hashes.GetStringAsync(key, "Token")).IsNull();
+        using (var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+        {
+            while (await client.Hashes.GetStringAsync(key, "Token", deadline.Token) is not null)
+                await Task.Delay(25, deadline.Token);
+        }
         await tracker.UpdateAsync(value);
         await Assert.That(await client.Hashes.GetStringAsync(key, "Token")).IsNull();
         await Assert.That(await client.Hashes.GetStringAsync(key, "Id")).IsEqualTo("id");

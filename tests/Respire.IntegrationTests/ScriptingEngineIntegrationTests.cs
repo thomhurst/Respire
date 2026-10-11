@@ -16,12 +16,10 @@ public class ScriptingEngineIntegrationTests
     [Arguments(3)]
     public async Task ModernAbsentEngineAndLegacyAclControls(int protocol)
     {
-        await using var modern = CreateServer("valkey/valkey:9.1.0-alpine");
-        await using var legacy = CreateServer("valkey/valkey:9.0-alpine");
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(90));
         var token = deadline.Token;
-        await modern.StartAsync(token);
-        await legacy.StartAsync(token);
+        await using var modern = await ContainerStartRetry.StartAsync(() => CreateServer("valkey/valkey:9.1.0-alpine"), [6379], token);
+        await using var legacy = await ContainerStartRetry.StartAsync(() => CreateServer("valkey/valkey:9.0-alpine"), [6379], token);
         await using var client = await ConnectAsync(modern, protocol, restricted: false, token);
         await using var older = await ConnectAsync(legacy, protocol, restricted: false, token);
         var script = RespireScript.Create("return 42");

@@ -15,8 +15,7 @@ public class ServerHotKeysIntegrationTests(VersionedServerFixture servers)
         [Matrix(RespireHotKeysMetrics.Cpu, RespireHotKeysMetrics.Network, RespireHotKeysMetrics.Cpu | RespireHotKeysMetrics.Network)] RespireHotKeysMetrics metrics)
     {
         // HOTKEYS has a single node-wide session, so every case owns its server.
-        await using var container = new RedisBuilder("redis:8.6-alpine").Build();
-        await container.StartAsync();
+        await using var container = await ContainerStartRetry.StartAsync(() => new RedisBuilder("redis:8.6-alpine").Build(), [6379]);
         var address = $"redis://{container.Hostname}:{container.GetMappedPublicPort(6379)}?protocol={protocol}&allowAdmin=true&connections=2";
         await using var client = await RespireClient.ConnectAsync(address);
         await using var other = await RespireClient.ConnectAsync(address);
@@ -97,8 +96,7 @@ public class ServerHotKeysIntegrationTests(VersionedServerFixture servers)
     [Arguments(3)]
     public async Task DurationStopsAutomaticallyAndStandaloneSlotsRemainServerErrors(int protocol)
     {
-        await using var container = new RedisBuilder("redis:8.6-alpine").Build();
-        await container.StartAsync();
+        await using var container = await ContainerStartRetry.StartAsync(() => new RedisBuilder("redis:8.6-alpine").Build(), [6379]);
         await using var client = await RespireClient.ConnectAsync($"redis://{container.Hostname}:{container.GetMappedPublicPort(6379)}?protocol={protocol}&allowAdmin=true");
         var tracker = await client.Server.GetHotKeysTrackerAsync();
         Func<Task> slots = async () => await tracker.StartAsync(new() { Slots = new[] { 1 } });
@@ -122,11 +120,10 @@ public class ServerHotKeysIntegrationTests(VersionedServerFixture servers)
     [Arguments(3)]
     public async Task ClusterSlotsAndSamplingPreserveLiteralRanges(int protocol)
     {
-        await using var container = new ContainerBuilder("redis:8.6-alpine")
+        await using var container = await ContainerStartRetry.StartAsync(() => new ContainerBuilder("redis:8.6-alpine")
             .WithPortBinding(6379, true).WithCommand("redis-server", "--cluster-enabled", "yes", "--cluster-config-file", "nodes.conf",
                 "--cluster-announce-ip", "127.0.0.1", "--appendonly", "no")
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build();
-        await container.StartAsync();
+            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), [6379]);
         var port = container.GetMappedPublicPort(6379);
         await Run(["redis-cli", "-e", "CONFIG", "SET", "cluster-announce-port", port.ToString()]);
         await Run(["redis-cli", "-e", "CLUSTER", "ADDSLOTSRANGE", "0", "16383"]);

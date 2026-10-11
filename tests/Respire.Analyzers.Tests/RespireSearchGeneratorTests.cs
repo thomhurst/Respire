@@ -7,7 +7,6 @@ using TUnit.Core;
 
 namespace Respire.Analyzers.Tests;
 
-[NotInParallel]
 public class RespireSearchGeneratorTests
 {
     [Test]
@@ -131,12 +130,8 @@ public class RespireSearchGeneratorTests
     private static (string Source, Diagnostic[] Diagnostics) Generate(string declaration)
     {
         var options = new CSharpParseOptions(LanguageVersion.CSharp12);
-        var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
-            .Append(typeof(RespireSearchAttribute).Assembly.Location).Append(typeof(RespireJsonAttribute).Assembly.Location)
-            .Append(typeof(RespireHashAttribute).Assembly.Location).Distinct(StringComparer.OrdinalIgnoreCase)
-            .Select(path => MetadataReference.CreateFromFile(path));
         var compilation = CSharpCompilation.Create("SearchConsumer", [CSharpSyntaxTree.ParseText(
-            "#nullable enable\nusing Respire; using Respire.Json; using Respire.Search;\n" + declaration, options)], references,
+            "#nullable enable\nusing Respire; using Respire.Json; using Respire.Search;\n" + declaration, options)], GeneratorTestReferences.All,
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
         GeneratorDriver driver = CSharpGeneratorDriver.Create([new RespireHashGenerator().AsSourceGenerator(),
             new RespireJsonGenerator().AsSourceGenerator(), new RespireSearchGenerator().AsSourceGenerator()], parseOptions: options);

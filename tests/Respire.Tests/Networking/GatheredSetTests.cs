@@ -309,7 +309,7 @@ public sealed class GatheredSetTests
     [Arguments("deadline")]
     [Arguments("peer-close")]
     [Arguments("dispose")]
-    [NotInParallel]
+    [ParallelLimiter<TimingSensitive>] // Real socket backpressure and watchdog deadlines.
     public async Task BackpressuredPeerPreservesCallerPayloadThroughEveryFailureBoundary(string boundary)
     {
         var reads = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -381,7 +381,7 @@ public sealed class GatheredSetTests
     [Arguments("cancel", true)]
     [Arguments("deadline", true)]
     [Arguments("watchdog", true)]
-    [NotInParallel]
+    [ParallelLimiter<TimingSensitive>] // Real socket backpressure and watchdog deadlines.
     public async Task ConfiguredWatchdogReleasesBorrowedMemoryWhenPeerNeverResumes(string boundary, bool pausedConsumer)
     {
         var reads = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -455,7 +455,7 @@ public sealed class GatheredSetTests
     }
 
     [Test]
-    [NotInParallel]
+    [ParallelLimiter<TimingSensitive>] // Real socket backpressure and watchdog deadlines.
     [Arguments("cancel")]
     [Arguments("deadline")]
     [Arguments("watchdog")]
@@ -540,7 +540,7 @@ public sealed class GatheredSetTests
     }
 
     [Test]
-    [NotInParallel]
+    [ParallelLimiter<TimingSensitive>] // Real socket backpressure and watchdog deadlines.
     public async Task CompletedBorrowedWriteDoesNotLeaveAnIdleWatchdogArmed()
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply);

@@ -60,10 +60,9 @@ public class StreamWorkerCapabilityIntegrationTests(RedisTestContainer redis)
         if (version < new Version(8, minimumMinor)) return;
         var nack = completion == "nack";
         var image = Environment.GetEnvironmentVariable("RESPIRE_TEST_REDIS_IMAGE") ?? "redis:7.0.15";
-        await using var disabled = new Testcontainers.Redis.RedisBuilder(image)
+        await using var disabled = await ContainerStartRetry.StartAsync(() => new Testcontainers.Redis.RedisBuilder(image)
             .WithCommand(["redis-server", "--rename-command", nack ? "XNACK" : "XACKDEL", ""])
-            .Build();
-        await disabled.StartAsync();
+            .Build(), [6379]);
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(disabled.GetConnectionString()));
         await client.Streams.AddAsync("disabled", new StreamAddOptions { Id = "1-0" }, ("f", "v"));
         await client.Streams.CreateGroupAsync("disabled", "g", RespireStreamId.Beginning);

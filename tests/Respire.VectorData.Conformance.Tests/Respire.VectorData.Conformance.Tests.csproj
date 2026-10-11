@@ -13,5 +13,7 @@
     <PackageReference Include="xunit.v3.mtp-v2" />
     <PackageReference Include="Testcontainers.Redis" />
     <ProjectReference Include="../../src/Respire.VectorData/Respire.VectorData.csproj" />
+    <Compile Include="../ContainerStartRetry.cs" Link="ContainerStartRetry.cs" />
+    <Compile Include="../../src/Respire.Testing.Containers/ContainerPortCollision.cs" Link="ContainerPortCollision.cs" />
   </ItemGroup>
 </Project>

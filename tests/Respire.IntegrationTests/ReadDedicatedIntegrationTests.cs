@@ -8,6 +8,7 @@ using TUnit.Core;
 namespace Respire.IntegrationTests;
 
 [Category(TestCategories.ProtocolIndependent)]
+[ParallelLimiter<DockerHeavy>]
 public class ReadDedicatedIntegrationTests
 {
     [Test]

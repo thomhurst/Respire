@@ -2,6 +2,13 @@
   "Surfaces": [],
   "Boundaries": [
     {
+      "Name": "script-correction-borrower",
+      "Role": "borrower",
+      "Member": "Respire.RespireClient.ExecuteScriptBorrowedAsync(RespireScript,RespireKey[],RespireValue[],CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<RespireResult>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Borrow the correction caller's observation through script fallback and mutation cleanup. Never publish a producer final error or dispose an independent caller's owner."
+    },
+    {
       "Name": "cursor-page-conversion",
       "Role": "helper",
       "Member": "Respire.RespireClient.ConvertCursorPageAsync`3(string,TCommand,ReadAffinity,CancellationToken,TState,ResponseConverter<TState,TResult>,RespireTelemetry.ErrorObservation):ValueTask<TResult>",

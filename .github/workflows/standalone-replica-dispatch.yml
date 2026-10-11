@@ -19,8 +19,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # The main pipeline covers net8.0 on Linux. This pair covers net10.0 and
-  # Windows scheduling/tiered compilation with the same Linux control cases.
+  # CI covers both frameworks on Linux: its net8.0 job runs this filter with its minimum, and its
+  # net10.0 unit shards run every class in it in Release without the HTML reporter. This job adds
+  # Windows scheduling and tiered compilation for the same cases.
   routing:
     name: Standalone replica dispatch (${{ matrix.os }}, net10.0)
     runs-on: ${{ matrix.os }}
@@ -28,7 +29,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [windows-latest]
     env:
       TUNIT_DISABLE_HTML_REPORTER: 'true'
     steps:

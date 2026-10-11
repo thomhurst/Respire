@@ -2,12 +2,14 @@ name: CI
 
 # The single PR test workflow. Each job builds only the projects it runs, for one framework;
 # the Modular Pipeline workflow compiles the whole solution for every framework and verifies the packages.
-#   - net10.0 runs the full suite (RESP3), split into parallel unit-shard, integration and component jobs;
-#     "Build and Test (net10.0)" gates on them and merges coverage. A second job reruns Respire.IntegrationTests on RESP2 so the
+#   - net10.0 runs the full suite (RESP3), split into parallel unit-shard, integration, component and analyzer
+#     jobs; "Build and Test (net10.0)" gates on them and, outside pull requests, merges coverage.
+#     A second job reruns Respire.IntegrationTests on RESP2 so the
 #     shared typed scenarios parse both reply shapes; tests that pin a protocol already cover the
 #     other suites' protocol-specific behavior, so those suites run once.
 #   - net8.0 runs a smoke set: the framework-conditional code paths, the fake-server
-#     client path, and the public samples, including one against a real Redis container.
+#     client path, and the public samples, including one against a real Redis container, plus the
+#     Debug-build invariants in a parallel job. "Build and Test (net8.0)" gates on both.
 
 on:
   workflow_dispatch:
@@ -22,6 +24,29 @@ env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
   DOTNET_NOLOGO: true
   DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  # Coverage adds about 40% to the unit shards, so pull requests skip it. Main and manual runs collect
+  # it, and the Codecov upload tolerates a missing report (fail_ci_if_error: false).
+  COLLECT_COVERAGE: ${{ github.event_name != 'pull_request' }}
+  COVERAGE_ARGS: ${{ github.event_name != 'pull_request' && '--coverage --coverage-output coverage.cobertura.xml --coverage-output-format cobertura' || '' }}
+  # Test jobs compile without Roslyn analyzers (source generators still run) or XML documentation.
+  # The Modular Pipeline workflow builds the whole solution with both on for every pull request.
+  TEST_BUILD_ARGS: -p:RunAnalyzers=false -p:GenerateDocumentationFile=false
+  # Images the test jobs pull through Testcontainers, pre-pulled while they build. The Ryuk reaper
+  # reference is the one Testcontainers 4.16.0 pins; update it with the package. A stale or missing
+  # entry only costs the pull at test time.
+  INTEGRATION_IMAGES: >-
+    testcontainers/ryuk:0.14.0@sha256:7c1a8a9a47c780ed0f983770a662f80deb115d95cce3e2daa3d12115b8cd28f0
+    redis:7.0.15 redis:8.10-alpine redis:8.4-alpine redis:8.8.3-alpine redis:7.2-alpine redis:7.4-alpine
+    valkey/valkey:9.0-alpine valkey/valkey:8.1-alpine valkey/valkey:9.1-alpine valkey/valkey:9-alpine
+    valkey/valkey:9.1.0-alpine redis:6.2.14-alpine redis:6.2-alpine redis:7.4.11-alpine redis:8.2-alpine
+    redis:8.6-alpine redis:8.8-alpine
+  COMPONENT_IMAGES: >-
+    testcontainers/ryuk:0.14.0@sha256:7c1a8a9a47c780ed0f983770a662f80deb115d95cce3e2daa3d12115b8cd28f0
+    redis:7.0.15 redis:7.2-alpine redis:7.4-alpine redis:8.10-alpine redis:7.4.11-alpine redis:7.2.11-alpine
+    valkey/valkey:8.1-alpine
+  NET8_IMAGES: >-
+    testcontainers/ryuk:0.14.0@sha256:7c1a8a9a47c780ed0f983770a662f80deb115d95cce3e2daa3d12115b8cd28f0
+    redis:7.0.15 redis:7.2.11-alpine redis:7.2-alpine valkey/valkey:8.1-alpine
 
 permissions:
   contents: read
@@ -193,7 +218,7 @@ jobs:
       - name: Verify worktree cleanup safety
         shell: pwsh
         run: |
-          foreach ($test in @('Test-MergedWorktreeSweep', 'Test-WorktreeCleanup', 'Test-WorkflowArtifactCleanup', 'Test-MergePr', 'Test-MergePrLifecycle', 'Test-ReleasedWorktreeCleanup')) {
+          foreach ($test in @('Test-MergedWorktreeSweep', 'Test-WorktreeCleanup', 'Test-WorkflowArtifactCleanup', 'Test-MergePr', 'Test-MergePrLifecycle', 'Test-ReleasedWorktreeCleanup', 'Test-ReviewThreadReply')) {
             & pwsh -NoProfile -File "./scripts/$test.ps1"
             if ($LASTEXITCODE -ne 0) { throw "$test failed" }
           }
@@ -342,34 +367,34 @@ jobs:
 
       - name: Set up .NET
         uses: ./.github/actions/setup-dotnet
+        with:
+          net8: 'false'
 
       - name: Build
-        run: dotnet build tests/Respire.Tests -c Release -f net10.0
+        run: dotnet build tests/Respire.Tests -c Release -f net10.0 $TEST_BUILD_ARGS
 
+      # A test that stops reporting progress for 10 minutes leaves a dump in the results directory.
       - name: Run Unit Tests
         run: >-
           dotnet run --project tests/Respire.Tests -c Release -f net10.0 --no-build --
           --treenode-filter '${{ matrix.shard.filter }}'
           --results-directory "$GITHUB_WORKSPACE/TestResults/unit"
           --report-trx --report-trx-filename unit-${{ matrix.shard.name }}.trx
-          --coverage
-          --coverage-output coverage.cobertura.xml
-          --coverage-output-format cobertura
+          --hangdump --hangdump-timeout 10m
+          $COVERAGE_ARGS
 
       # These tests control process-wide listener state; the HTML reporter adds its own listener.
+      # The direct-path classes share one process: none of them adds an ActivityListener, and each
+      # is [NotInParallel]. The metric suites assert on process-wide meter state, so they keep their own process.
       - name: Run telemetry and direct-path regressions without external tracing
         if: matrix.shard.name == 'circuit-dispatch'
         run: |
           dotnet run --project tests/Respire.Tests -c Release -f net10.0 --no-build -- \
-            --treenode-filter '/*/*/(HedgedReadTests)|(BytesResponseTests)/*'
-          dotnet run --project tests/Respire.Tests -c Release -f net10.0 --no-build -- \
-            --treenode-filter '/*/*/(GetStringDirectPathTests)|(ClusterReadyReplyTests)/*'
+            --treenode-filter '/*/*/(HedgedReadTests)|(BytesResponseTests)|(GetStringDirectPathTests)|(ClusterReadyReplyTests)/*'
           dotnet run --project tests/Respire.Tests -c Release -f net10.0 --no-build -- \
             --treenode-filter '/*/*/(MetricSelectionTests)|(ErrorMetricsTests)/*' \
             --results-directory "$GITHUB_WORKSPACE/TestResults/isolated-telemetry" \
-            --coverage \
-            --coverage-output coverage.cobertura.xml \
-            --coverage-output-format cobertura
+            $COVERAGE_ARGS
 
       - name: List slowest tests
         if: always()
@@ -377,9 +402,18 @@ jobs:
         with:
           results-directory: TestResults/unit
 
+      - name: Upload hang dumps
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: hangdump-net10.0-unit-${{ matrix.shard.name }}
+          path: TestResults/unit/**/*.dmp
+          if-no-files-found: ignore
+          retention-days: 3
+
       - name: Upload coverage
         uses: actions/upload-artifact@v7
-        if: always()
+        if: always() && env.COLLECT_COVERAGE == 'true'
         with:
           name: coverage-net10.0-unit-${{ matrix.shard.name }}
           path: TestResults/**/coverage.cobertura.xml
@@ -399,15 +433,32 @@ jobs:
 
       - name: Set up .NET
         uses: ./.github/actions/setup-dotnet
+        with:
+          net8: 'false'
+
+      - name: Pre-pull Redis and Valkey images
+        uses: ./.github/actions/prepull-images
+        with:
+          images: ${{ env.INTEGRATION_IMAGES }}
 
       - name: Build
-        run: dotnet build tests/Respire.IntegrationTests -c Release -f net10.0
+        run: dotnet build tests/Respire.IntegrationTests -c Release -f net10.0 $TEST_BUILD_ARGS
 
       - name: Run Integration Tests
         run: >-
           dotnet run --project tests/Respire.IntegrationTests -c Release -f net10.0 --no-build --
           --results-directory "$GITHUB_WORKSPACE/TestResults/integration"
           --report-trx --report-trx-filename integration.trx
+          --hangdump --hangdump-timeout 10m
+
+      - name: Upload hang dumps
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: hangdump-net10.0-integration-resp3
+          path: TestResults/integration/**/*.dmp
+          if-no-files-found: ignore
+          retention-days: 3
 
       - name: Verify typed cluster replies during slot migration without external tracing
         env:
@@ -445,53 +496,54 @@ jobs:
 
       - name: Set up .NET
         uses: ./.github/actions/setup-dotnet
+        with:
+          net8: 'false'
+
+      - name: Pre-pull Redis and Valkey images
+        uses: ./.github/actions/prepull-images
+        with:
+          images: ${{ env.COMPONENT_IMAGES }}
 
       # One solution-filter build lets MSBuild compile independent projects in parallel.
       - name: Build
-        run: dotnet build .github/ci/net10-components.slnf -c Release -f net10.0
+        run: dotnet build .github/ci/net10-components.slnf -c Release -f net10.0 $TEST_BUILD_ARGS
 
-      - name: Run Health Check Tests
-        run: dotnet run --project tests/Respire.HealthChecks.Tests -c Release -f net10.0 --no-build
-
-      - name: Run Aspire Client Tests
-        env:
-          TUNIT_DISABLE_HTML_REPORTER: 'true'
-        run: dotnet run --project tests/Aspire.Respire.Tests -c Release -f net10.0 --no-build -- --minimum-expected-tests 25
-
-      - name: Run Analyzer Tests
-        run: dotnet run --project tests/Respire.Analyzers.Tests -c Release -f net10.0 --no-build
-
-      - name: Run Coordination Tests
-        run: dotnet run --project tests/Respire.Coordination.Tests -c Release -f net10.0 --no-build
-
-      - name: Run Azure Integration Tests
-        run: dotnet run --project tests/Respire.Azure.Tests -c Release -f net10.0 --no-build
-
-      - name: Run DataProtection Tests
-        run: dotnet run --project tests/Respire.DataProtection.Tests -c Release -f net10.0 --no-build
-
-      - name: Run Caching Tests
+      # The suites are independent processes with their own containers, so they run concurrently.
+      # Each one's output is printed as a group once all of them finish.
+      - name: Run component tests
         run: |
-          dotnet run --project tests/Respire.Caching.Tests -c Release -f net10.0 --no-build
-          dotnet run --project tests/Respire.Caching.Hybrid.Tests -c Release -f net10.0 --no-build
-          dotnet run --project tests/Respire.FusionCache.Tests -c Release -f net10.0 --no-build
+          source .github/ci/parallel-suites.sh
+          results="$GITHUB_WORKSPACE/TestResults/components"
+          tests() {
+            local project=$1 report=$2
+            shift 2
+            dotnet run --project "tests/$project" -c Release -f net10.0 --no-build -- \
+              --results-directory "$results" --report-trx --report-trx-filename "$report.trx" "$@"
+          }
+          # Longest first, so the slowest suites start before the pool fills.
+          suite caching tests Respire.Caching.Tests Respire.Caching.Tests
+          suite coordination tests Respire.Coordination.Tests Respire.Coordination.Tests
+          suite caching-redis-7.4 RESPIRE_TEST_REDIS_IMAGE=redis:7.4.11-alpine \
+            tests Respire.Caching.Tests Respire.Caching.Tests-redis7.4 \
+            --report-html-filename "$results/Respire.Caching.Tests-redis7.4-linux-net10.0-report.html"
+          suite caching-hybrid tests Respire.Caching.Hybrid.Tests Respire.Caching.Hybrid.Tests
+          suite fusioncache tests Respire.FusionCache.Tests Respire.FusionCache.Tests
+          suite streaming TUNIT_DISABLE_HTML_REPORTER=true \
+            tests Respire.Streaming.Tests Respire.Streaming.Tests --minimum-expected-tests 42
+          suite signalr TUNIT_DISABLE_HTML_REPORTER=true \
+            tests Respire.SignalR.Tests Respire.SignalR.Tests --minimum-expected-tests "$(cat .github/signalr-minimum-tests.txt)"
+          suite aspire-client TUNIT_DISABLE_HTML_REPORTER=true \
+            tests Aspire.Respire.Tests Aspire.Respire.Tests --minimum-expected-tests 25
+          suite health-checks tests Respire.HealthChecks.Tests Respire.HealthChecks.Tests
+          suite azure tests Respire.Azure.Tests Respire.Azure.Tests
+          suite data-protection tests Respire.DataProtection.Tests Respire.DataProtection.Tests
+          finish_suites
 
-      - name: Run SignalR backplane tests
-        env:
-          TUNIT_DISABLE_HTML_REPORTER: 'true'
-        run: dotnet run --project tests/Respire.SignalR.Tests -c Release -f net10.0 --no-build -- --minimum-expected-tests "$(cat .github/signalr-minimum-tests.txt)"
-
-      - name: Run stream worker tests
-        env:
-          TUNIT_DISABLE_HTML_REPORTER: 'true'
-        run: dotnet run --project tests/Respire.Streaming.Tests -c Release -f net10.0 --no-build -- --minimum-expected-tests 42
-
-      - name: Run Caching Tests on Redis 7.4
-        env:
-          RESPIRE_TEST_REDIS_IMAGE: redis:7.4.11-alpine
-        run: >-
-          dotnet run --project tests/Respire.Caching.Tests -c Release -f net10.0 --no-build --
-          --report-html-filename TestResults/Respire.Caching.Tests-redis7.4-linux-net10.0-report.html
+      - name: List slowest tests
+        if: always()
+        uses: ./.github/actions/slowest-tests
+        with:
+          results-directory: TestResults/components
 
       - name: Run samples
         uses: ./.github/actions/run-samples
@@ -503,16 +555,54 @@ jobs:
         if: always()
         with:
           name: tunit-reports-net10.0
-          path: '**/TestResults/*-report.html'
+          path: '**/TestResults/**/*-report.html'
+          retention-days: 14
+
+  net10-analyzers:
+    # Analyzer tests need no containers, so they run beside the component job instead of inside it.
+    name: Analyzer Tests (net10.0)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up .NET
+        uses: ./.github/actions/setup-dotnet
+        with:
+          net8: 'false'
+
+      - name: Build
+        run: dotnet build tests/Respire.Analyzers.Tests -c Release -f net10.0 $TEST_BUILD_ARGS
+
+      - name: Run Analyzer Tests
+        run: >-
+          dotnet run --project tests/Respire.Analyzers.Tests -c Release -f net10.0 --no-build --
+          --results-directory "$GITHUB_WORKSPACE/TestResults/analyzers"
+          --report-trx --report-trx-filename analyzers.trx
+
+      - name: List slowest tests
+        if: always()
+        uses: ./.github/actions/slowest-tests
+        with:
+          results-directory: TestResults/analyzers
+
+      - name: Upload TUnit HTML reports
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: tunit-reports-net10.0-analyzers
+          path: '**/TestResults/**/*-report.html'
           retention-days: 14
 
   build-and-test-net10:
     # The name is a required status check. It passes only when every net10.0 job passed,
-    # and it merges their coverage into one report.
+    # and on main it merges their coverage into one report.
     name: Build and Test (net10.0)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [net10-unit, net10-integration, net10-components]
+    needs: [net10-unit, net10-integration, net10-components, net10-analyzers]
     if: always()
 
     steps:
@@ -525,19 +615,26 @@ jobs:
             if [ "$result" != success ]; then exit 1; fi
           done
 
+      # Pull requests collect no coverage, so the rest of this job runs only on main and manual runs.
       - name: Checkout code
+        if: env.COLLECT_COVERAGE == 'true'
         uses: actions/checkout@v7
 
       - name: Set up .NET
+        if: env.COLLECT_COVERAGE == 'true'
         uses: ./.github/actions/setup-dotnet
+        with:
+          net8: 'false'
 
       - name: Download coverage
+        if: env.COLLECT_COVERAGE == 'true'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: coverage-net10.0-*
           path: TestResults
 
       - name: Generate Code Coverage Report
+        if: env.COLLECT_COVERAGE == 'true'
         run: |
           dotnet tool install -g dotnet-reportgenerator-globaltool
           reportgenerator \
@@ -550,6 +647,7 @@ jobs:
           fi
 
       - name: Upload coverage report
+        if: env.COLLECT_COVERAGE == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: coverage-report
@@ -557,6 +655,7 @@ jobs:
           retention-days: 30
 
       - name: Upload coverage to Codecov
+        if: env.COLLECT_COVERAGE == 'true'
         uses: codecov/codecov-action@v7
         with:
           files: CoverageReport/Cobertura.xml
@@ -578,9 +677,16 @@ jobs:
 
       - name: Set up .NET
         uses: ./.github/actions/setup-dotnet
+        with:
+          net8: 'false'
+
+      - name: Pre-pull Redis and Valkey images
+        uses: ./.github/actions/prepull-images
+        with:
+          images: ${{ env.INTEGRATION_IMAGES }}
 
       - name: Build
-        run: dotnet build tests/Respire.IntegrationTests -c Release -f net10.0
+        run: dotnet build tests/Respire.IntegrationTests -c Release -f net10.0 $TEST_BUILD_ARGS
 
       # Classes tagged ProtocolIndependent pin their protocol or never read RESPIRE_TEST_PROTOCOL,
       # so the RESP3 job already covers them.
@@ -588,6 +694,16 @@ jobs:
         run: >-
           dotnet run --project tests/Respire.IntegrationTests -c Release -f net10.0 --no-build --
           --treenode-filter '/*/*/*/*[Category!=ProtocolIndependent]'
+          --hangdump --hangdump-timeout 10m
+
+      - name: Upload hang dumps
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: hangdump-net10.0-integration-resp2
+          path: '**/TestResults/**/*.dmp'
+          if-no-files-found: ignore
+          retention-days: 3
 
       - name: Upload TUnit HTML reports
         uses: actions/upload-artifact@v7
@@ -597,9 +713,8 @@ jobs:
           path: '**/TestResults/*-report.html'
           retention-days: 14
 
-  build-and-test-net8:
-    # The name is a required status check. This job is a smoke run; net10.0 carries the full suite.
-    name: Build and Test (net8.0)
+  net8-smoke:
+    name: Smoke Tests (net8.0)
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -610,131 +725,64 @@ jobs:
       - name: Set up .NET
         uses: ./.github/actions/setup-dotnet
 
+      - name: Pre-pull Redis and Valkey images
+        uses: ./.github/actions/prepull-images
+        with:
+          images: ${{ env.NET8_IMAGES }}
+
       # One solution-filter build lets MSBuild compile independent projects in parallel.
       - name: Build
-        run: dotnet build .github/ci/net8-smoke.slnf -c Release -f net8.0
+        run: dotnet build .github/ci/net8-smoke.slnf -c Release -f net8.0 $TEST_BUILD_ARGS
 
-      - name: Run Aspire Client Tests
-        env:
-          TUNIT_DISABLE_HTML_REPORTER: 'true'
-        run: dotnet run --project tests/Aspire.Respire.Tests -c Release -f net8.0 --no-build -- --minimum-expected-tests 25
-
-      # Utf8StringTests and TlsTests cover the code behind #if NET9_0_OR_GREATER / NET10_0_OR_GREATER;
-      # FakeServerTests and ConnectionStringParsingTests exercise the client end to end.
-      - name: Run unit smoke tests
+      # Each project runs in its own process, concurrently with the others. Respire.Tests runs its
+      # filters one after another in a single lane, because each process needs different listener state.
+      - name: Run smoke and regression tests
         run: |
-          dotnet run --project tests/Respire.Tests -c Release -f net8.0 --no-build -- \
-            --treenode-filter '/*/*/(Utf8StringTests)|(TlsTests)|(FakeServerTests)|(ConnectionStringParsingTests)/*'
+          source .github/ci/parallel-suites.sh
+          tests() {
+            local project=$1
+            shift
+            dotnet run --project "tests/$project" -c Release -f net8.0 --no-build -- "$@"
+          }
+          core_tests() {
+            local status=0
+            # Utf8StringTests and TlsTests cover the code behind #if NET9_0_OR_GREATER / NET10_0_OR_GREATER;
+            # FakeServerTests and ConnectionStringParsingTests exercise the client end to end.
+            tests Respire.Tests \
+              --treenode-filter '/*/*/(Utf8StringTests)|(TlsTests)|(FakeServerTests)|(ConnectionStringParsingTests)/*' || status=1
+            export TUNIT_DISABLE_HTML_REPORTER=true
+            # Standalone replica dispatch, command retry metadata, command write outcomes and gathered
+            # SET ownership share one process. The minimum is the sum of the four suites' minimums.
+            replica="$(cat .github/standalone-replica-filter.txt)"
+            tests Respire.Tests \
+              --treenode-filter "${replica%/\*}|(CommandCatalogTests)|(RetryCategoryMetadataTests)|(ClientCacheCommandMetadataTests)|(CommandWriteOutcomeTests)|(GatheredSetTests)/*" \
+              --minimum-expected-tests "$(( $(cat .github/standalone-replica-minimum-tests.txt) + $(cat .github/command-retry-metadata-minimum-tests.txt) + 35 + 33 ))" \
+              --report-trx --results-directory "$GITHUB_WORKSPACE/net8-regressions" || status=1
+            # Binary GET source selection and the telemetry suites each need a process without
+            # operation tracing.
+            tests Respire.Tests --treenode-filter '/*/*/BytesResponseTests/*' || status=1
+            tests Respire.Tests \
+              --treenode-filter '/*/*/(MetricSelectionTests)|(ErrorMetricsTests)|(TelemetryTests)|(RedisMetricSchemaTests)|(ClusterReadyReplyTests)/*' || status=1
+            return $status
+          }
+          suite respire-tests core_tests
+          suite signalr TUNIT_DISABLE_HTML_REPORTER=true \
+            tests Respire.SignalR.Tests --minimum-expected-tests "$(cat .github/signalr-minimum-tests.txt)"
+          suite streaming TUNIT_DISABLE_HTML_REPORTER=true tests Respire.Streaming.Tests --minimum-expected-tests 42
+          suite fusioncache-leases TUNIT_DISABLE_HTML_REPORTER=true \
+            tests Respire.FusionCache.Tests \
+            --treenode-filter '/*/*/(DistributedLockerTests)|(DistributedLockerWireTests)|(DistributedLockerRegistrationTests)|(IndependentLeaseLifetimeTests)|(IndependentLeaseLifetimeWireTests)/*' \
+            --minimum-expected-tests 28
+          suite aspire-client TUNIT_DISABLE_HTML_REPORTER=true tests Aspire.Respire.Tests --minimum-expected-tests 25
+          finish_suites
 
-      - name: Verify standalone replica dispatch (net8.0)
-        env:
-          TUNIT_DISABLE_HTML_REPORTER: 'true'
-        run: >-
-          dotnet run --project tests/Respire.Tests -c Release -f net8.0 --no-build --
-          --treenode-filter "$(cat .github/standalone-replica-filter.txt)"
-          --minimum-expected-tests "$(cat .github/standalone-replica-minimum-tests.txt)"
-          --report-trx --results-directory standalone-replica-net8
-
-      - name: Verify command retry metadata (net8.0)
-        env:
-          TUNIT_DISABLE_HTML_REPORTER: 'true'
-        run: >-
-          dotnet run --project tests/Respire.Tests -c Release -f net8.0 --no-build --
-          --treenode-filter '/*/*/(CommandCatalogTests)|(RetryCategoryMetadataTests)|(ClientCacheCommandMetadataTests)/*'
-          --minimum-expected-tests "$(cat .github/command-retry-metadata-minimum-tests.txt)"
-
-      - name: Verify command write outcomes (net8.0)
-        env:
-          TUNIT_DISABLE_HTML_REPORTER: 'true'
-        run: >-
-          dotnet run --project tests/Respire.Tests -c Release -f net8.0 --no-build --
-          --treenode-filter '/*/*/CommandWriteOutcomeTests/*'
-          --minimum-expected-tests 35
-          --report-trx --results-directory command-write-outcomes-net8
-
-      - name: Upload command write outcome regressions (net8.0)
+      - name: Upload net8.0 regression reports
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: command-write-outcomes-net8.0
-          path: command-write-outcomes-net8/
+          name: net8-regressions
+          path: net8-regressions/
           retention-days: 14
-
-      - name: Verify gathered SET ownership (net8.0)
-        env:
-          TUNIT_DISABLE_HTML_REPORTER: 'true'
-        run: >-
-          dotnet run --project tests/Respire.Tests -c Release -f net8.0 --no-build --
-          --treenode-filter '/*/*/GatheredSetTests/*'
-          --minimum-expected-tests 33
-
-      - name: Upload standalone replica regression report (net8.0)
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: standalone-replica-dispatch-net8.0
-          path: standalone-replica-net8/
-          retention-days: 14
-
-      - name: Run SignalR backplane tests
-        env:
-          TUNIT_DISABLE_HTML_REPORTER: 'true'
-        run: dotnet run --project tests/Respire.SignalR.Tests -c Release -f net8.0 --no-build -- --minimum-expected-tests "$(cat .github/signalr-minimum-tests.txt)"
-
-      - name: Run stream worker tests
-        env:
-          TUNIT_DISABLE_HTML_REPORTER: 'true'
-        run: dotnet run --project tests/Respire.Streaming.Tests -c Release -f net8.0 --no-build -- --minimum-expected-tests 42
-
-      - name: Run FusionCache lease lifetime regressions
-        env:
-          TUNIT_DISABLE_HTML_REPORTER: 'true'
-        run: >-
-          dotnet run --project tests/Respire.FusionCache.Tests -c Release -f net8.0 --no-build --
-          --treenode-filter '/*/*/(DistributedLockerTests)|(DistributedLockerWireTests)|(DistributedLockerRegistrationTests)|(IndependentLeaseLifetimeTests)|(IndependentLeaseLifetimeWireTests)/*'
-          --minimum-expected-tests 28
-
-      - name: Run binary GET regressions without operation tracing
-        env:
-          TUNIT_DISABLE_HTML_REPORTER: 'true'
-        run: >-
-          dotnet run --project tests/Respire.Tests -c Release -f net8.0 --no-build --
-          --treenode-filter '/*/*/BytesResponseTests/*'
-
-      - name: Run telemetry regressions without external tracing
-        env:
-          TUNIT_DISABLE_HTML_REPORTER: 'true'
-        run: |
-          dotnet run --project tests/Respire.Tests -c Release -f net8.0 --no-build -- \
-            --treenode-filter '/*/*/(MetricSelectionTests)|(ErrorMetricsTests)|(TelemetryTests)|(RedisMetricSchemaTests)|(ClusterReadyReplyTests)/*'
-
-      - name: Verify aggregate progress and ownership (net8.0)
-        env:
-          TUNIT_DISABLE_HTML_REPORTER: 'true'
-        run: |
-          dotnet build tests/Respire.Tests -c Debug -f net8.0
-          dotnet tests/Respire.Tests/bin/Debug/net8.0/Respire.Tests.dll \
-            --treenode-filter '/*/*/(AggregateProgressTransferTests)|(AggregateProgressWireTests)/*' \
-            --minimum-expected-tests 42
-          dotnet tests/Respire.Tests/bin/Debug/net8.0/Respire.Tests.dll \
-            --treenode-filter '/*/*/(AggregatePayloadTests)|(AggregateStorageTests)|(RespParseStateTests)|(RespParserTests)|(ParserContextTests)/*'
-
-      # Reuse the Debug core build above; net8 correctness stays in its designated CI job.
-      - name: Verify reserved writer invariants (net8.0)
-        env:
-          TUNIT_DISABLE_HTML_REPORTER: 'true'
-        run: >-
-          dotnet run --project tests/Respire.Tests -c Debug -f net8.0 --no-build --
-          --treenode-filter "$(cat .github/writer-invariants-filter.txt)"
-          --minimum-expected-tests "$(cat .github/writer-invariants-minimum.txt)"
-          --report-trx --results-directory writer-invariants-net8.0
-
-      - name: Upload net8.0 writer invariant results
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: always()
-        with:
-          name: writer-invariants-net8.0
-          path: writer-invariants-net8.0/
 
       - name: Run samples
         uses: ./.github/actions/run-samples
@@ -748,6 +796,60 @@ jobs:
           name: tunit-reports-net8.0
           path: '**/TestResults/*-report.html'
           retention-days: 14
+
+  net8-debug-invariants:
+    # Debug builds enable the publication guards these suites assert, so they need their own build.
+    name: Debug Invariants (net8.0)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TUNIT_DISABLE_HTML_REPORTER: 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up .NET
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Build
+        run: dotnet build tests/Respire.Tests -c Debug -f net8.0 $TEST_BUILD_ARGS
+
+      # Reserved writer invariants, aggregate progress and parser ownership share one process.
+      # The minimum is the writer minimum plus the 42 aggregate progress tests.
+      - name: Verify reserved writer invariants, aggregate progress and ownership (net8.0)
+        run: |
+          writer="$(cat .github/writer-invariants-filter.txt)"
+          dotnet tests/Respire.Tests/bin/Debug/net8.0/Respire.Tests.dll \
+            --treenode-filter "${writer%/\*}|(AggregateProgressTransferTests)|(AggregateProgressWireTests)|(AggregatePayloadTests)|(AggregateStorageTests)|(RespParseStateTests)|(RespParserTests)|(ParserContextTests)/*" \
+            --minimum-expected-tests "$(( $(cat .github/writer-invariants-minimum.txt) + 42 ))" \
+            --report-trx --results-directory "$GITHUB_WORKSPACE/writer-invariants-net8.0"
+
+      - name: Upload net8.0 writer invariant results
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: writer-invariants-net8.0
+          path: writer-invariants-net8.0/
+
+  build-and-test-net8:
+    # The name is a required status check. It passes only when every net8.0 job passed;
+    # net8.0 is a smoke run, and net10.0 carries the full suite.
+    name: Build and Test (net8.0)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [net8-smoke, net8-debug-invariants]
+    if: always()
+
+    steps:
+      - name: Require every net8.0 job to pass
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "net8.0 job results: $RESULTS"
+          for result in $RESULTS; do
+            if [ "$result" != success ]; then exit 1; fi
+          done
 
   performance-validation:
     name: Performance Validation

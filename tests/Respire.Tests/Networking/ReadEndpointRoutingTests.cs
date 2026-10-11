@@ -974,6 +974,9 @@ public class ReadEndpointRoutingTests
         await Assert.That(primary.ReceivedCommands.Count(command => command.StartsWith("FCALL_RO", StringComparison.Ordinal))).IsEqualTo(0);
     }
 
+    // Shorter than the production five-second ceiling so tests that outlast it stay fast.
+    private static readonly TimeSpan FunctionPropagationLimit = TimeSpan.FromSeconds(2);
+
     [Test]
     [Arguments(false, null)]
     [Arguments(false, 1000)]
@@ -1005,6 +1008,7 @@ public class ReadEndpointRoutingTests
             CommandTimeout = timeoutMilliseconds is { } milliseconds ? TimeSpan.FromMilliseconds(milliseconds) : null,
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+            FunctionPropagationLimit = FunctionPropagationLimit,
         });
         using var cancellation = new CancellationTokenSource();
         var function = RespireFunctionLibrary.Create(source).Function("readfn", readOnly: true);
@@ -1024,10 +1028,11 @@ public class ReadEndpointRoutingTests
             {
                 var error = await Assert.That(async () => { using var result = await execution.WaitAsync(TimeSpan.FromSeconds(10)); })
                     .Throws<RespireTimeoutException>();
-                var expectedMilliseconds = Math.Min(timeoutMilliseconds ?? 5000, 5000);
+                var limit = (int)FunctionPropagationLimit.TotalMilliseconds;
+                var expectedMilliseconds = Math.Min(timeoutMilliseconds ?? limit, limit);
                 await Assert.That(error!.Timeout).IsEqualTo(TimeSpan.FromMilliseconds(expectedMilliseconds));
                 await Assert.That(error.Message).Contains("Replica function propagation");
-                await Assert.That(error.Message).Contains($"{FunctionCommands.FunctionPropagationLimit.TotalSeconds:0} seconds");
+                await Assert.That(error.Message).Contains($"capped at {FunctionPropagationLimit.TotalSeconds:0} seconds");
                 await Assert.That(error.Message).DoesNotContain("Review RespireOptions.CommandTimeout");
             }
             await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("FCALL_RO", StringComparison.Ordinal))).IsFalse();
@@ -1064,6 +1069,7 @@ public class ReadEndpointRoutingTests
             CommandTimeout = timeoutMilliseconds is { } milliseconds ? TimeSpan.FromMilliseconds(milliseconds) : null,
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+            FunctionPropagationLimit = FunctionPropagationLimit,
         });
         await using var reader = client.WithReadFrom(RespireReadFrom.Replica);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(15));
@@ -1122,13 +1128,14 @@ public class ReadEndpointRoutingTests
             "-ERR Function not found\r\n"u8.ToArray(), available
                 ? ":42\r\n"u8.ToArray() : "-ERR Function not found\r\n"u8.ToArray());
         // An accepted attempt must finish normally even after the retry budget expires.
-        replica.DelayReply(2, 6000);
+        replica.DelayReply(2, (int)(FunctionPropagationLimit + TimeSpan.FromSeconds(1)).TotalMilliseconds);
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespProtocol.Resp2, Connections = 1,
             CommandTimeout = timeoutMilliseconds is { } milliseconds ? TimeSpan.FromMilliseconds(milliseconds) : null,
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+            FunctionPropagationLimit = FunctionPropagationLimit,
         });
         await using var reader = client.WithReadFrom(RespireReadFrom.Replica);
         var function = RespireFunctionLibrary.Create(source).Function("readfn", readOnly: true);
@@ -1381,13 +1388,15 @@ public class ReadEndpointRoutingTests
 
         Volatile.Write(ref replicaPorts, [other.Port]);
         await client.Core.ReadRouter.RefreshNowAsync(CancellationToken.None);
-        // A pause longer than the former idle cutoff must leave the retired stream usable.
-        await Task.Delay(TimeSpan.FromSeconds(31));
+        // Retirement starts after a grace of min(CommandTimeout, 1 s) and no longer has an idle
+        // cutoff. Pause for several command timeouts past that grace while the retired stream
+        // stays open, then keep pausing between reads; the stream must remain usable.
+        await Task.Delay(TimeSpan.FromSeconds(1));
         int read;
         while ((read = await stream.ReadAsync(buffer)) > 0)
         {
             total += read;
-            await Task.Delay(TimeSpan.FromMilliseconds(100));
+            await Task.Delay(TimeSpan.FromMilliseconds(10));
         }
 
         await Assert.That(total).IsEqualTo(payloadLength);

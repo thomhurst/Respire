@@ -1,0 +1,28 @@
+name: Pre-pull container images
+description: >-
+  Starts pulling the container images a job's tests use in the background, so the pulls overlap the
+  build instead of the first test that starts each container. Docker deduplicates a pull that
+  Testcontainers starts while the same image is still downloading. Pulls go through the Docker Hub
+  mirror that setup-dotnet configures, and a failed pull only means the test pulls the image itself.
+
+inputs:
+  images:
+    description: Whitespace-separated image references, exactly as the tests name them.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Pre-pull container images in the background
+      if: runner.os == 'Linux'
+      shell: bash
+      env:
+        IMAGES: ${{ inputs.images }}
+      run: |
+        log="$RUNNER_TEMP/prepull-images.log"
+        # The runner keeps background processes alive until the job ends; output goes to a log so
+        # it cannot interleave with later steps. Four pulls at a time leave the build most of the CPU.
+        # IMAGES must contain trusted, whitespace-safe image references from the workflow.
+        nohup bash -c 'printf "%s\n" $IMAGES | xargs -r -P 4 -I{} sh -c "docker pull --quiet {} || echo \"Pre-pull of {} failed; the test pulls it instead.\""' \
+          > "$log" 2>&1 < /dev/null &
+        echo "Pulling in the background; log: $log"

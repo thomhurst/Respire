@@ -4,10 +4,8 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
-public sealed class Redis810HashImportTestContainer() : StandaloneRedisTestContainer("redis:8.10-alpine");
-
-[ClassDataSource<Redis810HashImportTestContainer>(Shared = SharedType.PerTestSession)]
-public class HashImportIntegrationTests(Redis810HashImportTestContainer fixture)
+[ClassDataSource<ModernRedisTestContainer>(Shared = SharedType.PerTestSession)]
+public class HashImportIntegrationTests(ModernRedisTestContainer fixture)
 {
     [Test]
     [Arguments(false, 2, "immediate")]

@@ -4,7 +4,6 @@
     "projects": [
       "tests/Aspire.Respire.Tests/Aspire.Respire.Tests.csproj",
       "tests/Respire.HealthChecks.Tests/Respire.HealthChecks.Tests.csproj",
-      "tests/Respire.Analyzers.Tests/Respire.Analyzers.Tests.csproj",
       "tests/Respire.Coordination.Tests/Respire.Coordination.Tests.csproj",
       "tests/Respire.Azure.Tests/Respire.Azure.Tests.csproj",
       "tests/Respire.DataProtection.Tests/Respire.DataProtection.Tests.csproj",

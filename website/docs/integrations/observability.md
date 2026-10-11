@@ -479,6 +479,23 @@ load. Successful function routes rent no error-observation storage; warmed calle
 ownership adds no allocation. Raw `FCALL` and `FCALL_RO` keep their existing failure-only
 owner and completed transport retry count, including when collection starts late.
 
+The reusable function library's reload gate and generation coordinate callers; they
+do not share an error observation or a final failure. Each caller records its own
+missing-function reply and only the nested reload or propagation retries it performs.
+All reload targets finish before the gate is released, and conversion failures keep
+that caller's completed count. A successful caller does not close another caller's
+observation, even when both use the same library and connection.
+
+Sharing a completed script correction as a `Task` does not transfer its producer's
+error owner to callers. A failed producer and each failed caller have separate final
+boundaries, even when the same exception reaches all of them. Joined correction
+finishes before caller publication; a successful correction preserves the original
+exception and cancellation token, while a failed strict correction becomes the
+caller's final error. A tracked script response is consumed once, either by its direct
+reader or by the correction boundary, after mutation cleanup. Exporter failures
+cannot replace these outcomes. These lifetime rules add no success-path observation
+allocation and do not change execution or retry policy.
+
 Pending raw, cached, and fire-and-forget submissions keep their final observation
 boundary even when collection is disabled at dispatch. Enabling the group or attaching
 a listener before completion can therefore observe their final failure. Earlier errors

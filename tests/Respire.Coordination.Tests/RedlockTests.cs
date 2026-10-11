@@ -79,11 +79,12 @@ public class RedlockTests(RedlockRedisCluster fixture)
     [Test]
     public async Task PartitionBoundsNodeWaitAndRejectsWhenQuorumIsUnavailable()
     {
-        var containers = Enumerable.Range(0, 3).Select(_ => new RedisBuilder("redis:7.0.15").Build()).ToArray();
+        var containers = new RedisContainer[3];
         var clients = Array.Empty<IRespireClient>();
         try
         {
-            await Task.WhenAll(containers.Select(container => container.StartAsync()));
+            await Task.WhenAll(Enumerable.Range(0, containers.Length).Select(async index =>
+                containers[index] = await ContainerStartRetry.StartAsync(() => new RedisBuilder("redis:7.0.15").Build(), [RedisBuilder.RedisPort])));
             clients = containers.Select(container => (IRespireClient)RespireClient.Create(new RespireOptions
             {
                 Endpoints = [new(container.Hostname, container.GetMappedPublicPort(6379))],
@@ -105,7 +106,9 @@ public class RedlockTests(RedlockRedisCluster fixture)
         finally
         {
             await fixture.DisposeClientsAsync(clients);
-            foreach (var container in containers) await container.DisposeAsync();
+            // A node that never started was already removed by the retry helper.
+            foreach (var container in containers)
+                if (container is not null) await container.DisposeAsync();
         }
     }
 }
@@ -117,8 +120,12 @@ public sealed class RedlockRedisCluster : IAsyncInitializer, IAsyncDisposable
     public async Task InitializeAsync()
     {
         // Standalone containers publish random host ports, so they can start concurrently.
-        for (var i = 0; i < 3; i++) _containers.Add(new RedisBuilder("redis:7.0.15").Build());
-        await Task.WhenAll(_containers.Select(container => container.StartAsync()));
+        // Record each started node at once, so DisposeAsync removes it even when another node fails to start.
+        await Task.WhenAll(Enumerable.Range(0, 3).Select(async _ =>
+        {
+            var container = await ContainerStartRetry.StartAsync(() => new RedisBuilder("redis:7.0.15").Build(), [RedisBuilder.RedisPort]);
+            lock (_containers) _containers.Add(container);
+        }));
     }
 
     public IRespireClient[] CreateClients() => _containers.Select(container =>

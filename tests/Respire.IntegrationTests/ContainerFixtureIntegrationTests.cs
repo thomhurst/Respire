@@ -14,6 +14,7 @@ namespace Respire.IntegrationTests;
 public class ContainerFixtureIntegrationTests
 {
     [Test]
+    [ParallelLimiter<DockerHeavy>]
     [Arguments(RespireContainerServer.Redis, RespireContainerTopology.Standalone)]
     [Arguments(RespireContainerServer.Redis, RespireContainerTopology.Cluster)]
     [Arguments(RespireContainerServer.Redis, RespireContainerTopology.Sentinel)]
@@ -41,6 +42,13 @@ public class ContainerFixtureIntegrationTests
         {
             var container = await docker.Containers.InspectContainerAsync(fixture.ContainerId);
             (container.HostConfig?.Init).Should().BeTrue();
+            IEnumerable<int> expectedReservedPorts = topology == RespireContainerTopology.Standalone
+                ? [6379]
+                : fixture.DataEndpoints.Concat(fixture.SentinelEndpoints).Select(endpoint => endpoint.Port);
+            if (topology == RespireContainerTopology.Cluster)
+                expectedReservedPorts = expectedReservedPorts.Concat([16379, 16380, 16381]);
+            container.HostConfig!.Sysctls!["net.ipv4.ip_local_reserved_ports"].Split(',')
+                .Should().BeEquivalentTo(expectedReservedPorts.Select(port => port.ToString(System.Globalization.CultureInfo.InvariantCulture)));
             // Linux Docker includes image EXPOSE ports with null bindings when unpublished.
             var publishedPorts = container.NetworkSettings!.Ports.Values.SelectMany(bindings => bindings ?? []).ToArray();
             publishedPorts.Should().HaveCount(fixture.DataEndpoints.Count + fixture.SentinelEndpoints.Count);
@@ -116,6 +124,9 @@ public class ContainerFixtureIntegrationTests
             new RespireContainerOptions { Topology = (RespireContainerTopology)99 },
             new RespireContainerOptions { Server = (RespireContainerServer)99 },
             new RespireContainerOptions { Image = " " },
+            new RespireContainerOptions { SentinelDownAfter = TimeSpan.Zero },
+            new RespireContainerOptions { SentinelFailoverTimeout = TimeSpan.FromMilliseconds(0.5) },
+            new RespireContainerOptions { SentinelFailoverTimeout = TimeSpan.FromDays(30) },
         })
         {
             Func<Task> start = async () => await RespireContainerFixture.StartAsync(options);
@@ -161,6 +172,7 @@ public class ContainerFixtureIntegrationTests
     }
 
     [Test]
+    [ParallelLimiter<DockerHeavy>]
     [Arguments(RespireContainerServer.Redis, RespireContainerTopology.Cluster)]
     [Arguments(RespireContainerServer.Redis, RespireContainerTopology.Sentinel)]
     [Arguments(RespireContainerServer.Valkey, RespireContainerTopology.Cluster)]
@@ -207,13 +219,15 @@ public class ContainerFixtureIntegrationTests
     }
 
     [Test]
-    [Arguments(RespireContainerServer.Redis)]
-    [Arguments(RespireContainerServer.Valkey)]
-    public async Task StandaloneBindCollisionRecoversWithUsableFreshContainer(RespireContainerServer server)
+    [Arguments(RespireContainerServer.Redis, StandaloneStartupRetryTests.BindFailure)]
+    [Arguments(RespireContainerServer.Valkey, StandaloneStartupRetryTests.BindFailure)]
+    [Arguments(RespireContainerServer.Redis, StandaloneStartupRetryTests.TcpListenFailure)]
+    [Arguments(RespireContainerServer.Valkey, StandaloneStartupRetryTests.TcpListenFailure)]
+    public async Task StandaloneBindCollisionRecoversWithUsableFreshContainer(RespireContainerServer server, string message)
     {
         var options = new RespireContainerOptions { Server = server };
         var failed = ContainerStartupRetryTests.ContainerProbe.Create(_ =>
-            Task.FromException(StandaloneStartupRetryTests.ApiError(StandaloneStartupRetryTests.BindFailure)));
+            Task.FromException(StandaloneStartupRetryTests.ApiError(message)));
         var probe = (ContainerStartupRetryTests.ContainerProbe)failed;
         var attempts = 0;
         var createdIds = new List<string>();

@@ -534,6 +534,11 @@ public class CommandRouteOwnershipTests
     }
 
     private static readonly string[] RequiredBoundaries = [
+        "script-typed-conversion", "script-primary-fan-out", "script-primary-conversion",
+        "script-connection-fallback", "tracked-script-direct-consumption", "script-correction-borrower",
+        "script-telemetry-retry-fallback",
+        "function-execution", "function-mutation-fan-out", "function-target", "function-query",
+        "function-library-reload", "function-library-target", "function-propagation-retry",
         "semaphore-acquire", "semaphore-renew", "semaphore-release", "semaphore-cleanup", "semaphore-disposal",
         "cache-get-owner", "cache-mget-owner", "cache-hash-partial-read", "cache-correction-owner", "distributed-cache-correction", "cache-removal-owner",
         "distributed-cache-wrapped-removal", "decorated-dispatch-borrower",
