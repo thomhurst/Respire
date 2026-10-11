@@ -3,6 +3,12 @@ description: >-
   Routes Docker Hub pulls through a mirror, installs the .NET SDKs the repository builds with and
   restores the NuGet package cache.
 
+inputs:
+  net8:
+    description: Also install the .NET 8 SDK. Jobs that build and run only net10.0 pass 'false'.
+    required: false
+    default: 'true'
+
 runs:
   using: composite
   steps:
@@ -10,11 +16,19 @@ runs:
     - uses: ./.github/actions/docker-hub-mirror
 
     - name: Setup .NET SDKs
+      if: inputs.net8 != 'false'
       uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
       with:
         dotnet-version: |
           8.0.x
           10.0.x
+
+    # The .NET 10 SDK still restores and evaluates the net8.0 target; it only cannot run net8.0 tests.
+    - name: Setup .NET 10 SDK
+      if: inputs.net8 == 'false'
+      uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+      with:
+        dotnet-version: 10.0.x
 
     # Keyed per job: each job restores a different project set, so a shared key would let
     # whichever job saved first hand the others an incomplete cache.
