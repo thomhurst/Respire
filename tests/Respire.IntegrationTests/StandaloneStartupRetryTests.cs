@@ -12,11 +12,14 @@ namespace Respire.IntegrationTests;
 public class StandaloneStartupRetryTests
 {
     internal const string BindFailure = "failed to set up container networking: driver failed programming external connectivity on endpoint fixture (abc123): failed to bind host port for 127.0.0.1::172.17.0.8:6379/tcp: address already in use";
+    internal const string TcpListenFailure = "failed to set up container networking: driver failed programming external connectivity on endpoint fixture (abc123): failed to listen on TCP socket: address already in use";
 
     [Test]
-    [Arguments(1)]
-    [Arguments(2)]
-    public async Task SuccessfulStartEndsCollisionRetries(int collisions)
+    [Arguments(1, BindFailure)]
+    [Arguments(2, BindFailure)]
+    [Arguments(1, TcpListenFailure)]
+    [Arguments(2, TcpListenFailure)]
+    public async Task SuccessfulStartEndsCollisionRetries(int collisions, string message)
     {
         var probes = new List<ContainerProbe>();
         var initialized = new InvalidOperationException("Reached fixture initialization after successful start.");
@@ -24,7 +27,7 @@ public class StandaloneStartupRetryTests
         {
             probes.Should().OnlyContain(probe => probe.DisposeCount == 1);
             var container = ContainerProbe.Create(probes.Count < collisions
-                ? _ => Task.FromException(ApiError(BindFailure))
+                ? _ => Task.FromException(ApiError(message))
                 : _ => Task.CompletedTask);
             var probe = (ContainerProbe)container;
             // Stop at initialization so no real Docker port collision can affect the count.
@@ -38,7 +41,9 @@ public class StandaloneStartupRetryTests
     }
 
     [Test]
-    public async Task ExhaustionRemovesThreeFreshContainersAndRetainsFailures()
+    [Arguments(BindFailure)]
+    [Arguments(TcpListenFailure)]
+    public async Task ExhaustionRemovesThreeFreshContainersAndRetainsFailures(string message)
     {
         var probes = new List<ContainerProbe>();
         var failures = new List<Exception>();
@@ -48,7 +53,7 @@ public class StandaloneStartupRetryTests
             probes.Should().OnlyContain(probe => probe.DisposeCount == 1);
             ports.Should().Equal(6379); // Container port stays fixed; Docker chooses a new host port.
             tokens.Add(token);
-            var failure = ApiError(BindFailure);
+            var failure = ApiError(message);
             failures.Add(failure);
             var container = ContainerProbe.Create(_ => Task.FromException(failure));
             probes.Add((ContainerProbe)container);
@@ -135,23 +140,39 @@ public class StandaloneStartupRetryTests
         => await AssertNoRetryAsync(ApiError(BindFailure.Replace(before, after)));
 
     [Test]
-    public async Task RequiresStructuredDockerServerError()
+    [Arguments(TcpListenFailure, true)]
+    [Arguments("failed to set up container networking: driver failed programming external connectivity on endpoint fixture (abc123): failed to listen on UDP socket: address already in use", false)]
+    [Arguments("failed to set up container networking: driver failed programming external connectivity on endpoint fixture (abc123): failed to listen on TCP socket: permission denied", false)]
+    [Arguments("failed to listen on TCP socket: address already in use", false)]
+    [Arguments(TcpListenFailure + "; unrelated failure", false)]
+    public void RecognizesOnlyStructuredTcpListenCollision(string message, bool expected)
+    {
+        ContainerPortCollision.IsStandaloneBindCollision(ApiError(message), [6379]).Should().Be(expected);
+        ContainerPortCollision.IsStandaloneBindCollision(ApiError(message), []).Should().BeFalse();
+    }
+
+    [Test]
+    [Arguments(BindFailure)]
+    [Arguments(TcpListenFailure)]
+    public async Task RequiresStructuredDockerServerError(string message)
     {
         foreach (var error in new Exception[]
         {
-            new IOException(BindFailure), new AggregateException(ApiError(BindFailure)),
-            new DockerApiException(HttpStatusCode.BadRequest, JsonSerializer.Serialize(new { message = BindFailure })),
-            new DockerApiException(HttpStatusCode.InternalServerError, BindFailure),
+            new IOException(message), new AggregateException(ApiError(message)),
+            new DockerApiException(HttpStatusCode.BadRequest, JsonSerializer.Serialize(new { message })),
+            new DockerApiException(HttpStatusCode.InternalServerError, message),
             new DockerApiException(HttpStatusCode.InternalServerError, "{\"message\":42}"),
         }) await AssertNoRetryAsync(error);
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task MatchingErrorsOutsideContainerStartNeverRetry(bool postStart)
+    [Arguments(false, BindFailure)]
+    [Arguments(true, BindFailure)]
+    [Arguments(false, TcpListenFailure)]
+    [Arguments(true, TcpListenFailure)]
+    public async Task MatchingErrorsOutsideContainerStartNeverRetry(bool postStart, string message)
     {
-        var expected = ApiError(BindFailure);
+        var expected = ApiError(message);
         var attempts = 0;
         ContainerProbe? probe = null;
         Func<Task> start = async () => await RespireContainerFixture.StartAsync(new(), default, (_, _) =>
