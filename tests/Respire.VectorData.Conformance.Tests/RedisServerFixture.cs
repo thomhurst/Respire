@@ -28,13 +28,12 @@ public sealed class RedisServerFixture : IAsyncLifetime
             return;
         }
 
-        _container = new ContainerBuilder(Image)
+        _container = await Respire.Testing.ContainerStartRetry.StartAsync(() => new ContainerBuilder(Image)
             .WithPortBinding(6379, true)
             .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379))
-            .Build();
+            .Build(), [6379]).ConfigureAwait(false);
         try
         {
-            await _container.StartAsync().ConfigureAwait(false);
             ConnectionString = $"redis://{_container.Hostname}:{_container.GetMappedPublicPort(6379)}";
             await AssertCapabilitiesAsync().ConfigureAwait(false);
         }

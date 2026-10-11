@@ -92,17 +92,16 @@ public class ValkeySlotMigrationIntegrationTests
 
         internal static async Task<OwnedCluster> StartAsync(string image)
         {
-            var container = new ContainerBuilder(image)
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            var container = await ContainerStartRetry.StartAsync(() => new ContainerBuilder(image)
                 .WithPortBinding(7000, true).WithPortBinding(7001, true).WithPortBinding(7002, true)
                 .WithEntrypoint("sh", "-c")
                 .WithCommand("for port in 7000 7001 7002; do mkdir -p /data/$port; valkey-server --port $port --dir /data/$port --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 1000 --cluster-announce-ip 127.0.0.1 --appendonly no --protected-mode no & done; wait")
                 .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(7000)
-                    .UntilInternalTcpPortIsAvailable(7001).UntilInternalTcpPortIsAvailable(7002)).Build();
+                    .UntilInternalTcpPortIsAvailable(7001).UntilInternalTcpPortIsAvailable(7002)).Build(), [7000, 7001, 7002], deadline.Token);
             var cluster = new OwnedCluster(container);
-            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
             try
             {
-                await container.StartAsync(deadline.Token);
                 for (var node = 0; node < 3; node++)
                 {
                     await cluster.CommandAsync(node, deadline.Token, "CLUSTER", "SET-CONFIG-EPOCH", (node + 1).ToString(CultureInfo.InvariantCulture));

@@ -18,11 +18,10 @@ public class ClusterInfoEpochIntegrationTests
     {
         // Both nodes and all setup mutations belong to this case. The client reads only
         // its selected mapped endpoint; advertised ports are local to the owned container.
-        await using var container = new ContainerBuilder(image).WithEntrypoint("sh", "-c")
+        await using var container = await ContainerStartRetry.StartAsync(() => new ContainerBuilder(image).WithEntrypoint("sh", "-c")
             .WithCommand($"for port in 7000 7001; do mkdir -p /data/$port; {server} --port $port --dir /data/$port --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 1000 --cluster-announce-ip 127.0.0.1 --appendonly no --save '' --protected-mode no & done; wait")
             .WithPortBinding(7000, true)
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(7000).UntilInternalTcpPortIsAvailable(7001)).Build();
-        await container.StartAsync();
+            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(7000).UntilInternalTcpPortIsAvailable(7001)).Build(), [7000]);
         (await Command(7001, ["CLUSTER", "SET-CONFIG-EPOCH", long.MaxValue.ToString(CultureInfo.InvariantCulture)])).Trim().Should().Be("OK");
         (await Command(7000, ["CLUSTER", "MEET", "127.0.0.1", "7001", "17001"])).Trim().Should().Be("OK");
         using var convergence = new CancellationTokenSource(TimeSpan.FromSeconds(20));

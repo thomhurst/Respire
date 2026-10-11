@@ -19,8 +19,9 @@ public class StreamWorkerIntegrationTests(RedisTestContainer fixture)
     [Arguments(3, true)]
     public async Task GroupProgressBeforeAndBetweenDeliveriesMatchesRedis(int protocol, bool modern)
     {
-        await using var modernServer = modern ? new RedisBuilder("redis:7.2.11-alpine").Build() : null;
-        if (modernServer is not null) await modernServer.StartAsync();
+        await using var modernServer = modern
+            ? await ContainerStartRetry.StartAsync(() => new RedisBuilder("redis:7.2.11-alpine").Build(), [RedisBuilder.RedisPort])
+            : null;
         var options = modernServer is null ? RespireOptions.Parse(fixture.ConnectionString)
             : new RespireOptions { Endpoints = [new(modernServer.Hostname, modernServer.GetMappedPublicPort(6379))] };
         await using var real = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
@@ -63,8 +64,9 @@ public class StreamWorkerIntegrationTests(RedisTestContainer fixture)
     [Arguments(3, true)]
     public async Task EmptyGroupReadsRegisterConsumersLikeRedis(int protocol, bool modern = false)
     {
-        await using var modernServer = modern ? new RedisBuilder("redis:7.2.11-alpine").Build() : null;
-        if (modernServer is not null) await modernServer.StartAsync();
+        await using var modernServer = modern
+            ? await ContainerStartRetry.StartAsync(() => new RedisBuilder("redis:7.2.11-alpine").Build(), [RedisBuilder.RedisPort])
+            : null;
         var options = modernServer is null ? RespireOptions.Parse(fixture.ConnectionString)
             : new RespireOptions { Endpoints = [new(modernServer.Hostname, modernServer.GetMappedPublicPort(6379))] };
         await using var real = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });

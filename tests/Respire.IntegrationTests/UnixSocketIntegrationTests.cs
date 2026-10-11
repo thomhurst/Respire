@@ -122,11 +122,13 @@ public sealed class UnixSocketRedisFixture : IAsyncInitializer, IAsyncDisposable
         File.SetUnixFileMode(_directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
             | UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute
             | UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute);
-        _container = new RedisBuilder("redis:7.4.11-alpine")
-            .WithBindMount(_directory, "/sockets")
-            .WithCommand("redis-server", "--unixsocket", "/sockets/redis.sock", "--unixsocketperm", "777")
-            .Build();
-        try { await _container.StartAsync(); }
+        try
+        {
+            _container = await ContainerStartRetry.StartAsync(() => new RedisBuilder("redis:7.4.11-alpine")
+                .WithBindMount(_directory, "/sockets")
+                .WithCommand("redis-server", "--unixsocket", "/sockets/redis.sock", "--unixsocketperm", "777")
+                .Build(), [RedisBuilder.RedisPort]);
+        }
         catch { await DisposeAsync(); throw; }
     }
 

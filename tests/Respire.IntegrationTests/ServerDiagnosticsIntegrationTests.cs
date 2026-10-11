@@ -20,9 +20,8 @@ public class ServerDiagnosticsIntegrationTests
         string[] command = [image.StartsWith("valkey/", StringComparison.Ordinal) ? "valkey-server" : "redis-server",
             "--latency-monitor-threshold", "1", "--slowlog-log-slower-than", "0", "--slowlog-max-len", "128"];
         if (histogramSupported) command = [.. command, "--enable-debug-command", "yes"];
-        await using var container = new ContainerBuilder(image).WithCommand(command).WithPortBinding(6379, true)
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build();
-        await container.StartAsync();
+        await using var container = await ContainerStartRetry.StartAsync(() => new ContainerBuilder(image).WithCommand(command).WithPortBinding(6379, true)
+            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), [6379]);
         var address = $"redis://{container.Hostname}:{container.GetMappedPublicPort(6379)}?protocol={protocol}";
         await using var client = await RespireClient.ConnectAsync(address + "&allowAdmin=true");
         var server = client.WithKeyPrefix("ignored:").Server;

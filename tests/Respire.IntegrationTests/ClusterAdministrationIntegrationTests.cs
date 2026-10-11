@@ -20,8 +20,7 @@ public class ClusterAdministrationIntegrationTests
     {
         // Every test owns both nodes. Advertised ports are container-local because only the
         // servers use them; the client deliberately targets each mapped endpoint directly.
-        await using var container = OwnedNodes(image, server);
-        await container.StartAsync();
+        await using var container = await ContainerStartRetry.StartAsync(() => OwnedNodes(image, server), [7000, 7001]);
         await using var first = Client(7000);
         await using var second = Client(7001);
         var primary = first.Server.OnNode(Endpoint(7000));
@@ -100,8 +99,7 @@ public class ClusterAdministrationIntegrationTests
     [Arguments("valkey/valkey:9-alpine", "valkey-server", 3)]
     public async Task ReplicaRowsPreserveEpochAfterBumpingPastSignedLimit(string image, string server, int protocol)
     {
-        await using var container = OwnedNodes(image, server);
-        await container.StartAsync();
+        await using var container = await ContainerStartRetry.StartAsync(() => OwnedNodes(image, server), [7000, 7001]);
         await using var first = Client(7000);
         await using var second = Client(7001);
         var primary = first.Server.OnNode(Endpoint(7000));
