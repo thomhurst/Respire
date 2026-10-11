@@ -634,7 +634,8 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                     cluster.RecordRejection(ref discovery, connection, redirect);
                     observation.Handled(redirect);
                     discoveryPending = true;
-                    connection = await cluster.GetRedirectConnectionAsync(redirect, connection, acquisition.Token, slot, discovery)
+                    connection = await cluster.GetRedirectConnectionAsync(redirect, connection, acquisition.Token, slot, discovery,
+                            observation: observation)
                         .ConfigureAwait(false);
                     discoveryPending = false;
                 }

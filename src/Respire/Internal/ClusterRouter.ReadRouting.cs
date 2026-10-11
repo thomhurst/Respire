@@ -397,7 +397,8 @@ internal sealed partial class ClusterRouter
         try
         {
             if (fallback.ReplicaOnly == false)
-                return await GetPrimaryReadConnectionAsync(slot, readFrom, cancellationToken, discovery).ConfigureAwait(false);
+                return await GetPrimaryReadConnectionAsync(slot, readFrom, cancellationToken, discovery,
+                    observation: observation).ConfigureAwait(false);
 
             // Preserve replica zone ranking without probing the primary that just rejected the read.
             var replicaPolicy = ReadFallbackPolicy.UsesAvailabilityZone(readFrom)

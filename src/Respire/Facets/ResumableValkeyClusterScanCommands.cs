@@ -91,7 +91,7 @@ internal sealed partial class KeyCommands
                     topology.Moving[changedSlot] = true;
                 }
                 connection = await cluster.GetRedirectConnectionAsync(error, connection,
-                    cancellationToken, slot, recovery.Discovery).ConfigureAwait(false);
+                    cancellationToken, slot, recovery.Discovery, observation: recovery.Observation).ConfigureAwait(false);
                 asking = error.Code == RespireErrorCodes.Ask;
                 runId = await ReadScanRunIdAsync(connection, cancellationToken, recovery.Observation).ConfigureAwait(false);
                 if (!await SupportsClusterScanAsync(connection, runId, recovery, cancellationToken).ConfigureAwait(false))

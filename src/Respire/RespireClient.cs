@@ -1638,9 +1638,11 @@ public sealed partial class RespireClient : IRespireClient
             // The owning pool must follow the lease through commit/disposal, even if topology changes.
             RespireConnection connection;
             if (cluster is null)
-                (pool, connection) = await _core.RentDedicatedConnectionAsync(pool, cancellationToken).ConfigureAwait(false);
+                (pool, connection) = await _core.RentDedicatedConnectionAsync(pool, cancellationToken,
+                    observation: observation).ConfigureAwait(false);
             else
-                (pool, connection) = await cluster.RentDedicatedConnectionAsync(pool, slot, cancellationToken, discovery: null).ConfigureAwait(false);
+                (pool, connection) = await cluster.RentDedicatedConnectionAsync(pool, slot, cancellationToken, discovery: null,
+                    observation: observation).ConfigureAwait(false);
             try
             {
                 var command = new CmdN(Verbs.Watch, watchKeys);
@@ -4230,9 +4232,8 @@ public sealed partial class RespireClient : IRespireClient
                     else
                     {
                         pool = await core.GetDedicatedPoolAsync(cancellationToken).ConfigureAwait(false);
-                        observation.UseEndpoint(pool.Endpoint);
                         (pool, connection) = await core.RentDedicatedConnectionAsync(pool, cancellationToken,
-                            preferredZone: preferredZone).ConfigureAwait(false);
+                            preferredZone: preferredZone, observation: observation).ConfigureAwait(false);
                     }
                     if (!telemetryStarted)
                     {
@@ -5049,12 +5050,12 @@ public sealed partial class RespireClient : IRespireClient
         RespireConnection source,
         bool requireIdentity,
         CancellationToken cancellationToken,
-        int? commandSlot, ClusterRouter.DiscoveryRound? discovery = null)
+        int? commandSlot, ClusterRouter.DiscoveryRound? discovery, RespireTelemetry.ErrorObservation observation)
     {
         if (_core.Options.CommandTimeout is not { } timeout)
         {
             return await cluster.GetTrackedRedirectConnectionAsync(
-                    error, source, requireIdentity, cancellationToken, commandSlot, discovery)
+                    error, source, requireIdentity, cancellationToken, commandSlot, discovery, observation)
                 .ConfigureAwait(false);
         }
 
@@ -5062,7 +5063,7 @@ public sealed partial class RespireClient : IRespireClient
         try
         {
             return await cluster.GetTrackedRedirectConnectionAsync(
-                    error, source, requireIdentity, timeoutSource.Token, commandSlot, discovery)
+                    error, source, requireIdentity, timeoutSource.Token, commandSlot, discovery, observation)
                 .ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -5188,7 +5189,8 @@ public sealed partial class RespireClient : IRespireClient
                     execution.ErrorObservation.Handled(error);
                     discoveryPending = true;
                     connection = await GetTrackedRedirectConnectionAsync(
-                            cluster, error, connection, requiresIdentity, cancellationToken, slot, discovery)
+                            cluster, error, connection, requiresIdentity, cancellationToken, slot, discovery,
+                            execution.ErrorObservation)
                         .ConfigureAwait(false);
                     discoveryPending = false;
                     sendAsking = error.Code == RespireErrorCodes.Ask;

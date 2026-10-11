@@ -163,6 +163,10 @@ internal static partial class RespireTelemetry
         internal bool TryHandled(Exception error)
             => TryHandledCore(error, null, overrideEndpoint: false);
 
+        // Forwarding views (for example coordination cleanup) keep the borrower's endpoint choice.
+        internal bool TryHandled(Exception error, RespireEndpoint? endpoint, bool overrideEndpoint)
+            => TryHandledCore(error, endpoint, overrideEndpoint);
+
         private bool TryHandledCore(Exception error, RespireEndpoint? endpoint, bool overrideEndpoint)
         {
             if (_dispatch is not null) return _dispatch.Handled(_generation, error, endpoint, overrideEndpoint);

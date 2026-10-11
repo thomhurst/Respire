@@ -191,7 +191,7 @@ public class ClusterReconnectPolicyTests
             switch (path)
             {
                 case "command": await router.GetRedirectConnectionAsync(original, source, default, 42, discovery: null); break;
-                case "tracked": await router.GetTrackedRedirectConnectionAsync(original, source, true, default, 42, discovery: null); break;
+                case "tracked": await router.GetTrackedRedirectConnectionAsync(original, source, true, default, 42, discovery: null, observation: default); break;
                 case "dedicated": await router.GetRedirectDedicatedPoolAsync(original, source, default, 42, discovery: null); break;
                 default: throw new ArgumentOutOfRangeException(nameof(path));
             }
@@ -442,7 +442,7 @@ public class ClusterReconnectPolicyTests
         switch (path)
         {
             case "command": await router.GetRedirectConnectionAsync(original, source, deadline.Token, 42, discovery: null); break;
-            case "tracked": await router.GetTrackedRedirectConnectionAsync(original, source, true, deadline.Token, 42, discovery: null); break;
+            case "tracked": await router.GetTrackedRedirectConnectionAsync(original, source, true, deadline.Token, 42, discovery: null, observation: default); break;
             case "dedicated": await router.GetRedirectDedicatedPoolAsync(original, source, deadline.Token, 42, discovery: null); break;
             default: throw new ArgumentOutOfRangeException(nameof(path));
         }
@@ -488,7 +488,7 @@ public class ClusterReconnectPolicyTests
             switch (path)
             {
                 case "command": await router.GetRedirectConnectionAsync(original, source, deadline.Token, 42, discovery: null); break;
-                case "tracked": await router.GetTrackedRedirectConnectionAsync(original, source, true, deadline.Token, 42, discovery: null); break;
+                case "tracked": await router.GetTrackedRedirectConnectionAsync(original, source, true, deadline.Token, 42, discovery: null, observation: default); break;
                 case "dedicated": await router.GetRedirectDedicatedPoolAsync(original, source, deadline.Token, 42, discovery: null); break;
                 default: throw new ArgumentOutOfRangeException(nameof(path));
             }
@@ -624,7 +624,7 @@ public class ClusterReconnectPolicyTests
             Task followed = path switch
             {
                 "command" => router.GetRedirectConnectionAsync(redirect, source, default, 42, discovery).AsTask(),
-                "tracked" => router.GetTrackedRedirectConnectionAsync(redirect, source, true, default, 42, discovery).AsTask(),
+                "tracked" => router.GetTrackedRedirectConnectionAsync(redirect, source, true, default, 42, discovery, observation: default).AsTask(),
                 "dedicated" => router.GetRedirectDedicatedPoolAsync(redirect, source, default, 42, discovery).AsTask(),
                 _ => throw new ArgumentOutOfRangeException(nameof(path)),
             };

@@ -53,6 +53,28 @@ public partial class ErrorMetricsTests
     }
 
     [Test]
+    public async Task ColdClusterSeedFailureNamesTheSeed()
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        // Reserve then release a port so the seed refuses connections.
+        var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1, ThreadPoolMonitoring = false,
+            ClusterTopologyRefreshInterval = null, ConnectTimeout = TimeSpan.FromSeconds(2),
+            Endpoints = [new("127.0.0.1", port)],
+        });
+        using var capture = new Capture();
+        await Assert.That(async () => await client.Strings.GetStringAsync("key")).Throws<Exception>();
+        var final = capture.Items.Single(item => !(bool)item.Tags["redis.client.errors.internal"]!);
+        await Assert.That(final.Tags["server.address"]).IsEqualTo("127.0.0.1");
+        await Assert.That(final.Tags["server.port"]).IsEqualTo(port);
+    }
+
+    [Test]
     [MatrixDataSource]
     public async Task CommandFailuresCarryTheirOwnServerPort(
         [Matrix("string", "bytes", "raw")] string surface, [Matrix(false, true)] bool commandMetrics)

@@ -100,7 +100,7 @@ public sealed partial class RespireClient
                     var acquisitionToken = ArmDedicatedAcquisition(acquisitionCancellation, commandDeadline, cancellationToken);
                     pool = await core.GetDedicatedPoolAsync(acquisitionToken).ConfigureAwait(false);
                     (pool, connection) = await core.RentDedicatedConnectionAsync(pool, acquisitionToken,
-                        kind: DedicatedLeaseKind.Streaming).ConfigureAwait(false);
+                        kind: DedicatedLeaseKind.Streaming, observation: observation).ConfigureAwait(false);
                     acquisitionCancellation?.Disarm();
                     if (!telemetryStarted)
                     {
@@ -230,7 +230,7 @@ public sealed partial class RespireClient
                     (pool, connection) = await cluster.RentDedicatedConnectionAsync(
                         pool, new ClusterRouter.DedicatedRoute(slot, RespireReadFrom.Primary, asking.Redirect, asking.Source),
                         acquisitionToken, discovery,
-                        kind: DedicatedLeaseKind.Streaming).ConfigureAwait(false);
+                        kind: DedicatedLeaseKind.Streaming, observation: observation).ConfigureAwait(false);
                     acquisitionCancellation?.Disarm();
                     telemetryConnection = connection;
                     if (!telemetryStarted)

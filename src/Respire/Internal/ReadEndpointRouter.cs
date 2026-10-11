@@ -452,10 +452,13 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         string? preferredZone = null, ReadAttempt? attempt = null, RespireTelemetry.ErrorObservation observation = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (core.Sentinel is null) observation.UseEndpoint(core.Multiplexer.ActiveConnectionEndpoint);
+        // Never keep an earlier replica's endpoint for a primary failure. Sentinel resolves the
+        // primary inside EnsureConnectedAsync, so until then this attempt names no data node.
+        observation.UseEndpoint(core.Sentinel is null ? core.Multiplexer.ActiveConnectionEndpoint : (RespireEndpoint?)null);
         attempt?.ThrowIfFailed(core.Multiplexer.ActiveConnectionEndpoint);
         await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         var multiplexer = core.Multiplexer;
+        observation.UseEndpoint(multiplexer.ActiveConnectionEndpoint);
         attempt?.ThrowIfFailed(multiplexer.ActiveConnectionEndpoint);
         return new Selection(preferredZone is null ? multiplexer.GetConnection() : multiplexer.GetConnectionForZone(preferredZone),
             null, multiplexer);

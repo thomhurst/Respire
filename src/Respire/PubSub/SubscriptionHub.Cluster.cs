@@ -183,7 +183,8 @@ internal sealed partial class SubscriptionHub
                     else RespireTelemetry.RecordError(error, internallyHandled: true, retryAttempts: redirect, endpoint: new(commandConnection.Host, commandConnection.Port));
                     core.Cluster.RecordRejection(ref discovery, primary.Connection!, error);
                     discoveryPending = true;
-                    commandConnection = await core.Cluster.GetRedirectConnectionAsync(error, primary.Connection!, cancellationToken, slot, discovery)
+                    commandConnection = await core.Cluster.GetRedirectConnectionAsync(error, primary.Connection!, cancellationToken, slot, discovery,
+                            observation: observation)
                         .ConfigureAwait(false);
                     discoveryPending = false;
                     if (primary.IsAskConnection)

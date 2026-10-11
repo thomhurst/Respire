@@ -217,18 +217,21 @@ public sealed partial class RespireClient
                     var source = connection;
                     if (!requireIdentity)
                     {
-                        connection = await cluster.GetRedirectConnectionAsync(error, source, cancellationToken, slot, discovery)
+                        connection = await cluster.GetRedirectConnectionAsync(error, source, cancellationToken, slot, discovery,
+                                observation: execution.ErrorObservation)
                             .ConfigureAwait(false);
                     }
                     else
                     {
                         connection = await GetTrackedRedirectConnectionAsync(
-                                cluster, error, source, !allowUnfencedFallback, cancellationToken, slot, discovery)
+                                cluster, error, source, !allowUnfencedFallback, cancellationToken, slot, discovery,
+                                execution.ErrorObservation)
                             .ConfigureAwait(false);
                         if (RequiresStrictIdentityRetry(connection, allowUnfencedFallback))
                         {
                             connection = await GetTrackedRedirectConnectionAsync(
-                                    cluster, error, source, true, cancellationToken, slot, discovery)
+                                    cluster, error, source, true, cancellationToken, slot, discovery,
+                                    execution.ErrorObservation)
                                 .ConfigureAwait(false);
                         }
                     }

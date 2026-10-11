@@ -287,6 +287,12 @@ public sealed class RespireSemaphore
     {
         public bool IsOpen(long generation) => detached.IsOpen;
         public int Attempts(long generation) => caller.IsOpen ? caller.Attempts : detached.Attempts;
+        public RespireEndpoint? Endpoint(long generation) => caller.IsOpen ? caller.Endpoint : detached.Endpoint;
+        public void UseEndpoint(long generation, RespireEndpoint? endpoint)
+        {
+            if (caller.IsOpen) caller.UseEndpoint(endpoint);
+            else detached.UseEndpoint(endpoint);
+        }
         public void SetAttempts(long generation, int attempts)
         {
             if (caller.IsOpen) caller.SetAttempts(attempts);
@@ -297,8 +303,8 @@ public sealed class RespireSemaphore
             if (caller.IsOpen) caller.Retry();
             else detached.Retry();
         }
-        public bool Handled(long generation, Exception error)
-            => caller.TryHandled(error) || detached.TryHandled(error);
+        public bool Handled(long generation, Exception error, RespireEndpoint? endpoint, bool overrideEndpoint)
+            => caller.TryHandled(error, endpoint, overrideEndpoint) || detached.TryHandled(error, endpoint, overrideEndpoint);
     }
 
     private static void RecordCleanupFailure(RespireTelemetry.ErrorObservation caller, Exception error)

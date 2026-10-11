@@ -44,7 +44,8 @@ internal sealed partial class ReadEndpointRouter
         catch (Exception error) when (IsUnavailable(error, cancellationToken)) { }
         if (readFrom == RespireReadFrom.Replica) return null;
         var primary = await GetPrimaryAsync(cancellationToken,
-            ReadFallbackPolicy.UsesAvailabilityZone(readFrom) ? Core.Options.ClientAvailabilityZone : null).ConfigureAwait(false);
+            ReadFallbackPolicy.UsesAvailabilityZone(readFrom) ? Core.Options.ClientAvailabilityZone : null,
+            observation: observation).ConfigureAwait(false);
         return ReferenceEquals(primary.Primary, Core.Multiplexer)
             && HedgedReadPolicy.IsDifferentPeer(original, primary.Connection) ? primary.Connection : null;
     }

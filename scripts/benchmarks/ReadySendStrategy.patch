@@ -1,9 +1,9 @@
 diff --git b/src/Respire/RespireClient.ReadySend.cs a/src/Respire/RespireClient.ReadySend.cs
 new file mode 100644
-index 000000000..6bc3399d0
+index 000000000..8274d47e7
 --- /dev/null
 +++ a/src/Respire/RespireClient.ReadySend.cs
-@@ -0,0 +1,214 @@
+@@ -0,0 +1,215 @@
 +using System.Runtime.CompilerServices;
 +using Respire.Commands;
 +using Respire.Infrastructure;
@@ -50,7 +50,8 @@ index 000000000..6bc3399d0
 +            if (_core.Sentinel is not null)
 +                return CaptureReadySendFailure<TResult>(error, cache, mutationFence, observeSelectionErrors);
 +            if (mutationFence.IsRequired) cache!.CompleteMutation(in mutationFence);
-+            if (observeSelectionErrors) RespireTelemetry.RecordError(error, internallyHandled: false);
++            if (observeSelectionErrors) RespireTelemetry.RecordError(error, internallyHandled: false,
++                endpoint: cancellationToken.IsCancellationRequested ? (RespireEndpoint?)null : multiplexer.ActiveConnectionEndpoint);
 +            throw;
 +        }
 +        if (sender.ObserveDuration && _core.Circuits is not null && !_snapshotPrefixedBinaryKeys)
