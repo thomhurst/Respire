@@ -5553,7 +5553,8 @@ public partial class ErrorMetricsTests
         private readonly MeterListener _listener = new();
         internal ConcurrentQueue<Item> Items { get; } = new();
 
-        internal Capture(bool throwOnMeasurement = false, bool commandMetrics = false, Action<Item>? onMeasurement = null)
+        internal Capture(bool throwOnMeasurement = false, bool commandMetrics = false, Action<Item>? onMeasurement = null,
+            int? serverPort = null)
         {
             _listener.InstrumentPublished = (instrument, listener) =>
             {
@@ -5563,6 +5564,13 @@ public partial class ErrorMetricsTests
             };
             _listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
             {
+                if (serverPort is { } port)
+                {
+                    var matches = false;
+                    foreach (var tag in tags)
+                        if (tag.Key == "server.port" && Equals(tag.Value, port)) { matches = true; break; }
+                    if (!matches) return;
+                }
                 var item = new Item(value, instrument.Unit, tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value));
                 Items.Enqueue(item);
                 onMeasurement?.Invoke(item);

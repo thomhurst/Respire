@@ -50,6 +50,7 @@ public sealed partial class RespireClient
         // These routes can retry or clean up after native inspection. They retain the
         // generation-bound owner, including the logical cache mutation fence.
         var core = _core;
+        RespireEndpoint? endpoint = null;
         try
         {
             if (core.Cluster is not null || core.Sentinel is not null || core.Circuits is not null
@@ -58,12 +59,13 @@ public sealed partial class RespireClient
                 || !CanUseDirectReplySource(operation, in command)
                 || !core.TryGetReadyPrimaryMultiplexer(out var multiplexer)) return false;
             ObjectDisposedException.ThrowIf(core.Disposed, this);
+            endpoint = multiplexer.ActiveConnectionEndpoint;
             connection = multiplexer.GetConnection();
             return true;
         }
         catch (Exception error)
         {
-            RespireTelemetry.RecordError(error, internallyHandled: false);
+            RespireTelemetry.RecordError(error, internallyHandled: false, endpoint: endpoint);
             throw;
         }
     }

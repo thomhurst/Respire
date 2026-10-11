@@ -176,7 +176,7 @@ internal sealed partial class SubscriptionHub
                         if (observation.Attempts == 0) observation.SetAttempts(recoveryAttempts);
                         observation.Handled(error);
                     }
-                    else RespireTelemetry.RecordError(error, internallyHandled: true, retryAttempts: redirect);
+                    else RespireTelemetry.RecordError(error, internallyHandled: true, retryAttempts: redirect, endpoint: new(commandConnection.Host, commandConnection.Port));
                     commandConnection = await core.Cluster.GetRedirectConnectionAsync(error, primary.Connection!, cancellationToken, slot, discovery: null)
                         .ConfigureAwait(false);
                     if (primary.IsAskConnection)

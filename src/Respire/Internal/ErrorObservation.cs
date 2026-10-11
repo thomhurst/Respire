@@ -29,14 +29,15 @@ internal static class ErrorObservation
 
     // Called only after the final response owner has finished its cleanup. A supplied
     // owner transfers its completion right here; borrowed routes disable publication.
-    internal static void FinishFinal(FinalOwner owner, Exception? error, bool observeErrors = true, int retryAttempts = 0)
+    internal static void FinishFinal(FinalOwner owner, Exception? error, bool observeErrors = true, int retryAttempts = 0,
+        RespireEndpoint? endpoint = null)
     {
         try
         {
             if (error is not null && observeErrors)
             {
                 if (owner.IsEmpty) owner = StartFailure(retryAttempts);
-                owner.PublishFinal(error);
+                owner.PublishFinal(error, endpoint);
             }
         }
         finally { owner.Complete(); }
@@ -53,9 +54,9 @@ internal static class ErrorObservation
         internal void SetRetryAttempts(int retryAttempts) => _lease?.SetRetryAttempts(retryAttempts);
 
         internal Borrower Borrow() => new(_lease?.Borrow());
-        internal bool RecordHandled(Exception error) => _lease?.RecordHandled(error) ?? false;
+        internal bool RecordHandled(Exception error, RespireEndpoint? endpoint = null) => _lease?.RecordHandled(error, endpoint) ?? false;
         internal bool RecordRetry() => _lease?.RecordRetry() ?? false;
-        internal bool PublishFinal(Exception error) => _lease?.PublishFinal(error) ?? false;
+        internal bool PublishFinal(Exception error, RespireEndpoint? endpoint = null) => _lease?.PublishFinal(error, endpoint) ?? false;
         internal void Complete() => _lease?.Complete();
     }
 
@@ -65,7 +66,7 @@ internal static class ErrorObservation
         internal Borrower(Lease? lease) => _lease = lease;
 
         internal Borrower Borrow() => new(_lease?.Borrow());
-        internal bool RecordHandled(Exception error) => _lease?.RecordHandled(error) ?? false;
+        internal bool RecordHandled(Exception error, RespireEndpoint? endpoint = null) => _lease?.RecordHandled(error, endpoint) ?? false;
         internal void Complete() => _lease?.Complete();
     }
 
@@ -110,7 +111,7 @@ internal static class ErrorObservation
             }
         }
 
-        internal bool RecordHandled(Exception error)
+        internal bool RecordHandled(Exception error, RespireEndpoint? endpoint = null)
         {
             if (error is null) return false;
             int retryAttempts;
@@ -121,7 +122,7 @@ internal static class ErrorObservation
             }
             // Never invoke an exporter while holding the ownership gate. The captured count
             // remains this event's count even if another retry, final inspection or reuse wins.
-            RespireTelemetry.RecordError(error, internallyHandled: true, retryAttempts);
+            RespireTelemetry.RecordError(error, internallyHandled: true, retryAttempts, endpoint);
             return true;
         }
 
@@ -134,7 +135,7 @@ internal static class ErrorObservation
             }
         }
 
-        internal bool PublishFinal(Exception error)
+        internal bool PublishFinal(Exception error, RespireEndpoint? endpoint = null)
         {
             if (error is null) return false;
             int retryAttempts;
@@ -143,7 +144,7 @@ internal static class ErrorObservation
                 if (!IsOpen) return false;
                 if (!ErrorPublication.TryPublishFinal(observation.RetryAttempts, ref observation.FinalPublished, out retryAttempts)) return false;
             }
-            RespireTelemetry.RecordError(error, internallyHandled: false, retryAttempts);
+            RespireTelemetry.RecordError(error, internallyHandled: false, retryAttempts, endpoint);
             return true;
         }
 

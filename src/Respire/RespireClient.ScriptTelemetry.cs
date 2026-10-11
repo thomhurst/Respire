@@ -16,7 +16,7 @@ public sealed partial class RespireClient
         internal void RecordRetry(Exception error)
         {
             ErrorPublication.TryRecordHandled(ref _errorAttempts, finalPublished: false, out var attempts);
-            RespireTelemetry.RecordError(error, internallyHandled: true, attempts);
+            RespireTelemetry.RecordError(error, internallyHandled: true, attempts, _connection is { } connection ? new(connection.Host, connection.Port) : null);
         }
 
         /// <summary>Updates the selected peer without resetting the logical operation's start time.</summary>

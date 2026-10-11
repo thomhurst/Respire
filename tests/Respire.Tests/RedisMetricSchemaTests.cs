@@ -13,6 +13,41 @@ namespace Respire.Tests;
 public class RedisMetricSchemaTests
 {
     [Test]
+    [Arguments(6379)]
+    [Arguments(6380)]
+    [Arguments(0)]
+    public async Task ErrorsUseTheDurationEndpointSchema(int port)
+    {
+        using var capture = new Capture();
+        var endpoint = new RespireEndpoint("errors.example", port);
+        RespireTelemetry.RecordError(new RespireServerException("WRONGTYPE private-key"),
+            internallyHandled: false, retryAttempts: 2, endpoint: endpoint);
+
+        var item = capture.Items.Single(item => item.Name == "redis.client.errors");
+        await CheckIdentity(item);
+        await Assert.That(item.Unit).IsEqualTo("{error}");
+        await Assert.That(item.Value).IsEqualTo(1);
+        await Assert.That(item.Tags["server.address"]).IsEqualTo(endpoint.Host);
+        await Assert.That(item.Tags.ContainsKey("server.port")).IsEqualTo(port != 6379);
+        if (port != 6379) await Assert.That(item.Tags["server.port"]).IsEqualTo(port);
+        await Assert.That(item.Tags["db.response.status_code"]).IsEqualTo("WRONGTYPE");
+        await Assert.That(item.Tags["redis.client.operation.retry_attempts"]).IsEqualTo(2);
+        var durationTags = RespireTelemetry.CreateOperationMetricTags(endpoint.Host, port, "0", null, null);
+        foreach (var tag in durationTags.Where(tag => tag.Key.StartsWith("server.", StringComparison.Ordinal)))
+            await Assert.That(item.Tags[tag.Key]).IsEqualTo(tag.Value);
+    }
+
+    [Test]
+    public async Task UnroutedErrorsOmitEndpointTags()
+    {
+        using var capture = new Capture();
+        RespireTelemetry.RecordError(new OperationCanceledException(), internallyHandled: false);
+        var item = capture.Items.Single(item => item.Name == "redis.client.errors");
+        await Assert.That(item.Tags.ContainsKey("server.address")).IsFalse();
+        await Assert.That(item.Tags.ContainsKey("server.port")).IsFalse();
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task QueryEvictionCallbackDoesNotBlockOtherQueryPublication(bool capacity)

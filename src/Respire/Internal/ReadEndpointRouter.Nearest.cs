@@ -27,12 +27,13 @@ internal sealed partial class ReadEndpointRouter
         {
             try
             {
-                primary = await GetPrimaryAsync(cancellationToken, attempt: attempt).ConfigureAwait(false);
+                primary = await GetPrimaryAsync(cancellationToken, attempt: attempt, observation: observation).ConfigureAwait(false);
                 sampler.ConnectionSucceeded(primaryCandidate);
             }
             catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
             {
-                RecordCandidateFailure(observation, error);
+                RecordCandidateFailure(observation, error,
+                    Core.Sentinel is null ? primaryCandidate.ActiveConnectionEndpoint : observation.Endpoint);
                 lastError = error;
                 sampler.ConnectionFailed(primaryCandidate);
             }
@@ -73,7 +74,7 @@ internal sealed partial class ReadEndpointRouter
                 }
                 catch (Exception error) when (!cancellationToken.IsCancellationRequested && error is not ObjectDisposedException)
                 {
-                    RecordCandidateFailure(observation, error);
+                    RecordCandidateFailure(observation, error, entry.Endpoint);
                     lastError = error;
                     TryRecordFailure(entry, error, nearest: true);
                     continue;

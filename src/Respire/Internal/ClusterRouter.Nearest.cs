@@ -31,12 +31,12 @@ internal sealed partial class ClusterRouter
         {
             try
             {
-                primary = await GetConnectionAsync(slot, cancellationToken, discovery).ConfigureAwait(false);
+                primary = await GetConnectionAsync(slot, cancellationToken, discovery, observation).ConfigureAwait(false);
                 if (primary.Multiplexer is { } connected) sampler.ConnectionSucceeded(connected);
             }
             catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
             {
-                ReadEndpointRouter.RecordCandidateFailure(observation, error);
+                ReadEndpointRouter.RecordCandidateFailure(observation, error, observation.Endpoint);
                 lastError = error;
                 if (owner is not null) sampler.ConnectionFailed(owner);
             }
@@ -91,6 +91,7 @@ internal sealed partial class ClusterRouter
                 if (node.IsRetired || excluded?.Contains(node) == true || !sampler.CanConnect(node)) continue;
                 try
                 {
+                    observation.UseEndpoint(node.ActiveConnectionEndpoint);
                     await EnsureRouteNodeConnectedAsync(node, cancellationToken, discovery).ConfigureAwait(false);
                     if (node.IsRetired) continue;
                     sampler.ConnectionSucceeded(node);
@@ -99,7 +100,7 @@ internal sealed partial class ClusterRouter
                 }
                 catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
                 {
-                    ReadEndpointRouter.RecordCandidateFailure(observation, error);
+                    ReadEndpointRouter.RecordCandidateFailure(observation, error, observation.Endpoint);
                     lastError = error;
                     sampler.ConnectionFailed(node);
                     continue;

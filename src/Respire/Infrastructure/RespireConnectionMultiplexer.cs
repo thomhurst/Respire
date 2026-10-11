@@ -1070,7 +1070,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
             }
             if (IsOperational)
             {
-                RespireTelemetry.RecordError(ex, internallyHandled: true, attempt);
+                RespireTelemetry.RecordError(ex, internallyHandled: true, attempt, new(Host, Port));
                 lock (_lifecycleGate)
                 {
                     if (IsOperational && _connections[slot] is { IsAcceptingCommands: true })

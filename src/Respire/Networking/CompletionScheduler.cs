@@ -128,7 +128,7 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
     {
         if (!source.TryReserveResult())
         {
-            RespireTelemetry.RecordDiscardedError(in value, source.CommandName, source.ErrorAttempts);
+            RespireTelemetry.RecordDiscardedError(in value, source.CommandName, source.ErrorAttempts, source.ErrorEndpoint);
             value.Dispose();
             source.ReleaseRef();
             return;

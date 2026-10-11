@@ -44,13 +44,13 @@ public partial class ErrorMetricsTests
                 switch (boundary)
                 {
                     case "record":
-                        record.Invoke(null, [original, false, 0]);
+                        record.Invoke(null, [original, false, 0, null]);
                         break;
                     case "discard":
                         var valueType = assembly.GetType("Respire.Protocol.RespValue", throwOnError: true)!;
                         using (var value = (IDisposable)valueType.GetMethod("Error", [typeof(string)])!
                             .Invoke(null, ["ERR discarded error"])!)
-                            telemetry.GetMethod("RecordDiscardedError", flags)!.Invoke(null, [value, "PING", 0]);
+                            telemetry.GetMethod("RecordDiscardedError", flags)!.Invoke(null, [value, "PING", 0, null]);
                         break;
                     case "observe":
                         var observe = telemetry.GetMethods(flags).Single(method =>
@@ -78,7 +78,7 @@ public partial class ErrorMetricsTests
             };
             accepting.SetMeasurementEventCallback<long>((_, count, _, _) => measurements += (int)count);
             accepting.Start();
-            record.Invoke(null, [original, false, 0]);
+            record.Invoke(null, [original, false, 0, null]);
             await Assert.That(measurements).IsEqualTo(1);
         }
         finally

@@ -120,6 +120,7 @@ internal sealed partial class RespireConnection
         {
             source = _sourcePool.Rent(throwOnError, commandName: "SET");
             source.ErrorAttempts = errorAttempts;
+            source.ErrorEndpoint = new(Host, Port);
         }
         catch
         {
@@ -318,6 +319,7 @@ internal sealed partial class RespireConnection
     {
         var source = _sourcePool.Rent(throwOnError: true, commandName: "ASKING");
         source.ErrorAttempts = errorAttempts;
+        source.ErrorEndpoint = new(Host, Port);
         bool startedBatch;
         try
         {
@@ -513,16 +515,17 @@ internal sealed partial class RespireConnection
         // GetResult releases the caller reference and can return this source to its pool.
         var commandName = source.CommandName;
         var attempts = source.ErrorAttempts;
+        var endpoint = source.ErrorEndpoint;
         try
         {
             using var response = await source.Task.ConfigureAwait(false);
-            RespireTelemetry.RecordDiscardedError(in response, commandName, attempts);
+            RespireTelemetry.RecordDiscardedError(in response, commandName, attempts, endpoint);
         }
         catch (RespireServerException error)
         {
             // The reply can win before a failed final write aborts the connection. It is
             // discarded because the write failure owns the caller's final boundary.
-            RespireTelemetry.RecordError(error, internallyHandled: true, attempts);
+            RespireTelemetry.RecordError(error, internallyHandled: true, attempts, endpoint);
         }
         catch
         {

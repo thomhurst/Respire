@@ -25,7 +25,7 @@ internal sealed partial class ClusterRouter
     {
         if (readFrom == RespireReadFrom.Primary || slot is null)
         {
-            return GetConnectionAsync(slot, cancellationToken, discovery);
+            return GetConnectionAsync(slot, cancellationToken, discovery, observation);
         }
 
         // Role fallback narrows eligibility to replicas, but redirects and pool replacement
@@ -55,11 +55,11 @@ internal sealed partial class ClusterRouter
         {
             try
             {
-                return await GetPrimaryReadConnectionAsync(slot, readFrom, cancellationToken, discovery, excluded).ConfigureAwait(false);
+                return await GetPrimaryReadConnectionAsync(slot, readFrom, cancellationToken, discovery, excluded, observation).ConfigureAwait(false);
             }
             catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
             {
-                ReadEndpointRouter.RecordCandidateFailure(observation, error);
+                ReadEndpointRouter.RecordCandidateFailure(observation, error, observation.Endpoint);
                 return await GetReplicaConnectionAsync(slot, cancellationToken, error, discovery, excluded: excluded, observation: observation).ConfigureAwait(false);
             }
         }
@@ -71,7 +71,7 @@ internal sealed partial class ClusterRouter
         catch (Exception error) when (ReadFallbackPolicy.AllowsPrimaryFallback(readFrom)
             && IsReadCandidateFailure(error, cancellationToken))
         {
-            return await GetPrimaryReadConnectionAsync(slot, readFrom, cancellationToken, discovery, excluded).ConfigureAwait(false);
+            return await GetPrimaryReadConnectionAsync(slot, readFrom, cancellationToken, discovery, excluded, observation).ConfigureAwait(false);
         }
     }
 
@@ -94,11 +94,11 @@ internal sealed partial class ClusterRouter
 
     private async ValueTask<RespireConnection> GetPrimaryReadConnectionAsync(
         int slot, RespireReadFrom readFrom, CancellationToken cancellationToken, DiscoveryRound? discovery,
-        HashSet<RespireConnectionMultiplexer>? excluded = null)
+        HashSet<RespireConnectionMultiplexer>? excluded = null, RespireTelemetry.ErrorObservation observation = default)
     {
         if (excluded is not null && GetKnownSlotOwner(slot) is { } current && excluded.Contains(current))
             throw new RespireConnectionException("The primary dedicated connection candidate already failed.");
-        var primary = await GetConnectionAsync(slot, cancellationToken, discovery).ConfigureAwait(false);
+        var primary = await GetConnectionAsync(slot, cancellationToken, discovery, observation).ConfigureAwait(false);
         if (primary.Multiplexer is { } selected && excluded?.Contains(selected) == true)
             throw new RespireConnectionException("The primary dedicated connection candidate already failed.");
         return ReadFallbackPolicy.UsesAvailabilityZone(readFrom)
@@ -167,6 +167,7 @@ internal sealed partial class ClusterRouter
                 attempted++;
                 try
                 {
+                    observation.UseEndpoint(node.ActiveConnectionEndpoint);
                     await EnsureRouteNodeConnectedAsync(node, cancellationToken, discovery).ConfigureAwait(false);
                     if (node.IsRetired) continue;
                     // Healthy reads do not redirect; background revalidation discovers promotions.
@@ -183,7 +184,7 @@ internal sealed partial class ClusterRouter
                 {
                     // The logical read borrows this owner through selection and eventual conversion.
                     // Report the rejected endpoint, not the aggregate no-healthy-replica wrapper.
-                    ReadEndpointRouter.RecordCandidateFailure(observation, error);
+                    ReadEndpointRouter.RecordCandidateFailure(observation, error, observation.Endpoint);
                     lastError = error;
                 }
             }
@@ -191,14 +192,14 @@ internal sealed partial class ClusterRouter
             {
                 try
                 {
-                    var primary = await GetPrimaryReadConnectionAsync(slot, readFrom, cancellationToken, discovery, excluded).ConfigureAwait(false);
+                    var primary = await GetPrimaryReadConnectionAsync(slot, readFrom, cancellationToken, discovery, excluded, observation).ConfigureAwait(false);
                     if (ReadFallbackPolicy.IsSameZone(primary, _options.ClientAvailabilityZone)
                         && (excludedPeer is null || HedgedReadPolicy.IsDifferentPeer(excludedPeer, primary)))
                         return (primary, lastError, attempted);
                 }
                 catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
                 {
-                    ReadEndpointRouter.RecordCandidateFailure(observation, error);
+                    ReadEndpointRouter.RecordCandidateFailure(observation, error, observation.Endpoint);
                     lastError = error;
                 }
             }

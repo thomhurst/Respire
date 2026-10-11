@@ -449,7 +449,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             if (physicalConnected && !isUnixSocket)
                 ConnectionTelemetry.ClosedBeforeHandshake(host, port, options, error, cancellationToken, peerClosed);
             if (options.ObserveEstablishmentErrors && !ConnectionTelemetry.IsCallerCancellation(error, cancellationToken))
-                RespireTelemetry.RecordError(error, internallyHandled: true);
+                RespireTelemetry.RecordError(error, internallyHandled: true, endpoint: new(host, port));
             throw;
         }
 
@@ -507,7 +507,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             try { if (stream is not null) await stream.DisposeAsync().ConfigureAwait(false); }
             catch { /* Preserve the factory cancellation or connection failure. */ }
             if (options.ObserveEstablishmentErrors && !ConnectionTelemetry.IsCallerCancellation(error, cancellationToken))
-                RespireTelemetry.RecordError(error, internallyHandled: true);
+                RespireTelemetry.RecordError(error, internallyHandled: true, endpoint: new(host, port));
             throw;
         }
         var connection = new RespireConnection(null, stream, host, port, options, logger);
@@ -1048,6 +1048,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         CommandDeadline deadline = default)
         where TCommand : struct, IRespCommand
     {
+        if (!cancellationToken.IsCancellationRequested) observation.UseEndpoint(new(Host, Port));
         if (cancellationToken.IsCancellationRequested)
             throw new RespireCommandNotSubmittedException(new OperationCanceledException(cancellationToken));
         if (command is IStreamingRespCommand)
@@ -1061,7 +1062,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, deadline, out var target, out var rerouted, preferredZone: null))
         {
             ReclaimUnpublished(source);
-            observation.Handled(error);
+            observation.Handled(error, new(Host, Port));
             return await target.EnqueuePinnedAsync(command, cancellationToken, commandName, observation,
                 pinToConnection, rerouted).ConfigureAwait(false);
         }
@@ -1076,7 +1077,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, deadline, out var target, out var rerouted, preferredZone: null))
             {
                 // The capacity wait already reclaimed its unpublished source.
-                observation.Handled(error);
+                observation.Handled(error, new(Host, Port));
                 return await target.EnqueuePinnedAsync(command, cancellationToken, commandName, observation,
                     pinToConnection, rerouted).ConfigureAwait(false);
             }
@@ -1093,6 +1094,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
     {
+        if (!cancellationToken.IsCancellationRequested) observation.UseEndpoint(new(Host, Port));
         Interlocked.Increment(ref _responseTimeoutSuppressions);
         try
         {
@@ -1141,6 +1143,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         where TPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
     {
+        if (!cancellationToken.IsCancellationRequested) observation.UseEndpoint(new(Host, Port));
         if (_inflight.Capacity < 2)
             throw new InvalidOperationException(
                 $"A validated prefixed command needs 2 in-flight slots, but this connection allows {_inflight.Capacity}.");
@@ -1195,6 +1198,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         RespireTelemetry.ErrorObservation observation = default, RespireTelemetry.OperationStart durationStarted = default, bool pinToConnection = false)
         where TCommand : struct, IRespCommand
     {
+        if (!cancellationToken.IsCancellationRequested) observation.UseEndpoint(new(Host, Port));
         if (observation.IsEmpty)
             return DispatchResponseSource<TResult>.Run(
                 (Connection: this, Command: command, State: state, Converter: converter, Transfer: transferOwnership,
@@ -1228,8 +1232,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone: null))
         {
             ReclaimUnpublished(source);
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts);
-            else observation.Handled(error);
+            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
+            else observation.Handled(error, new(Host, Port));
             return target.SendConvertedAsync(in command, state, converter,
                 transferOwnership, cancellationToken, commandName, rerouted, errorAttempts + 1, observation, durationStarted, pinToConnection);
         }
@@ -1237,7 +1241,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             duration.Complete(commandName, error);
             ReclaimUnpublished(source);
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: false, errorAttempts);
+            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: false, errorAttempts, endpoint: new(Host, Port));
             throw;
         }
 
@@ -1287,6 +1291,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         RespireTelemetry.ErrorObservation observation = default, RespireTelemetry.OperationStart durationStarted = default, bool pinToConnection = false)
         where TCommand : struct, IRespCommand
     {
+        if (!cancellationToken.IsCancellationRequested) observation.UseEndpoint(new(Host, Port));
         if (observation.IsEmpty)
             return DispatchResponseSource<string?>.Run(
                 (Connection: this, Command: command, Token: cancellationToken, Name: commandName,
@@ -1310,8 +1315,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone: null))
         {
             ReclaimUnpublished(source);
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts);
-            else observation.Handled(error);
+            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
+            else observation.Handled(error, new(Host, Port));
             return target.SendStringAsync(in command, cancellationToken, commandName,
                 rerouted, errorAttempts + 1, observation, durationStarted, pinToConnection);
         }
@@ -1319,7 +1324,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             duration.Complete(commandName, error);
             ReclaimUnpublished(source);
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: false, errorAttempts);
+            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: false, errorAttempts, endpoint: new(Host, Port));
             throw;
         }
 
@@ -1375,6 +1380,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         string? preferredZone = null, RespireTelemetry.ErrorObservation observation = default, int errorAttempts = 0, bool pinToConnection = false)
         where TCommand : struct, IRespCommand
     {
+        if (!cancellationToken.IsCancellationRequested) observation.UseEndpoint(new(Host, Port));
         if (!commandDeadline.IsSet) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
         source.ErrorAttempts = (observation.IsEmpty ? errorAttempts : observation.Attempts);
         bool enqueued;
@@ -1387,8 +1393,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone))
         {
             ReclaimUnpublished(source, discardRepliesBefore + 2);
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts);
-            else observation.Handled(error);
+            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
+            else observation.Handled(error, new(Host, Port));
             return target.SendBulkStreamCoreAsync(command,
                 new BulkStreamPendingResponseSource(source.CommandName, source.HasPrefixReply, source.OnFrameCompleted,
                     source.StreamCancellationToken, target.OnBulkStreamLifetimeCancelled),
@@ -1452,8 +1458,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone))
         {
             // The capacity wait reclaimed the unadmitted source; the target needs a fresh one.
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts);
-            else observation.Handled(error);
+            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
+            else observation.Handled(error, new(Host, Port));
             return await target.SendBulkStreamCoreAsync(command,
                 new BulkStreamPendingResponseSource(source.CommandName, source.HasPrefixReply, source.OnFrameCompleted,
                     source.StreamCancellationToken, target.OnBulkStreamLifetimeCancelled),
@@ -1483,8 +1489,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
         catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone: null))
         {
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts);
-            else observation.Handled(error);
+            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
+            else observation.Handled(error, new(Host, Port));
             return await target.SendStringAsync(in command, cancellationToken, commandName, rerouted, errorAttempts + 1, observation, durationStarted, pinToConnection).ConfigureAwait(false);
         }
         catch (Exception error)
@@ -1492,7 +1498,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             // Capacity admission already reclaimed its unpublished source. Do not touch it.
             var duration = new RespireTelemetry.DurationObservation(this, durationStarted);
             duration.Complete(commandName, error);
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: false, errorAttempts);
+            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: false, errorAttempts, endpoint: new(Host, Port));
             throw;
         }
 
@@ -1516,6 +1522,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         RespireTelemetry.ErrorObservation observation = default,
         ClientSideCacheCoordinator.MutationFence mutationFence = default, bool pinToConnection = false)
     {
+        if (!cancellationToken.IsCancellationRequested) observation.UseEndpoint(new(Host, Port));
         ValidateTransactionCapacity(commandCount, includeMulti);
         var prefixReplies = includeMulti ? 1 : 0;
         return SendMultiReplyCoreAsync(
@@ -1572,6 +1579,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         where TPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
     {
+        if (!cancellationToken.IsCancellationRequested) observation.UseEndpoint(new(Host, Port));
         if (_inflight.Capacity < 2)
         {
             throw new InvalidOperationException(
@@ -1606,6 +1614,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         where TPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
     {
+        if (!cancellationToken.IsCancellationRequested) observation.UseEndpoint(new(Host, Port));
         if (_inflight.Capacity < 2)
         {
             throw new InvalidOperationException(
@@ -1634,6 +1643,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         where TSecondPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
     {
+        if (!cancellationToken.IsCancellationRequested) observation.UseEndpoint(new(Host, Port));
         if (_inflight.Capacity < 3)
         {
             throw new InvalidOperationException(
@@ -1664,6 +1674,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         CommandWriteObservation? writeObservation = null, bool armCommandDeadline = true)
         where TCommand : struct, IRespCommand
     {
+        if (!cancellationToken.IsCancellationRequested) observation.UseEndpoint(new(Host, Port));
         if (!commandDeadline.IsSet && armCommandDeadline) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
         var replyCount = repliesBeforeFinal + 1;
         var source = MultiReplyPendingResponseSource.Rent(replyCount, firstQueueReply, commandName);
@@ -1681,8 +1692,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone))
         {
             ReclaimUnpublished(source, replyCount + 1);
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts);
-            else observation.Handled(error);
+            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
+            else observation.Handled(error, new(Host, Port));
             return target.SendMultiReplyCoreAsync(in command, repliesBeforeFinal,
                 firstQueueReply, cancellationToken, commandName, cancellationTimeout, callerCancellationToken,
                 rerouted, preferredZone, pinToConnection, observation, errorAttempts + 1, writeObservation, armCommandDeadline);
@@ -1727,6 +1738,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         CommandWriteObservation? writeObservation = null, bool deferFlush = false)
         where TCommand : struct, IRespCommand
     {
+        if (!cancellationToken.IsCancellationRequested) observation.UseEndpoint(new(Host, Port));
         if (!commandDeadline.IsSet && armCommandDeadline) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
         // TCommand is always a struct, so the JIT specializes this method per command type and
         // folds both type tests to constants; they cost nothing on the ordinary command hot path.
@@ -1750,8 +1762,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             && TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone))
         {
             ReclaimUnpublished(source);
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts);
-            else observation.Handled(error);
+            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
+            else observation.Handled(error, new(Host, Port));
             return target.SendCoreAsync(in command, discardRepliesBefore, throwOnError,
                 cancellationToken, commandName, armCommandDeadline, rerouted, preferredZone: preferredZone,
                 observation: observation, errorAttempts: errorAttempts + 1, writeObservation: writeObservation);
@@ -1783,6 +1795,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         CommandWriteObservation? writeObservation = null)
         where TCommand : struct, IRespCommand
     {
+        if (!cancellationToken.IsCancellationRequested) observation.UseEndpoint(new(Host, Port));
         if (!allowConnectionReroute)
             return await SendStreamingAsync(in command, cancellationToken, commandDeadline, streamingRoute,
                 throwOnError, (observation.IsEmpty ? errorAttempts : observation.Attempts), writeObservation)
@@ -1797,8 +1810,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         catch (RespireConnectionRetiredException error) when (TryReroute(
             pinToConnection, commandDeadline, out var target, out var reroutedDeadline, preferredZone: null))
         {
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts);
-            else observation.Handled(error);
+            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
+            else observation.Handled(error, new(Host, Port));
             return await target.SendStreamingCoreAsync(command, cancellationToken, reroutedDeadline, pinToConnection,
                     allowConnectionReroute, streamingRoute, throwOnError, observation, errorAttempts + 1, writeObservation)
                 .ConfigureAwait(false);
@@ -1814,6 +1827,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         RespireTelemetry.ErrorObservation observation = default, int errorAttempts = 0, bool pinToConnection = false)
         where TCommand : struct, IRespCommand
     {
+        if (!cancellationToken.IsCancellationRequested) observation.UseEndpoint(new(Host, Port));
         if (observation.IsEmpty)
             return DispatchResponseSource.Run(
                 (Connection: this, Command: command, Token: cancellationToken, Name: commandName,
@@ -1835,8 +1849,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
         catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, capacityDeadline, out var target, out var rerouted, preferredZone))
         {
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts);
-            else observation.Handled(error);
+            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
+            else observation.Handled(error, new(Host, Port));
             return target.SendFireAndForgetAsync(in command, cancellationToken, commandName, rerouted, preferredZone,
                 observation, errorAttempts + 1, pinToConnection);
         }
@@ -1952,6 +1966,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     {
         startedBatch = false;
         writeTask = null;
+        if (!ReferenceEquals(source, InflightRing.DiscardSentinel)) source.ErrorEndpoint = new(Host, Port);
 
         _cacheMutationAdmission?.ValidateDispatchAdmission(in command);
 
@@ -2260,8 +2275,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         catch (RespireConnectionRetiredException error) when (!IsMaintenanceDrainBarrier<TCommand>()
             && TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone))
         {
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts);
-            else observation.Handled(error);
+            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
+            else observation.Handled(error, new(Host, Port));
             return await target.SendCoreAsync(in command, discardRepliesBefore, throwOnError,
                 cancellationToken, commandName, armCommandDeadline, rerouted, preferredZone: preferredZone,
                 observation: observation, errorAttempts: errorAttempts + 1, writeObservation: writeObservation).ConfigureAwait(false);
@@ -2319,8 +2334,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone))
         {
             ReclaimUnpublished(source, replyCount + 1);
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts);
-            else observation.Handled(error);
+            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
+            else observation.Handled(error, new(Host, Port));
             return await target.SendMultiReplyCoreAsync(in command, repliesBeforeFinal,
                 firstQueueReply, cancellationToken, commandName, cancellationTimeout, callerCancellationToken,
                 rerouted, preferredZone, pinToConnection, observation, errorAttempts + 1, writeObservation, armCommandDeadline).ConfigureAwait(false);
@@ -2360,8 +2375,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
         catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone: null))
         {
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts);
-            else observation.Handled(error);
+            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
+            else observation.Handled(error, new(Host, Port));
             return await target.SendConvertedAsync(in command, state, converter,
                 transferOwnership, cancellationToken, commandName, rerouted, errorAttempts + 1, observation, durationStarted, pinToConnection).ConfigureAwait(false);
         }
@@ -2369,7 +2384,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             var duration = new RespireTelemetry.DurationObservation(this, durationStarted);
             duration.Complete(commandName, error);
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: false, errorAttempts);
+            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: false, errorAttempts, endpoint: new(Host, Port));
             throw;
         }
 
@@ -2409,8 +2424,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
         catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, deadline, out var target, out var rerouted, preferredZone))
         {
-            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts);
-            else observation.Handled(error);
+            if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts, endpoint: new(Host, Port));
+            else observation.Handled(error, new(Host, Port));
             await target.SendFireAndForgetAsync(in command, cancellationToken, commandName, rerouted, preferredZone,
                 observation, errorAttempts + 1, pinToConnection).ConfigureAwait(false);
             return;
@@ -3336,7 +3351,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         if (ReferenceEquals(source, InflightRing.DiscardSentinel))
         {
-            RespireTelemetry.RecordDiscardedError(in value, discardedOperation, discardedErrorAttempts);
+            RespireTelemetry.RecordDiscardedError(in value, discardedOperation, discardedErrorAttempts, new(Host, Port));
             value.Dispose();
             return;
         }
@@ -3991,7 +4006,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         if (observeErrors && reason is not null and not RespireConnectionRetiredException)
-            RespireTelemetry.RecordError(reason, internallyHandled: true);
+            RespireTelemetry.RecordError(reason, internallyHandled: true, endpoint: new(Host, Port));
 
         Volatile.Read(ref _activeBulkStreamSource)?.AbortPayload(writeFailure);
 

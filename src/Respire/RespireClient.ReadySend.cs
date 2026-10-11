@@ -44,7 +44,8 @@ public sealed partial class RespireClient
             if (_core.Sentinel is not null)
                 return CaptureReadySendFailure<TResult>(error, cache, mutationFence, observeSelectionErrors);
             if (mutationFence.IsRequired) cache!.CompleteMutation(in mutationFence);
-            if (observeSelectionErrors) RespireTelemetry.RecordError(error, internallyHandled: false);
+            if (observeSelectionErrors) RespireTelemetry.RecordError(error, internallyHandled: false,
+                endpoint: cancellationToken.IsCancellationRequested ? (RespireEndpoint?)null : multiplexer.ActiveConnectionEndpoint);
             throw;
         }
         if (sender.ObserveDuration && _core.Circuits is not null && !_snapshotPrefixedBinaryKeys)

@@ -118,6 +118,25 @@ internal static partial class RespireTelemetry
             }
         }
 
+        internal RespireEndpoint? Endpoint
+        {
+            get
+            {
+                if (_dispatch is not null) return _dispatch.Endpoint(_generation);
+                if (_state is null) return null;
+                lock (_state.Gate)
+                    return _state.Active && _state.Generation == _generation ? _state.Endpoint : null;
+            }
+        }
+
+        internal void UseEndpoint(RespireEndpoint? endpoint)
+        {
+            if (_dispatch is not null) { _dispatch.UseEndpoint(_generation, endpoint); return; }
+            if (_state is null) return;
+            lock (_state.Gate)
+                if (IsActive(_state) && !_state.Final) _state.Endpoint = endpoint;
+        }
+
         internal static ErrorObservation Rent(bool force = false)
         {
             if (!force && !ErrorsEnabled) return default;
@@ -127,6 +146,7 @@ internal static partial class RespireTelemetry
             {
                 state.Generation = unchecked(state.Generation + 1);
                 state.Attempts = 0;
+                state.Endpoint = null;
                 state.Final = false;
                 state.Active = true;
                 return new(state, state.Generation);
@@ -135,17 +155,26 @@ internal static partial class RespireTelemetry
         internal void Handled(Exception error)
             => _ = TryHandled(error);
 
+        // Parallel borrowers capture their own failed attempt's endpoint. The retained
+        // endpoint still belongs to the last selection, independently of publication order.
+        internal void Handled(Exception error, RespireEndpoint? endpoint)
+            => _ = TryHandledCore(error, endpoint, overrideEndpoint: true);
+
         internal bool TryHandled(Exception error)
+            => TryHandledCore(error, null, overrideEndpoint: false);
+
+        private bool TryHandledCore(Exception error, RespireEndpoint? endpoint, bool overrideEndpoint)
         {
-            if (_dispatch is not null) return _dispatch.Handled(_generation, error);
+            if (_dispatch is not null) return _dispatch.Handled(_generation, error, endpoint, overrideEndpoint);
             if (_state is null) return false;
             int attempt;
             lock (_state.Gate)
             {
                 if (!IsActive(_state)) return false;
                 if (!ErrorPublication.TryRecordHandled(ref _state.Attempts, _state.Final, out attempt)) return false;
+                if (!overrideEndpoint) endpoint = _state.Endpoint;
             }
-            RecordError(error, internallyHandled: true, attempt);
+            RecordError(error, internallyHandled: true, attempt, endpoint);
             return true;
         }
         internal void Final(Exception error)
@@ -154,16 +183,21 @@ internal static partial class RespireTelemetry
             if (_dispatch is not null) return;
             if (_state is null) return;
             int attempts;
+            RespireEndpoint? endpoint;
             lock (_state.Gate)
             {
                 if (!IsActive(_state) || !ErrorPublication.TryPublishFinal(_state.Attempts, ref _state.Final, out attempts)) return;
+                endpoint = _state.Endpoint;
             }
-            RecordError(error, internallyHandled: false, attempts);
+            RecordError(error, internallyHandled: false, attempts, endpoint);
         }
         // Copy while the independently owned result leg is still live. Preserve the
         // caller's prefix and nested retry history without overflowing into a zero count.
         internal void CopyCompletedAttempts(int prefix, ErrorObservation completed)
-            => SetAttempts((int)Math.Min((long)Math.Max(0, prefix) + completed.Attempts, int.MaxValue));
+        {
+            SetAttempts((int)Math.Min((long)Math.Max(0, prefix) + completed.Attempts, int.MaxValue));
+            if (completed.Endpoint is { } endpoint) UseEndpoint(endpoint);
+        }
 
         internal void SetAttempts(int attempts)
         {
@@ -210,6 +244,7 @@ internal static partial class RespireTelemetry
                 if (!_state.Active || _state.Generation != _generation) return 0;
                 attempts = _state.Attempts;
                 _state.Active = false;
+                _state.Endpoint = null;
             }
             Pool.Return(_state);
             return attempts;
@@ -228,6 +263,7 @@ internal static partial class RespireTelemetry
             internal readonly Lock Gate = new();
             internal long Generation;
             internal int Attempts;
+            internal RespireEndpoint? Endpoint;
             internal bool Final;
             internal bool Active;
         }
@@ -319,10 +355,11 @@ internal static partial class RespireTelemetry
         finally { observation.Dispose(); }
     }
 
-    internal static void RecordDiscardedError(in RespValue value, string? commandName, int retryAttempts = 0)
+    internal static void RecordDiscardedError(in RespValue value, string? commandName, int retryAttempts = 0,
+        RespireEndpoint? endpoint = null)
     {
         if (value.IsError && ErrorsEnabled)
-            RecordError(ResponseReader.ServerError(in value, commandName), internallyHandled: true, retryAttempts);
+            RecordError(ResponseReader.ServerError(in value, commandName), internallyHandled: true, retryAttempts, endpoint);
     }
 
     // Call only where the owner handles an error or publishes its final failure. Exception
@@ -330,7 +367,8 @@ internal static partial class RespireTelemetry
     // One owner reports each final boundary: pooled typed sources, routing/script scopes,
     // cache waiters, or deferred execution owners after cleanup. Never wrap one of these
     // with another final observer. Retry producers may be shared by several caller boundaries.
-    internal static void RecordError(Exception error, bool internallyHandled, int retryAttempts = 0)
+    internal static void RecordError(Exception error, bool internallyHandled, int retryAttempts = 0,
+        RespireEndpoint? endpoint = null)
     {
         if (!ErrorsEnabled) return;
         var relevant = error;
@@ -350,6 +388,9 @@ internal static partial class RespireTelemetry
             RespireAuthenticationException { InnerException: RespireServerException server } => StandardErrorCode(server.Code),
             _ => null,
         };
+        // Circuit rejection happens before transport dispatch but carries the exact
+        // rejected endpoint. No route inference is needed at the final observer.
+        if (endpoint is null && relevant is RespireCircuitOpenException circuit) endpoint = circuit.Endpoint;
         var category = relevant switch
         {
             // This boundary cannot infer the initiator from an exception token. Count
@@ -372,6 +413,11 @@ internal static partial class RespireTelemetry
                 : retryAttempts < ErrorRetryCounts.Length ? ErrorRetryCounts[retryAttempts] : retryAttempts),
         };
         if (code is not null) tags.Add("db.response.status_code", code);
+        if (endpoint is { } target)
+        {
+            tags.Add("server.address", target.Host);
+            if (target.Port != DefaultRedisPort) tags.Add("server.port", target.Port);
+        }
         try { ErrorInstruments.Errors.Add(1, in tags); }
         catch (Exception) { /* A listener must never replace an application error or prevent recovery. */ }
     }

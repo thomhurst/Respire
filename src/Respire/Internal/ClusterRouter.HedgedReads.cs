@@ -32,13 +32,13 @@ internal sealed partial class ClusterRouter
                         || RoutingSnapshot[slot].Replicas?.Nodes.Contains(node) == true)) return connection;
             }
             if (readFrom == RespireReadFrom.Replica) return null;
-            var primary = await GetPrimaryReadConnectionAsync(slot, readFrom, cancellationToken, discovery: null).ConfigureAwait(false);
+            var primary = await GetPrimaryReadConnectionAsync(slot, readFrom, cancellationToken, discovery: null, observation: observation).ConfigureAwait(false);
             return ReferenceEquals(RoutingSnapshot[slot].Primary, primary.Multiplexer)
                 && HedgedReadPolicy.IsDifferentPeer(original, primary) ? primary : null;
         }
         catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
         {
-            ReadEndpointRouter.RecordCandidateFailure(observation, error);
+            ReadEndpointRouter.RecordCandidateFailure(observation, error, observation.Endpoint);
             throw;
         }
         finally { owner.CompleteInternal(); }

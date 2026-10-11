@@ -119,7 +119,7 @@ public sealed partial class RespireClient
                 catch (RespireConnectionRetiredException error) when (allowStreamingConnectionReroute
                     && connection.TryReroute(false, commandDeadline, out var target, out var rerouted, GetTransportReadZone(in command)))
                 {
-                    observation.Handled(error);
+                    observation.Handled(error, new(connection.Host, connection.Port));
                     connection = target;
                     commandDeadline = rerouted;
                     telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
@@ -183,7 +183,7 @@ public sealed partial class RespireClient
                 catch (RespireConnectionRetiredException error) when (connection.TryReroute(false, commandDeadline,
                     out var target, out var rerouted, GetTransportReadZone(in command)))
                 {
-                    observation.Handled(error);
+                    observation.Handled(error, new(connection.Host, connection.Port));
                     connection = target;
                     commandDeadline = rerouted;
                 }
@@ -253,7 +253,7 @@ public sealed partial class RespireClient
             catch (RespireConnectionRetiredException error) when (connection.TryReroute(false, commandDeadline,
                 out var target, out var rerouted, GetTransportReadZone(in command)))
             {
-                observation.Handled(error);
+                observation.Handled(error, new(connection.Host, connection.Port));
                 connection = target;
                 commandDeadline = rerouted;
             }
@@ -290,7 +290,7 @@ public sealed partial class RespireClient
             catch (RespireConnectionRetiredException error) when (connection.TryReroute(false, commandDeadline,
                 out var target, out var rerouted, GetTransportReadZone(in command)))
             {
-                observation.Handled(error);
+                observation.Handled(error, new(connection.Host, connection.Port));
                 connection = target;
                 commandDeadline = rerouted;
             }

@@ -269,8 +269,10 @@ public partial class ErrorMetricsTests
         internal Func<int> Read { get; set; } = null!;
         public bool IsOpen(long generation) => generation == 1;
         public int Attempts(long generation) => Read();
+        public RespireEndpoint? Endpoint(long generation) => null;
+        public void UseEndpoint(long generation, RespireEndpoint? endpoint) { }
         public void SetAttempts(long generation, int attempts) => throw new NotSupportedException();
-        public bool Handled(long generation, Exception error) => throw new NotSupportedException();
+        public bool Handled(long generation, Exception error, RespireEndpoint? endpoint, bool overrideEndpoint) => throw new NotSupportedException();
         public void Retry(long generation) => throw new NotSupportedException();
     }
 

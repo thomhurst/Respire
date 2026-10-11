@@ -5,13 +5,15 @@ using Reservoir;
 namespace Respire.Internal;
 
 // Dispatch routes still cross legacy route-family signatures. This view forwards only
-// retry bookkeeping; the caller-facing response source retains final publication rights.
+// retry bookkeeping and endpoint metadata; the caller-facing source retains final publication rights.
 internal interface IDispatchObservation
 {
     bool IsOpen(long generation);
     int Attempts(long generation);
+    RespireEndpoint? Endpoint(long generation);
+    void UseEndpoint(long generation, RespireEndpoint? endpoint);
     void SetAttempts(long generation, int attempts);
-    bool Handled(long generation, Exception error);
+    bool Handled(long generation, Exception error, RespireEndpoint? endpoint, bool overrideEndpoint);
     void Retry(long generation);
 }
 
@@ -66,6 +68,7 @@ internal sealed class DispatchResponseSource<TResult> : IValueTaskSource<TResult
     private object? _continuationState;
     private ValueTask<TResult> _response;
     private ErrorObservation.FinalOwner _owner;
+    private RespireEndpoint? _endpoint;
     private long _generation;
     private short _version;
     private bool _closed;
@@ -135,7 +138,7 @@ internal sealed class DispatchResponseSource<TResult> : IValueTaskSource<TResult
         lock (_gate) return generation == _generation && !_closed;
     }
 
-    bool IDispatchObservation.Handled(long generation, Exception error)
+    bool IDispatchObservation.Handled(long generation, Exception error, RespireEndpoint? endpoint, bool overrideEndpoint)
     {
         ErrorObservation.Borrower borrower;
         lock (_gate)
@@ -143,9 +146,21 @@ internal sealed class DispatchResponseSource<TResult> : IValueTaskSource<TResult
             if (generation != _generation || _closed) return false;
             if (_owner.IsEmpty) _owner = ErrorObservation.StartFailure();
             borrower = _owner.Borrow();
+            if (!overrideEndpoint) endpoint = _endpoint;
         }
-        try { return borrower.RecordHandled(error); }
+        try { return borrower.RecordHandled(error, endpoint); }
         finally { borrower.Complete(); }
+    }
+
+    RespireEndpoint? IDispatchObservation.Endpoint(long generation)
+    {
+        lock (_gate) return generation == _generation && !_closed ? _endpoint : null;
+    }
+
+    void IDispatchObservation.UseEndpoint(long generation, RespireEndpoint? endpoint)
+    {
+        lock (_gate)
+            if (generation == _generation && !_closed) _endpoint = endpoint;
     }
 
     void IDispatchObservation.SetAttempts(long generation, int attempts)
@@ -171,13 +186,16 @@ internal sealed class DispatchResponseSource<TResult> : IValueTaskSource<TResult
     private void Finish(Exception? error)
     {
         ErrorObservation.FinalOwner owner;
+        RespireEndpoint? endpoint;
         lock (_gate)
         {
             _closed = true;
             owner = _owner;
             _owner = default;
+            endpoint = _endpoint;
+            _endpoint = null;
         }
-        ErrorObservation.FinishFinal(owner, error);
+        ErrorObservation.FinishFinal(owner, error, endpoint: endpoint);
     }
 
     private void InvokeContinuation()
