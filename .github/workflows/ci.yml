@@ -444,13 +444,21 @@ jobs:
       - name: Build
         run: dotnet build tests/Respire.IntegrationTests -c Release -f net10.0 $TEST_BUILD_ARGS
 
-      # ClusterReadyReplyIntegrationTests runs once, in the next step, without external tracing.
       - name: Run Integration Tests
         run: >-
           dotnet run --project tests/Respire.IntegrationTests -c Release -f net10.0 --no-build --
-          --treenode-filter '/*/*/(!ClusterReadyReplyIntegrationTests)/*'
           --results-directory "$GITHUB_WORKSPACE/TestResults/integration"
           --report-trx --report-trx-filename integration.trx
+          --hangdump --hangdump-timeout 10m
+
+      - name: Upload hang dumps
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: hangdump-net10.0-integration-resp3
+          path: TestResults/integration/**/*.dmp
+          if-no-files-found: ignore
+          retention-days: 3
 
       - name: Verify typed cluster replies during slot migration without external tracing
         env:
@@ -686,6 +694,16 @@ jobs:
         run: >-
           dotnet run --project tests/Respire.IntegrationTests -c Release -f net10.0 --no-build --
           --treenode-filter '/*/*/*/*[Category!=ProtocolIndependent]'
+          --hangdump --hangdump-timeout 10m
+
+      - name: Upload hang dumps
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: hangdump-net10.0-integration-resp2
+          path: '**/TestResults/**/*.dmp'
+          if-no-files-found: ignore
+          retention-days: 3
 
       - name: Upload TUnit HTML reports
         uses: actions/upload-artifact@v7
