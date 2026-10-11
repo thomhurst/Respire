@@ -605,9 +605,10 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     private async Task<RespireClient> ConnectTimeoutClientAsync()
     {
         var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(Server.ConnectionString) with { CommandTimeout = TimeSpan.FromMilliseconds(200) });
+            RespireOptions.Parse(Server.ConnectionString) with { CommandTimeout = TimeSpan.FromSeconds(1) });
 
-        // Keep the test's 200ms timeout scoped to the cache command under test. Reliable
+        // Allow handshake replies time to arrive while CI runs other suites concurrently.
+        // The deliberate server pauses below exceed this deadline. Reliable
         // corrections lazily capture CLIENT ID once per connection; prime that setup before
         // deliberately stalling Redis.
         await client.Core.Multiplexer.EnsureReliableCorrectionOrderingAsync();
@@ -917,7 +918,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         // during connection setup.
         await timeoutCache.RemoveAsync("warmup");
 
-        var stallObserved = await StartServerPauseAsync(500);
+        var stallObserved = await StartServerPauseAsync(2000);
 
         var threw = false;
         try
@@ -1048,7 +1049,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         await using var timeoutClient = await ConnectTimeoutClientAsync();
         await using var timeoutCache = new RespireDistributedCache(timeoutClient);
 
-        var stallObserved = await StartServerPauseAsync(500);
+        var stallObserved = await StartServerPauseAsync(2000);
 
         var threw = false;
         try
@@ -1080,7 +1081,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         await using var timeoutClient = await ConnectTimeoutClientAsync();
         await using var timeoutCache = new RespireDistributedCache(timeoutClient);
 
-        var stallObserved = await StartServerPauseAsync(500);
+        var stallObserved = await StartServerPauseAsync(2000);
 
         RespireTimeoutException? failure = null;
         try
@@ -1121,7 +1122,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         await using var timeoutClient = await ConnectTimeoutClientAsync();
         await using var timeoutCache = new RespireDistributedCache(timeoutClient);
 
-        var stallObserved = await StartServerPauseAsync(500);
+        var stallObserved = await StartServerPauseAsync(2000);
 
         var threw = false;
         try
@@ -1155,7 +1156,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         // A stall longer than SendDelayTolerance: the first correction pass chases the queued
         // set through it, so its remainder is stale by more than the tolerance and a second
         // pass with a freshly derived remainder must run.
-        var stallObserved = await StartServerPauseAsync(1500);
+        var stallObserved = await StartServerPauseAsync(2500);
 
         var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(10);
         var threw = false;
@@ -1283,9 +1284,9 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         };
         var originalClientId = (await timeoutClient.AcquireConnectionAsync(CancellationToken.None)).ServerClientId;
 
-        // A cold fencing connection must complete SELECT while the ordinary 200ms
+        // A cold fencing connection must complete SELECT while the ordinary 1s
         // command deadline expires inside this pause; the kill barrier must still complete.
-        var stallObserved = await StartServerPauseAsync(1500);
+        var stallObserved = await StartServerPauseAsync(2500);
 
         RespireTimeoutException? failure = null;
         try

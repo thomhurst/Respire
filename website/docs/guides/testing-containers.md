@@ -70,6 +70,8 @@ retry an aborted election after twice the failover timeout. Very short values tr
 false failovers on an overloaded host, so keep the defaults for tests that do not fail over.
 
 ```csharp
+using Respire.Testing.Containers;
+
 await using var fixture = await RespireContainerFixture.StartAsync(new()
 {
     Topology = RespireContainerTopology.Sentinel,
