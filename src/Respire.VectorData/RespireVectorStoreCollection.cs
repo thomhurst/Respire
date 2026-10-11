@@ -295,6 +295,7 @@ public sealed partial class RespireVectorStoreCollection<TRecord> : VectorStoreC
             ReadOnlyMemory<float> memory => memory,
             Memory<float> memory => memory,
             float[] array => array,
+            string => throw new NotSupportedException("A value of type 'string' was passed to 'SearchAsync', but that isn't a supported vector type by your provider and no embedding generator was configured. The supported vector types are: ReadOnlyMemory<float>, Memory<float>, float[]."),
             _ => throw new NotSupportedException("Search input must be a FLOAT32 array or memory. Embedding generation is not supported."),
         };
         var bytes = RespireVectorDataFloat32.Encode(values.Span);
