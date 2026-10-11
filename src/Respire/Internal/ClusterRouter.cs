@@ -205,7 +205,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         // below. That is transient, so resolve again a few times before reporting a failure.
         for (var attempt = 1; ; attempt++)
         {
-            var connection = await GetConnectionAsync(slot, cancellationToken, discovery: null).ConfigureAwait(false);
+            // Owner lookup for diagnostics and pub/sub routing has no logical command owner.
+            var connection = await GetConnectionAsync(slot, cancellationToken, discovery: null, observation: default).ConfigureAwait(false);
             var owner = RoutingSnapshot[slot].Primary;
             if (owner is { IsRetired: false, IsConnected: true }
                 && owner.Host == connection.Host && owner.Port == connection.Port)
@@ -227,7 +228,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             && await TryRefreshTopologyAsync(node, cancellationToken, discovery: null).ConfigureAwait(false)
             && TryGetCachedPrimaryEndpoints() is { } endpoints)
             return endpoints;
-        var connections = await GetMasterConnectionsAsync(cancellationToken, discovery: null).ConfigureAwait(false);
+        // Endpoint enumeration has no logical command owner.
+        var connections = await GetMasterConnectionsAsync(cancellationToken, discovery: null, observation: default).ConfigureAwait(false);
         return connections.Select(static connection => new RespireEndpoint(connection.Host, connection.Port))
             .Distinct().ToArray();
     }
@@ -340,7 +342,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         => RoutingSnapshot.Replicas;
 
     internal async ValueTask EnsureConnectedAsync(CancellationToken cancellationToken, DiscoveryRound? discovery,
-        RespireTelemetry.ErrorObservation observation = default)
+        RespireTelemetry.ErrorObservation observation)
     {
         if (Volatile.Read(ref _seed) is { IsConnected: true } readySeed && discovery?.HasRejected(readySeed) != true)
         {
@@ -400,7 +402,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
     internal ValueTask<RespireConnection> GetConnectionAsync(
         int? slot, CancellationToken cancellationToken, DiscoveryRound? discovery,
-        RespireTelemetry.ErrorObservation observation = default)
+        RespireTelemetry.ErrorObservation observation)
     {
         cancellationToken.ThrowIfCancellationRequested();
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
@@ -567,8 +569,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         RespireServerException error,
         RespireConnection source,
         CancellationToken cancellationToken,
-        int? commandSlot, DiscoveryRound? discovery, string? preferredZone = null,
-        RespireTelemetry.ErrorObservation observation = default)
+        int? commandSlot, DiscoveryRound? discovery, RespireTelemetry.ErrorObservation observation, string? preferredZone = null)
     {
         using var scope = BeginDiscovery(discovery);
         discovery = scope.Round;
@@ -628,8 +629,9 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     }
 
     internal ValueTask<RespireConnection> GetTrackedConnectionAsync(
-        int? slot, bool requireIdentity, CancellationToken cancellationToken, DiscoveryRound? discovery)
-        => GetReplacementConnectionAsync(null, slot, requireIdentity, cancellationToken, discovery);
+        int? slot, bool requireIdentity, CancellationToken cancellationToken, DiscoveryRound? discovery,
+        RespireTelemetry.ErrorObservation observation)
+        => GetReplacementConnectionAsync(null, slot, requireIdentity, cancellationToken, discovery, observation);
 
     internal bool CanRetryRetirement(int attempt, CancellationToken cancellationToken)
         => attempt < MaxRedirects && !cancellationToken.IsCancellationRequested && Volatile.Read(ref _disposed) == 0;
@@ -638,18 +640,18 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     // Callers may retry only commands rejected before acceptance, never ambiguous I/O failures.
     internal ValueTask<RespireConnection> GetReplacementConnectionAsync(
         RespireConnection? endpointSource, int? slot, bool? requireIdentity, CancellationToken cancellationToken,
-        DiscoveryRound? discovery, string? preferredZone = null)
+        DiscoveryRound? discovery, RespireTelemetry.ErrorObservation observation, string? preferredZone = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         if (endpointSource is null && discovery is null && preferredZone is null && _options.ReconnectPolicy is not null
             && TryGetReadyConnection(slot, requireIdentity) is { } ready) return new(ready);
-        return GetReplacementWithDiscoveryAsync(endpointSource, slot, requireIdentity, cancellationToken, discovery, preferredZone);
+        return GetReplacementWithDiscoveryAsync(endpointSource, slot, requireIdentity, cancellationToken, discovery, observation, preferredZone);
     }
 
     private async ValueTask<RespireConnection> GetReplacementWithDiscoveryAsync(
         RespireConnection? endpointSource, int? slot, bool? requireIdentity, CancellationToken cancellationToken,
-        DiscoveryRound? discovery, string? preferredZone)
+        DiscoveryRound? discovery, RespireTelemetry.ErrorObservation observation, string? preferredZone)
     {
         using var scope = BeginDiscovery(discovery);
         discovery = scope.Round;
@@ -662,10 +664,11 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 {
                     RespireConnection connection;
                     if (endpointSource is null)
-                        connection = await GetConnectionAsync(slot, cancellationToken, discovery).ConfigureAwait(false);
+                        connection = await GetConnectionAsync(slot, cancellationToken, discovery, observation).ConfigureAwait(false);
                     else
                     {
                         node = GetOrCreateNode(new(endpointSource.Host, endpointSource.Port), observe: false, redirect: true);
+                        observation.UseEndpoint(node.ActiveConnectionEndpoint);
                         await EnsureRouteNodeConnectedAsync(node, cancellationToken, discovery).ConfigureAwait(false);
                         connection = slot is { } value ? node.GetConnection(value) : node.GetConnection();
                     }
@@ -699,8 +702,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         discovery = scope.Round;
         try
         {
-            var connection = await GetRedirectConnectionAsync(error, source, cancellationToken, commandSlot, discovery,
-                    observation: observation)
+            var connection = await GetRedirectConnectionAsync(error, source, cancellationToken, commandSlot, discovery, observation)
                 .ConfigureAwait(false);
             try
             {
@@ -715,7 +717,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 discovery?.Failed(new RespireEndpoint(connection.Host, connection.Port), failure);
                 return await GetReplacementConnectionAsync(
                     error.Code == RespireErrorCodes.Ask ? connection : null, commandSlot, requireIdentity,
-                    cancellationToken, discovery).ConfigureAwait(false);
+                    cancellationToken, discovery, observation).ConfigureAwait(false);
             }
         }
         catch (Exception failure)
@@ -733,7 +735,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
     internal ValueTask<DedicatedConnectionPool> GetDedicatedPoolAsync(
         int? slot, CancellationToken cancellationToken, DiscoveryRound? discovery,
-        RespireTelemetry.ErrorObservation observation = default)
+        RespireTelemetry.ErrorObservation observation)
     {
         cancellationToken.ThrowIfCancellationRequested();
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
@@ -745,14 +747,13 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     }
 
     internal async ValueTask<DedicatedConnectionPool> GetReadDedicatedPoolAsync(
-        int? slot, RespireReadFrom readFrom, CancellationToken cancellationToken, DiscoveryRound? discovery,
-        string? preferredZone = null, HashSet<RespireConnectionMultiplexer>? excluded = null,
-        RespireTelemetry.ErrorObservation observation = default)
+        int? slot, RespireReadFrom readFrom, CancellationToken cancellationToken, DiscoveryRound? discovery, RespireTelemetry.ErrorObservation observation,
+        string? preferredZone = null, HashSet<RespireConnectionMultiplexer>? excluded = null)
     {
         if (readFrom == RespireReadFrom.Primary || slot is null)
             return await GetDedicatedPoolAsync(slot, cancellationToken, discovery, observation).ConfigureAwait(false);
 
-        var connection = await GetReadConnectionAsync(slot, readFrom, cancellationToken, discovery, preferredZone, excluded, observation)
+        var connection = await GetReadConnectionAsync(slot, readFrom, cancellationToken, observation, discovery, preferredZone, excluded)
             .ConfigureAwait(false);
         return connection.Multiplexer is { } node
             ? GetOrCreateDedicatedPool(node)
@@ -822,7 +823,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         RespireServerException error,
         RespireConnection source,
         CancellationToken cancellationToken,
-        int? commandSlot, DiscoveryRound? discovery, RespireTelemetry.ErrorObservation observation = default)
+        int? commandSlot, DiscoveryRound? discovery, RespireTelemetry.ErrorObservation observation)
     {
         using var scope = BeginDiscovery(discovery);
         discovery = scope.Round;
@@ -895,12 +896,12 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     }
 
     internal async ValueTask<(DedicatedConnectionPool Pool, StreamRouteVersion SlotVersion)> GetDedicatedStreamPoolAsync(
-        int? slot, CancellationToken cancellationToken, DiscoveryRound? discovery)
+        int? slot, CancellationToken cancellationToken, DiscoveryRound? discovery, RespireTelemetry.ErrorObservation observation)
     {
         // Validate this snapshot before the upload header, where the caller's bounded retry loop
         // can handle topology churn without spinning indefinitely during pool selection.
         var slotVersion = CaptureSlotVersion(slot);
-        var pool = await GetDedicatedPoolAsync(slot, cancellationToken, discovery).ConfigureAwait(false);
+        var pool = await GetDedicatedPoolAsync(slot, cancellationToken, discovery, observation).ConfigureAwait(false);
         return (pool, slotVersion);
     }
 
@@ -931,11 +932,9 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     }
 
     internal ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> RentDedicatedConnectionAsync(
-        DedicatedConnectionPool pool, int? slot, CancellationToken cancellationToken, DiscoveryRound? discovery,
-        bool reuseIdle = true, DedicatedLeaseKind kind = DedicatedLeaseKind.Ordinary,
-        RespireTelemetry.ErrorObservation observation = default)
-        => RentDedicatedConnectionAsync(pool, new DedicatedRoute(slot), cancellationToken, discovery, reuseIdle, kind,
-            observation: observation);
+        DedicatedConnectionPool pool, int? slot, CancellationToken cancellationToken, DiscoveryRound? discovery, RespireTelemetry.ErrorObservation observation,
+        bool reuseIdle = true, DedicatedLeaseKind kind = DedicatedLeaseKind.Ordinary)
+        => RentDedicatedConnectionAsync(pool, new DedicatedRoute(slot), cancellationToken, discovery, observation, reuseIdle, kind);
 
     /// <summary>
     /// Where a dedicated rent reselects its pool after topology retirement: the slot's route under
@@ -952,14 +951,13 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         HashSet<RespireConnectionMultiplexer>? excluded, RespireTelemetry.ErrorObservation observation)
         => route.AskRedirect is { } ask
             ? GetRedirectDedicatedPoolAsync(ask, route.RedirectSource!, cancellationToken, route.Slot, discovery, observation)
-            : GetReadDedicatedPoolAsync(route.Slot, route.ReadFrom, cancellationToken, discovery, preferredZone, excluded, observation);
+            : GetReadDedicatedPoolAsync(route.Slot, route.ReadFrom, cancellationToken, discovery, observation, preferredZone, excluded);
 
     internal ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> RentDedicatedConnectionAsync(
-        DedicatedConnectionPool pool, DedicatedRoute route, CancellationToken cancellationToken, DiscoveryRound? discovery,
-        bool reuseIdle = true, DedicatedLeaseKind kind = DedicatedLeaseKind.Ordinary, string? preferredZone = null,
-        RespireTelemetry.ErrorObservation observation = default)
+        DedicatedConnectionPool pool, DedicatedRoute route, CancellationToken cancellationToken, DiscoveryRound? discovery, RespireTelemetry.ErrorObservation observation,
+        bool reuseIdle = true, DedicatedLeaseKind kind = DedicatedLeaseKind.Ordinary, string? preferredZone = null)
         => DedicatedLeaseAcquisition.RentAsync(pool, new DedicatedLeaseRoute(this, route, discovery, preferredZone),
-            cancellationToken, reuseIdle, kind, preferredZone, _circuits, observation);
+            cancellationToken, reuseIdle, kind, observation, preferredZone, _circuits);
 
     private struct DedicatedLeaseRoute(ClusterRouter owner, DedicatedRoute route, DiscoveryRound? discovery,
         string? preferredZone) : IDedicatedLeaseRoute
@@ -1414,7 +1412,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
     internal async ValueTask<RespireConnection[]> GetMasterConnectionsAsync(
         CancellationToken cancellationToken, DiscoveryRound? discovery,
-        RespireTelemetry.ErrorObservation observation = default)
+        RespireTelemetry.ErrorObservation observation)
     {
         using var scope = BeginDiscovery(discovery);
         discovery = scope.Round;
@@ -1452,6 +1450,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             && discovery?.HasRejected(seed) != true)
         {
             attemptedSeed = seed;
+            observation.UseEndpoint(seed.ActiveConnectionEndpoint);
             refreshed = await TryRefreshTopologyAsync(seed, cancellationToken, discovery, expectedTopologyVersion,
                     snapshotBatch)
                 .ConfigureAwait(false);
@@ -1464,6 +1463,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 // The connected seed is also a known master. Its failed query has already
                 // seeded the round; reserve the fallback budget for a different candidate.
                 if (ReferenceEquals(master, attemptedSeed) || discovery?.HasRejected(master) == true) continue;
+                observation.UseEndpoint(master.ActiveConnectionEndpoint);
                 if (await TryRefreshTopologyAsync(master, cancellationToken, discovery, expectedTopologyVersion,
                         snapshotBatch)
                     .ConfigureAwait(false))
@@ -1505,6 +1505,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             // TryLoadSlotsAsync replaces stale owners after a successful refresh. Any owner
             // still present is current; omitting it would make SCAN and cluster-wide server
             // commands silently return incomplete results.
+            observation.UseEndpoint(master.ActiveConnectionEndpoint);
             await EnsureRouteNodeConnectedAsync(master, cancellationToken, discovery).ConfigureAwait(false);
             connections[index++] = master.GetConnection();
         }
@@ -1559,7 +1560,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     private async ValueTask<ImmutableArray<RespireConnectionMultiplexer>> RefreshKnownMastersAsync(
         CancellationToken cancellationToken, DiscoveryRound? discovery)
     {
-        _ = await GetMasterConnectionsAsync(cancellationToken, discovery).ConfigureAwait(false);
+        // Known-master enumeration (test and diagnostics only) has no logical command owner.
+        _ = await GetMasterConnectionsAsync(cancellationToken, discovery, observation: default).ConfigureAwait(false);
         return RoutingSnapshot.Masters;
     }
 
@@ -1653,7 +1655,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                     discovery?.FailedNode(master, error);
                 }
             }
-            await EnsureConnectedAsync(cancellationToken, discovery).ConfigureAwait(false);
+            // Pub/sub endpoint selection has no logical command owner.
+            await EnsureConnectedAsync(cancellationToken, discovery, observation: default).ConfigureAwait(false);
             var endpoint = SeedEndpoint;
             if (discovery is not null) await discovery.BeforeCandidateAsync(endpoint, cancellationToken).ConfigureAwait(false);
             return endpoint;

@@ -512,7 +512,7 @@ public class ClusterScanTests
         var first = await client.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start, cancellationToken: timeout.Token);
         if (modern) first = await client.Keys.ScanClusterPageAsync(first.Cursor, cancellationToken: timeout.Token);
         var router = client.Core.Cluster!;
-        var old = await router.GetConnectionAsync(8192, timeout.Token, discovery: null);
+        var old = await router.GetConnectionAsync(8192, timeout.Token, discovery: null, observation: default);
         var full = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var pings = 0;
         cluster.Second.Server.SuppressReply = command =>

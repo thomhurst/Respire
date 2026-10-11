@@ -99,8 +99,8 @@ public sealed partial class RespireClient
                 {
                     var acquisitionToken = ArmDedicatedAcquisition(acquisitionCancellation, commandDeadline, cancellationToken);
                     pool = await core.GetDedicatedPoolAsync(acquisitionToken).ConfigureAwait(false);
-                    (pool, connection) = await core.RentDedicatedConnectionAsync(pool, acquisitionToken,
-                        kind: DedicatedLeaseKind.Streaming, observation: observation).ConfigureAwait(false);
+                    (pool, connection) = await core.RentDedicatedConnectionAsync(pool, acquisitionToken, observation,
+                        kind: DedicatedLeaseKind.Streaming).ConfigureAwait(false);
                     acquisitionCancellation?.Disarm();
                     if (!telemetryStarted)
                     {
@@ -217,7 +217,7 @@ public sealed partial class RespireClient
         ClusterRouter.DiscoveryRound? discovery = null;
         try
         {
-            (pool, routeVersion) = await cluster.GetDedicatedStreamPoolAsync(slot, acquisitionToken, discovery: null)
+            (pool, routeVersion) = await cluster.GetDedicatedStreamPoolAsync(slot, acquisitionToken, discovery: null, observation: observation)
                 .ConfigureAwait(false);
             for (var attempt = 0; ; attempt++)
             {
@@ -229,8 +229,8 @@ public sealed partial class RespireClient
                     acquisitionToken = ArmDedicatedAcquisition(acquisitionCancellation, commandDeadline, cancellationToken);
                     (pool, connection) = await cluster.RentDedicatedConnectionAsync(
                         pool, new ClusterRouter.DedicatedRoute(slot, RespireReadFrom.Primary, asking.Redirect, asking.Source),
-                        acquisitionToken, discovery,
-                        kind: DedicatedLeaseKind.Streaming, observation: observation).ConfigureAwait(false);
+                        acquisitionToken, discovery, observation,
+                        kind: DedicatedLeaseKind.Streaming).ConfigureAwait(false);
                     acquisitionCancellation?.Disarm();
                     telemetryConnection = connection;
                     if (!telemetryStarted)
@@ -290,7 +290,7 @@ public sealed partial class RespireClient
                             commandDeadline = connection.GetReroutedCommandDeadline(commandDeadline);
                             acquisitionToken = ArmDedicatedAcquisition(acquisitionCancellation, commandDeadline, cancellationToken);
                             var redirect = await AcquireUploadRedirectAsync(
-                                    cluster, error, connection, slot, discovery, acquisitionToken)
+                                    cluster, error, connection, slot, discovery, acquisitionToken, observation)
                                 .ConfigureAwait(false);
                             acquiringRedirectPool = false;
                             pool.Return(connection);
@@ -326,12 +326,12 @@ public sealed partial class RespireClient
                     acquisitionToken = ArmDedicatedAcquisition(acquisitionCancellation, commandDeadline, cancellationToken);
                     if (asking.IsActive && cluster.CaptureSlotVersion(slot) == routeVersion)
                         pool = await cluster.GetRedirectDedicatedPoolAsync(
-                            asking.Redirect!, asking.Source!, acquisitionToken, slot, discovery).ConfigureAwait(false);
+                            asking.Redirect!, asking.Source!, acquisitionToken, slot, discovery, observation).ConfigureAwait(false);
                     else
                     {
                         asking = default;
                         (pool, routeVersion) = await cluster.GetDedicatedStreamPoolAsync(
-                            slot, acquisitionToken, discovery).ConfigureAwait(false);
+                            slot, acquisitionToken, discovery, observation).ConfigureAwait(false);
                     }
                     continue;
                 }
@@ -369,12 +369,13 @@ public sealed partial class RespireClient
 
     private static async ValueTask<UploadRedirect>
         AcquireUploadRedirectAsync(ClusterRouter cluster, RespireServerException error, RespireConnection source,
-            int? slot, ClusterRouter.DiscoveryRound? discovery, CancellationToken cancellationToken)
+            int? slot, ClusterRouter.DiscoveryRound? discovery, CancellationToken cancellationToken,
+            RespireTelemetry.ErrorObservation observation)
     {
         var asking = error.Code == RespireErrorCodes.Ask;
         // ASK does not publish an owner; a concurrent topology change must invalidate it.
         var version = asking ? cluster.CaptureSlotVersion(slot) : default;
-        var pool = await cluster.GetRedirectDedicatedPoolAsync(error, source, cancellationToken, slot, discovery)
+        var pool = await cluster.GetRedirectDedicatedPoolAsync(error, source, cancellationToken, slot, discovery, observation)
             .ConfigureAwait(false);
         // MOVED and READONLY recovery can publish an owner during acquisition.
         if (!asking) version = cluster.CaptureSlotVersion(slot);

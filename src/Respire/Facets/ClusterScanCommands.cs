@@ -174,7 +174,7 @@ internal sealed partial class KeyCommands
         RespireConnection[] connections;
         try
         {
-            connections = await client.Core.Cluster!.GetMasterConnectionsAsync(cancellationToken, discovery).ConfigureAwait(false);
+            connections = await client.Core.Cluster!.GetMasterConnectionsAsync(cancellationToken, discovery, observation).ConfigureAwait(false);
         }
         catch (Exception error) when (error is not RespireConnectionRetiredException)
         {

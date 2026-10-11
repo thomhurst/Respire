@@ -1981,11 +1981,11 @@ public class ClusterNodeIdentityTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         if (dedicated)
         {
-            await router.GetRedirectDedicatedPoolAsync(error, source, timeout.Token, commandSlot: null, discovery: null);
+            await router.GetRedirectDedicatedPoolAsync(error, source, timeout.Token, commandSlot: null, discovery: null, observation: default);
         }
         else
         {
-            await router.GetRedirectConnectionAsync(error, source, timeout.Token, commandSlot: null, discovery: null);
+            await router.GetRedirectConnectionAsync(error, source, timeout.Token, commandSlot: null, discovery: null, observation: default);
         }
         var redirected = router.GetMultiplexer(redirectedEndpoint);
         var slots = (RespireConnectionMultiplexer?[])typeof(ClusterRouter).GetField("_slots", flags)!.GetValue(router)!;
@@ -1995,7 +1995,7 @@ public class ClusterNodeIdentityTests
             : [new(0, 16383, originalEndpoint, "original-id", [redirectedEndpoint])];
         apply.Invoke(router, [stale, capturedVersion, 2L]);
         await Assert.That(ReferenceEquals(router.GetMultiplexer(redirectedEndpoint), redirected)).IsTrue();
-        var next = await router.GetRedirectConnectionAsync(error, source, timeout.Token, commandSlot: null, discovery: null);
+        var next = await router.GetRedirectConnectionAsync(error, source, timeout.Token, commandSlot: null, discovery: null, observation: default);
         await Assert.That(ReferenceEquals(next.Multiplexer, redirected)).IsTrue();
 
         // A discovery started after ASK is authoritative and may replace that endpoint's identity.
@@ -2249,8 +2249,8 @@ public class ClusterNodeIdentityTests
         using var result = await execution.ConsumeResponseAsync();
         var original = execution.Connection;
         var router = client.Core.Cluster!;
-        await router.GetMasterConnectionsAsync(CancellationToken.None, discovery: null);
-        var replacement = await router.GetConnectionAsync(ClusterHash.GetSlot("key"), CancellationToken.None, discovery: null);
+        await router.GetMasterConnectionsAsync(CancellationToken.None, discovery: null, observation: default);
+        var replacement = await router.GetConnectionAsync(ClusterHash.GetSlot("key"), CancellationToken.None, discovery: null, observation: default);
         await Assert.That(ReferenceEquals(original, replacement)).IsFalse();
 
         await client.ExecuteOnAllConnectionsAsync(script, ["key"], [], execution.ConnectionIdentity);
@@ -2272,7 +2272,7 @@ public class ClusterNodeIdentityTests
         var options = Options(seed.Port);
         await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", seed.Port, options: options.ToConnectionOptions());
         await using var router = new ClusterRouter(options, primary);
-        await router.EnsureConnectedAsync(default, discovery: null);
+        await router.EnsureConnectedAsync(default, discovery: null, observation: default);
 
         var hostname = new RespireEndpoint("localhost", target.Port);
         var address = new RespireEndpoint("127.0.0.1", target.Port);
@@ -2294,7 +2294,7 @@ public class ClusterNodeIdentityTests
         var options = Options(seed.Port);
         await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", seed.Port, options: options.ToConnectionOptions());
         await using var router = new ClusterRouter(options, primary);
-        var connect = router.EnsureConnectedAsync(default, discovery: null).AsTask();
+        var connect = router.EnsureConnectedAsync(default, discovery: null, observation: default).AsTask();
         await commandReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await seed.SendRawAsync(Topology("localhost", seed.Port, "seed-node"));
         await connect;
@@ -2327,7 +2327,7 @@ public class ClusterNodeIdentityTests
         await using var primary = RespireConnectionMultiplexer.Create(
             "127.0.0.1", seed.Port, options: options.ToConnectionOptions());
         await using var router = new ClusterRouter(options, primary);
-        var connect = router.EnsureConnectedAsync(default, discovery: null).AsTask();
+        var connect = router.EnsureConnectedAsync(default, discovery: null, observation: default).AsTask();
         await firstDiscovery.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var initial = Encoding.UTF8.GetBytes("*1\r\n" + Range(
             0, 16383, "127.0.0.1", seed.Port, "original", "", includeAliases: false));
@@ -2339,7 +2339,7 @@ public class ClusterNodeIdentityTests
             0, 16383, preferred, seed.Port, movedHost ? "original" : "replacement", "", includeAliases: false));
         var refreshReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         seed.SuppressReply = _ => { refreshReceived.TrySetResult(); return true; };
-        var refresh = router.GetMasterConnectionsAsync(default, discovery: null).AsTask();
+        var refresh = router.GetMasterConnectionsAsync(default, discovery: null, observation: default).AsTask();
         await refreshReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await seed.SendRawAsync(replacement);
         await refresh;
@@ -2348,7 +2348,7 @@ public class ClusterNodeIdentityTests
         await Assert.That(ReferenceEquals(current, primary)).IsFalse();
         await router.WaitForRetirementAsync().WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(primary.IsConnected).IsEqualTo(movedHost);
-        var slotless = await router.GetConnectionAsync(null, default, discovery: null);
+        var slotless = await router.GetConnectionAsync(null, default, discovery: null, observation: default);
         await Assert.That(ReferenceEquals(slotless, current.GetConnection())).IsTrue();
         await Assert.That(router.SeedEndpoint.Host).IsEqualTo(preferred);
     }
@@ -2364,7 +2364,7 @@ public class ClusterNodeIdentityTests
         await using var router = new ClusterRouter(options, primary);
         var preferred = router.GetMultiplexer(new RespireEndpoint("127.0.0.1", target.Port));
         var alias = router.GetMultiplexer(new RespireEndpoint("localhost", target.Port));
-        await router.EnsureConnectedAsync(default, discovery: null);
+        await router.EnsureConnectedAsync(default, discovery: null, observation: default);
 
         await Assert.That(ReferenceEquals(preferred, alias)).IsFalse();
         await Assert.That(ReferenceEquals(preferred,
@@ -2435,7 +2435,7 @@ public class ClusterNodeIdentityTests
         var options = Options(seed.Port);
         await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", seed.Port, options: options.ToConnectionOptions());
         await using var router = new ClusterRouter(options, primary);
-        await router.EnsureConnectedAsync(default, discovery: null);
+        await router.EnsureConnectedAsync(default, discovery: null, observation: default);
 
         await Assert.That(ReferenceEquals(
             router.GetMultiplexer(new RespireEndpoint("127.0.0.1", first.Port)),
@@ -2452,7 +2452,7 @@ public class ClusterNodeIdentityTests
         var options = Options(seed.Port);
         await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", seed.Port, options: options.ToConnectionOptions());
         await using var router = new ClusterRouter(options, primary);
-        await router.EnsureConnectedAsync(default, discovery: null);
+        await router.EnsureConnectedAsync(default, discovery: null, observation: default);
 
         await Assert.That(ReferenceEquals(
             router.GetMultiplexer(new RespireEndpoint("localhost", target.Port)),
@@ -2469,10 +2469,10 @@ public class ClusterNodeIdentityTests
         var options = Options(seed.Port);
         await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", seed.Port, options: options.ToConnectionOptions());
         await using var router = new ClusterRouter(options, primary);
-        await router.EnsureConnectedAsync(default, discovery: null);
+        await router.EnsureConnectedAsync(default, discovery: null, observation: default);
         var endpoint = new RespireEndpoint("localhost", target.Port);
         var old = router.GetMultiplexer(endpoint);
-        await router.GetMasterConnectionsAsync(default, discovery: null);
+        await router.GetMasterConnectionsAsync(default, discovery: null, observation: default);
 
         await Assert.That(ReferenceEquals(old, router.GetMultiplexer(endpoint))).IsFalse();
         await Assert.That(ReferenceEquals(router.GetMultiplexer(endpoint),
@@ -2490,8 +2490,8 @@ public class ClusterNodeIdentityTests
         var options = Options(seed.Port);
         await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", seed.Port, options: options.ToConnectionOptions());
         await using var router = new ClusterRouter(options, primary);
-        await router.EnsureConnectedAsync(default, discovery: null);
-        var connections = await router.GetMasterConnectionsAsync(default, discovery: null);
+        await router.EnsureConnectedAsync(default, discovery: null, observation: default);
+        var connections = await router.GetMasterConnectionsAsync(default, discovery: null, observation: default);
 
         await Assert.That(connections).Count().IsEqualTo(1);
         await Assert.That(connections[0].Port).IsEqualTo(replacement.Port);
@@ -2507,9 +2507,9 @@ public class ClusterNodeIdentityTests
         var options = Options(seed.Port);
         await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", seed.Port, options: options.ToConnectionOptions());
         await using var router = new ClusterRouter(options, primary);
-        await router.EnsureConnectedAsync(default, discovery: null);
+        await router.EnsureConnectedAsync(default, discovery: null, observation: default);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        var connections = await router.GetMasterConnectionsAsync(timeout.Token, discovery: null);
+        var connections = await router.GetMasterConnectionsAsync(timeout.Token, discovery: null, observation: default);
 
         await Assert.That(connections[0].Host).IsEqualTo("127.0.0.1");
     }
@@ -2523,10 +2523,10 @@ public class ClusterNodeIdentityTests
         var options = Options(seed.Port);
         await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", seed.Port, options: options.ToConnectionOptions());
         await using var router = new ClusterRouter(options, primary);
-        await router.EnsureConnectedAsync(default, discovery: null);
+        await router.EnsureConnectedAsync(default, discovery: null, observation: default);
         var address = new RespireEndpoint("127.0.0.1", target.Port);
         var old = router.GetMultiplexer(address);
-        await router.GetMasterConnectionsAsync(default, discovery: null);
+        await router.GetMasterConnectionsAsync(default, discovery: null, observation: default);
 
         await Assert.That(ReferenceEquals(old, router.GetMultiplexer(address))).IsFalse();
         await Assert.That(ReferenceEquals(router.GetMultiplexer(address),

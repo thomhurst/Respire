@@ -24,7 +24,7 @@ public partial class ReadDedicatedRoutingTests
         await Assert.That(attempt.TryAdd(client.Core.Multiplexer.ActiveConnectionEndpoint, original)).IsTrue();
         using var caller = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var error = await Assert.That(async () =>
-            await client.Core.ReadRouter.SelectAsync(RespireReadFrom.Nearest, caller.Token, attempt))
+            await client.Core.ReadRouter.SelectAsync(RespireReadFrom.Nearest, caller.Token, default, attempt))
             .Throws<RespireConnectionException>();
         var causes = error!.InnerException as AggregateException;
         await Assert.That(causes).IsNotNull();
@@ -71,13 +71,13 @@ public partial class ReadDedicatedRoutingTests
             if (failRental && !hasReplica)
             {
                 var error = await Assert.That(async () =>
-                    await core.ReadRouter.RentDedicatedConnectionAsync(RespireReadFrom.Nearest, caller.Token))
+                    await core.ReadRouter.RentDedicatedConnectionAsync(RespireReadFrom.Nearest, caller.Token, observation: default))
                     .ThrowsExactly<IOException>();
                 await Assert.That(error).IsSameReferenceAs(expected);
             }
             else
             {
-                var lease = await core.ReadRouter.RentDedicatedConnectionAsync(RespireReadFrom.Nearest, caller.Token);
+                var lease = await core.ReadRouter.RentDedicatedConnectionAsync(RespireReadFrom.Nearest, caller.Token, observation: default);
                 lease.Pool.Return(lease.Connection);
                 await Assert.That(lease.IsReplica).IsEqualTo(failRental && hasReplica);
                 await Assert.That(lease.Connection.Port).IsEqualTo(failRental && hasReplica ? replica.Port : primary.Port);

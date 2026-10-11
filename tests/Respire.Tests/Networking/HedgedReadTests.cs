@@ -94,7 +94,7 @@ public class HedgedReadTests
         await using var replica = Replica();
         await using var client = RespireClient.Create(Options(primary, replica));
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        var first = await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Replica, deadline.Token);
+        var first = await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Replica, deadline.Token, observation: default);
         var alternate = await client.Core.ReadRouter.GetHedgeConnectionAsync(RespireReadFrom.Replica, first, deadline.Token);
         await Assert.That(alternate).IsNull();
         await Assert.That(primary.CommandsSeen).IsEqualTo(0);
@@ -109,11 +109,11 @@ public class HedgedReadTests
         await using var secondReplica = Replica();
         await using var client = RespireClient.Create(Options(primary, firstReplica, secondReplica) with { ReadFrom = RespireReadFrom.Replica });
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        var selected = await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Replica, deadline.Token);
+        var selected = await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Replica, deadline.Token, observation: default);
         var slow = selected.Port == firstReplica.Port ? firstReplica : secondReplica;
         var fast = ReferenceEquals(slow, firstReplica) ? secondReplica : firstReplica;
         // Pin the next round-robin start to the selected server by advancing selection once.
-        await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Replica, deadline.Token);
+        await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Replica, deadline.Token, observation: default);
         slow.SuppressReply = command => command.StartsWith("GET ", StringComparison.Ordinal);
         fast.ReplyOverride = (_, command) => command == "ROLE" ? ReplicaRole : Bulk("hedge");
         await Assert.That(await client.GetStringAsync("key", deadline.Token)).IsEqualTo("hedge");

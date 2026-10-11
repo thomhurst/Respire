@@ -50,8 +50,8 @@ internal static class DedicatedLeaseAcquisition
     // Struct routes avoid strategy allocations.
     internal static async ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> RentAsync<TRoute>(
         DedicatedConnectionPool pool, TRoute route, CancellationToken cancellationToken,
-        bool reuseIdle, DedicatedLeaseKind kind, string? preferredZone = null,
-        StandaloneCircuitRegistry? circuits = null, RespireTelemetry.ErrorObservation observation = default)
+        bool reuseIdle, DedicatedLeaseKind kind, RespireTelemetry.ErrorObservation observation, string? preferredZone = null,
+        StandaloneCircuitRegistry? circuits = null)
         where TRoute : struct, IDedicatedLeaseRoute
     {
         try

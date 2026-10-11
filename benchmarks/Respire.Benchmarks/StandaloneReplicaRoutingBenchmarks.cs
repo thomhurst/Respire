@@ -75,7 +75,7 @@ public class StandaloneReplicaRoutingBenchmarks
 
     private int PreparedRoute(RespireReadFrom policy, int expectedPort)
     {
-        var pending = _client.Core.ReadRouter.GetConnectionAsync(policy, default);
+        var pending = _client.Core.ReadRouter.GetConnectionAsync(policy, default, observation: default);
         if (!pending.IsCompletedSuccessfully)
             throw new InvalidOperationException("A prepared standalone selection did not complete synchronously.");
         var connection = pending.GetAwaiter().GetResult();

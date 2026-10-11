@@ -105,7 +105,7 @@ public class DedicatedLeaseAcquisitionTests
         finally { admission.Dispose(); }
         var state = new RouteState(replacement);
         var lease = await DedicatedLeaseAcquisition.RentAsync(original, new TestRoute(state), default,
-            reuseIdle: true, DedicatedLeaseKind.Ordinary, circuits: circuits);
+            reuseIdle: true, DedicatedLeaseKind.Ordinary, observation: default, circuits: circuits);
         try
         {
             await Assert.That(lease.Pool).IsSameReferenceAs(replacement);
@@ -258,8 +258,8 @@ public class DedicatedLeaseAcquisitionTests
         for (var index = 0; index < 1_000; index++)
         {
             var pending = core.Cluster is { } cluster
-                ? cluster.RentDedicatedConnectionAsync(pool, slot: null, CancellationToken.None, discovery: null)
-                : core.RentDedicatedConnectionAsync(pool, CancellationToken.None);
+                ? cluster.RentDedicatedConnectionAsync(pool, slot: null, CancellationToken.None, discovery: null, observation: default)
+                : core.RentDedicatedConnectionAsync(pool, CancellationToken.None, observation: default);
             if (!pending.IsCompletedSuccessfully) throw new InvalidOperationException("Warm idle rental must complete synchronously.");
             var lease = pending.Result;
             lease.Pool.Return(lease.Connection);
@@ -270,7 +270,8 @@ public class DedicatedLeaseAcquisitionTests
 
     private static ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> RentAsync(
         DedicatedConnectionPool pool, RouteState state, CancellationToken cancellationToken = default, bool reuseIdle = true)
-        => DedicatedLeaseAcquisition.RentAsync(pool, new TestRoute(state), cancellationToken, reuseIdle, DedicatedLeaseKind.Ordinary);
+        => DedicatedLeaseAcquisition.RentAsync(pool, new TestRoute(state), cancellationToken, reuseIdle, DedicatedLeaseKind.Ordinary,
+            observation: default);
 
     private sealed class RouteState(DedicatedConnectionPool replacement)
     {

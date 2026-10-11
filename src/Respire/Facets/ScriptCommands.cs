@@ -389,14 +389,15 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         Action<TResult[]>? validate = null)
         where TCommand : struct, IRespCommand
     {
-        var masters = await cluster.GetMasterConnectionsAsync(cancellationToken, discovery: null).ConfigureAwait(false);
+        var masters = await cluster.GetMasterConnectionsAsync(cancellationToken, discovery: null, observation).ConfigureAwait(false);
         if (masters.Length == 0)
             throw new RespireConnectionException($"{operation} did not reach any Redis Cluster primary.");
         var responses = new Task<TResult>[masters.Length];
+        var legs = new RespireTelemetry.FanOutEndpoints(masters.Length);
         for (var i = 0; i < masters.Length; i++)
-            responses[i] = SendAndConvertAsync(operation, masters[i], command, convert, cancellationToken, observation).AsTask();
-        // Join every target and its reply cleanup before the caller publishes one failure.
-        var results = await Task.WhenAll(responses).ConfigureAwait(false);
+            responses[i] = SendAndConvertAsync(operation, masters[i], command, convert, cancellationToken, observation, legs.Leg(i)).AsTask();
+        // Join every target and its reply cleanup before the caller publishes one failure, named by its own leg.
+        var results = await legs.JoinAsync(responses, observation).ConfigureAwait(false);
         validate?.Invoke(results);
         return results;
     }
@@ -404,11 +405,12 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<TResult> SendAndConvertAsync<TCommand, TResult>(
         string operation, RespireConnection connection, TCommand command,
-        ResponseConverter<ScriptCommands, TResult> convert, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        ResponseConverter<ScriptCommands, TResult> convert, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation,
+        RespireTelemetry.FanOutLeg leg = default)
         where TCommand : struct, IRespCommand
     {
         using var reply = await client.SendToClusterTargetAsync(operation, connection, command, cancellationToken,
-            observeErrors: false, observation: observation).ConfigureAwait(false);
+            observeErrors: false, observation: observation, leg: leg).ConfigureAwait(false);
         return convert(this, in reply);
     }
 }

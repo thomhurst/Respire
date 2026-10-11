@@ -66,7 +66,7 @@ public class AvailabilityZoneRoutingTests
         replica.SuppressReply = command => command == "PING";
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], false,
             RespireReadFrom.AzAffinity) with { Connections = 4, MaxInflightCommands = 4 });
-        var selected = await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.AzAffinity, default);
+        var selected = await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.AzAffinity, default, observation: default);
         var owner = selected.Multiplexer!;
         var remote = Enumerable.Range(0, 4).Select(owner.GetConnection)
             .First(connection => connection.AvailabilityZone == "remote");
@@ -151,8 +151,8 @@ public class AvailabilityZoneRoutingTests
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], mode == 1,
             RespireReadFrom.AzAffinity) with { Connections = 4 });
         var selected = mode == 1
-            ? await client.Core.Cluster!.GetReadConnectionAsync(slot, RespireReadFrom.AzAffinity, default)
-            : await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.AzAffinity, default);
+            ? await client.Core.Cluster!.GetReadConnectionAsync(slot, RespireReadFrom.AzAffinity, default, observation: default)
+            : await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.AzAffinity, default, observation: default);
         var owner = selected.Multiplexer!;
         var remote = Enumerable.Range(0, 4).Select(owner.GetConnection)
             .First(connection => connection.AvailabilityZone == "remote");
@@ -234,7 +234,7 @@ public class AvailabilityZoneRoutingTests
         var before = GC.GetAllocatedBytesForCurrentThread();
         for (var index = 0; index < 1_000; index++)
         {
-            var selected = router.SelectAsync(RespireReadFrom.AzAffinity, CancellationToken.None);
+            var selected = router.SelectAsync(RespireReadFrom.AzAffinity, CancellationToken.None, observation: default);
             if (!selected.IsCompletedSuccessfully) throw new InvalidOperationException("Warm selection must complete synchronously.");
             _ = selected.Result;
             counter.Increment();
@@ -249,7 +249,7 @@ public class AvailabilityZoneRoutingTests
         await using var primary = Node("primary", "remote", false);
         await using var replica = Node("replica", "local", true);
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], false, RespireReadFrom.AzAffinity));
-        var old = (await client.Core.ReadRouter!.SelectAsync(RespireReadFrom.AzAffinity, CancellationToken.None)).Connection;
+        var old = (await client.Core.ReadRouter!.SelectAsync(RespireReadFrom.AzAffinity, CancellationToken.None, observation: default)).Connection;
         await Assert.That(old.AvailabilityZone).IsEqualTo("local");
         var previous = replica.ReplyOverride!;
         replica.ReplyOverride = (id, command) => command == "INFO SERVER"
@@ -260,7 +260,7 @@ public class AvailabilityZoneRoutingTests
         old.Multiplexer!.ScheduleReconnect(0);
         while (!old.Multiplexer!.HasConnection(connection => connection.IsAcceptingCommands
             && !ReferenceEquals(connection, old))) await Task.Delay(5, timeout.Token);
-        var current = (await client.Core.ReadRouter.SelectAsync(RespireReadFrom.Replica, timeout.Token)).Connection;
+        var current = (await client.Core.ReadRouter.SelectAsync(RespireReadFrom.Replica, timeout.Token, observation: default)).Connection;
         await Assert.That(current.AvailabilityZone).IsEqualTo("changed");
     }
 
@@ -354,13 +354,13 @@ public class AvailabilityZoneRoutingTests
             RespireReadFrom.AzAffinity));
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var router = client.Core.ReadRouter;
-        var old = await router.GetReplicaFromEndpointsAsync([new("127.0.0.1", first.Port)], timeout.Token,
+        var old = await router.GetReplicaFromEndpointsAsync([new("127.0.0.1", first.Port)], timeout.Token, default,
             RespireReadFrom.AzAffinity);
         // The warm lookup increments rotation once; start the next lookup at first in either array.
         RespireEndpoint[] endpoints = laterProbeFails
             ? [new("127.0.0.1", second.Port), new("127.0.0.1", third.Port), new("127.0.0.1", first.Port)]
             : [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)];
-        var selection = router.GetReplicaFromEndpointsAsync(endpoints, timeout.Token, RespireReadFrom.AzAffinity).AsTask();
+        var selection = router.GetReplicaFromEndpointsAsync(endpoints, timeout.Token, default, RespireReadFrom.AzAffinity).AsTask();
         await reached.Task.WaitAsync(timeout.Token);
         first.CloseConnections();
         while (old.Connection.IsAcceptingCommands) await Task.Delay(5, timeout.Token);
@@ -460,13 +460,13 @@ public class AvailabilityZoneRoutingTests
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], true,
             RespireReadFrom.AzAffinityReplicasAndPrimary) with { Connections = 2 });
         var router = client.Core.Cluster!;
-        await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
+        await router.EnsureConnectedAsync(CancellationToken.None, discovery: null, observation: default);
         for (var slot = 0; slot < 8; slot++)
         {
             var fallback = new ReadFallbackPolicy.RoleFallback(RespireReadFrom.AzAffinityReplicasAndPrimary);
             await Assert.That(fallback.TrySwitch(new RespireServerException("LOADING unavailable"), onReplica: false)).IsTrue();
             var selected = await router.GetOtherRoleReadConnectionAsync(slot,
-                fallback, CancellationToken.None, discovery: null);
+                fallback, CancellationToken.None, discovery: null, observation: default);
             await Assert.That(selected.Port).IsEqualTo(replica.Port);
             await Assert.That(selected.AvailabilityZone).IsEqualTo("local");
         }
@@ -687,8 +687,8 @@ public class AvailabilityZoneRoutingTests
         for (var page = 0; page < 8; page++)
         {
             var selected = cluster
-                ? await cursors.GetClusterConnectionAsync(client.Core.Cluster!, 1, policy, pin, page > 0, CancellationToken.None)
-                : await cursors.GetConnectionAsync(client.Core.ReadRouter, policy, pin, page > 0, CancellationToken.None);
+                ? await cursors.GetClusterConnectionAsync(client.Core.Cluster!, 1, policy, pin, page > 0, CancellationToken.None, observation: default)
+                : await cursors.GetConnectionAsync(client.Core.ReadRouter, policy, pin, page > 0, CancellationToken.None, observation: default);
             await Assert.That(selected.Port).IsEqualTo(mixed.Port);
             await Assert.That(selected.AvailabilityZone).IsEqualTo("local");
         }
@@ -712,7 +712,7 @@ public class AvailabilityZoneRoutingTests
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], true,
             RespireReadFrom.AzAffinityReplicasAndPrimary) with { Connections = 2 });
         var pool = await client.Core.Cluster!.GetReadDedicatedPoolAsync(ClusterHash.GetSlot("key"),
-            RespireReadFrom.Primary, CancellationToken.None, discovery: null);
+            RespireReadFrom.Primary, CancellationToken.None, discovery: null, observation: default);
         var first = await pool.RentAsync(CancellationToken.None);
         var second = await pool.RentAsync(CancellationToken.None);
         var local = first.AvailabilityZone == "local" ? first : second;
@@ -1230,10 +1230,10 @@ public class AvailabilityZoneRoutingTests
             RespireReadFrom.AzAffinityReplicasAndPrimary) with { ClusterTopologyRefreshInterval = null });
         var router = client.Core.Cluster!;
         var slot = ClusterHash.GetSlot("key");
-        var previous = await router.GetReadDedicatedPoolAsync(slot, RespireReadFrom.Replica, default, null);
+        var previous = await router.GetReadDedicatedPoolAsync(slot, RespireReadFrom.Replica, default, null, observation: default);
         await previous.RetireAsync();
         var lease = await router.RentDedicatedConnectionAsync(previous,
-            new ClusterRouter.DedicatedRoute(slot, RespireReadFrom.Replica), default, null, preferredZone: "local");
+            new ClusterRouter.DedicatedRoute(slot, RespireReadFrom.Replica), default, null, preferredZone: "local", observation: default);
         try
         {
             await Assert.That(lease.Connection.Port).IsEqualTo(localReplica.Port);
@@ -1359,7 +1359,7 @@ public class AvailabilityZoneRoutingTests
         var source = router.GetKnownSlotOwner(slot)!.GetConnection(slot);
         var selected = await router.GetRedirectConnectionAsync(
             new RespireServerException($"ASK {slot} 127.0.0.1:{target.Port}"),
-            source, CancellationToken.None, slot, null, "local");
+            source, CancellationToken.None, slot, null, default, "local");
         await Assert.That(selected.AvailabilityZone).IsEqualTo("local");
         await Assert.That(selected.Multiplexer!.GetConnection(slot).AvailabilityZone).IsEqualTo("remote");
         var retired = 0;
@@ -1424,7 +1424,7 @@ public class AvailabilityZoneRoutingTests
         var router = client.Core.Cluster!;
         var fallback = new ReadFallbackPolicy.RoleFallback(RespireReadFrom.AzAffinityReplicasAndPrimary);
         await Assert.That(fallback.TrySwitch(new RespireServerException("LOADING unavailable"), onReplica: false)).IsTrue();
-        var old = await router.GetOtherRoleReadConnectionAsync(1, fallback, CancellationToken.None, null);
+        var old = await router.GetOtherRoleReadConnectionAsync(1, fallback, CancellationToken.None, null, observation: default);
         router.ApplyTopology([new(0, 16383, new("127.0.0.1", primary.Port), "primary", [])
         {
             Replicas = replacementAvailable ? [new(new("127.0.0.1", replacement.Port), "replacement", [])] : [],
@@ -1433,14 +1433,14 @@ public class AvailabilityZoneRoutingTests
         if (replacementAvailable)
         {
             var current = await router.GetReadReplacementConnectionAsync(1, RespireReadFrom.Replica,
-                CancellationToken.None, null, "local");
+                CancellationToken.None, null, default, "local");
             await Assert.That(current.Port).IsEqualTo(replacement.Port);
             await Assert.That(current.AvailabilityZone).IsEqualTo("local");
             await Assert.That(current.Multiplexer!.Options.ReadOnly).IsTrue();
         }
         else
             await Assert.That(async () => await router.GetReadReplacementConnectionAsync(1, RespireReadFrom.Replica,
-                CancellationToken.None, null, "local")).Throws<RespireConnectionException>();
+                CancellationToken.None, null, default, "local")).Throws<RespireConnectionException>();
     }
 
     [Test, NotInParallel]
@@ -1451,7 +1451,7 @@ public class AvailabilityZoneRoutingTests
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], false, RespireReadFrom.AzAffinity));
         var router = client.Core.ReadRouter;
         router.RoleRevalidationInterval = TimeSpan.FromDays(1);
-        var first = await router.RentDedicatedConnectionAsync(RespireReadFrom.AzAffinity, CancellationToken.None, "local");
+        var first = await router.RentDedicatedConnectionAsync(RespireReadFrom.AzAffinity, CancellationToken.None, default, "local");
         first.Pool.Return(first.Connection);
         for (var index = 0; index < 20; index++) { MeasureDedicatedRental(router, false); MeasureDedicatedRental(router, true); }
         var measured = AllocationMeasurement.WithoutConcurrentGc(() =>
@@ -1466,7 +1466,7 @@ public class AvailabilityZoneRoutingTests
         var before = GC.GetAllocatedBytesForCurrentThread();
         for (var index = 0; index < 1_000; index++)
         {
-            var pending = router.RentDedicatedConnectionAsync(RespireReadFrom.AzAffinity, CancellationToken.None, "local");
+            var pending = router.RentDedicatedConnectionAsync(RespireReadFrom.AzAffinity, CancellationToken.None, default, "local");
             if (!pending.IsCompletedSuccessfully) throw new InvalidOperationException("Warm rental performed asynchronous work.");
             var lease = pending.Result;
             lease.Pool.Return(lease.Connection);

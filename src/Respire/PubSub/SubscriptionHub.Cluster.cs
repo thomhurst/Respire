@@ -120,7 +120,7 @@ internal sealed partial class SubscriptionHub
         RespireTelemetry.ErrorObservation observation = default, int recoveryAttempts = 0)
     {
         var slot = ClusterHash.GetSlot(name.Span);
-        var commandConnection = await core.Cluster!.GetConnectionAsync(slot, cancellationToken, discovery: null).ConfigureAwait(false);
+        var commandConnection = await core.Cluster!.GetConnectionAsync(slot, cancellationToken, discovery: null, observation).ConfigureAwait(false);
         lock (_gate)
         {
             // A confirmed ASK route stays valid while the router still names its migration
@@ -183,8 +183,7 @@ internal sealed partial class SubscriptionHub
                     else RespireTelemetry.RecordError(error, internallyHandled: true, retryAttempts: redirect, endpoint: new(commandConnection.Host, commandConnection.Port));
                     core.Cluster.RecordRejection(ref discovery, primary.Connection!, error);
                     discoveryPending = true;
-                    commandConnection = await core.Cluster.GetRedirectConnectionAsync(error, primary.Connection!, cancellationToken, slot, discovery,
-                            observation: observation)
+                    commandConnection = await core.Cluster.GetRedirectConnectionAsync(error, primary.Connection!, cancellationToken, slot, discovery, observation)
                         .ConfigureAwait(false);
                     discoveryPending = false;
                     if (primary.IsAskConnection)

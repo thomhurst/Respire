@@ -106,14 +106,14 @@ public sealed partial class RespireBatch
         {
             foreach (var op in _ops) op.MutationFence = mutationFence;
             pool = core.Cluster is { } cluster
-                ? await cluster.GetDedicatedPoolAsync(slot, cancellationToken, discovery: null).ConfigureAwait(false)
+                ? await cluster.GetDedicatedPoolAsync(slot, cancellationToken, discovery: null, observation: default).ConfigureAwait(false)
                 : await core.GetDedicatedPoolAsync(cancellationToken).ConfigureAwait(false);
             // WAIT uses connection-local replication history, including when this batch only reads.
             if (core.Cluster is { } router)
                 (pool, connection) = await router.RentDedicatedConnectionAsync(
-                    pool, slot, cancellationToken, discovery: null, reuseIdle: false).ConfigureAwait(false);
+                    pool, slot, cancellationToken, discovery: null, reuseIdle: false, observation: default).ConfigureAwait(false);
             else
-                (pool, connection) = await core.RentDedicatedConnectionAsync(pool, cancellationToken, reuseIdle: false).ConfigureAwait(false);
+                (pool, connection) = await core.RentDedicatedConnectionAsync(pool, cancellationToken, observation: default, reuseIdle: false).ConfigureAwait(false);
             telemetry = RespireTelemetry.StartBatchOperation(
                 operation, _ops, static op => op.Operation,
                 connection.Host, connection.Port, core.Options.Database, out telemetryOperation, started);

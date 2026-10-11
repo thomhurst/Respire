@@ -24,7 +24,7 @@ public class StandaloneReplicaReadyTests
         await using var client = await RespireClient.ConnectAsync(Options(primary, replica));
         var view = client.WithReadFrom(policy);
         await Assert.That(await view.GetStringAsync("warm")).IsEqualTo("hello");
-        var connection = await client.Core.ReadRouter.GetConnectionAsync(policy, default);
+        var connection = await client.Core.ReadRouter.GetConnectionAsync(policy, default, observation: default);
         replica.SuppressReply = command => command.StartsWith("GET", StringComparison.Ordinal);
         var pending = view.GetStringAsync("parked");
         try
@@ -61,7 +61,7 @@ public class StandaloneReplicaReadyTests
         await using var replica = Server();
         await using var client = await RespireClient.ConnectAsync(Options(primary, replica));
         var router = client.Core.ReadRouter;
-        var connection = await router.GetConnectionAsync(RespireReadFrom.Replica, default);
+        var connection = await router.GetConnectionAsync(RespireReadFrom.Replica, default, observation: default);
         await Assert.That(router.TryAcquireReadyConnection(RespireReadFrom.Replica, default)).IsSameReferenceAs(connection);
         var publication = Volatile.Read(ref ReadyPublication(router));
         await Assert.That(publication).IsNotNull();
@@ -79,7 +79,7 @@ public class StandaloneReplicaReadyTests
         await using var replica = Server();
         await using var client = await RespireClient.ConnectAsync(Options(primary, replica));
         var router = client.Core.ReadRouter;
-        var connection = await router.GetConnectionAsync(RespireReadFrom.Replica, default);
+        var connection = await router.GetConnectionAsync(RespireReadFrom.Replica, default, observation: default);
         await Assert.That(router.TryAcquireReadyConnection(RespireReadFrom.Replica, default)).IsSameReferenceAs(connection);
         var old = Volatile.Read(ref ReadyPublication(router))!;
         SetEndpoints(router, [old.Entry.Endpoint]);
@@ -99,14 +99,14 @@ public class StandaloneReplicaReadyTests
         await using var replica = Server();
         await using var client = await RespireClient.ConnectAsync(Options(primary, replica));
         var router = client.Core.ReadRouter;
-        var oldConnection = await router.GetConnectionAsync(RespireReadFrom.Replica, default);
+        var oldConnection = await router.GetConnectionAsync(RespireReadFrom.Replica, default, observation: default);
         await Assert.That(router.TryAcquireReadyConnection(RespireReadFrom.Replica, default)).IsSameReferenceAs(oldConnection);
         var old = Volatile.Read(ref ReadyPublication(router))!;
         SetEndpoints(router, []);
         await Assert.That(old.Entry.TryGetReadyConnection(old)).IsNull();
         SetEndpoints(router, [old.Entry.Endpoint]);
         await Assert.That(router.TryAcquireReadyConnection(RespireReadFrom.Replica, default)).IsNull();
-        var connection = await router.GetConnectionAsync(RespireReadFrom.Replica, default);
+        var connection = await router.GetConnectionAsync(RespireReadFrom.Replica, default, observation: default);
         await Assert.That(connection).IsNotSameReferenceAs(oldConnection);
         await Assert.That(router.TryAcquireReadyConnection(RespireReadFrom.Replica, default)).IsSameReferenceAs(connection);
         await Assert.That(Volatile.Read(ref ReadyPublication(router))!.Entry).IsNotSameReferenceAs(old.Entry);
@@ -121,7 +121,7 @@ public class StandaloneReplicaReadyTests
         await using var second = Server();
         await using var client = await RespireClient.ConnectAsync(Options(primary, first));
         var router = client.Core.ReadRouter;
-        var prepared = await router.GetConnectionAsync(RespireReadFrom.Replica, default);
+        var prepared = await router.GetConnectionAsync(RespireReadFrom.Replica, default, observation: default);
         var before = Volatile.Read(ref ReplicaCursor(router));
         for (var i = 0; i < 4; i++)
             await Assert.That(router.TryAcquireReadyConnection(RespireReadFrom.Replica, default)).IsSameReferenceAs(prepared);
@@ -129,8 +129,8 @@ public class StandaloneReplicaReadyTests
         Volatile.Write(ref PublishedReplicas(router), [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)]);
         await Assert.That(router.TryAcquireReadyConnection(RespireReadFrom.Replica, default)).IsNull();
         var expected = (uint)unchecked(before + 5) % 2 == 0 ? first.Port : second.Port;
-        await Assert.That((await router.GetConnectionAsync(RespireReadFrom.Replica, default)).Port).IsEqualTo(expected);
-        await Assert.That((await router.GetConnectionAsync(RespireReadFrom.Replica, default)).Port)
+        await Assert.That((await router.GetConnectionAsync(RespireReadFrom.Replica, default, observation: default)).Port).IsEqualTo(expected);
+        await Assert.That((await router.GetConnectionAsync(RespireReadFrom.Replica, default, observation: default)).Port)
             .IsEqualTo(expected == first.Port ? second.Port : first.Port);
     }
 
@@ -147,7 +147,7 @@ public class StandaloneReplicaReadyTests
             },
         });
         var router = client.Core.ReadRouter;
-        var selected = await router.GetReplicaFromEndpointsAsync(Options(primary, replica).ReplicaEndpoints.ToArray(), default);
+        var selected = await router.GetReplicaFromEndpointsAsync(Options(primary, replica).ReplicaEndpoints.ToArray(), default, observation: default);
         var multiplexer = selected.Connection.Multiplexer!;
         await selected.Connection.DisposeAsync();
         await Assert.That(selected.Replica!.TryGetReadyConnection()).IsNull();
@@ -155,7 +155,7 @@ public class StandaloneReplicaReadyTests
         await Assert.That(multiplexer.IsReconnecting).IsFalse();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         // Normal selection starts demand-driven recovery and preserves ReplicaPreferred's primary fallback.
-        await Assert.That((await router.GetConnectionAsync(RespireReadFrom.ReplicaPreferred, deadline.Token)).Port)
+        await Assert.That((await router.GetConnectionAsync(RespireReadFrom.ReplicaPreferred, deadline.Token, observation: default)).Port)
             .IsEqualTo(primary.Port);
         await Assert.That(multiplexer.IsReconnecting).IsTrue();
         await Assert.That(await client.WithReadFrom(RespireReadFrom.ReplicaPreferred).GetStringAsync("fallback", deadline.Token))
@@ -172,13 +172,13 @@ public class StandaloneReplicaReadyTests
         await using var replacement = Server();
         await using var client = await RespireClient.ConnectAsync(Options(primary, oldReplica));
         var router = client.Core.ReadRouter;
-        var selected = await router.GetReplicaFromEndpointsAsync(Options(primary, oldReplica).ReplicaEndpoints.ToArray(), default);
+        var selected = await router.GetReplicaFromEndpointsAsync(Options(primary, oldReplica).ReplicaEndpoints.ToArray(), default, observation: default);
         await Assert.That(selected.Replica!.TryGetReadyConnection()).IsSameReferenceAs(selected.Connection);
         // Pause the topology transition after publication and before the removed-entry sweep.
         Volatile.Write(ref PublishedReplicas(router), [new("127.0.0.1", replacement.Port)]);
         await Assert.That(selected.Replica.TryGetReadyConnection()).IsNull();
         await Assert.That(router.TryAcquireReadyConnection(RespireReadFrom.Replica, default)).IsNull();
-        var newConnection = await router.GetConnectionAsync(RespireReadFrom.Replica, default);
+        var newConnection = await router.GetConnectionAsync(RespireReadFrom.Replica, default, observation: default);
         await Assert.That(newConnection.Port).IsEqualTo(replacement.Port);
         await Assert.That(router.TryAcquireReadyConnection(RespireReadFrom.Replica, default)).IsSameReferenceAs(newConnection);
     }
@@ -197,7 +197,7 @@ public class StandaloneReplicaReadyTests
             : command.StartsWith("GET", StringComparison.Ordinal) ? "$5\r\nhello\r\n"u8.ToArray() : null;
         await using var client = await RespireClient.ConnectAsync(Options(primary, replica));
         var router = client.Core.ReadRouter;
-        var selected = await router.GetReplicaFromEndpointsAsync(Options(primary, replica).ReplicaEndpoints.ToArray(), default);
+        var selected = await router.GetReplicaFromEndpointsAsync(Options(primary, replica).ReplicaEndpoints.ToArray(), default, observation: default);
         if (reason == "expired") router.RoleRevalidationInterval = TimeSpan.Zero;
         if (reason == "cooldown") selected.Replica!.MarkFailed();
         if (reason == "retired") await selected.Connection.Multiplexer!.RetireAsync();
@@ -218,7 +218,7 @@ public class StandaloneReplicaReadyTests
         await using var primary = Server();
         await using var replica = Server();
         await using var client = await RespireClient.ConnectAsync(Options(primary, replica) with { ClientAvailabilityZone = "local" });
-        await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Replica, default);
+        await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Replica, default, observation: default);
         await Assert.That(client.Core.ReadRouter.TryAcquireReadyConnection(policy, default)).IsNull();
         await Assert.That(await client.WithReadFrom(policy).GetStringAsync("policy")).IsEqualTo("hello");
         if (policy is RespireReadFrom.Primary or RespireReadFrom.PrimaryPreferred)
@@ -235,11 +235,11 @@ public class StandaloneReplicaReadyTests
         await using var second = Server();
         await using var client = await RespireClient.ConnectAsync(Options(primary, first, second) with { Connections = connections });
         var router = client.Core.ReadRouter;
-        await router.GetConnectionAsync(RespireReadFrom.Replica, default);
-        await router.GetConnectionAsync(RespireReadFrom.Replica, default);
+        await router.GetConnectionAsync(RespireReadFrom.Replica, default, observation: default);
+        await router.GetConnectionAsync(RespireReadFrom.Replica, default, observation: default);
         await Assert.That(router.TryAcquireReadyConnection(RespireReadFrom.Replica, default)).IsNull();
         var ports = new int[8];
-        for (var i = 0; i < ports.Length; i++) ports[i] = (await router.GetConnectionAsync(RespireReadFrom.Replica, default)).Port;
+        for (var i = 0; i < ports.Length; i++) ports[i] = (await router.GetConnectionAsync(RespireReadFrom.Replica, default, observation: default)).Port;
         await Assert.That(ports.Count(port => port == first.Port)).IsEqualTo(4);
         await Assert.That(ports.Count(port => port == second.Port)).IsEqualTo(4);
     }
@@ -331,7 +331,7 @@ public class StandaloneReplicaReadyTests
         var view = client.WithReadFrom(RespireReadFrom.Replica);
         await view.GetStringAsync("warm");
         _ = view.Strings;
-        var connection = await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Replica, default);
+        var connection = await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Replica, default, observation: default);
         replica.SuppressReply = command => command.StartsWith("GET", StringComparison.Ordinal)
             || command.StartsWith("STRLEN", StringComparison.Ordinal);
         var send = shape switch

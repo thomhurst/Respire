@@ -272,7 +272,7 @@ public class MaintenanceNotificationTests
         var old = await pool.RentAsync(timeout.Token, kind: DedicatedLeaseKind.Streaming);
         pool.Return(old);
         var multiplexed = mode == "cluster"
-            ? await client.Core.Cluster!.GetConnectionAsync(ClusterHash.GetSlot("upload"), timeout.Token, discovery: null)
+            ? await client.Core.Cluster!.GetConnectionAsync(ClusterHash.GetSlot("upload"), timeout.Token, discovery: null, observation: default)
             : client.Core.Multiplexer.GetConnection();
         var wireId = server.ReceivedConnectionIds[0];
         await server.SendRawAsync(omitTarget ? ">4\r\n+MOVING\r\n:1\r\n:10\r\n_\r\n"u8.ToArray() : Moving(1, server.Port), wireId);
@@ -630,7 +630,7 @@ public class MaintenanceNotificationTests
 
     private static ValueTask<DedicatedConnectionPool> MaintenancePoolAsync(RespireClient client, string key)
         => client.Core.Cluster is { } cluster
-            ? cluster.GetDedicatedPoolAsync(ClusterHash.GetSlot(key), CancellationToken.None, discovery: null)
+            ? cluster.GetDedicatedPoolAsync(ClusterHash.GetSlot(key), CancellationToken.None, discovery: null, observation: default)
             : client.Core.GetDedicatedPoolAsync(CancellationToken.None);
 
     private sealed class PausedFirstReadStream() : MemoryStream("payload"u8.ToArray())
@@ -814,9 +814,9 @@ public class MaintenanceNotificationTests
         ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> Rent(CancellationToken token)
             => client.Core.Cluster is { } cluster
                 ? cluster.RentDedicatedConnectionAsync(originalPool, ClusterHash.GetSlot("lease"), token,
-                    discovery: null, kind: streaming ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary)
+                    discovery: null, observation: default, kind: streaming ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary)
                 : client.Core.RentDedicatedConnectionAsync(originalPool, token,
-                    kind: streaming ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary);
+                    kind: streaming ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary, observation: default);
         var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         source.SuppressReply = command =>
         {
@@ -874,9 +874,9 @@ public class MaintenanceNotificationTests
         await Assert.That(originalPool.IsStopping).IsTrue();
         var (owner, lease) = client.Core.Cluster is { } cluster
             ? await cluster.RentDedicatedConnectionAsync(originalPool, ClusterHash.GetSlot("old-upload"), timeout.Token,
-                discovery: null, reuseIdle: reuseIdle, kind: DedicatedLeaseKind.Streaming)
+                discovery: null, observation: default, reuseIdle: reuseIdle, kind: DedicatedLeaseKind.Streaming)
             : await client.Core.RentDedicatedConnectionAsync(originalPool, timeout.Token,
-                reuseIdle: reuseIdle, kind: DedicatedLeaseKind.Streaming);
+                reuseIdle: reuseIdle, kind: DedicatedLeaseKind.Streaming, observation: default);
         await Assert.That(ReferenceEquals(owner, await MaintenancePoolAsync(client, "old-upload"))).IsTrue();
         await Assert.That(lease.Port).IsEqualTo(target.Port);
         owner.Return(lease);
@@ -1991,7 +1991,7 @@ public class MaintenanceNotificationTests
         // Bound warmup separately and keep ordinary command deadlines armed after it.
         using var initialization = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var pool = cluster
-            ? await client.Core.Cluster!.GetDedicatedPoolAsync(null, initialization.Token, discovery: null)
+            ? await client.Core.Cluster!.GetDedicatedPoolAsync(null, initialization.Token, discovery: null, observation: default)
             : await client.Core.GetDedicatedPoolAsync(initialization.Token);
         var blocking = await pool.RentAsync(initialization.Token, armHandshakeDeadline: false);
         pool.Return(blocking);

@@ -218,7 +218,7 @@ public class ClusterDatabaseTests
         {
             if (path == 0) await client.SetAsync("key", "value", cancellationToken: deadline.Token);
             else if (path == 1)
-                await client.Core.Cluster!.GetDedicatedPoolAsync(ClusterHash.GetSlot("key"), deadline.Token, discovery: null);
+                await client.Core.Cluster!.GetDedicatedPoolAsync(ClusterHash.GetSlot("key"), deadline.Token, discovery: null, observation: default);
             else await client.SubscribeAsync("ch", deadline.Token);
         }).ThrowsExactly<RespireConfigurationException>();
         await Assert.That(owner.ReceivedCommands).IsEquivalentTo(["INFO SERVER"]);

@@ -559,7 +559,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         {
             // A cursor pin identifies its issuing connection, not its current role.
             // Resolve the current primary separately before allowing any writes in this group.
-            var primary = await _client.AcquireConnectionAsync(slot, cancellationToken, RespireReadFrom.Primary).ConfigureAwait(false);
+            var primary = await _client.AcquireConnectionAsync(slot, cancellationToken, RespireReadFrom.Primary, observation).ConfigureAwait(false);
             if (!ReferenceEquals(connection.Multiplexer, primary.Multiplexer)
                 || (continuationConnection is not null && !ReferenceEquals(continuationConnection.Multiplexer, primary.Multiplexer)))
             {

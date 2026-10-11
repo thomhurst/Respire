@@ -9,9 +9,8 @@ internal sealed partial class ReadEndpointRouter
     // LazyInitializer's ref-object overload uses Monitor internally; do not replace with Lock.
     private object? _nearestGate;
 
-    private async ValueTask<Selection> GetNearestAsync(CancellationToken cancellationToken, bool retry = true,
-        long? samplingDeadline = null, Exception? previousFailure = null, ReadAttempt? attempt = null,
-        RespireTelemetry.ErrorObservation observation = default)
+    private async ValueTask<Selection> GetNearestAsync(CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, bool retry = true,
+        long? samplingDeadline = null, Exception? previousFailure = null, ReadAttempt? attempt = null)
     {
         var deadline = samplingDeadline ?? NearestReadSelection.CreateDeadline();
         var sampler = LazyInitializer.EnsureInitialized(ref NearestLatency, ref _nearestGate, static () => ReadLatencySampler.Create());
@@ -27,7 +26,7 @@ internal sealed partial class ReadEndpointRouter
         {
             try
             {
-                primary = await GetPrimaryAsync(cancellationToken, attempt: attempt, observation: observation).ConfigureAwait(false);
+                primary = await GetPrimaryAsync(cancellationToken, observation, attempt: attempt).ConfigureAwait(false);
                 sampler.ConnectionSucceeded(primaryCandidate);
             }
             catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
@@ -117,8 +116,8 @@ internal sealed partial class ReadEndpointRouter
             }
         }
         if (retry)
-            return await GetNearestAsync(cancellationToken, retry: false, samplingDeadline: deadline,
-                previousFailure: lastError, attempt: attempt, observation: observation).ConfigureAwait(false);
+            return await GetNearestAsync(cancellationToken, observation, retry: false, samplingDeadline: deadline,
+                previousFailure: lastError, attempt: attempt).ConfigureAwait(false);
         if (attempt?.FirstFailure is { } original)
         {
             // Exclusions alone preserve the original exception. A later selection or

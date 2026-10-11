@@ -35,12 +35,12 @@ internal sealed class ReadCursorAffinity
 
     internal async ValueTask<RespireConnection> GetConnectionAsync(
         ReadEndpointRouter router, RespireReadFrom readFrom, ReadAffinity? affinity, bool isContinuation,
-        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         if (affinity is not null)
         {
             if (affinity.IsPinned) return await GetPinnedConnectionAsync(router, affinity, cancellationToken).ConfigureAwait(false);
-            var first = await router.SelectAsync(readFrom, cancellationToken, observation: observation).ConfigureAwait(false);
+            var first = await router.SelectAsync(readFrom, cancellationToken, observation).ConfigureAwait(false);
             affinity.Replica = first.Replica;
             affinity.Primary = first.Primary;
             affinity.ReadFrom = readFrom;
@@ -67,7 +67,7 @@ internal sealed class ReadCursorAffinity
                 _shared.TryRemove(new KeyValuePair<RespireReadFrom, ReadAffinity>(readFrom, shared));
             }
 
-            var selection = await router.SelectAsync(readFrom, cancellationToken, observation: observation).ConfigureAwait(false);
+            var selection = await router.SelectAsync(readFrom, cancellationToken, observation).ConfigureAwait(false);
             _shared[readFrom] = new ReadAffinity { Replica = selection.Replica, Primary = selection.Primary, ReadFrom = readFrom };
             return selection.Connection;
         }
@@ -77,13 +77,13 @@ internal sealed class ReadCursorAffinity
     internal async ValueTask<RespireConnection> GetClusterConnectionAsync(
         ClusterRouter cluster, int slot, RespireReadFrom readFrom, ReadAffinity? affinity,
         bool isContinuation, CancellationToken cancellationToken,
-        RespireTelemetry.ErrorObservation observation = default)
+        RespireTelemetry.ErrorObservation observation)
     {
         if (affinity is not null)
         {
             if (affinity.ClusterNode is { } pinned)
                 return await cluster.GetPinnedReadConnectionAsync(slot, pinned, cancellationToken, readFrom: affinity.ReadFrom).ConfigureAwait(false);
-            var first = await cluster.GetReadConnectionAsync(slot, readFrom, cancellationToken, observation: observation).ConfigureAwait(false);
+            var first = await cluster.GetReadConnectionAsync(slot, readFrom, cancellationToken, observation).ConfigureAwait(false);
             affinity.ClusterSlot = slot;
             affinity.ClusterNode = first.Multiplexer;
             affinity.ReadFrom = readFrom;
@@ -118,7 +118,7 @@ internal sealed class ReadCursorAffinity
                     _clusterShared.TryRemove(new KeyValuePair<(RespireReadFrom, int), ReadAffinity>(key, shared));
                 }
             }
-            var connection = await cluster.GetReadConnectionAsync(slot, readFrom, cancellationToken, observation: observation).ConfigureAwait(false);
+            var connection = await cluster.GetReadConnectionAsync(slot, readFrom, cancellationToken, observation).ConfigureAwait(false);
             _clusterShared[key] = new ReadAffinity { ClusterNode = connection.Multiplexer, ClusterSlot = slot, ReadFrom = readFrom };
             return connection;
         }

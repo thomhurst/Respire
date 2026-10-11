@@ -669,7 +669,7 @@ public class ConnectionMetricTests
         }
         await using var client = await RespireClient.ConnectAsync(options);
         var pool = client.Core.Cluster is { } cluster
-            ? await cluster.GetDedicatedPoolAsync(ClusterHash.GetSlot("lease"), default, discovery: null)
+            ? await cluster.GetDedicatedPoolAsync(ClusterHash.GetSlot("lease"), default, discovery: null, observation: default)
             : await client.Core.GetDedicatedPoolAsync(default);
         var idle = await pool.RentAsync(default);
         var borrowed = await pool.RentAsync(default, reuseIdle: false);
@@ -799,7 +799,7 @@ public class ConnectionMetricTests
         }
         await using var client = await RespireClient.ConnectAsync(options);
         var pool = client.Core.Cluster is { } cluster
-            ? await cluster.GetDedicatedPoolAsync(ClusterHash.GetSlot("lease"), default, discovery: null)
+            ? await cluster.GetDedicatedPoolAsync(ClusterHash.GetSlot("lease"), default, discovery: null, observation: default)
             : await client.Core.GetDedicatedPoolAsync(default);
         var multiplexer = pool.MovingOwner!;
         var originalOptions = multiplexer.Options;

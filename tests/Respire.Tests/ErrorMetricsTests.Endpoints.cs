@@ -1,3 +1,4 @@
+using System.Text;
 using Respire.Internal;
 using Respire.Tests.Networking;
 using TUnit.Assertions;
@@ -50,6 +51,43 @@ public partial class ErrorMetricsTests
         var item = capture.Items.Single();
         await Assert.That(item.Tags["server.address"]).IsEqualTo("replica.example");
         await Assert.That(item.Tags["server.port"]).IsEqualTo(6381);
+    }
+
+    [Test]
+    [Arguments("function")]
+    [Arguments("script")]
+    public async Task ParallelFanOutFinalErrorNamesTheFailingLeg(string route)
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        await using var first = new FakeRespServer(16, FakeRespServer.OkReply);
+        await using var second = new FakeRespServer(16, FakeRespServer.OkReply);
+        var topology = Encoding.ASCII.GetBytes(
+            $"*2\r\n*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{first.Port}\r\n" +
+            $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{second.Port}\r\n");
+        await using var seed = new FakeRespServer(16, topology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, UseCluster = true,
+            ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", seed.Port)],
+        });
+        var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(default, discovery: null, observation: default);
+        // Task.WhenAll surfaces the first leg's failure. The healthy leg answers later, so it
+        // is the last to touch the shared observation and must not own the final error.
+        var failingPort = connections[0].Port;
+        var failing = failingPort == first.Port ? first : second;
+        var healthy = ReferenceEquals(failing, first) ? second : first;
+        var operation = route == "function" ? "FUNCTION FLUSH" : "SCRIPT FLUSH";
+        failing.ReplyOverride = (_, command) => command.StartsWith(operation, StringComparison.Ordinal)
+            ? "-NOPERM failing leg\r\n"u8.ToArray() : null;
+        healthy.DelayCommand(operation, 300);
+        using var capture = new Capture();
+        await Assert.That(async () =>
+        {
+            if (route == "function") await client.Functions.FlushAsync();
+            else await client.Scripts.FlushAsync();
+        }).Throws<RespireServerException>();
+        var final = capture.Items.Single(item => !(bool)item.Tags["redis.client.errors.internal"]!);
+        await Assert.That(final.Tags["server.port"]).IsEqualTo(failingPort);
     }
 
     [Test]

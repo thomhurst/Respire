@@ -36,16 +36,15 @@ internal sealed partial class ReadEndpointRouter
         var endpoints = await GetReplicaEndpointsAsync(cancellationToken, waitForUnknown: false).ConfigureAwait(false);
         try
         {
-            var selected = await GetReplicaFromEndpointsAsync(endpoints, cancellationToken, readFrom, original, observation: observation).ConfigureAwait(false);
+            var selected = await GetReplicaFromEndpointsAsync(endpoints, cancellationToken, observation, readFrom, original).ConfigureAwait(false);
             if (selected.Replica is { } replica
                 ? IsCurrent(replica) && replica.IsRoleEligible(selected.Connection)
                 : ReferenceEquals(selected.Primary, Core.Multiplexer)) return selected.Connection;
         }
         catch (Exception error) when (IsUnavailable(error, cancellationToken)) { }
         if (readFrom == RespireReadFrom.Replica) return null;
-        var primary = await GetPrimaryAsync(cancellationToken,
-            ReadFallbackPolicy.UsesAvailabilityZone(readFrom) ? Core.Options.ClientAvailabilityZone : null,
-            observation: observation).ConfigureAwait(false);
+        var primary = await GetPrimaryAsync(cancellationToken, observation,
+            ReadFallbackPolicy.UsesAvailabilityZone(readFrom) ? Core.Options.ClientAvailabilityZone : null).ConfigureAwait(false);
         return ReferenceEquals(primary.Primary, Core.Multiplexer)
             && HedgedReadPolicy.IsDifferentPeer(original, primary.Connection) ? primary.Connection : null;
     }

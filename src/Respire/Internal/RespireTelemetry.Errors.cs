@@ -75,6 +75,43 @@ internal static partial class RespireTelemetry
     // retry counts; they never borrow another logical owner's pooled lease.
     // Copies retain their generation. Returning storage cannot give old borrowers access
     // to a later renter, and the private storage gate makes validation/mutation atomic.
+    /// <summary>Per-leg endpoints for a concurrent fan-out that shares one caller observation.</summary>
+    /// <remarks>
+    /// Legs run in parallel, so the shared observation's retained endpoint is whichever leg wrote
+    /// last. Each leg records its own target here; <see cref="JoinAsync{T}"/> copies the endpoint of
+    /// the leg whose exception surfaces into the caller's observation before rethrowing.
+    /// </remarks>
+    internal sealed class FanOutEndpoints(int count)
+    {
+        private readonly RespireEndpoint?[] _legs = new RespireEndpoint?[count];
+
+        internal FanOutLeg Leg(int index) => new(this, index);
+
+        // Each slot has one writer (its leg); the lock only publishes the multi-word value.
+        internal void Set(int index, RespireEndpoint? endpoint) { lock (_legs) _legs[index] = endpoint; }
+
+        internal RespireEndpoint? Get(int index) { lock (_legs) return _legs[index]; }
+
+        // Task.WhenAll surfaces the first faulted task in array order, or a cancellation when none faulted.
+        internal async Task<T[]> JoinAsync<T>(Task<T>[] tasks, ErrorObservation observation)
+        {
+            try { return await Task.WhenAll(tasks).ConfigureAwait(false); }
+            catch
+            {
+                var surfaced = Array.FindIndex(tasks, static task => task.IsFaulted);
+                if (surfaced < 0) surfaced = Array.FindIndex(tasks, static task => task.IsCanceled);
+                if (surfaced >= 0) observation.UseEndpoint(Get(surfaced));
+                throw;
+            }
+        }
+    }
+
+    /// <summary>One fan-out leg's endpoint slot. The default value is not a fan-out leg.</summary>
+    internal readonly struct FanOutLeg(FanOutEndpoints? owner, int index)
+    {
+        internal void Use(RespireEndpoint? endpoint) => owner?.Set(index, endpoint);
+    }
+
     internal readonly struct ErrorObservation : IDisposable
     {
         private static readonly ObjectPool<ObservationState, Policy> Pool = new(4096);

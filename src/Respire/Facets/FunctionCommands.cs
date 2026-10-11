@@ -358,14 +358,15 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
         if (client.Core.Cluster is not { } cluster)
             return await client.ConvertResponseAsync(operation, command, cancellationToken, this, convert,
                 observation: observation).ConfigureAwait(false);
-        var connections = await cluster.GetMasterConnectionsAsync(cancellationToken, discovery: null).ConfigureAwait(false);
+        var connections = await cluster.GetMasterConnectionsAsync(cancellationToken, discovery: null, observation).ConfigureAwait(false);
         if (connections.Length == 0) throw new RespireConnectionException($"{operation} did not reach any Redis Cluster primary.");
         var tasks = new Task<T>[connections.Length];
+        var legs = new RespireTelemetry.FanOutEndpoints(tasks.Length);
         for (var i = 0; i < tasks.Length; i++) tasks[i] = SendAndConvertAsync(connections[i], operation, command, convert,
-            cancellationToken, observation).AsTask();
+            cancellationToken, observation, legs.Leg(i)).AsTask();
         // Every target borrows the caller owner. Join all sends, conversions and cleanup
-        // before propagating the single exception that reaches the caller.
-        var results = await Task.WhenAll(tasks).ConfigureAwait(false);
+        // before propagating the single exception that reaches the caller, named by its own leg.
+        var results = await legs.JoinAsync(tasks, observation).ConfigureAwait(false);
         if (results.Any(result => !EqualityComparer<T>.Default.Equals(results[0], result)))
             throw new RespireProtocolException($"{operation} returned inconsistent results across primaries.");
         return results[0];
@@ -375,10 +376,10 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
 #endif
     private async ValueTask<T> SendAndConvertAsync<TCommand, T>(RespireConnection connection, string operation,
         TCommand command, ResponseConverter<FunctionCommands, T> convert, CancellationToken cancellationToken,
-        RespireTelemetry.ErrorObservation observation) where TCommand : struct, IRespCommand
+        RespireTelemetry.ErrorObservation observation, RespireTelemetry.FanOutLeg leg = default) where TCommand : struct, IRespCommand
     {
         using var reply = await client.SendToClusterTargetAsync(operation, connection, command, cancellationToken,
-            observeErrors: false, observation: observation).ConfigureAwait(false);
+            observeErrors: false, observation: observation, leg: leg).ConfigureAwait(false);
         return convert(this, in reply);
     }
     private async ValueTask<bool> EnsureLibraryAsync(RespireFunctionLibrary library, string functionName,
@@ -386,10 +387,13 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
     {
         if (client.Core.Cluster is { } cluster)
         {
-            var connections = await cluster.GetMasterConnectionsAsync(cancellationToken, discovery: null).ConfigureAwait(false);
+            var connections = await cluster.GetMasterConnectionsAsync(cancellationToken, discovery: null, observation).ConfigureAwait(false);
             if (connections.Length == 0) throw new RespireConnectionException("Library reload did not reach any Redis Cluster primary.");
-            var results = await Task.WhenAll(connections.Select(connection =>
-                EnsureOnConnectionAsync(connection, library, functionName, cancellationToken, observation).AsTask())).ConfigureAwait(false);
+            var legs = new RespireTelemetry.FanOutEndpoints(connections.Length);
+            var tasks = new Task<bool>[connections.Length];
+            for (var i = 0; i < tasks.Length; i++)
+                tasks[i] = EnsureOnConnectionAsync(connections[i], library, functionName, cancellationToken, observation, legs.Leg(i)).AsTask();
+            var results = await legs.JoinAsync(tasks, observation).ConfigureAwait(false);
             return results.All(static available => available);
         }
         await client.Core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
@@ -397,39 +401,43 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
             cancellationToken, observation).ConfigureAwait(false);
     }
     private async ValueTask<bool> EnsureOnConnectionAsync(RespireConnection connection, RespireFunctionLibrary library,
-        string functionName, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        string functionName, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation,
+        RespireTelemetry.FanOutLeg leg = default)
     {
+        leg.Use(new RespireEndpoint(connection.Host, connection.Port));
         // Inspect before loading: concurrent first use accepts identical source, but never silently
         // overwrites a different library unless replacement was explicitly requested.
-        var matching = await FindMatchingLibraryAsync(connection, library, cancellationToken, observation).ConfigureAwait(false);
+        var matching = await FindMatchingLibraryAsync(connection, library, cancellationToken, observation, leg).ConfigureAwait(false);
         if (matching is not null)
             return matching.Functions.Any(function => function.Name == functionName);
         try
         {
             _ = await SendAndConvertAsync(connection, "FUNCTION LOAD", LoadCommand(library.Source, library.Replace),
                 static (FunctionCommands _, in RespValue value) => ResponseReader.String(in value), cancellationToken,
-                observation: observation).ConfigureAwait(false);
-            matching = await FindMatchingLibraryAsync(connection, library, cancellationToken, observation).ConfigureAwait(false);
+                observation: observation, leg: leg).ConfigureAwait(false);
+            matching = await FindMatchingLibraryAsync(connection, library, cancellationToken, observation, leg).ConfigureAwait(false);
             return matching?.Functions.Any(function => function.Name == functionName) == true;
         }
         catch (RespireServerException error) when (!library.Replace
             && error.Message == $"ERR Library '{library.Name}' already exists")
         {
-            observation.Handled(error);
+            // Parallel legs share the observation; name this leg's node explicitly.
+            observation.Handled(error, new RespireEndpoint(connection.Host, connection.Port));
             // Another client/process may load after our LIST. Accept only identical source;
             // never replace, retry LOAD, or hide a conflicting library's original error.
-            matching = await FindMatchingLibraryAsync(connection, library, cancellationToken, observation).ConfigureAwait(false);
+            matching = await FindMatchingLibraryAsync(connection, library, cancellationToken, observation, leg).ConfigureAwait(false);
             if (matching is null) throw;
             return matching.Functions.Any(function => function.Name == functionName);
         }
     }
 
     private async ValueTask<RespireFunctionLibraryInfo?> FindMatchingLibraryAsync(RespireConnection connection,
-        RespireFunctionLibrary library, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        RespireFunctionLibrary library, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation,
+        RespireTelemetry.FanOutLeg leg = default)
     {
         var libraries = await SendAndConvertAsync(connection, "FUNCTION LIST", ListCommand(EscapeLibraryPattern(library.Name), true),
             static (FunctionCommands _, in RespValue value) => FunctionResponseReader.Libraries(in value), cancellationToken,
-            observation: observation).ConfigureAwait(false);
+            observation: observation, leg: leg).ConfigureAwait(false);
         return libraries.FirstOrDefault(item => item.Name == library.Name && item.Code == library.Source);
     }
 }

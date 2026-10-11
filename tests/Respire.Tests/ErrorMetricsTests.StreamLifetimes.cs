@@ -219,7 +219,7 @@ public partial class ErrorMetricsTests
             Protocol = RespProtocol.Resp2, Connections = 1, UseCluster = true,
             ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", first.Port)],
         }, deadline.Token);
-        var pool = await client.Core.Cluster!.GetDedicatedPoolAsync(slot, deadline.Token, discovery: null);
+        var pool = await client.Core.Cluster!.GetDedicatedPoolAsync(slot, deadline.Token, discovery: null, observation: default);
         var borrowedAtReset = -1;
         using var source = new ReplayUploadSource(() => borrowedAtReset = pool.CaptureRetirementState().Borrowed, resetFails);
         using var capture = new Capture(throwOnMeasurement: true);

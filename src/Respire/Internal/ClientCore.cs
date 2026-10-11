@@ -126,7 +126,8 @@ internal sealed class ClientCore : IAsyncDisposable
         => Sentinel is not null
             ? EnsureSentinelConnectedAsync(cancellationToken, observeEstablishmentErrors)
             : Cluster is { } cluster
-            ? cluster.EnsureConnectedAsync(cancellationToken, discovery: null)
+            // Explicit connection establishment reports through its own establishment observer.
+            ? cluster.EnsureConnectedAsync(cancellationToken, discovery: null, observation: default)
             : Multiplexer.EnsureConnectedAsync(cancellationToken, observeEstablishmentErrors);
 
     /// <summary>Captures an initialized primary route without starting discovery or reconnecting.</summary>
@@ -170,11 +171,10 @@ internal sealed class ClientCore : IAsyncDisposable
     }
 
     internal ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> RentDedicatedConnectionAsync(
-        DedicatedConnectionPool pool, CancellationToken cancellationToken, bool reuseIdle = true,
-        DedicatedLeaseKind kind = DedicatedLeaseKind.Ordinary, string? preferredZone = null,
-        RespireTelemetry.ErrorObservation observation = default)
+        DedicatedConnectionPool pool, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, bool reuseIdle = true,
+        DedicatedLeaseKind kind = DedicatedLeaseKind.Ordinary, string? preferredZone = null)
         => DedicatedLeaseAcquisition.RentAsync(pool, new DedicatedLeaseRoute(this),
-            cancellationToken, reuseIdle, kind, preferredZone, observation: observation);
+            cancellationToken, reuseIdle, kind, observation, preferredZone);
 
     private readonly struct DedicatedLeaseRoute(ClientCore owner) : IDedicatedLeaseRoute
     {

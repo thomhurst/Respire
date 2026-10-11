@@ -46,7 +46,7 @@ public class PrimaryReadRetirementTests
         core.TestingDedicatedPoolOverride = original;
         using var caller = new CancellationTokenSource();
         var pending = core.ReadRouter.RentDedicatedConnectionAsync(
-            allowFallback ? RespireReadFrom.PrimaryPreferred : RespireReadFrom.Primary, caller.Token).AsTask();
+            allowFallback ? RespireReadFrom.PrimaryPreferred : RespireReadFrom.Primary, caller.Token, observation: default).AsTask();
         Task? retirement = null;
         try
         {

@@ -32,7 +32,7 @@
     {
       "Name": "function-library-target",
       "Role": "borrower",
-      "Member": "Respire.FunctionCommands.EnsureOnConnectionAsync(RespireConnection,RespireFunctionLibrary,string,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<bool>",
+      "Member": "Respire.FunctionCommands.EnsureOnConnectionAsync(RespireConnection,RespireFunctionLibrary,string,CancellationToken,RespireTelemetry.ErrorObservation,RespireTelemetry.FanOutLeg):ValueTask<bool>",
       "Owner": "Respire.FunctionCommands.ExecuteSpanAsync(RespireFunction,ReadOnlySpan<RespireKey>,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<RespireResult>",
       "Contract": "Borrow only the current caller's observation through LIST, LOAD collision recovery and revalidation. Concurrent targets contribute nested retries to that caller; another caller retains independent completion."
     },
@@ -58,7 +58,7 @@
       "Owner": "Respire.FunctionCommands.LoadAsync(string,bool,CancellationToken):ValueTask<string>"
     },
     {
-      "Member": "Respire.FunctionCommands.SendAndConvertAsync`2(RespireConnection,string,TCommand,ResponseConverter<FunctionCommands,T>,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<T>",
+      "Member": "Respire.FunctionCommands.SendAndConvertAsync`2(RespireConnection,string,TCommand,ResponseConverter<FunctionCommands,T>,CancellationToken,RespireTelemetry.ErrorObservation,RespireTelemetry.FanOutLeg):ValueTask<T>",
       "Role": "borrower",
       "Contract": "Borrow the mutation or execution caller owner; never rent or publish an independent final target observation.",
       "Name": "function-target",

@@ -511,7 +511,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                     slot = await flushCluster.GetPrimaryRoutingSlotAsync(acquisition.Token).ConfigureAwait(false);
                 for (var attempt = 0; ; attempt++)
                 {
-                    connection ??= await _client.AcquireConnectionAsync(slot, ref acquisition).ConfigureAwait(false);
+                    connection ??= await _client.AcquireConnectionAsync(slot, ref acquisition, observation).ConfigureAwait(false);
                     acquisition.Dispose();
                     acquisition.CheckDeadline("MULTI/EXEC", core, ConnectionPolicy.ImportConnection);
                     if (core.Sentinel is not null)
@@ -576,7 +576,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                         cluster.RecordRejection(ref discovery, connection, retirement);
                         observation.Handled(retirement);
                         discoveryPending = true;
-                        connection = await cluster.GetReplacementConnectionAsync(null, slot, null, acquisition.Token, discovery)
+                        connection = await cluster.GetReplacementConnectionAsync(null, slot, null, acquisition.Token, discovery, observation)
                             .ConfigureAwait(false);
                         discoveryPending = false;
                         continue;
@@ -634,8 +634,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                     cluster.RecordRejection(ref discovery, connection, redirect);
                     observation.Handled(redirect);
                     discoveryPending = true;
-                    connection = await cluster.GetRedirectConnectionAsync(redirect, connection, acquisition.Token, slot, discovery,
-                            observation: observation)
+                    connection = await cluster.GetRedirectConnectionAsync(redirect, connection, acquisition.Token, slot, discovery, observation)
                         .ConfigureAwait(false);
                     discoveryPending = false;
                 }
