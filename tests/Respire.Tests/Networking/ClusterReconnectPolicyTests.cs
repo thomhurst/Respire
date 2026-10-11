@@ -396,6 +396,79 @@ public class ClusterReconnectPolicyTests
     }
 
     [Test]
+    [Arguments("MOVED")]
+    [Arguments("ASK")]
+    public async Task RedirectedCommandDoesNotWaitForReconnectBackoff(string code)
+    {
+        await using var target = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("GET ") ? "$5\r\nvalue\r\n"u8.ToArray() : null,
+        };
+        var slot = ClusterHash.GetSlot("key");
+        var redirect = Encoding.ASCII.GetBytes($"-{code} {slot} 127.0.0.1:{target.Port}\r\n");
+        await using var seed = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? "*0\r\n"u8.ToArray()
+                : command.StartsWith("GET ") ? redirect : null,
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with { ReconnectPolicy = SlowPolicy });
+        var discovery = new ConcurrentQueue<RespireConnectionStateChange>();
+        var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery) return;
+            discovery.Enqueue(change);
+            if (change.SourceState == RespireConnectionState.Connected) finished.TrySetResult();
+        };
+        // One configured backoff would exceed this bound six times over.
+        await Assert.That(await client.GetStringAsync("key").AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo("value");
+        await Assert.That(target.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
+        // The redirect still spends one discovery attempt, scheduled without a delay.
+        await finished.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var scheduled = discovery.Where(change => change.SourceState == RespireConnectionState.Reconnecting).ToArray();
+        await Assert.That(scheduled.Length).IsEqualTo(1);
+        await Assert.That(scheduled[0].NextReconnectDelay).IsEqualTo(TimeSpan.Zero);
+    }
+
+    [Test]
+    [Arguments("MOVED", "command")]
+    [Arguments("ASK", "command")]
+    [Arguments("MOVED", "tracked")]
+    [Arguments("ASK", "tracked")]
+    [Arguments("MOVED", "dedicated")]
+    [Arguments("ASK", "dedicated")]
+    public async Task RecordedRedirectDoesNotWaitForReconnectBackoff(string code, string path)
+    {
+        await using var target = new FakeRespServer(FakeRespServer.OkReply);
+        await using var seed = new FakeRespServer(FakeRespServer.OkReply, "*0\r\n"u8.ToArray());
+        await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with { ReconnectPolicy = SlowPolicy });
+        var router = client.Core.Cluster!;
+        var source = await router.GetConnectionAsync(null, default, discovery: null);
+        var redirect = new RespireServerException($"{code} 42 127.0.0.1:{target.Port}");
+        // Commands record the rejection in their round before following it.
+        ClusterRouter.DiscoveryRound? discovery = null;
+        router.RecordRejection(ref discovery, source, redirect);
+        try
+        {
+            Task followed = path switch
+            {
+                "command" => router.GetRedirectConnectionAsync(redirect, source, default, 42, discovery).AsTask(),
+                "tracked" => router.GetTrackedRedirectConnectionAsync(redirect, source, true, default, 42, discovery).AsTask(),
+                "dedicated" => router.GetRedirectDedicatedPoolAsync(redirect, source, default, 42, discovery).AsTask(),
+                _ => throw new ArgumentOutOfRangeException(nameof(path)),
+            };
+            await followed.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally { discovery?.Finish(); }
+        await Assert.That(target.ReceivedCommands).Contains("AUTH test");
+    }
+
+    private static readonly RespireReconnectPolicy SlowPolicy = new()
+    {
+        InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30), JitterRatio = 0,
+    };
+
+    [Test]
     public async Task ReadOnlyRecoveryDeadlineBoundsConfiguredDelay()
     {
         await using var target = new FakeRespServer(FakeRespServer.OkReply);

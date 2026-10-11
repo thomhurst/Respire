@@ -254,8 +254,10 @@ connection calls retain seed discovery coalescing: waiting callers reuse its suc
 result. Failed rounds do not permanently disable the router.
 
 MOVED, ASK, and READONLY are explicit server rejections. Their first replacement consumes
-attempt one. If recovery cannot establish a replacement, the original server exception
-is preserved. ASK keeps its temporary target; tracked identity setup and retirement
+attempt one. A MOVED or ASK reply names its owner, so Respire follows it without waiting
+for the policy delay. That attempt reports a `NextReconnectDelay` of zero. The delay applies
+only when the redirect target itself fails. If recovery cannot establish a replacement,
+the original server exception is preserved. ASK keeps its temporary target; tracked identity setup and retirement
 reselection share the ongoing round. A command rejected before acceptance by topology
 retirement starts fallback at attempt one. Repeated retirement during that command,
 including an individual rejected batch entry or an unwatched transaction, retains the
