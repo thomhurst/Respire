@@ -518,6 +518,71 @@ public sealed class SentinelCircuitDispatchTests
     }
 
     [Test]
+    [Arguments("fire-and-forget")]
+    [Arguments("tracked")]
+    public async Task RetiredSendKeepsOneTelemetryScopeOnReplacement(string shape)
+    {
+        using var configuration = new MetricConfigurationScope();
+        await using var first = Primary();
+        await using var second = Primary();
+        var port = first.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        await using var client = await Connect(sentinel, clientSideCache: shape == "tracked");
+        var (circuit, _) = Prepare(client, first);
+        using var clock = new AdmissionGateClock();
+        CircuitClock(circuit) = clock;
+        var observed = new AsyncLocal<bool>();
+        var started = new ConcurrentQueue<Activity>();
+        var stopped = new ConcurrentQueue<Activity>();
+        var measurements = new ConcurrentQueue<Dictionary<string, object?>>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "Respire",
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStarted = activity => { if (observed.Value && activity.OperationName == "GET") started.Enqueue(activity); },
+            ActivityStopped = activity => { if (observed.Value && activity.OperationName == "GET") stopped.Enqueue(activity); },
+        };
+        ActivitySource.AddActivityListener(listener);
+        using var meter = new MeterListener();
+        meter.InstrumentPublished = (instrument, owner) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.operation.duration")
+                owner.EnableMeasurementEvents(instrument);
+        };
+        meter.SetMeasurementEventCallback<double>((_, _, tags, _) =>
+        {
+            if (observed.Value) measurements.Enqueue(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value));
+        });
+        meter.Start();
+        clock.Arm();
+        var execution = Task.Run(async () =>
+        {
+            observed.Value = true;
+            if (shape == "tracked") await Assert.That(await client.GetStringAsync("healthy")).IsEqualTo("healthy");
+            else await client.ExecuteFireAndForgetAsync("GET", ["healthy"]);
+            observed.Value = false;
+        });
+        try
+        {
+            await clock.Selected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Volatile.Write(ref port, second.Port);
+            await client.Core.Sentinel!.GetGenerationAsync(default, forceDiscovery: true);
+        }
+        finally { clock.Release(); }
+        await execution.WaitAsync(TimeSpan.FromSeconds(5));
+        await Received(second, "GET healthy");
+        // The handled retirement belongs to the same logical command as the replacement send.
+        await Assert.That(started.Count).IsEqualTo(1);
+        await Assert.That(stopped.Count).IsEqualTo(1);
+        await Assert.That(stopped.Single().GetTagItem("server.port")).IsEqualTo(second.Port);
+        await Assert.That(stopped.Single().GetTagItem("error.type")).IsNull();
+        var durations = measurements.Where(tags => Equals(tags.GetValueOrDefault("db.operation.name"), "GET")).ToArray();
+        await Assert.That(durations.Length).IsEqualTo(1);
+        await Assert.That(durations[0]["server.port"]).IsEqualTo(second.Port);
+        await Assert.That(first.ReceivedCommands.Contains("GET healthy")).IsFalse();
+    }
+
+    [Test]
     [Arguments(1, false)]
     [Arguments(2, false)]
     [Arguments(2, true)]
@@ -674,12 +739,14 @@ public sealed class SentinelCircuitDispatchTests
         await Assert.That(primary.ReceivedCommands.Count(command => command == "GET timeout")).IsEqualTo(2);
     }
 
-    private static async Task<RespireClient> Connect(FakeRespServer sentinel, TimeSpan? commandTimeout = null, int connections = 1)
+    private static async Task<RespireClient> Connect(FakeRespServer sentinel, TimeSpan? commandTimeout = null, int connections = 1,
+        bool clientSideCache = false)
     {
         var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
-            Connections = connections, Protocol = RespProtocol.Resp2, ThreadPoolMonitoring = false,
+            Connections = connections, Protocol = clientSideCache ? RespProtocol.Resp3 : RespProtocol.Resp2,
+            ClientSideCache = clientSideCache ? new() : null, ThreadPoolMonitoring = false,
             ConnectTimeout = TimeSpan.FromSeconds(5), CommandTimeout = commandTimeout ?? TimeSpan.FromSeconds(5),
             CircuitBreaker = new() { MinimumFailureCount = 1, FailureRateThreshold = 0.25,
                 HalfOpenProbeCount = 2, OpenDuration = TimeSpan.FromMinutes(1) },
@@ -738,6 +805,7 @@ public sealed class SentinelCircuitDispatchTests
         ReplyOverride = (_, command) => command switch
         {
             "ROLE" => "*3\r\n+master\r\n:0\r\n*0\r\n"u8.ToArray(),
+            "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
             "GET canceled" => "+QUEUED\r\n"u8.ToArray(),
             "GET healthy" => "$7\r\nhealthy\r\n"u8.ToArray(),
             "EXEC" => "*1\r\n$7\r\nhealthy\r\n"u8.ToArray(),

@@ -2615,6 +2615,10 @@ public sealed partial class RespireClient : IRespireClient
     {
         var telemetry = RespireTelemetry.StartOperation(
             operation, connection, _core.Options.Database);
+        // The circuit retry owns the final endpoint; transfer the scope so a reroute retargets it.
+        if (_core.Circuits is not null && !_snapshotPrefixedBinaryKeys)
+            return await SendCircuitTrackedAsync(operation, connection, command, cancellationToken, sendAsking, track,
+                observation, telemetry).ConfigureAwait(false);
         try
         {
             var response = await SendTrackedOnConnectionCoreAsync(
