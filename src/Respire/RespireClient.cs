@@ -2791,32 +2791,36 @@ public sealed partial class RespireClient : IRespireClient
         // A raw command's own cursor argument says whether it starts a scan or continues one.
         var continuation = CursorCommandMetadata.IsServerCursorContinuation(in command);
         // A server-cursor command never moves inside the transport: its read pin names the selected
-        // server. A fresh scan instead reselects below, so the pin follows the server that answers.
+        // server. A fresh circuit-admitted scan instead reselects below, so the pin follows the
+        // server that answers.
         var pinned = CursorCommandMetadata.HasServerCursor(in command);
-        for (var attempt = 0; ; attempt++)
+        var connection = readKind == ReadCommandKind.CursorRead
+            ? await _core.ReadRouter.GetCursorConnectionAsync(_readFrom, affinity,
+                affinity is null && continuation, cancellationToken, observation).ConfigureAwait(false)
+            : await _core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken, observation).ConfigureAwait(false);
+        if (pinned && !continuation && UsesCircuitResponsePath(operation, pinToConnection: false))
         {
-            var connection = readKind == ReadCommandKind.CursorRead
-                ? await _core.ReadRouter.GetCursorConnectionAsync(_readFrom, affinity,
-                    affinity is null && continuation, cancellationToken, observation).ConfigureAwait(false)
-                : await _core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken, observation).ConfigureAwait(false);
-            try
-            {
-                return await SendOnConnectionAsync(operation, connection, command, cancellationToken,
-                    allowStreamingConnectionReroute: !pinned, observation: observation).ConfigureAwait(false);
-            }
-            catch (RespireConnectionRetiredException error) when (pinned && !continuation && attempt == 0
-                && _core.Circuits is not null && !cancellationToken.IsCancellationRequested)
-            {
-                // Retirement rejected the fresh scan before dispatch. No server issued its cursor
-                // yet, so drop the stale pin and select again under the same read policy.
-                observation.Handled(error);
-                if (affinity is not null)
+            // One telemetry scope and one command deadline span the reselection.
+            var telemetry = RespireTelemetry.IsOperationEnabled(operation)
+                ? RespireTelemetry.StartOperation(operation, connection, _core.Options.Database)
+                : default;
+            return await SendCircuitResponseAsync(operation, connection, command, cancellationToken, sendAsking: false,
+                commandDeadline: default, allowStreamingConnectionReroute: false, observation, telemetry,
+                reselect: token =>
                 {
-                    affinity.Replica = null;
-                    affinity.Primary = null;
-                }
-            }
+                    // Retirement rejected the fresh scan before dispatch. No server issued its cursor
+                    // yet, so drop the stale pin and select again under the same read policy.
+                    if (affinity is not null)
+                    {
+                        affinity.Replica = null;
+                        affinity.Primary = null;
+                    }
+                    return _core.ReadRouter.GetCursorConnectionAsync(_readFrom, affinity, isContinuation: false,
+                        token, observation);
+                }).ConfigureAwait(false);
         }
+        return await SendOnConnectionAsync(operation, connection, command, cancellationToken,
+            allowStreamingConnectionReroute: !pinned, observation: observation).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -4222,6 +4226,7 @@ public sealed partial class RespireClient : IRespireClient
             var preferredZone = ReadFallbackPolicy.UsesAvailabilityZone(readFrom) ? core.Options.ClientAvailabilityZone : null;
             var fallback = new ReadFallbackPolicy.RoleFallback(readFrom);
             var errorAttempts = 0;
+            var retiredLeaseReplaced = false;
             try
             {
                 RespValue response;
@@ -4258,11 +4263,28 @@ public sealed partial class RespireClient : IRespireClient
                         // Keep one logical span while routing advances to a replacement lease.
                         telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
                     }
-                    response = mutationFence.IsRequired
-                        ? await SendBlockingOnConnectionAsync(connection, new MutationCommand<TCommand>(command, mutationFence), cancellationToken,
-                            observation.IsEmpty ? errorAttempts : observation.Attempts, observation).ConfigureAwait(false)
-                        : await SendBlockingOnConnectionAsync(connection, command, cancellationToken,
-                            observation.IsEmpty ? errorAttempts : observation.Attempts, observation).ConfigureAwait(false);
+                    try
+                    {
+                        response = mutationFence.IsRequired
+                            ? await SendBlockingOnConnectionAsync(connection, new MutationCommand<TCommand>(command, mutationFence), cancellationToken,
+                                observation.IsEmpty ? errorAttempts : observation.Attempts, observation).ConfigureAwait(false)
+                            : await SendBlockingOnConnectionAsync(connection, command, cancellationToken,
+                                observation.IsEmpty ? errorAttempts : observation.Attempts, observation).ConfigureAwait(false);
+                    }
+                    catch (RespireConnectionRetiredException error) when (core.Circuits is not null && core.Sentinel is not null
+                        && !retiredLeaseReplaced && !cancellationToken.IsCancellationRequested)
+                    {
+                        // Retirement rejected the blocking frame before dispatch, so it was never
+                        // submitted. Rent once from the current generation under the same span.
+                        retiredLeaseReplaced = true;
+                        var retired = connection;
+                        connection = null;
+                        await pool.DiscardAsync(retired).ConfigureAwait(false);
+                        if (!observation.IsEmpty) observation.Handled(error);
+                        else RespireTelemetry.RecordError(error, internallyHandled: true, errorAttempts);
+                        errorAttempts++;
+                        continue;
+                    }
                     if (response.IsError && fallback.OriginalFailure is null && readFrom != RespireReadFrom.Primary)
                     {
                         var error = ResponseReader.ServerError(in response, operation);

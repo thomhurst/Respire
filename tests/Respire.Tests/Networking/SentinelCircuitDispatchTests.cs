@@ -323,6 +323,112 @@ public sealed class SentinelCircuitDispatchTests
     }
 
     [Test]
+    public async Task ReadPolicyFreshScanReselectionKeepsOneTelemetryScope()
+    {
+        await using var first = Primary();
+        await using var second = Primary();
+        var port = first.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        await using var client = await Connect(sentinel);
+        var view = (RespireClient)client.WithReadFrom(RespireReadFrom.PrimaryPreferred);
+        var (circuit, _) = Prepare(client, first);
+        using var clock = new AdmissionGateClock();
+        CircuitClock(circuit) = clock;
+        var observed = new AsyncLocal<bool>();
+        var stopped = new ConcurrentQueue<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "Respire",
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activity => { if (observed.Value && activity.OperationName == "SCAN") stopped.Enqueue(activity); },
+        };
+        ActivitySource.AddActivityListener(listener);
+        clock.Arm();
+        var pending = Task.Run(async () =>
+        {
+            observed.Value = true;
+            using var page = await view.ExecuteAsync(RespireCommands.Key.SCAN, ["0"]);
+            observed.Value = false;
+        });
+        try
+        {
+            await clock.Selected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Volatile.Write(ref port, second.Port);
+            await client.Core.Sentinel!.GetGenerationAsync(default, forceDiscovery: true);
+        }
+        finally { clock.Release(); }
+        await pending.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // The handled retirement and the reselected send are one logical scan.
+        await Assert.That(stopped.Count).IsEqualTo(1);
+        await Assert.That(stopped.Single().GetTagItem("server.port")).IsEqualTo(second.Port);
+        await Assert.That(stopped.Single().GetTagItem("error.type")).IsNull();
+        await Assert.That(second.ReceivedCommands.Count(command => command.StartsWith("SCAN 0"))).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task ReadPolicyFreshScanReselectionKeepsTheOriginalDeadline()
+    {
+        await using var first = Primary();
+        await using var second = Primary();
+        second.SuppressReply = command => command.StartsWith("SCAN ", StringComparison.Ordinal);
+        var port = first.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        var timeout = TimeSpan.FromSeconds(2);
+        await using var client = await Connect(sentinel, timeout);
+        var view = (RespireClient)client.WithReadFrom(RespireReadFrom.PrimaryPreferred);
+        var (circuit, _) = Prepare(client, first);
+        using var clock = new AdmissionGateClock();
+        CircuitClock(circuit) = clock;
+        clock.Arm();
+        var started = Stopwatch.StartNew();
+        var pending = Task.Run(async () => { using var page = await view.ExecuteAsync(RespireCommands.Key.SCAN, ["0"]); });
+        try
+        {
+            await clock.Selected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Volatile.Write(ref port, second.Port);
+            await client.Core.Sentinel!.GetGenerationAsync(default, forceDiscovery: true);
+            // Spend most of the budget before the reselected send starts.
+            await Task.Delay(TimeSpan.FromMilliseconds(1500));
+        }
+        finally { clock.Release(); }
+
+        await Assert.That(await Failure(async () => await pending.WaitAsync(TimeSpan.FromSeconds(10))))
+            .IsTypeOf<RespireTimeoutException>();
+        // A fresh budget would end near 3.5 s; the shared deadline ends near 2 s.
+        await Assert.That(started.Elapsed < TimeSpan.FromSeconds(3)).IsTrue();
+        await Received(second, "SCAN 0");
+    }
+
+    [Test]
+    public async Task BlockingCommandRetiredBeforeDispatchRetriesOnReplacement()
+    {
+        await using var first = Primary();
+        await using var second = Primary();
+        var port = first.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        await using var client = await Connect(sentinel);
+        var (circuit, _) = Prepare(client, first);
+        using var clock = new AdmissionGateClock();
+        CircuitClock(circuit) = clock;
+        clock.Arm();
+        var pending = Task.Run(async () => { using var reply = await client.ExecuteAsync("BLPOP", ["blocking", "1"]); });
+        try
+        {
+            await clock.Selected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Volatile.Write(ref port, second.Port);
+            await client.Core.Sentinel!.GetGenerationAsync(default, forceDiscovery: true);
+        }
+        finally { clock.Release(); }
+
+        await pending.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(first.ReceivedCommands.Contains("BLPOP blocking 1")).IsFalse();
+        await Assert.That(second.ReceivedCommands.Count(command => command == "BLPOP blocking 1")).IsEqualTo(1);
+        await Assert.That(circuit.Snapshot().FailureCount).IsEqualTo(0);
+        await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(0);
+    }
+
+    [Test]
     [Arguments("raw", "7")]
     [Arguments("typed", "7")]
     [Arguments("raw", "0")]

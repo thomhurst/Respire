@@ -134,7 +134,7 @@ public sealed partial class RespireClient
         string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken,
         bool sendAsking, CommandDeadline commandDeadline, bool allowStreamingConnectionReroute,
         RespireTelemetry.ErrorObservation observation, RespireTelemetry.OperationScope telemetry = default,
-        string? storedProcedureName = null)
+        string? storedProcedureName = null, Func<CancellationToken, ValueTask<RespireConnection>>? reselect = null)
         where TCommand : struct, IRespCommand
     {
         commandDeadline = CreateCircuitDeadline(commandDeadline);
@@ -163,6 +163,19 @@ public sealed partial class RespireClient
                     observation.Handled(error);
                     connection = target;
                     commandDeadline = rerouted;
+                    telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
+                }
+                catch (RespireConnectionRetiredException error) when (reselect is not null
+                    && !cancellationToken.IsCancellationRequested)
+                {
+                    // The caller's routing owns the replacement (for example a read pin). Select once;
+                    // the original deadline and telemetry scope carry over to the replacement.
+                    observation.Handled(error);
+                    var selectReplacement = reselect;
+                    reselect = null;
+                    admission.Dispose();
+                    admission = default;
+                    connection = await selectReplacement(cancellationToken).ConfigureAwait(false);
                     telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
                 }
                 catch (Exception error)
