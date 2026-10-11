@@ -201,7 +201,7 @@ public sealed partial class RespireFakeServer
         {
             group.Pending.Remove(id);
             TouchWatchedKey(args[3]);
-            return FakeReply.Integer(1);
+            return FakeReply.Integer(-1);
         }
         if (originalFields.Length / 2 > StreamWorkerScripts.MaximumDeadLetterFields)
             return FakeReply.Error("ERR dead-letter entries support at most 1024 field/value pairs");
