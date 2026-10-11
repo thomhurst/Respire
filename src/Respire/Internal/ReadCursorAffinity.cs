@@ -202,7 +202,11 @@ internal sealed class ReadCursorAffinity
         await core.EnsureConnectedAsync(cancellationToken, observation).ConfigureAwait(false);
         var multiplexer = core.Multiplexer;
         if (!ReferenceEquals(multiplexer, affinity.Primary))
+        {
+            // Connecting recorded the replacement generation; the failure belongs to the cursor's owner.
+            observation.UseEndpoint(affinity.Primary?.ActiveConnectionEndpoint);
             throw new RespireConnectionException("The primary that issued the cursor was replaced.");
+        }
         return preferredZone is null ? multiplexer.GetConnection() : multiplexer.GetConnectionForZone(preferredZone);
     }
 }

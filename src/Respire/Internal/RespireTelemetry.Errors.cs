@@ -113,14 +113,7 @@ internal static partial class RespireTelemetry
         /// </summary>
         internal static async Task<T[]> JoinAsync<T>(Task<T>[] tasks, FanOutLegObservation[] legs, ErrorObservation caller)
         {
-            try
-            {
-                var results = await Task.WhenAll(tasks).ConfigureAwait(false);
-                // Every leg succeeded, so a later cross-node validation failure belongs to no single
-                // node; drop whichever master the caller's selection visited last.
-                caller.UseEndpoint(null);
-                return results;
-            }
+            try { return await Task.WhenAll(tasks).ConfigureAwait(false); }
             catch (Exception propagated)
             {
                 var surfaced = Array.FindIndex(tasks, task => task.Exception?.InnerExceptions.Any(

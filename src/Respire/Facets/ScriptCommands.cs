@@ -398,7 +398,13 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
             responses[i] = SendAndConvertAsync(operation, masters[i], command, convert, cancellationToken, legs[i].Observation).AsTask();
         // Join every target and its reply cleanup before the caller publishes one failure, named by its own leg.
         var results = await RespireTelemetry.FanOutLegObservation.JoinAsync(responses, legs, observation).ConfigureAwait(false);
-        validate?.Invoke(results);
+        try { validate?.Invoke(results); }
+        catch
+        {
+            // A cross-primary comparison failure belongs to no single node.
+            observation.UseEndpoint(null);
+            throw;
+        }
         return results;
     }
 

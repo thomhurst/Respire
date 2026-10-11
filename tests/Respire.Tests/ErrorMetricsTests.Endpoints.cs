@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net.Sockets;
 using System.Text;
 using Respire.Commands;
+using Respire.Infrastructure;
 using Respire.Internal;
 using Respire.Tests.Networking;
 using TUnit.Assertions;
@@ -474,6 +475,77 @@ public partial class ErrorMetricsTests
         var final = capture.Items.Single(item => !(bool)item.Tags["redis.client.errors.internal"]!);
         await Assert.That(final.Tags["server.address"]).IsEqualTo("127.0.0.1");
         await Assert.That(final.Tags["server.port"]).IsEqualTo(server.Port);
+    }
+
+    [Test]
+    public async Task CancelledEmptyWatchedCommitNamesNoNode()
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        await using var server = new FakeRespServer(2, FakeRespServer.OkReply);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+        });
+        await using var transaction = await client.CreateTransactionAsync(["balance"]);
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+        using var capture = new Capture();
+        // The empty commit returns before sending anything, although it holds a pinned connection.
+        await Assert.That(async () => await transaction.CommitAsync(cancelled.Token)).Throws<OperationCanceledException>();
+        var final = capture.Items.Single(item => !(bool)item.Tags["redis.client.errors.internal"]!);
+        await Assert.That(final.Tags.ContainsKey("server.address")).IsFalse();
+        await Assert.That(final.Tags.ContainsKey("server.port")).IsFalse();
+    }
+
+    [Test]
+    public async Task ReplacedCursorPrimaryNamesTheCursorOwner()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        // Models a failover: the cursor's primary multiplexer has since been replaced.
+        await using var replaced = RespireConnectionMultiplexer.Create("127.0.0.1", 1);
+        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        await Assert.That(async () => await client.Core.ReadRouter.GetCursorConnectionAsync(
+                RespireReadFrom.PrimaryPreferred, new ReadAffinity { Primary = replaced }, isContinuation: true,
+                CancellationToken.None, observation))
+            .Throws<RespireConnectionException>();
+        // Connecting recorded the live primary; the failure still belongs to the cursor's owner.
+        await Assert.That(observation.Endpoint?.Port).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments("{foo}:key")]
+    [Arguments("{bar}:key")]
+    public async Task MissingClusterFunctionKeepsTheCallingNode(string key)
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        const string source = "#!lua name=sample\nreturn 1";
+        // Every primary has the library, but it lacks the called function, so Redis's error is rethrown.
+        var library = Encoding.ASCII.GetBytes(
+            "*1\r\n*8\r\n+library_name\r\n$6\r\nsample\r\n+engine\r\n$3\r\nLUA\r\n" +
+            "+functions\r\n*1\r\n*6\r\n+name\r\n$5\r\nother\r\n+description\r\n$-1\r\n" +
+            $"+flags\r\n*0\r\n+library_code\r\n${Encoding.UTF8.GetByteCount(source)}\r\n{source}\r\n");
+        byte[]? Reply(string command) => command.StartsWith("FCALL ", StringComparison.Ordinal)
+            ? "-ERR Function not found\r\n"u8.ToArray()
+            : command.StartsWith("FUNCTION LIST", StringComparison.Ordinal) ? library : null;
+        await using var first = new FakeRespServer(16, FakeRespServer.OkReply) { ReplyOverride = (_, command) => Reply(command) };
+        await using var second = new FakeRespServer(16, FakeRespServer.OkReply) { ReplyOverride = (_, command) => Reply(command) };
+        var topology = Encoding.ASCII.GetBytes(
+            $"*2\r\n*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{first.Port}\r\n" +
+            $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{second.Port}\r\n");
+        await using var seed = new FakeRespServer(16, topology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, UseCluster = true,
+            ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", seed.Port)],
+        });
+        var owner = ClusterHash.GetSlot(key) <= 8191 ? first : second;
+        var function = RespireFunctionLibrary.Create(source).Function("function");
+        using var capture = new Capture();
+        await Assert.That(async () => await client.Functions.ExecuteIntegerAsync(function, [key]))
+            .Throws<RespireServerException>();
+        var final = capture.Items.Single(item => !(bool)item.Tags["redis.client.errors.internal"]!);
+        await Assert.That(final.Tags["server.port"]).IsEqualTo(owner.Port);
     }
 
     [Test]

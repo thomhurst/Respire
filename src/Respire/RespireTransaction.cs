@@ -285,6 +285,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
         var importTransactionStarted = false;
         RespireConnection.CredentialSequenceLease credentialSequence = default;
         var returnWatchConnection = false;
+        var sendAttempted = false;
         var mutationFence = default(ClientSideCacheCoordinator.MutationFence);
         try
         {
@@ -312,6 +313,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             {
                 // The connection sweep owns EXEC's timeout. Acquisition alone needs a timer
                 // when it cannot use a ready connection; both stages share one absolute budget.
+                sendAttempted = true;
                 result = await SendAsync().ConfigureAwait(false);
 
                 // SendTransactionAsync drains through EXEC before completing, including when it
@@ -474,9 +476,11 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             {
                 var attempts = observation.Attempts;
                 // An empty WATCH commit has no queued owner, but still sends MULTI/EXEC on its
-                // pinned connection. Capture the node before ReportErrors closes the owners.
+                // pinned connection. Capture the node before ReportErrors closes the owners; an
+                // empty commit that returned early (for example on cancellation) contacted no node.
                 RespireEndpoint? finalEndpoint = observation.IsEmpty
-                    ? connection is { } attempted ? new RespireEndpoint(attempted.Host, attempted.Port) : (RespireEndpoint?)null
+                    ? sendAttempted && connection is { } attempted
+                        ? new RespireEndpoint(attempted.Host, attempted.Port) : (RespireEndpoint?)null
                     : observation.Endpoint;
                 DeferredOperation.ShareEndpoint(_ops, observation);
                 var pendingErrors = DeferredOperation.ReportErrors(_ops, attempts) != 0;
