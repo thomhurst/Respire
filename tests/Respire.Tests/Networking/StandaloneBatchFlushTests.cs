@@ -1,9 +1,12 @@
+using System.Buffers;
 using System.Net.Sockets;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Infrastructure;
+using Respire.Internal;
 using Respire.Networking;
+using Respire.Protocol;
 using TUnit.Assertions;
 using TUnit.Assertions.Enums;
 using TUnit.Assertions.Extensions;
@@ -13,8 +16,6 @@ namespace Respire.Tests.Networking;
 
 public class StandaloneBatchFlushTests
 {
-    private static object? s_allocationControl;
-
     [Test]
     [Arguments(false)]
     [Arguments(true)]
@@ -41,52 +42,109 @@ public class StandaloneBatchFlushTests
         }
     }
 
-    [Test]
-    [NotInParallel]
+    private const string AllocationProbeMode = "RESPIRE_BATCH_START_ALLOCATION_PROBE";
+
+    [Test, ParallelLimiter<ChildProcessProbes>]
     public async Task StartingOneHundredOperationsDoesNotAllocateOneTaskPerOperation()
+    {
+        var start = AsyncFlushSignalTests.CreateProbeStartInfo(Environment.ProcessPath,
+            Environment.GetEnvironmentVariable("DOTNET_HOST_PATH"), typeof(StandaloneBatchFlushTests).Assembly.Location);
+        start.Environment[AllocationProbeMode] = Environment.Version.ToString();
+        // Tier-0 and instrumented code box each struct command three times when MutationCommand
+        // forwards to IRespCommand default interface methods (408 bytes per INCR). Optimized code
+        // does not. Promotion timing depends on unrelated JIT activity in the test process, so
+        // measure fully optimized steady state from the first call.
+        start.Environment["DOTNET_TieredCompilation"] = "0";
+        await AsyncFlushSignalTests.RunProbeAsync(start, TimeSpan.FromSeconds(30));
+    }
+
+    internal static int? RunIsolatedAllocationProbe()
+    {
+        var runtime = Environment.GetEnvironmentVariable(AllocationProbeMode);
+        if (runtime is null) return null;
+        try
+        {
+            if (runtime != Environment.Version.ToString()) throw new InvalidOperationException("Probe runtime differs from parent.");
+            // A pool thread lets the first command run the flush loop inline, as in production.
+            Task.Run(MeasureBatchStartAsync).GetAwaiter().GetResult();
+            return 0;
+        }
+        catch (Exception error) { Console.Error.WriteLine(error); return 1; }
+    }
+
+    private static async Task MeasureBatchStartAsync()
     {
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
-        // Fixed wall-clock warmup gives background tiered compilation time to finish.
-        // Do not choose the stopping point from allocation samples.
-        var warmStart = System.Diagnostics.Stopwatch.GetTimestamp();
-        for (var warmup = 0; warmup < 32 || System.Diagnostics.Stopwatch.GetElapsedTime(warmStart) < TimeSpan.FromSeconds(2); warmup++)
+        for (var warmup = 0; warmup < 32; warmup++)
         {
             using var warm = CreateBatch(client, 100);
             _ = MeasureStart(warm, warmup % 2 == 0, out var execution);
-            await execution;
-            await Task.Delay(25);
+            await execution.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         }
 
         server.SuppressReply = _ => true;
         var replyBytes = System.Text.Encoding.ASCII.GetBytes(string.Concat(Enumerable.Repeat(":1\r\n", 100)));
+        var bytes = await MeasureAndCompleteAsync(server, client, replyBytes, allocateControl: false);
+        var controlBytes = await MeasureAndCompleteAsync(server, client, replyBytes, allocateControl: true);
+        Console.WriteLine($"Standalone batch start: {bytes} bytes; one Task per operation control: {controlBytes} bytes.");
+        // Includes the execution state machine; excludes queued operations and response-thread work.
+        // The control adds one real Task per operation, so the limit must catch that regression.
+        if (bytes >= MaxStartBytes || controlBytes < MaxStartBytes || controlBytes - bytes < 100 * MinimumTaskBytes)
+            throw new InvalidOperationException(
+                $"Expected under {MaxStartBytes} bytes to start 100 operations and a control of at least {MaxStartBytes} bytes; "
+                + $"observed {bytes} and {controlBytes} bytes.");
+    }
+
+    private static async Task<long> MeasureAndCompleteAsync(FakeRespServer server, RespireClient client, byte[] replyBytes,
+        bool allocateControl)
+    {
         using var batch = CreateBatch(client, 100);
         var expectedCommands = server.CommandsSeen + 100;
         ValueTask<RespireBatchResult> pending = default;
-        var bytes = AllocationMeasurement.WithoutConcurrentGc(() => MeasureStart(batch, false, out pending));
+        var bytes = AllocationMeasurement.WithoutConcurrentGc(() => MeasureStart(batch, allocateControl, out pending));
         await WaitForCommandsAsync(server, expectedCommands).WaitAsync(TimeSpan.FromSeconds(5));
         await server.SendRawAsync(replyBytes);
-        await pending;
-
-        using var controlBatch = CreateBatch(client, 100);
-        expectedCommands += 100;
-        var controlBytes = AllocationMeasurement.WithoutConcurrentGc(() => MeasureStart(controlBatch, true, out pending));
-        await WaitForCommandsAsync(server, expectedCommands).WaitAsync(TimeSpan.FromSeconds(5));
-        await server.SendRawAsync(replyBytes);
-        await pending;
-        Console.WriteLine($"Standalone batch start: {bytes} bytes; escaping allocation control: {controlBytes} bytes.");
-        // Includes the execution state machine; excludes queued operations and response-thread work.
-        await Assert.That(bytes).IsLessThan(8_000);
-        await Assert.That(controlBytes).IsGreaterThanOrEqualTo(8_192);
+        await pending.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        return bytes;
     }
+
+    // 100 operations x one Task (at least 64 bytes on x64) clearly exceed this limit.
+    private const long MaxStartBytes = 4_096;
+    private const long MinimumTaskBytes = 64;
+    private static readonly Task<long>?[] s_controlTasks = new Task<long>?[100];
+    private static readonly Func<long> s_controlTaskBody = static () => 0;
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static long MeasureStart(RespireBatch batch, bool allocateControl, out ValueTask<RespireBatchResult> pending)
     {
+        PrimeStartingThread();
         var before = GC.GetAllocatedBytesForCurrentThread();
         pending = batch.TryExecuteAsync();
-        if (allocateControl) s_allocationControl = new byte[8_192];
+        if (allocateControl)
+        {
+            for (var index = 0; index < s_controlTasks.Length; index++)
+                s_controlTasks[index] = new Task<long>(s_controlTaskBody);
+        }
         return GC.GetAllocatedBytesForCurrentThread() - before;
+    }
+
+    private static readonly FieldInfo s_serializeScratch = typeof(RespireConnection)
+        .GetField("_serializeScratch", BindingFlags.Static | BindingFlags.NonPublic)!;
+
+    // Earlier batches start on other pool threads, so this thread's caches are not warm:
+    // - RunStandaloneBatchAsync rents two scratch arrays (10,288 bytes on x64) here and
+    //   returns them on the completing thread. ArrayPool.Shared serves this thread's slot
+    //   first, then shared per-core stacks; gen-2 GCs, including the no-GC region's, can
+    //   trim both under memory pressure.
+    // - Command serialization uses a thread-static 4 KiB scratch buffer, created on first use.
+    // Both are one-time per-thread costs, not per-operation work.
+    private static void PrimeStartingThread()
+    {
+        ArrayPool<ValueTask<RespValue>>.Shared.Return(ArrayPool<ValueTask<RespValue>>.Shared.Rent(100), clearArray: true);
+        ArrayPool<RespireTelemetry.ErrorObservation>.Shared.Return(
+            ArrayPool<RespireTelemetry.ErrorObservation>.Shared.Rent(100), clearArray: true);
+        if (s_serializeScratch.GetValue(null) is null) s_serializeScratch.SetValue(null, new WriteBuffer(4 * 1024));
     }
 
     private static RespireBatch CreateBatch(RespireClient client, int count)

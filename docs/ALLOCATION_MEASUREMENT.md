@@ -277,3 +277,36 @@ The test still reports per-caller bytes, the first allocating iteration and the
 GC collection counts around the region. A late iteration from a single caller points
 at that caller's path. A delta on the first iteration right after the region's GC
 points at runtime state that GC reset.
+
+## Standalone batch start
+
+`StartingOneHundredOperationsDoesNotAllocateOneTaskPerOperation` checks that starting a
+100-command batch does not allocate a Task per operation. Under full-suite load in
+Release it measured 10,632 bytes against its 8,000-byte limit; CI and isolated runs passed.
+
+The 10,632 bytes are the usual 344-byte start plus the two `ArrayPool.Shared` arrays that
+`RunStandaloneBatchAsync` rents for 100 operations: `ValueTask<RespValue>[128]` (7,192 bytes)
+and `ErrorObservation[128]` (3,096 bytes). Draining both pools before the measured start
+reproduced exactly 10,632 bytes. The arrays are rented on the starting thread and returned
+on the completing thread. `ArrayPool.Shared` serves a per-thread slot first, then per-core
+stacks, and gen-2 GCs (including the no-GC region's) can trim both under memory pressure.
+A hit therefore depends on which threads ran earlier batches and on machine memory load.
+
+Two more per-thread or per-process effects appeared in isolated runs:
+
+- The first command serialized on a thread creates the thread-static 4 KiB scratch buffer
+  (4,216 bytes).
+- At tier 0, `MutationCommand<T>` forwards `ValidateAdmission`, `OnAccepted` and
+  `GetResponseCancellationToken` to `IRespCommand` default interface methods. Each call
+  boxes the struct command (136 bytes for `IncrementCommand`), so 100 operations
+  allocated 40,800 bytes more. `DOTNET_TC_CallCounting=0` reproduced this on every run.
+  Optimized code does not box. Tier promotion depends on other JIT activity in the
+  process, so a fixed warmup cannot guarantee it.
+
+The test now measures in a child process with `DOTNET_TieredCompilation=0`, like the
+other dispatch probes. Before the counter starts, it rents and returns both arrays and
+creates the scratch buffer on the measuring thread. The positive control allocates one
+real `Task<long>` per operation. It must reach the 4,096-byte limit and add at least
+64 bytes per operation. The old 8,000-byte limit could not catch that: 100 plain Tasks
+plus the 344-byte start measured 7,544 bytes. In 20 direct child runs, the start measured
+344 bytes every time. The product code is unchanged.
