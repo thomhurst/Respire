@@ -106,11 +106,15 @@ public class InflightRingOrderingTests
     }
 
     [Test]
-    [Arguments(1)]
-    [Arguments(2)]
-    [Arguments(8)]
-    [Arguments(256)]
-    public async Task ConcurrentPublicationPreservesSourcesOffsetsAndDiscardMetadata(int capacity)
+    [Arguments(1, false)]
+    [Arguments(1, true)]
+    [Arguments(2, false)]
+    [Arguments(2, true)]
+    [Arguments(8, false)]
+    [Arguments(8, true)]
+    [Arguments(256, false)]
+    [Arguments(256, true)]
+    public async Task ConcurrentPublicationPreservesSourcesOffsetsAndDiscardMetadata(int capacity, bool peekBeforeDequeue)
     {
         const int count = 50_000;
         var ring = new InflightRing(capacity);
@@ -143,17 +147,28 @@ public class InflightRingOrderingTests
                 PendingResponse source;
                 string? operation;
                 int retryAttempts;
-                while (!ring.TryPeekConsumer(out source))
+                if (peekBeforeDequeue)
                 {
-                    token.ThrowIfCancellationRequested();
-                    spin.SpinOnce(sleep1Threshold: -1);
+                    PendingResponse peeked;
+                    while (!ring.TryPeekConsumer(out peeked))
+                    {
+                        token.ThrowIfCancellationRequested();
+                        spin.SpinOnce(sleep1Threshold: -1);
+                    }
+                    if (!ring.TryDequeue(out source, out operation, out retryAttempts)
+                        || !ReferenceEquals(source, peeked))
+                    {
+                        cancellation.Cancel();
+                        throw new InvalidOperationException($"Published reply disappeared at {i}.");
+                    }
                 }
-                var peeked = source;
-                if (!ring.TryDequeue(out source, out operation, out retryAttempts)
-                    || !ReferenceEquals(source, peeked))
+                else
                 {
-                    cancellation.Cancel();
-                    throw new InvalidOperationException($"Published reply disappeared at {i}.");
+                    while (!ring.TryDequeue(out source, out operation, out retryAttempts))
+                    {
+                        token.ThrowIfCancellationRequested();
+                        spin.SpinOnce(sleep1Threshold: -1);
+                    }
                 }
                 spin.Reset();
                 var expected = i % 3 == 0 ? InflightRing.DiscardSentinel : sources[i % sources.Length];
