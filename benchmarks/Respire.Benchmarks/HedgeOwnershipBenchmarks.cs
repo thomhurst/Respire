@@ -45,6 +45,7 @@ public class HedgeOwnershipBenchmarks
         _hedgeWins = Bind(pending, completed, alternative);
         foreach (var resolve in new[] { _single, _originalWins, _hedgeWins })
         {
+            _caller.Observation.SetAttempts(0);
             _ = await resolve();
             if (_caller.Observation.Attempts != Attempts * 2)
                 throw new InvalidOperationException("Hedge handoff lost the caller or result-leg retry count.");

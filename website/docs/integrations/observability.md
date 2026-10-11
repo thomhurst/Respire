@@ -561,7 +561,8 @@ failure; the caller independently owns the final failure.
 SCRIPT and FUNCTION primary fan-outs share one caller observation across their
 target retries. They join every accepted target, reply conversion, and cleanup before
 publishing one final failure. Sequential DBSIZE and flush fan-outs also retain their
-caller count across targets. Successful targets do not add retries. These joined
+caller count across targets. Success itself adds no retry, but retries before a target
+succeeds still count. These joined
 targets do not become independent final owners.
 
 Explicit node-result fan-outs use an independent owner for each endpoint through
