@@ -26,8 +26,9 @@ internal sealed class InflightRing
     private readonly int _mask;
     private Positions _positions;
 #if DEBUG
-    // Capacity-hint traffic only; diagnostics and exact idle observations are independent.
+    // Cache refresh evidence only; diagnostics and exact idle observations are independent.
     internal int CapacitySnapshotHeadReadsForTests;
+    internal int ConsumerTailReadsForTests;
 #endif
 
     // The regions need not start on a cache-line boundary: 128 bytes between the
@@ -39,6 +40,7 @@ internal sealed class InflightRing
         [FieldOffset(8)] internal long CachedHead;
         [FieldOffset(144)] internal long Head;
         [FieldOffset(152)] internal long CompletedWriteEnd;
+        [FieldOffset(160)] internal long CachedTail;
     }
 
     public InflightRing(int capacity)
@@ -140,8 +142,8 @@ internal sealed class InflightRing
     internal bool TryDequeue(out PendingResponse source, out string? discardedOperation)
         => TryDequeue(out source, out discardedOperation, out _);
 
-    /// <summary>Consumer only. Returns the head source without consuming it, so the receive
-    /// loop can choose a specialized completion path before dequeuing.</summary>
+    /// <summary>Returns the head source without consuming it or mutating the consumer cache.
+    /// Inspection retains an exact publication read; the receive loop uses TryPeekConsumer.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryPeek(out PendingResponse source)
     {
@@ -237,12 +239,41 @@ internal sealed class InflightRing
         return next;
     }
 
+    // The acquire read publishes every slot before the observed tail. A single consumer
+    // can use those slots without rereading the producer's cache line until it drains them.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool HasPublishedReply(long head)
+    {
+        if (head != _positions.CachedTail) return true;
+#if DEBUG
+        ConsumerTailReadsForTests++;
+#endif
+        var tail = Volatile.Read(ref _positions.Tail);
+        _positions.CachedTail = tail;
+        return head != tail;
+    }
+
+    /// <summary>Receive-loop only. Reuses the acquired publication snapshot for subsequent dequeues.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal bool TryPeekConsumer(out PendingResponse source)
+    {
+        var head = _positions.Head;
+        if (!HasPublishedReply(head))
+        {
+            source = null!;
+            return false;
+        }
+
+        source = _slots[head & _mask].Source!;
+        return true;
+    }
+
     /// <summary>Consumer only (receive loop, or the fail-all drain after the loop exits).</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryDequeue(out PendingResponse source)
     {
         var head = _positions.Head;
-        if (Volatile.Read(ref _positions.Tail) == head)
+        if (!HasPublishedReply(head))
         {
             source = null!;
             return false;
@@ -265,7 +296,7 @@ internal sealed class InflightRing
         var head = _positions.Head;
         discardedOperation = null;
         retryAttempts = 0;
-        if (Volatile.Read(ref _positions.Tail) == head)
+        if (!HasPublishedReply(head))
         {
             source = null!;
             return false;

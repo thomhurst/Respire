@@ -2739,7 +2739,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
                         if (hasBulkHeader
                             && bulkType == RespDataType.BulkString
-                            && _inflight.TryPeek(out var pending)
+                            && _inflight.TryPeekConsumer(out var pending)
                             && pending is BulkStreamPendingResponseSource streamSource
                             && streamSource.IsFinalReply)
                         {
@@ -2860,7 +2860,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                             // Only a top-level bulk string belongs to the FIFO head. Nested values,
                             // pushes, attributes, and errors must retain their normal parser semantics.
                             var responseSource = parser.IsIdle && directFill.Type == RespDataType.BulkString
-                                && _inflight.TryPeek(out var directHead) ? directHead : null;
+                                && _inflight.TryPeekConsumer(out var directHead) ? directHead : null;
                             var filled = await ReceiveLargeBulkAsync(
                                     receiveBuffer, start, end, directFill.Type, directFill.PayloadLength, responseSource)
                                 .ConfigureAwait(false);
@@ -3360,7 +3360,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     {
         frameEnd = 0;
         if (type != RespDataType.BulkString
-            || !_inflight.TryPeek(out var head)
+            || !_inflight.TryPeekConsumer(out var head)
             || head is not StringPendingResponseSource source)
         {
             return false;
