@@ -171,14 +171,14 @@ internal sealed class ClientCore : IAsyncDisposable
         if (Sentinel is not null) return EnsureSentinelConnectedAsync(cancellationToken, observation);
         if (Cluster is { } cluster) return cluster.EnsureConnectedAsync(cancellationToken, discovery: null, observation);
         // A caller that is already cancelled never dials, so its failure names no node.
-        if (!cancellationToken.IsCancellationRequested) observation.UseEndpoint(Multiplexer.ActiveConnectionEndpoint);
+        observation.UseEndpoint(Multiplexer.ActiveConnectionEndpoint, cancellationToken);
         return Multiplexer.EnsureConnectedAsync(cancellationToken, observeEstablishmentErrors: false);
     }
 
     private async ValueTask EnsureSentinelConnectedAsync(CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         var generation = await Sentinel!.GetGenerationAsync(cancellationToken, observation: observation).ConfigureAwait(false);
-        observation.UseEndpoint(generation.Multiplexer.ActiveConnectionEndpoint);
+        observation.UseEndpoint(generation.Multiplexer.ActiveConnectionEndpoint, cancellationToken);
     }
 
     internal async ValueTask<DedicatedConnectionPool> GetDedicatedPoolAsync(CancellationToken cancellationToken,

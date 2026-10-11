@@ -180,6 +180,13 @@ internal static partial class RespireTelemetry
             }
         }
 
+        /// <summary>
+        /// Records the node an attempt is about to contact. Cancellation observed before dispatch
+        /// means nothing reaches Redis, so it clears the endpoint instead of naming a node.
+        /// </summary>
+        internal void UseEndpoint(RespireEndpoint? endpoint, CancellationToken cancellationToken)
+            => UseEndpoint(cancellationToken.IsCancellationRequested ? null : endpoint);
+
         internal void UseEndpoint(RespireEndpoint? endpoint)
         {
             if (_dispatch is not null) { _dispatch.UseEndpoint(_generation, endpoint); return; }

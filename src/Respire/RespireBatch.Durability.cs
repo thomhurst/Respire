@@ -102,18 +102,21 @@ public sealed partial class RespireBatch
         Exception? operationError = null;
         var cache = core.ClientCache;
         var mutationFence = cache is null ? default : cache.BeginUnknownMutation();
+        // Pool selection and rental record the attempted node on the first queued owner;
+        // ShareEndpoint copies it to the others before their failures are published.
+        var observation = _ops.Count == 0 ? default : _ops[0].Observation;
         try
         {
             foreach (var op in _ops) op.MutationFence = mutationFence;
             pool = core.Cluster is { } cluster
-                ? await cluster.GetDedicatedPoolAsync(slot, cancellationToken, discovery: null, observation: default).ConfigureAwait(false)
-                : await core.GetDedicatedPoolAsync(cancellationToken, observation: default).ConfigureAwait(false);
+                ? await cluster.GetDedicatedPoolAsync(slot, cancellationToken, discovery: null, observation).ConfigureAwait(false)
+                : await core.GetDedicatedPoolAsync(cancellationToken, observation).ConfigureAwait(false);
             // WAIT uses connection-local replication history, including when this batch only reads.
             if (core.Cluster is { } router)
                 (pool, connection) = await router.RentDedicatedConnectionAsync(
-                    pool, slot, cancellationToken, discovery: null, reuseIdle: false, observation: default).ConfigureAwait(false);
+                    pool, slot, cancellationToken, discovery: null, observation, reuseIdle: false).ConfigureAwait(false);
             else
-                (pool, connection) = await core.RentDedicatedConnectionAsync(pool, cancellationToken, observation: default, reuseIdle: false).ConfigureAwait(false);
+                (pool, connection) = await core.RentDedicatedConnectionAsync(pool, cancellationToken, observation, reuseIdle: false).ConfigureAwait(false);
             telemetry = RespireTelemetry.StartBatchOperation(
                 operation, _ops, static op => op.Operation,
                 connection.Host, connection.Port, core.Options.Database, out telemetryOperation, started);
@@ -159,6 +162,7 @@ public sealed partial class RespireBatch
             finally
             {
                 cache?.CompleteMutation(in mutationFence);
+                DeferredOperation.ShareEndpoint(_ops, observation);
                 var pendingErrors = DeferredOperation.ReportErrors(_ops) != 0;
                 if (operationError is not null && !pendingErrors)
                     ErrorObservation.FinishFinal(default, operationError);

@@ -165,7 +165,7 @@ internal sealed partial class ClusterRouter
                 attempted++;
                 try
                 {
-                    observation.UseEndpoint(node.ActiveConnectionEndpoint);
+                    observation.UseEndpoint(node.ActiveConnectionEndpoint, cancellationToken);
                     await EnsureRouteNodeConnectedAsync(node, cancellationToken, discovery).ConfigureAwait(false);
                     if (node.IsRetired) continue;
                     // Healthy reads do not redirect; background revalidation discovers promotions.

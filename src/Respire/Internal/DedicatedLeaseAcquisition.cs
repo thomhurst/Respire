@@ -63,7 +63,7 @@ internal static class DedicatedLeaseAcquisition
                 route.ThrowIfDisposed();
                 // A failed private handshake belongs to the pool being rented, including a
                 // replacement selected after retirement or a rejected read candidate.
-                observation.UseEndpoint(pool.Endpoint);
+                observation.UseEndpoint(pool.Endpoint, cancellationToken);
                 try
                 {
                     // A stale selection must reselect before consulting the old endpoint's history.

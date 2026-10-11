@@ -54,6 +54,60 @@ public partial class ErrorMetricsTests
     }
 
     [Test]
+    [Arguments("transaction")]
+    [Arguments("durability")]
+    public async Task QueuedCommandsShareTheAttemptedEndpoint(string route)
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+            Endpoints = [new("127.0.0.1", port)], ConnectTimeout = TimeSpan.FromSeconds(2),
+        });
+        using var capture = new Capture();
+        if (route == "transaction")
+        {
+            await using var transaction = client.CreateTransaction();
+            var first = transaction.Set("first", "1");
+            var second = transaction.Set("second", "2");
+            await Assert.That(async () => await transaction.CommitAsync()).Throws<Exception>();
+            await Assert.That(async () => await first).Throws<Exception>();
+            await Assert.That(async () => await second).Throws<Exception>();
+        }
+        else
+        {
+            using var batch = client.CreateBatch();
+            var first = batch.Set("first", "1");
+            var second = batch.Set("second", "2");
+            await Assert.That(async () => await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.FromSeconds(1)))
+                .Throws<Exception>();
+            await Assert.That(async () => await first).Throws<Exception>();
+            await Assert.That(async () => await second).Throws<Exception>();
+        }
+        var finals = capture.Items.Where(item => !(bool)item.Tags["redis.client.errors.internal"]!).ToArray();
+        await Assert.That(finals.Length).IsGreaterThanOrEqualTo(2);
+        foreach (var item in finals) await Assert.That(item.Tags["server.port"]).IsEqualTo(port);
+    }
+
+    [Test]
+    public async Task CancelledReadyRequestNamesNoNode()
+    {
+        using var caller = RespireTelemetry.ErrorObservation.Rent(force: true);
+        using var cancelled = new CancellationTokenSource();
+        caller.UseEndpoint(new("selected.example", 6380));
+        // Cancellation observed before dispatch clears any routing selection.
+        cancelled.Cancel();
+        caller.UseEndpoint(new("primary.example", 6381), cancelled.Token);
+        await Assert.That(caller.Endpoint).IsNull();
+        caller.UseEndpoint(new("primary.example", 6381), CancellationToken.None);
+        await Assert.That(caller.Endpoint).IsEqualTo(new RespireEndpoint("primary.example", 6381));
+    }
+
+    [Test]
     public async Task HedgeLegWithoutEndpointClearsTheCallersSelection()
     {
         using var caller = RespireTelemetry.ErrorObservation.Rent(force: true);

@@ -90,7 +90,7 @@ internal sealed partial class ClusterRouter
                 if (node.IsRetired || excluded?.Contains(node) == true || !sampler.CanConnect(node)) continue;
                 try
                 {
-                    observation.UseEndpoint(node.ActiveConnectionEndpoint);
+                    observation.UseEndpoint(node.ActiveConnectionEndpoint, cancellationToken);
                     await EnsureRouteNodeConnectedAsync(node, cancellationToken, discovery).ConfigureAwait(false);
                     if (node.IsRetired) continue;
                     sampler.ConnectionSucceeded(node);

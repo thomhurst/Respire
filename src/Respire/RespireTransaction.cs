@@ -471,6 +471,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             finally
             {
                 var attempts = observation.Attempts;
+                DeferredOperation.ShareEndpoint(_ops, observation);
                 var pendingErrors = DeferredOperation.ReportErrors(_ops, attempts) != 0;
                 if (operationError is not null && !pendingErrors)
                     ErrorObservation.FinishFinal(default, operationError, retryAttempts: attempts);

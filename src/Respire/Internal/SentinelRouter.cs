@@ -125,7 +125,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
         // is still the elected primary; discovery and ROLE validation select a new generation.
         if (!forceDiscovery && Current is { IsRetired: false } current && current.Multiplexer.IsConnected)
         {
-            observation.UseEndpoint(current.Multiplexer.ActiveConnectionEndpoint);
+            observation.UseEndpoint(current.Multiplexer.ActiveConnectionEndpoint, cancellationToken);
             return current;
         }
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
@@ -143,7 +143,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
                     && startup.ReportingSentinel is { } reporter
                     && !Monitoring.NeedsStartupValidation(reporter, startup.StartupSubscriptionVersion)))
             {
-                observation.UseEndpoint(previous.Multiplexer.ActiveConnectionEndpoint);
+                observation.UseEndpoint(previous.Multiplexer.ActiveConnectionEndpoint, cancellationToken);
                 return previous;
             }
             var subscriptionVersion = Monitoring.SubscriptionVersion;
@@ -178,7 +178,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
                         throw new RespireConnectionException("Sentinel primary changed while it was being revalidated.");
                     if (acceptedReporter is { } validatedReporter) Monitoring.Validated(validatedReporter, subscriptionVersion);
                 }
-                observation.UseEndpoint(replacement.Multiplexer.ActiveConnectionEndpoint);
+                observation.UseEndpoint(replacement.Multiplexer.ActiveConnectionEndpoint, cancellationToken);
                 return replacement;
             }
             unpublished = replacement;
@@ -196,7 +196,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
                     && old.Multiplexer.AllCurrentPeersMatch(replacementPeer.Host, replacementPeer.Port))
                 {
                     if (acceptedReporter is { } validatedReporter) Monitoring.Validated(validatedReporter, subscriptionVersion);
-                    observation.UseEndpoint(old.Multiplexer.ActiveConnectionEndpoint);
+                    observation.UseEndpoint(old.Multiplexer.ActiveConnectionEndpoint, cancellationToken);
                     return old;
                 }
                 if (old is not null) Invalidate(old);
@@ -212,7 +212,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
                 Monitoring.Published();
                 if (acceptedReporter is { } publishedReporter) Monitoring.Validated(publishedReporter, subscriptionVersion);
             }
-            observation.UseEndpoint(replacement.Multiplexer.ActiveConnectionEndpoint);
+            observation.UseEndpoint(replacement.Multiplexer.ActiveConnectionEndpoint, cancellationToken);
             return replacement;
         }
         catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(
@@ -284,7 +284,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
         if (current.IsRetired || !current.Multiplexer.IsConnected
             || !sameEndpointWithoutAddresses && !samePeer)
             return await ConnectGenerationAsync(options, hint, cancellationToken, observeEstablishmentErrors, observation).ConfigureAwait(false);
-        observation.UseEndpoint(current.Multiplexer.ActiveConnectionEndpoint);
+        observation.UseEndpoint(current.Multiplexer.ActiveConnectionEndpoint, cancellationToken);
         await current.ValidateAsync(current.Multiplexer.GetConnection(), cancellationToken).ConfigureAwait(false);
         ValidateSwitchTargetPeer(current, hint);
         return current;
@@ -308,7 +308,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
     {
         var generation = new Generation(this, core, options);
         // The resolved primary is known before its handshake; a refused connection names it.
-        observation.UseEndpoint(generation.Multiplexer.ActiveConnectionEndpoint);
+        observation.UseEndpoint(generation.Multiplexer.ActiveConnectionEndpoint, cancellationToken);
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);

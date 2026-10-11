@@ -369,7 +369,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 if (discovery?.HasRejected(node) == true) continue;
                 if (discovery is not null) await discovery.BeforeCandidateAsync(endpoint, cancellationToken).ConfigureAwait(false);
                 // A cold route's failure names the seed it last dialled, not an earlier cached owner.
-                observation.UseEndpoint(node.ActiveConnectionEndpoint);
+                observation.UseEndpoint(node.ActiveConnectionEndpoint, cancellationToken);
                 try
                 {
                     // Candidate scheduling and failure accounting belong to this seed loop.
@@ -471,7 +471,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         if (slot is null && TryGetConnectedNode() is { } connectedNode)
         {
             if (discovery is not null) await discovery.BeforeCandidateAsync(Endpoint(connectedNode), cancellationToken).ConfigureAwait(false);
-            observation.UseEndpoint(connectedNode.ActiveConnectionEndpoint);
+            observation.UseEndpoint(connectedNode.ActiveConnectionEndpoint, cancellationToken);
             return connectedNode.GetConnection();
         }
 
@@ -484,7 +484,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 if (discovery?.HasRejected(master) == true) continue;
                 try
                 {
-                    observation.UseEndpoint(master.ActiveConnectionEndpoint);
+                    observation.UseEndpoint(master.ActiveConnectionEndpoint, cancellationToken);
                     await EnsureRouteNodeConnectedAsync(master, cancellationToken, discovery).ConfigureAwait(false);
                     return master.GetConnection();
                 }
@@ -500,7 +500,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         {
             try
             {
-                observation.UseEndpoint(cachedNode.ActiveConnectionEndpoint);
+                observation.UseEndpoint(cachedNode.ActiveConnectionEndpoint, cancellationToken);
                 await EnsureRouteNodeConnectedAsync(cachedNode, cancellationToken, discovery).ConfigureAwait(false);
                 return cachedNode.GetConnection(cachedSlot);
             }
@@ -517,14 +517,14 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             && await TryRefreshSlotThroughKnownMastersAsync(refreshSlot, failedOwner, cancellationToken, discovery).ConfigureAwait(false)
                 is { } refreshedNode)
         {
-            observation.UseEndpoint(refreshedNode.ActiveConnectionEndpoint);
+            observation.UseEndpoint(refreshedNode.ActiveConnectionEndpoint, cancellationToken);
             return refreshedNode.GetConnection(refreshSlot);
         }
 
         await EnsureConnectedAsync(cancellationToken, discovery, observation).ConfigureAwait(false);
         var node = slot is { } value ? RoutingSnapshot[value].Primary : null;
         node ??= Volatile.Read(ref _seed)!;
-        observation.UseEndpoint(node.ActiveConnectionEndpoint);
+        observation.UseEndpoint(node.ActiveConnectionEndpoint, cancellationToken);
         await EnsureRouteNodeConnectedAsync(node, cancellationToken, discovery).ConfigureAwait(false);
         return slot is { } affinity ? node.GetConnection(affinity) : node.GetConnection();
     }
@@ -605,7 +605,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 cancellationToken.ThrowIfCancellationRequested();
                 if (error.Code == RespireErrorCodes.Moved) SignalMovedTopologyRefresh();
                 var node = GetOrCreateNode(endpoint, observe: error.Code != "ASK", redirect: true);
-                observation.UseEndpoint(endpoint);
+                observation.UseEndpoint(endpoint, cancellationToken);
                 try
                 {
                     await EnsureRouteNodeConnectedAsync(node, cancellationToken, discovery).ConfigureAwait(false);
@@ -668,7 +668,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                     else
                     {
                         node = GetOrCreateNode(new(endpointSource.Host, endpointSource.Port), observe: false, redirect: true);
-                        observation.UseEndpoint(node.ActiveConnectionEndpoint);
+                        observation.UseEndpoint(node.ActiveConnectionEndpoint, cancellationToken);
                         await EnsureRouteNodeConnectedAsync(node, cancellationToken, discovery).ConfigureAwait(false);
                         connection = slot is { } value ? node.GetConnection(value) : node.GetConnection();
                     }
@@ -790,7 +790,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         {
             try
             {
-                observation.UseEndpoint(cachedNode.ActiveConnectionEndpoint);
+                observation.UseEndpoint(cachedNode.ActiveConnectionEndpoint, cancellationToken);
                 await EnsureRouteNodeConnectedAsync(cachedNode, cancellationToken, discovery).ConfigureAwait(false);
                 return GetOrCreateDedicatedPool(new RespireEndpoint(cachedNode.Host, cachedNode.Port));
             }
@@ -807,14 +807,14 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             && await TryRefreshSlotThroughKnownMastersAsync(refreshSlot, failedOwner, cancellationToken, discovery).ConfigureAwait(false)
                 is { } refreshedNode)
         {
-            observation.UseEndpoint(refreshedNode.ActiveConnectionEndpoint);
+            observation.UseEndpoint(refreshedNode.ActiveConnectionEndpoint, cancellationToken);
             return GetOrCreateDedicatedPool(new RespireEndpoint(refreshedNode.Host, refreshedNode.Port));
         }
 
         await EnsureConnectedAsync(cancellationToken, discovery, observation).ConfigureAwait(false);
         var node = slot is { } value ? RoutingSnapshot[value].Primary : null;
         node ??= Volatile.Read(ref _seed)!;
-        observation.UseEndpoint(node.ActiveConnectionEndpoint);
+        observation.UseEndpoint(node.ActiveConnectionEndpoint, cancellationToken);
         await EnsureRouteNodeConnectedAsync(node, cancellationToken, discovery).ConfigureAwait(false);
         return GetOrCreateDedicatedPool(new RespireEndpoint(node.Host, node.Port));
     }
@@ -852,7 +852,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 cancellationToken.ThrowIfCancellationRequested();
                 if (error.Code == RespireErrorCodes.Moved) SignalMovedTopologyRefresh();
                 var node = GetOrCreateNode(endpoint, observe: error.Code != "ASK", redirect: true);
-                observation.UseEndpoint(endpoint);
+                observation.UseEndpoint(endpoint, cancellationToken);
                 try
                 {
                     await EnsureRouteNodeConnectedAsync(node, cancellationToken, discovery).ConfigureAwait(false);
@@ -1450,7 +1450,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             && discovery?.HasRejected(seed) != true)
         {
             attemptedSeed = seed;
-            observation.UseEndpoint(seed.ActiveConnectionEndpoint);
+            observation.UseEndpoint(seed.ActiveConnectionEndpoint, cancellationToken);
             refreshed = await TryRefreshTopologyAsync(seed, cancellationToken, discovery, expectedTopologyVersion,
                     snapshotBatch)
                 .ConfigureAwait(false);
@@ -1463,7 +1463,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 // The connected seed is also a known master. Its failed query has already
                 // seeded the round; reserve the fallback budget for a different candidate.
                 if (ReferenceEquals(master, attemptedSeed) || discovery?.HasRejected(master) == true) continue;
-                observation.UseEndpoint(master.ActiveConnectionEndpoint);
+                observation.UseEndpoint(master.ActiveConnectionEndpoint, cancellationToken);
                 if (await TryRefreshTopologyAsync(master, cancellationToken, discovery, expectedTopologyVersion,
                         snapshotBatch)
                     .ConfigureAwait(false))
@@ -1480,7 +1480,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             // Cold cluster-wide discovery names the seed it dials, as single-slot routing does.
             await EnsureConnectedAsync(cancellationToken, discovery, observation).ConfigureAwait(false);
             var fallbackSeed = Volatile.Read(ref _seed)!;
-            observation.UseEndpoint(fallbackSeed.ActiveConnectionEndpoint);
+            observation.UseEndpoint(fallbackSeed.ActiveConnectionEndpoint, cancellationToken);
             await EnsureRouteNodeConnectedAsync(fallbackSeed, cancellationToken, discovery).ConfigureAwait(false);
             var loaded = (await TryLoadSlotsAsync(fallbackSeed, cancellationToken,
                 expectedTopologyVersion: expectedTopologyVersion, snapshotBatch: snapshotBatch).ConfigureAwait(false)).Loaded;
@@ -1505,7 +1505,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             // TryLoadSlotsAsync replaces stale owners after a successful refresh. Any owner
             // still present is current; omitting it would make SCAN and cluster-wide server
             // commands silently return incomplete results.
-            observation.UseEndpoint(master.ActiveConnectionEndpoint);
+            observation.UseEndpoint(master.ActiveConnectionEndpoint, cancellationToken);
             await EnsureRouteNodeConnectedAsync(master, cancellationToken, discovery).ConfigureAwait(false);
             connections[index++] = master.GetConnection();
         }

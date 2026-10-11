@@ -320,7 +320,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             }
             try
             {
-                observation.UseEndpoint(replica.Endpoint);
+                observation.UseEndpoint(replica.Endpoint, cancellationToken);
                 var lease = await replica.RentDedicatedConnectionAsync(cancellationToken, preferredZone).ConfigureAwait(false);
                 return (lease.Pool, lease.Connection, true);
             }
@@ -352,7 +352,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             ObjectDisposedException.ThrowIf(core.Disposed, core);
             cancellationToken.ThrowIfCancellationRequested();
             attempt?.ThrowIfFailed(pool.Endpoint);
-            observation.UseEndpoint(pool.Endpoint);
+            observation.UseEndpoint(pool.Endpoint, cancellationToken);
             var connection = await pool.RentAsync(cancellationToken, preferredZone: preferredZone).ConfigureAwait(false);
             return new(pool, connection, null);
         }
@@ -456,11 +456,11 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         cancellationToken.ThrowIfCancellationRequested();
         // Never keep an earlier replica's endpoint for a primary failure. Sentinel resolves the
         // primary inside EnsureConnectedAsync, so until then this attempt names no data node.
-        observation.UseEndpoint(core.Sentinel is null ? core.Multiplexer.ActiveConnectionEndpoint : (RespireEndpoint?)null);
+        observation.UseEndpoint(core.Sentinel is null ? core.Multiplexer.ActiveConnectionEndpoint : (RespireEndpoint?)null, cancellationToken);
         attempt?.ThrowIfFailed(core.Multiplexer.ActiveConnectionEndpoint);
         await core.EnsureConnectedAsync(cancellationToken, observation).ConfigureAwait(false);
         var multiplexer = core.Multiplexer;
-        observation.UseEndpoint(multiplexer.ActiveConnectionEndpoint);
+        observation.UseEndpoint(multiplexer.ActiveConnectionEndpoint, cancellationToken);
         attempt?.ThrowIfFailed(multiplexer.ActiveConnectionEndpoint);
         return new Selection(preferredZone is null ? multiplexer.GetConnection() : multiplexer.GetConnectionForZone(preferredZone),
             null, multiplexer);
@@ -518,7 +518,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 // A failed replica remains in cooldown so it cannot add a timeout to every read.
                 if (entry.IsCoolingDown) continue;
                 attempted = true;
-                observation.UseEndpoint(endpoint);
+                observation.UseEndpoint(endpoint, cancellationToken);
                 try
                 {
                     var selection = new Selection(await entry.GetConnectionAsync(cancellationToken,

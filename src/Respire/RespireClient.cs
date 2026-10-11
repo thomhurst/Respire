@@ -2437,7 +2437,7 @@ public sealed partial class RespireClient : IRespireClient
         for (var attempt = 0; ; attempt++)
         {
             if (!cancellationToken.IsCancellationRequested && core.Sentinel is null)
-                observation.UseEndpoint(core.Multiplexer.ActiveConnectionEndpoint);
+                observation.UseEndpoint(core.Multiplexer.ActiveConnectionEndpoint, cancellationToken);
             await core.EnsureConnectedAsync(cancellationToken, observation).ConfigureAwait(false);
             try
             {
@@ -2949,7 +2949,7 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         if (!cancellationToken.IsCancellationRequested && core.Sentinel is null)
-            observation.UseEndpoint(core.Multiplexer.ActiveConnectionEndpoint);
+            observation.UseEndpoint(core.Multiplexer.ActiveConnectionEndpoint, cancellationToken);
         await core.EnsureConnectedAsync(cancellationToken, observation).ConfigureAwait(false);
         var connection = GetCircuitAwareConnection(core.Multiplexer, cancellationToken);
         return await SendOnConnectionAsync(operation, connection, command, cancellationToken, observation: observation)
@@ -3004,7 +3004,7 @@ public sealed partial class RespireClient : IRespireClient
                 else
                 {
                     if (!cancellationToken.IsCancellationRequested && core.Sentinel is null)
-                        observation.UseEndpoint(core.Multiplexer.ActiveConnectionEndpoint);
+                        observation.UseEndpoint(core.Multiplexer.ActiveConnectionEndpoint, cancellationToken);
                     await core.EnsureConnectedAsync(cancellationToken, observation).ConfigureAwait(false);
                     connection = GetCircuitAwareConnection(core.Multiplexer, cancellationToken);
                 }
@@ -3453,7 +3453,7 @@ public sealed partial class RespireClient : IRespireClient
             }
 
             if (!cancellationToken.IsCancellationRequested && core.Sentinel is null)
-                observation.UseEndpoint(core.Multiplexer.ActiveConnectionEndpoint);
+                observation.UseEndpoint(core.Multiplexer.ActiveConnectionEndpoint, cancellationToken);
             await core.EnsureConnectedAsync(cancellationToken, observation).ConfigureAwait(false);
             var connection = GetCircuitAwareConnection(core.Multiplexer, cancellationToken);
             if (RespireCommand.MayCloseWithoutReply(operation))
@@ -3568,7 +3568,7 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         if (!cancellationToken.IsCancellationRequested && core.Sentinel is null)
-            observation.UseEndpoint(core.Multiplexer.ActiveConnectionEndpoint);
+            observation.UseEndpoint(core.Multiplexer.ActiveConnectionEndpoint, cancellationToken);
         await core.EnsureConnectedAsync(cancellationToken, observation).ConfigureAwait(false);
         var connection = GetCircuitAwareConnection(core.Multiplexer, cancellationToken);
         await SendFireAndForgetOnConnectionAsync(
@@ -4869,7 +4869,7 @@ public sealed partial class RespireClient : IRespireClient
             else
             {
                 if (!cancellationToken.IsCancellationRequested && core.Sentinel is null)
-                    observation.UseEndpoint(core.Multiplexer.ActiveConnectionEndpoint);
+                    observation.UseEndpoint(core.Multiplexer.ActiveConnectionEndpoint, cancellationToken);
                 await core.EnsureConnectedAsync(cancellationToken, observation).ConfigureAwait(false);
                 connection = GetCircuitAwareConnection(core.Multiplexer, cancellationToken);
             }

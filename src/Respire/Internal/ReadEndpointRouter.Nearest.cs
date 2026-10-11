@@ -65,6 +65,7 @@ internal sealed partial class ReadEndpointRouter
                 if (attempt?.ContainsFailure(endpoints[index - 1]) == true) continue;
                 var entry = await GetCurrentReplicaEntryAsync(endpoints[index - 1]).ConfigureAwait(false);
                 if (entry is null || entry.IsCoolingDown) continue;
+                observation.UseEndpoint(entry.Endpoint, cancellationToken);
                 try
                 {
                     var connection = await entry.GetNearestConnectionAsync(sampler, cancellationToken).ConfigureAwait(false);
