@@ -54,6 +54,34 @@ public partial class ErrorMetricsTests
     }
 
     [Test]
+    public async Task SentinelPrimaryConnectFailureNamesTheResolvedPrimary()
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        // Sentinel resolves a primary that refuses connections.
+        var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        await using var sentinel = new FakeRespServer(16)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ", StringComparison.Ordinal)
+                ? Encoding.ASCII.GetBytes($"*2\r\n$9\r\n127.0.0.1\r\n${port.ToString().Length}\r\n{port}\r\n")
+                : "*0\r\n"u8.ToArray(),
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "primary",
+            ConnectTimeout = TimeSpan.FromSeconds(2),
+        });
+        using var capture = new Capture();
+        await Assert.That(async () => await client.Strings.GetStringAsync("key")).Throws<Exception>();
+        var final = capture.Items.Single(item => !(bool)item.Tags["redis.client.errors.internal"]!);
+        await Assert.That(final.Tags["server.address"]).IsEqualTo("127.0.0.1");
+        await Assert.That(final.Tags["server.port"]).IsEqualTo(port);
+    }
+
+    [Test]
     [Arguments("function")]
     [Arguments("script")]
     public async Task ParallelFanOutFinalErrorNamesTheFailingLeg(string route)

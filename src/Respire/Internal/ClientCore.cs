@@ -160,6 +160,26 @@ internal sealed class ClientCore : IAsyncDisposable
     private async ValueTask EnsureSentinelConnectedAsync(CancellationToken cancellationToken, bool observeEstablishmentErrors)
         => await Sentinel!.GetGenerationAsync(cancellationToken, observeEstablishmentErrors: observeEstablishmentErrors).ConfigureAwait(false);
 
+    /// <summary>Connects for a logical command owner, recording each data node before it is dialled.</summary>
+    /// <remarks>
+    /// Standalone names its configured or handed-off endpoint. Sentinel leaves the endpoint unset
+    /// while it resolves the primary, records each resolved candidate before connecting it, then
+    /// names the validated generation. Cluster records each seed before dialling it.
+    /// </remarks>
+    internal ValueTask EnsureConnectedAsync(CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+    {
+        if (Sentinel is not null) return EnsureSentinelConnectedAsync(cancellationToken, observation);
+        if (Cluster is { } cluster) return cluster.EnsureConnectedAsync(cancellationToken, discovery: null, observation);
+        observation.UseEndpoint(Multiplexer.ActiveConnectionEndpoint);
+        return Multiplexer.EnsureConnectedAsync(cancellationToken, observeEstablishmentErrors: false);
+    }
+
+    private async ValueTask EnsureSentinelConnectedAsync(CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+    {
+        var generation = await Sentinel!.GetGenerationAsync(cancellationToken, observation: observation).ConfigureAwait(false);
+        observation.UseEndpoint(generation.Multiplexer.ActiveConnectionEndpoint);
+    }
+
     internal async ValueTask<DedicatedConnectionPool> GetDedicatedPoolAsync(CancellationToken cancellationToken)
     {
         if (TestingDedicatedPoolOverride is { } testingPool) return testingPool;

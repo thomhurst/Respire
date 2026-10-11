@@ -396,7 +396,7 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
             var results = await legs.JoinAsync(tasks, observation).ConfigureAwait(false);
             return results.All(static available => available);
         }
-        await client.Core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+        await client.Core.EnsureConnectedAsync(cancellationToken, observation).ConfigureAwait(false);
         return await EnsureOnConnectionAsync(client.Core.Multiplexer.GetConnection(), library, functionName,
             cancellationToken, observation).ConfigureAwait(false);
     }

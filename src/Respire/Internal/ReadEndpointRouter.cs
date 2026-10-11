@@ -457,7 +457,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         // primary inside EnsureConnectedAsync, so until then this attempt names no data node.
         observation.UseEndpoint(core.Sentinel is null ? core.Multiplexer.ActiveConnectionEndpoint : (RespireEndpoint?)null);
         attempt?.ThrowIfFailed(core.Multiplexer.ActiveConnectionEndpoint);
-        await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+        await core.EnsureConnectedAsync(cancellationToken, observation).ConfigureAwait(false);
         var multiplexer = core.Multiplexer;
         observation.UseEndpoint(multiplexer.ActiveConnectionEndpoint);
         attempt?.ThrowIfFailed(multiplexer.ActiveConnectionEndpoint);

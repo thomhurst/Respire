@@ -2438,7 +2438,7 @@ public sealed partial class RespireClient : IRespireClient
         {
             if (!cancellationToken.IsCancellationRequested && core.Sentinel is null)
                 observation.UseEndpoint(core.Multiplexer.ActiveConnectionEndpoint);
-            await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            await core.EnsureConnectedAsync(cancellationToken, observation).ConfigureAwait(false);
             try
             {
                 var connection = GetCircuitAwareConnection(core.Multiplexer, cancellationToken);
@@ -2950,7 +2950,7 @@ public sealed partial class RespireClient : IRespireClient
         var core = _core;
         if (!cancellationToken.IsCancellationRequested && core.Sentinel is null)
             observation.UseEndpoint(core.Multiplexer.ActiveConnectionEndpoint);
-        await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+        await core.EnsureConnectedAsync(cancellationToken, observation).ConfigureAwait(false);
         var connection = GetCircuitAwareConnection(core.Multiplexer, cancellationToken);
         return await SendOnConnectionAsync(operation, connection, command, cancellationToken, observation: observation)
             .ConfigureAwait(false);
@@ -3005,7 +3005,7 @@ public sealed partial class RespireClient : IRespireClient
                 {
                     if (!cancellationToken.IsCancellationRequested && core.Sentinel is null)
                         observation.UseEndpoint(core.Multiplexer.ActiveConnectionEndpoint);
-                    await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+                    await core.EnsureConnectedAsync(cancellationToken, observation).ConfigureAwait(false);
                     connection = GetCircuitAwareConnection(core.Multiplexer, cancellationToken);
                 }
                 return await SendMutationOnConnectionAsync(
@@ -3454,7 +3454,7 @@ public sealed partial class RespireClient : IRespireClient
 
             if (!cancellationToken.IsCancellationRequested && core.Sentinel is null)
                 observation.UseEndpoint(core.Multiplexer.ActiveConnectionEndpoint);
-            await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            await core.EnsureConnectedAsync(cancellationToken, observation).ConfigureAwait(false);
             var connection = GetCircuitAwareConnection(core.Multiplexer, cancellationToken);
             if (RespireCommand.MayCloseWithoutReply(operation))
             {
@@ -3569,7 +3569,7 @@ public sealed partial class RespireClient : IRespireClient
         var core = _core;
         if (!cancellationToken.IsCancellationRequested && core.Sentinel is null)
             observation.UseEndpoint(core.Multiplexer.ActiveConnectionEndpoint);
-        await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+        await core.EnsureConnectedAsync(cancellationToken, observation).ConfigureAwait(false);
         var connection = GetCircuitAwareConnection(core.Multiplexer, cancellationToken);
         await SendFireAndForgetOnConnectionAsync(
                 operation, connection, command, cancellationToken, storedProcedureName, observation)
@@ -3806,7 +3806,7 @@ public sealed partial class RespireClient : IRespireClient
         RespireTelemetry.ErrorObservation observation)
         where TCommand : struct, IRespCommand
     {
-        await _core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+        await _core.EnsureConnectedAsync(cancellationToken, observation).ConfigureAwait(false);
         return await SendBulkStreamOnConnectionAsync(
             operation, GetCircuitAwareConnection(_core.Multiplexer, cancellationToken), command, cancellationToken,
             observation: observation).ConfigureAwait(false);
@@ -4581,12 +4581,8 @@ public sealed partial class RespireClient : IRespireClient
         if (_core.Cluster is { } cluster)
             return await cluster.GetConnectionAsync(slot, cancellationToken, discovery: null, observation).ConfigureAwait(false);
 
-        // Sentinel resolves its primary inside EnsureConnectedAsync; until then no data node is known.
-        observation.UseEndpoint(_core.Sentinel is null ? _core.Multiplexer.ActiveConnectionEndpoint : (RespireEndpoint?)null);
-        await _core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-        var multiplexer = _core.Multiplexer;
-        observation.UseEndpoint(multiplexer.ActiveConnectionEndpoint);
-        return multiplexer.GetConnection();
+        await _core.EnsureConnectedAsync(cancellationToken, observation).ConfigureAwait(false);
+        return _core.Multiplexer.GetConnection();
     }
 
     // Wire-level primitives for the caching package (see InternalsVisibleTo). Keyed operations
@@ -4622,7 +4618,7 @@ public sealed partial class RespireClient : IRespireClient
         }
 
         if (_core.Sentinel is not null)
-            await _core.EnsureConnectedAsync(CancellationToken.None).ConfigureAwait(false);
+            await _core.EnsureConnectedAsync(CancellationToken.None, observation).ConfigureAwait(false);
         var multiplexer = _core.Multiplexer;
         if (multiplexer.IsReliableCorrectionOrderingUnavailable)
         {
@@ -4876,7 +4872,7 @@ public sealed partial class RespireClient : IRespireClient
             {
                 if (!cancellationToken.IsCancellationRequested && core.Sentinel is null)
                     observation.UseEndpoint(core.Multiplexer.ActiveConnectionEndpoint);
-                await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+                await core.EnsureConnectedAsync(cancellationToken, observation).ConfigureAwait(false);
                 connection = GetCircuitAwareConnection(core.Multiplexer, cancellationToken);
             }
             telemetry = RespireTelemetry.StartOperation(script.EvalShaOperation, connection,
@@ -5663,7 +5659,7 @@ public sealed partial class RespireClient : IRespireClient
 
             args.CopyTo(tail, 1 + keys.Length);
             if (core.Sentinel is not null && connectionIdentity.Connection is null)
-                await core.EnsureConnectedAsync(CancellationToken.None).ConfigureAwait(false);
+                await core.EnsureConnectedAsync(CancellationToken.None, observation).ConfigureAwait(false);
             var multiplexer = connectionIdentity.Connection?.Multiplexer;
             if (multiplexer is null)
             {

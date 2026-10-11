@@ -165,7 +165,7 @@ internal sealed class ReadCursorAffinity
         // Without Sentinel the pinned primary is the active endpoint. Sentinel resolution
         // failures name no data node, so they stay untagged.
         var pinned = core.Sentinel is null ? core.Multiplexer.ActiveConnectionEndpoint : (RespireEndpoint?)null;
-        try { await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false); }
+        try { await core.EnsureConnectedAsync(cancellationToken, observation).ConfigureAwait(false); }
         catch (Exception error) when (ReadEndpointRouter.IsUnavailable(error, cancellationToken))
         {
             ReadEndpointRouter.RecordCandidateFailure(observation, error, pinned);
