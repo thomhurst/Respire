@@ -457,6 +457,52 @@ public class ClusterReconnectPolicyTests
     }
 
     [Test]
+    [Arguments("command")]
+    [Arguments("tracked")]
+    [Arguments("dedicated")]
+    public async Task FailedNewAskTargetReportsFailedDiscovery(string path)
+    {
+        // Keep the port reserved without listening so the redirect deterministically fails.
+        using var unavailable = new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.InterNetwork,
+            System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+        unavailable.Bind(new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, 0));
+        var endpoint = new RespireEndpoint("127.0.0.1", ((System.Net.IPEndPoint)unavailable.LocalEndPoint!).Port);
+        await using var seed = new FakeRespServer(FakeRespServer.OkReply, "*0\r\n"u8.ToArray());
+        await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with
+        {
+            ReconnectPolicy = new() { InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30),
+                MaxAttempts = 1, JitterRatio = 0 },
+        });
+        var router = client.Core.Cluster!;
+        var source = await router.GetConnectionAsync(null, default, discovery: null);
+        var terminal = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
+        router.DiscoveryStateChanged += change =>
+        {
+            if (change.Endpoint == endpoint && change.SourceState == RespireConnectionState.Disconnected)
+                terminal.TrySetResult(change);
+        };
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var original = new RespireServerException($"ASK 42 {endpoint.Host}:{endpoint.Port}");
+        var error = await Assert.That(async () =>
+        {
+            switch (path)
+            {
+                case "command": await router.GetRedirectConnectionAsync(original, source, deadline.Token, 42, discovery: null); break;
+                case "tracked": await router.GetTrackedRedirectConnectionAsync(original, source, true, deadline.Token, 42, discovery: null); break;
+                case "dedicated": await router.GetRedirectDedicatedPoolAsync(original, source, deadline.Token, 42, discovery: null); break;
+                default: throw new ArgumentOutOfRangeException(nameof(path));
+            }
+        }).ThrowsExactly<RespireServerException>();
+        await Assert.That(error).IsSameReferenceAs(original);
+        var change = await terminal.Task.WaitAsync(deadline.Token);
+        await Assert.That(change.Error).IsNotNull();
+        await Assert.That(change.ReconnectAttempt).IsEqualTo(1);
+        await Assert.That(change.ReconnectEpisodeId is > 0).IsTrue();
+        await Assert.That(change.NextReconnectDelay).IsNull();
+        await Assert.That(change.ReconnectExhausted).IsFalse();
+    }
+
+    [Test]
     [Arguments("MOVED", "redirect")]
     [Arguments("ASK", "redirect")]
     [Arguments("MOVED", "failure")]

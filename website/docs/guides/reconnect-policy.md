@@ -259,6 +259,10 @@ even with a configured policy or an already connected target. This plain redirec
 not publish a discovery `Reconnecting` event or start a discovery episode. Later redirects
 and candidate failures retain the shared attempt budget and apply policy backoff. READONLY
 still applies policy backoff before its first replacement.
+If the immediate redirect target fails, discovery publishes a terminal `Disconnected`
+event, including for a new ASK target whose physical connection events are not forwarded.
+Sharded subscription activation shares one discovery round across its MOVED/ASK retries,
+so only its first redirect bypasses backoff and later redirects retain the attempt budget.
 If recovery cannot establish a replacement, the original server exception
 is preserved. ASK keeps its temporary target; tracked identity setup and retirement
 reselection share the ongoing round. A command rejected before acceptance by topology

@@ -661,9 +661,14 @@ internal sealed partial class ClusterRouter
 
         private void CompleteFinish()
         {
-            // An immediate redirect does not start a discovery episode. Physical
-            // connection health still reports failures without a scheduled backoff.
-            if (_episode == 0 || Exhaustion is not null || Volatile.Read(ref owner._disposed) != 0) return;
+            if (Exhaustion is not null || Volatile.Read(ref owner._disposed) != 0) return;
+            // Healthy immediate redirects stay silent. A failed target still needs a
+            // terminal event, including ASK targets whose physical events are not observed.
+            if (_episode == 0)
+            {
+                if (_attempts == 0 || TerminalError is null) return;
+                _episode = Interlocked.Increment(ref _nextDiscoveryEpisode);
+            }
             // Pending failure is retry bookkeeping, not the operation's outcome: another
             // caller may have connected the shared seed before we acquired its gate.
             // Owning scopes and command recovery record terminal errors when selection fails.

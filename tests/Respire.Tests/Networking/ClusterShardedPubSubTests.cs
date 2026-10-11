@@ -136,6 +136,58 @@ public class ClusterShardedPubSubTests
     }
 
     [Test]
+    [Arguments(2, "MOVED", false)]
+    [Arguments(3, "MOVED", false)]
+    [Arguments(2, "ASK", false)]
+    [Arguments(3, "ASK", false)]
+    [Arguments(2, "MOVED", true)]
+    [Arguments(3, "MOVED", true)]
+    [Arguments(2, "ASK", true)]
+    [Arguments(3, "ASK", true)]
+    public async Task RepeatedSubscriptionRedirectsShareBackoffAndBudget(int protocol, string code, bool exhaust)
+    {
+        await using var cluster = new Cluster(protocol);
+        cluster.SecondOverride = (_, command) => command == "SSUBSCRIBE foo"
+            ? Encoding.ASCII.GetBytes($"-{code} {ClusterHash.GetSlot("foo")} 127.0.0.1:{cluster.First.Port}\r\n") : null;
+        cluster.FirstOverride = (_, command) => command == "SSUBSCRIBE foo"
+            ? Encoding.ASCII.GetBytes($"-{code} {ClusterHash.GetSlot("foo")} 127.0.0.1:{cluster.Second.Port}\r\n") : null;
+        await using var client = cluster.CreateClient(new()
+        {
+            InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30),
+            JitterRatio = 0, MaxAttempts = exhaust ? 1 : 2,
+        });
+        using var deadline = new CancellationTokenSource(Deadline);
+        await client.Core.Cluster!.EnsureConnectedAsync(deadline.Token, discovery: null);
+        var scheduled = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.ReconnectSource == RespireReconnectSource.ClusterDiscovery
+                && (exhaust ? change.ReconnectExhausted : change.NextReconnectDelay is not null))
+                scheduled.TrySetResult(change);
+        };
+        using var caller = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
+        var pending = client.SubscribeShardedAsync("foo", cancellationToken: caller.Token).AsTask();
+        if (exhaust)
+        {
+            // Redirect discovery preserves the last server rejection for the caller.
+            var rejection = await Assert.That(async () => await pending).ThrowsExactly<RespireServerException>();
+            await Assert.That(rejection!.Code).IsEqualTo(code);
+        }
+        var change = await scheduled.Task.WaitAsync(deadline.Token);
+        await Assert.That(change.ReconnectAttempt).IsEqualTo(exhaust ? 1 : 2);
+        await Assert.That(change.ReconnectEpisodeId is > 0).IsTrue();
+        await Assert.That(cluster.Second.ReceivedCommands.Count(command => command == "SSUBSCRIBE foo")).IsEqualTo(1);
+        await Assert.That(cluster.First.ReceivedCommands.Count(command => command == "SSUBSCRIBE foo")).IsEqualTo(1);
+        if (!exhaust)
+        {
+            await Assert.That(change.NextReconnectDelay).IsEqualTo(TimeSpan.FromSeconds(30));
+            await Assert.That(pending.IsCompleted).IsFalse();
+            await caller.CancelAsync();
+            await Assert.That(async () => await pending).Throws<OperationCanceledException>();
+        }
+    }
+
+    [Test]
     public async Task Resp2AskUsesSeparateConnectionWhenTargetAlreadyHasSubscriptions()
     {
         await using var cluster = new Cluster(2);

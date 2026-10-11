@@ -27,7 +27,7 @@ public sealed record RespireReconnectPolicy
     /// Cluster discovery counts fallbacks after a failed candidate or a rejected route. Successful
     /// required node connections do not consume fallback attempts. New rounds start fresh.
     /// The first MOVED/ASK redirect in a fresh round consumes an attempt without backoff or
-    /// a discovery reconnect event.
+    /// a discovery Reconnecting event. A failed redirect target still publishes Disconnected.
     /// Later redirects and candidate failures apply the shared policy delay.
     /// Pub/sub exhaustion ends live subscriptions and prevents new subscriptions in that group.
     /// Cluster sharded subscriptions use a separate group from regular channel/pattern subscriptions.
