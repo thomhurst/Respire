@@ -561,6 +561,32 @@ public partial class ErrorMetricsTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RemovedReplicaCursorNamesTheIssuingReplica(bool shared)
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        await using var replica = new FakeRespServer(
+            "*5\r\n$5\r\nslave\r\n$9\r\n127.0.0.1\r\n:6379\r\n$9\r\nconnected\r\n:0\r\n"u8.ToArray());
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+        });
+        var router = client.Core.ReadRouter;
+        // An entry the router no longer tracks models a replica removed from the read topology.
+        await using var removed = new ReadEndpointRouter.Entry(new("removed.example", 6390), client.Core, router);
+        var affinity = new ReadAffinity { Replica = removed };
+        if (shared) router.Cursors.PinShared(RespireReadFrom.Replica, affinity);
+        using var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        await Assert.That(async () => await router.GetCursorConnectionAsync(
+                RespireReadFrom.Replica, shared ? null : affinity, isContinuation: true, CancellationToken.None, observation))
+            .Throws<RespireConnectionException>();
+        await Assert.That(observation.Endpoint?.Host).IsEqualTo("removed.example");
+        await Assert.That(observation.Endpoint?.Port).IsEqualTo(6390);
+    }
+
+    [Test]
     public async Task ReplayResetFailureNamesTheRedirectSource()
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });

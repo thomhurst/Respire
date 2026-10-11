@@ -165,7 +165,13 @@ internal sealed class ReadCursorAffinity
         ReadEndpointRouter router, ReadAffinity affinity, CancellationToken cancellationToken,
         RespireTelemetry.ErrorObservation observation)
     {
-        if (affinity.Replica is { } replica) return router.IsCurrent(replica);
+        if (affinity.Replica is { } replica)
+        {
+            if (router.IsCurrent(replica)) return true;
+            // A lost continuation belongs to the removed replica that issued the cursor.
+            observation.UseEndpoint(replica.Endpoint, cancellationToken);
+            return false;
+        }
         // An unreachable or replaced primary invalidates the pin so the policy can reselect.
         var core = router.Core;
         // Without Sentinel the pinned primary is the active endpoint. Sentinel records each
@@ -193,11 +199,12 @@ internal sealed class ReadCursorAffinity
             ? router.Core.Options.ClientAvailabilityZone : null;
         if (affinity.Replica is { } replica)
         {
+            // The issuing replica owns this failure even when it has left the topology.
+            observation.UseEndpoint(replica.Endpoint, cancellationToken);
             // Never recreate an entry for a replica removed from the topology.
             if (!router.IsCurrent(replica))
                 throw new RespireConnectionException(
                     $"Read replica {replica.Endpoint} that issued the cursor was removed from the topology.");
-            observation.UseEndpoint(replica.Endpoint, cancellationToken);
             return await replica.GetConnectionAsync(cancellationToken, preferredZone).ConfigureAwait(false);
         }
 
