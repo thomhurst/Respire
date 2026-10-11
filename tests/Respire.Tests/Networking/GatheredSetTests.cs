@@ -2,6 +2,7 @@ using System.Net.Sockets;
 using System.Reflection;
 using System.Buffers;
 using System.Threading.Tasks.Sources;
+using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Networking;
 using Respire.Protocol;
@@ -14,11 +15,78 @@ namespace Respire.Tests.Networking;
 public sealed class GatheredSetTests
 {
     [Test]
+    [NotInParallel]
+    public async Task ConcurrentResponseBarriersAllocateNothingAfterInitialization()
+    {
+        const int count = 128;
+        var responses = Enumerable.Range(0, count).Select(_ => new BarrierResponse()).ToArray();
+        var leases = new GatheredSetWriteLease[count];
+        var completions = new ValueTask<bool>[count];
+        for (var control = 0; control < 2; control++)
+        {
+            RentLeases();
+            RegisterResponses(responses, leases, completions, control != 0);
+            DrainResponses();
+        }
+
+        RentLeases();
+        var allocated = AllocationMeasurement.WithoutConcurrentGc(
+            () => RegisterResponses(responses, leases, completions, false));
+        DrainResponses();
+        RentLeases();
+        var positiveControl = AllocationMeasurement.WithoutConcurrentGc(
+            () => RegisterResponses(responses, leases, completions, true));
+        DrainResponses();
+        await Assert.That(allocated).IsEqualTo(0);
+        await Assert.That(positiveControl).IsGreaterThanOrEqualTo(count * 37L);
+
+        void RentLeases()
+        {
+            for (var index = 0; index < count; index++) leases[index] = GatheredSetWriteLease.Rent();
+        }
+
+        void DrainResponses()
+        {
+            for (var index = 0; index < count; index++)
+            {
+                responses[index].Complete();
+                completions[index].AsTask().GetAwaiter().GetResult();
+                responses[index].Reset();
+            }
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long RegisterResponses(BarrierResponse[] responses, GatheredSetWriteLease[] leases,
+        ValueTask<bool>[] completions, bool allocateControl)
+    {
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        for (var index = 0; index < responses.Length; index++)
+        {
+            completions[index] = leases[index].CompleteResponseAsync(responses[index].Task);
+            if (allocateControl) GC.KeepAlive(new byte[37]);
+        }
+        return GC.GetAllocatedBytesForCurrentThread() - before;
+    }
+
+    private sealed class BarrierResponse : IValueTaskSource<bool>
+    {
+        private ManualResetValueTaskSourceCore<bool> _core;
+        internal ValueTask<bool> Task => new(this, _core.Version);
+        internal void Complete() => _core.SetResult(true);
+        internal void Reset() => _core.Reset();
+        bool IValueTaskSource<bool>.GetResult(short token) => _core.GetResult(token);
+        ValueTaskSourceStatus IValueTaskSource<bool>.GetStatus(short token) => _core.GetStatus(token);
+        void IValueTaskSource<bool>.OnCompleted(Action<object?> continuation, object? state, short token,
+            ValueTaskSourceOnCompletedFlags flags) => _core.OnCompleted(continuation, state, token, flags);
+    }
+
+    [Test]
     public async Task FinalWriteReleaseNeverRunsTheCallerOnTheSenderThread()
     {
         var lease = GatheredSetWriteLease.Rent();
         lease.RetainWrite();
-        var completion = lease.FinishOperation().ConfigureAwait(false).GetAwaiter();
+        var completion = lease.CompleteResponseAsync(ValueTask.FromResult(true)).ConfigureAwait(false).GetAwaiter();
         var resumed = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         completion.UnsafeOnCompleted(() =>
         {
@@ -103,6 +171,72 @@ public sealed class GatheredSetTests
         await Assert.That(await completion).IsEqualTo(result);
     }
 
+    [Test]
+    public async Task PrematureConsumptionCannotRecycleAWriteOwner()
+    {
+        var lease = GatheredSetWriteLease.Rent();
+        lease.RetainWrite();
+        var completion = lease.CompleteResponseAsync(ValueTask.FromResult(false));
+        await Assert.That(() => completion.GetAwaiter().GetResult()).ThrowsExactly<InvalidOperationException>();
+        await Assert.That(completion.IsCompleted).IsFalse();
+        lease.ReleaseWrite();
+        await Assert.That(await completion).IsFalse();
+    }
+
+    [Test]
+    public async Task FaultedResponseDoesNotLeakItsOutcomeIntoReusedLeases()
+    {
+        var expected = new InvalidOperationException("response error");
+        for (var iteration = 0; iteration < 128; iteration++)
+        {
+            var failure = GatheredSetWriteLease.Rent().CompleteResponseAsync(ValueTask.FromException<bool>(expected));
+            Exception? actual = null;
+            try { await failure; }
+            catch (Exception error) { actual = error; }
+            await Assert.That(ReferenceEquals(actual, expected)).IsTrue();
+            await Assert.That(await GatheredSetWriteLease.Rent().CompleteResponseAsync(ValueTask.FromResult(true))).IsTrue();
+        }
+    }
+
+    [Test]
+    public async Task FailedRegistrationRetainsWriteOwnershipAndCannotCorruptTheNextLease()
+    {
+        var expected = new InvalidOperationException("registration error");
+        var response = new FailedRegistrationResponse(expected);
+        var lease = GatheredSetWriteLease.Rent();
+        lease.RetainWrite();
+        var completion = lease.CompleteResponseAsync(new ValueTask<bool>(response, 0));
+        await Assert.That(completion.IsCompleted).IsFalse();
+        lease.ReleaseWrite();
+        Exception? actual = null;
+        try { await completion; }
+        catch (Exception error) { actual = error; }
+        await Assert.That(ReferenceEquals(actual, expected)).IsTrue();
+        var next = GatheredSetWriteLease.Rent();
+        next.RetainWrite();
+        var nextCompletion = next.CompleteResponseAsync(ValueTask.FromResult(false));
+        response.InvokeLateCallback();
+        await Assert.That(nextCompletion.IsCompleted).IsFalse();
+        next.ReleaseWrite();
+        await Assert.That(await nextCompletion).IsFalse();
+    }
+
+    private sealed class FailedRegistrationResponse(Exception error) : IValueTaskSource<bool>
+    {
+        private Action<object?>? _continuation;
+        private object? _state;
+        internal void InvokeLateCallback() => _continuation!(_state);
+        bool IValueTaskSource<bool>.GetResult(short token) => throw new InvalidOperationException("No response was published.");
+        ValueTaskSourceStatus IValueTaskSource<bool>.GetStatus(short token) => ValueTaskSourceStatus.Pending;
+        void IValueTaskSource<bool>.OnCompleted(Action<object?> continuation, object? state, short token,
+            ValueTaskSourceOnCompletedFlags flags)
+        {
+            _continuation = continuation;
+            _state = state;
+            throw error;
+        }
+    }
+
     private sealed class ControlledResponse(AsyncLocal<string?> ambient) : IValueTaskSource<bool>
     {
         private ManualResetValueTaskSourceCore<bool> _core = new() { RunContinuationsAsynchronously = true };
@@ -135,7 +269,7 @@ public sealed class GatheredSetTests
             var lease = GatheredSetWriteLease.Rent();
             lease.RetainWrite();
             lease.RetainWrite();
-            var completion = lease.FinishOperation();
+            var completion = lease.CompleteResponseAsync(ValueTask.FromResult(true));
             await Assert.That(completion.IsCompleted).IsFalse();
             lease.ReleaseWrite();
             await Assert.That(completion.IsCompleted).IsFalse();
@@ -515,7 +649,7 @@ public sealed class GatheredSetTests
                 await Assert.That(gathered.PrepareBorrowedPayload()).IsTrue();
                 var wrapper = new GatheredSetCommand(command, slice, lease);
                 gathered.AddBorrowedPayload(wrapper.WriteEnvelope(gathered), slice, lease);
-                completions.Add(lease.FinishOperation());
+                completions.Add(lease.CompleteResponseAsync(ValueTask.FromResult(true)));
                 var writer = new RespWriter(copied, command.GetWriteSizeHint());
                 command.Write(ref writer);
                 writer.Complete();
