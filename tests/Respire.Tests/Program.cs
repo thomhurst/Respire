@@ -13,7 +13,8 @@ internal static class Program
         var probeResult = DispatchResponseObservationTests.RunIsolatedNativeDispatchProbe()
             ?? StandaloneCircuitAllocationTests.RunIsolatedAllocationProbe()
             ?? ConnectionMetricCleanupTests.RunIsolatedQueuedSelectionProbe()
-            ?? AsyncFlushSignalTests.RunIsolatedAllocationProbe();
+            ?? AsyncFlushSignalTests.RunIsolatedAllocationProbe()
+            ?? StandaloneBatchFlushTests.RunIsolatedAllocationProbe();
         // TUnit 1.72.16 supplies this helper; keep the centrally pinned package and entry point in sync.
         return probeResult is { } exitCode
             ? Task.FromResult(exitCode)
