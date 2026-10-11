@@ -22,7 +22,7 @@ jobs:
       matrix:
         error-metrics: [disabled, enabled]
     runs-on: ubuntu-latest
-    # Each metric mode measures eighteen cases, two launches and both bracket controls.
+    # Each metric mode measures twenty-four cases, two launches and both bracket controls.
     # The disabled leg exceeded 45 minutes during the final baseline control.
     # Retain the full sampling profile and allow every bracket to finish.
     timeout-minutes: 60
