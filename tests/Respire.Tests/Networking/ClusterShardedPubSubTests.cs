@@ -323,11 +323,10 @@ public class ClusterShardedPubSubTests
         await using var cluster = new Cluster(protocol);
         cluster.SecondOverride = (_, command) => command == "SSUBSCRIBE foo"
             ? Encoding.ASCII.GetBytes($"-ASK {ClusterHash.GetSlot("foo")} 127.0.0.1:{cluster.First.Port}\r\n") : null;
-        // The ASK redirect waits one discovery policy delay before it is followed; skip it.
         await using var client = cluster.CreateClient(new()
         {
             InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30), JitterRatio = 0,
-        }, discoveryClock: new ImmediateDiscoveryClock());
+        });
         var clock = new RecoveryClock();
         await using var hub = new SubscriptionHub(client.Core, clock);
         await using var redirected = await hub.SubscribeAsync(SubscriptionKind.Sharded, ["foo"], new(), CancellationToken.None)
@@ -753,13 +752,6 @@ public class ClusterShardedPubSubTests
         internal Task<RecoveryTimer> NextAsync() => _timers.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
     }
 
-    // Completes every cluster discovery backoff at once, leaving other clocks on real time.
-    private sealed class ImmediateDiscoveryClock : TimeProvider
-    {
-        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
-            => System.CreateTimer(callback, state, TimeSpan.Zero, Timeout.InfiniteTimeSpan);
-    }
-
     private sealed class RecoveryTimer(TimerCallback callback, object? state) : ITimer
     {
         private int _finished;
@@ -897,14 +889,12 @@ public class ClusterShardedPubSubTests
         }
         internal RespireClient CreateClient(
             RespireReconnectPolicy? policy = null, ILoggerFactory? logger = null,
-            int maxInflightCommands = 16 * 1024, IRespireCredentialProvider? credentialProvider = null,
-            TimeProvider? discoveryClock = null)
+            int maxInflightCommands = 16 * 1024, IRespireCredentialProvider? credentialProvider = null)
             => RespireClient.Create(new RespireOptions
         {
             UseCluster = true, Protocol = (RespProtocol)_protocol, Connections = 1, ReconnectPolicy = policy,
             LoggerFactory = logger, MaxInflightCommands = maxInflightCommands, CredentialProvider = credentialProvider,
             Endpoints = { new RespireEndpoint("127.0.0.1", First.Port) }, ConnectTimeout = TimeSpan.FromSeconds(1),
-            ClusterDiscoveryClock = discoveryClock ?? TimeProvider.System,
         });
         private byte[] Reply(string command)
         {
