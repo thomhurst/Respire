@@ -14,6 +14,7 @@ namespace Respire.IntegrationTests;
 public class ContainerFixtureIntegrationTests
 {
     [Test]
+    [ParallelLimiter<DockerHeavy>]
     [Arguments(RespireContainerServer.Redis, RespireContainerTopology.Standalone)]
     [Arguments(RespireContainerServer.Redis, RespireContainerTopology.Cluster)]
     [Arguments(RespireContainerServer.Redis, RespireContainerTopology.Sentinel)]
@@ -164,6 +165,7 @@ public class ContainerFixtureIntegrationTests
     }
 
     [Test]
+    [ParallelLimiter<DockerHeavy>]
     [Arguments(RespireContainerServer.Redis, RespireContainerTopology.Cluster)]
     [Arguments(RespireContainerServer.Redis, RespireContainerTopology.Sentinel)]
     [Arguments(RespireContainerServer.Valkey, RespireContainerTopology.Cluster)]
