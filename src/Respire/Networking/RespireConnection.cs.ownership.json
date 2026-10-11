@@ -24,9 +24,8 @@
     },
     {
       "Name": "physical-disconnect-publication",
-      "Role": "final",
+      "Role": "internal",
       "Member": "Respire.Networking.RespireConnection.Abort(Exception?,bool,bool):bool",
-      "Owner": "Respire.Networking.RespireConnection.Abort(Exception?,bool,bool):bool",
       "Contract": "Only the winning physical close publishes one internal error, outside the write gate. This physical event is independent of logical caller retry counts. Idle sockets, successful calls and already-cancelled callers acquire no additional final caller failure."
     },
     {
