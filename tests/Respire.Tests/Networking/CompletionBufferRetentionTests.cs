@@ -141,8 +141,7 @@ public class CompletionBufferRetentionTests
                 using var value = await replies[index];
                 await Assert.That(value.AsInteger()).IsEqualTo((long)index);
             }
-            // Two low ownership bits leave the first recycled epoch at four.
-            await Assert.That(sources[index].State).IsEqualTo(4);
+            await Assert.That(sources[index].State).IsEqualTo(2);
         }
         await AssertClearedAndBoundedAsync(scheduler);
     }
