@@ -583,11 +583,13 @@ public sealed class SentinelCircuitDispatchTests
     }
 
     [Test]
-    [Arguments(1, false)]
-    [Arguments(2, false)]
-    [Arguments(2, true)]
-    public async Task BatchAdmissionRaceRetainsOrderOnReplacementPrimary(int connections, bool includeCursor)
+    [Arguments(1, null)]
+    [Arguments(2, null)]
+    [Arguments(2, "7")]
+    [Arguments(2, "0")]
+    public async Task BatchAdmissionRaceRetainsOrderOnReplacementPrimary(int connections, string? cursorArgument)
     {
+        var includeCursor = cursorArgument is not null;
         await using var first = Primary();
         await using var second = Primary();
         var port = first.Port;
@@ -600,7 +602,7 @@ public sealed class SentinelCircuitDispatchTests
         var one = batch.GetString("first");
         var two = batch.GetString("second");
         var cursor = includeCursor ? ((IPendingSink)batch).Add("SCAN",
-            new CatalogCommand(RespireCommands.Key.SCAN, ["7"]), static (_, _) => true) : null;
+            new CatalogCommand(RespireCommands.Key.SCAN, [cursorArgument!]), static (_, _) => true) : null;
         clock.Arm();
         var execution = Task.Run(async () => await batch.TryExecuteAsync());
         try
@@ -623,10 +625,19 @@ public sealed class SentinelCircuitDispatchTests
             .Select(entry => connectionIds[entry.index]).Distinct().Count()).IsEqualTo(1);
         await Assert.That(circuit.Snapshot().FailureCount).IsEqualTo(0);
         await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(0);
-        if (cursor is not null)
+        if (cursorArgument == "7")
         {
-            await Assert.That(cursor.Error).IsTypeOf<RespireConnectionRetiredException>();
+            // The old primary issued cursor 7; its continuation cannot move to the replacement.
+            await Assert.That(cursor!.Error).IsTypeOf<RespireConnectionRetiredException>();
             await Assert.That(second.ReceivedCommands.Any(command => command.StartsWith("SCAN "))).IsFalse();
+        }
+        else if (cursorArgument == "0")
+        {
+            // A fresh scan has no issuing server, so it follows the batch to the replacement in order.
+            await Assert.That(await cursor!).IsTrue();
+            await Assert.That(first.ReceivedCommands.Any(command => command.StartsWith("SCAN "))).IsFalse();
+            await Assert.That(second.ReceivedCommands.Where(command => command.StartsWith("GET ") || command.StartsWith("SCAN ")).ToArray())
+                .IsEquivalentTo(new[] { "GET first", "GET second", "SCAN 0" }, TUnit.Assertions.Enums.CollectionOrdering.Matching);
         }
     }
 

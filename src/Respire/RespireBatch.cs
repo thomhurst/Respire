@@ -407,7 +407,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
                 // without awaiting these reply tasks. Capacity waits share the same budget.
                 for (var i = 0; i < _ops.Count; i++)
                 {
-                    // Cursor commands retain the original socket. Ordinary entries follow the
+                    // Cursor continuations retain the original socket. Ordinary entries and fresh scans follow the
                     // last accepted route so a replacement pool cannot split their wire order.
                     var operationConnection = _ops[i].IsCursorRead ? connection : executingConnection;
                     var accepted = await _ops[i].StartOrderedSendAsync(_client, operationConnection, cancellationToken,
@@ -711,7 +711,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             || command.GetCacheMutation(Operation) == RespireCacheMutation.ReadOnly;
 
         public override bool AllowsReadRouting => command.ReadKind != ReadCommandKind.None;
-        public override bool IsCursorRead => CursorCommandMetadata.HasServerCursor(in command);
+        public override bool IsCursorRead => CursorCommandMetadata.IsServerCursorContinuation(in command);
 
         // ARSCAN pages are index ranges without an issuing server cursor. They can follow
         // same-slot writes on the primary while the catalog retains its CursorRead classification.
