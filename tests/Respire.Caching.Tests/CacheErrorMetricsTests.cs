@@ -380,6 +380,8 @@ public partial class CacheErrorMetricsTests
     [Arguments(true, true)]
     public async Task GetFinalErrorWaitsForTtlCorrection(bool refresh, bool replace)
     {
+        // Observe this operation and its retries without counting earlier detached work.
+        var metricScope = new AsyncLocal<bool> { Value = true };
         var previous = RespireMetrics.Configuration;
         RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Resiliency });
         try
@@ -417,6 +419,7 @@ public partial class CacheErrorMetricsTests
             };
             listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
             {
+                if (!metricScope.Value) return;
                 var item = tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value);
                 if (!(bool)item["redis.client.errors.internal"]!) finals.Enqueue(item);
                 else handled.Enqueue(item);
@@ -450,6 +453,14 @@ public partial class CacheErrorMetricsTests
             var correctionConnection = server.ReceivedConnectionIds[correctionIndex];
             try
             {
+                // Detached work can outlive an earlier test despite NotInParallel.
+                Task unrelatedPublication;
+                using (ExecutionContext.SuppressFlow())
+                {
+                    unrelatedPublication = Task.Run(() => RespireTelemetry.RecordError(
+                        new ObjectDisposedException("earlier test"), internallyHandled: true, retryAttempts: 1));
+                }
+                await unrelatedPublication;
                 await Assert.That(finals.Count).IsEqualTo(0);
                 await Assert.That(response.IsCompleted).IsFalse();
             }
