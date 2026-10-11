@@ -88,6 +88,14 @@ Server and protocol requirements vary by feature; each linked guide describes it
   [shared test sample](guides/testing-sample.md) for .NET 8 and .NET 10.
 - A [.NET Aspire AppHost and HTTP sample](integrations/aspire-sample.md) using the public
   client integration, Redis/Valkey references, cache backends, health checks, and dashboard telemetry.
+- An [ASP.NET Core sample](https://github.com/thomhurst/Respire/tree/main/samples/Respire.Samples.AspNetCore)
+  combining dependency injection, distributed caching, `HybridCache`, output caching, health checks,
+  and OpenTelemetry. It builds and runs in CI on .NET 8 and .NET 10.
+- Runnable [Cluster](https://github.com/thomhurst/Respire/tree/main/samples/Respire.Samples.Cluster)
+  and [Sentinel](https://github.com/thomhurst/Respire/tree/main/samples/Respire.Samples.Sentinel)
+  samples with local Docker Compose topologies. CI builds both samples on .NET 8 and .NET 10;
+  their [topology smoke workflow](https://github.com/thomhurst/Respire/blob/main/samples/TopologySmoke.md)
+  verifies Cluster slot routing and Sentinel primary promotion.
 
 ## Planned work
 
@@ -126,8 +134,6 @@ acceptance criteria, dependencies, and current status:
   Redis hash writes/full reads, explicit partial reads, field TTL and change tracking. The remaining
   [object mapper work](https://github.com/thomhurst/Respire/issues/895) includes
   final AOT/performance acceptance.
-- [Documentation and samples](https://github.com/thomhurst/Respire/issues/861): guides and runnable
-  examples for the expanded feature set.
 
 See [Coming from StackExchange.Redis](./stackexchange-redis) for a feature comparison.
 
