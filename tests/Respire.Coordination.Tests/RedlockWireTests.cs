@@ -180,19 +180,29 @@ public class RedlockWireTests
         var renewalReplies = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         foreach (var server in nodes.Servers) server.GateCommand("SET ", renewalReplies.Task);
         using var cancellation = new CancellationTokenSource();
-        var renewal = attempt.Lock.ResetExpiryAsync(TimeSpan.FromSeconds(10), cancellation.Token).AsTask();
-        // The limit only bounds a failing run; a passing run never depends on it.
-        using (var limit = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
+        try
         {
-            while (!nodes.Servers.All(static server => server.ReceivedCommands.Count(static c => c.StartsWith("SET ", StringComparison.Ordinal)) == 2))
-                await Task.Delay(1, limit.Token);
+            var renewal = attempt.Lock.ResetExpiryAsync(TimeSpan.FromSeconds(10), cancellation.Token).AsTask();
+            // The limit only bounds a failing run; a passing run never depends on it.
+            using (var limit = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
+            {
+                while (!nodes.Servers.All(static server => server.ReceivedCommands.Count(static c => c.StartsWith("SET ", StringComparison.Ordinal)) == 2))
+                    await Task.Delay(1, limit.Token);
+            }
+            cancellation.Cancel();
+            renewalReplies.SetResult();
+            await Assert.That(async () => await renewal).Throws<OperationCanceledException>();
+            await Assert.That(attempt.Lock.IsReleased).IsTrue();
+            foreach (var server in nodes.Servers)
+                await Assert.That(server.ReceivedCommands.Count(static command => command.StartsWith("DELEX ", StringComparison.Ordinal))).IsEqualTo(1);
         }
-        cancellation.Cancel();
-        renewalReplies.SetResult();
-        await Assert.That(async () => await renewal).Throws<OperationCanceledException>();
-        await Assert.That(attempt.Lock.IsReleased).IsTrue();
-        foreach (var server in nodes.Servers)
-            await Assert.That(server.ReceivedCommands.Count(static command => command.StartsWith("DELEX ", StringComparison.Ordinal))).IsEqualTo(1);
+        finally
+        {
+            // Untimed clients wait on the gate for as long as it stays closed. On any early exit,
+            // cancel and open it before disposal: disposing the attempt waits for the renewal.
+            cancellation.Cancel();
+            renewalReplies.TrySetResult();
+        }
     }
 
     [Test]
@@ -285,22 +295,32 @@ public class RedlockWireTests
         foreach (var server in nodes.Servers) server.GateCommand("SET ", setReplies.Task);
         var group = new RespireRedlockGroup(nodes.Clients, new RespireRedlockOptions { NodeTimeout = RespireRedlockNodes.MaxNodeTimeout });
         using var cancellation = new CancellationTokenSource();
-        var acquisition = group.TryAcquireAsync("redlock:cancel", TimeSpan.FromSeconds(10), cancellation.Token).AsTask();
-        // Cancel only once every node holds the SET. A wall-clock cancel could fire before
-        // acquisition starts on a slow runner; no node is contacted then, so none needs a release.
-        // The limit only bounds a failing run; a passing run never depends on it.
-        using (var limit = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
+        try
         {
-            while (!nodes.Servers.All(static server => server.ReceivedCommands.Any(static c => c.StartsWith("SET ", StringComparison.Ordinal))))
-                await Task.Delay(1, limit.Token);
+            var acquisition = group.TryAcquireAsync("redlock:cancel", TimeSpan.FromSeconds(10), cancellation.Token).AsTask();
+            // Cancel only once every node holds the SET. A wall-clock cancel could fire before
+            // acquisition starts on a slow runner; no node is contacted then, so none needs a release.
+            // The limit only bounds a failing run; a passing run never depends on it.
+            using (var limit = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
+            {
+                while (!nodes.Servers.All(static server => server.ReceivedCommands.Any(static c => c.StartsWith("SET ", StringComparison.Ordinal))))
+                    await Task.Delay(1, limit.Token);
+            }
+            cancellation.Cancel();
+            // The late SET replies now land on cancelled waiters; the gate also holds the DELEX
+            // that follows on each single-connection node, so cleanup needs it open.
+            setReplies.SetResult();
+            await Assert.That(async () => await acquisition).Throws<OperationCanceledException>();
+            foreach (var server in nodes.Servers)
+                await Assert.That(server.ReceivedCommands.Count(static c => c.StartsWith("DELEX ", StringComparison.Ordinal))).IsEqualTo(1);
         }
-        cancellation.Cancel();
-        // The late SET replies now land on cancelled waiters; the gate also holds the DELEX
-        // that follows on each single-connection node, so cleanup needs it open.
-        setReplies.SetResult();
-        await Assert.That(async () => await acquisition).Throws<OperationCanceledException>();
-        foreach (var server in nodes.Servers)
-            await Assert.That(server.ReceivedCommands.Count(static c => c.StartsWith("DELEX ", StringComparison.Ordinal))).IsEqualTo(1);
+        finally
+        {
+            // Untimed clients wait on the gate for as long as it stays closed. On any early exit,
+            // cancel and open it so the acquisition and its cleanup finish before disposal.
+            cancellation.Cancel();
+            setReplies.TrySetResult();
+        }
     }
 
     [Test]
