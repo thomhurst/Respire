@@ -595,7 +595,10 @@ internal sealed partial class ClusterRouter
                 // Unlimited policies must not wrap the backoff index during long-lived recovery.
                 if (_attempts < int.MaxValue) _attempts++;
                 if (_episode == 0) _episode = Interlocked.Increment(ref _nextDiscoveryEpisode);
-                var delay = policy.GetDelay(_attempts);
+                // A MOVED or ASK reply names a reachable owner, so following it still spends an
+                // attempt but never waits. Only a failure at the redirect target backs off.
+                var delay = failure is RespireServerException { Code: RespireErrorCodes.Moved or RespireErrorCodes.Ask }
+                    ? TimeSpan.Zero : policy.GetDelay(_attempts);
                 if (maximumDelay is { } maximum && delay > maximum) delay = maximum;
                 Publish(RespireConnectionState.Reconnecting, failure, delay);
                 if (delay > TimeSpan.Zero)
