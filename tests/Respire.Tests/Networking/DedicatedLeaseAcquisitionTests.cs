@@ -105,7 +105,7 @@ public class DedicatedLeaseAcquisitionTests
         finally { admission.Dispose(); }
         var state = new RouteState(replacement);
         var lease = await DedicatedLeaseAcquisition.RentAsync(original, new TestRoute(state), default,
-            reuseIdle: true, DedicatedLeaseKind.Ordinary, circuits: circuits);
+            reuseIdle: true, DedicatedLeaseKind.Ordinary, observation: default, circuits: circuits);
         try
         {
             await Assert.That(lease.Pool).IsSameReferenceAs(replacement);
@@ -115,6 +115,43 @@ public class DedicatedLeaseAcquisitionTests
             await Assert.That(state.Completions).IsEqualTo(1);
         }
         finally { lease.Pool.Return(lease.Connection); }
+    }
+
+    [Test]
+    public async Task HandshakeObservationNamesEachRentedPool()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var replacement = new DedicatedConnectionPool("127.0.0.1", 9002,
+            new RespireConnectionOptions
+            {
+                TestingStreamFactory = async (_, _, cancellationToken) =>
+                {
+                    entered.TrySetResult();
+                    await Task.Delay(Timeout.Infinite, cancellationToken);
+                    throw new InvalidOperationException("Unreachable.");
+                },
+            }, null);
+        await using var original = new DedicatedConnectionPool("127.0.0.1", 9001, RespireConnectionOptions.Default, null);
+        await original.RetireAsync();
+        var observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        try
+        {
+            // A redirect source or an earlier selection must not own a later pool's handshake failure.
+            observation.UseEndpoint(new("source.example", 6380));
+            using var cancellation = new CancellationTokenSource();
+            var state = new RouteState(replacement);
+            var pending = DedicatedLeaseAcquisition.RentAsync(original, new TestRoute(state),
+                cancellation.Token, reuseIdle: true, DedicatedLeaseKind.Ordinary, observation: observation).AsTask();
+            await entered.Task.WaitAsync(Limit);
+            // Replacement selection can dial before it returns a pool. The retired pool must not own that failure.
+            await Assert.That(state.Selections).IsEqualTo(1);
+            await Assert.That(state.SelectionEndpoint).IsNull();
+            await Assert.That(observation.Endpoint).IsEqualTo(replacement.Endpoint);
+            cancellation.Cancel();
+            await Assert.That(async () => await pending.WaitAsync(Limit)).Throws<OperationCanceledException>();
+            await Assert.That(observation.Endpoint).IsEqualTo(replacement.Endpoint);
+        }
+        finally { observation.Dispose(); }
     }
 
     [Test]
@@ -203,7 +240,7 @@ public class DedicatedLeaseAcquisitionTests
         {
             Protocol = RespProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, UseCluster = cluster,
         });
-        var pool = await client.Core.GetDedicatedPoolAsync(CancellationToken.None);
+        var pool = await client.Core.GetDedicatedPoolAsync(CancellationToken.None, observation: default);
         var connection = await pool.RentAsync(CancellationToken.None);
         pool.Return(connection);
         Measure(client.Core, pool, false);
@@ -221,8 +258,8 @@ public class DedicatedLeaseAcquisitionTests
         for (var index = 0; index < 1_000; index++)
         {
             var pending = core.Cluster is { } cluster
-                ? cluster.RentDedicatedConnectionAsync(pool, slot: null, CancellationToken.None, discovery: null)
-                : core.RentDedicatedConnectionAsync(pool, CancellationToken.None);
+                ? cluster.RentDedicatedConnectionAsync(pool, slot: null, CancellationToken.None, discovery: null, observation: default)
+                : core.RentDedicatedConnectionAsync(pool, CancellationToken.None, observation: default);
             if (!pending.IsCompletedSuccessfully) throw new InvalidOperationException("Warm idle rental must complete synchronously.");
             var lease = pending.Result;
             lease.Pool.Return(lease.Connection);
@@ -233,7 +270,8 @@ public class DedicatedLeaseAcquisitionTests
 
     private static ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> RentAsync(
         DedicatedConnectionPool pool, RouteState state, CancellationToken cancellationToken = default, bool reuseIdle = true)
-        => DedicatedLeaseAcquisition.RentAsync(pool, new TestRoute(state), cancellationToken, reuseIdle, DedicatedLeaseKind.Ordinary);
+        => DedicatedLeaseAcquisition.RentAsync(pool, new TestRoute(state), cancellationToken, reuseIdle, DedicatedLeaseKind.Ordinary,
+            observation: default);
 
     private sealed class RouteState(DedicatedConnectionPool replacement)
     {
@@ -245,6 +283,7 @@ public class DedicatedLeaseAcquisitionTests
         internal int Completions;
         internal bool IsDisposed;
         internal Exception? TerminalError;
+        internal RespireEndpoint? SelectionEndpoint;
     }
 
     private readonly struct TestRoute(RouteState state) : IDedicatedLeaseRoute
@@ -252,8 +291,10 @@ public class DedicatedLeaseAcquisitionTests
         public void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(state.IsDisposed, state);
         public bool CanRetry(int attempt, CancellationToken cancellationToken) => !state.IsDisposed;
         public void RecordRetirement(Exception error, int attempt) => state.Retirements++;
-        public ValueTask<DedicatedConnectionPool> SelectReplacementAsync(CancellationToken cancellationToken)
+        public ValueTask<DedicatedConnectionPool> SelectReplacementAsync(CancellationToken cancellationToken,
+            RespireTelemetry.ErrorObservation observation)
         {
+            state.SelectionEndpoint = observation.Endpoint;
             state.Selections++;
             state.SelectionStarted.TrySetResult();
             return state.SelectionGate is { } gate

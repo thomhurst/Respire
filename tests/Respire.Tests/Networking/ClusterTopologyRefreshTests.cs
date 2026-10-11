@@ -29,7 +29,7 @@ public class ClusterTopologyRefreshTests
         await Assert.That(seed.ReceivedCommands).IsEmpty();
         await Assert.That(clock.Created.Task.IsCompleted).IsFalse();
 
-        await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
+        await router.EnsureConnectedAsync(CancellationToken.None, discovery: null, observation: default);
         var timer = await clock.Created.Task.WaitAsync(TimeSpan.FromSeconds(2));
         await Assert.That(timer.DueTime).IsLessThanOrEqualTo(TimeSpan.FromMilliseconds(50));
         clock.Advance(TimeSpan.FromMilliseconds(50));
@@ -61,7 +61,7 @@ public class ClusterTopologyRefreshTests
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
         var router = client.Core.Cluster!;
-        await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
+        await router.EnsureConnectedAsync(CancellationToken.None, discovery: null, observation: default);
         var periodic = await clock.Created.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
         router.SignalMovedTopologyRefresh();
@@ -88,7 +88,7 @@ public class ClusterTopologyRefreshTests
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
         var router = client.Core.Cluster!;
-        await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
+        await router.EnsureConnectedAsync(CancellationToken.None, discovery: null, observation: default);
 
         var firstSegment = await clock.Created.Task.WaitAsync(TimeSpan.FromSeconds(2));
         await Assert.That(firstSegment.DueTime).IsEqualTo(TimeSpan.FromDays(24));
@@ -120,7 +120,7 @@ public class ClusterTopologyRefreshTests
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
         var router = client.Core.Cluster!;
-        await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
+        await router.EnsureConnectedAsync(CancellationToken.None, discovery: null, observation: default);
 
         router.SignalTopologyRefresh();
         await secondRefresh.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -157,7 +157,7 @@ public class ClusterTopologyRefreshTests
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
         var router = client.Core.Cluster!;
-        await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
+        await router.EnsureConnectedAsync(CancellationToken.None, discovery: null, observation: default);
 
         router.SignalPrimaryDisconnectRefresh();
         await secondRefresh.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -202,7 +202,7 @@ public class ClusterTopologyRefreshTests
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
         var router = client.Core.Cluster!;
-        await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
+        await router.EnsureConnectedAsync(CancellationToken.None, discovery: null, observation: default);
 
         router.SignalPrimaryDisconnectRefresh();
         await secondRefresh.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -245,7 +245,7 @@ public class ClusterTopologyRefreshTests
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
         var router = client.Core.Cluster!;
-        await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
+        await router.EnsureConnectedAsync(CancellationToken.None, discovery: null, observation: default);
 
         router.SignalMovedTopologyRefresh();
         _ = await clock.NextTimerAsync(TimeSpan.FromSeconds(5)).WaitAsync(TimeSpan.FromSeconds(2));
@@ -286,7 +286,7 @@ public class ClusterTopologyRefreshTests
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
         var router = client.Core.Cluster!;
-        await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
+        await router.EnsureConnectedAsync(CancellationToken.None, discovery: null, observation: default);
 
         router.SignalMovedTopologyRefresh();
         _ = await clock.NextTimerAsync(TimeSpan.FromSeconds(5)).WaitAsync(TimeSpan.FromSeconds(2));
@@ -315,8 +315,8 @@ public class ClusterTopologyRefreshTests
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
         var router = client.Core.Cluster!;
-        await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
-        var connection = await router.GetConnectionAsync(0, CancellationToken.None, discovery: null);
+        await router.EnsureConnectedAsync(CancellationToken.None, discovery: null, observation: default);
+        var connection = await router.GetConnectionAsync(0, CancellationToken.None, discovery: null, observation: default);
 
         router.LearnWatchedRoute(new RespireServerException(
             $"MOVED 0 127.0.0.1:{seed.Port}"), connection, watchedSlot: null);
@@ -337,7 +337,7 @@ public class ClusterTopologyRefreshTests
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
         var router = client.Core.Cluster!;
-        await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
+        await router.EnsureConnectedAsync(CancellationToken.None, discovery: null, observation: default);
         seed.SuppressReply = command =>
         {
             if (command == "CLUSTER SLOTS") refreshStarted.TrySetResult();
@@ -629,7 +629,7 @@ public class ClusterTopologyRefreshTests
             Endpoints = [new RespireEndpoint("127.0.0.1", seed.Port)],
         });
         var router = client.Core.Cluster!;
-        await router.EnsureConnectedAsync(CancellationToken.None, discovery: null);
+        await router.EnsureConnectedAsync(CancellationToken.None, discovery: null, observation: default);
 
         using var flightCancellation = new CancellationTokenSource();
         var flight = router.SharedRefreshCoordinator.JoinReadOnly(ClusterHash.GetSlot("key"),

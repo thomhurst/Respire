@@ -35,7 +35,7 @@ public class DedicatedStreamRouteTests
         var slot = ClusterHash.GetSlot("key");
         var cluster = client.Core.Cluster;
         var pool = cluster is null ? client.Core.DedicatedPool
-            : await cluster.GetDedicatedPoolAsync(slot, default, discovery: null);
+            : await cluster.GetDedicatedPoolAsync(slot, default, discovery: null, observation: default);
         var connection = await pool.RentAsync(default, kind: DedicatedLeaseKind.Streaming);
         try
         {

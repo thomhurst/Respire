@@ -144,6 +144,8 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
         catch (RespireServerException error) when (function.Library is not null && IsFunctionNotFound(error))
         {
             observation.Handled(error);
+            // Library inspection records other nodes; a rethrown not-found error keeps its own node.
+            var missingEndpoint = observation.Endpoint;
             var library = function.Library;
             var gate = reload!.Gate;
             await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -153,7 +155,10 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
                 // A matching library without this function cannot be repaired by replication.
                 // Preserve Redis's original not-found error instead of entering propagation polling.
                 if (!await EnsureLibraryAsync(library, function.Name, cancellationToken, observation).ConfigureAwait(false))
+                {
+                    observation.UseEndpoint(missingEndpoint);
                     throw;
+                }
                 // Revalidate this function even when another caller refreshed the library.
                 if (currentGeneration == generation)
                     Interlocked.Increment(ref reload.Generation);
@@ -358,16 +363,21 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
         if (client.Core.Cluster is not { } cluster)
             return await client.ConvertResponseAsync(operation, command, cancellationToken, this, convert,
                 observation: observation).ConfigureAwait(false);
-        var connections = await cluster.GetMasterConnectionsAsync(cancellationToken, discovery: null).ConfigureAwait(false);
+        var connections = await cluster.GetMasterConnectionsAsync(cancellationToken, discovery: null, observation).ConfigureAwait(false);
         if (connections.Length == 0) throw new RespireConnectionException($"{operation} did not reach any Redis Cluster primary.");
         var tasks = new Task<T>[connections.Length];
+        var legs = RespireTelemetry.FanOutLegObservation.Create(tasks.Length, observation);
         for (var i = 0; i < tasks.Length; i++) tasks[i] = SendAndConvertAsync(connections[i], operation, command, convert,
-            cancellationToken, observation).AsTask();
-        // Every target borrows the caller owner. Join all sends, conversions and cleanup
-        // before propagating the single exception that reaches the caller.
-        var results = await Task.WhenAll(tasks).ConfigureAwait(false);
+            cancellationToken, legs[i].Observation).AsTask();
+        // Every target borrows the caller owner through its own leg. Join all sends, conversions and
+        // cleanup before propagating the single exception that reaches the caller, named by its leg.
+        var results = await RespireTelemetry.FanOutLegObservation.JoinAsync(tasks, legs, observation).ConfigureAwait(false);
         if (results.Any(result => !EqualityComparer<T>.Default.Equals(results[0], result)))
+        {
+            // A cross-primary comparison failure belongs to no single node.
+            observation.UseEndpoint(null);
             throw new RespireProtocolException($"{operation} returned inconsistent results across primaries.");
+        }
         return results[0];
     }
 #if NET
@@ -386,13 +396,16 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
     {
         if (client.Core.Cluster is { } cluster)
         {
-            var connections = await cluster.GetMasterConnectionsAsync(cancellationToken, discovery: null).ConfigureAwait(false);
+            var connections = await cluster.GetMasterConnectionsAsync(cancellationToken, discovery: null, observation).ConfigureAwait(false);
             if (connections.Length == 0) throw new RespireConnectionException("Library reload did not reach any Redis Cluster primary.");
-            var results = await Task.WhenAll(connections.Select(connection =>
-                EnsureOnConnectionAsync(connection, library, functionName, cancellationToken, observation).AsTask())).ConfigureAwait(false);
+            var legs = RespireTelemetry.FanOutLegObservation.Create(connections.Length, observation);
+            var tasks = new Task<bool>[connections.Length];
+            for (var i = 0; i < tasks.Length; i++)
+                tasks[i] = EnsureOnConnectionAsync(connections[i], library, functionName, cancellationToken, legs[i].Observation).AsTask();
+            var results = await RespireTelemetry.FanOutLegObservation.JoinAsync(tasks, legs, observation).ConfigureAwait(false);
             return results.All(static available => available);
         }
-        await client.Core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+        await client.Core.EnsureConnectedAsync(cancellationToken, observation).ConfigureAwait(false);
         return await EnsureOnConnectionAsync(client.Core.Multiplexer.GetConnection(), library, functionName,
             cancellationToken, observation).ConfigureAwait(false);
     }
@@ -415,6 +428,8 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
         catch (RespireServerException error) when (!library.Replace
             && error.Message == $"ERR Library '{library.Name}' already exists")
         {
+            // Each leg owns its observation, which retains the node that answered LOAD,
+            // including a MOVING replacement.
             observation.Handled(error);
             // Another client/process may load after our LIST. Accept only identical source;
             // never replace, retry LOAD, or hide a conflicting library's original error.

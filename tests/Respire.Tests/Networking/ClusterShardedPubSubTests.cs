@@ -158,7 +158,7 @@ public class ClusterShardedPubSubTests
             JitterRatio = 0, MaxAttempts = exhaust ? 1 : 2,
         });
         using var deadline = new CancellationTokenSource(Deadline);
-        await client.Core.Cluster!.EnsureConnectedAsync(deadline.Token, discovery: null);
+        await client.Core.Cluster!.EnsureConnectedAsync(deadline.Token, discovery: null, observation: default);
         var scheduled = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
@@ -210,7 +210,7 @@ public class ClusterShardedPubSubTests
         });
         using var deadline = new CancellationTokenSource(Deadline);
         var router = client.Core.Cluster!;
-        await router.EnsureConnectedAsync(deadline.Token, discovery: null);
+        await router.EnsureConnectedAsync(deadline.Token, discovery: null, observation: default);
         var changes = new ConcurrentQueue<RespireConnectionStateChange>();
         var barrier = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var barrierEndpoint = new RespireEndpoint("unused.invalid");
@@ -262,7 +262,7 @@ public class ClusterShardedPubSubTests
             InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30), JitterRatio = 0,
         });
         using var deadline = new CancellationTokenSource(Deadline);
-        await client.Core.Cluster!.EnsureConnectedAsync(deadline.Token, discovery: null);
+        await client.Core.Cluster!.EnsureConnectedAsync(deadline.Token, discovery: null, observation: default);
         var terminal = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
         client.Core.Cluster.DiscoveryStateChanged += change =>
         {
@@ -831,11 +831,11 @@ public class ClusterShardedPubSubTests
         await using var subscription = await client.SubscribeShardedAsync(["bar", "foo"]);
         var notifications = 0;
         client.Core.Cluster!.TopologyChanged += (_, _, _) => Interlocked.Increment(ref notifications);
-        _ = await client.Core.Cluster.GetMasterConnectionsAsync(CancellationToken.None, discovery: null);
+        _ = await client.Core.Cluster.GetMasterConnectionsAsync(CancellationToken.None, discovery: null, observation: default);
         await Assert.That(notifications).IsEqualTo(0);
         cluster.FirstOverride = (_, command) => command == "CLUSTER SLOTS"
             ? Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{cluster.First.Port}\r\n") : null;
-        _ = await client.Core.Cluster.GetMasterConnectionsAsync(CancellationToken.None, discovery: null);
+        _ = await client.Core.Cluster.GetMasterConnectionsAsync(CancellationToken.None, discovery: null, observation: default);
         await Assert.That(notifications).IsEqualTo(1);
         await using var reader = subscription.GetAsyncEnumerator();
         await Assert.That(await reader.MoveNextAsync().AsTask().WaitAsync(Deadline)).IsTrue();

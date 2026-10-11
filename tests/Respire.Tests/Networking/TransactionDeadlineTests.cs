@@ -392,7 +392,7 @@ public class TransactionDeadlineTests
                 CommandDeadline.After((long)Timeout.TotalMilliseconds), Timeout);
             try
             {
-                var timed = await client.AcquireConnectionAsync(slot, ref acquisition);
+                var timed = await client.AcquireConnectionAsync(slot, ref acquisition, observation: default);
                 await Assert.That(timed).IsSameReferenceAs(normal);
                 await Assert.That(acquisition.HasCancellation).IsFalse();
             }

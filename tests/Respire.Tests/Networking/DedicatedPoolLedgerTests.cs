@@ -301,10 +301,10 @@ public class DedicatedPoolLedgerTests
             LoggerFactory = logger,
         });
         if (mode == "cluster")
-            await client.Core.Cluster!.GetConnectionAsync(10000, CancellationToken.None, discovery: null);
+            await client.Core.Cluster!.GetConnectionAsync(10000, CancellationToken.None, discovery: null, observation: default);
         if (mode == "replicas")
             foreach (var replica in new[] { second, third })
-                await client.Core.ReadRouter.GetReplicaFromEndpointsAsync([new("127.0.0.1", replica.Port)], CancellationToken.None);
+                await client.Core.ReadRouter.GetReplicaFromEndpointsAsync([new("127.0.0.1", replica.Port)], CancellationToken.None, observation: default);
         if (mode == "sentinel")
         {
             // Ensure the monitor owns a socket before enabling data-disposal fault injection.
@@ -358,7 +358,7 @@ public class DedicatedPoolLedgerTests
         logger.ThrowOnDisconnect = false;
         await Assert.That(logger.DisconnectFailures.Count).IsEqualTo(2);
         if (abortAlsoFails)
-            await router.GetConnectionAsync(0, CancellationToken.None, discovery: null);
+            await router.GetConnectionAsync(0, CancellationToken.None, discovery: null, observation: default);
         logger.ThrowOnDisconnect = abortAlsoFails;
         try
         {
@@ -391,7 +391,7 @@ public class DedicatedPoolLedgerTests
         });
         try
         {
-            var selection = await client.Core.ReadRouter.SelectAsync(RespireReadFrom.Replica, CancellationToken.None);
+            var selection = await client.Core.ReadRouter.SelectAsync(RespireReadFrom.Replica, CancellationToken.None, observation: default);
             var entry = selection.Replica!;
             var lease = await entry.RentDedicatedConnectionAsync(CancellationToken.None);
             lease.Pool.Return(lease.Connection);

@@ -37,7 +37,7 @@ internal static class QueuedCircuitDispatch
                 && !CursorCommandMetadata.IsServerCursorContinuation(in command) && client?.Core.Sentinel is not null
                 && client.TryRerouteCircuit(connection, deadline, out var target, out var rerouted, preferredZone: null))
             {
-                observation.Handled(error);
+                observation.Handled(error, new(connection.Host, connection.Port));
                 connection = target;
                 deadline = rerouted;
             }
@@ -90,7 +90,7 @@ internal static class QueuedCircuitDispatch
                 && client?.Core.Sentinel is not null
                 && client.TryRerouteCircuit(connection, deadline, out var target, out var rerouted, preferredZone: null))
             {
-                observation.Handled(error);
+                observation.Handled(error, new(connection.Host, connection.Port));
                 connection = target;
                 deadline = rerouted;
             }

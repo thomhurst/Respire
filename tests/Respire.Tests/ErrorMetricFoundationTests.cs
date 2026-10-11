@@ -249,7 +249,7 @@ public class ErrorMetricFoundationTests
                 var type = types.DefineType($"FoundationBudgetError{i}", TypeAttributes.Public, typeof(Exception)).CreateType()!;
                 var error = (Exception)Activator.CreateInstance(type)!;
                 known ??= error;
-                record.Invoke(null, [error, false, 0]);
+                record.Invoke(null, [error, false, 0, null]);
             }
             var items = capture.Items.ToArray();
             await Assert.That(items.Length).IsEqualTo(131);
@@ -257,7 +257,7 @@ public class ErrorMetricFoundationTests
             await Assert.That(items.Skip(128).All(item => Equals(item.Tags["error.type"], "_OTHER"))).IsTrue();
             // Overflow needs no extra instrument: this series already counts each such error.
             await Assert.That(items.Where(item => Equals(item.Tags["error.type"], "_OTHER")).Sum(item => item.Count)).IsEqualTo(3L);
-            record.Invoke(null, [known!, false, 0]);
+            record.Invoke(null, [known!, false, 0, null]);
             await Assert.That(capture.Items.Last().Tags["error.type"]).IsEqualTo("FoundationBudgetError0");
         }
         finally { meter?.Dispose(); context.Unload(); }
@@ -320,7 +320,7 @@ public class ErrorMetricFoundationTests
                     }
                 };
                 rejecting.Start();
-                if (boundary == "record") record.Invoke(null, [original, false, 0]);
+                if (boundary == "record") record.Invoke(null, [original, false, 0, null]);
                 else
                 {
                     var observe = telemetry.GetMethods(flags).Single(method => method.Name == "ObserveFinalError" && method.IsGenericMethodDefinition).MakeGenericMethod(typeof(int));
@@ -339,7 +339,7 @@ public class ErrorMetricFoundationTests
             };
             accepting.SetMeasurementEventCallback<long>((_, count, _, _) => measurements += (int)count);
             accepting.Start();
-            record.Invoke(null, [original, false, 0]);
+            record.Invoke(null, [original, false, 0, null]);
             await Assert.That(measurements).IsEqualTo(1);
         }
         finally { meter?.Dispose(); context.Unload(); }
@@ -374,7 +374,7 @@ public class ErrorMetricFoundationTests
             }
             else await (ValueTask)observe.Invoke(null, [ValueTask.CompletedTask, noObservation])!;
             await Assert.That(publications).IsEqualTo(0);
-            telemetry.GetMethod("RecordError", flags)!.Invoke(null, [new InvalidOperationException(), false, 0]);
+            telemetry.GetMethod("RecordError", flags)!.Invoke(null, [new InvalidOperationException(), false, 0, null]);
             await Assert.That(publications).IsEqualTo(1);
         }
         finally { meter?.Dispose(); context.Unload(); }

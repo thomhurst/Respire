@@ -57,7 +57,7 @@ public partial class ReadDedicatedRoutingTests
         var generation = client.Core.Sentinel!.Current!;
         router.NearestLatency = new ReadLatencySampler<RespireConnection>(
             (connection, _) => ValueTask.FromResult(connection.Port == primary.Port ? 1L : 10L), () => 0L);
-        var selected = await router.SelectAsync(RespireReadFrom.Nearest, default);
+        var selected = await router.SelectAsync(RespireReadFrom.Nearest, default, observation: default);
         await Assert.That(selected.Primary).IsSameReferenceAs(generation.Multiplexer);
         var originalReply = sentinel.ReplyOverride!;
         var discoveries = 0;
@@ -71,14 +71,14 @@ public partial class ReadDedicatedRoutingTests
         // The primary helper must rediscover before it can return a pool.
         generation.TryRetire();
         using var caller = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        var first = await router.TryRentPrimaryReadAsync(caller.Token, default, allowFallback: true,
+        var first = await router.TryRentPrimaryReadAsync(caller.Token, observation: default, attempt: default, allowFallback: true,
             preferredZone: null, nearestPrimary: selected.Primary);
         await Assert.That(first.Pool).IsNull();
         await Assert.That(first.Failure).IsTypeOf<RespireConnectionException>();
         await Assert.That(discoveries).IsGreaterThan(0);
         await Assert.That(router.NearestLatency.CanConnect(generation.Multiplexer)).IsFalse();
         var previousDiscoveries = discoveries;
-        var second = await router.RentDedicatedConnectionAsync(RespireReadFrom.Nearest, caller.Token);
+        var second = await router.RentDedicatedConnectionAsync(RespireReadFrom.Nearest, caller.Token, observation: default);
         second.Pool.Return(second.Connection);
         await Assert.That(second.IsReplica).IsTrue();
         await Assert.That(discoveries).IsEqualTo(previousDiscoveries);

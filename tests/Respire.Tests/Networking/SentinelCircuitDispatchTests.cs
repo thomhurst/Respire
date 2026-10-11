@@ -64,7 +64,7 @@ public sealed class SentinelCircuitDispatchTests
         var router = client.Core.ReadRouter;
         await router.RefreshNowAsync(default);
         var endpoint = new RespireEndpoint("127.0.0.1", replica.Port);
-        var connection = (await router.SelectAsync(RespireReadFrom.Replica, default)).Connection;
+        var connection = (await router.SelectAsync(RespireReadFrom.Replica, default, observation: default)).Connection;
         for (var i = 1; i < ports.Length; i++) ports[i] = 20000 + i;
         await router.RefreshNowAsync(default);
         var entry = ReplicaEntries(router)[endpoint];
@@ -646,9 +646,11 @@ public sealed class SentinelCircuitDispatchTests
         var execution = Task.Run(async () =>
         {
             observed.Value = true;
+            // The test host can own an ambient activity; the operation must restore it, not leak its own.
+            var ambient = Activity.Current;
             if (transactional) await transaction.CommitAsync();
             else await batch.ExecuteAsync();
-            await Assert.That(Activity.Current).IsNull();
+            await Assert.That(Activity.Current).IsSameReferenceAs(ambient);
             observed.Value = false;
         });
         try

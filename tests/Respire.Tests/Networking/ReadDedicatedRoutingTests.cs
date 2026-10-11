@@ -349,7 +349,7 @@ public partial class ReadDedicatedRoutingTests
             ValueTask.FromResult(connection.Port == failedNode.Port ? 1L : connection.Port == fast.Port ? 10L : 100L),
             () => Volatile.Read(ref now));
         if (useSentinel) await SentinelTestSetup.CompleteReadSetupAsync(client);
-        var selected = await router.SelectAsync(RespireReadFrom.Nearest, default);
+        var selected = await router.SelectAsync(RespireReadFrom.Nearest, default, observation: default);
         await Assert.That(selected.Connection.Port).IsEqualTo(failedNode.Port);
         var sentinelGeneration = client.Core.Sentinel?.Current;
         if (useSentinel) await Assert.That(sentinelGeneration).IsNotNull();
@@ -586,7 +586,7 @@ public partial class ReadDedicatedRoutingTests
         await using var sentinel = Sentinel(primary, () => Volatile.Read(ref replicas));
         await using var client = await RespireClient.ConnectAsync(Options(sentinel, [], RespireReadFrom.ReplicaPreferred)
             with { SentinelPrimaryName = "primary" });
-        var lease = await client.Core.ReadRouter.RentDedicatedConnectionAsync(RespireReadFrom.ReplicaPreferred, CancellationToken.None);
+        var lease = await client.Core.ReadRouter.RentDedicatedConnectionAsync(RespireReadFrom.ReplicaPreferred, CancellationToken.None, observation: default);
         lease.Pool.Return(lease.Connection);
         var arrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         replica.SuppressReply = command =>
@@ -689,7 +689,7 @@ public partial class ReadDedicatedRoutingTests
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], RespireReadFrom.ReplicaPreferred));
         var router = client.Core.ReadRouter;
         router.RoleRevalidationInterval = TimeSpan.FromDays(1);
-        var first = await router.RentDedicatedConnectionAsync(RespireReadFrom.ReplicaPreferred, CancellationToken.None);
+        var first = await router.RentDedicatedConnectionAsync(RespireReadFrom.ReplicaPreferred, CancellationToken.None, observation: default);
         first.Pool.Return(first.Connection);
         for (var index = 0; index < 20; index++) { MeasureDedicatedRental(router, false); MeasureDedicatedRental(router, true); }
         var measured = AllocationMeasurement.WithoutConcurrentGc(() =>
@@ -704,7 +704,7 @@ public partial class ReadDedicatedRoutingTests
         var before = GC.GetAllocatedBytesForCurrentThread();
         for (var index = 0; index < 1_000; index++)
         {
-            var pending = router.RentDedicatedConnectionAsync(RespireReadFrom.ReplicaPreferred, CancellationToken.None);
+            var pending = router.RentDedicatedConnectionAsync(RespireReadFrom.ReplicaPreferred, CancellationToken.None, observation: default);
             if (!pending.IsCompletedSuccessfully) throw new InvalidOperationException("Warm rental performed asynchronous work.");
             var lease = pending.Result;
             lease.Pool.Return(lease.Connection);

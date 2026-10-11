@@ -572,10 +572,12 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         {
             // A cursor pin identifies its issuing connection, not its current role.
             // Resolve the current primary separately before allowing any writes in this group.
-            var primary = await _client.AcquireConnectionAsync(slot, cancellationToken, RespireReadFrom.Primary).ConfigureAwait(false);
+            var primary = await _client.AcquireConnectionAsync(slot, cancellationToken, RespireReadFrom.Primary, observation).ConfigureAwait(false);
             if (!ReferenceEquals(connection.Multiplexer, primary.Multiplexer)
                 || (continuationConnection is not null && !ReferenceEquals(continuationConnection.Multiplexer, primary.Multiplexer)))
             {
+                // Local validation rejects the group before submission, so no node owns this failure.
+                observation.UseEndpoint(null);
                 var names = string.Join(", ", operations.Select(static operation => operation.Operation).Distinct());
                 throw new NotSupportedException($"A cursor page pinned to a replica cannot share its batch group with writes. Operations: {names}. Keep cursor pages in a read-only group.");
             }

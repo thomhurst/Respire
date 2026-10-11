@@ -9,7 +9,10 @@ internal interface IDedicatedLeaseRoute : IDisposable
     bool CanRetry(int attempt, CancellationToken cancellationToken);
     void RecordRetirement(Exception error, int attempt);
     bool TryExcludeFailedCandidate(DedicatedConnectionPool pool, Exception error, CancellationToken cancellationToken) => false;
-    ValueTask<DedicatedConnectionPool> SelectReplacementAsync(CancellationToken cancellationToken);
+    // Routes record each candidate they dial on the observation. RentAsync has already cleared
+    // the retired pool's endpoint, so an unnamed selection failure is not misattributed.
+    ValueTask<DedicatedConnectionPool> SelectReplacementAsync(CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation);
     void SetTerminalError(Exception error);
 }
 
@@ -47,7 +50,7 @@ internal static class DedicatedLeaseAcquisition
     // Struct routes avoid strategy allocations.
     internal static async ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> RentAsync<TRoute>(
         DedicatedConnectionPool pool, TRoute route, CancellationToken cancellationToken,
-        bool reuseIdle, DedicatedLeaseKind kind, string? preferredZone = null,
+        bool reuseIdle, DedicatedLeaseKind kind, RespireTelemetry.ErrorObservation observation, string? preferredZone = null,
         StandaloneCircuitRegistry? circuits = null)
         where TRoute : struct, IDedicatedLeaseRoute
     {
@@ -58,6 +61,9 @@ internal static class DedicatedLeaseAcquisition
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 route.ThrowIfDisposed();
+                // A failed private handshake belongs to the pool being rented, including a
+                // replacement selected after retirement or a rejected read candidate.
+                observation.UseEndpoint(pool.Endpoint, cancellationToken);
                 try
                 {
                     // A stale selection must reselect before consulting the old endpoint's history.
@@ -80,14 +86,16 @@ internal static class DedicatedLeaseAcquisition
                     && route.CanRetry(retirements, cancellationToken))
                 {
                     route.RecordRetirement(error, retirements++);
-                    var replacement = await route.SelectReplacementAsync(cancellationToken).ConfigureAwait(false);
+                    observation.UseEndpoint(null);
+                    var replacement = await route.SelectReplacementAsync(cancellationToken, observation).ConfigureAwait(false);
                     cancellationToken.ThrowIfCancellationRequested();
                     if (ReferenceEquals(replacement, pool)) throw;
                     pool = replacement;
                 }
                 catch (Exception error) when (route.TryExcludeFailedCandidate(pool, error, cancellationToken))
                 {
-                    pool = await route.SelectReplacementAsync(cancellationToken).ConfigureAwait(false);
+                    observation.UseEndpoint(null);
+                    pool = await route.SelectReplacementAsync(cancellationToken, observation).ConfigureAwait(false);
                 }
             }
         }

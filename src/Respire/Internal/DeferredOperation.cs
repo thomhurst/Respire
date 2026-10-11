@@ -19,6 +19,17 @@ internal abstract class DeferredOperation(string operation)
 
     // Call only after the route's final cleanup. Capture shared selection/transaction
     // history before closing the first pending, since it also lends the dispatch owner.
+    // Batch-level routing records its endpoint on the first operation's owner. Every queued
+    // command ran (or would have run) on that same connection, so share it with operations
+    // that did not record their own before their failures are published.
+    internal static void ShareEndpoint<TOperation>(List<TOperation> operations, RespireTelemetry.ErrorObservation source)
+        where TOperation : DeferredOperation
+    {
+        if (source.Endpoint is not { } endpoint) return;
+        foreach (var operation in operations)
+            if (operation.Observation.Endpoint is null) operation.Observation.UseEndpoint(endpoint);
+    }
+
     internal static int ReportErrors<TOperation>(List<TOperation> operations, int? sharedAttempts = null)
         where TOperation : DeferredOperation
     {

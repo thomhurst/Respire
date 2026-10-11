@@ -285,6 +285,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
         var importTransactionStarted = false;
         RespireConnection.CredentialSequenceLease credentialSequence = default;
         var returnWatchConnection = false;
+        var sendAttempted = false;
         var mutationFence = default(ClientSideCacheCoordinator.MutationFence);
         try
         {
@@ -473,9 +474,17 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             finally
             {
                 var attempts = observation.Attempts;
+                // An empty WATCH commit has no queued owner, but still sends MULTI/EXEC on its
+                // pinned connection. Capture the node before ReportErrors closes the owners; an
+                // empty commit that returned early (for example on cancellation) contacted no node.
+                RespireEndpoint? finalEndpoint = observation.IsEmpty
+                    ? sendAttempted && connection is { } attempted
+                        ? new RespireEndpoint(attempted.Host, attempted.Port) : (RespireEndpoint?)null
+                    : observation.Endpoint;
+                DeferredOperation.ShareEndpoint(_ops, observation);
                 var pendingErrors = DeferredOperation.ReportErrors(_ops, attempts) != 0;
                 if (operationError is not null && !pendingErrors)
-                    ErrorObservation.FinishFinal(default, operationError, retryAttempts: attempts);
+                    ErrorObservation.FinishFinal(default, operationError, retryAttempts: attempts, endpoint: finalEndpoint);
                 if (connection is null && operationError is not null)
                     RespireTelemetry.RecordUnroutedBatchFailure("MULTI", _ops, static op => op.Operation,
                         core.Options.Database, sentinelStarted, operationError);
@@ -514,7 +523,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                     slot = await flushCluster.GetPrimaryRoutingSlotAsync(acquisition.Token).ConfigureAwait(false);
                 for (var attempt = 0; ; attempt++)
                 {
-                    connection ??= await _client.AcquireConnectionAsync(slot, ref acquisition).ConfigureAwait(false);
+                    connection ??= await _client.AcquireConnectionAsync(slot, ref acquisition, observation).ConfigureAwait(false);
                     acquisition.Dispose();
                     acquisition.CheckDeadline("MULTI/EXEC", core, ConnectionPolicy.ImportConnection);
                     if (core.Sentinel is not null)
@@ -549,6 +558,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                             // This lease is exclusive: confirm MULTI before any import can
                             // reach Redis, including when ACLs allow HIMPORT but deny MULTI.
                             importSubmissionAttempted = true;
+                            sendAttempted = true;
                             // Import-only MULTI cannot reroute; keep this decision in the shared policy.
                             using var multi = await _client.SendOnConnectionAsync("MULTI", connection,
                                 new ProtocolCommand<Cmd>(new Cmd(RespireCommands.Transaction.MULTI.Verb)), cancellationToken, commandDeadline: deadline,
@@ -557,6 +567,11 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                             ResponseReader.ExpectOk(in multi);
                             importTransactionStarted = true;
                         }
+                        // Only reaching transport submission lets an empty commit name this node. Local
+                        // capacity validation submits nothing, so run it before marking the send.
+                        try { connection.ValidateTransactionCapacity(_ops.Count, includeMulti: !ConnectionPolicy.IsImportSession); }
+                        catch { observation.UseEndpoint(null); throw; }
+                        sendAttempted = true;
                         reply = await connection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count,
                                 cancellationToken, includeMulti: !ConnectionPolicy.IsImportSession, commandDeadline: deadline,
                                 transaction: this, observation: observation, mutationFence: mutationFence,
@@ -586,7 +601,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                         cluster.RecordRejection(ref discovery, connection, retirement);
                         observation.Handled(retirement);
                         discoveryPending = true;
-                        connection = await cluster.GetReplacementConnectionAsync(null, slot, null, acquisition.Token, discovery)
+                        connection = await cluster.GetReplacementConnectionAsync(null, slot, null, acquisition.Token, discovery, observation)
                             .ConfigureAwait(false);
                         discoveryPending = false;
                         continue;
@@ -644,7 +659,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                     cluster.RecordRejection(ref discovery, connection, redirect);
                     observation.Handled(redirect);
                     discoveryPending = true;
-                    connection = await cluster.GetRedirectConnectionAsync(redirect, connection, acquisition.Token, slot, discovery)
+                    connection = await cluster.GetRedirectConnectionAsync(redirect, connection, acquisition.Token, slot, discovery, observation)
                         .ConfigureAwait(false);
                     discoveryPending = false;
                 }

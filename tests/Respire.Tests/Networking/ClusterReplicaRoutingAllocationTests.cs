@@ -35,7 +35,7 @@ public class ClusterReplicaRoutingAllocationTests
         });
         var router = client.Core.Cluster!;
         var slot = ClusterHash.GetSlot("ready-replica");
-        await router.GetReadConnectionAsync(slot, RespireReadFrom.Replica, default);
+        await router.GetReadConnectionAsync(slot, RespireReadFrom.Replica, default, observation: default);
         var route = router.RoutingSnapshot[slot];
         var replicaNode = route.Replicas!.Nodes.Single();
         // Cache deterministic samples; route revalidation keeps its normal production interval.
@@ -72,7 +72,7 @@ public class ClusterReplicaRoutingAllocationTests
         {
             var pending = pinned
                 ? router.GetPinnedReadConnectionAsync(slot, expectedNode, default, revalidate: true, readFrom: policy)
-                : router.GetReadConnectionAsync(slot, policy, default);
+                : router.GetReadConnectionAsync(slot, policy, default, observation: default);
             // A prepared route must complete inline; no task allocation may hide in the measurement.
             if (!pending.IsCompletedSuccessfully)
                 throw new InvalidOperationException("The prepared cluster route did not complete synchronously.");

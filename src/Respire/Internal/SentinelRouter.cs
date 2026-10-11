@@ -112,14 +112,22 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
         lock (_gate) _correctionPools.Remove(pool);
     }
 
+    // Background discovery (notifications, pub/sub, coordination) has no logical owner and passes
+    // no observation. Owners pass theirs: every resolved candidate is recorded before it is dialled,
+    // and every successful return names the generation the owner will use.
     internal async ValueTask<Generation> GetGenerationAsync(CancellationToken cancellationToken, bool forceDiscovery = false,
-        SentinelHint? notificationHint = null, bool observeEstablishmentErrors = false)
+        SentinelHint? notificationHint = null, bool observeEstablishmentErrors = false,
+        RespireTelemetry.ErrorObservation observation = default)
     {
         lock (_gate) ObjectDisposedException.ThrowIf(_disposed, this);
         // An unexpected close retires a Sentinel generation, even when that multiplexer
         // could reconnect. Reconnecting the former primary alone cannot establish that it
         // is still the elected primary; discovery and ROLE validation select a new generation.
-        if (!forceDiscovery && Current is { IsRetired: false } current && current.Multiplexer.IsConnected) return current;
+        if (!forceDiscovery && Current is { IsRetired: false } current && current.Multiplexer.IsConnected)
+        {
+            observation.UseEndpoint(current.Multiplexer.ActiveConnectionEndpoint, cancellationToken);
+            return current;
+        }
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
         var acquired = false;
         Generation? unpublished = null;
@@ -133,7 +141,11 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
             if (previous is { IsRetired: false } && previous.Multiplexer.IsConnected
                 && (!forceDiscovery || notificationHint is { StartupSubscriptionVersion: > 0 } startup
                     && startup.ReportingSentinel is { } reporter
-                    && !Monitoring.NeedsStartupValidation(reporter, startup.StartupSubscriptionVersion))) return previous;
+                    && !Monitoring.NeedsStartupValidation(reporter, startup.StartupSubscriptionVersion)))
+            {
+                observation.UseEndpoint(previous.Multiplexer.ActiveConnectionEndpoint, cancellationToken);
+                return previous;
+            }
             var subscriptionVersion = Monitoring.SubscriptionVersion;
             RespireEndpoint? acceptedReporter = null;
             // Classify against the generation current after acquiring discovery ownership:
@@ -141,12 +153,14 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
             if (notificationHint is { } downHint && previous is not null)
                 notificationHint = downHint.BindDownReportsToCurrentPrimary(new(previous.Endpoint, previous.ValidatedPeer));
             if (!forceDiscovery && previous is not null) Invalidate(previous);
+            // Sentinel queries name no data node. Each resolved primary is recorded before it is dialled.
+            observation.UseEndpoint(null);
             // A forced discovery that resolves to the healthy current primary confirms it with ROLE
             // on the existing connection instead of opening and discarding a candidate generation.
             Func<RespireOptions, string[]?, CancellationToken, ValueTask<Generation>> connect = forceDiscovery && previous is not null
                 ? (options, addresses, token) => ReuseOrConnectGenerationAsync(previous, options, addresses, notificationHint, token,
-                    observeEstablishmentErrors)
-                : (options, _, token) => ConnectGenerationAsync(options, notificationHint, token, observeEstablishmentErrors);
+                    observeEstablishmentErrors, observation)
+                : (options, _, token) => ConnectGenerationAsync(options, notificationHint, token, observeEstablishmentErrors, observation);
             var replacement = await SentinelResolver.ResolveAndConnectPrimaryAsync(
                 core.Options, connect, linked.Token, _discovery,
                 notificationHint?.ReportingSentinel,
@@ -164,6 +178,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
                         throw new RespireConnectionException("Sentinel primary changed while it was being revalidated.");
                     if (acceptedReporter is { } validatedReporter) Monitoring.Validated(validatedReporter, subscriptionVersion);
                 }
+                observation.UseEndpoint(replacement.Multiplexer.ActiveConnectionEndpoint, cancellationToken);
                 return replacement;
             }
             unpublished = replacement;
@@ -181,6 +196,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
                     && old.Multiplexer.AllCurrentPeersMatch(replacementPeer.Host, replacementPeer.Port))
                 {
                     if (acceptedReporter is { } validatedReporter) Monitoring.Validated(validatedReporter, subscriptionVersion);
+                    observation.UseEndpoint(old.Multiplexer.ActiveConnectionEndpoint, cancellationToken);
                     return old;
                 }
                 if (old is not null) Invalidate(old);
@@ -196,6 +212,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
                 Monitoring.Published();
                 if (acceptedReporter is { } publishedReporter) Monitoring.Validated(publishedReporter, subscriptionVersion);
             }
+            observation.UseEndpoint(replacement.Multiplexer.ActiveConnectionEndpoint, cancellationToken);
             return replacement;
         }
         catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(
@@ -254,7 +271,8 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
     }
 
     private async ValueTask<Generation> ReuseOrConnectGenerationAsync(Generation current, RespireOptions options,
-        string[]? addresses, SentinelHint? hint, CancellationToken cancellationToken, bool observeEstablishmentErrors)
+        string[]? addresses, SentinelHint? hint, CancellationToken cancellationToken, bool observeEstablishmentErrors,
+        RespireTelemetry.ErrorObservation observation)
     {
         var endpoint = options.PrimaryEndpoint;
         var samePeer = new SentinelAddressEvidence(endpoint, addresses).SingleAddress is { } address
@@ -265,7 +283,8 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
             && current.ValidatedPeer is { } peer && current.Multiplexer.AllCurrentPeersMatch(peer.Host, peer.Port);
         if (current.IsRetired || !current.Multiplexer.IsConnected
             || !sameEndpointWithoutAddresses && !samePeer)
-            return await ConnectGenerationAsync(options, hint, cancellationToken, observeEstablishmentErrors).ConfigureAwait(false);
+            return await ConnectGenerationAsync(options, hint, cancellationToken, observeEstablishmentErrors, observation).ConfigureAwait(false);
+        observation.UseEndpoint(current.Multiplexer.ActiveConnectionEndpoint, cancellationToken);
         await current.ValidateAsync(current.Multiplexer.GetConnection(), cancellationToken).ConfigureAwait(false);
         ValidateSwitchTargetPeer(current, hint);
         return current;
@@ -285,9 +304,11 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
     // The supervisor wakes when discovery learns a Sentinel. Monitors complete only when the
     // client is disposed, so this fallback interval only restarts one that faulted unexpectedly.
     private async ValueTask<Generation> ConnectGenerationAsync(RespireOptions options, SentinelHint? hint,
-        CancellationToken cancellationToken, bool observeEstablishmentErrors)
+        CancellationToken cancellationToken, bool observeEstablishmentErrors, RespireTelemetry.ErrorObservation observation)
     {
         var generation = new Generation(this, core, options);
+        // The resolved primary is known before its handshake; a refused connection names it.
+        observation.UseEndpoint(generation.Multiplexer.ActiveConnectionEndpoint, cancellationToken);
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);

@@ -66,7 +66,7 @@ public partial class ErrorMetricsTests
         replica.ReplyOverride = (_, command) => command.StartsWith("AUTH ", StringComparison.Ordinal)
             ? "-WRONGPASS dedicated authentication rejected\r\n"u8.ToArray() : null;
         using var capture = new Capture(throwOnMeasurement: true);
-        var lease = await client.Core.ReadRouter.RentDedicatedConnectionAsync(RespireReadFrom.ReplicaPreferred, default);
+        var lease = await client.Core.ReadRouter.RentDedicatedConnectionAsync(RespireReadFrom.ReplicaPreferred, default, observation: default);
         try
         {
             await Assert.That(lease.IsReplica).IsFalse();
@@ -91,7 +91,7 @@ public partial class ErrorMetricsTests
             ? "-NOPERM dedicated role rejected\r\n"u8.ToArray()
             : "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray()) : null;
         using var capture = new Capture(throwOnMeasurement: true);
-        var lease = await client.Core.ReadRouter.RentDedicatedConnectionAsync(RespireReadFrom.ReplicaPreferred, default);
+        var lease = await client.Core.ReadRouter.RentDedicatedConnectionAsync(RespireReadFrom.ReplicaPreferred, default, observation: default);
         try
         {
             await Assert.That(lease.IsReplica).IsFalse();

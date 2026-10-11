@@ -9,9 +9,8 @@ internal sealed partial class ReadEndpointRouter
     // LazyInitializer's ref-object overload uses Monitor internally; do not replace with Lock.
     private object? _nearestGate;
 
-    private async ValueTask<Selection> GetNearestAsync(CancellationToken cancellationToken, bool retry = true,
-        long? samplingDeadline = null, Exception? previousFailure = null, ReadAttempt? attempt = null,
-        RespireTelemetry.ErrorObservation observation = default)
+    private async ValueTask<Selection> GetNearestAsync(CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, bool retry = true,
+        long? samplingDeadline = null, Exception? previousFailure = null, ReadAttempt? attempt = null)
     {
         var deadline = samplingDeadline ?? NearestReadSelection.CreateDeadline();
         var sampler = LazyInitializer.EnsureInitialized(ref NearestLatency, ref _nearestGate, static () => ReadLatencySampler.Create());
@@ -27,12 +26,13 @@ internal sealed partial class ReadEndpointRouter
         {
             try
             {
-                primary = await GetPrimaryAsync(cancellationToken, attempt: attempt).ConfigureAwait(false);
+                primary = await GetPrimaryAsync(cancellationToken, observation, attempt: attempt).ConfigureAwait(false);
                 sampler.ConnectionSucceeded(primaryCandidate);
             }
             catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
             {
-                RecordCandidateFailure(observation, error);
+                RecordCandidateFailure(observation, error,
+                    Core.Sentinel is null ? primaryCandidate.ActiveConnectionEndpoint : observation.Endpoint);
                 lastError = error;
                 sampler.ConnectionFailed(primaryCandidate);
             }
@@ -65,6 +65,7 @@ internal sealed partial class ReadEndpointRouter
                 if (attempt?.ContainsFailure(endpoints[index - 1]) == true) continue;
                 var entry = await GetCurrentReplicaEntryAsync(endpoints[index - 1]).ConfigureAwait(false);
                 if (entry is null || entry.IsCoolingDown) continue;
+                observation.UseEndpoint(entry.Endpoint, cancellationToken);
                 try
                 {
                     var connection = await entry.GetNearestConnectionAsync(sampler, cancellationToken).ConfigureAwait(false);
@@ -73,7 +74,7 @@ internal sealed partial class ReadEndpointRouter
                 }
                 catch (Exception error) when (!cancellationToken.IsCancellationRequested && error is not ObjectDisposedException)
                 {
-                    RecordCandidateFailure(observation, error);
+                    RecordCandidateFailure(observation, error, entry.Endpoint);
                     lastError = error;
                     TryRecordFailure(entry, error, nearest: true);
                     continue;
@@ -116,8 +117,8 @@ internal sealed partial class ReadEndpointRouter
             }
         }
         if (retry)
-            return await GetNearestAsync(cancellationToken, retry: false, samplingDeadline: deadline,
-                previousFailure: lastError, attempt: attempt, observation: observation).ConfigureAwait(false);
+            return await GetNearestAsync(cancellationToken, observation, retry: false, samplingDeadline: deadline,
+                previousFailure: lastError, attempt: attempt).ConfigureAwait(false);
         if (attempt?.FirstFailure is { } original)
         {
             // Exclusions alone preserve the original exception. A later selection or

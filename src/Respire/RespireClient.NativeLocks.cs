@@ -118,19 +118,19 @@ public sealed partial class RespireClient
             RespireConnection connection;
             if (requireIdentity && core.Cluster is { } cluster)
             {
-                connection = await GetTrackedClusterConnectionAsync(cluster, slot, requireIdentity, cancellationToken)
+                connection = await GetTrackedClusterConnectionAsync(cluster, slot, requireIdentity, cancellationToken, observation)
                     .ConfigureAwait(false);
             }
             else if (requireIdentity)
             {
                 var multiplexer = core.Sentinel is { } sentinel
-                    ? (await sentinel.GetGenerationAsync(cancellationToken).ConfigureAwait(false)).Multiplexer
+                    ? (await sentinel.GetGenerationAsync(cancellationToken, observation: observation).ConfigureAwait(false)).Multiplexer
                     : core.Multiplexer;
                 connection = await GetTrackedConnectionAsync(multiplexer, cancellationToken).ConfigureAwait(false);
             }
             else
             {
-                connection = await AcquireConnectionAsync(slot, cancellationToken).ConfigureAwait(false);
+                connection = await AcquireConnectionAsync(slot, cancellationToken, observation).ConfigureAwait(false);
             }
 
             var execution = new TrackedLockExecution(GetTrackedConnectionIdentity(connection, requireIdentity), observation, finalOwner);
@@ -189,16 +189,18 @@ public sealed partial class RespireClient
                     if (!requireIdentity)
                     {
                         connection = await cluster.GetReplacementConnectionAsync(
-                            source, slot, null, cancellationToken, discovery).ConfigureAwait(false);
+                            source, slot, null, cancellationToken, discovery, execution.ErrorObservation).ConfigureAwait(false);
                     }
                     else
                     {
                         connection = await GetTrackedReplacementConnectionAsync(
-                            cluster, source, slot, !allowUnfencedFallback, cancellationToken, discovery).ConfigureAwait(false);
+                            cluster, source, slot, !allowUnfencedFallback, cancellationToken, discovery,
+                            execution.ErrorObservation).ConfigureAwait(false);
                         if (RequiresStrictIdentityRetry(connection, allowUnfencedFallback))
                         {
                             connection = await GetTrackedReplacementConnectionAsync(
-                                cluster, source, slot, true, cancellationToken, discovery).ConfigureAwait(false);
+                                cluster, source, slot, true, cancellationToken, discovery,
+                                execution.ErrorObservation).ConfigureAwait(false);
                         }
                     }
 
@@ -217,18 +219,20 @@ public sealed partial class RespireClient
                     var source = connection;
                     if (!requireIdentity)
                     {
-                        connection = await cluster.GetRedirectConnectionAsync(error, source, cancellationToken, slot, discovery)
+                        connection = await cluster.GetRedirectConnectionAsync(error, source, cancellationToken, slot, discovery, execution.ErrorObservation)
                             .ConfigureAwait(false);
                     }
                     else
                     {
                         connection = await GetTrackedRedirectConnectionAsync(
-                                cluster, error, source, !allowUnfencedFallback, cancellationToken, slot, discovery)
+                                cluster, error, source, !allowUnfencedFallback, cancellationToken, slot, discovery,
+                                execution.ErrorObservation)
                             .ConfigureAwait(false);
                         if (RequiresStrictIdentityRetry(connection, allowUnfencedFallback))
                         {
                             connection = await GetTrackedRedirectConnectionAsync(
-                                    cluster, error, source, true, cancellationToken, slot, discovery)
+                                    cluster, error, source, true, cancellationToken, slot, discovery,
+                                    execution.ErrorObservation)
                                 .ConfigureAwait(false);
                         }
                     }

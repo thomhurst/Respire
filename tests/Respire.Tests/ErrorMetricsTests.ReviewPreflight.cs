@@ -194,7 +194,7 @@ public partial class ErrorMetricsTests
         await using var subscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         using var capture = new Capture(throwOnMeasurement: true);
         Volatile.Write(ref topology, NotificationTopology(second.Port));
-        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(default, discovery: null);
+        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(default, discovery: null, observation: default);
         await subscription.Completion.WaitAsync(TimeSpan.FromSeconds(10));
         var rejection = capture.Items.Where(item => item.Tags.GetValueOrDefault("db.response.status_code") is "NOPERM").ToArray();
         await Assert.That(rejection.Length).IsEqualTo(attempts);

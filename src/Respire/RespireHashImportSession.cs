@@ -66,14 +66,14 @@ public sealed class RespireHashImportSession : IAsyncDisposable
         var core = client.Core;
         var cluster = core.Cluster;
         var pool = cluster is null
-            ? await core.GetDedicatedPoolAsync(cancellationToken).ConfigureAwait(false)
-            : await cluster.GetDedicatedPoolAsync(slot, cancellationToken, discovery: null).ConfigureAwait(false);
+            ? await core.GetDedicatedPoolAsync(cancellationToken, observation: default).ConfigureAwait(false)
+            : await cluster.GetDedicatedPoolAsync(slot, cancellationToken, discovery: null, observation: default).ConfigureAwait(false);
         RespireConnection connection;
         if (cluster is null)
-            (pool, connection) = await core.RentDedicatedConnectionAsync(pool, cancellationToken, reuseIdle: false).ConfigureAwait(false);
+            (pool, connection) = await core.RentDedicatedConnectionAsync(pool, cancellationToken, observation: default, reuseIdle: false).ConfigureAwait(false);
         else
             (pool, connection) = await cluster.RentDedicatedConnectionAsync(pool, slot, cancellationToken,
-                discovery: null, reuseIdle: false).ConfigureAwait(false);
+                discovery: null, reuseIdle: false, observation: default).ConfigureAwait(false);
         return new(client, pool, connection, slot, cluster?.CaptureSlotVersion(slot) ?? default);
     }
 

@@ -85,7 +85,7 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
             return null;
         }
 
-        var payload = new RespBulkPayloadPipe();
+        var payload = new RespBulkPayloadPipe(ErrorEndpoint);
         Volatile.Write(ref _payload, payload);
         if (Volatile.Read(ref _payloadAbortError) is { } lateAbort)
             payload.Complete(lateAbort);
@@ -159,7 +159,7 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
 
         if (Volatile.Read(ref _prefixError) is { } prefixError)
         {
-            RespireTelemetry.RecordDiscardedError(in result, _commandName, ErrorAttempts);
+            RespireTelemetry.RecordDiscardedError(in result, _commandName, ErrorAttempts, ErrorEndpoint);
             result.Dispose();
             if (reserved) SetExceptionCore(PrepareException(prefixError));
             else TrySetException(prefixError);
@@ -256,7 +256,7 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
         // Prefix errors retained before cancellation need an owner after both replies drain.
         if (_prefixError is { } prefixError && _completionError is { } completionError
             && !ReferenceEquals(prefixError, completionError))
-            RespireTelemetry.RecordError(prefixError, internallyHandled: true, ErrorAttempts);
+            RespireTelemetry.RecordError(prefixError, internallyHandled: true, ErrorAttempts, ErrorEndpoint);
         // One-shot source. The caller and receive loop own its only references.
     }
 }
@@ -271,14 +271,18 @@ internal sealed class RespBulkPayloadPipe : IDisposable
         minimumSegmentSize: 4096,
         useSynchronizationContext: false));
     private readonly Stream _readStream;
+    private readonly RespireEndpoint? _endpoint;
     private int _errorAttempts;
     private int _reportedReadError;
     private int _completed;
     private bool _flushCancelled;
     private long _lastReaderProgress = Stopwatch.GetTimestamp();
 
-    internal RespBulkPayloadPipe()
-        => _readStream = new ProgressTrackingStream(_pipe.Reader.AsStream(leaveOpen: false), this);
+    internal RespBulkPayloadPipe(RespireEndpoint? endpoint = null)
+    {
+        _endpoint = endpoint;
+        _readStream = new ProgressTrackingStream(_pipe.Reader.AsStream(leaveOpen: false), this);
+    }
 
     internal Stream ReadStream => _readStream;
 
@@ -297,11 +301,11 @@ internal sealed class RespBulkPayloadPipe : IDisposable
         if (error is OperationCanceledException cancelled && readCancellation.IsCancellationRequested
             && cancelled.CancellationToken == readCancellation)
         {
-            ErrorObservation.FinishFinal(default, error, retryAttempts: _errorAttempts);
+            ErrorObservation.FinishFinal(default, error, retryAttempts: _errorAttempts, endpoint: _endpoint);
             return;
         }
         if (Interlocked.Exchange(ref _reportedReadError, 1) == 0)
-            ErrorObservation.FinishFinal(default, error, retryAttempts: _errorAttempts);
+            ErrorObservation.FinishFinal(default, error, retryAttempts: _errorAttempts, endpoint: _endpoint);
     }
 
     internal Memory<byte> GetMemory(int sizeHint) => _pipe.Writer.GetMemory(sizeHint);

@@ -132,7 +132,7 @@ public class ClusterCircuitDispatchTests
         await using var server = Server();
         await using var client = await RespireClient.ConnectAsync(Options(server));
         await client.GetStringAsync("warm");
-        var connection = await client.Core.Cluster!.GetConnectionAsync(null, default, null);
+        var connection = await client.Core.Cluster!.GetConnectionAsync(null, default, null, observation: default);
         Open(client, server);
         var error = await Failure(async () =>
         {
@@ -165,7 +165,7 @@ public class ClusterCircuitDispatchTests
             while (node.IsConnected) await Task.Delay(1, timeout.Token);
         }
         var error = await Failure(async () => await router.GetReadConnectionAsync(ClusterHash.GetSlot("rejected"),
-            replicaRoute ? RespireReadFrom.ReplicaPreferred : RespireReadFrom.Primary, default));
+            replicaRoute ? RespireReadFrom.ReplicaPreferred : RespireReadFrom.Primary, default, observation: default));
         await Assert.That(error).IsTypeOf<RespireCircuitOpenException>();
         await Assert.That(((RespireCircuitOpenException)error).Endpoint).IsEqualTo(endpoint);
         await Assert.That((replicaRoute ? replica : primary).ReceivedCommands.Any(command => command.Contains("rejected"))).IsFalse();
@@ -303,7 +303,7 @@ public class ClusterCircuitDispatchTests
         await client.GetStringAsync("warm");
         if (targetOpen) Open(client, target);
         var router = client.Core.Cluster!;
-        var original = await router.GetConnectionAsync(ClusterHash.GetSlot("retired"), default, null);
+        var original = await router.GetConnectionAsync(ClusterHash.GetSlot("retired"), default, null, observation: default);
         router.SetSlotOwner(ClusterHash.GetSlot("retired"), router.GetMultiplexer(Endpoint(target)));
         await original.Multiplexer!.RetireAsync();
         var command = new Cmd1(Verbs.Get, "retired");
@@ -377,7 +377,7 @@ public class ClusterCircuitDispatchTests
             MaxInflightCommands = 4, CommandTimeout = TimeSpan.FromSeconds(10),
         });
         await client.GetStringAsync("warm");
-        var connection = await client.Core.Cluster!.GetConnectionAsync(null, default, null);
+        var connection = await client.Core.Cluster!.GetConnectionAsync(null, default, null, observation: default);
         server.SuppressReply = command => command.StartsWith("GET hold", StringComparison.Ordinal);
         var held = connection.SendAsync(new Cmd1(Verbs.Get, "hold")).AsTask();
         var heldSecond = connection.SendAsync(new Cmd1(Verbs.Get, "hold2")).AsTask();
@@ -470,7 +470,7 @@ public class ClusterCircuitDispatchTests
         });
         await client.GetStringAsync("warm");
         var pool = await client.Core.Cluster!.GetReadDedicatedPoolAsync(ClusterHash.GetSlot("rejected"),
-            RespireReadFrom.Primary, default, null);
+            RespireReadFrom.Primary, default, null, observation: default);
         openDuringConnect = true;
         await Assert.That(await Failure(() => Send(client, shape, "rejected"))).IsTypeOf<RespireCircuitOpenException>();
         await Assert.That(pool.CaptureRetirementState().Borrowed).IsEqualTo(0);
@@ -545,7 +545,7 @@ public class ClusterCircuitDispatchTests
         var method = typeof(ClusterRouter).GetMethod("TryRefreshSlotThroughKnownMastersAsync",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
         var result = (ValueTask<RespireConnectionMultiplexer?>)method.Invoke(router,
-            [0, failedOwner, CancellationToken.None, null, false])!;
+            [0, failedOwner, CancellationToken.None, null, default(RespireTelemetry.ErrorObservation), false])!;
         var owner = await result;
         await Assert.That(owner).IsSameReferenceAs(healthyNode);
         await Assert.That(healthy.ReceivedCommands.Contains("CLUSTER SLOTS")).IsTrue();
@@ -648,7 +648,7 @@ public class ClusterCircuitDispatchTests
             case "bytes": await client.GetBytesAsync(key, cancellationToken); break;
             case "integer": await client.Strings.LengthAsync(key, cancellationToken); break;
             case "pinned":
-                var connection = await client.Core.Cluster!.GetConnectionAsync(ClusterHash.GetSlot(key), cancellationToken, null);
+                var connection = await client.Core.Cluster!.GetConnectionAsync(ClusterHash.GetSlot(key), cancellationToken, null, observation: default);
                 using (var response = await client.SendOnPinnedConnectionAsync("GET", connection, new Cmd1(Verbs.Get, key), cancellationToken)) { }
                 break;
             case "stream":

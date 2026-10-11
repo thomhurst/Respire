@@ -145,7 +145,7 @@ public class ClusterReadOnlyTests
         var router = client.Core.Cluster!;
         var refreshing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         seed.SuppressReply = _ => { refreshing.TrySetResult(); return true; };
-        var refresh = router.GetMasterConnectionsAsync(CancellationToken.None, discovery: null).AsTask();
+        var refresh = router.GetMasterConnectionsAsync(CancellationToken.None, discovery: null, observation: default).AsTask();
         await refreshing.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         var slot = ClusterHash.GetSlot("key");
@@ -155,8 +155,8 @@ public class ClusterReadOnlyTests
         await seed.SendRawAsync(FullTopology(stale.Port));
         _ = await refresh.WaitAsync(TimeSpan.FromSeconds(5));
 
-        await Assert.That((await router.GetConnectionAsync(slot, CancellationToken.None, discovery: null)).Port).IsEqualTo(original.Port);
-        await Assert.That((await router.GetConnectionAsync((slot + 1) % 16384, CancellationToken.None, discovery: null)).Port)
+        await Assert.That((await router.GetConnectionAsync(slot, CancellationToken.None, discovery: null, observation: default)).Port).IsEqualTo(original.Port);
+        await Assert.That((await router.GetConnectionAsync((slot + 1) % 16384, CancellationToken.None, discovery: null, observation: default)).Port)
             .IsEqualTo(stale.Port);
     }
 
@@ -312,7 +312,7 @@ public class ClusterReadOnlyTests
         var router = client.Core.Cluster!;
         if (topologyUpdate)
         {
-            _ = await router.GetMasterConnectionsAsync(CancellationToken.None, discovery: null);
+            _ = await router.GetMasterConnectionsAsync(CancellationToken.None, discovery: null, observation: default);
         }
         else
         {
@@ -320,7 +320,7 @@ public class ClusterReadOnlyTests
             var source = router.GetMultiplexer(new RespireEndpoint("127.0.0.1", replica.Port)).GetConnection();
             _ = await router.GetRedirectConnectionAsync(
                 new RespireServerException($"MOVED {slot} 127.0.0.1:{replacement.Port}", "SET"),
-                source, CancellationToken.None, commandSlot: null, discovery: null);
+                source, CancellationToken.None, commandSlot: null, discovery: null, observation: default);
         }
         await healthy.SendRawAsync(initial);
 
@@ -472,12 +472,12 @@ public class ClusterReadOnlyTests
         var router = client.Core.Cluster!;
         var source = router.GetMultiplexer(new RespireEndpoint("127.0.0.1", replica.Port)).GetConnection();
         _ = await router.GetRedirectConnectionAsync(
-            new RespireServerException($"MOVED 0 127.0.0.1:{moved.Port}", "SET"), source, CancellationToken.None, commandSlot: null, discovery: null);
+            new RespireServerException($"MOVED 0 127.0.0.1:{moved.Port}", "SET"), source, CancellationToken.None, commandSlot: null, discovery: null, observation: default);
         await healthy.SendRawAsync(SplitTopology(healthy.Port, replacement.Port));
 
         await Assert.That(await write.WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
         await Assert.That(replacement.ReceivedCommands).IsEquivalentTo(["SET key value"]);
-        await Assert.That((await router.GetConnectionAsync(0, CancellationToken.None, discovery: null)).Port).IsEqualTo(moved.Port);
+        await Assert.That((await router.GetConnectionAsync(0, CancellationToken.None, discovery: null, observation: default)).Port).IsEqualTo(moved.Port);
         await Assert.That(seed.CommandsSeen).IsEqualTo(1);
     }
 
@@ -712,12 +712,12 @@ public class ClusterReadOnlyTests
             ReconnectPolicy = new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0 },
             Endpoints = [new RespireEndpoint("127.0.0.1", sourceServer.Port)],
         });
-        await client.Core.Cluster!.EnsureConnectedAsync(CancellationToken.None, discovery: null);
+        await client.Core.Cluster!.EnsureConnectedAsync(CancellationToken.None, discovery: null, observation: default);
         var slot = ClusterHash.GetSlot("key");
-        var source = await client.Core.Cluster.GetConnectionAsync(slot, CancellationToken.None, discovery: null);
+        var source = await client.Core.Cluster.GetConnectionAsync(slot, CancellationToken.None, discovery: null, observation: default);
 
         var recovered = await client.Core.Cluster.GetRedirectConnectionAsync(
-            new RespireServerException("READONLY demoted"), source, CancellationToken.None, slot, discovery: null)
+            new RespireServerException("READONLY demoted"), source, CancellationToken.None, slot, discovery: null, observation: default)
             .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
 
         await Assert.That(recovered.Port).IsEqualTo(replacement.Port);
@@ -742,11 +742,11 @@ public class ClusterReadOnlyTests
         });
         var router = client.Core.Cluster!;
         var slot = ClusterHash.GetSlot("key");
-        var source = await router.GetConnectionAsync(slot, CancellationToken.None, discovery: null);
+        var source = await router.GetConnectionAsync(slot, CancellationToken.None, discovery: null, observation: default);
         var requested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         seed.SuppressReply = _ => { requested.TrySetResult(); return true; };
         var original = new RespireServerException("READONLY original rejection");
-        var recovery = router.GetRedirectConnectionAsync(original, source, CancellationToken.None, slot, discovery: null).AsTask();
+        var recovery = router.GetRedirectConnectionAsync(original, source, CancellationToken.None, slot, discovery: null, observation: default).AsTask();
         await requested.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var newer = router.GetMultiplexer(new RespireEndpoint("127.0.0.1", replacement.Port));
         router.SetSlotOwner(slot, newer);
@@ -754,7 +754,7 @@ public class ClusterReadOnlyTests
         {
             _ = await router.GetRedirectConnectionAsync(
                 new RespireServerException($"MOVED {slot} 127.0.0.1:{replacement.Port}"),
-                source, CancellationToken.None, slot, discovery: null);
+                source, CancellationToken.None, slot, discovery: null, observation: default);
         }
         clock.Advance(TimeSpan.FromSeconds(2));
         if (connected)
@@ -789,7 +789,7 @@ public class ClusterReadOnlyTests
             Endpoints = [new("127.0.0.1", seed.Port)],
         });
         var router = client.Core.Cluster!;
-        var source = await router.GetConnectionAsync(100, CancellationToken.None, discovery: null);
+        var source = await router.GetConnectionAsync(100, CancellationToken.None, discovery: null, observation: default);
         seed.SuppressReply = command =>
         {
             if (command != "CLUSTER SLOTS") return false;
@@ -803,10 +803,10 @@ public class ClusterReadOnlyTests
             return true;
         };
         var firstError = new RespireServerException("READONLY first slot");
-        var first = router.GetRedirectConnectionAsync(firstError, source, CancellationToken.None, 100, discovery: null).AsTask();
+        var first = router.GetRedirectConnectionAsync(firstError, source, CancellationToken.None, 100, discovery: null, observation: default).AsTask();
         await requested.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var joinedError = new RespireServerException("READONLY joined slot");
-        var joined = router.GetRedirectConnectionAsync(joinedError, source, CancellationToken.None, 200, discovery: null).AsTask();
+        var joined = router.GetRedirectConnectionAsync(joinedError, source, CancellationToken.None, 200, discovery: null, observation: default).AsTask();
         var newer = router.GetMultiplexer(new RespireEndpoint("127.0.0.1", replacement.Port));
         router.SetSlotOwner(200, newer);
 
@@ -842,12 +842,12 @@ public class ClusterReadOnlyTests
         });
         var router = client.Core.Cluster!;
         var slot = ClusterHash.GetSlot("key");
-        var source = await router.GetConnectionAsync(slot, CancellationToken.None, discovery: null);
+        var source = await router.GetConnectionAsync(slot, CancellationToken.None, discovery: null, observation: default);
         var requested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         seed.SuppressReply = _ => { requested.TrySetResult(); return true; };
         using var caller = new CancellationTokenSource();
         var original = new RespireServerException("READONLY original rejection");
-        var recovery = router.GetRedirectConnectionAsync(original, source, caller.Token, slot, discovery: null).AsTask();
+        var recovery = router.GetRedirectConnectionAsync(original, source, caller.Token, slot, discovery: null, observation: default).AsTask();
         await requested.Task.WaitAsync(TimeSpan.FromSeconds(5));
         if (cancelCaller)
         {
@@ -910,10 +910,10 @@ public class ClusterReadOnlyTests
         using var cancelledWaiter = new CancellationTokenSource();
         var router = client.Core.Cluster!;
         var rejection = new RespireServerException("READONLY demoted");
-        var cancelled = router.GetRedirectConnectionAsync(rejection, source, cancelledWaiter.Token, slot, discovery: null).AsTask();
+        var cancelled = router.GetRedirectConnectionAsync(rejection, source, cancelledWaiter.Token, slot, discovery: null, observation: default).AsTask();
         await slotsReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var waiters = Enumerable.Range(0, 7)
-            .Select(_ => router.GetRedirectConnectionAsync(rejection, source, CancellationToken.None, slot, discovery: null).AsTask())
+            .Select(_ => router.GetRedirectConnectionAsync(rejection, source, CancellationToken.None, slot, discovery: null, observation: default).AsTask())
             .ToArray();
 
         cancelledWaiter.Cancel();
@@ -956,14 +956,14 @@ public class ClusterReadOnlyTests
         var router = client.Core.Cluster!;
         var rejection = new RespireServerException("READONLY demoted");
         var canceled = router.GetRedirectConnectionAsync(
-            rejection, source, cancellation.Token, ClusterHash.GetSlot("key"), discovery: null).AsTask();
+            rejection, source, cancellation.Token, ClusterHash.GetSlot("key"), discovery: null, observation: default).AsTask();
         await firstRefresh.Task.WaitAsync(TimeSpan.FromSeconds(5));
         cancellation.Cancel();
         await Assert.That(async () => await canceled).Throws<OperationCanceledException>();
         await seed.SendRawAsync(Topology(replica.Port));
 
         var lateCaller = router.GetRedirectConnectionAsync(
-            rejection, source, CancellationToken.None, ClusterHash.GetSlot("key"), discovery: null).AsTask();
+            rejection, source, CancellationToken.None, ClusterHash.GetSlot("key"), discovery: null, observation: default).AsTask();
         await nextRefresh.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var recovered = await lateCaller.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(recovered.Port).IsEqualTo(replacement.Port);
@@ -994,9 +994,9 @@ public class ClusterReadOnlyTests
 
         var rejection = new RespireServerException("READONLY demoted");
         var router = client.Core.Cluster!;
-        var first = router.GetRedirectConnectionAsync(rejection, source, CancellationToken.None, 100, discovery: null).AsTask();
+        var first = router.GetRedirectConnectionAsync(rejection, source, CancellationToken.None, 100, discovery: null, observation: default).AsTask();
         await firstRefresh.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        var second = router.GetRedirectConnectionAsync(rejection, source, CancellationToken.None, 200, discovery: null).AsTask();
+        var second = router.GetRedirectConnectionAsync(rejection, source, CancellationToken.None, 200, discovery: null, observation: default).AsTask();
         await seed.SendRawAsync(TopologyRanges(firstReplacement.Port, sourceServer.Port));
         await secondRefresh.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await seed.SendRawAsync(TopologyRanges(firstReplacement.Port, secondReplacement.Port));

@@ -15,11 +15,11 @@ public partial class ReadDedicatedRoutingTests
         await using var primary = Node("primary", false);
         await using var replica = Node("replica", true);
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], RespireReadFrom.PrimaryPreferred));
-        var pool = await client.Core.GetDedicatedPoolAsync(CancellationToken.None);
+        var pool = await client.Core.GetDedicatedPoolAsync(CancellationToken.None, observation: default);
         await pool.RetireAsync();
         using var caller = new CancellationTokenSource(TimeSpan.FromSeconds(1));
         await Assert.That(async () => await client.Core.ReadRouter.RentDedicatedConnectionAsync(
-            RespireReadFrom.PrimaryPreferred, caller.Token)).ThrowsExactly<ObjectDisposedException>();
+            RespireReadFrom.PrimaryPreferred, caller.Token, observation: default)).ThrowsExactly<ObjectDisposedException>();
         await Assert.That(caller.IsCancellationRequested).IsFalse();
     }
 
@@ -37,7 +37,7 @@ public partial class ReadDedicatedRoutingTests
         await using var client = await RespireClient.ConnectAsync(Options(sentinel, [], RespireReadFrom.ReplicaPreferred)
             with { SentinelPrimaryName = "primary", LoggerFactory = logger });
         var router = client.Core.ReadRouter;
-        var lease = await router.RentDedicatedConnectionAsync(RespireReadFrom.ReplicaPreferred, CancellationToken.None);
+        var lease = await router.RentDedicatedConnectionAsync(RespireReadFrom.ReplicaPreferred, CancellationToken.None, observation: default);
         lease.Pool.Return(lease.Connection);
         var arrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         replica.SuppressReply = command =>
@@ -107,8 +107,8 @@ public partial class ReadDedicatedRoutingTests
         try
         {
             var router = client.Core.ReadRouter;
-            var selection = await router.SelectAsync(RespireReadFrom.Replica, CancellationToken.None);
-            var lease = await router.RentDedicatedConnectionAsync(RespireReadFrom.Replica, CancellationToken.None);
+            var selection = await router.SelectAsync(RespireReadFrom.Replica, CancellationToken.None, observation: default);
+            var lease = await router.RentDedicatedConnectionAsync(RespireReadFrom.Replica, CancellationToken.None, observation: default);
             lease.Pool.Return(lease.Connection);
             logger.Arm();
             var first = Task.Run(async () => await selection.Replica!.DisposeAsync());

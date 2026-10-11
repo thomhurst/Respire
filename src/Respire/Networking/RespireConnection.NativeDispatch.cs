@@ -34,7 +34,7 @@ internal sealed partial class RespireConnection
                 // Uninstrumented ready sends retain their synchronous failure boundary.
                 // Neither the caller nor the receive ring owns this unpublished source.
                 ReclaimUnpublished(source);
-                RespireTelemetry.RecordError(error, internallyHandled: false);
+                RespireTelemetry.RecordError(error, internallyHandled: false, endpoint: new(Host, Port));
                 throw;
             }
             // Preserve the async admission boundary and let native inspection publish
@@ -62,10 +62,10 @@ internal sealed partial class RespireConnection
         var response = source.Task;
         if (TryAdmitNative(in command, source, cancellationToken, false, out var destination, out var deadline, out var retirement)) return response;
         return DispatchResponseSource<RespValue>.Run(
-            (Connection: destination, Command: command, Token: cancellationToken, Operation: operation, Deadline: deadline, Retirement: retirement),
+            (Connection: destination, Command: command, Token: cancellationToken, Operation: operation, Deadline: deadline, Retirement: retirement, FailedEndpoint: new RespireEndpoint(Host, Port)),
             static (state, observation) =>
             {
-                if (state.Retirement is not null) observation.Handled(state.Retirement);
+                if (state.Retirement is not null) observation.Handled(state.Retirement, state.FailedEndpoint);
                 return state.Connection.SendCheckedAsync(state.Command, state.Token, state.Operation,
                     commandDeadline: state.Deadline, observation: observation);
             });
@@ -81,10 +81,10 @@ internal sealed partial class RespireConnection
         var response = source.Task;
         if (TryAdmitNative(in command, source, cancellationToken, started.Timestamp != 0, out var destination, out var deadline, out var retirement)) return response;
         return DispatchResponseSource<string?>.Run(
-            (Connection: destination, Command: command, Token: cancellationToken, Operation: operation, Deadline: deadline, Retirement: retirement, Started: started),
+            (Connection: destination, Command: command, Token: cancellationToken, Operation: operation, Deadline: deadline, Retirement: retirement, Started: started, FailedEndpoint: new RespireEndpoint(Host, Port)),
             static (state, observation) =>
             {
-                if (state.Retirement is not null) observation.Handled(state.Retirement);
+                if (state.Retirement is not null) observation.Handled(state.Retirement, state.FailedEndpoint);
                 return state.Connection.SendStringAsync(state.Command, state.Token, state.Operation,
                     commandDeadline: state.Deadline, observation: observation, durationStarted: state.Started);
             });
@@ -100,10 +100,10 @@ internal sealed partial class RespireConnection
         var response = source.Task;
         if (TryAdmitNative(in command, source, cancellationToken, started.Timestamp != 0, out var destination, out var deadline, out var retirement)) return response;
         return DispatchResponseSource<byte[]?>.Run(
-            (Connection: destination, Command: command, Token: cancellationToken, Operation: operation, Deadline: deadline, Retirement: retirement, Started: started),
+            (Connection: destination, Command: command, Token: cancellationToken, Operation: operation, Deadline: deadline, Retirement: retirement, Started: started, FailedEndpoint: new RespireEndpoint(Host, Port)),
             static (state, observation) =>
             {
-                if (state.Retirement is not null) observation.Handled(state.Retirement);
+                if (state.Retirement is not null) observation.Handled(state.Retirement, state.FailedEndpoint);
                 return state.Connection.SendBytesAsync(state.Command, state.Token, state.Operation,
                     commandDeadline: state.Deadline, observation: observation, durationStarted: state.Started);
             });
@@ -121,10 +121,11 @@ internal sealed partial class RespireConnection
         if (TryAdmitNative(in command, source, cancellationToken, started.Timestamp != 0, out var destination, out var deadline, out var retirement)) return response;
         return DispatchResponseSource<TResult>.Run(
             (Connection: destination, Command: command, Token: cancellationToken, Operation: operation, Deadline: deadline,
-                Retirement: retirement, Started: started, State: state, Converter: converter, Transfer: transferOwnership),
+                Retirement: retirement, Started: started, State: state, Converter: converter, Transfer: transferOwnership,
+                FailedEndpoint: new RespireEndpoint(Host, Port)),
             static (state, observation) =>
             {
-                if (state.Retirement is not null) observation.Handled(state.Retirement);
+                if (state.Retirement is not null) observation.Handled(state.Retirement, state.FailedEndpoint);
                 return state.Connection.SendConvertedAsync(state.Command, state.State, state.Converter, state.Transfer,
                     state.Token, state.Operation, commandDeadline: state.Deadline, observation: observation, durationStarted: state.Started);
             });

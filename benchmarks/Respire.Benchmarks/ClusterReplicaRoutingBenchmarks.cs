@@ -77,7 +77,7 @@ public class ClusterReplicaRoutingBenchmarks
 
     private int PreparedRoute(RespireReadFrom policy)
     {
-        var pending = _client.Core.Cluster!.GetReadConnectionAsync(_slot, policy, default);
+        var pending = _client.Core.Cluster!.GetReadConnectionAsync(_slot, policy, default, observation: default);
         // Refresh timing remains unchanged. A healthy prepared read still completes inline
         // when periodic revalidation starts in the background.
         if (!pending.IsCompletedSuccessfully)

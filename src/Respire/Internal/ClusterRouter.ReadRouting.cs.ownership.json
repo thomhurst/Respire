@@ -4,7 +4,7 @@
     {
       "Name": "cluster-read-selection",
       "Role": "borrower",
-      "Member": "Respire.Internal.ClusterRouter.GetReadConnectionAsync(int?,RespireReadFrom,CancellationToken,DiscoveryRound?,string?,HashSet<RespireConnectionMultiplexer>?,RespireTelemetry.ErrorObservation):ValueTask<RespireConnection>",
+      "Member": "Respire.Internal.ClusterRouter.GetReadConnectionAsync(int?,RespireReadFrom,CancellationToken,RespireTelemetry.ErrorObservation,DiscoveryRound?,string?,HashSet<RespireConnectionMultiplexer>?):ValueTask<RespireConnection>",
       "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
       "Contract": "Borrow the caller through replica, preferred, and Nearest selection; rejected candidates retain retry history for final conversion."
     }

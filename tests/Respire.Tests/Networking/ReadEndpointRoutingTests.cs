@@ -786,7 +786,7 @@ public class ReadEndpointRoutingTests
         // A typed enumeration pinned to the replaced primary fails rather than continuing elsewhere.
         await Assert.That(async () => await client.Core.ReadRouter.GetCursorConnectionAsync(
                 RespireReadFrom.PrimaryPreferred, new ReadAffinity { Primary = replaced }, isContinuation: true,
-                CancellationToken.None))
+                CancellationToken.None, observation: default))
             .Throws<RespireConnectionException>();
         await Assert.That(ScanCursors(primary)).IsEquivalentTo(["0"]);
         await Assert.That(replica.ReceivedCommands).IsEmpty();
@@ -1326,7 +1326,7 @@ public class ReadEndpointRoutingTests
         await router.RefreshNowAsync(CancellationToken.None);
         for (var attempt = 0; attempt < 4; attempt++)
         {
-            var selection = await router.GetReplicaFromEndpointsAsync(stale, CancellationToken.None);
+            var selection = await router.GetReplicaFromEndpointsAsync(stale, CancellationToken.None, observation: default);
             await Assert.That(selection.Replica!.Endpoint.Port).IsEqualTo(second.Port);
             await Assert.That(router.IsCurrent(selection.Replica)).IsTrue();
         }

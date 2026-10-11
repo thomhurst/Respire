@@ -241,7 +241,7 @@ public class RespireHealthProbeContractTests
             Protocol = RespProtocol.Resp2, Connections = 1, UseCluster = true,
             Endpoints = [new("127.0.0.1", first.Port)],
         });
-        await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null);
+        await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null, observation: default);
         var captured = client.Core.Cluster.RoutingSnapshot.Masters.Select(node =>
             (Endpoint: new RespireEndpoint(node.Host, node.Port), Connection: node.GetExistingHealthConnection())).ToArray();
         var beforeConnections = first.ReceivedConnectionIds.Concat(second.ReceivedConnectionIds).ToArray();

@@ -40,8 +40,8 @@ public class CacheMutationDispatchIntegrationTests(RedisTestContainer fixture)
             (await client.GetStringAsync(key)).Should().Be("original");
             if (dedicated)
             {
-                pool = await client.Core.GetDedicatedPoolAsync(CancellationToken.None);
-                (pool, borrowed) = await client.Core.RentDedicatedConnectionAsync(pool, CancellationToken.None);
+                pool = await client.Core.GetDedicatedPoolAsync(CancellationToken.None, observation: default);
+                (pool, borrowed) = await client.Core.RentDedicatedConnectionAsync(pool, CancellationToken.None, observation: default);
             }
             var connection = borrowed ?? client.Core.Multiplexer.GetConnection();
             var command = new Cmd2(Verbs.Set, key.AsValue(), new byte[payloadLength]);

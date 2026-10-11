@@ -389,15 +389,22 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         Action<TResult[]>? validate = null)
         where TCommand : struct, IRespCommand
     {
-        var masters = await cluster.GetMasterConnectionsAsync(cancellationToken, discovery: null).ConfigureAwait(false);
+        var masters = await cluster.GetMasterConnectionsAsync(cancellationToken, discovery: null, observation).ConfigureAwait(false);
         if (masters.Length == 0)
             throw new RespireConnectionException($"{operation} did not reach any Redis Cluster primary.");
         var responses = new Task<TResult>[masters.Length];
+        var legs = RespireTelemetry.FanOutLegObservation.Create(masters.Length, observation);
         for (var i = 0; i < masters.Length; i++)
-            responses[i] = SendAndConvertAsync(operation, masters[i], command, convert, cancellationToken, observation).AsTask();
-        // Join every target and its reply cleanup before the caller publishes one failure.
-        var results = await Task.WhenAll(responses).ConfigureAwait(false);
-        validate?.Invoke(results);
+            responses[i] = SendAndConvertAsync(operation, masters[i], command, convert, cancellationToken, legs[i].Observation).AsTask();
+        // Join every target and its reply cleanup before the caller publishes one failure, named by its own leg.
+        var results = await RespireTelemetry.FanOutLegObservation.JoinAsync(responses, legs, observation).ConfigureAwait(false);
+        try { validate?.Invoke(results); }
+        catch
+        {
+            // A cross-primary comparison failure belongs to no single node.
+            observation.UseEndpoint(null);
+            throw;
+        }
         return results;
     }
 

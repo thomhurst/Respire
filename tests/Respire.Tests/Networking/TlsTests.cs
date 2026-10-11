@@ -173,11 +173,11 @@ public class TlsTests
             await using var router = new ClusterRouter(options, primary);
             // An earlier failed/unconnected IP redirect must not displace the preferred TLS name.
             _ = router.GetMultiplexer(new RespireEndpoint("127.0.0.1", port));
-            await router.EnsureConnectedAsync(deadline.Token, discovery: null);
-            var connection = await router.GetConnectionAsync(0, deadline.Token, discovery: null);
+            await router.EnsureConnectedAsync(deadline.Token, discovery: null, observation: default);
+            var connection = await router.GetConnectionAsync(0, deadline.Token, discovery: null, observation: default);
             using var moved = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame), deadline.Token);
             var redirect = new RespireServerException(moved.GetErrorMessage());
-            var redirected = await router.GetRedirectConnectionAsync(redirect, connection, deadline.Token, commandSlot: null, discovery: null);
+            var redirected = await router.GetRedirectConnectionAsync(redirect, connection, deadline.Token, commandSlot: null, discovery: null, observation: default);
             using var pong = await redirected.SendAsync(new RawCommand(FakeRespServer.PingFrame), deadline.Token);
 
             await Assert.That(ReferenceEquals(connection, redirected)).IsTrue();

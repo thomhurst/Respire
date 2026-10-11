@@ -41,11 +41,14 @@ public partial class ErrorMetricsTests
         var handled = capture.Items.Where(item => item.Tags.ContainsKey("db.response.status_code")).ToArray();
         await Assert.That(handled.Length).IsEqualTo(2);
         await Assert.That(handled[0].Tags["redis.client.operation.retry_attempts"]).IsEqualTo(0);
+        await Assert.That(handled[0].Tags["server.port"]).IsEqualTo(first.Port);
         await Assert.That(handled[1].Tags["redis.client.operation.retry_attempts"]).IsEqualTo(1);
+        await Assert.That(handled[1].Tags["server.port"]).IsEqualTo(second.Port);
         await Assert.That(target.ReceivedCommands).Contains("ASKING");
         await target.DisposeAsync();
         await Assert.That(async () => await stream.ReadAsync(new byte[1], deadline.Token)).Throws<Exception>();
         var final = capture.Items.Single(item => !(bool)item.Tags["redis.client.errors.internal"]!);
+        await Assert.That(final.Tags["server.port"]).IsEqualTo(target.Port);
         await Assert.That(final.Tags["redis.client.operation.retry_attempts"]).IsEqualTo(2);
     }
 
@@ -216,7 +219,7 @@ public partial class ErrorMetricsTests
             Protocol = RespProtocol.Resp2, Connections = 1, UseCluster = true,
             ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", first.Port)],
         }, deadline.Token);
-        var pool = await client.Core.Cluster!.GetDedicatedPoolAsync(slot, deadline.Token, discovery: null);
+        var pool = await client.Core.Cluster!.GetDedicatedPoolAsync(slot, deadline.Token, discovery: null, observation: default);
         var borrowedAtReset = -1;
         using var source = new ReplayUploadSource(() => borrowedAtReset = pool.CaptureRetirementState().Borrowed, resetFails);
         using var capture = new Capture(throwOnMeasurement: true);

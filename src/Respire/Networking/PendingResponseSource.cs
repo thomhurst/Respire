@@ -58,6 +58,7 @@ internal abstract partial class PendingResponse
     // Copy before admission; retain until the FIFO reply drains, independently of
     // the caller's final observation, which may already have returned to its pool.
     internal int ErrorAttempts { get; set; }
+    internal RespireEndpoint? ErrorEndpoint { get; set; }
 
     /// <summary>Completion state captured by the deadline sweep for its epoch-checked CAS.</summary>
     internal long State => Volatile.Read(ref _state);
@@ -69,6 +70,7 @@ internal abstract partial class PendingResponse
     {
         _refs = receiveReferences + 1;
         ErrorAttempts = 0;
+        ErrorEndpoint = null;
     }
 
     public virtual bool TrySetResult(in RespValue result)
@@ -199,12 +201,13 @@ internal abstract partial class PendingResponse
     protected void CompleteCallerInspection(ErrorObservation.FinalOwner observation, Exception? failure, bool observeErrors)
     {
         var errorAttempts = ErrorAttempts;
+        var endpoint = ErrorEndpoint;
         try { ReleaseCallerRef(); }
         catch (Exception error)
         {
             if (failure is null) { failure = error; throw; }
         }
-        finally { ErrorObservation.FinishFinal(observation, failure, observeErrors, errorAttempts); }
+        finally { ErrorObservation.FinishFinal(observation, failure, observeErrors, errorAttempts, endpoint); }
     }
 
     // Drop response ownership before disposal can throw. Pool reset must never dispose
@@ -381,7 +384,7 @@ internal sealed class MultiReplyPendingResponseSource : PendingResponse, IValueT
             }
             else
             {
-                RespireTelemetry.RecordDiscardedError(in result, _commandName, ErrorAttempts);
+                RespireTelemetry.RecordDiscardedError(in result, _commandName, ErrorAttempts, ErrorEndpoint);
                 result.Dispose();
             }
 
@@ -398,7 +401,7 @@ internal sealed class MultiReplyPendingResponseSource : PendingResponse, IValueT
                 || result.IsError && result.AsMemory().Span.SequenceEqual(
                     "EXECABORT Transaction discarded because of previous errors."u8)))
                 completion = completion.WithTransactionStateCleared();
-            RespireTelemetry.RecordDiscardedError(in result, _commandName, ErrorAttempts);
+            RespireTelemetry.RecordDiscardedError(in result, _commandName, ErrorAttempts, ErrorEndpoint);
             result.Dispose();
             _queueError = default;
             _hasQueueError = false;
@@ -406,7 +409,7 @@ internal sealed class MultiReplyPendingResponseSource : PendingResponse, IValueT
 
         if (!(reserved ? base.CompleteReservedResult(in completion) : base.TrySetResult(in completion)))
         {
-            RespireTelemetry.RecordDiscardedError(in completion, _commandName, ErrorAttempts);
+            RespireTelemetry.RecordDiscardedError(in completion, _commandName, ErrorAttempts, ErrorEndpoint);
             completion.Dispose();
         }
 
@@ -462,7 +465,7 @@ internal sealed class MultiReplyPendingResponseSource : PendingResponse, IValueT
         {
             if (source._hasQueueError)
             {
-                RespireTelemetry.RecordDiscardedError(in source._queueError, source._commandName, source.ErrorAttempts);
+                RespireTelemetry.RecordDiscardedError(in source._queueError, source._commandName, source.ErrorAttempts, source.ErrorEndpoint);
                 source._queueError.Dispose();
             }
 

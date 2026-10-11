@@ -26,7 +26,7 @@ public class NearestReadRoutingTests
         };
         await using var client = await RespireClient.ConnectAsync(options);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var selection = await client.Core.ReadRouter.GetReplicaFromEndpointsAsync(options.ReplicaEndpoints.ToArray(), deadline.Token);
+        var selection = await client.Core.ReadRouter.GetReplicaFromEndpointsAsync(options.ReplicaEndpoints.ToArray(), deadline.Token, observation: default);
         await using var sampler = new ReadLatencySampler<RespireConnection>((_, _) => ValueTask.FromResult(10L));
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var release = new ManualResetEventSlim();
@@ -69,7 +69,7 @@ public class NearestReadRoutingTests
         };
         await using var client = await RespireClient.ConnectAsync(options);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var selection = await client.Core.ReadRouter.GetReplicaFromEndpointsAsync(options.ReplicaEndpoints.ToArray(), deadline.Token);
+        var selection = await client.Core.ReadRouter.GetReplicaFromEndpointsAsync(options.ReplicaEndpoints.ToArray(), deadline.Token, observation: default);
         var entry = selection.Replica!;
         var blocked = selection.Connection;
         var healthy = await entry.GetConnectionAsync(deadline.Token);
@@ -102,7 +102,7 @@ public class NearestReadRoutingTests
         };
         await using var client = await RespireClient.ConnectAsync(options);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var selection = await client.Core.ReadRouter.GetReplicaFromEndpointsAsync(options.ReplicaEndpoints.ToArray(), deadline.Token);
+        var selection = await client.Core.ReadRouter.GetReplicaFromEndpointsAsync(options.ReplicaEndpoints.ToArray(), deadline.Token, observation: default);
         var entry = selection.Replica!;
         var multiplexer = selection.Connection.Multiplexer!;
         // Validate every physical socket so none needs ROLE during the selections below.
@@ -159,8 +159,8 @@ public class NearestReadRoutingTests
             for (var index = 0; index < 6; index++)
             {
                 var selected = cluster
-                    ? await client.Core.Cluster!.GetReadConnectionAsync(slot, RespireReadFrom.Nearest, deadline.Token)
-                    : await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Nearest, deadline.Token);
+                    ? await client.Core.Cluster!.GetReadConnectionAsync(slot, RespireReadFrom.Nearest, deadline.Token, observation: default)
+                    : await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Nearest, deadline.Token, observation: default);
                 await Assert.That(selected).IsSameReferenceAs(healthy);
             }
         }
@@ -182,10 +182,10 @@ public class NearestReadRoutingTests
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var slot = ClusterHash.GetSlot("key");
         var replicaConnection = cluster
-            ? await client.Core.Cluster!.GetReadConnectionAsync(slot, RespireReadFrom.Replica, deadline.Token)
-            : await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Replica, deadline.Token);
+            ? await client.Core.Cluster!.GetReadConnectionAsync(slot, RespireReadFrom.Replica, deadline.Token, observation: default)
+            : await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Replica, deadline.Token, observation: default);
         var primaryConnection = cluster
-            ? await client.Core.Cluster!.GetReadConnectionAsync(slot, RespireReadFrom.Primary, deadline.Token)
+            ? await client.Core.Cluster!.GetReadConnectionAsync(slot, RespireReadFrom.Primary, deadline.Token, observation: default)
             : client.Core.Multiplexer.GetConnection();
         primary.SuppressReply = command => command == "PING";
         replica.SuppressReply = command => command == "PING";
@@ -208,7 +208,7 @@ public class NearestReadRoutingTests
         await using var replica = Server("replica");
         var options = Options(primary, replica) with { ReplicaRefreshInterval = TimeSpan.Zero };
         await using var client = await RespireClient.ConnectAsync(options);
-        var selection = await client.Core.ReadRouter.GetReplicaFromEndpointsAsync(options.ReplicaEndpoints.ToArray(), default);
+        var selection = await client.Core.ReadRouter.GetReplicaFromEndpointsAsync(options.ReplicaEndpoints.ToArray(), default, observation: default);
         var probe = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var sampler = new ReadLatencySampler<RespireConnection>((_, token) => new(probe.Task.WaitAsync(token)));
         var pending = sampler.GetLatencyAsync(selection.Connection, default).AsTask();
@@ -248,13 +248,13 @@ public class NearestReadRoutingTests
         for (var index = 0; index < 12 && connections.Count < 4; index++)
         {
             var connection = cluster
-                ? await client.Core.Cluster!.GetReadConnectionAsync(slot, RespireReadFrom.Replica, default)
-                : await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Replica, default);
+                ? await client.Core.Cluster!.GetReadConnectionAsync(slot, RespireReadFrom.Replica, default, observation: default)
+                : await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Replica, default, observation: default);
             connections[connection.Port] = connection;
         }
         await Assert.That(connections.Count).IsEqualTo(4);
         connections[primary.Port] = cluster
-            ? await client.Core.Cluster!.GetReadConnectionAsync(slot, RespireReadFrom.Primary, default)
+            ? await client.Core.Cluster!.GetReadConnectionAsync(slot, RespireReadFrom.Primary, default, observation: default)
             : client.Core.Multiplexer.GetConnection();
         var sampler = ReadLatencySampler.Create();
         if (cluster) client.Core.Cluster!.NearestLatency = sampler;
@@ -295,7 +295,7 @@ public class NearestReadRoutingTests
         await source.DisposeAsync();
         router.SetSlotOwner(0, owner);
         router.NearestLatency = new ReadLatencySampler<RespireConnection>((_, _) => ValueTask.FromResult(10L));
-        await router.GetReadConnectionAsync(0, RespireReadFrom.Nearest, deadline.Token);
+        await router.GetReadConnectionAsync(0, RespireReadFrom.Nearest, deadline.Token, observation: default);
         while (!target.ReceivedCommands.Contains("CLUSTER SLOTS")) await Task.Delay(1, deadline.Token);
         while (router.GetKnownSlotOwner(0)!.Port != target.Port) await Task.Delay(1, deadline.Token);
         await Assert.That(router.GetKnownSlotOwner(0)!.Host).IsEqualTo("127.0.0.1");
@@ -579,7 +579,7 @@ public class NearestReadRoutingTests
         if (movedCoverage)
         {
             var slot = ClusterHash.GetSlot("key");
-            await client.Core.Cluster.GetReadConnectionAsync(slot, RespireReadFrom.Replica, default);
+            await client.Core.Cluster.GetReadConnectionAsync(slot, RespireReadFrom.Replica, default, observation: default);
             client.Core.Cluster.SetSlotOwner(slot, client.Core.Cluster.GetKnownSlotOwner(slot)!);
         }
         await using var nearest = client.WithReadFrom(RespireReadFrom.Nearest);
@@ -770,10 +770,10 @@ public class NearestReadRoutingTests
             ValueTask.FromResult(connection.Port == replica.Port ? 10L : 100L));
         primary.SuppressReply = command => command == "CLUSTER SLOTS";
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        await Assert.That((await router.GetReadConnectionAsync(0, RespireReadFrom.Nearest, timeout.Token)).Port).IsEqualTo(primary.Port);
+        await Assert.That((await router.GetReadConnectionAsync(0, RespireReadFrom.Nearest, timeout.Token, observation: default)).Port).IsEqualTo(primary.Port);
         while (primary.ReceivedCommands.Count(command => command == "CLUSTER SLOTS") < 2)
             await Task.Delay(1, timeout.Token);
-        await Assert.That((await router.GetReadConnectionAsync(1, RespireReadFrom.Nearest, timeout.Token)).Port).IsEqualTo(primary.Port);
+        await Assert.That((await router.GetReadConnectionAsync(1, RespireReadFrom.Nearest, timeout.Token, observation: default)).Port).IsEqualTo(primary.Port);
         var firstQuery = primary.ReceivedCommands.ToList().FindLastIndex(command => command == "CLUSTER SLOTS");
         await primary.SendRawAsync(SlotReply(primary.Port, 0, 0), primary.ReceivedConnectionIds[firstQuery]);
         // No second read for slot 1: its existing background waiter must request independent coverage.
@@ -785,7 +785,7 @@ public class NearestReadRoutingTests
         // membership used by selection, not the earlier inventory notification.
         while (KnownReplicaRoutes(router, 1)?.Nodes.Any(node => node.Port == replica.Port) != true)
             await Task.Delay(1, timeout.Token);
-        await Assert.That((await router.GetReadConnectionAsync(1, RespireReadFrom.Nearest, timeout.Token)).Port).IsEqualTo(replica.Port);
+        await Assert.That((await router.GetReadConnectionAsync(1, RespireReadFrom.Nearest, timeout.Token, observation: default)).Port).IsEqualTo(replica.Port);
     }
 
     [Test]
@@ -859,7 +859,7 @@ public class NearestReadRoutingTests
         primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
             ? "-ERR old owner unavailable\r\n"u8.ToArray() : Reply(command, "primary");
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        var selected = await router.GetReadConnectionAsync(1, RespireReadFrom.Nearest, timeout.Token);
+        var selected = await router.GetReadConnectionAsync(1, RespireReadFrom.Nearest, timeout.Token, observation: default);
         await Assert.That(selected.Port).IsEqualTo(replacement.Port);
         await Assert.That(otherMaster.ReceivedCommands).Contains("CLUSTER SLOTS");
     }
@@ -895,7 +895,7 @@ public class NearestReadRoutingTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         try
         {
-            var selected = await router.GetReadConnectionAsync(1, RespireReadFrom.Nearest, timeout.Token);
+            var selected = await router.GetReadConnectionAsync(1, RespireReadFrom.Nearest, timeout.Token, observation: default);
             await Assert.That(selected.Port).IsEqualTo(replacement.Port);
         }
         finally { if (retirement is not null) await retirement.WaitAsync(timeout.Token); }
@@ -937,7 +937,7 @@ public class NearestReadRoutingTests
         router.NearestLatency = new ReadLatencySampler<RespireConnection>((_, _) => ValueTask.FromResult(10L));
 
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        var selected = await router.GetReadConnectionAsync(1, RespireReadFrom.Nearest, timeout.Token);
+        var selected = await router.GetReadConnectionAsync(1, RespireReadFrom.Nearest, timeout.Token, observation: default);
         await Assert.That(selected.Port).IsEqualTo(replacement.Port);
     }
 
@@ -988,7 +988,7 @@ public class NearestReadRoutingTests
         router.SetSlotOwner(0, router.GetKnownSlotOwner(0)!);
         router.NearestLatency = new ReadLatencySampler<RespireConnection>((_, _) => ValueTask.FromResult(10L));
         rejectAuthentication = true;
-        await router.GetReadConnectionAsync(0, RespireReadFrom.Nearest, CancellationToken.None);
+        await router.GetReadConnectionAsync(0, RespireReadFrom.Nearest, CancellationToken.None, observation: default);
         var failure = await logger.Failure.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(failure).IsNotNull();
         await Assert.That(failure!.Message).Contains("injected topology handshake failure");

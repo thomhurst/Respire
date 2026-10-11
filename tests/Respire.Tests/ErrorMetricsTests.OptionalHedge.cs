@@ -59,7 +59,7 @@ public partial class ErrorMetricsTests
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var slot = ClusterHash.GetSlot("key");
         var router = client.Core.Cluster!;
-        var original = await router.GetReadConnectionAsync(slot, RespireReadFrom.Replica, deadline.Token);
+        var original = await router.GetReadConnectionAsync(slot, RespireReadFrom.Replica, deadline.Token, observation: default);
         var response = original.SendCheckedAsync(new Cmd1(Verbs.Get, "key"), deadline.Token).AsTask();
         using var capture = new Capture(throwOnMeasurement: true, commandMetrics: commandMetrics);
         try

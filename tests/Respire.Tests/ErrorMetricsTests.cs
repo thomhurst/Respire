@@ -536,7 +536,7 @@ public partial class ErrorMetricsTests
             Protocol = (RespProtocol)protocol, Connections = 2, MaxInflightCommands = 1,
             UseCluster = true, ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", seed.Port)],
         });
-        var original = await client.Core.Cluster!.GetConnectionAsync(slot, default, discovery: null);
+        var original = await client.Core.Cluster!.GetConnectionAsync(slot, default, discovery: null, observation: default);
         _ = original.Multiplexer!.GetConnection();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         Task<RespValue>? held = null;
@@ -1010,8 +1010,8 @@ public partial class ErrorMetricsTests
             UseCluster = true, ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
-        var original = await client.Core.Cluster!.GetConnectionAsync(null, default, discovery: null);
-        _ = await client.Core.Cluster.GetConnectionAsync(null, default, discovery: null);
+        var original = await client.Core.Cluster!.GetConnectionAsync(null, default, discovery: null, observation: default);
+        _ = await client.Core.Cluster.GetConnectionAsync(null, default, discovery: null, observation: default);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         Task<RespValue>? held = null;
         if (capacityWait)
@@ -1161,8 +1161,8 @@ public partial class ErrorMetricsTests
             UseCluster = true, ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
-        var original = (await client.Core.Cluster!.GetMasterConnectionsAsync(default, discovery: null))[0];
-        _ = await client.Core.Cluster.GetMasterConnectionsAsync(default, discovery: null);
+        var original = (await client.Core.Cluster!.GetMasterConnectionsAsync(default, discovery: null, observation: default))[0];
+        _ = await client.Core.Cluster.GetMasterConnectionsAsync(default, discovery: null, observation: default);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         Task<RespValue>? held = null;
         if (capacityWait)
@@ -1551,8 +1551,8 @@ public partial class ErrorMetricsTests
         });
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var policy = RespireReadFrom.PrimaryPreferred;
-        var original = await client.Core.ReadRouter.GetConnectionAsync(policy, deadline.Token);
-        _ = await client.Core.ReadRouter.GetConnectionAsync(policy, deadline.Token);
+        var original = await client.Core.ReadRouter.GetConnectionAsync(policy, deadline.Token, observation: default);
+        _ = await client.Core.ReadRouter.GetConnectionAsync(policy, deadline.Token, observation: default);
         // The cache-enabled transport admits only protocol commands outside the logical client.
         var held = original.SendCheckedAsync(new ProtocolCommand<RawCommand>(new("*2\r\n$4\r\nPING\r\n$4\r\nhold\r\n"u8.ToArray()))).AsTask();
         var secondHeld = original.SendCheckedAsync(new ProtocolCommand<RawCommand>(new("*2\r\n$4\r\nPING\r\n$4\r\nhold\r\n"u8.ToArray()))).AsTask();
@@ -2586,11 +2586,11 @@ public partial class ErrorMetricsTests
         });
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var slot = ClusterHash.GetSlot("key");
-        if (cluster) await client.Core.Cluster!.GetReadConnectionAsync(slot, RespireReadFrom.Replica, deadline.Token);
-        else await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Replica, deadline.Token);
+        if (cluster) await client.Core.Cluster!.GetReadConnectionAsync(slot, RespireReadFrom.Replica, deadline.Token, observation: default);
+        else await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Replica, deadline.Token, observation: default);
         var selected = cluster
-            ? await client.Core.Cluster!.GetReadConnectionAsync(slot, RespireReadFrom.PrimaryPreferred, deadline.Token)
-            : await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.PrimaryPreferred, deadline.Token);
+            ? await client.Core.Cluster!.GetReadConnectionAsync(slot, RespireReadFrom.PrimaryPreferred, deadline.Token, observation: default)
+            : await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.PrimaryPreferred, deadline.Token, observation: default);
         // Advance the two-socket round robin so the read selects this socket, then hands off
         // to the other live socket when snapshotting closes this socket's admission.
         _ = selected.Multiplexer!.GetConnection();
@@ -4062,7 +4062,7 @@ public partial class ErrorMetricsTests
             Protocol = RespProtocol.Resp2, Connections = 2, UseCluster = true, ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", seed.Port)],
         });
-        var original = await client.Core.Cluster!.GetConnectionAsync(slot, default, discovery: null);
+        var original = await client.Core.Cluster!.GetConnectionAsync(slot, default, discovery: null, observation: default);
         Task? retirement = null;
         using var listener = new ActivityListener
         {
@@ -5553,7 +5553,8 @@ public partial class ErrorMetricsTests
         private readonly MeterListener _listener = new();
         internal ConcurrentQueue<Item> Items { get; } = new();
 
-        internal Capture(bool throwOnMeasurement = false, bool commandMetrics = false, Action<Item>? onMeasurement = null)
+        internal Capture(bool throwOnMeasurement = false, bool commandMetrics = false, Action<Item>? onMeasurement = null,
+            int? serverPort = null)
         {
             _listener.InstrumentPublished = (instrument, listener) =>
             {
@@ -5563,6 +5564,13 @@ public partial class ErrorMetricsTests
             };
             _listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
             {
+                if (serverPort is { } port)
+                {
+                    var matches = false;
+                    foreach (var tag in tags)
+                        if (tag.Key == "server.port" && Equals(tag.Value, port)) { matches = true; break; }
+                    if (!matches) return;
+                }
                 var item = new Item(value, instrument.Unit, tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value));
                 Items.Enqueue(item);
                 onMeasurement?.Invoke(item);

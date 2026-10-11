@@ -26,7 +26,7 @@ public class PrimaryReadRetirementTests
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         var core = client.Core;
-        var replacement = await core.GetDedicatedPoolAsync(default);
+        var replacement = await core.GetDedicatedPoolAsync(default, observation: default);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var failure = new RespireTimeoutException(connectTimeout ? "CONNECT" : "SELECT", limit,
@@ -46,7 +46,7 @@ public class PrimaryReadRetirementTests
         core.TestingDedicatedPoolOverride = original;
         using var caller = new CancellationTokenSource();
         var pending = core.ReadRouter.RentDedicatedConnectionAsync(
-            allowFallback ? RespireReadFrom.PrimaryPreferred : RespireReadFrom.Primary, caller.Token).AsTask();
+            allowFallback ? RespireReadFrom.PrimaryPreferred : RespireReadFrom.Primary, caller.Token, observation: default).AsTask();
         Task? retirement = null;
         try
         {

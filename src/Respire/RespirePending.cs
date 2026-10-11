@@ -35,10 +35,10 @@ public sealed class RespirePending<T> : IDispatchObservation
     private const int ObservationGate = 128;
     private int _state;
     private T? _value;
-    // Keep the successful pending layout unchanged. A retry replaces this existing error
-    // slot with failure-only state; terminal publication restores the original exception.
+    // A retry uses failure-only state; terminal publication restores the original exception.
     private object? _failure;
     private int _errorAttempts;
+    private RespireEndpoint? _errorEndpoint;
 
     internal RespireTelemetry.ErrorObservation Observation => new(this, 0);
 
@@ -62,6 +62,23 @@ public sealed class RespirePending<T> : IDispatchObservation
 
     bool IDispatchObservation.IsOpen(long generation)
         => (Volatile.Read(ref _state) & ObservationClosed) == 0;
+
+    RespireEndpoint? IDispatchObservation.Endpoint(long generation)
+    {
+        EnterObservationGate();
+        try { return _errorEndpoint; }
+        finally { ExitObservationGate(); }
+    }
+
+    void IDispatchObservation.UseEndpoint(long generation, RespireEndpoint? endpoint)
+    {
+        EnterObservationGate();
+        try
+        {
+            if ((Volatile.Read(ref _state) & ObservationClosed) == 0) _errorEndpoint = endpoint;
+        }
+        finally { ExitObservationGate(); }
+    }
 
     void IDispatchObservation.SetAttempts(long generation, int attempts)
     {
@@ -87,7 +104,7 @@ public sealed class RespirePending<T> : IDispatchObservation
         finally { ExitObservationGate(); }
     }
 
-    bool IDispatchObservation.Handled(long generation, Exception error)
+    bool IDispatchObservation.Handled(long generation, Exception error, RespireEndpoint? endpoint, bool overrideEndpoint)
     {
         ErrorObservation.Borrower borrower;
         EnterObservationGate();
@@ -97,9 +114,10 @@ public sealed class RespirePending<T> : IDispatchObservation
             if (_failure is not RetryObservation)
                 _failure = new RetryObservation(ErrorObservation.StartFailure(_errorAttempts), (Exception?)_failure);
             borrower = ((RetryObservation)_failure).Owner.Borrow();
+            if (!overrideEndpoint) endpoint = _errorEndpoint;
         }
         finally { ExitObservationGate(); }
-        try { return borrower.RecordHandled(error); }
+        try { return borrower.RecordHandled(error, endpoint); }
         finally { borrower.Complete(); }
     }
 
@@ -182,6 +200,7 @@ public sealed class RespirePending<T> : IDispatchObservation
         ErrorObservation.FinalOwner owner;
         int attempts;
         Exception? error;
+        RespireEndpoint? endpoint;
         bool faulted;
         EnterObservationGate();
         try
@@ -191,11 +210,13 @@ public sealed class RespirePending<T> : IDispatchObservation
             var failure = Failure;
             owner = _failure is RetryObservation retry ? retry.Owner : default;
             _failure = failure;
+            endpoint = _errorEndpoint;
+            _errorEndpoint = null;
             Interlocked.Or(ref _state, ObservationClosed);
             error = faulted && (Interlocked.Or(ref _state, ErrorRecorded) & ErrorRecorded) == 0 ? failure : null;
         }
         finally { ExitObservationGate(); }
-        ErrorObservation.FinishFinal(owner, error, retryAttempts: attempts);
+        ErrorObservation.FinishFinal(owner, error, retryAttempts: attempts, endpoint: endpoint);
         return faulted;
     }
 

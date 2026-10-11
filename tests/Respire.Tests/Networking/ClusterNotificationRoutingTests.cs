@@ -187,7 +187,7 @@ public class ClusterNotificationRoutingTests
         await using var subscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 
         topology = Topology(second.Port, third.Port);
-        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null)
+        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null, observation: default)
             .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         await Task.WhenAll(thirdSubscribed.Task, firstUnsubscribed.Task).WaitAsync(TimeSpan.FromSeconds(10));
         await Assert.That(third.ReceivedCommands).Contains($"PSUBSCRIBE {descriptor}");
@@ -215,7 +215,7 @@ public class ClusterNotificationRoutingTests
         topology = PartialTopology(second.Port);
         try
         {
-            _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null)
+            _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null, observation: default)
                 .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         }
         catch (RespireConnectionException)
@@ -250,7 +250,7 @@ public class ClusterNotificationRoutingTests
         topology = PartialTopology(second.Port);
         try
         {
-            _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null)
+            _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null, observation: default)
                 .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         }
         catch (RespireConnectionException)
@@ -288,7 +288,7 @@ public class ClusterNotificationRoutingTests
         await using var subscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 
         topology = SinglePrimaryTopology(second.Port);
-        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null)
+        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null, observation: default)
             .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         await Task.WhenAll(movedSubscription.Task, oldUnsubscribed.Task).WaitAsync(TimeSpan.FromSeconds(10));
         await Assert.That(second.ReceivedCommands).Contains($"SUBSCRIBE {descriptor}");
@@ -314,7 +314,7 @@ public class ClusterNotificationRoutingTests
             .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 
         topology = Topology(second.Port, first.Port);
-        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null)
+        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null, observation: default)
             .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -371,7 +371,7 @@ public class ClusterNotificationRoutingTests
         client.Core.Cluster!.TopologyChanged += (_, _, _) => published.TrySetResult();
         var newSecondOwner = includeAllPrimaries ? third : first;
         Volatile.Write(ref topology, Topology(second.Port, newSecondOwner.Port));
-        var refresh = client.Core.Cluster.GetMasterConnectionsAsync(CancellationToken.None, discovery: null).AsTask();
+        var refresh = client.Core.Cluster.GetMasterConnectionsAsync(CancellationToken.None, discovery: null, observation: default).AsTask();
         await published.Task.WaitAsync(TimeSpan.FromSeconds(10));
         second.SuppressReply = null;
         await second.SendRawAsync(Hello);
@@ -857,7 +857,7 @@ public class ClusterNotificationRoutingTests
         var subscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 
         topology = Topology(first.Port, second.Port);
-        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null)
+        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null, observation: default)
             .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 
         await Assert.That(await subscription.Completion.WaitAsync(TimeSpan.FromSeconds(10)))
@@ -902,7 +902,7 @@ public class ClusterNotificationRoutingTests
 
         // One failure against the second primary, then a newer topology replaces it.
         topology = Topology(first.Port, second.Port);
-        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null)
+        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null, observation: default)
             .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         hub.NotifyTopologyChanged(1,
             [new RespireEndpoint("127.0.0.1", first.Port), new RespireEndpoint("127.0.0.1", second.Port)],
@@ -912,7 +912,7 @@ public class ClusterNotificationRoutingTests
         // topology-discovery latency must not spend the second endpoint's budget.
         var replacedRetry = await clock.NextAsync();
         topology = Topology(first.Port, third.Port);
-        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null)
+        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null, observation: default)
             .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         hub.NotifyTopologyChanged(2,
             [new RespireEndpoint("127.0.0.1", first.Port), new RespireEndpoint("127.0.0.1", third.Port)],
@@ -985,7 +985,7 @@ public class ClusterNotificationRoutingTests
         // Reproduce a topology reply arriving after the fixture's former 200 ms deadline.
         first.DelayCommand("CLUSTER SLOTS", 300);
         Volatile.Write(ref topology, Topology(first.Port, second.Port));
-        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null)
+        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null, observation: default)
             .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 
         await tenantAdmitted.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -1032,7 +1032,7 @@ public class ClusterNotificationRoutingTests
         await using var subscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 
         topology = Topology(first.Port, second.Port);
-        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null)
+        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null, observation: default)
             .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         await reconnecting.Task.WaitAsync(TimeSpan.FromSeconds(10));
         await Assert.That(subscription.Completion.IsCompleted).IsFalse();
@@ -1077,7 +1077,7 @@ public class ClusterNotificationRoutingTests
         var subscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 
         topology = Topology(first.Port, second.Port);
-        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null)
+        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null, observation: default)
             .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         await reconnecting.Task.WaitAsync(TimeSpan.FromSeconds(10));
         await subscription.DisposeAsync();
@@ -1130,7 +1130,7 @@ public class ClusterNotificationRoutingTests
         await using var subscription = await client.SubscribeAsync(descriptor).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 
         topology = Topology(first.Port, second.Port);
-        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null)
+        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null, observation: default)
             .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         await reconnecting.Task.WaitAsync(TimeSpan.FromSeconds(10));
         suppress = false;
@@ -1217,7 +1217,7 @@ public class ClusterNotificationRoutingTests
         Volatile.Write(ref reject, true);
 
         topology = Topology(second.Port, first.Port);
-        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null)
+        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null, observation: default)
             .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         await rejected.Task.WaitAsync(TimeSpan.FromSeconds(10));
         await Task.Delay(400);
@@ -1382,7 +1382,7 @@ public class ClusterNotificationRoutingTests
         await secondAckPending.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
         topology = Topology(first.Port, second.Port, third.Port);
-        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null)
+        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null, observation: default)
             .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         var ackIndex = second.ReceivedCommands.ToList().FindIndex(command => command == $"PSUBSCRIBE {descriptor}");
         await second.SendRawAsync(Confirmation("psubscribe", descriptor.ToString(), resp3: false),
@@ -1445,7 +1445,7 @@ public class ClusterNotificationRoutingTests
         // Both subscriptions gain the second primary. The tenant SUBSCRIBE times out on the
         // socket the stable route shares, so that socket is closed and replays stable only.
         topology = Topology(first.Port, second.Port);
-        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null)
+        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null, observation: default)
             .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         await stableReplayed.Task.WaitAsync(TimeSpan.FromSeconds(10));
         await tenantRetried.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -1630,7 +1630,7 @@ public class ClusterNotificationRoutingTests
             SubscriptionKind.Pattern, [rejectedDescriptor], new(), CancellationToken.None).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 
         topology = Topology(first.Port, second.Port);
-        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null)
+        _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null, observation: default)
             .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         hub.NotifyTopologyChanged(1,
             [new RespireEndpoint("127.0.0.1", first.Port), new RespireEndpoint("127.0.0.1", second.Port)],
@@ -1853,7 +1853,7 @@ public class ClusterNotificationRoutingTests
                 Volatile.Write(ref topology, iteration % 2 == 0
                     ? Topology(second.Port, third.Port)
                     : Topology(first.Port, second.Port));
-                var refresh = client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null).AsTask();
+                var refresh = client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null, observation: default).AsTask();
                 live.AddRange(await Task.WhenAll(subscribing).WaitAsync(TimeSpan.FromSeconds(20)));
                 _ = await refresh.WaitAsync(TimeSpan.FromSeconds(10));
                 // Drop half of the subscriptions while later topology passes may still run.

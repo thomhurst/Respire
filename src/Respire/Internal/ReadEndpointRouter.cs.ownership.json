@@ -11,7 +11,7 @@
     {
       "Name": "standalone-dedicated-read-selection",
       "Role": "borrower",
-      "Member": "Respire.Internal.ReadEndpointRouter.RentDedicatedConnectionAsync(RespireReadFrom,CancellationToken,string?,bool?,ReadAttempt?,RespireTelemetry.ErrorObservation):ValueTask<(DedicatedConnectionPoolPool,RespireConnectionConnection,boolIsReplica)>",
+      "Member": "Respire.Internal.ReadEndpointRouter.RentDedicatedConnectionAsync(RespireReadFrom,CancellationToken,RespireTelemetry.ErrorObservation,string?,bool?,ReadAttempt?):ValueTask<(DedicatedConnectionPoolPool,RespireConnectionConnection,boolIsReplica)>",
       "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
       "Contract": "Borrow caller retries through dedicated candidate acquisition and cleanup; establishment and ROLE must not independently count the same failure."
     },

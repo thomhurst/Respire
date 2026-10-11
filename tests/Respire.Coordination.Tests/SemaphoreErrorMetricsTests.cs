@@ -28,18 +28,24 @@ public class SemaphoreErrorMetricsTests
             cleanup.SetAttempts(0, 3);
             await Assert.That(caller.Attempts).IsEqualTo(3);
             await Assert.That(detached.Observation.Attempts).IsEqualTo(0);
+            // Selected while the caller is open; the detached owner must keep it after the caller closes.
+            cleanup.UseEndpoint(0, new RespireEndpoint("cleanup.example", 6390));
+            await Assert.That(caller.Endpoint).IsEqualTo(new RespireEndpoint("cleanup.example", 6390));
 
             caller.Final(new IOException("foreground failure"));
             await Assert.That(caller.IsOpen).IsFalse();
             cleanup.SetAttempts(0, 7);
             cleanup.Retry(0);
             await Assert.That(cleanup.Attempts(0)).IsEqualTo(8);
-            await Assert.That(cleanup.Handled(0, new IOException("detached cleanup failure"))).IsTrue();
+            await Assert.That(cleanup.Endpoint(0)).IsEqualTo(new RespireEndpoint("cleanup.example", 6390));
+            await Assert.That(cleanup.Handled(0, new IOException("detached cleanup failure"), null, overrideEndpoint: false)).IsTrue();
             await Assert.That(caller.Attempts).IsEqualTo(3);
             await Assert.That(detached.Observation.Attempts).IsEqualTo(9);
             await Assert.That(metrics.Items.Count).IsEqualTo(2);
             var handled = metrics.Items.Single(item => (bool)item["redis.client.errors.internal"]!);
             await Assert.That(handled["redis.client.operation.retry_attempts"]).IsEqualTo(8);
+            await Assert.That(handled["server.address"]).IsEqualTo("cleanup.example");
+            await Assert.That(handled["server.port"]).IsEqualTo(6390);
         }
         finally { detached.CompleteInternal(); }
     }

@@ -775,7 +775,7 @@ public partial class StandaloneCircuitDispatchTests
         await using var server = Server();
         await using var client = await RespireClient.ConnectAsync(Options(server));
         await Prepare(client, server);
-        var pool = await client.Core.GetDedicatedPoolAsync(default);
+        var pool = await client.Core.GetDedicatedPoolAsync(default, observation: default);
         var lease = await pool.RentAsync(default,
             kind: shape == "upload" ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary);
         pool.Return(lease);
@@ -820,7 +820,7 @@ public partial class StandaloneCircuitDispatchTests
         var (sourceCircuit, _) = await Prepare(client, source);
         var multiplexer = client.Core.Multiplexer;
         var original = multiplexer.GetConnection();
-        var pool = await client.Core.GetDedicatedPoolAsync(default);
+        var pool = await client.Core.GetDedicatedPoolAsync(default, observation: default);
         var lease = await pool.RentAsync(default, kind: DedicatedLeaseKind.Streaming);
         pool.Return(lease);
         var failed = client.Core.Circuits!.Acquire(new("127.0.0.1", source.Port), default);
@@ -875,7 +875,7 @@ public partial class StandaloneCircuitDispatchTests
         await Assert.That(targetCircuit.Snapshot().State).IsEqualTo(targetOpen ? EndpointCircuitState.Open : EndpointCircuitState.Closed);
         await Assert.That(targetCircuit.Snapshot().ActiveProbes).IsEqualTo(0);
         await Assert.That(pool.CaptureRetirementState().Borrowed).IsEqualTo(0);
-        var replacementPool = await client.Core.GetDedicatedPoolAsync(default);
+        var replacementPool = await client.Core.GetDedicatedPoolAsync(default, observation: default);
         await Assert.That(replacementPool.CaptureRetirementState().Borrowed).IsEqualTo(0);
     }
 

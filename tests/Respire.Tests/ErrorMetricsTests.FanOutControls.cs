@@ -28,7 +28,7 @@ public partial class ErrorMetricsTests
             Protocol = RespProtocol.Resp2, Connections = 2, UseCluster = true,
             ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", seed.Port)],
         });
-        var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(default, discovery: null);
+        var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(default, discovery: null, observation: default);
         foreach (var connection in connections) _ = connection.Multiplexer!.GetConnection();
         var operation = route == "function" ? "FUNCTION FLUSH" : "SCRIPT FLUSH";
         var retired = new HashSet<int>();

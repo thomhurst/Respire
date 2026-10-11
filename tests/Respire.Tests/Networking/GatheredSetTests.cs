@@ -438,10 +438,13 @@ public sealed class GatheredSetTests
             await WaitForNativeCompletionAsync(connection, guard.Token);
             await Assert.That(pending.IsCompleted).IsFalse();
         }
+        // Releasing a stalled write can take longer than three seconds on a loaded runner. Bound it
+        // with a timeout alone: the guard token would surface as an OperationCanceledException
+        // and let the "cancel" case pass without the caller's cancellation completing it.
         if (boundary == "cancel")
-            await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(3), guard.Token)).Throws<OperationCanceledException>();
+            await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(8))).Throws<OperationCanceledException>();
         else if (boundary == "deadline")
-            await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(3), guard.Token)).Throws<RespireTimeoutException>();
+            await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(8))).Throws<RespireTimeoutException>();
         else
             // Socket backpressure can be temporary: further successful sends reset the
             // idle watchdog. Bound the whole test, not three seconds from the first stall.

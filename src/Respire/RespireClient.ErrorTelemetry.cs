@@ -333,12 +333,12 @@ public sealed partial class RespireClient
 
     private static void RecordRetryError(Exception error, int retryAttempts,
         ClusterScriptTelemetry? scriptTelemetry, Action<Exception>? onRetry,
-        RespireTelemetry.ErrorObservation observation)
+        RespireTelemetry.ErrorObservation observation, RespireEndpoint? endpoint = null)
     {
-        if (!observation.IsEmpty) observation.Handled(error);
+        if (!observation.IsEmpty) observation.Handled(error, endpoint ?? observation.Endpoint);
         else if (scriptTelemetry is not null) scriptTelemetry.RecordRetry(error);
         else if (onRetry is not null) onRetry(error);
-        else RespireTelemetry.RecordError(error, internallyHandled: true, retryAttempts);
+        else RespireTelemetry.RecordError(error, internallyHandled: true, retryAttempts, endpoint);
     }
 
 }

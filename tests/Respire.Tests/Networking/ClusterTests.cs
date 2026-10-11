@@ -890,7 +890,7 @@ public class ClusterTests
         // Keep the old range throttled after its refresh completes. Selection already holds
         // this range when publication retires its candidate during the READONLY handshake.
         await previous.JoinOrStartRefresh(() => Task.CompletedTask)!;
-        var selection = router.GetReadConnectionAsync(0, RespireReadFrom.Replica, CancellationToken.None).AsTask();
+        var selection = router.GetReadConnectionAsync(0, RespireReadFrom.Replica, CancellationToken.None, observation: default).AsTask();
         await handshake.Task.WaitAsync(TimeSpan.FromSeconds(5));
         router.ApplyTopology(Topology(newReplica.Port), 0, 2);
         var connection = await selection.WaitAsync(TimeSpan.FromSeconds(5));
@@ -941,7 +941,7 @@ public class ClusterTests
         routes.MarkValidated(TimeSpan.Zero);
         // Selection schedules revalidation without sending a GET behind the deliberately
         // suppressed topology response on the fake server's FIFO connection.
-        await client.Core.Cluster!.GetReadConnectionAsync(ClusterHash.GetSlot(key), RespireReadFrom.Replica, CancellationToken.None);
+        await client.Core.Cluster!.GetReadConnectionAsync(ClusterHash.GetSlot(key), RespireReadFrom.Replica, CancellationToken.None, observation: default);
         var refresh = routes.JoinOrStartRefresh(() => throw new InvalidOperationException("Read did not start refresh"));
         if (refresh is not null) await refresh.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(primary.ReceivedCommands.Count(command => command == "CLUSTER SLOTS")).IsEqualTo(2);
@@ -3759,7 +3759,7 @@ public class ClusterTests
         core.ConnectionStateChanged += change => states.Add(change.State);
         core.NotifyCommandStateChanged(retiredMultiplexer, 0, RespireConnectionState.Reconnecting);
 
-        _ = await core.Cluster.GetMasterConnectionsAsync(CancellationToken.None, discovery: null);
+        _ = await core.Cluster.GetMasterConnectionsAsync(CancellationToken.None, discovery: null, observation: default);
 
         await Assert.That(states).IsEquivalentTo(
             [RespireConnectionState.Reconnecting, RespireConnectionState.Connected]);

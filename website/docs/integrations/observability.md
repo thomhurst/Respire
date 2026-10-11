@@ -509,7 +509,14 @@ for classification without changing the exception delivered to the caller.
 `db.response.status_code` contains a recognized Redis error prefix, such as `WRONGTYPE`
 or `NOSCRIPT`. Unknown prefixes are omitted because scripts and modules can put
 application data in them. Exception messages, credentials, keys, and payloads are never
-labels. Error measurements currently omit endpoint labels.
+labels. When the failed endpoint is known, error measurements include `server.address`
+and include `server.port` unless it is the default Redis port, 6379. These attributes use
+the same endpoint and default-port rule as `db.client.operation.duration`, so errors
+can be grouped by node in standalone, Cluster, and Sentinel deployments. Handled
+retries identify the failed attempt; the final error identifies the last attempted
+endpoint. Endpoint labels are omitted when routing has not selected a node, including
+preflight failures and cancellation before dispatch. Endpoint cardinality is bounded
+by the deployment's topology, as with the duration histogram.
 
 `error.type` uses the runtime exception type's full name for the first 128 distinct
 canonical names observed in the process. Additional names use `_OTHER`; previously

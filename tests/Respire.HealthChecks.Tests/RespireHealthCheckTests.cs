@@ -198,7 +198,7 @@ public class RespireHealthCheckTests
             Protocol = RespProtocol.Resp2, Connections = 1, UseCluster = true,
             Endpoints = [new("127.0.0.1", first.Port)],
         });
-        await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null);
+        await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null, observation: default);
         var connections = first.ReceivedConnectionIds.Concat(second.ReceivedConnectionIds).ToArray();
         var masters = client.Core.Cluster.RoutingSnapshot.Masters;
         if (disconnectFirstMaster) await masters[0].DisposeAsync();

@@ -160,7 +160,7 @@ public sealed partial class RespireClient
                     && !CursorCommandMetadata.IsServerCursorContinuation(in command)
                     && TryRerouteCircuit(connection, commandDeadline, out var target, out var rerouted, GetTransportReadZone(in command)))
                 {
-                    observation.Handled(error);
+                    observation.Handled(error, new(connection.Host, connection.Port));
                     connection = target;
                     commandDeadline = rerouted;
                     telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
@@ -170,7 +170,7 @@ public sealed partial class RespireClient
                 {
                     // The caller's routing owns the replacement (for example a read pin). Select once;
                     // the original deadline and telemetry scope carry over to the replacement.
-                    observation.Handled(error);
+                    observation.Handled(error, new(connection.Host, connection.Port));
                     var selectReplacement = reselect;
                     reselect = null;
                     admission.Dispose();
@@ -239,7 +239,7 @@ public sealed partial class RespireClient
                     && TryRerouteCircuit(connection, commandDeadline,
                     out var target, out var rerouted, GetTransportReadZone(in command)))
                 {
-                    observation.Handled(error);
+                    observation.Handled(error, new(connection.Host, connection.Port));
                     connection = target;
                     commandDeadline = rerouted;
                 }
@@ -314,7 +314,7 @@ public sealed partial class RespireClient
                     && TryRerouteCircuit(connection, commandDeadline,
                     out var target, out var rerouted, GetTransportReadZone(in command)))
                 {
-                    observation.Handled(error);
+                    observation.Handled(error, new(connection.Host, connection.Port));
                     connection = target;
                     commandDeadline = rerouted;
                     // One logical read owns one scope, attributed to the endpoint that accepts it.
@@ -370,7 +370,7 @@ public sealed partial class RespireClient
                     && TryRerouteCircuit(connection, commandDeadline,
                     out var target, out var rerouted, GetTransportReadZone(in command)))
                 {
-                    observation.Handled(error);
+                    observation.Handled(error, new(connection.Host, connection.Port));
                     connection = target;
                     commandDeadline = rerouted;
                     telemetry.UpdateServerEndpoint(connection.Host, connection.Port);

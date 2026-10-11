@@ -25,7 +25,7 @@ public sealed partial class RespireClient
             var slot = command.TryGetClusterSlot(out var value) ? value : (int?)null;
             connection = cluster is null
                 ? await _core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken, observation).ConfigureAwait(false)
-                : await cluster.GetReadConnectionAsync(slot, _readFrom, cancellationToken, observation: observation).ConfigureAwait(false);
+                : await cluster.GetReadConnectionAsync(slot, _readFrom, cancellationToken, observation).ConfigureAwait(false);
             // Selection belongs to the caller, before either independently owned hedge leg starts.
             callerAttempts = observation.Attempts;
             budget.RecordRead();
