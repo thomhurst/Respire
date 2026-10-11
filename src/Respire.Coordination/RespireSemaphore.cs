@@ -288,10 +288,12 @@ public sealed class RespireSemaphore
         public bool IsOpen(long generation) => detached.IsOpen;
         public int Attempts(long generation) => caller.IsOpen ? caller.Attempts : detached.Attempts;
         public RespireEndpoint? Endpoint(long generation) => caller.IsOpen ? caller.Endpoint : detached.Endpoint;
+        // The detached owner keeps its own copy: the caller can close after the release
+        // starts, and a late cleanup failure must still name the node it attempted.
         public void UseEndpoint(long generation, RespireEndpoint? endpoint)
         {
             if (caller.IsOpen) caller.UseEndpoint(endpoint);
-            else detached.UseEndpoint(endpoint);
+            detached.UseEndpoint(endpoint);
         }
         public void SetAttempts(long generation, int attempts)
         {

@@ -181,7 +181,8 @@ internal sealed class ClientCore : IAsyncDisposable
         public void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(owner.Disposed, owner);
         public bool CanRetry(int attempt, CancellationToken cancellationToken) => !owner.Disposed;
         public void RecordRetirement(Exception error, int attempt) { }
-        public ValueTask<DedicatedConnectionPool> SelectReplacementAsync(CancellationToken cancellationToken)
+        public ValueTask<DedicatedConnectionPool> SelectReplacementAsync(CancellationToken cancellationToken,
+            RespireTelemetry.ErrorObservation observation)
             => owner.GetDedicatedPoolAsync(cancellationToken);
         public void SetTerminalError(Exception error) { }
         public void Dispose() { }

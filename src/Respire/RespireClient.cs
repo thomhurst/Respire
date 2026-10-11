@@ -3293,7 +3293,8 @@ public sealed partial class RespireClient : IRespireClient
             var mutationFence = cache is null ? default : cache.BeginUnknownMutation();
             try
             {
-                var connections = await cluster.GetMasterConnectionsAsync(cancellationToken, discovery: null).ConfigureAwait(false);
+                var connections = await cluster.GetMasterConnectionsAsync(cancellationToken, discovery: null, observation)
+                    .ConfigureAwait(false);
                 var retainedReply = default(RespValue);
                 var hasRetainedReply = false;
                 try
@@ -3659,7 +3660,8 @@ public sealed partial class RespireClient : IRespireClient
             var mutationFence = cache is null ? default : cache.BeginUnknownMutation();
             try
             {
-                var connections = await cluster.GetMasterConnectionsAsync(cancellationToken, discovery: null).ConfigureAwait(false);
+                var connections = await cluster.GetMasterConnectionsAsync(cancellationToken, discovery: null, observation)
+                    .ConfigureAwait(false);
                 List<Exception>? failures = null;
                 foreach (var connection in connections)
                 {

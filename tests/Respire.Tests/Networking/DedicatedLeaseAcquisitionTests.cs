@@ -139,9 +139,13 @@ public class DedicatedLeaseAcquisitionTests
             // A redirect source or an earlier selection must not own a later pool's handshake failure.
             observation.UseEndpoint(new("source.example", 6380));
             using var cancellation = new CancellationTokenSource();
-            var pending = DedicatedLeaseAcquisition.RentAsync(original, new TestRoute(new RouteState(replacement)),
+            var state = new RouteState(replacement);
+            var pending = DedicatedLeaseAcquisition.RentAsync(original, new TestRoute(state),
                 cancellation.Token, reuseIdle: true, DedicatedLeaseKind.Ordinary, observation: observation).AsTask();
             await entered.Task.WaitAsync(Limit);
+            // Replacement selection can dial before it returns a pool. The retired pool must not own that failure.
+            await Assert.That(state.Selections).IsEqualTo(1);
+            await Assert.That(state.SelectionEndpoint).IsNull();
             await Assert.That(observation.Endpoint).IsEqualTo(replacement.Endpoint);
             cancellation.Cancel();
             await Assert.That(async () => await pending.WaitAsync(Limit)).Throws<OperationCanceledException>();
@@ -278,6 +282,7 @@ public class DedicatedLeaseAcquisitionTests
         internal int Completions;
         internal bool IsDisposed;
         internal Exception? TerminalError;
+        internal RespireEndpoint? SelectionEndpoint;
     }
 
     private readonly struct TestRoute(RouteState state) : IDedicatedLeaseRoute
@@ -285,8 +290,10 @@ public class DedicatedLeaseAcquisitionTests
         public void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(state.IsDisposed, state);
         public bool CanRetry(int attempt, CancellationToken cancellationToken) => !state.IsDisposed;
         public void RecordRetirement(Exception error, int attempt) => state.Retirements++;
-        public ValueTask<DedicatedConnectionPool> SelectReplacementAsync(CancellationToken cancellationToken)
+        public ValueTask<DedicatedConnectionPool> SelectReplacementAsync(CancellationToken cancellationToken,
+            RespireTelemetry.ErrorObservation observation)
         {
+            state.SelectionEndpoint = observation.Endpoint;
             state.Selections++;
             state.SelectionStarted.TrySetResult();
             return state.SelectionGate is { } gate

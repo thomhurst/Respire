@@ -41,11 +41,12 @@ public sealed partial class RespireClient
         try { connection = GetCircuitAwareConnection(multiplexer, cancellationToken); }
         catch (Exception error)
         {
+            // The captured generation names the attempted data node, with or without Sentinel.
+            var endpoint = cancellationToken.IsCancellationRequested ? (RespireEndpoint?)null : multiplexer.ActiveConnectionEndpoint;
             if (_core.Sentinel is not null)
-                return CaptureReadySendFailure<TResult>(error, cache, mutationFence, observeSelectionErrors);
+                return CaptureReadySendFailure<TResult>(error, cache, mutationFence, observeSelectionErrors, endpoint);
             if (mutationFence.IsRequired) cache!.CompleteMutation(in mutationFence);
-            if (observeSelectionErrors) RespireTelemetry.RecordError(error, internallyHandled: false,
-                endpoint: cancellationToken.IsCancellationRequested ? (RespireEndpoint?)null : multiplexer.ActiveConnectionEndpoint);
+            if (observeSelectionErrors) RespireTelemetry.RecordError(error, internallyHandled: false, endpoint: endpoint);
             throw;
         }
         if (sender.ObserveDuration && _core.Circuits is not null && !_snapshotPrefixedBinaryKeys)
@@ -195,13 +196,13 @@ public sealed partial class RespireClient
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static ValueTask<TResult> CaptureReadySendFailure<TResult>(Exception error,
         ClientSideCacheCoordinator? cache = null, ClientSideCacheCoordinator.MutationFence mutationFence = default,
-        bool reportError = false)
+        bool reportError = false, RespireEndpoint? endpoint = null)
     {
         // Readiness is an observation, not a lease: socket loss, retirement, or disposal
         // can make GetConnection or admission throw after validation. A command writer
         // can also throw before admission. Preserve the former async acquisition result.
         if (mutationFence.IsRequired) cache!.CompleteMutation(in mutationFence);
-        if (reportError) RespireTelemetry.RecordError(error, internallyHandled: false);
+        if (reportError) RespireTelemetry.RecordError(error, internallyHandled: false, endpoint: endpoint);
         return ReadySendFailureAsync<TResult>(error);
     }
 

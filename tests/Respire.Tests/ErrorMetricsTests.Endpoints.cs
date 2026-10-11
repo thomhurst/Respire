@@ -53,7 +53,9 @@ public partial class ErrorMetricsTests
     }
 
     [Test]
-    public async Task ColdClusterSeedFailureNamesTheSeed()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ColdClusterSeedFailureNamesTheSeed(bool clusterWide)
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
         // Reserve then release a port so the seed refuses connections.
@@ -68,7 +70,12 @@ public partial class ErrorMetricsTests
             Endpoints = [new("127.0.0.1", port)],
         });
         using var capture = new Capture();
-        await Assert.That(async () => await client.Strings.GetStringAsync("key")).Throws<Exception>();
+        await Assert.That(async () =>
+        {
+            // SCRIPT FLUSH discovers every master before it sends anything.
+            if (clusterWide) using (await client.ExecuteAsync("SCRIPT", ["FLUSH"])) { }
+            else await client.Strings.GetStringAsync("key");
+        }).Throws<Exception>();
         var final = capture.Items.Single(item => !(bool)item.Tags["redis.client.errors.internal"]!);
         await Assert.That(final.Tags["server.address"]).IsEqualTo("127.0.0.1");
         await Assert.That(final.Tags["server.port"]).IsEqualTo(port);
