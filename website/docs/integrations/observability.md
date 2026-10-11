@@ -669,6 +669,16 @@ Failed batch and transaction commands produce one user-visible measurement per f
 deferred result, after the owner finishes correction and connection cleanup. Reading
 `Result` again or calling `ThrowIfAnyFailed` does not add another measurement.
 Standalone batch transport retries retain each pending command's own retry count.
+Cluster batches copy completed group-selection attempts before individual commands start
+their own retries. Transactions share the complete dispatch retry history across their
+queued results, including successful results, and freeze that count after connection cleanup.
+An unexpected null EXEC in an unwatched transaction faults every queued result with the
+same protocol exception thrown by commit. It is reported at the execution boundary;
+a null EXEC in a watched transaction still returns `false` without an execution error.
+Idle socket teardown or a disconnect after successful execution does not create deferred
+failures. A disconnect with outstanding commands produces one internal physical event
+and one final error for each affected result. Cancellation retains the original caller
+token even when the physical connection closes later.
 A failure of the execution itself, such as a durability acknowledgement failure, is counted when
 there are no failed deferred results representing that execution. WATCH aborts and
 intentional batch or transaction disposal are not errors for this counter.
@@ -1133,6 +1143,12 @@ Transactions retain shared retry history through commit preflight, EXEC replies 
 connection cleanup. WATCH setup and hash-import session calls start ownership before
 key routing, argument validation or command construction. Successful deferred execution
 rents no error observation lease.
+
+The shared `DeferredOperation` helper contains only operation metadata and observation
+forwarding. It adds no pending storage, lease, response wrapper or successful-path rental.
+Batch, durability and transaction routes call its final publication helper only after
+their own cleanup. Transaction and group-selection retry counts are captured before
+the lending pending closes; independent batch command retries remain independent.
 
 Deferred command failures are reported once after execution cleanup. Inspecting a pending
 before execution, after a WATCH abort, or after its queue is discarded counts that lifecycle

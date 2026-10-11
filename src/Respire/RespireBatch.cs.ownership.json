@@ -36,7 +36,7 @@
       "Role": "final",
       "Member": "Respire.RespireBatch.TryExecuteAsync(CancellationToken):ValueTask<RespireBatchResult>",
       "Owner": "Respire.RespireBatch.TryExecuteAsync(CancellationToken):ValueTask<RespireBatchResult>",
-      "Contract": "Setup failures belong to this caller before command ownership. Each queued pending retains a failure-only owner through transport retries, conversion and cache-fence cleanup; execution reports each final pending failure once."
+      "Contract": "Setup failures belong to this caller before command ownership. Each queued pending retains a failure-only owner through transport retries, conversion and cache-fence cleanup. The shared deferred-operation helper copies completed group-selection attempts before dispatch and reports each final pending failure once after cleanup; summary and pending inspection never republish. Physical teardown alone creates no logical failure."
     }
   ],
   "NonRoutes": []
