@@ -567,7 +567,9 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                             ResponseReader.ExpectOk(in multi);
                             importTransactionStarted = true;
                         }
-                        // Only reaching transport submission lets an empty commit name this node.
+                        // Only reaching transport submission lets an empty commit name this node. Local
+                        // capacity validation submits nothing, so run it before marking the send.
+                        connection.ValidateTransactionCapacity(_ops.Count, includeMulti: !ConnectionPolicy.IsImportSession);
                         sendAttempted = true;
                         reply = await connection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count,
                                 cancellationToken, includeMulti: !ConnectionPolicy.IsImportSession, commandDeadline: deadline,

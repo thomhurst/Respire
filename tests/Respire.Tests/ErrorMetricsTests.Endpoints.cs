@@ -639,6 +639,26 @@ public partial class ErrorMetricsTests
     }
 
     [Test]
+    public async Task EmptyWatchedCommitCapacityRejectionNamesNoNode()
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        await using var server = new FakeRespServer(2, FakeRespServer.OkReply);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
+        });
+        await using var transaction = await client.CreateTransactionAsync(["balance"]);
+        using var capture = new Capture();
+        // WATCH fits one slot, but MULTI/EXEC needs two, so validation rejects it before any frame is sent.
+        await Assert.That(async () => await transaction.CommitWithWatchValidationAsync(CancellationToken.None))
+            .Throws<ArgumentOutOfRangeException>();
+        var final = capture.Items.Single(item => !(bool)item.Tags["redis.client.errors.internal"]!);
+        await Assert.That(final.Tags.ContainsKey("server.address")).IsFalse();
+        await Assert.That(final.Tags.ContainsKey("server.port")).IsFalse();
+    }
+
+    [Test]
     public async Task CancelledWatchValidationBeforeSubmissionNamesNoNode()
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
