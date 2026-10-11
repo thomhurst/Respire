@@ -41,6 +41,13 @@ public class ContainerFixtureIntegrationTests
         {
             var container = await docker.Containers.InspectContainerAsync(fixture.ContainerId);
             (container.HostConfig?.Init).Should().BeTrue();
+            IEnumerable<int> expectedReservedPorts = topology == RespireContainerTopology.Standalone
+                ? [6379]
+                : fixture.DataEndpoints.Concat(fixture.SentinelEndpoints).Select(endpoint => endpoint.Port);
+            if (topology == RespireContainerTopology.Cluster)
+                expectedReservedPorts = expectedReservedPorts.Concat([16379, 16380, 16381]);
+            container.HostConfig!.Sysctls!["net.ipv4.ip_local_reserved_ports"].Split(',')
+                .Should().BeEquivalentTo(expectedReservedPorts.Select(port => port.ToString(System.Globalization.CultureInfo.InvariantCulture)));
             // Linux Docker includes image EXPOSE ports with null bindings when unpublished.
             var publishedPorts = container.NetworkSettings!.Ports.Values.SelectMany(bindings => bindings ?? []).ToArray();
             publishedPorts.Should().HaveCount(fixture.DataEndpoints.Count + fixture.SentinelEndpoints.Count);
