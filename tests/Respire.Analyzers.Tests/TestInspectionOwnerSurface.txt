@@ -125,7 +125,7 @@ Respire.ClientSideCacheCoordinator.QueryReadLease | method Capture(QueryDependen
 Respire.ClientSideCacheCoordinator.QueryReadLease | method ClearDependencies() : void
 Respire.ClientSideCacheCoordinator.QueryReadLease | method GetDependency(int) : QueryDependencyStamp
 Respire.ClientSideCacheCoordinator.QueryReadLease | property Capacity [internal; get] : int
-# Count: Respire.Networking.BulkStreamPendingResponseSource | 26
+# Count: Respire.Networking.BulkStreamPendingResponseSource | 27
 Respire.Networking.BulkStreamPendingResponseSource | constructor BulkStreamPendingResponseSource(string?, bool, Action<Exception?>?, CancellationToken, Action?)
 Respire.Networking.BulkStreamPendingResponseSource | method AbortPayload(Exception) : void
 Respire.Networking.BulkStreamPendingResponseSource | method BeginPayload() : RespBulkPayloadPipe?
@@ -139,6 +139,7 @@ Respire.Networking.BulkStreamPendingResponseSource | method IValueTaskSource<Str
 Respire.Networking.BulkStreamPendingResponseSource | method IValueTaskSource<Stream?>.OnCompleted(Action<object?>, object?, short, ValueTaskSourceOnCompletedFlags) : void
 Respire.Networking.BulkStreamPendingResponseSource | method ObservePrefix(in RespValue) : void
 Respire.Networking.BulkStreamPendingResponseSource | method PrepareException(Exception) : Exception
+Respire.Networking.BulkStreamPendingResponseSource | method ReleaseRef() : void
 Respire.Networking.BulkStreamPendingResponseSource | method ResetAndReturn() : void
 Respire.Networking.BulkStreamPendingResponseSource | method SetExceptionCore(Exception) : void
 Respire.Networking.BulkStreamPendingResponseSource | method SetResultCore(in RespValue) : void

@@ -51,6 +51,7 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
     }
 
     internal override string? CommandName => _commandName;
+    internal override void ReleaseRef() => ReleaseRefAtomic();
     internal bool HasPrefixReply => _hasPrefixReply;
     internal Action<Exception?>? OnFrameCompleted => _onFrameCompleted;
     internal CancellationToken StreamCancellationToken => _streamCancellationToken;

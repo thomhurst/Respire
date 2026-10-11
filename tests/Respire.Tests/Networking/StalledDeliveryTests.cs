@@ -524,6 +524,8 @@ public class StalledDeliveryTests
         public int Completions;
         public int MaxConcurrent;
 
+        internal override void ReleaseRef() => ReleaseRefAtomic();
+
         internal override bool TryReserveResult() => true;
 
         internal override bool CompleteReservedResult(in RespValue result)
