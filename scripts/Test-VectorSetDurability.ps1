@@ -37,11 +37,26 @@ function Assert-Equal($Actual, $Expected, [string]$Message) {
     }
 }
 
+function Wait-RedisReady {
+    $timer = [System.Diagnostics.Stopwatch]::StartNew()
+    do {
+        try {
+            Assert-Equal (Invoke-Redis -RedisArguments @('PING')) 'PONG' 'Redis is not ready.'
+            return
+        }
+        catch {
+            $lastFailure = $_.Exception.Message
+        }
+        Start-Sleep -Milliseconds 200
+    } while ($timer.Elapsed.TotalSeconds -lt 30)
+    throw "Redis did not become ready within 30 seconds. Last failure: $lastFailure"
+}
+
 try {
     $container = Invoke-Docker -DockerArguments @('run', '--detach', '--pull', 'never', $Image,
         'redis-server', '--appendonly', 'yes', '--appendfsync', 'always',
         '--auto-aof-rewrite-percentage', '0', '--save', '')
-    Assert-Equal (Invoke-Redis -RedisArguments @('PING')) 'PONG' 'Redis did not start.'
+    Wait-RedisReady
     $info = Invoke-Docker -DockerArguments @('exec', $container, 'redis-cli', '--raw', 'INFO', 'server')
     $version = [regex]::Match($info, '(?m)^redis_version:([^\r\n]+)').Groups[1].Value
     $imageId = Invoke-Docker -DockerArguments @('inspect', '--format', '{{.Image}}', $container)
@@ -50,15 +65,18 @@ try {
     $luaAdd = "return redis.call('VADD',KEYS[1],'VALUES',3,0,1,0,'a','NOQUANT','SETATTR',ARGV[1])"
     $luaReplace = "redis.call('VREM',KEYS[1],'a'); " + $luaAdd
 
-    foreach ($key in @('control', 'direct', 'lua', 'remove-add')) {
+    foreach ($key in @('control', 'direct', 'lua', 'remove-add', 'remove-add-surviving')) {
         Assert-Equal (Invoke-Redis -RedisArguments @('VADD', $key, 'VALUES', '3', '1', '0', '0', 'a',
             'NOQUANT', 'SETATTR', $original)) 1 "Insertion failed for $key."
     }
+    Assert-Equal (Invoke-Redis -RedisArguments @('VADD', 'remove-add-surviving', 'VALUES', '3', '0', '0', '1',
+        'sentinel', 'NOQUANT', 'SETATTR', $original)) 1 'Surviving-set sentinel insertion failed.'
     Assert-Equal (Invoke-Redis -RedisArguments @('VADD', 'direct', 'VALUES', '3', '0', '1', '0', 'a',
         'NOQUANT', 'SETATTR', $replacement)) 0 'Replacement must report an existing member.'
     Assert-Equal (Invoke-Redis -RedisArguments @('EVAL', $luaAdd, '1', 'lua', $replacement)) 0 'Lua replacement failed.'
     Assert-Equal (Invoke-Redis -RedisArguments @('EVAL', $luaReplace, '1', 'remove-add', $replacement)) 1 'Remove/add failed.'
-    foreach ($key in @('direct', 'lua', 'remove-add')) {
+    Assert-Equal (Invoke-Redis -RedisArguments @('EVAL', $luaReplace, '1', 'remove-add-surviving', $replacement)) 1 'Surviving-set remove/add failed.'
+    foreach ($key in @('direct', 'lua', 'remove-add', 'remove-add-surviving')) {
         Assert-Equal ([double[]](Invoke-Redis -RedisArguments @('VEMB', $key, 'a'))) @(0, 1, 0) "Replacement vector is wrong for $key."
         Assert-Equal (Invoke-Redis -RedisArguments @('VGETATTR', $key, 'a')) $replacement "Replacement attributes are wrong for $key."
     }
@@ -86,9 +104,13 @@ try {
     # SIGKILL prevents an orderly shutdown from persisting an RDB snapshot.
     Invoke-Docker -DockerArguments @('kill', '--signal', 'KILL', $container) | Out-Null
     Invoke-Docker -DockerArguments @('start', $container) | Out-Null
+    Wait-RedisReady
     Assert-Equal ([double[]](Invoke-Redis -RedisArguments @('VEMB', 'control', 'a'))) @(1, 0, 0) 'Insertion control did not survive AOF reload.'
     Assert-Equal (Invoke-Redis -RedisArguments @('VGETATTR', 'control', 'a')) $original 'Insertion attributes did not survive AOF reload.'
-    foreach ($key in @('direct', 'lua', 'remove-add')) {
+    Assert-Equal ([double[]](Invoke-Redis -RedisArguments @('VEMB', 'remove-add-surviving', 'sentinel'))) @(0, 0, 1) 'Surviving-set sentinel vector did not survive AOF reload.'
+    Assert-Equal (Invoke-Redis -RedisArguments @('VGETATTR', 'remove-add-surviving', 'sentinel')) $original 'Surviving-set sentinel attributes did not survive AOF reload.'
+    Assert-Equal (Invoke-Redis -RedisArguments @('VCARD', 'remove-add-surviving')) 2 'Surviving set must retain both members.'
+    foreach ($key in @('direct', 'lua', 'remove-add', 'remove-add-surviving')) {
         $vector = [double[]](Invoke-Redis -RedisArguments @('VEMB', $key, 'a'))
         $attributes = Invoke-Redis -RedisArguments @('VGETATTR', $key, 'a')
         [pscustomobject]@{
