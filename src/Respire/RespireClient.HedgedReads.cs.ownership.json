@@ -6,7 +6,7 @@
       "Role": "borrower",
       "Member": "Respire.RespireClient.SendHedgedReadAsync`1(string,TCommand,HedgedReadBudget,RespireCommandFlags,CancellationToken,RespireTelemetry.ErrorObservation,bool):ValueTask<RespValue>",
       "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
-      "Contract": "Retain the caller through selection and loser cleanup. Each leg owns independent failure-only storage; copy only the completed result leg retries before releasing it."
+      "Contract": "Retain the caller through selection and loser cleanup. Each leg owns independent failure-only storage; add only the completed result leg retries to the caller prefix, saturating at int.MaxValue, before releasing that leg. Never borrow the loser lifetime."
     },
     {
       "Name": "hedged-read-leg",

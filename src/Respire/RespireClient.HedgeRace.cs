@@ -50,8 +50,8 @@ public sealed partial class RespireClient
             }
             finally
             {
-                observation.SetAttempts(callerAttempts +
-                    (ReferenceEquals(winner, original) ? OriginalObservation : HedgeObservation).Attempts);
+                observation.CopyCompletedAttempts(callerAttempts,
+                    ReferenceEquals(winner, original) ? OriginalObservation : HedgeObservation);
             }
         }
 

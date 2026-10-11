@@ -547,7 +547,37 @@ events. Cancellation caused by subscription shutdown is excluded.
 Additional rejected prefix or transaction queue replies are internal events when
 discarded; the retained error is reported once at the caller's final boundary.
 Hedged reads add the completed result leg's retry count to retries already handled by
-the caller; the discarded leg retains its own internal error boundary.
+the caller, including counts copied from nested routes. Addition saturates at
+`int.MaxValue` on immediate completion, sole-leg completion, and either race winner.
+The copy happens before completing the result leg's owner. A later caller conversion
+failure uses that retained count; it does not borrow a completed leg's storage.
+The discarded leg retains its own internal error boundary and retry count through
+FIFO reply consumption and disposal, even after the caller has completed. Neither
+winning nor losing a race cancels an accepted request or releases its buffer early.
+If both legs fail, the caller retains the original leg's exception and retry count,
+including its original cancellation token. Each discarded leg still owns its internal
+failure; the caller independently owns the final failure.
+
+SCRIPT and FUNCTION primary fan-outs share one caller observation across their
+target retries. They join every accepted target, reply conversion, and cleanup before
+publishing one final failure. Sequential DBSIZE and flush fan-outs also retain their
+caller count across targets. Success itself adds no retry, but retries before a target
+succeeds still count. These joined
+targets do not become independent final owners.
+
+Explicit node-result fan-outs use an independent owner for each endpoint through
+capacity admission, native send, conversion, and pool cleanup. Each endpoint failure
+is reported before its error result is returned. The parent does not report those
+returned failures again; it owns discovery and exceptions escaping the fan-out itself.
+Concurrent callers have separate observations even when they query the same endpoint.
+Reading an error result's `Value` does not create a new command lifetime.
+
+These ownership rules preserve original exceptions and cancellation tokens even
+when a metric listener throws. Successful paths acquire no error-observation storage.
+The targeted `run-hedge-ownership-benchmarks` PR label starts pinned
+baseline/candidate/baseline handoff comparisons on net10.0. Its sole-leg case requires
+zero allocation; race cases retain the existing `Task.WhenAny` cost. Correctness controls
+run on both net8.0 and net10.0. Accept the comparison before merging a handoff change.
 Standalone submission retries retain the same count through both immediate retirement
 and capacity waits; a later write/submission failure reports the accumulated count.
 `ConnectAnyAsync` also reports null or empty candidates and enumeration failures once
