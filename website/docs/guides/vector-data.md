@@ -11,6 +11,32 @@ description: Store typed vector records in Redis hashes or JSON through explicit
 dotnet add package Respire.VectorData
 ```
 
+## Vector-set backend decision
+
+`Respire.VectorData` uses Query Engine hash and JSON collections. It does not expose
+a `VADD`/`VSIM` collection backend. The [vector-set evaluation](https://github.com/thomhurst/Respire/issues/1261)
+found that acknowledged replacements lose both their new vector and attributes after
+an AOF crash/reload on Redis **8.6.0** and **8.10.2**, even with `appendfsync always`.
+Wrapping `VADD` in Lua does not fix this. This blocks a direct native-upsert adapter.
+
+Lua `VREM` followed by `VADD` survives that reload with compatible inputs, but a failed
+add can leave the previous record deleted. Lua isolation provides no rollback. A
+backend using this approach needs validation before removal and a defined recovery
+protocol, with AOF, replica, concurrent-operation and failure-path tests before release.
+These results apply to the evaluated server versions; run the disposable
+[durability probe](https://github.com/thomhurst/Respire/blob/main/scripts/Test-VectorSetDurability.ps1)
+against another version rather than assuming its behavior.
+
+Native vector sets offer one vector per member and JSON attributes, with cosine
+similarity scores. Their score `s` maps to cosine similarity `2*s-1` or cosine distance
+`2*(1-s)`; relabeling it cannot supply dot-product or L2 ranking. A VectorData backend
+also needs independent empty-collection metadata, an authoritative record codec,
+schema validation, and a translator for the distinct vector-set filter language.
+Optional capabilities can be restricted honestly, but successful writes must persist.
+The evaluation does not establish VectorData conformance for a vector-set backend.
+Use [native vector-set commands](vector-sets.md) only with their server semantics and
+these durability limits understood.
+
 ## Explicit mapping
 
 Derive from `RespireVectorDataHashMapper<TRecord>`. Implement `GetKey`, `Write` and `Read`, and declare vector fields and any indexed scalar fields. Mapping uses your code directly, so immutable records work without reflection, attribute scanning or runtime serialization. Mappers must be thread-safe. Custom TAG separators must be printable ASCII characters (U+0020 through U+007E); invalid separators fail when constructing the collection, before any Redis request. Omitting the separator retains Redis's default comma. The runnable [VectorData sample](https://github.com/thomhurst/Respire/tree/main/samples/Respire.Samples.VectorData) includes a complete `MovieMapper` that writes UTF-8 text and little-endian vector bytes.
