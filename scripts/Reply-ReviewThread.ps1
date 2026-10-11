@@ -5,8 +5,10 @@ Replies to a PR review thread from a body file and optionally resolves the threa
 .DESCRIPTION
 Write the disposition to a file first (Write tool or a quoted here-string), then pass its path.
 The body is sent as JSON through gh api --input, so PowerShell never expands it. The script
-rejects serialized object text such as "System.Collections.Hashtable.Body", confirms GitHub
-stored the exact body, and only then resolves the thread.
+rejects bodies consisting only of serialized object text such as "System.Collections.Hashtable.Body".
+It finds the thread before posting, reuses your matching latest reply on retry, deletes a
+mismatched stored reply, and only resolves after confirming the body. Pass -Repo owner/name
+when invoking from outside the intended repository; the fallback uses the current directory.
 
 .EXAMPLE
 pwsh scripts/Reply-ReviewThread.ps1 -Pr 1440 -CommentId 4241877246 -BodyFile $env:TEMP/reply.md -Resolve
