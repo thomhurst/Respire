@@ -123,38 +123,62 @@ public class AsyncFlushSignalTests
     [Arguments(true)]
     public async Task ConcurrentSignalsCoalesceWhileParkedWaiterIsResuming(bool preferInline)
     {
+        const int signalers = 8;
+        const int signalsPerThread = 25;
         var signal = new AsyncFlushSignal();
         var pending = signal.WaitAsync();
+        var resumeCount = 0;
+        var resumeThread = -1;
+        var resumeOnPool = false;
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var resumed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var release = new ManualResetEventSlim();
+        // The continuation records the wake and returns without consuming it (no GetResult), so
+        // the waiter stays "resuming" — woken but with the signal unconsumed — while no thread
+        // is held. Blocking the waking thread here instead starved the 1-CPU thread pool: the
+        // blocked worker owned the queued `entered` continuation and the pool grew too slowly.
         pending.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(() =>
         {
-            try
-            {
-                entered.TrySetResult();
-                if (!release.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("Waiter was not released.");
-                pending.ConfigureAwait(false).GetAwaiter().GetResult();
-                resumed.TrySetResult();
-            }
-            catch (Exception error) { resumed.TrySetException(error); }
+            resumeThread = Environment.CurrentManagedThreadId;
+            resumeOnPool = Thread.CurrentThread.IsThreadPoolThread;
+            Interlocked.Increment(ref resumeCount);
+            entered.TrySetResult();
         });
-        var wake = Task.Run(() => signal.Signal(preferInline));
-        try
+        // Dedicated threads keep the wake and the signal storm independent of pool capacity.
+        var wakeThread = StartSignalThread(() => signal.Signal(preferInline));
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        if (preferInline) await Assert.That(resumeThread).IsEqualTo(wakeThread.Thread.ManagedThreadId);
+        else await Assert.That(resumeOnPool).IsTrue();
+
+        using var start = new ManualResetEventSlim();
+        var storm = Enumerable.Range(0, signalers).Select(_ => StartSignalThread(() =>
         {
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            await Task.WhenAll(Enumerable.Range(0, 50).Select(_ => Task.Run(() => signal.Signal(preferInline))));
-        }
-        finally
-        {
-            release.Set();
-            await Task.WhenAll(wake, resumed.Task).WaitAsync(TimeSpan.FromSeconds(5));
-        }
+            start.Wait();
+            for (var i = 0; i < signalsPerThread; i++) signal.Signal(preferInline);
+        })).ToArray();
+        start.Set();
+        await Task.WhenAll(storm.Select(s => s.Done).Append(wakeThread.Done)).WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Every signal raced the unconsumed wake: none may resume the waiter again or queue a
+        // second wake (a second SetResult would throw on its pool thread).
+        await Assert.That(Volatile.Read(ref resumeCount)).IsEqualTo(1);
+        pending.ConfigureAwait(false).GetAwaiter().GetResult();
 
         var next = signal.WaitAsync();
         await Assert.That(next.IsCompleted).IsFalse();
         signal.Signal(preferInline);
         await next.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(Volatile.Read(ref resumeCount)).IsEqualTo(1);
+    }
+
+    private static (Thread Thread, Task Done) StartSignalThread(Action body)
+    {
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var thread = new Thread(() =>
+        {
+            try { body(); done.TrySetResult(); }
+            catch (Exception error) { done.TrySetException(error); }
+        }) { IsBackground = true, Name = "AsyncFlushSignalTests signaler" };
+        thread.Start();
+        return (thread, done.Task);
     }
 
     [Test]
