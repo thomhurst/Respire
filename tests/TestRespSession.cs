@@ -12,19 +12,21 @@ internal sealed class TestRespSession(Stream stream, TcpClient? socket = null) :
     private byte[] _buffer = new byte[4096];
     private int _length;
 
-    internal static async Task<TestRespSession> ConnectAsync(RespireOptions options)
+    internal static async Task<TestRespSession> ConnectAsync(RespireOptions options, CancellationToken cancellationToken = default)
     {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(Limit);
         var endpoint = options.Endpoints[0];
         TcpClient? socket = null;
         Stream stream;
         if (options.TestingStreamFactory is { } factory)
-            stream = await factory(endpoint.Host, endpoint.Port, default);
+            stream = await factory(endpoint.Host, endpoint.Port, deadline.Token);
         else
         {
             socket = new TcpClient();
             try
             {
-                await socket.ConnectAsync(endpoint.Host, endpoint.Port).WaitAsync(Limit);
+                await socket.ConnectAsync(endpoint.Host, endpoint.Port, deadline.Token);
                 stream = socket.GetStream();
             }
             catch { socket.Dispose(); throw; }
@@ -34,11 +36,11 @@ internal sealed class TestRespSession(Stream stream, TcpClient? socket = null) :
         {
             // These parity fixtures support RESP3; Auto requests the preferred wire protocol.
             var protocol = options.Protocol == RespProtocol.Auto ? RespProtocol.Resp3 : options.Protocol;
-            using var hello = await session.CommandAsync("HELLO", ((int)protocol).ToString());
+            using var hello = await session.CommandAsync(deadline.Token, "HELLO", ((int)protocol).ToString());
             if (hello.IsError) throw new IOException(hello.GetErrorMessage());
             if (options.Database != 0)
             {
-                using var selected = await session.CommandAsync("SELECT", options.Database.ToString());
+                using var selected = await session.CommandAsync(deadline.Token, "SELECT", options.Database.ToString());
                 if (selected.IsError) throw new IOException(selected.GetErrorMessage());
             }
             return session;
@@ -49,14 +51,24 @@ internal sealed class TestRespSession(Stream stream, TcpClient? socket = null) :
     internal Task<RespValue> CommandAsync(params string[] arguments)
         => CommandBytesAsync(arguments.Select(Encoding.UTF8.GetBytes).ToArray());
 
-    internal async Task<RespValue> CommandBytesAsync(params byte[][] arguments)
+    private Task<RespValue> CommandAsync(CancellationToken cancellationToken, params string[] arguments)
+        => CommandBytesAsync(cancellationToken, arguments.Select(Encoding.UTF8.GetBytes).ToArray());
+
+    internal Task<RespValue> CommandBytesAsync(params byte[][] arguments)
+        => CommandBytesAsync(default, arguments);
+
+    private async Task<RespValue> CommandBytesAsync(CancellationToken cancellationToken, params byte[][] arguments)
     {
-        await SendAsync(arguments);
-        return await ReadAsync();
+        await SendAsync(cancellationToken, arguments);
+        return await ReadAsync(cancellationToken);
     }
 
-    internal async Task SendAsync(params byte[][] arguments)
+    internal Task SendAsync(params byte[][] arguments) => SendAsync(default, arguments);
+
+    private async Task SendAsync(CancellationToken cancellationToken, params byte[][] arguments)
     {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(Limit);
         var writer = new ArrayBufferWriter<byte>();
         writer.Write(Encoding.ASCII.GetBytes($"*{arguments.Length}\r\n"));
         foreach (var argument in arguments)
@@ -65,12 +77,13 @@ internal sealed class TestRespSession(Stream stream, TcpClient? socket = null) :
             writer.Write(argument);
             writer.Write("\r\n"u8);
         }
-        await stream.WriteAsync(writer.WrittenMemory).AsTask().WaitAsync(Limit);
+        await stream.WriteAsync(writer.WrittenMemory, deadline.Token);
     }
 
-    internal async Task<RespValue> ReadAsync()
+    internal async Task<RespValue> ReadAsync(CancellationToken cancellationToken = default)
     {
-        using var deadline = new CancellationTokenSource(Limit);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(Limit);
         while (true)
         {
             var consumed = 0;

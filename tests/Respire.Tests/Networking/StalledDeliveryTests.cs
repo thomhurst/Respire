@@ -20,6 +20,9 @@ namespace Respire.Tests.Networking;
 [Category(TestCategories.ConstrainedRetirement)]
 public class StalledDeliveryTests
 {
+    // Tests that only need a rescue to happen, not its production timing, avoid the 500 ms default.
+    private static readonly TimeSpan FastRescue = TimeSpan.FromMilliseconds(50);
+
     [Test]
     public async Task StalledRunnerHandsQueuedRepliesToANewRunner()
     {
@@ -238,7 +241,10 @@ public class StalledDeliveryTests
     {
         await using var server = new FakeRespServer(FakeRespServer.PongReply);
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
-            new RespireConnectionOptions { CommandTimeout = commandTimeout ? TimeSpan.FromSeconds(30) : null });
+            new RespireConnectionOptions
+            {
+                CommandTimeout = commandTimeout ? TimeSpan.FromSeconds(30) : null, StalledDeliveryThreshold = FastRescue,
+            });
         var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var awaiter = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).ConfigureAwait(false).GetAwaiter();
         awaiter.UnsafeOnCompleted(() =>
@@ -277,7 +283,8 @@ public class StalledDeliveryTests
                 return true;
             },
         };
-        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+            new RespireConnectionOptions { StalledDeliveryThreshold = FastRescue });
         // Not disposed: a continuation delayed by a starved pool may still wait after the test ends.
         var release = new ManualResetEventSlim();
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

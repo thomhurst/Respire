@@ -131,13 +131,17 @@ internal sealed partial class SubscriptionHub
                 && IsRouteOwnerCurrentLocked(existing, commandConnection.Multiplexer)) return;
         }
         RespireConnectionMultiplexer? askSource = null;
+        ClusterRouter.DiscoveryRound? discovery = null;
+        var discoveryPending = false;
         try
         {
             for (var redirect = 0; ; redirect++)
             {
+                discoveryPending = true;
                 var primary = askSource is not null
                     ? await CreatePrimaryConnectionAsync(commandConnection.Multiplexer!, askSource, cancellationToken).ConfigureAwait(false)
                     : await GetPrimaryConnectionAsync(commandConnection.Multiplexer!, cancellationToken).ConfigureAwait(false);
+                discoveryPending = false;
                 PrimarySubscriptionConnection? previous;
                 lock (_gate)
                 {
@@ -177,8 +181,11 @@ internal sealed partial class SubscriptionHub
                         observation.Handled(error);
                     }
                     else RespireTelemetry.RecordError(error, internallyHandled: true, retryAttempts: redirect);
-                    commandConnection = await core.Cluster.GetRedirectConnectionAsync(error, primary.Connection!, cancellationToken, slot, discovery: null)
+                    core.Cluster.RecordRejection(ref discovery, primary.Connection!, error);
+                    discoveryPending = true;
+                    commandConnection = await core.Cluster.GetRedirectConnectionAsync(error, primary.Connection!, cancellationToken, slot, discovery)
                         .ConfigureAwait(false);
+                    discoveryPending = false;
                     if (primary.IsAskConnection)
                         await ClosePrimaryAsync(primary).ConfigureAwait(false);
                     askSource = error.Code == RespireErrorCodes.Ask ? primary.AskSource ?? primary.Owner : null;
@@ -201,12 +208,14 @@ internal sealed partial class SubscriptionHub
                 }
             }
         }
-        catch
+        catch (Exception error)
         {
+            discovery?.RecordCommandFailure(error, discoveryPending, slot, callerToken: cancellationToken);
             if (recovering)
                 lock (_gate) _shardedRecoveryEndpoints.Add(new(commandConnection.Host, commandConnection.Port));
             throw;
         }
+        finally { discovery?.Finish(); }
     }
 
     private async ValueTask<PrimarySubscriptionConnection> GetPrimaryConnectionAsync(

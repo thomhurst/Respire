@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Respire.HealthChecks;
@@ -12,6 +13,14 @@ namespace Respire.Tests;
 
 public class RespireHealthProbeContractTests
 {
+    [Test]
+    public async Task HealthPackageHasNoCoreFriendAccess()
+    {
+        var healthAssembly = typeof(RespireHealthCheck).Assembly.GetName().Name;
+        var friends = typeof(RespireClient).Assembly.GetCustomAttributes<InternalsVisibleToAttribute>();
+        await Assert.That(friends.Any(friend => new AssemblyName(friend.AssemblyName).Name == healthAssembly)).IsFalse();
+    }
+
     private static HealthCheckContext Context()
         => new() { Registration = new("respire", _ => throw new NotSupportedException(), HealthStatus.Unhealthy, null) };
 
@@ -233,7 +242,8 @@ public class RespireHealthProbeContractTests
             Endpoints = [new("127.0.0.1", first.Port)],
         });
         await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null);
-        var captured = client.CaptureHealthConnections(true);
+        var captured = client.Core.Cluster.RoutingSnapshot.Masters.Select(node =>
+            (Endpoint: new RespireEndpoint(node.Host, node.Port), Connection: node.GetExistingHealthConnection())).ToArray();
         var beforeConnections = first.ReceivedConnectionIds.Concat(second.ReceivedConnectionIds).ToArray();
         var blockedServer = captured[0].Endpoint.Port == first.Port ? first : second;
         var waitingServer = captured[1].Endpoint.Port == first.Port ? first : second;

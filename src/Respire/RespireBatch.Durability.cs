@@ -159,8 +159,7 @@ public sealed partial class RespireBatch
             finally
             {
                 cache?.CompleteMutation(in mutationFence);
-                var pendingErrors = false;
-                foreach (var op in _ops) pendingErrors |= op.ReportError();
+                var pendingErrors = DeferredOperation.ReportErrors(_ops) != 0;
                 if (operationError is not null && !pendingErrors)
                     ErrorObservation.FinishFinal(default, operationError);
                 if (connection is null && operationError is not null)

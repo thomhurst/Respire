@@ -17,16 +17,15 @@ public sealed class ClusterTransactionTestContainer : IAsyncInitializer, IAsyncD
 
     public async Task InitializeAsync()
     {
-        var container = new ContainerBuilder("redis:7.0.15")
+        var container = await ContainerStartRetry.StartAsync(() => new ContainerBuilder("redis:7.0.15")
             .WithPortBinding(6379, true)
             .WithCommand("redis-server", "--cluster-enabled", "yes", "--cluster-config-file", "nodes.conf",
                 "--cluster-announce-ip", "127.0.0.1", "--appendonly", "no")
             .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379))
-            .Build();
+            .Build(), [6379]);
         _container = container;
         try
         {
-            await container.StartAsync();
             // Discovery must advertise the mapped client port, not the container-private port.
             await RunAsync(["redis-cli", "-e", "CONFIG", "SET", "cluster-announce-port", Port.ToString()]);
             await RunAsync(["redis-cli", "-e", "CLUSTER", "ADDSLOTSRANGE", "0", "16383"]);

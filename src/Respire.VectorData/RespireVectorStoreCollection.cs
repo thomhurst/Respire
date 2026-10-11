@@ -12,8 +12,11 @@ namespace Respire.VectorData;
 /// <summary>String-keyed Redis hash or JSON records, FLOAT32 KNN search and full-text/vector hybrid search.</summary>
 public sealed partial class RespireVectorStoreCollection<TRecord> : VectorStoreCollection<string, TRecord>, IKeywordHybridSearchable<TRecord> where TRecord : class
 {
-    // One script replaces the complete hash atomically, including absent optional fields.
-    private static readonly RespireScript Replace = RespireScript.Create("redis.call('DEL',KEYS[1]); for i=1,#ARGV,2 do redis.call('HSET',KEYS[1],ARGV[i],ARGV[i+1]); end; return 1");
+    // One script replaces the complete hash atomically, including absent optional fields. RediSearch reindexes the
+    // document on every write command, so all fields go in one HSET: a per-field HSET assigned a new document id per
+    // field and left deleted ids that shifted BM25 scores when index GC ran. Records with more than 3500 fields are
+    // written in chunks of 7000 arguments to stay below the Lua unpack stack limit.
+    private static readonly RespireScript Replace = RespireScript.Create("redis.call('DEL',KEYS[1]); local n=#ARGV; for i=1,n,7000 do redis.call('HSET',KEYS[1],unpack(ARGV,i,math.min(i+6999,n))); end; return 1");
     private static readonly UTF8Encoding FilterUtf8 = new(false, true);
     // JSON.SET replaces the root without deleting first, so a server rejection preserves the previous record.
     private static readonly RespireScript ReplaceJson = RespireScript.Create("redis.call('JSON.SET',KEYS[1],'$',ARGV[1]); redis.call('PERSIST',KEYS[1]); return 1");
@@ -292,6 +295,7 @@ public sealed partial class RespireVectorStoreCollection<TRecord> : VectorStoreC
             ReadOnlyMemory<float> memory => memory,
             Memory<float> memory => memory,
             float[] array => array,
+            string => throw new NotSupportedException("A value of type 'string' was passed to 'SearchAsync', but that isn't a supported vector type by your provider and no embedding generator was configured. The supported vector types are: ReadOnlyMemory<float>, Memory<float>, float[]."),
             _ => throw new NotSupportedException("Search input must be a FLOAT32 array or memory. Embedding generation is not supported."),
         };
         var bytes = RespireVectorDataFloat32.Encode(values.Span);
@@ -304,6 +308,9 @@ public sealed partial class RespireVectorStoreCollection<TRecord> : VectorStoreC
         foreach (var document in result.Documents)
         {
             var score = RespireVectorDataOperations.ReadSearchScore(document, _prefix, Name);
+            // Redis IP is 1 - dot(a,b); VectorData's negative dot product is -dot(a,b).
+            // Normalize before applying the public ScoreThreshold, preserving nearest-first order.
+            if (vector.DistanceMetric == RespireSearchDistanceMetric.InnerProduct) score -= 1;
             if (options?.ScoreThreshold is { } threshold && score > threshold) continue;
             var key = RespireVectorDataOperations.DecodeName(document.Id[_prefix.Length..], nameof(SearchAsync), Name);
             hits.Add((key, score));

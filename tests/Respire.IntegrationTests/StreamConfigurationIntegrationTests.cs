@@ -8,12 +8,13 @@ namespace Respire.IntegrationTests;
 
 public sealed class StreamConfigurationRedisContainer : IAsyncInitializer, IAsyncDisposable
 {
-    private readonly IContainer _container = new ContainerBuilder("redis:8.10-alpine")
+    private IContainer? _container;
+    private IContainer Container => _container ?? throw new InvalidOperationException("Redis container has not been initialized.");
+    public string ConnectionString => $"redis://{Container.Hostname}:{Container.GetMappedPublicPort(6379)}";
+    public async Task InitializeAsync() => _container = await ContainerStartRetry.StartAsync(() => new ContainerBuilder("redis:8.10-alpine")
         .WithPortBinding(6379, true)
-        .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build();
-    public string ConnectionString => $"redis://{_container.Hostname}:{_container.GetMappedPublicPort(6379)}";
-    public Task InitializeAsync() => _container.StartAsync();
-    public ValueTask DisposeAsync() => _container.DisposeAsync();
+        .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), [6379]);
+    public ValueTask DisposeAsync() => _container?.DisposeAsync() ?? ValueTask.CompletedTask;
 }
 
 [ClassDataSource<StreamConfigurationRedisContainer>(Shared = SharedType.PerTestSession)]

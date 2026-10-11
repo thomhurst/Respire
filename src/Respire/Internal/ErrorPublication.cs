@@ -16,9 +16,13 @@ internal static class ErrorPublication
     }
 
     internal static bool TryRecordRetry(ref int attempts, bool finalPublished)
+        => TryAddAttempts(ref attempts, finalPublished, 1);
+
+    internal static bool TryAddAttempts(ref int attempts, bool finalPublished, int additionalAttempts)
     {
         if (finalPublished) return false;
-        if (attempts < int.MaxValue) attempts++;
+        if (additionalAttempts > 0)
+            attempts += Math.Min(additionalAttempts, int.MaxValue - attempts);
         return true;
     }
 

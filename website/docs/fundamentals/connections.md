@@ -401,6 +401,9 @@ as described in [Read from replicas](#read-from-replicas).
 
 ## Redis Sentinel
 
+Use [typed Sentinel administration](../guides/sentinel-administration.md) to query or
+configure a Sentinel directly. The connection options below discover and connect to a data primary.
+
 Set `SentinelPrimaryName` to resolve the current primary from one or more Sentinel endpoints before
 connecting:
 

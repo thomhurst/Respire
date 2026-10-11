@@ -6,7 +6,7 @@
       "Role": "final",
       "Member": "Respire.Networking.BytesPendingResponseSource.IValueTaskSource<byte[]?>.GetResult(short):byte[]?",
       "Owner": "Respire.Networking.BytesPendingResponseSource.IValueTaskSource<byte[]?>.GetResult(short):byte[]?",
-      "Contract": "Byte inspection owns transport, cancellation, server and conversion failures through response cleanup and caller reference release. Existing dispatch publication defaults and copied retry counts remain intact. Copy transferred FinalOwner and attempts before pool reuse and retain the operation until a canceled receive reference drains. Borrowed inspection suppresses publication; successful inspection rents no observation."
+      "Contract": "Byte inspection owns transport, cancellation, server and conversion failures through response cleanup and caller reference release. Existing dispatch publication defaults and copied retry counts remain intact. Preserve the first failure over cleanup errors and clear response ownership before disposal; disposal alone remains a final failure. Copy transferred FinalOwner and attempts before pool reuse and retain the operation until a canceled receive reference drains. Borrowed inspection suppresses publication; successful inspection rents no observation."
     }
   ],
   "NonRoutes": []

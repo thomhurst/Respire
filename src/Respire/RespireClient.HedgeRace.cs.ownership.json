@@ -6,7 +6,7 @@
       "Role": "internal",
       "Member": "Respire.RespireClient.HedgeRace.DisposeReplyAsync(Task<RespValue>,DispatchResponseSource<RespValue>,bool):Task",
       "Owner": null,
-      "Contract": "Retain discarded-leg ownership through FIFO reply consumption and disposal. Complete only after recording its one internal failure."
+      "Contract": "Retain discarded-leg ownership through FIFO reply consumption and disposal, including after caller completion. Complete only after recording its one internal failure with the leg's own retry count; do not mutate the completed caller."
     }
   ],
   "NonRoutes": []

@@ -3,7 +3,7 @@ using Testcontainers.Redis;
 
 namespace Respire.Benchmarks;
 
-/// <summary>Success-path coverage for timed batches and transactions on a real Redis connection.</summary>
+/// <summary>Deferred ownership coverage for retries, timed batches and transactions.</summary>
 [MemoryDiagnoser]
 public class DiagnosticsPipelineBenchmarks
 {
@@ -11,6 +11,8 @@ public class DiagnosticsPipelineBenchmarks
     private readonly RedisContainer _redis = new RedisBuilder("redis:7.2-alpine").Build();
     private readonly RespirePending<long>[] _pending = new RespirePending<long>[CommandCount];
     private readonly RespireKey _key = "diagnostics-benchmark";
+    private readonly Exception _retryError = new IOException("Recovered deferred failure.");
+    private int _additionalAttempts = 3;
     private RespireClient _client = null!;
     private ErrorMetricBenchmarkScope _errorMetrics = null!;
 
@@ -70,6 +72,45 @@ public class DiagnosticsPipelineBenchmarks
         }
         if (errors != CommandCount) throw new InvalidOperationException("Expected one Redis ERR per command.");
         return errors;
+    }
+
+    // Runtime errors in EXEC fault the deferred results without throwing from commit.
+    // Measure final publication and later inspection with the same fixture in every revision.
+    [Benchmark(OperationsPerInvoke = CommandCount)]
+    public async Task<int> TimedTransactionServerErrors()
+    {
+        await using var transaction = _client.CreateTransaction();
+        for (var i = 0; i < CommandCount; i++) _pending[i] = transaction.Strings.Increment(_key);
+        await transaction.CommitAsync();
+        var errors = 0;
+        foreach (var pending in _pending)
+        {
+            try { _ = pending.Result; }
+            catch (RespireServerException error) when (error.Code == "ERR") { errors++; }
+        }
+        if (errors != CommandCount) throw new InvalidOperationException("Expected one Redis ERR per command.");
+        return errors;
+    }
+
+    // One completed pending owner per invocation, including its failure-only storage
+    // when a recovered error is observed. The same fixture runs against both revisions.
+    [Benchmark]
+    [Arguments(false)]
+    [Arguments(true)]
+    public int DeferredRetryBookkeeping(bool handled)
+    {
+        var pending = new RespirePending<long>();
+        var observation = pending.Observation;
+        observation.Retry();
+        if (handled) observation.Handled(_retryError);
+        pending.AddErrorAttempts(_additionalAttempts);
+        observation.Retry();
+        pending.Succeed(5);
+        pending.ReportError();
+        var attempts = observation.Attempts;
+        if (attempts != _additionalAttempts + (handled ? 3 : 2))
+            throw new InvalidOperationException("Deferred retry history was lost.");
+        return attempts;
     }
 
     private long ReadResults()

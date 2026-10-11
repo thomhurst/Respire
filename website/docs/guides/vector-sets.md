@@ -5,6 +5,14 @@ contracts and integration tests are pinned to Redis 8.6.0, including RESP2 and R
 Servers without the requested command return their original `RespireServerException`;
 Respire does not substitute a search module or another data type.
 
+Replacing an existing member returns `false` from `AddAsync`: this means no new member
+was inserted, not that replacement failed. However, on evaluated Redis **8.6.0** and
+**8.10.2**, acknowledged `VADD` replacements lose their new vector and attributes after
+an AOF crash/reload. Lua-wrapped `VADD` has the same limitation. See the
+[VectorData backend decision](vector-data.md#vector-set-backend-decision) and
+[evaluation evidence](https://github.com/thomhurst/Respire/issues/1261) before relying
+on durable replacement. Respire forwards native commands without adding a replacement protocol.
+
 ```csharp
 float[] embedding = [1, 0, 0];
 await redis.VectorSets.AddAsync("products", embedding, "sku:1", new()

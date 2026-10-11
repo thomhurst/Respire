@@ -429,7 +429,12 @@ public class MaintenanceNotificationTests
     {
         await using var server = Server(maxConnections: 4);
         server.SuppressReply = command => command == "HELLO 3";
-        await using var client = RespireClient.Create(Options(server) with { ConnectTimeout = TimeSpan.FromMilliseconds(100) });
+        // ConnectTimeout bounds only TCP/TLS setup; the suppressed HELLO reply is bounded by
+        // the command timeout, as documented for handshake replies.
+        await using var client = RespireClient.Create(Options(server) with
+        {
+            ConnectTimeout = TimeSpan.FromMilliseconds(100), CommandTimeout = TimeSpan.FromMilliseconds(250),
+        });
         var stopped = new System.Collections.Concurrent.ConcurrentQueue<Activity>();
         using var listener = new ActivityListener
         {

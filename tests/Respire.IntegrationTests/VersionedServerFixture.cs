@@ -50,11 +50,10 @@ public sealed class VersionedServerFixture : IAsyncInitializer, IAsyncDisposable
             "--cluster-config-file", "nodes.conf", "--cluster-announce-ip", "127.0.0.1", "--appendonly", "no"];
         if (clusterDatabases.HasValue)
             arguments.AddRange(["--cluster-databases", clusterDatabases.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)]);
-        var container = new ContainerBuilder(image).WithPortBinding(RedisPort, true).WithCommand(arguments.ToArray())
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(RedisPort)).Build();
+        var container = await ContainerStartRetry.StartAsync(() => new ContainerBuilder(image).WithPortBinding(RedisPort, true).WithCommand(arguments.ToArray())
+            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(RedisPort)).Build(), [RedisPort]);
         try
         {
-            await container.StartAsync();
             // Discovery must advertise the mapped client port, not the container-private port.
             await RunAsync(container, [cli, "-e", "CONFIG", "SET", "cluster-announce-port",
                 container.GetMappedPublicPort(RedisPort).ToString(System.Globalization.CultureInfo.InvariantCulture)]);
@@ -106,11 +105,9 @@ public sealed class VersionedServerFixture : IAsyncInitializer, IAsyncDisposable
         public static async Task<VersionedServer> StartAsync(string image, int databaseCount)
         {
             // Both the Redis and Valkey entrypoints prepend their server binary to option-only commands.
-            var container = new ContainerBuilder(image).WithPortBinding(RedisPort, true)
+            var container = await ContainerStartRetry.StartAsync(() => new ContainerBuilder(image).WithPortBinding(RedisPort, true)
                 .WithCommand("--databases", databaseCount.ToString(System.Globalization.CultureInfo.InvariantCulture))
-                .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(RedisPort)).Build();
-            try { await container.StartAsync(); }
-            catch { await container.DisposeAsync(); throw; }
+                .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(RedisPort)).Build(), [RedisPort]);
             return new VersionedServer(container, databaseCount);
         }
 

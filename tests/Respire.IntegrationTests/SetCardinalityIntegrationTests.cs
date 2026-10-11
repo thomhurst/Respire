@@ -3,10 +3,8 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
-public sealed class Redis810SetTestContainer() : StandaloneRedisTestContainer("redis:8.10-alpine");
-
-[ClassDataSource<Redis810SetTestContainer>(Shared = SharedType.PerTestSession)]
-public class SetCardinalityIntegrationTests(Redis810SetTestContainer fixture)
+[ClassDataSource<ModernRedisTestContainer>(Shared = SharedType.PerTestSession)]
+public class SetCardinalityIntegrationTests(ModernRedisTestContainer fixture)
 {
     [Test]
     [Arguments("immediate", 2, false)]

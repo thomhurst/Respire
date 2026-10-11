@@ -305,8 +305,7 @@ public class ContainerStartupDiagnosticsTests
     [Arguments(RespireContainerServer.Valkey)]
     public async Task RealDaemonLogCollectionIncludesOnlyBoundedTails(RespireContainerServer server)
     {
-        await using var container = RespireContainerFixture.BuildContainer(new() { Server = server }, [6379]);
-        await container.StartAsync();
+        await using var container = await ContainerStartRetry.StartAsync(() => RespireContainerFixture.BuildContainer(new() { Server = server }, [6379]), [6379]);
         await container.ExecAsync(["mkdir", "-p", "/tmp/respire-fixture"]);
         await container.CopyAsync(Encoding.UTF8.GetBytes("discarded beginning\n" + new string('x', 8192) + "\nlast daemon line"),
             "/tmp/respire-fixture/6379.log");

@@ -37,6 +37,17 @@ public class JsonCollectionTests(ModernRedisTestContainer fixture)
     });
 
     [Test, Arguments(2), Arguments(3)]
+    public Task Upsert_reindexes_each_record_once(int protocol) => WithCollection(protocol, async (client, store, collection) =>
+    {
+        await collection.EnsureCollectionExistsAsync();
+        await HashCollectionTests.WaitForInitialScan(client, store.IndexName(collection.Name));
+        await collection.UpsertAsync([Movie("one", 1, 0), Movie("two", 0, 1), Movie("three", 1, 1)]);
+        (await HashCollectionTests.MaxDocumentId(client, store.IndexName(collection.Name))).Should().Be(3);
+        await collection.UpsertAsync(Movie("two", 1, 1));
+        (await HashCollectionTests.MaxDocumentId(client, store.IndexName(collection.Name))).Should().Be(4);
+    });
+
+    [Test, Arguments(2), Arguments(3)]
     public Task Insert_and_update_in_same_batch(int protocol) => WithCollection(protocol, async (_, _, collection) =>
     {
         await collection.UpsertAsync(Movie("existing", 1, 0));

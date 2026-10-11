@@ -3,16 +3,15 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
-public sealed class Redis810ListMoveTestContainer() : StandaloneRedisTestContainer("redis:8.10-alpine");
-
-[ClassDataSource<Redis810ListMoveTestContainer>(Shared = SharedType.PerTestSession)]
-public class ListMoveManyIntegrationTests(Redis810ListMoveTestContainer fixture)
+[ClassDataSource<ModernRedisTestContainer>(Shared = SharedType.PerTestSession)]
+public class ListMoveManyIntegrationTests(ModernRedisTestContainer fixture)
 {
     [Test]
     [Arguments(2)]
     [Arguments(3)]
     public async Task Redis810WatchTracksListMoveMutationsAndRejections(int protocol)
     {
+        // The parity scenarios use fixed key names, so each protocol owns database 2 or 3 of the shared server.
         await FakeTransactionParityTests.AssertWatchTracksMutationsAsync(
             RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol, Database = protocol }, useFake: false);
     }

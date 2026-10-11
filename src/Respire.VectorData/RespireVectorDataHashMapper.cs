@@ -29,7 +29,8 @@ public sealed record RespireVectorDataVectorField(string PropertyName, string St
     /// <summary>JSON property path. Defaults to <c>$.StorageName</c>; ignored by hash mappings.</summary>
     public string? JsonPath { get; init; }
 
-    /// <summary>Distance function returned unchanged as the result score. Lower is better.</summary>
+    /// <summary>Distance metric for search. Lower scores are better: COSINE is cosine distance,
+    /// L2 is squared Euclidean distance, and IP is negative dot product (Redis's IP score minus 1).</summary>
     public RespireSearchDistanceMetric DistanceMetric { get; init; } = RespireSearchDistanceMetric.Cosine;
 
     /// <summary>Index algorithm.</summary>

@@ -133,9 +133,7 @@ internal sealed partial class ClientSideCacheCoordinator
             owned.Dispose();
             // Producer cancellation can also come from client disposal or the command
             // deadline, independently of a waiter's token. Preserve that original failure.
-            shared.Completion.TrySetException(error);
-            // All callers may have canceled. Observe the producer failure even then.
-            _ = shared.Completion.Task.Exception;
+            shared.Fail(error);
         }
     }
 
@@ -214,8 +212,12 @@ internal sealed partial class ClientSideCacheCoordinator
             // Copy a scalar while the gate still protects the producer's active lease.
             // Completed producers already returned it and retain only the final count.
             if (!callerObservation.IsEmpty)
-                callerObservation.SetAttempts(callerObservation.Attempts +
-                    (shared.Finished ? shared.CompletedAttempts : shared.Observation.Attempts));
+            {
+                var producerAttempts = shared.Finished ? shared.CompletedAttempts : shared.Observation.Attempts;
+                // Nested owners each saturate independently. Widen before combining so
+                // overflow cannot erase either owner's completed retry history.
+                callerObservation.SetAttempts((int)Math.Min(int.MaxValue, (long)callerObservation.Attempts + producerAttempts));
+            }
             if (--shared.Waiters == 0)
             {
                 RemoveSharedRead(shared);

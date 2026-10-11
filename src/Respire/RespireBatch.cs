@@ -484,15 +484,16 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         }
         catch (Exception ex)
         {
+            DeferredOperation.SetAttempts(operations, selectionObservation.Attempts);
             foreach (var operation in operations)
             {
-                operation.Observation.SetAttempts(selectionObservation.Attempts);
                 operation.Fail(ex);
             }
 
             return;
         }
         var selectionAttempts = selectionObservation.Attempts;
+        if (selectionAttempts != 0) DeferredOperation.SetAttempts(operations, selectionAttempts);
 
         var sends = new ValueTask<RespValue>[operations.Count];
         var observations = ArrayPool<RespireTelemetry.ErrorObservation>.Shared.Rent(operations.Count);
@@ -502,7 +503,6 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             for (var i = 0; i < operations.Count; i++)
             {
                 observations[i] = operations[i].Observation;
-                if (selectionAttempts != 0) observations[i].SetAttempts(selectionAttempts);
                 try
                 {
                     var operationConnection = operations[i].IsCursorContinuation == true ? continuationConnection ?? connection : connection;
@@ -594,20 +594,19 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         return CollectFailures(_ops);
     }
 
-    private static RespireBatchFailure[]? CollectFailures(IReadOnlyList<Op> operations, bool reportErrors = true)
+    private static RespireBatchFailure[]? CollectFailures(List<Op> operations, bool reportErrors = true)
     {
-        var failureCount = 0;
-        for (var i = 0; i < operations.Count; i++)
+        var failureCount = reportErrors ? DeferredOperation.ReportErrors(operations) : 0;
+        if (!reportErrors)
         {
-            if (operations[i].Error is not null)
+            foreach (var operation in operations)
             {
-                failureCount++;
+                if (operation.Error is not null) failureCount++;
             }
         }
 
         if (failureCount == 0)
         {
-            if (reportErrors) foreach (var operation in operations) operation.ReportError();
             return null;
         }
 
@@ -616,7 +615,6 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         for (var i = 0; i < operations.Count; i++)
         {
             var operation = operations[i];
-            if (reportErrors) operation.ReportError();
             if (operation.Error is { } error)
             {
                 failures[failureIndex++] = new RespireBatchFailure(
@@ -642,17 +640,11 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         return pending;
     }
 
-    private abstract class Op : RespireConnection.IBatchCommand
+    private abstract class Op(string operation) : DeferredOperation(operation), RespireConnection.IBatchCommand
     {
-        protected Op(string operation) => Operation = operation;
-
-        public string Operation { get; }
-
         internal ClientSideCacheCoordinator.MutationFence MutationFence;
 
         public abstract Exception? Error { get; }
-
-        public abstract bool IsCompleted { get; }
 
         public abstract bool IsReadOnly { get; }
 
@@ -680,7 +672,6 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             RespireConnection connection,
             CancellationToken cancellationToken,
             RespireTelemetry.ErrorObservation observation);
-
         public abstract Task<Exception?> CompleteClusterSendAsync(
             RespireBatch batch,
             RespireConnection connection,
@@ -689,10 +680,6 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             CancellationToken cancellationToken,
             RespireTelemetry.ErrorObservation observation);
 
-        public abstract void Fail(Exception error);
-        public abstract bool ReportError();
-        public abstract void AllowErrorInspection();
-        public abstract RespireTelemetry.ErrorObservation Observation { get; }
     }
 
     private sealed class Op<TCommand, T>(

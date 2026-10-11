@@ -16,7 +16,7 @@ public sealed partial class RespireClient : IRespireHealthProbe
         options.Validate();
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(options.Timeout);
-        var targets = CaptureHealthConnections(options.ProbeAllNodes);
+        var targets = CaptureHealthProbeTargets(options.ProbeAllNodes);
         using var capacity = new SemaphoreSlim(options.MaxConcurrentProbes);
         var results = await Task.WhenAll(targets.Select(target => ProbeHealthConnectionAsync(
             target.Endpoint, target.Connection, capacity, deadline.Token))).ConfigureAwait(false);
@@ -54,9 +54,8 @@ public sealed partial class RespireClient : IRespireHealthProbe
         }
     }
 
-    // Retain this internal entry point for older HealthChecks binaries. New integrations use IRespireHealthProbe.
     // Capture one routing publication. Never discover topology or open a probe connection.
-    internal (RespireEndpoint Endpoint, RespireConnection? Connection)[] CaptureHealthConnections(bool allNodes)
+    private (RespireEndpoint Endpoint, RespireConnection? Connection)[] CaptureHealthProbeTargets(bool allNodes)
     {
         ObjectDisposedException.ThrowIf(_core.Disposed, this);
         if (_core.Cluster is { } cluster)

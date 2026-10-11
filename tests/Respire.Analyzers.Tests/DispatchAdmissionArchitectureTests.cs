@@ -23,9 +23,9 @@ public class DispatchAdmissionArchitectureTests
     [Arguments(true)]
     public async Task NativePublicationRequiresReviewedAdmissionPaths(bool net10)
     {
-        var roots = TestInspectionSource.ReadLibrarySources()
+        var roots = TestInspectionSource.Library(net10).Trees
             .Where(source => source.Path.StartsWith("LibrarySource/Respire/Networking/RespireConnection", StringComparison.Ordinal))
-            .Select(source => TestInspectionSource.Parse(source.Text, net10)).ToArray();
+            .Select(source => source.Tree.GetRoot()).ToArray();
         await Assert.That(InspectNativePublication(roots)).IsEmpty();
     }
 
@@ -72,9 +72,9 @@ public class DispatchAdmissionArchitectureTests
     public async Task ReadOnlyDeclarationsStayInAuditedFactories(bool net10)
     {
         var calls = 0;
-        foreach (var source in TestInspectionSource.ReadLibrarySources())
+        foreach (var source in TestInspectionSource.Library(net10).Trees)
         {
-            var root = TestInspectionSource.Parse(source.Text, net10);
+            var root = source.Tree.GetRoot();
             foreach (var invocation in root.DescendantNodes().OfType<InvocationExpressionSyntax>()
                 .Where(IsReadOnlyFactory))
             {

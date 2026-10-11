@@ -27,10 +27,9 @@ public sealed class RespireContainerFixture : IAsyncDisposable
     // Cluster bus traffic stays inside the shared container; these ports are never published.
     private const int ClusterBusPortStart = 16379;
     private const int SentinelQuorum = 2;
-    private const int SentinelDownAfterMilliseconds = 5000;
-    // A failed election retries after twice this interval. Keep retries within fixture tests'
-    // bounded failover windows instead of the server default's six-minute retry delay.
-    private const int SentinelFailoverTimeoutMilliseconds = 10000;
+    // Readiness polls back off to this interval. Docker exec dominates each poll, so a longer
+    // sleep only adds latency after the topology is already ready.
+    private const int MaximumReadinessDelayMilliseconds = 200;
     private readonly IContainer _container;
     private readonly RespireContainerOptions _options;
     private readonly int[] _ports;
@@ -52,14 +51,24 @@ public sealed class RespireContainerFixture : IAsyncDisposable
         _container = container;
     }
 
-    internal static IContainer BuildContainer(RespireContainerOptions options, int[] ports)
+    internal static IContainer BuildContainer(RespireContainerOptions options, int[] ports,
+        Func<ContainerBuilder, ContainerBuilder>? configure = null)
     {
         var image = options.Image ?? (options.Server == RespireContainerServer.Redis ? DefaultRedisImage : DefaultValkeyImage);
+        var reservedPorts = options.Topology == RespireContainerTopology.Cluster
+            ? ports.Concat(Enumerable.Range(ClusterBusPortStart, ClusterPrimaryCount))
+            : ports;
+        var reservation = string.Join(',', reservedPorts.Order().Select(Number));
         var builder = new ContainerBuilder(image)
             .WithCreateParameterModifier(parameters =>
             {
                 var hostConfig = parameters.HostConfig!;
                 hostConfig.Init = true;
+                // Replicas and Sentinels connect before all daemons have bound their
+                // ports. Exclude every listener from automatic source-port allocation
+                // in this container's network namespace, including the cluster bus.
+                hostConfig.Sysctls ??= new Dictionary<string, string>();
+                hostConfig.Sysctls["net.ipv4.ip_local_reserved_ports"] = reservation;
                 foreach (var bindings in hostConfig.PortBindings.Values)
                     foreach (var binding in bindings)
                         binding.HostIP = "127.0.0.1";
@@ -71,7 +80,7 @@ public sealed class RespireContainerFixture : IAsyncDisposable
             builder = options.Topology == RespireContainerTopology.Standalone
                 ? builder.WithPortBinding(port, assignRandomHostPort: true)
                 : builder.WithPortBinding(port, port);
-        return builder.Build();
+        return (configure?.Invoke(builder) ?? builder).Build();
     }
 
     /// <summary>The owned container ID, for diagnostics.</summary>
@@ -100,6 +109,10 @@ public sealed class RespireContainerFixture : IAsyncDisposable
         if (options.Image is not null) ArgumentException.ThrowIfNullOrWhiteSpace(options.Image);
         if (options.StartupTimeout <= TimeSpan.Zero || options.StartupTimeout.TotalMilliseconds > uint.MaxValue - 1)
             throw new ArgumentOutOfRangeException(nameof(options), "StartupTimeout must be finite and positive.");
+        if (!IsSentinelInterval(options.SentinelDownAfter))
+            throw new ArgumentOutOfRangeException(nameof(options), "SentinelDownAfter must be at least one millisecond and fit in 32 bits.");
+        if (!IsSentinelInterval(options.SentinelFailoverTimeout))
+            throw new ArgumentOutOfRangeException(nameof(options), "SentinelFailoverTimeout must be at least one millisecond and fit in 32 bits.");
         cancellationToken.ThrowIfCancellationRequested();
         using var startupDeadline = new CancellationTokenSource(options.StartupTimeout, timeProvider ?? TimeProvider.System);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, startupDeadline.Token);
@@ -296,8 +309,8 @@ public sealed class RespireContainerFixture : IAsyncDisposable
         for (var index = 2; index < _ports.Length; index++)
         {
             var config = BaseConfiguration(_ports[index]) +
-                $"sentinel monitor {SentinelServiceName} 127.0.0.1 {_ports[0]} {SentinelQuorum}\nsentinel down-after-milliseconds {SentinelServiceName} {SentinelDownAfterMilliseconds}\n" +
-                $"sentinel failover-timeout {SentinelServiceName} {SentinelFailoverTimeoutMilliseconds}\n" +
+                $"sentinel monitor {SentinelServiceName} 127.0.0.1 {_ports[0]} {SentinelQuorum}\nsentinel down-after-milliseconds {SentinelServiceName} {Milliseconds(_options.SentinelDownAfter)}\n" +
+                $"sentinel failover-timeout {SentinelServiceName} {Milliseconds(_options.SentinelFailoverTimeout)}\n" +
                 $"sentinel announce-ip 127.0.0.1\nsentinel announce-port {_ports[index]}\n";
             await StartServerAsync(index, config, sentinel: true, cancellationToken).ConfigureAwait(false);
         }
@@ -339,7 +352,7 @@ public sealed class RespireContainerFixture : IAsyncDisposable
             _lastReadinessResponse = result.Stdout + result.Stderr;
             if (result.ExitCode == 0 && ready(result.Stdout)) return;
             await Task.Delay(delayMilliseconds, cancellationToken).ConfigureAwait(false);
-            delayMilliseconds = Math.Min(delayMilliseconds * 2, 1000);
+            delayMilliseconds = Math.Min(delayMilliseconds * 2, MaximumReadinessDelayMilliseconds);
         }
     }
 
@@ -379,6 +392,8 @@ public sealed class RespireContainerFixture : IAsyncDisposable
     private static bool IsLocalHost(string host)
         => host.Equals("localhost", StringComparison.OrdinalIgnoreCase) || IPAddress.TryParse(host, out var address) && IPAddress.IsLoopback(address);
     private static string Number(int value) => value.ToString(CultureInfo.InvariantCulture);
+    private static bool IsSentinelInterval(TimeSpan value) => value.TotalMilliseconds is >= 1 and <= int.MaxValue;
+    private static string Milliseconds(TimeSpan value) => Number((int)value.TotalMilliseconds);
 
     private static int[] ChooseLocalPorts(int count, HashSet<int> excludedPorts)
     {

@@ -15,8 +15,8 @@ public class ReplicaPolicyConsistencyTests
     [Arguments(true)]
     public async Task CallerAndRouterRecognizeExactlyTheSameReadyReplicaPolicies(bool net10)
     {
-        var sources = TestInspectionSource.ReadLibrarySources().ToArray();
-        var enumRoot = TestInspectionSource.Parse(sources.Single(source => source.Path == "LibrarySource/Respire/RespireReadFrom.cs").Text, net10);
+        var library = TestInspectionSource.Library(net10);
+        var enumRoot = library.Tree("LibrarySource/Respire/RespireReadFrom.cs").GetRoot();
         foreach (var (path, methodName, variable, excluded) in new[]
         {
             ("LibrarySource/Respire/RespireClient.ReplicaReadySend.cs", "TryGetDirectReplicaConnection", "_readFrom", true),
@@ -24,7 +24,7 @@ public class ReplicaPolicyConsistencyTests
             ("LibrarySource/Respire/Internal/ReadEndpointRouter.cs", "GetConnectionAsync", "readFrom", false)
         })
         {
-            var root = TestInspectionSource.Parse(sources.Single(source => source.Path == path).Text, net10);
+            var root = library.Tree(path).GetRoot();
             var method = root.DescendantNodes().OfType<MethodDeclarationSyntax>()
                 .Single(item => item.Identifier.ValueText == methodName
                     && item.Parent is ClassDeclarationSyntax owner
@@ -78,8 +78,7 @@ public class ReplicaPolicyConsistencyTests
     [Arguments("not (RespireReadFrom.Replica or RespireReadFrom.PrimaryPreferred)", true, false)]
     public async Task GuardDetectsMissingAndExtraPolicies(string text, bool excluded, bool consistent)
     {
-        var enumRoot = TestInspectionSource.Parse(TestInspectionSource.ReadLibrarySources()
-            .Single(source => source.Path == "LibrarySource/Respire/RespireReadFrom.cs").Text, true);
+        var enumRoot = TestInspectionSource.Library(true).Tree("LibrarySource/Respire/RespireReadFrom.cs").GetRoot();
         var root = CSharpSyntaxTree.ParseText("namespace Respire; class Control { bool Use(RespireReadFrom policy) => policy is (" + text + "); }",
             new CSharpParseOptions(LanguageVersion.Preview)).GetRoot();
         var compilation = TestInspectionSource.CreateCompilation([root.SyntaxTree, enumRoot.SyntaxTree]);

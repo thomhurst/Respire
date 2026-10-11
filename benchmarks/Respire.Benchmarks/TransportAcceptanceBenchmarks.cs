@@ -24,6 +24,7 @@ public class TransportAcceptanceBenchmarks
     private readonly RespireKey _errorKey = "transport-acceptance:not-integer";
     private RespireConnectionMultiplexer _multiplexer = null!;
     private RespireClient _client = null!;
+    private RespireClient _circuitClient = null!;
     private ErrorMetricBenchmarkScope _errorMetrics = null!;
 
     [Params(1, 2)]
@@ -44,6 +45,14 @@ public class TransportAcceptanceBenchmarks
             Endpoints = { new RespireEndpoint(host, port) },
             ThreadPoolMonitoring = false,
         });
+        _circuitClient = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Connections = Connections,
+            Endpoints = { new RespireEndpoint(host, port) },
+            ThreadPoolMonitoring = false,
+            CircuitBreaker = new(),
+        });
         await Pipeline();
         await _client.PingAsync();
         await _client.SetAsync(_errorKey, "value");
@@ -54,6 +63,7 @@ public class TransportAcceptanceBenchmarks
         await SmallSet();
         for (var i = 0; i < Connections * 2; i++) await LargeSet();
         await StreamedSetWithInstantSource();
+        await CircuitStreamedGet();
         ReportMemory("after-churn");
     }
 
@@ -61,8 +71,10 @@ public class TransportAcceptanceBenchmarks
     public async Task Cleanup()
     {
         await _client.DisposeAsync();
+        await _circuitClient.DisposeAsync();
         await _multiplexer.DisposeAsync();
         _client = null!;
+        _circuitClient = null!;
         _multiplexer = null!;
         _stream.Dispose();
         _instantStream.Dispose();
@@ -148,6 +160,20 @@ public class TransportAcceptanceBenchmarks
         _instantStream.Position = 0;
         if (!await _client.Strings.SetAsync("transport-acceptance:stream", _instantStream, StreamPayloadLength))
             throw new InvalidOperationException("Unexpected streamed SET response.");
+    }
+
+    [Benchmark]
+    public async Task<long> CircuitStreamedGet()
+    {
+        using var stream = await _circuitClient.Strings.GetStreamAsync("transport-acceptance:stream")
+            ?? throw new InvalidOperationException("Missing streamed GET payload.");
+        // Reuse caller-owned memory so measured allocations belong to GET and its handoff.
+        var buffer = _largePayload.AsMemory(0, 32 * 1024);
+        long total = 0;
+        int read;
+        while ((read = await stream.ReadAsync(buffer).ConfigureAwait(false)) != 0) total += read;
+        if (total != StreamPayloadLength) throw new InvalidOperationException("Unexpected streamed GET length.");
+        return total;
     }
 
     private sealed class DelayedReadStream(byte[] payload) : MemoryStream(payload)

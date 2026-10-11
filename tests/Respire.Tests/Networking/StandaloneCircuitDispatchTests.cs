@@ -258,7 +258,7 @@ public partial class StandaloneCircuitDispatchTests
             ReconnectPolicy = new() { InitialDelay = TimeSpan.FromMinutes(1), MaxDelay = TimeSpan.FromMinutes(1) },
         });
         var (sourceCircuit, _) = await Prepare(client, source);
-        if (sourceOpen) await Trip(client, source);
+        if (sourceOpen) Open(client, source);
         var multiplexer = client.Core.Multiplexer;
         var original = multiplexer.GetConnection();
         var endpoint = new RespireEndpoint("127.0.0.1", target.Port);
@@ -403,7 +403,10 @@ public partial class StandaloneCircuitDispatchTests
             ClientSideCache = shape == "cache" ? new() : null,
         });
         var (sourceCircuit, clock) = await Prepare(client, source);
-        await Trip(client, source);
+        // Set up circuit recovery without waiting for a wire command timeout. This test
+        // covers admission during MOVING; transport timeout failures are covered separately.
+        Open(client, source);
+        await Assert.That(sourceCircuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Open);
         clock.Advance(TimeSpan.FromMinutes(1));
         var original = client.Core.Multiplexer.GetConnection();
         source.SuppressReply = command => command == "GET parked";
@@ -431,6 +434,9 @@ public partial class StandaloneCircuitDispatchTests
                 await pending.WaitAsync(TimeSpan.FromSeconds(5));
                 await Received(target, shape == "integer" ? "STRLEN routed" : "GET routed");
             }
+            // Dispatch must finish while the old socket still has accepted work to drain.
+            await Assert.That(first.IsCompleted).IsFalse();
+            await Assert.That(second.IsCompleted).IsFalse();
             await Assert.That(sourceCircuit.Snapshot().ActiveProbes).IsEqualTo(0);
             await Assert.That(sourceCircuit.Snapshot().State).IsEqualTo(EndpointCircuitState.HalfOpen);
             await Assert.That(targetCircuit.Snapshot().State).IsEqualTo(targetOpen ? EndpointCircuitState.Open : EndpointCircuitState.Closed);
@@ -500,7 +506,7 @@ public partial class StandaloneCircuitDispatchTests
             CircuitBreaker = Options(server).CircuitBreaker! with { HalfOpenProbeCount = 1 },
         });
         var (circuit, clock) = await Prepare(client, server);
-        await Trip(client, server);
+        Open(client, server);
         clock.Advance(TimeSpan.FromMinutes(1));
         Exception listenerError = connectionFailure
             ? new RespireConnectionException("Telemetry listener failed.")
@@ -560,7 +566,7 @@ public partial class StandaloneCircuitDispatchTests
         });
         await Prepare(client, source);
         var original = client.Core.Multiplexer.GetConnection();
-        await Trip(client, source);
+        Open(client, source);
         await source.SendRawAsync(Encoding.UTF8.GetBytes($">4\r\n+MOVING\r\n:1\r\n:10\r\n+127.0.0.1:{target.Port}\r\n"));
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (client.Core.Multiplexer.ActiveConnectionEndpoint.Port != target.Port) await Task.Delay(1, deadline.Token);
@@ -579,7 +585,7 @@ public partial class StandaloneCircuitDispatchTests
         });
         var (circuit, clock) = await Prepare(client, server);
         await client.GetStringAsync("cached");
-        await Trip(client, server);
+        Open(client, server);
         var commands = server.CommandsSeen;
         await Assert.That(await client.GetStringAsync("cached")).IsEqualTo("cached");
         await Assert.That(await Failure(() => Send(client, "string", "missing"))).IsTypeOf<RespireCircuitOpenException>();
@@ -650,7 +656,7 @@ public partial class StandaloneCircuitDispatchTests
         await using var server = Server();
         await using var client = await RespireClient.ConnectAsync(Options(server));
         var (circuit, clock) = await Prepare(client, server);
-        await Trip(client, server);
+        Open(client, server);
         clock.Advance(TimeSpan.FromMinutes(1));
         server.SuppressReply = command => command.StartsWith("GET probe", StringComparison.Ordinal);
         var first = client.GetStringAsync("probe-1").AsTask();
@@ -677,7 +683,7 @@ public partial class StandaloneCircuitDispatchTests
         await using var server = Server();
         await using var client = await RespireClient.ConnectAsync(Options(server) with { MaxInflightCommands = 1 });
         var (circuit, clock) = await Prepare(client, server);
-        await Trip(client, server);
+        Open(client, server);
         clock.Advance(TimeSpan.FromMinutes(1));
         server.SuppressReply = command => command == "GET parked";
         using var cancellation = new CancellationTokenSource();
@@ -732,7 +738,7 @@ public partial class StandaloneCircuitDispatchTests
         var (circuit, clock) = await Prepare(client, server);
         await Assert.That(await Failure(() => Send(client, "string", "wrongtype"))).IsTypeOf<RespireServerException>();
         await Assert.That(circuit.Snapshot().FailureCount).IsEqualTo(0);
-        await Trip(client, server);
+        Open(client, server);
         clock.Advance(TimeSpan.FromMinutes(1));
         await Assert.That(await Failure(async () => await client.ExecuteFireAndForgetAsync("BLPOP", "x", "1"))).IsTypeOf<NotSupportedException>();
         await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(0);
@@ -747,7 +753,7 @@ public partial class StandaloneCircuitDispatchTests
         await using var server = Server();
         await using var client = await RespireClient.ConnectAsync(Options(server));
         var (circuit, _) = await Prepare(client, server);
-        await Trip(client, server);
+        Open(client, server);
         var commands = server.CommandsSeen;
         using var batch = client.CreateBatch();
         var pending = batch.Strings.GetString("batch");
@@ -773,7 +779,7 @@ public partial class StandaloneCircuitDispatchTests
         var lease = await pool.RentAsync(default,
             kind: shape == "upload" ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary);
         pool.Return(lease);
-        await Trip(client, server);
+        Open(client, server);
         var commands = server.CommandsSeen;
         for (var i = 0; i < 8; i++)
         {
@@ -882,7 +888,7 @@ public partial class StandaloneCircuitDispatchTests
         await using var server = Server();
         await using var client = await RespireClient.ConnectAsync(Options(server));
         await Prepare(client, server);
-        await Trip(client, server);
+        Open(client, server);
         var error = await Failure(async () =>
         {
             if (shape == "stream") await using (var stream = await client.Strings.GetStreamAsync("rejected")) { }
@@ -906,7 +912,7 @@ public partial class StandaloneCircuitDispatchTests
         await using var server = Server();
         await using var client = await RespireClient.ConnectAsync(Options(server));
         var (circuit, clock) = await Prepare(client, server);
-        await Trip(client, server);
+        Open(client, server);
         clock.Advance(TimeSpan.FromMinutes(1));
         server.SuppressReply = command => command == "GET stream";
         using var cancellation = new CancellationTokenSource();
@@ -1016,6 +1022,8 @@ public partial class StandaloneCircuitDispatchTests
         return (circuit, clock);
     }
 
+    // Opens the circuit through a real command timeout (CommandTimeout, 200 ms). Tests that only
+    // need an open circuit use the synthetic Open helper instead of paying that wait.
     private static async Task Trip(RespireClient client, FakeRespServer server)
     {
         server.SuppressReply = command => command == "GET fail";

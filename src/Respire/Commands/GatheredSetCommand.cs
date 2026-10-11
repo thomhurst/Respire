@@ -70,6 +70,15 @@ internal sealed class GatheredSetWriteLease : IValueTaskSource<bool>, IThreadPoo
     private static readonly ObjectPool<GatheredSetWriteLease, PoolPolicy> Pool = new(4096);
     private ManualResetValueTaskSourceCore<bool> _core;
     private int _references;
+    private readonly Action _responseContinuation;
+    private ValueTask<bool> _response;
+    private ExecutionContext? _responseContext;
+    private bool _result = true;
+    private Exception? _error;
+    private int _responseConsumed;
+    private bool _reusable = true;
+
+    private GatheredSetWriteLease() => _responseContinuation = CompleteResponse;
 
     internal static GatheredSetWriteLease Rent()
     {
@@ -88,39 +97,72 @@ internal sealed class GatheredSetWriteLease : IValueTaskSource<bool>, IThreadPoo
             ThreadPool.UnsafeQueueUserWorkItem(this, preferLocal: false);
     }
 
-    void IThreadPoolWorkItem.Execute() => _core.SetResult(true);
+    void IThreadPoolWorkItem.Execute() => PublishResponse();
 
-    internal ValueTask<bool> FinishOperation()
+    private void PublishResponse()
     {
+        if (_error is { } error) _core.SetException(error);
+        else _core.SetResult(_result);
+    }
+
+    internal ValueTask<bool> CompleteResponseAsync(ValueTask<bool> response)
+    {
+        // The bounded lease is also the public source. A separate pooled async frame
+        // still allocates when concurrent responses exhaust the builder's small cache.
         var pending = new ValueTask<bool>(this, _core.Version);
-        // No awaiter can be attached to this newly created task yet. If all writes
-        // already finished, publish synchronously without another worker dispatch.
-        if (Interlocked.Decrement(ref _references) == 0) _core.SetResult(true);
+        _response = response;
+        try
+        {
+            if (response.IsCompleted) ConsumeResponse();
+            else
+            {
+                _responseContext = ExecutionContext.Capture();
+                response.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(_responseContinuation);
+            }
+        }
+        catch (Exception error)
+        {
+            // Registration may throw after retaining a callback. Never reuse this lease:
+            // a late callback must not observe a different public operation's state.
+            _reusable = false;
+            ConsumeResponse(error);
+        }
         return pending;
     }
 
-    // Keep the async frame independent of the client, command and payload descriptors.
-    // A pooled builder also queues its state-machine box without a callback allocation.
-#if NET
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-#endif
-    internal async ValueTask<bool> CompleteResponseAsync(ValueTask<bool> response)
+    private void CompleteResponse()
     {
-        try { return await response.ConfigureAwait(false); }
-        finally
+        if (_responseContext is { } context)
+            ExecutionContext.Run(context, static state => ((GatheredSetWriteLease)state!).ConsumeResponse(), this);
+        else ConsumeResponse();
+    }
+
+    private void ConsumeResponse(Exception? registrationError = null)
+    {
+        if (Interlocked.Exchange(ref _responseConsumed, 1) != 0) return;
+        try
         {
-            // Cancellation, deadlines and connection failure can precede socket completion.
-            // The persistent sender releases in-flight writes; abort releases queued writes.
-            // Publish the response only after every accepted write releases caller memory.
-            await FinishOperation().ConfigureAwait(false);
+            if (registrationError is not null) _error = registrationError;
+            else _result = _response.GetAwaiter().GetResult();
         }
+        catch (Exception error) { _error = error; }
+        // Clear response ownership before the last reference can publish and recycle us.
+        _response = default;
+        _responseContext = null;
+        // Cancellation, deadlines and connection failure can precede kernel completion.
+        // The operation reference ends only after consuming its response exactly once.
+        if (Interlocked.Decrement(ref _references) != 0) return;
+        // Preserve the response's existing completion dispatch when all writes finished.
+        // Only a final write release needs a separate worker to leave the sender thread.
+        PublishResponse();
     }
 
     bool IValueTaskSource<bool>.GetResult(short token)
     {
-        var result = _core.GetResult(token);
-        Pool.Return(this);
-        return result;
+        if (_core.GetStatus(token) == ValueTaskSourceStatus.Pending)
+            throw new InvalidOperationException("The gathered SET response has not completed.");
+        try { return _core.GetResult(token); }
+        finally { if (_reusable) Pool.Return(this); }
     }
     ValueTaskSourceStatus IValueTaskSource<bool>.GetStatus(short token) => _core.GetStatus(token);
     void IValueTaskSource<bool>.OnCompleted(Action<object?> continuation, object? state, short token,
@@ -129,6 +171,13 @@ internal sealed class GatheredSetWriteLease : IValueTaskSource<bool>, IThreadPoo
     private readonly struct PoolPolicy : IPooledObjectPolicy<GatheredSetWriteLease>
     {
         public GatheredSetWriteLease Create() => new();
-        public bool TryReset(GatheredSetWriteLease lease) { lease._core.Reset(); return true; }
+        public bool TryReset(GatheredSetWriteLease lease)
+        {
+            lease._error = null;
+            lease._result = true;
+            lease._responseConsumed = 0;
+            lease._core.Reset();
+            return true;
+        }
     }
 }

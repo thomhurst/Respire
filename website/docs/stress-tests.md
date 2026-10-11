@@ -8,7 +8,7 @@ import ComparisonBarChart from '@site/src/components/ComparisonBarChart';
 # Stress tests
 
 :::info Automated results
-Generated 2026-10-05 13:16 UTC from commit `99929295e05f`. See the [GitHub Actions run](https://github.com/thomhurst/Respire/actions/runs/37309537385) for logs, JSON results, and downloadable artifacts.
+Generated 2026-10-11 03:12 UTC from commit `5c324a586d18`. See the [GitHub Actions run](https://github.com/thomhurst/Respire/actions/runs/38105179006) for logs, JSON results, and downloadable artifacts.
 :::
 
 3 min measured (+10s warmup) per scenario/client pass, 50 concurrent workers, 1,024 B values, .NET 10.0.12, Ubuntu 24.04.5 LTS.
@@ -19,17 +19,17 @@ Generated 2026-10-05 13:16 UTC from commit `99929295e05f`. See the [GitHub Actio
   title="Sustained throughput"
   description="Operations per second. Longer bars are better."
   format="integer"
-  data={[{"label":"ping","other":192653,"respire":228882},{"label":"get","other":121158,"respire":178802},{"label":"set","other":140252,"respire":184697},{"label":"incr","other":159505,"respire":194689},{"label":"hash","other":59651,"respire":88761},{"label":"list","other":59314,"respire":84701},{"label":"mixed","other":117623,"respire":181013}]}
+  data={[{"label":"ping","other":365338,"respire":497436},{"label":"get","other":215402,"respire":326245},{"label":"set","other":270081,"respire":380898},{"label":"incr","other":310432,"respire":437865},{"label":"hash","other":115542,"respire":181409},{"label":"list","other":116618,"respire":174926},{"label":"mixed","other":225641,"respire":352754}]}
 />
 | Scenario | StackExchange.Redis ops/s | Respire ops/s | Respire / StackExchange |
 |---|---:|---:|---:|
-| ping | 192,653 | 228,882 | 1.19x |
-| get | 121,158 | 178,802 | 1.48x |
-| set | 140,252 | 184,697 | 1.32x |
-| incr | 159,505 | 194,689 | 1.22x |
-| hash | 59,651 | 88,761 | 1.49x |
-| list | 59,314 | 84,701 | 1.43x |
-| mixed | 117,623 | 181,013 | 1.54x |
+| ping | 365,338 | 497,436 | 1.36x |
+| get | 215,402 | 326,245 | 1.51x |
+| set | 270,081 | 380,898 | 1.41x |
+| incr | 310,432 | 437,865 | 1.41x |
+| hash | 115,542 | 181,409 | 1.57x |
+| list | 116,618 | 174,926 | 1.50x |
+| mixed | 225,641 | 352,754 | 1.56x |
 
 A ratio above 1.00x means Respire sustained more operations per second.
 
@@ -37,20 +37,20 @@ A ratio above 1.00x means Respire sustained more operations per second.
 
 | Scenario | Client | Ops/s | p50 ms | p95 ms | p99 ms | p99.9 ms | Max ms | Errors | Alloc/op | Gen0/1/2 | GC pause s | CPU µs/op | Drift % | Status |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
-| ping | StackExchange.Redis | 192,653 | 0.250 | 0.410 | 0.690 | 1.180 | 6.6 | 0 | 356 B | 742/371/2 | 0.89 | 10.0 | +5.0 | OK |
-| ping | Respire | 228,882 | 0.230 | 0.290 | 0.340 | 0.500 | 4.1 | 0 | 120 B | 299/19/2 | 0.12 | 7.9 | +1.0 | OK |
-| get | StackExchange.Redis | 121,158 | 0.400 | 0.650 | 0.970 | 1.380 | 4.2 | 0 | 3.55 KB | 5010/1644/2 | 2.70 | 16.4 | -1.0 | OK |
-| get | Respire | 178,802 | 0.280 | 0.390 | 0.480 | 0.780 | 2.5 | 0 | 2.15 KB | 4280/85/2 | 1.69 | 10.1 | +0.3 | OK |
-| set | StackExchange.Redis | 140,252 | 0.340 | 0.560 | 0.820 | 1.290 | 5.9 | 0 | 383 B | 583/195/2 | 0.81 | 13.8 | +0.6 | OK |
-| set | Respire | 184,697 | 0.270 | 0.380 | 0.460 | 0.670 | 2.6 | 0 | 128 B | 257/18/2 | 0.14 | 10.1 | -0.2 | OK |
-| incr | StackExchange.Redis | 159,505 | 0.310 | 0.480 | 0.730 | 1.170 | 5.5 | 0 | 495 B | 854/285/2 | 1.00 | 12.4 | +0.2 | OK |
-| incr | Respire | 194,689 | 0.270 | 0.330 | 0.380 | 0.550 | 2.7 | 0 | 128 B | 270/18/2 | 0.15 | 9.0 | +0.7 | OK |
-| hash | StackExchange.Redis | 59,651 | 0.810 | 1.190 | 1.740 | 2.440 | 5.6 | 0 | 3.99 KB | 2766/688/2 | 2.59 | 33.1 | -0.9 | OK |
-| hash | Respire | 88,761 | 0.550 | 0.740 | 0.910 | 1.240 | 3.1 | 0 | 2.30 KB | 2292/25/1 | 1.10 | 20.4 | +0.1 | OK |
-| list | StackExchange.Redis | 59,314 | 0.820 | 1.190 | 1.630 | 2.180 | 4.8 | 0 | 3.94 KB | 2712/905/2 | 1.76 | 32.8 | -+0.0 | OK |
-| list | Respire | 84,701 | 0.580 | 0.770 | 0.920 | 1.200 | 3.2 | 0 | 2.30 KB | 2189/152/2 | 0.89 | 21.0 | +0.6 | OK |
-| mixed | StackExchange.Redis | 117,623 | 0.420 | 0.660 | 1.000 | 1.490 | 4.5 | 0 | 2.68 KB | 3648/1205/2 | 2.31 | 16.8 | -0.5 | OK |
-| mixed | Respire | 181,013 | 0.270 | 0.390 | 0.480 | 0.820 | 2.7 | 0 | 1.61 KB | 3248/81/2 | 1.48 | 10.2 | -0.3 | OK |
+| ping | StackExchange.Redis | 365,338 | 0.120 | 0.280 | 0.420 | 0.560 | 27.0 | 0 | 358 B | 282/142/2 | 3.36 | 5.1 | +11.5 | OK |
+| ping | Respire | 497,436 | 0.100 | 0.150 | 0.170 | 0.240 | 4.5 | 0 | 120 B | 130/11/1 | 0.05 | 3.7 | -2.1 | OK |
+| get | StackExchange.Redis | 215,402 | 0.220 | 0.440 | 0.550 | 1.990 | 5.5 | 0 | 3.55 KB | 1764/882/2 | 2.20 | 8.5 | +1.1 | OK |
+| get | Respire | 326,245 | 0.160 | 0.210 | 0.240 | 0.500 | 2.2 | 0 | 2.15 KB | 1561/256/2 | 0.52 | 5.3 | +4.1 | OK |
+| set | StackExchange.Redis | 270,081 | 0.180 | 0.320 | 0.480 | 0.650 | 31.9 | 0 | 384 B | 225/113/2 | 2.93 | 7.1 | +2.7 | OK |
+| set | Respire | 380,898 | 0.130 | 0.190 | 0.220 | 0.300 | 2.7 | 0 | 128 B | 106/9/1 | 0.04 | 5.0 | -0.6 | OK |
+| incr | StackExchange.Redis | 310,432 | 0.150 | 0.300 | 0.440 | 0.580 | 23.8 | 0 | 495 B | 333/166/2 | 3.63 | 6.1 | +12.4 | OK |
+| incr | Respire | 437,865 | 0.120 | 0.170 | 0.200 | 0.260 | 1.8 | 0 | 128 B | 122/10/1 | 0.05 | 4.5 | +1.4 | OK |
+| hash | StackExchange.Redis | 115,542 | 0.420 | 0.630 | 0.780 | 4.300 | 13.9 | 0 | 3.99 KB | 1067/534/2 | 2.42 | 17.0 | -3.7 | OK |
+| hash | Respire | 181,409 | 0.270 | 0.390 | 0.460 | 0.700 | 2.8 | 0 | 2.30 KB | 936/117/2 | 0.36 | 10.5 | +1.0 | OK |
+| list | StackExchange.Redis | 116,618 | 0.410 | 0.620 | 0.790 | 3.720 | 12.0 | 0 | 3.94 KB | 1063/532/2 | 2.12 | 16.2 | -+0.0 | OK |
+| list | Respire | 174,926 | 0.280 | 0.400 | 0.470 | 0.700 | 2.9 | 0 | 2.30 KB | 904/116/2 | 0.33 | 10.3 | +0.9 | OK |
+| mixed | StackExchange.Redis | 225,641 | 0.210 | 0.390 | 0.530 | 0.960 | 9.1 | 0 | 2.68 KB | 1394/698/2 | 2.09 | 8.5 | +1.9 | OK |
+| mixed | Respire | 352,754 | 0.140 | 0.220 | 0.250 | 0.530 | 2.6 | 0 | 1.61 KB | 1265/185/2 | 0.50 | 5.3 | -3.0 | OK |
 
 ## Notes
 

@@ -18,6 +18,8 @@ public partial class CacheErrorMetricsTests
     [Arguments(true)]
     public async Task OrderedCorrectionCopiesItsRetirementRetryIntoTheCacheOwner(bool refresh)
     {
+        // Metrics are process-wide; ignore detached work that an earlier test left running.
+        var metricScope = new AsyncLocal<bool> { Value = true };
         var previous = RespireMetrics.Configuration;
         RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Resiliency });
         try
@@ -55,7 +57,9 @@ public partial class CacheErrorMetricsTests
                     observer.EnableMeasurementEvents(instrument);
             };
             listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
-                recorded.Enqueue(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value)));
+            {
+                if (metricScope.Value) recorded.Enqueue(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value));
+            });
             listener.Start();
             using var caller = new CancellationTokenSource();
             var pending = refresh ? cache.RefreshAsync("key", caller.Token) : cache.GetAsync("key", caller.Token);
@@ -90,6 +94,8 @@ public partial class CacheErrorMetricsTests
     [Arguments(true, true)]
     public async Task DetachedCorrectionRetainsItsLeaseAndReportsHandledFailures(bool refresh, bool decorated)
     {
+        // Metrics are process-wide; ignore detached work that an earlier test left running.
+        var metricScope = new AsyncLocal<bool> { Value = true };
         var previous = RespireMetrics.Configuration;
         RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Resiliency });
         try
@@ -140,6 +146,7 @@ public partial class CacheErrorMetricsTests
             };
             listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
             {
+                if (!metricScope.Value) return;
                 var item = tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value);
                 items.Enqueue(item);
                 if (Equals(item.GetValueOrDefault("db.response.status_code"), "NOPERM")) completed.TrySetResult();
@@ -291,6 +298,8 @@ public partial class CacheErrorMetricsTests
     [Arguments(true)]
     public async Task GetWithoutCorrectionIdentityReportsOneFinalScriptError(bool refresh)
     {
+        // Metrics are process-wide; ignore detached work that an earlier test left running.
+        var metricScope = new AsyncLocal<bool> { Value = true };
         var previous = RespireMetrics.Configuration;
         RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Resiliency });
         try
@@ -314,6 +323,7 @@ public partial class CacheErrorMetricsTests
             };
             listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
             {
+                if (!metricScope.Value) return;
                 var item = tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value);
                 if (!(bool)item["redis.client.errors.internal"]! && Equals(item.GetValueOrDefault("db.response.status_code"), "WRONGTYPE"))
                     finals.Enqueue(item);
@@ -336,6 +346,8 @@ public partial class CacheErrorMetricsTests
     [Arguments(true)]
     public async Task GetReportsFinalFailureDuringCorrectionSetup(bool refresh)
     {
+        // Metrics are process-wide; ignore detached work that an earlier test left running.
+        var metricScope = new AsyncLocal<bool> { Value = true };
         var previous = RespireMetrics.Configuration;
         RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Resiliency });
         try
@@ -356,6 +368,7 @@ public partial class CacheErrorMetricsTests
             };
             listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
             {
+                if (!metricScope.Value) return;
                 var item = tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value);
                 if (!(bool)item["redis.client.errors.internal"]!) finals.Enqueue(item);
                 throw new InvalidOperationException("Listener failure must remain isolated.");
@@ -380,6 +393,8 @@ public partial class CacheErrorMetricsTests
     [Arguments(true, true)]
     public async Task GetFinalErrorWaitsForTtlCorrection(bool refresh, bool replace)
     {
+        // Observe this operation and its retries without counting earlier detached work.
+        var metricScope = new AsyncLocal<bool> { Value = true };
         var previous = RespireMetrics.Configuration;
         RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Resiliency });
         try
@@ -417,6 +432,7 @@ public partial class CacheErrorMetricsTests
             };
             listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
             {
+                if (!metricScope.Value) return;
                 var item = tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value);
                 if (!(bool)item["redis.client.errors.internal"]!) finals.Enqueue(item);
                 else handled.Enqueue(item);
@@ -450,6 +466,14 @@ public partial class CacheErrorMetricsTests
             var correctionConnection = server.ReceivedConnectionIds[correctionIndex];
             try
             {
+                // Detached work can outlive an earlier test despite NotInParallel.
+                Task unrelatedPublication;
+                using (ExecutionContext.SuppressFlow())
+                {
+                    unrelatedPublication = Task.Run(() => RespireTelemetry.RecordError(
+                        new ObjectDisposedException("earlier test"), internallyHandled: true, retryAttempts: 1));
+                }
+                await unrelatedPublication;
                 await Assert.That(finals.Count).IsEqualTo(0);
                 await Assert.That(response.IsCompleted).IsFalse();
             }
@@ -517,6 +541,8 @@ public partial class CacheErrorMetricsTests
     [Arguments(true, true)]
     public async Task SetReportsOneFinalTrackedScriptError(bool cluster, bool retry)
     {
+        // Metrics are process-wide; ignore detached work that an earlier test left running.
+        var metricScope = new AsyncLocal<bool> { Value = true };
         var previous = RespireMetrics.Configuration;
         RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Resiliency });
         try
@@ -553,6 +579,7 @@ public partial class CacheErrorMetricsTests
             };
             listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
             {
+                if (!metricScope.Value) return;
                 items.Enqueue(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value));
                 throw new InvalidOperationException("Listener failure must remain isolated.");
             });

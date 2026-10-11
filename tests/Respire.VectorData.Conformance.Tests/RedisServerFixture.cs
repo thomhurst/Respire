@@ -24,23 +24,35 @@ public sealed class RedisServerFixture : IAsyncLifetime
         if (!string.IsNullOrWhiteSpace(externalConnection))
         {
             ConnectionString = externalConnection;
+            await AssertCapabilitiesAsync().ConfigureAwait(false);
             return;
         }
 
-        _container = new ContainerBuilder(Image)
+        _container = await Respire.Testing.ContainerStartRetry.StartAsync(() => new ContainerBuilder(Image)
             .WithPortBinding(6379, true)
             .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379))
-            .Build();
+            .Build(), [6379]).ConfigureAwait(false);
         try
         {
-            await _container.StartAsync().ConfigureAwait(false);
             ConnectionString = $"redis://{_container.Hostname}:{_container.GetMappedPublicPort(6379)}";
+            await AssertCapabilitiesAsync().ConfigureAwait(false);
         }
         catch
         {
             await DisposeAsync().ConfigureAwait(false);
             throw;
         }
+    }
+
+    private async Task AssertCapabilitiesAsync()
+    {
+        await using var client = await RespireClient.ConnectAsync(ConnectionString).ConfigureAwait(false);
+        string[] commands = ["JSON.SET", "JSON.GET", "FT.CREATE", "FT.SEARCH", "FT.HYBRID"];
+        using var info = await client.ExecuteAsync(RespireCommands.Server.COMMAND_INFO,
+            commands.Select(command => (RespireValue)command).ToArray()).ConfigureAwait(false);
+        if (info.Count != commands.Length) throw new InvalidOperationException("COMMAND INFO returned incomplete capability metadata.");
+        for (var i = 0; i < commands.Length; i++)
+            if (info[i].IsNull) throw new NotSupportedException($"Official VectorData conformance requires {commands[i]}.");
     }
 
     public async ValueTask DisposeAsync()

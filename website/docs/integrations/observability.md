@@ -479,6 +479,23 @@ load. Successful function routes rent no error-observation storage; warmed calle
 ownership adds no allocation. Raw `FCALL` and `FCALL_RO` keep their existing failure-only
 owner and completed transport retry count, including when collection starts late.
 
+The reusable function library's reload gate and generation coordinate callers; they
+do not share an error observation or a final failure. Each caller records its own
+missing-function reply and only the nested reload or propagation retries it performs.
+All reload targets finish before the gate is released, and conversion failures keep
+that caller's completed count. A successful caller does not close another caller's
+observation, even when both use the same library and connection.
+
+Sharing a completed script correction as a `Task` does not transfer its producer's
+error owner to callers. A failed producer and each failed caller have separate final
+boundaries, even when the same exception reaches all of them. Joined correction
+finishes before caller publication; a successful correction preserves the original
+exception and cancellation token, while a failed strict correction becomes the
+caller's final error. A tracked script response is consumed once, either by its direct
+reader or by the correction boundary, after mutation cleanup. Exporter failures
+cannot replace these outcomes. These lifetime rules add no success-path observation
+allocation and do not change execution or retry policy.
+
 Pending raw, cached, and fire-and-forget submissions keep their final observation
 boundary even when collection is disabled at dispatch. Enabling the group or attaching
 a listener before completion can therefore observe their final failure. Earlier errors
@@ -547,7 +564,37 @@ events. Cancellation caused by subscription shutdown is excluded.
 Additional rejected prefix or transaction queue replies are internal events when
 discarded; the retained error is reported once at the caller's final boundary.
 Hedged reads add the completed result leg's retry count to retries already handled by
-the caller; the discarded leg retains its own internal error boundary.
+the caller, including counts copied from nested routes. Addition saturates at
+`int.MaxValue` on immediate completion, sole-leg completion, and either race winner.
+The copy happens before completing the result leg's owner. A later caller conversion
+failure uses that retained count; it does not borrow a completed leg's storage.
+The discarded leg retains its own internal error boundary and retry count through
+FIFO reply consumption and disposal, even after the caller has completed. Neither
+winning nor losing a race cancels an accepted request or releases its buffer early.
+If both legs fail, the caller retains the original leg's exception and retry count,
+including its original cancellation token. Each discarded leg still owns its internal
+failure; the caller independently owns the final failure.
+
+SCRIPT and FUNCTION primary fan-outs share one caller observation across their
+target retries. They join every accepted target, reply conversion, and cleanup before
+publishing one final failure. Sequential DBSIZE and flush fan-outs also retain their
+caller count across targets. Success itself adds no retry, but retries before a target
+succeeds still count. These joined
+targets do not become independent final owners.
+
+Explicit node-result fan-outs use an independent owner for each endpoint through
+capacity admission, native send, conversion, and pool cleanup. Each endpoint failure
+is reported before its error result is returned. The parent does not report those
+returned failures again; it owns discovery and exceptions escaping the fan-out itself.
+Concurrent callers have separate observations even when they query the same endpoint.
+Reading an error result's `Value` does not create a new command lifetime.
+
+These ownership rules preserve original exceptions and cancellation tokens even
+when a metric listener throws. Successful paths acquire no error-observation storage.
+The targeted `run-hedge-ownership-benchmarks` PR label starts pinned
+baseline/candidate/baseline handoff comparisons on net10.0. Its sole-leg case requires
+zero allocation; race cases retain the existing `Task.WhenAny` cost. Correctness controls
+run on both net8.0 and net10.0. Accept the comparison before merging a handoff change.
 Standalone submission retries retain the same count through both immediate retirement
 and capacity waits; a later write/submission failure reports the accumulated count.
 `ConnectAnyAsync` also reports null or empty candidates and enumeration failures once
@@ -639,6 +686,16 @@ Failed batch and transaction commands produce one user-visible measurement per f
 deferred result, after the owner finishes correction and connection cleanup. Reading
 `Result` again or calling `ThrowIfAnyFailed` does not add another measurement.
 Standalone batch transport retries retain each pending command's own retry count.
+Cluster batches copy completed group-selection attempts before individual commands start
+their own retries. Transactions share the complete dispatch retry history across their
+queued results, including successful results, and freeze that count after connection cleanup.
+An unexpected null EXEC in an unwatched transaction faults every queued result with the
+same protocol exception thrown by commit. It is reported at the execution boundary;
+a null EXEC in a watched transaction still returns `false` without an execution error.
+Idle socket teardown or a disconnect after successful execution does not create deferred
+failures. A disconnect with outstanding commands produces one internal physical event
+and one final error for each affected result. Cancellation retains the original caller
+token even when the physical connection closes later.
 A failure of the execution itself, such as a durability acknowledgement failure, is counted when
 there are no failed deferred results representing that execution. WATCH aborts and
 intentional batch or transaction disposal are not errors for this counter.
@@ -655,6 +712,15 @@ producer's completed retry count in its final measurement. Cache hits, peek conv
 and cache-aside factories keep the same caller boundary without renting error observation
 storage on success. Each coalesced `GetOrSetAsync` waiter owns its own conversion and final
 failure, including failures after the factory succeeds.
+
+Ordinary and typed coalesced reads finish producer response copying and disposal before
+waking waiters. They retain the completed retry count separately from the returned
+producer observation. Each waiter combines that count with its own existing retries,
+saturating at `int.MaxValue`. A waiter that cancels while the producer is still active
+copies the producer count at its release boundary and keeps its own cancellation token;
+later producer retries belong to the remaining waiters. A converter failure affects only
+that caller. Reusing a completed producer or canceled caller observation cannot change
+another waiter's count or publish another final failure.
 
 Distributed-cache operations start ownership before validation, payload encoding and
 correction setup. GET and buffered GET retain it through payload decoding and response
@@ -1014,6 +1080,45 @@ later handled events or count updates, including reentrant exporter callbacks. T
 not suppress late native replies: discarded replies retain their own copied attempt count
 and publish internal errors independently after the caller observation has closed.
 
+Native raw, string, byte and typed response inspection shares final-error publication
+after response cleanup and caller-reference release. Conversion still runs when the
+caller consumes the result. If cleanup also fails, the original conversion or cancellation
+error wins, including its cancellation token. Native transport cancellation keeps its
+canceled task status. A cleanup failure
+without an earlier error remains the caller's final failure. Response ownership is cleared
+before disposal so a failed disposal cannot make pool reset dispose the same response again.
+Successful inspection does not rent error observation storage.
+
+Physical setup borrows the connection caller's boundary. A physical disconnect records one
+independent internal error, with zero logical retries. It does not invent a final failure
+for an idle socket, a successful caller, or an already-canceled caller. Pending callers
+retain their own final failure after cleanup. Cancellation releases the caller reference
+but keeps the native receive reference until the original FIFO reply drains or the socket
+closes. A late server error remains an internal event and cannot answer the next command
+or publish a second final caller failure. Raw, catalog and interpolated dispatch follow
+these same lifetime rules.
+
+Streaming uploads retain the caller boundary through dedicated lease acquisition, source
+reads, transparent retries, replay reset, reply inspection and mutation/lease cleanup.
+A source failure preserves its original exception and independent cancellation token.
+An incomplete frame is closed before caller failure is published; a failed first fill
+reclaims the unpublished response. Cleanup never disposes the caller's source stream.
+Replay reset runs after releasing the source lease; a reset failure preserves the
+original server rejection. Caller cancellation can finish while a detached source fill
+still runs. That fill retains its buffer until the fill settles and cannot publish a
+second caller failure.
+
+Streaming downloads have independent header, transport-frame and payload-read lifetimes.
+The GET header boundary ends when the stream is returned. Copy its completed retry
+count through circuit wrappers to the payload before returning observation storage.
+Later observation reuse cannot change payload retry tags. The receive loop owns frame
+validation and FIFO draining independently of caller inspection. A producer failure is
+not a caller failure until a read observes it. Repeated reads of that terminal failure
+publish once across all read overloads. Canceling an individual read preserves that
+read's token and does not close payload ownership: later reads can succeed, cancel
+independently or observe a producer failure. Invalid stream arguments and early disposal
+do not count as Redis payload failures. Exporter exceptions cannot replace any failure.
+
 When adding a command path, declare its public boundary and delegated final owner in
 the independent route inventory. Helper, borrower, transport, and cleanup observations
 must remain distinct from the caller's final publication. Preserve checked native
@@ -1056,10 +1161,21 @@ connection cleanup. WATCH setup and hash-import session calls start ownership be
 key routing, argument validation or command construction. Successful deferred execution
 rents no error observation lease.
 
+The shared `DeferredOperation` helper contains only operation metadata and observation
+forwarding. It adds no pending storage, lease, response wrapper or successful-path rental.
+Batch, durability and transaction routes call its final publication helper only after
+their own cleanup. Transaction and group-selection retry counts are captured before
+the lending pending closes; independent batch command retries remain independent.
+
 Deferred command failures are reported once after execution cleanup. Inspecting a pending
 before execution, after a WATCH abort, or after its queue is discarded counts that lifecycle
 failure once; repeated `Result` or awaiter inspection does not count it again. A later
 execution failure remains a separate boundary from an earlier not-ready inspection.
+Deferred results use the shared bounded retry transitions both before and after they
+acquire failure-only storage. Added retries saturate at `int.MaxValue`; zero or negative
+additions do not reduce completed retry history. Final execution reporting freezes that
+count. Copied observations and later `Result` or awaiter inspection retain the original
+exception and cancellation token without publishing a second terminal failure.
 
 ## Sentinel primary changes
 
