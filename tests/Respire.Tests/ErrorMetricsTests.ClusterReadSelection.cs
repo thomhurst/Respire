@@ -1,3 +1,4 @@
+using System.Net.Sockets;
 using System.Text;
 using Respire.Internal;
 using Respire.Tests.Networking;
@@ -40,6 +41,20 @@ public partial class ErrorMetricsTests
             ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", primary.Port)], ReadFrom = policy,
             ClientAvailabilityZone = ReadFallbackPolicy.UsesAvailabilityZone(policy) ? "local" : null,
             HedgedReads = shape == "hedged" ? new() { Delay = TimeSpan.FromSeconds(1), MaximumExtraLoadPercent = 100 } : null,
+            // Windows retries a refused loopback connect for about two seconds. Refuse the reserved
+            // replica at the stream boundary instead; the batch and alternate-replica tests below
+            // keep covering an actual refused socket on this selection path.
+            TestingStreamFactory = async (host, port, cancellationToken) =>
+            {
+                if (port == unavailable.Port) throw new SocketException((int)SocketError.ConnectionRefused);
+                var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+                try
+                {
+                    await socket.ConnectAsync(host, port, cancellationToken);
+                    return new NetworkStream(socket, ownsSocket: true);
+                }
+                catch { socket.Dispose(); throw; }
+            },
         });
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         if (outcome == "cancellation") await cancellation.CancelAsync();

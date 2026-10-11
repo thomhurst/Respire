@@ -6,6 +6,7 @@
 
     <ItemGroup>
         <PackageReference Include="TUnit" />
+        <PackageReference Include="Microsoft.Testing.Extensions.HangDump" />
         <PackageReference Include="Testcontainers.Redis" />
         <PackageReference Include="StackExchange.Redis" />
         <PackageReference Include="FluentAssertions" />

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -19,8 +20,56 @@ internal static class TestInspectionSource
 
     internal sealed record SourceConfiguration(string Framework, string[] Symbols);
 
+    // Resources, parsed trees and whole-library compilations are immutable and thread-safe,
+    // so every test shares one copy instead of re-reading and re-binding ~6 MB of source.
+    private static readonly Lazy<SourceConfiguration[]> Configurations = new(LoadSourceConfigurations);
+    private static readonly Lazy<(string Path, string Text)[]> LibrarySources = new(LoadLibrarySources);
+    private static readonly ConcurrentDictionary<string, Lazy<LibrarySet>> LibrarySets = new(StringComparer.Ordinal);
+
+    /// <summary>All embedded production trees parsed under one configuration, plus their shared compilation.</summary>
+    internal sealed class LibrarySet
+    {
+        private readonly Lazy<CSharpCompilation> _compilation;
+
+        public LibrarySet(SourceConfiguration configuration)
+        {
+            Configuration = configuration;
+            Trees = ReadLibrarySources()
+                .Select(source => (source.Path, CSharpSyntaxTree.ParseText(source.Text, ParseOptionsFor(configuration), source.Path)))
+                .ToArray();
+            _compilation = new(() => CreateCompilation(Trees.Select(item => item.Tree)));
+        }
+
+        public SourceConfiguration Configuration { get; }
+
+        /// <summary>Trees in resource order; each carries its embedded resource path as <see cref="SyntaxTree.FilePath"/>.</summary>
+        public IReadOnlyList<(string Path, SyntaxTree Tree)> Trees { get; }
+
+        /// <summary>One binding of every production tree; semantic models from it are safe to request concurrently.</summary>
+        public CSharpCompilation Compilation => _compilation.Value;
+
+        /// <summary>Finds the shared tree parsed from one embedded resource path.</summary>
+        public SyntaxTree Tree(string path) => Trees.Single(item => item.Path == path).Tree;
+    }
+
     /// <summary>Reads the SDK-evaluated framework and symbol manifest embedded at build time.</summary>
-    internal static SourceConfiguration[] ReadSourceConfigurations()
+    internal static SourceConfiguration[] ReadSourceConfigurations() => Configurations.Value.ToArray();
+
+    /// <summary>Selects one SDK-derived framework configuration.</summary>
+    internal static SourceConfiguration Configuration(bool net10)
+        => Configurations.Value.Single(configuration => configuration.Framework == (net10 ? "net10.0" : "net8.0"));
+
+    /// <summary>Returns the shared parse and compilation of every production tree under one configuration.</summary>
+    internal static LibrarySet Library(SourceConfiguration configuration)
+        => LibrarySets.GetOrAdd(configuration.Framework, _ => new(() => new LibrarySet(configuration))).Value;
+
+    /// <summary>Returns the shared parse and compilation of every production tree under one framework.</summary>
+    internal static LibrarySet Library(bool net10) => Library(Configuration(net10));
+
+    private static CSharpParseOptions ParseOptionsFor(SourceConfiguration configuration)
+        => new(LanguageVersion.Preview, preprocessorSymbols: configuration.Symbols);
+
+    private static SourceConfiguration[] LoadSourceConfigurations()
     {
         using var stream = OpenResource("TestInspectionConfigurations.txt");
         using var reader = new StreamReader(stream);
@@ -39,27 +88,29 @@ internal static class TestInspectionSource
             ?? throw new InvalidOperationException("Missing embedded resource: " + resource);
 
     /// <summary>Reads production source independently of a repository checkout.</summary>
-    internal static IEnumerable<(string Path, string Text)> ReadLibrarySources()
+    internal static IReadOnlyList<(string Path, string Text)> ReadLibrarySources() => LibrarySources.Value;
+
+    private static (string Path, string Text)[] LoadLibrarySources()
     {
         var assembly = typeof(TestInspectionSource).Assembly;
+        var sources = new List<(string Path, string Text)>();
         foreach (var resource in assembly.GetManifestResourceNames())
         {
             var path = resource.Replace('\\', '/');
             if (!path.StartsWith("LibrarySource/", StringComparison.Ordinal)) continue;
             using var stream = OpenResource(resource);
             using var reader = new StreamReader(stream);
-            yield return (path, reader.ReadToEnd());
+            sources.Add((path, reader.ReadToEnd()));
         }
+        return sources.ToArray();
     }
 
     /// <summary>Selects an SDK-derived framework configuration for self-contained regression controls.</summary>
-    internal static SyntaxNode Parse(string source, bool net10)
-        => Parse(source, ReadSourceConfigurations().Single(configuration => configuration.Framework == (net10 ? "net10.0" : "net8.0")));
+    internal static SyntaxNode Parse(string source, bool net10) => Parse(source, Configuration(net10));
 
     /// <summary>Parses source under the evaluated symbols of one production framework.</summary>
     internal static SyntaxNode Parse(string source, SourceConfiguration configuration)
-        => CSharpSyntaxTree.ParseText(source, new CSharpParseOptions(LanguageVersion.Preview,
-            preprocessorSymbols: configuration.Symbols)).GetRoot();
+        => CSharpSyntaxTree.ParseText(source, ParseOptionsFor(configuration)).GetRoot();
 
     /// <summary>Inventories reviewable declarations on inspection owners and their privileged subclasses.</summary>
     internal static string[] FindOwnerSurface(SyntaxNode root, SemanticModel? semanticModel = null)

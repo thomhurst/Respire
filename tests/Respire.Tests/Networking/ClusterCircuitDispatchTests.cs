@@ -11,10 +11,10 @@ using TUnit.Core;
 
 namespace Respire.Tests.Networking;
 
-[NotInParallel]
 public class ClusterCircuitDispatchTests
 {
     [Test]
+    [NotInParallel]
     [Arguments("string")]
     [Arguments("bytes")]
     [Arguments("integer")]
@@ -75,6 +75,7 @@ public class ClusterCircuitDispatchTests
     }
 
     [Test]
+    [NotInParallel]
     [Arguments("MOVED", "string", false)]
     [Arguments("MOVED", "converted", true)]
     [Arguments("MOVED", "batch", true)]
@@ -553,6 +554,7 @@ public class ClusterCircuitDispatchTests
     }
 
     [Test]
+    [NotInParallel]
     public async Task ConverterFailureKeepsHealthyOutcomeAndNeverReplays()
     {
         using var metrics = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.None });

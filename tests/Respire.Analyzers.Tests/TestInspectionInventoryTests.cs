@@ -225,9 +225,10 @@ public class TestInspectionInventoryTests
             .Select(line => line[9..].Split(" | ")).ToDictionary(parts => parts[0], parts => int.Parse(parts[1]), StringComparer.Ordinal);
         foreach (var configuration in ReadSourceConfigurations())
         {
-            var roots = ReadLibrarySources().Select(source => Parse(source.Text, configuration)).ToArray();
+            var library = Library(configuration);
+            var roots = library.Trees.Select(item => item.Tree.GetRoot()).ToArray();
             await Assert.That(FindMissingOwners(roots)).IsEmpty();
-            var compilation = CreateCompilation(roots.Select(root => root.SyntaxTree));
+            var compilation = library.Compilation;
             var actual = roots.SelectMany(root => FindOwnerSurface(root, compilation.GetSemanticModel(root.SyntaxTree)))
                 .Order(StringComparer.Ordinal).ToArray();
             // An empty inventory is deliberately a failure, never an automatic snapshot update.

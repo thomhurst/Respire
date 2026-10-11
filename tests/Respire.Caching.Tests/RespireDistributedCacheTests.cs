@@ -300,44 +300,44 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     public async Task RemoveAsync_WrappedClient_CancellationStopsTheWait()
     {
         var keys = new BlockingUnlinkKeyCommands(Client.Keys);
+        var removalStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseRemoval = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var removalResult = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
         var wrappedClient = new ScriptInterceptingClient(Client, async (_, send) =>
         {
+            removalStarted.TrySetResult();
             await releaseRemoval.Task;
             var result = await send();
             removalResult.TrySetResult(result.AsInteger());
             return result;
         }, keys, ignoreScriptCancellation: true);
         await using var cache = new RespireDistributedCache(wrappedClient);
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+        using var cts = new CancellationTokenSource();
+        var removal = cache.RemoveAsync("cancel-wrapped-remove", cts.Token);
 
-        var cancelled = false;
         try
         {
-            await cache.RemoveAsync("cancel-wrapped-remove", cts.Token).WaitAsync(TimeSpan.FromSeconds(2));
-        }
-        catch (OperationCanceledException)
-        {
-            cancelled = true;
-        }
-        catch (TimeoutException)
-        {
-            Assert.Fail("Wrapped removal did not honor cancellation.");
+            // Cancel only once the wrapped script is pending. A startup timer can expire
+            // during lease placement on a loaded runner, before there is a late send to test.
+            await removalStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            cts.Cancel();
+            await Assert.That(async () => await removal.WaitAsync(TimeSpan.FromSeconds(2)))
+                .Throws<OperationCanceledException>();
+            keys.Complete();
+            await Cache.SetAsync("cancel-wrapped-remove", [2], new DistributedCacheEntryOptions());
+
+            releaseRemoval.TrySetResult();
+            await Assert.That(await removalResult.Task.WaitAsync(TimeSpan.FromSeconds(2))).IsEqualTo(0);
+            var survivor = await Cache.GetAsync("cancel-wrapped-remove");
+            await Assert.That(survivor).IsNotNull();
+            await Assert.That(survivor!.SequenceEqual(new byte[] { 2 })).IsTrue();
         }
         finally
         {
+            cts.Cancel();
             keys.Complete();
+            releaseRemoval.TrySetResult();
         }
-
-        await Assert.That(cancelled).IsTrue();
-        await Cache.SetAsync("cancel-wrapped-remove", [2], new DistributedCacheEntryOptions());
-
-        releaseRemoval.TrySetResult();
-        await Assert.That(await removalResult.Task.WaitAsync(TimeSpan.FromSeconds(2))).IsEqualTo(0);
-        var survivor = await Cache.GetAsync("cancel-wrapped-remove");
-        await Assert.That(survivor).IsNotNull();
-        await Assert.That(survivor!.SequenceEqual(new byte[] { 2 })).IsTrue();
     }
 
     [Test]
@@ -605,9 +605,10 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     private async Task<RespireClient> ConnectTimeoutClientAsync()
     {
         var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(Server.ConnectionString) with { CommandTimeout = TimeSpan.FromMilliseconds(200) });
+            RespireOptions.Parse(Server.ConnectionString) with { CommandTimeout = TimeSpan.FromSeconds(1) });
 
-        // Keep the test's 200ms timeout scoped to the cache command under test. Reliable
+        // Allow handshake replies time to arrive while CI runs other suites concurrently.
+        // The deliberate server pauses below exceed this deadline. Reliable
         // corrections lazily capture CLIENT ID once per connection; prime that setup before
         // deliberately stalling Redis.
         await client.Core.Multiplexer.EnsureReliableCorrectionOrderingAsync();
@@ -917,7 +918,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         // during connection setup.
         await timeoutCache.RemoveAsync("warmup");
 
-        var stallObserved = await StartServerPauseAsync(500);
+        var stallObserved = await StartServerPauseAsync(2000);
 
         var threw = false;
         try
@@ -1048,7 +1049,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         await using var timeoutClient = await ConnectTimeoutClientAsync();
         await using var timeoutCache = new RespireDistributedCache(timeoutClient);
 
-        var stallObserved = await StartServerPauseAsync(500);
+        var stallObserved = await StartServerPauseAsync(2000);
 
         var threw = false;
         try
@@ -1080,7 +1081,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         await using var timeoutClient = await ConnectTimeoutClientAsync();
         await using var timeoutCache = new RespireDistributedCache(timeoutClient);
 
-        var stallObserved = await StartServerPauseAsync(500);
+        var stallObserved = await StartServerPauseAsync(2000);
 
         RespireTimeoutException? failure = null;
         try
@@ -1121,7 +1122,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         await using var timeoutClient = await ConnectTimeoutClientAsync();
         await using var timeoutCache = new RespireDistributedCache(timeoutClient);
 
-        var stallObserved = await StartServerPauseAsync(500);
+        var stallObserved = await StartServerPauseAsync(2000);
 
         var threw = false;
         try
@@ -1155,7 +1156,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         // A stall longer than SendDelayTolerance: the first correction pass chases the queued
         // set through it, so its remainder is stale by more than the tolerance and a second
         // pass with a freshly derived remainder must run.
-        var stallObserved = await StartServerPauseAsync(1500);
+        var stallObserved = await StartServerPauseAsync(2500);
 
         var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(10);
         var threw = false;
@@ -1283,9 +1284,9 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         };
         var originalClientId = (await timeoutClient.AcquireConnectionAsync(CancellationToken.None)).ServerClientId;
 
-        // A cold fencing connection must complete SELECT while the ordinary 200ms
+        // A cold fencing connection must complete SELECT while the ordinary 1s
         // command deadline expires inside this pause; the kill barrier must still complete.
-        var stallObserved = await StartServerPauseAsync(1500);
+        var stallObserved = await StartServerPauseAsync(2500);
 
         RespireTimeoutException? failure = null;
         try

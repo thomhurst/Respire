@@ -16,6 +16,7 @@ public class ConnectionMetricCleanupTests
     private const string QueuedSelectionProbe = "RESPIRE_TEST_METRIC_QUEUED_SELECTION";
 
     [Test]
+    [NotInParallel(TestConstraints.IsolatedProbe)]
     public async Task QueuedLifecycleDeliveryRetainsEventTimeGroupSelection()
     {
         // Constrain only a fresh child process, never the parallel test runner.

@@ -180,8 +180,9 @@ public class TestInspectionFactoryUseTests
     {
         foreach (var configuration in ReadSourceConfigurations())
         {
-            var sources = ReadLibrarySources().Select(source => (source.Path, Root: Parse(source.Text, configuration))).ToArray();
-            var compilation = CreateCompilation(sources.Select(source => source.Root.SyntaxTree));
+            var library = Library(configuration);
+            var sources = library.Trees.Select(item => (item.Path, Root: item.Tree.GetRoot())).ToArray();
+            var compilation = library.Compilation;
             RequireResolvedViews(compilation);
             var violations = sources.SelectMany(source => FindFactoryUses(source.Root, compilation.GetSemanticModel(source.Root.SyntaxTree))
                 .Select(use => $"{configuration.Framework}: {source.Path}: {use}")).ToArray();

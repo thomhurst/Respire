@@ -3,10 +3,8 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
-public sealed class Redis810StreamReadContainer() : StandaloneRedisTestContainer("redis:8.10-alpine");
-
-[ClassDataSource<Redis810StreamReadContainer>(Shared = SharedType.PerTestSession)]
-public class StreamReadLimitIntegrationTests(Redis810StreamReadContainer fixture)
+[ClassDataSource<ModernRedisTestContainer>(Shared = SharedType.PerTestSession)]
+public class StreamReadLimitIntegrationTests(ModernRedisTestContainer fixture)
 {
     [Test]
     [Arguments(2)]

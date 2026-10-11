@@ -30,7 +30,10 @@ jobs:
       - uses: ./.github/actions/setup-dotnet
       # CI's required net8 job is a smoke set. This opt-in job covers every
       # multi-targeted test project; analyzer, pipeline and packed-package smoke projects are net10-only.
-      - name: Build and run every .NET 8 test project
+      # One solution-filter build lets MSBuild compile independent projects in parallel.
+      - name: Build every .NET 8 test project
+        run: dotnet build .github/ci/net8-full.slnf -c Release -f net8.0
+      - name: Run every .NET 8 test project
         shell: bash
         run: |
           set -euo pipefail
@@ -48,7 +51,6 @@ jobs:
             tests/Respire.VectorData.Tests \
             tests/Respire.Streaming.Tests
           do
-            dotnet build "$project" -c Release -f net8.0
             if [[ "$project" == tests/Respire.Tests ]]; then
               # Core tests own listener state; the HTML reporter adds a process-wide listener.
               TUNIT_DISABLE_HTML_REPORTER=true dotnet run --project "$project" -c Release -f net8.0 --no-build -- \
@@ -68,10 +70,9 @@ jobs:
         env:
           TUNIT_DISABLE_HTML_REPORTER: 'true'
         run: |
+          # None of the direct-path classes adds an ActivityListener, so they share one process.
           dotnet run --project tests/Respire.Tests -c Release -f net8.0 --no-build -- \
-            --treenode-filter '/*/*/(HedgedReadTests)|(BytesResponseTests)/*'
-          dotnet run --project tests/Respire.Tests -c Release -f net8.0 --no-build -- \
-            --treenode-filter '/*/*/GetStringDirectPathTests/*'
+            --treenode-filter '/*/*/(HedgedReadTests)|(BytesResponseTests)|(GetStringDirectPathTests)/*'
           dotnet run --project tests/Respire.Tests -c Release -f net8.0 --no-build -- \
             --treenode-filter '/*/*/(MetricSelectionTests)|(ErrorMetricsTests)/*' --report-trx \
             --report-trx-filename Respire.Tests-metric-selection-net8.trx
