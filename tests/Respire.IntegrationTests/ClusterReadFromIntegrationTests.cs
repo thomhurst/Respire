@@ -43,7 +43,7 @@ public class ClusterReadFromIntegrationTests
             await batch.ExecuteAsync();
             (await pending).Should().Be("first");
         }
-        await client.Strings.SetAsync(key, "updated", RespireExpiry.In(TimeSpan.FromSeconds(2)));
+        await client.Strings.SetAsync(key, "updated", RespireExpiry.In(TimeSpan.FromSeconds(1)));
         await WaitForReplicaValue("updated");
         using var expiry = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         while (await replica.Strings.GetStringAsync(key, expiry.Token) is not null)

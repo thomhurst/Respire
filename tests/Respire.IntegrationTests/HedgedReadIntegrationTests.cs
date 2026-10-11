@@ -108,13 +108,14 @@ public class HedgedReadIntegrationTests
                     Interlocked.Add(ref won, value);
         });
         listener.Start();
-        using (await control.ExecuteAsync("CLIENT", "PAUSE", 3_000, "ALL")) { }
+        // The hedge fires after 20 ms, so the primary answers long before the bounded pause ends.
+        using (await control.ExecuteAsync("CLIENT", "PAUSE", 1_500, "ALL")) { }
         // A separate socket proves the replica has not resumed when the hedge returns.
         var pausedPing = witness.PingAsync(cancellationToken).AsTask();
         try
         {
             (await reader.GetStringAsync(key, cancellationToken).AsTask()
-                .WaitAsync(TimeSpan.FromSeconds(2))).Should().Be("first");
+                .WaitAsync(TimeSpan.FromSeconds(1))).Should().Be("first");
             Interlocked.Read(ref won).Should().Be(1);
             pausedPing.IsCompleted.Should().BeFalse();
         }
