@@ -27,6 +27,10 @@ public class ClientCacheQueryBenchmarks
     private RespireClient _sharing = null!;
     private RespireClient _independent = null!;
     private RespireClient _cacheOff = null!;
+    private long _independentInvocations;
+    private long _independentPublications;
+    private int _minimumIndependentPublications = int.MaxValue;
+    private int _maximumIndependentPublications;
 
     [GlobalSetup]
     public async Task Setup()
@@ -94,7 +98,20 @@ public class ClientCacheQueryBenchmarks
     public Task<long> UnrelatedQueriesWithWrites() => Run(_sharing, queries: true, writes: true, affected: false);
 
     [Benchmark(OperationsPerInvoke = Callers * Rounds)]
-    public Task<long> UnrelatedQueriesWithoutCoalescing() => Run(_independent, queries: true, writes: true, affected: false);
+    public async Task<long> UnrelatedQueriesWithoutCoalescing()
+    {
+        var result = await Run(_independent, queries: true, writes: true, affected: false);
+        // Each invocation clears the store and queries 800 distinct keys exactly once before
+        // reuse. Unrelated SETs cannot remove these entries, so the final resident count is
+        // the number of successful publications in this measured invocation. The identical
+        // bracket controls include this count read and tally in their measured work too.
+        var publications = _independent.ClientSideCache!.Count;
+        _independentPublications += publications;
+        _minimumIndependentPublications = Math.Min(_minimumIndependentPublications, publications);
+        _maximumIndependentPublications = Math.Max(_maximumIndependentPublications, publications);
+        _independentInvocations++;
+        return result;
+    }
 
     [Benchmark(OperationsPerInvoke = Callers * Rounds)]
     public Task<long> AffectedQueriesWithWrites() => Run(_sharing, queries: true, writes: true, affected: true);
@@ -400,6 +417,19 @@ public class ClientCacheQueryBenchmarks
     [GlobalCleanup]
     public async Task Cleanup()
     {
+        if (_independentInvocations != 0)
+            Console.WriteLine("QUERY_TIMED_PUBLICATIONS " + JsonSerializer.Serialize(new
+            {
+                // Includes BDN pilot/warmup and actual workload invocations, excludes
+                // GlobalSetup validation. Min/max prove publication cardinality per
+                // invocation without forcing BDN's InvocationCount to one with hooks.
+                scope = "all-benchmark-workload-invocations",
+                invocations = _independentInvocations,
+                coldQueryCalls = _independentInvocations * Callers * Rounds,
+                publications = _independentPublications,
+                minimumPublicationsPerInvocation = _minimumIndependentPublications,
+                maximumPublicationsPerInvocation = _maximumIndependentPublications,
+            }));
         if (_sharing is not null) { await _sharing.DisposeAsync(); _sharing = null!; }
         if (_independent is not null) { await _independent.DisposeAsync(); _independent = null!; }
         if (_cacheOff is not null) { await _cacheOff.DisposeAsync(); _cacheOff = null!; }

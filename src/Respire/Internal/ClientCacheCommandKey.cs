@@ -84,6 +84,20 @@ internal readonly struct ClientCacheCommandKey : IEquatable<ClientCacheCommandKe
 
     internal ClientCacheCommandKey Snapshot()
     {
+        // Small queries already have inline storage. Own every binary argument without
+        // allocating a second container for immutable scalar/string arguments.
+        switch (ArgumentCount)
+        {
+            case 0: return new(_operation);
+            case 1: return new(_operation, GetArgument(0).Snapshot());
+            case 2: return new(_operation, GetArgument(0).Snapshot(), GetArgument(1).Snapshot());
+            case 3: return new(_operation, GetArgument(0).Snapshot(), GetArgument(1).Snapshot(), GetArgument(2).Snapshot());
+            case 4: return new(_operation, GetArgument(0).Snapshot(), GetArgument(1).Snapshot(), GetArgument(2).Snapshot(),
+                GetArgument(3).Snapshot());
+            case 5: return new(_operation, GetArgument(0).Snapshot(), GetArgument(1).Snapshot(), GetArgument(2).Snapshot(),
+                GetArgument(3).Snapshot(), GetArgument(4).Snapshot());
+        }
+
         var arguments = new RespireValue[ArgumentCount];
         for (var index = 0; index < arguments.Length; index++)
         {
