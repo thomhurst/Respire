@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Net.Sockets;
 using System.Text;
 using Respire.Internal;
 using Respire.Tests.Networking;
@@ -53,6 +55,60 @@ public partial class ErrorMetricsTests
         await Assert.That(item.Tags["server.port"]).IsEqualTo(6381);
     }
 
+    [Test]
+    public async Task ClusterWideFireAndForgetNamesTheRejectingMaster()
+    {
+        using var configuration = new MetricConfigurationScope(new()
+            { Groups = RespireMetricGroups.Resiliency | RespireMetricGroups.Command });
+        await using var first = new FakeRespServer(16, FakeRespServer.OkReply);
+        await using var second = new FakeRespServer(16, FakeRespServer.OkReply);
+        var topology = Encoding.ASCII.GetBytes(
+            $"*2\r\n*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{first.Port}\r\n" +
+            $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{second.Port}\r\n");
+        await using var seed = new FakeRespServer(16, topology);
+        var refusedPort = 0;
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, UseCluster = true, ThreadPoolMonitoring = false,
+            ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", seed.Port)],
+            TestingStreamFactory = async (host, port, cancellationToken) =>
+            {
+                if (port == Volatile.Read(ref refusedPort)) throw new SocketException((int)SocketError.ConnectionRefused);
+                var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+                try
+                {
+                    await socket.ConnectAsync(host, port, cancellationToken);
+                    return new NetworkStream(socket, ownsSocket: true);
+                }
+                catch { socket.Dispose(); throw; }
+            },
+        });
+        var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(default, discovery: null, observation: default);
+        // The first target rejects during its send (retired, replacement refused); the later target
+        // accepts and is the last send to touch the caller's observation, so it must not own the error.
+        var rejecting = connections[0];
+        var healthy = rejecting.Port == first.Port ? second : first;
+        Task? retirement = null;
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "Respire",
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+            ActivityStarted = activity =>
+            {
+                if (activity.GetTagItem("db.operation.name")?.ToString() != "SCRIPT"
+                    || (int)activity.GetTagItem("server.port")! != rejecting.Port || retirement is not null) return;
+                Volatile.Write(ref refusedPort, rejecting.Port);
+                retirement = rejecting.RetireAsync();
+            },
+        };
+        ActivitySource.AddActivityListener(listener);
+        using var capture = new Capture();
+        await Assert.That(async () => await client.ExecuteFireAndForgetAsync("SCRIPT", ["FLUSH"])).Throws<Exception>();
+        if (retirement is not null) await retirement;
+        await Assert.That(healthy.ReceivedCommands).Contains("SCRIPT FLUSH");
+        var final = capture.Items.Single(item => !(bool)item.Tags["redis.client.errors.internal"]!);
+        await Assert.That(final.Tags["server.port"]).IsEqualTo(rejecting.Port);
+    }
     [Test]
     [Arguments("transaction")]
     [Arguments("durability")]

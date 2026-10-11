@@ -3661,9 +3661,14 @@ public sealed partial class RespireClient : IRespireClient
                 var connections = await cluster.GetMasterConnectionsAsync(cancellationToken, discovery: null, observation)
                     .ConfigureAwait(false);
                 List<Exception>? failures = null;
+                // Targets continue after a rejection, so a later accepted target must not
+                // replace the failed node. Each target records its node on its own leg.
+                RespireEndpoint? failedEndpoint = null;
+                var failedNodes = 0;
                 foreach (var connection in connections)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
+                    var leg = new RespireTelemetry.FanOutLegObservation(observation);
                     try
                     {
                         var target = connection;
@@ -3672,7 +3677,7 @@ public sealed partial class RespireClient : IRespireClient
                             try
                             {
                                 await SendFireAndForgetOnConnectionAsync(
-                                        operation, target, new MutationCommand<TCommand>(command, mutationFence), cancellationToken, storedProcedureName, observation)
+                                        operation, target, new MutationCommand<TCommand>(command, mutationFence), cancellationToken, storedProcedureName, leg.Observation)
                                     .ConfigureAwait(false);
                                 break;
                             }
@@ -3680,9 +3685,9 @@ public sealed partial class RespireClient : IRespireClient
                             {
                                 cluster.RecordRejection(ref discovery, target, retirement);
                                 // Retry only this rejected target, never a previously accepted send.
-                                observation.Handled(retirement);
+                                leg.Observation.Handled(retirement);
                                 discoveryPending = true;
-                                target = await cluster.GetReplacementConnectionAsync(connection, null, null, cancellationToken, discovery, observation)
+                                target = await cluster.GetReplacementConnectionAsync(connection, null, null, cancellationToken, discovery, leg.Observation)
                                     .ConfigureAwait(false);
                                 discoveryPending = false;
                             }
@@ -3694,13 +3699,18 @@ public sealed partial class RespireClient : IRespireClient
                         // failure before continuing, without classifying application failures.
                         discovery?.RecordCommandFailure(ex, discoveryPending, cancellationToken);
                         discoveryPending = false;
-                        RespireTelemetry.RecordError(ex, internallyHandled: true, observation.Attempts, observation.Endpoint);
+                        var endpoint = leg.LegEndpoint;
+                        RespireTelemetry.RecordError(ex, internallyHandled: true, observation.Attempts, endpoint);
+                        if (failedNodes == 0 || failedEndpoint != endpoint) failedNodes++;
+                        failedEndpoint = endpoint;
                         (failures ??= []).Add(ex);
                     }
                 }
 
                 if (failures is not null)
                 {
+                    // One failed node names the final error; failures on several nodes name none.
+                    observation.UseEndpoint(failedNodes == 1 ? failedEndpoint : null);
                     throw new AggregateException(
                         "One or more Redis Cluster masters did not accept the command.", failures);
                 }
