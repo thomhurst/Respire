@@ -13,14 +13,6 @@ internal abstract partial class PendingResponse
 
         /// <summary>Primitive ownership snapshot while the fixture holds the receive reference.</summary>
         /// <remarks>Prevent reply dequeue and source recycling before inspecting caller consumption.</remarks>
-        internal int ReferenceCount
-        {
-            get
-            {
-                var references = Volatile.Read(ref owner._refs);
-                if (references >= 0) return references;
-                return (Volatile.Read(ref owner._state) & OwnerReleased) != 0 ? 1 : 2;
-            }
-        }
+        internal int ReferenceCount => Volatile.Read(ref owner._refs);
     }
 }

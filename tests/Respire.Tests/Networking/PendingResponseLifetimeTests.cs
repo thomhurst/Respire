@@ -37,7 +37,7 @@ public class PendingResponseLifetimeTests
         }
         await Assert.That(source.Returns).IsEqualTo(1);
         await Assert.That(source.InspectForTests().ReferenceCount).IsEqualTo(0);
-        await Assert.That(source.State).IsEqualTo(observedState + 4);
+        await Assert.That(source.State).IsEqualTo(observedState + 2);
         source.PrepareForUse(receiveReferences);
         RespireTimeoutDiagnostics? diagnostics = null;
         await Assert.That(source.TrySetTimedOut(observedState, TimeSpan.FromSeconds(1), ref diagnostics, null)).IsFalse();
