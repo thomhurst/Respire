@@ -50,6 +50,7 @@ const sidebars = {
         'guides/server-metadata-and-persistence',
         'guides/server-diagnostics',
         'guides/server-node-lifecycle',
+        'guides/sentinel-administration',
         'guides/cluster-inspection',
         'guides/command-logs',
         'guides/hot-keys',

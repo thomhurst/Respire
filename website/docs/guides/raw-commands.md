@@ -13,6 +13,43 @@ extensions.
 See [Dragonfly and KeyDB extensions](server-extensions.md) for vendor command lists,
 version provenance, and rate-limiting/member-expiry examples.
 
+## Finding typed APIs
+
+The audited Redis 8.10 / Valkey 9.1 command families also have typed APIs for the
+operations below. Prefer these APIs for argument validation and owned .NET results;
+use descriptors when you need an option or extension outside the typed surface.
+Each linked guide describes server versions, routing, and result semantics. Redis-only
+commands do not become available on Valkey merely because the client exposes them.
+
+| Operations | Typed API guide |
+| --- | --- |
+| All 18 sparse-array commands, including scans, aggregation, insertion cursors, and ring buffers | [Sparse arrays](../commands/arrays.md) |
+| `INCREX` bounded integer/floating counters; `LCS IDX`, match-length options; `COPY DB` | [Strings and keys](../commands/strings-and-keys.md) |
+| `LMOVEM`/`BLMOVEM`, `SDIFFCARD`/`SUNIONCARD`, conditional `ZADD` and `INCR`, rank with score, field-only `HSCAN` | [Collections and streams](../commands/collections.md) |
+| Connection-local `HIMPORT PREPARE`, `SET`, `DISCARD`, and `DISCARDALL` | [Hash import sessions](hash-import.md) |
+| `XCFGSET`, `XREAD`/`XREADGROUP` count/size limits, multi-stream group reads, `NOACK`, `CLAIM`, pending-idle filters, and claim/recovery options | [Stream reads and recovery](../commands/collections.md#streams) |
+| `TS.NRANGE`, `TS.NREVRANGE`, `TS.QUERYLABELS`, blocking `TS.READ`, and tail following | [TimeSeries](timeseries.md#redis-810-reads) |
+| Search aliases, suggestions, spellcheck, dictionaries, synonyms, tag values, profiling, configuration, query/schema options, hybrid queries, and `COLLECT` | [Search](search.md) |
+| `JSON.MERGE`, `JSON.ARRLEN`, and `JSON.NUMPOWBY` | [JSON](json.md#low-level-commands) |
+| Typed Sentinel queries and administration with separate credentials and TLS | [Sentinel administration](sentinel-administration.md) |
+| Classic Cluster administration, Redis atomic slot migration, and Valkey slot migration/deletion | [Node lifecycle and administration](server-node-lifecycle.md) |
+| ACL, replication, modules, backup, script/function cancellation, and lifecycle operations on an explicit node | [Node lifecycle and administration](server-node-lifecycle.md) |
+| `CLIENT LIST`/`CLIENT KILL` filters and `FLUSHDB`/`FLUSHALL` modes | [Client administration](client-administration.md#filtering-and-closing-clients) and [server flushes](batches-and-transactions.md#deferred-server-flushes) |
+
+Single-command data APIs have batch/transaction counterparts where queuing is supported.
+Blocking reads and list moves use dedicated connections; queued list moves are nonblocking.
+Hash import queues belong to their import session. Explicit-node lifecycle operations are
+immediate-only, and mutations require `AllowAdmin`. Valkey's internal `SYNCSLOTS` protocol
+is intentionally outside the typed request/reply surface; see the
+[migration boundary](server-node-lifecycle.md#valkey-slot-migration-and-deletion).
+
+The [in-memory testing server](in-memory-testing.md#supported-subset) models the new core
+commands for data types it supports, including sparse arrays. It does not emulate every
+module or administration command; use native server fixtures for those operations and
+for version-specific behavior. Dragonfly and KeyDB extension commands remain descriptors.
+
+## Using descriptors
+
 Descriptors expose the canonical command name and the references in which it was found. Their
 command words are encoded once during static initialization, avoiding string splitting and
 temporary token arrays on each execution.

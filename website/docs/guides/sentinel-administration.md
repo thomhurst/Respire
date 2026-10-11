@@ -1,3 +1,8 @@
+---
+title: Typed Sentinel administration
+description: Query and administer one Sentinel directly with typed results, separate credentials, and TLS.
+---
+
 # Typed Sentinel administration
 
 `RespireSentinelClient` connects directly to one Sentinel endpoint. It is independent of
