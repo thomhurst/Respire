@@ -267,7 +267,10 @@ public class GeneratedHashMutationTests
             Protocol = RespProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)],
             Connections = connections,
-            CommandTimeout = TimeSpan.FromMilliseconds(200),
+            // The timeout is client-wide: it also bounds the retry's COMMAND INFO on a fresh
+            // inspection connection, then HSET and HPEXPIRE. 200ms let thread-pool stalls on CI
+            // time out those unsuppressed commands before they were flushed.
+            CommandTimeout = TimeSpan.FromSeconds(1),
         });
         var first = new ExpiringHashModel("x", "name", "old", null);
         var tracker = ExpiringHashModelHashMapper.Track(client, first, RespireHashExpiryMode.HSetThenExpire);
