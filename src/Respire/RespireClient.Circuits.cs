@@ -24,6 +24,25 @@ public sealed partial class RespireClient
         => deadline.IsSet || _core.Options.CommandTimeout is not { } timeout
             ? deadline : CommandDeadline.After(Math.Max(1L, (long)timeout.TotalMilliseconds));
 
+    // Only retirement rejection reaches this helper: no application frame was accepted.
+    // A Sentinel generation cannot reroute inside its retired multiplexer. Select the
+    // freshly validated generation, then let the next dispatch acquire its own circuit.
+    internal bool TryRerouteCircuit(RespireConnection connection, CommandDeadline deadline,
+        out RespireConnection target, out CommandDeadline reroutedDeadline, string? preferredZone)
+    {
+        if (connection.TryReroute(false, deadline, out target, out reroutedDeadline, preferredZone)) return true;
+        if (_core.Sentinel is not null
+            && connection.Multiplexer?.Options.Generation is SentinelRouter.Generation { IsRetired: true }
+            && _core.TryGetReadyPrimaryMultiplexer(out var current)
+            && !ReferenceEquals(current, connection.Multiplexer))
+        {
+            target = preferredZone is null ? current.GetConnection() : current.GetConnectionForZone(preferredZone);
+            reroutedDeadline = connection.GetReroutedCommandDeadline(deadline);
+            return true;
+        }
+        return false;
+    }
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private RespireConnection GetCircuitAwareConnection(RespireConnectionMultiplexer multiplexer, CancellationToken cancellationToken)
         => _core.Circuits is null || _snapshotPrefixedBinaryKeys
@@ -34,10 +53,30 @@ public sealed partial class RespireClient
     {
         while (true)
         {
+            if (_core.Sentinel is not null && _core.TryGetReadyPrimaryMultiplexer(out var current))
+                multiplexer = current;
             var routing = multiplexer.CaptureMovingPublication();
             try { return multiplexer.GetConnection(); }
+            catch (RespireConnectionRetiredException) when (_core.Sentinel is not null
+                && _core.TryGetReadyPrimaryMultiplexer(out var replacement)
+                && !ReferenceEquals(multiplexer, replacement))
+            {
+                multiplexer = replacement;
+                cancellationToken.ThrowIfCancellationRequested();
+            }
             catch (RespireConnectionException error)
             {
+                if (_core.Sentinel is not null && _core.TryGetReadyPrimaryMultiplexer(out var replacement)
+                    && !ReferenceEquals(multiplexer, replacement))
+                {
+                    multiplexer = replacement;
+                    cancellationToken.ThrowIfCancellationRequested();
+                    continue;
+                }
+                // A retired Sentinel generation is a stale route, not endpoint health evidence.
+                // Ready queue selection catches retirement and enters validated discovery.
+                if (multiplexer.Options.Generation is SentinelRouter.Generation { IsRetired: true })
+                    throw new RespireConnectionRetiredException(multiplexer.Host, multiplexer.Port);
                 // A handoff can publish after selection observes the dead source. Retry that
                 // stale selection before rejecting or recording availability for either endpoint.
                 if (!ReferenceEquals(routing.Publication, multiplexer.MovingPublication))
@@ -71,6 +110,7 @@ public sealed partial class RespireClient
         RespireTelemetry.ErrorObservation observation)
         where TCommand : struct, IRespCommand
     {
+        connection.ThrowIfRetired();
         var admission = AcquireCircuit(connection, cancellationToken);
         try
         {
@@ -94,7 +134,7 @@ public sealed partial class RespireClient
         string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken,
         bool sendAsking, CommandDeadline commandDeadline, bool allowStreamingConnectionReroute,
         RespireTelemetry.ErrorObservation observation, RespireTelemetry.OperationScope telemetry = default,
-        string? storedProcedureName = null)
+        string? storedProcedureName = null, Func<CancellationToken, ValueTask<RespireConnection>>? reselect = null)
         where TCommand : struct, IRespCommand
     {
         commandDeadline = CreateCircuitDeadline(commandDeadline);
@@ -117,11 +157,25 @@ public sealed partial class RespireClient
                     break;
                 }
                 catch (RespireConnectionRetiredException error) when (allowStreamingConnectionReroute
-                    && connection.TryReroute(false, commandDeadline, out var target, out var rerouted, GetTransportReadZone(in command)))
+                    && !CursorCommandMetadata.IsServerCursorContinuation(in command)
+                    && TryRerouteCircuit(connection, commandDeadline, out var target, out var rerouted, GetTransportReadZone(in command)))
                 {
                     observation.Handled(error);
                     connection = target;
                     commandDeadline = rerouted;
+                    telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
+                }
+                catch (RespireConnectionRetiredException error) when (reselect is not null
+                    && !cancellationToken.IsCancellationRequested)
+                {
+                    // The caller's routing owns the replacement (for example a read pin). Select once;
+                    // the original deadline and telemetry scope carry over to the replacement.
+                    observation.Handled(error);
+                    var selectReplacement = reselect;
+                    reselect = null;
+                    admission.Dispose();
+                    admission = default;
+                    connection = await selectReplacement(cancellationToken).ConfigureAwait(false);
                     telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
                 }
                 catch (Exception error)
@@ -180,7 +234,9 @@ public sealed partial class RespireClient
                     admission.Success();
                     return response;
                 }
-                catch (RespireConnectionRetiredException error) when (connection.TryReroute(false, commandDeadline,
+                // A cursor continuation is server-local; another generation cannot resume it.
+                catch (RespireConnectionRetiredException error) when (!CursorCommandMetadata.IsServerCursorContinuation(in command)
+                    && TryRerouteCircuit(connection, commandDeadline,
                     out var target, out var rerouted, GetTransportReadZone(in command)))
                 {
                     observation.Handled(error);
@@ -234,36 +290,52 @@ public sealed partial class RespireClient
 #endif
     private async ValueTask<RespValue> SendCircuitTrackedAsync<TCommand>(
         string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken,
-        bool sendAsking, bool track, RespireTelemetry.ErrorObservation observation) where TCommand : struct, IRespCommand
+        bool sendAsking, bool track, RespireTelemetry.ErrorObservation observation,
+        RespireTelemetry.OperationScope telemetry = default) where TCommand : struct, IRespCommand
     {
         var commandDeadline = CreateCircuitDeadline();
-        while (true)
+        RespValue response;
+        try
         {
-            CircuitAdmission admission = default;
-            try
+            while (true)
             {
-                connection.ThrowIfRetired();
-                admission = AcquireCircuit(connection, cancellationToken);
-                var response = await SendTrackedOnConnectionUncheckedAsync(operation, connection, command,
-                    cancellationToken, sendAsking, track, commandDeadline, pinToConnection: true,
-                    observation: observation).ConfigureAwait(false);
-                admission.Success();
-                return response;
+                CircuitAdmission admission = default;
+                try
+                {
+                    connection.ThrowIfRetired();
+                    admission = AcquireCircuit(connection, cancellationToken);
+                    response = await SendTrackedOnConnectionUncheckedAsync(operation, connection, command,
+                        cancellationToken, sendAsking, track, commandDeadline, pinToConnection: true,
+                        observation: observation).ConfigureAwait(false);
+                    admission.Success();
+                    break;
+                }
+                catch (RespireConnectionRetiredException error) when (!CursorCommandMetadata.IsServerCursorContinuation(in command)
+                    && TryRerouteCircuit(connection, commandDeadline,
+                    out var target, out var rerouted, GetTransportReadZone(in command)))
+                {
+                    observation.Handled(error);
+                    connection = target;
+                    commandDeadline = rerouted;
+                    // One logical read owns one scope, attributed to the endpoint that accepts it.
+                    telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
+                }
+                catch (Exception error)
+                {
+                    admission.Failed(error, cancellationToken);
+                    throw;
+                }
+                finally { admission.Dispose(); }
             }
-            catch (RespireConnectionRetiredException error) when (connection.TryReroute(false, commandDeadline,
-                out var target, out var rerouted, GetTransportReadZone(in command)))
-            {
-                observation.Handled(error);
-                connection = target;
-                commandDeadline = rerouted;
-            }
-            catch (Exception error)
-            {
-                admission.Failed(error, cancellationToken);
-                throw;
-            }
-            finally { admission.Dispose(); }
         }
+        catch (Exception error)
+        {
+            telemetry.Complete(_core, operation, error: error, connection: connection);
+            throw;
+        }
+        telemetry.Complete(_core, operation,
+            error: response.IsError ? ResponseReader.ServerError(in response, operation) : null, connection: connection);
+        return response;
     }
 
 #if NET
@@ -274,32 +346,48 @@ public sealed partial class RespireClient
         string? storedProcedureName, RespireTelemetry.ErrorObservation observation) where TCommand : struct, IRespCommand
     {
         var commandDeadline = CreateCircuitDeadline();
-        while (true)
+        // One logical send owns one scope; a handled retirement must not complete it early.
+        var telemetry = RespireTelemetry.IsOperationEnabled(operation)
+            ? RespireTelemetry.StartOperation(operation, connection, _core.Options.Database,
+                storedProcedureName: storedProcedureName)
+            : default;
+        try
         {
-            CircuitAdmission admission = default;
-            try
+            while (true)
             {
-                connection.ThrowIfRetired();
-                admission = AcquireCircuit(connection, cancellationToken);
-                await SendFireAndForgetOnConnectionUncheckedAsync(operation, connection, command, cancellationToken,
-                    storedProcedureName, commandDeadline, pinToConnection: true,
-                    observation: observation).ConfigureAwait(false);
-                // Queue acceptance cannot establish endpoint health without observing its reply.
-                return;
+                CircuitAdmission admission = default;
+                try
+                {
+                    connection.ThrowIfRetired();
+                    admission = AcquireCircuit(connection, cancellationToken);
+                    await connection.SendFireAndForgetAsync(in command, cancellationToken, operation,
+                        capacityDeadline: commandDeadline, preferredZone: GetTransportReadZone(in command),
+                        pinToConnection: true, observation: observation).ConfigureAwait(false);
+                    // Queue acceptance cannot establish endpoint health without observing its reply.
+                    break;
+                }
+                catch (RespireConnectionRetiredException error) when (!CursorCommandMetadata.IsServerCursorContinuation(in command)
+                    && TryRerouteCircuit(connection, commandDeadline,
+                    out var target, out var rerouted, GetTransportReadZone(in command)))
+                {
+                    observation.Handled(error);
+                    connection = target;
+                    commandDeadline = rerouted;
+                    telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
+                }
+                catch (Exception error)
+                {
+                    admission.Failed(error, cancellationToken);
+                    throw;
+                }
+                finally { admission.Dispose(); }
             }
-            catch (RespireConnectionRetiredException error) when (connection.TryReroute(false, commandDeadline,
-                out var target, out var rerouted, GetTransportReadZone(in command)))
-            {
-                observation.Handled(error);
-                connection = target;
-                commandDeadline = rerouted;
-            }
-            catch (Exception error)
-            {
-                admission.Failed(error, cancellationToken);
-                throw;
-            }
-            finally { admission.Dispose(); }
         }
+        catch (Exception error)
+        {
+            telemetry.Complete(_core, operation, storedProcedureName, error, connection);
+            throw;
+        }
+        telemetry.Complete(_core, operation, storedProcedureName, connection: connection);
     }
 }
