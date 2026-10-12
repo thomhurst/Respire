@@ -78,7 +78,8 @@ their contents. `Configure` copies and validates the collections before publishi
 | `PubSub` | `pubsub` | Confirmed publications and received messages |
 | `Streaming` | `streaming` | Stream lag reported explicitly when application processing starts |
 
-`None` suppresses these standard measurements. Existing `respire.*` diagnostics remain
+`None` suppresses these standard measurements and the endpoint circuit counters described below.
+Legacy `respire.*` diagnostics remain
 available independently, including pub/sub gaps, cache invalidations, reconnects, and
 thread-pool health. Filter those instruments in the application's exporter when needed.
 Selecting a group does not invent a measurement that Respire has not implemented.
@@ -169,6 +170,32 @@ dual emission. Update exporter filters and dashboards when upgrading. The broade
 and transitions to or from having no healthy endpoint. Those events are excluded from
 the standardized geographic failover counter. Cache statistics keep their existing
 meaning and are independent of exported metric totals.
+
+### Endpoint circuit metrics
+
+Opt-in [endpoint circuit breakers](../guides/circuit-breakers.md) expose two counters
+through `metrics.AddMeter("Respire")`:
+
+| Instrument | Unit | Attributes and counting |
+| --- | --- | --- |
+| `respire.circuit.transitions` | `{transition}` | One per state change; `respire.circuit.state.from` and `respire.circuit.state.to` use `closed`, `open`, or `half_open` |
+| `respire.circuit.rejections` | `{operation}` | One per rejected admission, including open circuits and exhausted half-open probe capacity |
+
+Both instruments require `RespireMetricGroups.Resiliency` and an enabled listener.
+`RespireMetricGroups.None` suppresses them, unlike legacy `respire.*` diagnostics.
+They carry `redis.client.library`, `db.system.name=redis`, `server.address`, and
+`server.port` when it differs from 6379. Endpoint identities follow the circuit registry;
+there is no separate retained instrument state when idle circuit histories are evicted.
+State values are fixed; keys, payloads, exception messages, and credentials are excluded.
+
+Batch entries acquire independently, so each rejected entry adds one. A transaction
+commit acquires one permit for MULTI/EXEC, so it adds one even if several pending results
+receive the rejection. WATCH setup is a separate admission. Successful admissions never
+add a rejection, but can report a state transition, such as `open` to `half_open` when
+recovery starts. Initial closed-state creation and history eviction add nothing. These counters are
+independent of `redis.client.errors`, which can also count surfaced circuit exceptions.
+Failover-group health probes keep only their existing `respire.failover.*` metrics;
+application commands on circuit-enabled members use the data-endpoint counters.
 
 Respire-specific instruments remain available for hedging, availability zones, thread-pool
 health, coordination, Sentinel recovery, cache invalidation notifications, continuity

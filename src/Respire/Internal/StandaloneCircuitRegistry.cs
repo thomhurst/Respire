@@ -26,19 +26,30 @@ internal sealed class StandaloneCircuitRegistry(RespireCircuitBreakerOptions opt
     internal CircuitAdmission Acquire(RespireEndpoint endpoint, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        Entry entry;
         lock (_gate)
         {
-            if (!_circuits.TryGetValue(endpoint, out var entry))
+            if (!_circuits.TryGetValue(endpoint, out entry!))
             {
-                _circuits.Add(endpoint, entry = new(new(endpoint, options)));
+                _circuits.Add(endpoint, entry = new(new(endpoint, options, reportMetrics: true)));
                 _trimPending = true;
             }
             entry.LastUse = ++_lastUse;
-            if (!entry.Circuit.TryAcquire(out var permit, out var retryAfter))
-                throw new RespireCircuitOpenException(endpoint, retryAfter);
+            // Retain the entry while TryAcquire publishes metrics outside the registry
+            // gate. Listeners can admit work on this registry from any thread.
             entry.ActiveAdmissions++;
             TrimInactive();
+        }
+        try
+        {
+            if (!entry.Circuit.TryAcquire(out var permit, out var retryAfter))
+                throw new RespireCircuitOpenException(endpoint, retryAfter);
             return new(permit, this, entry);
+        }
+        catch
+        {
+            Release(entry);
+            throw;
         }
     }
 

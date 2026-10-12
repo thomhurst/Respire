@@ -205,6 +205,10 @@ internal static partial class RespireTelemetry
         "respire.failover.endpoint.switches", unit: "{switch}", description: "Selected deployment changes in failover groups.");
     private static readonly Counter<long> GeographicFailovers = Meter.CreateCounter<long>(
         "redis.client.geofailover.failovers", "{failover}", "Automatic switches between distinct, known failover deployments.");
+    private static readonly Counter<long> CircuitTransitions = Meter.CreateCounter<long>(
+        "respire.circuit.transitions", "{transition}", "Data-endpoint circuit state changes.");
+    private static readonly Counter<long> CircuitRejections = Meter.CreateCounter<long>(
+        "respire.circuit.rejections", "{operation}", "Data-endpoint circuit admission attempts rejected while open or at probe capacity.");
 
     public static readonly Counter<long> FailoverMonitorErrors = Meter.CreateCounter<long>(
         "respire.failover.monitor.errors", unit: "{error}", description: "Unexpected errors while updating failover health.");
