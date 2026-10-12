@@ -736,10 +736,8 @@ internal static class DynamicCommandRouting
 internal readonly struct CatalogCommand(RespireCommand command, RespireValue[] args,
     RawCommandKeyLayouts.KeyRouting routing = default) : IRespCommand
 {
-    public RespireCommandRetryCategory RetryCategory => !command.HasExplicitRetryCategory
-        && command.RetryCategory != RespireCommandRetryCategory.Never
-        && command.Name == "SET" && args.Length == 2
-        ? RespireCommandRetryCategory.WriteLastWins : command.RetryCategory;
+    // Caller arguments never refine risk; typed commands own option-aware categories.
+    public RespireCommandRetryCategory RetryCategory => command.RetryCategory;
     public int GetWriteSizeHint() => CommandWriteSizeHint.For(command.Verb, args);
     public CancellationToken GetResponseCancellationToken(CancellationToken admissionToken) => admissionToken;
     private readonly ReadCommandKind readKind = command.ReadKind != ReadCommandKind.None

@@ -414,6 +414,36 @@ public class StandaloneCommandRetryTests
     }
 
     [Test]
+    [Arguments(false, 1)]
+    [Arguments(true, 2)]
+    public async Task CatalogSetArgumentsDoNotRefineRiskWithoutDeclaration(bool declared, int expected)
+    {
+        var effects = 0;
+        await using var server = Server();
+        server.ReplyOverride = (_, command) =>
+        {
+            if (command != "SET key value") return Setup(command);
+            return Interlocked.Increment(ref effects) == 1 ? "-TRYAGAIN busy\r\n"u8.ToArray() : FakeRespServer.OkReply;
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server) with
+        { RetryPolicy = new() { InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = RespireCommandRetryCategory.WriteLastWins } });
+        var descriptor = declared
+            ? RespireCommands.String.SET.WithRetryCategory(RespireCommandRetryCategory.WriteLastWins)
+            : RespireCommands.String.SET;
+        RespireValue[] arguments = ["key", "value"];
+        if (declared)
+        {
+            using var result = await client.ExecuteAsync(descriptor, arguments);
+        }
+        else
+        {
+            await Assert.That(async () => { using var result = await client.ExecuteAsync(descriptor, arguments); })
+                .ThrowsExactly<RespireServerException>();
+        }
+        await Assert.That(effects).IsEqualTo(expected);
+    }
+
+    [Test]
     public async Task RawCommandNameDoesNotGrantAuditedReplayPermission()
     {
         var effects = 0;

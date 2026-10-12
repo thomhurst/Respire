@@ -39,6 +39,10 @@ write that the first attempt applied. An overwrite can replace an intervening
 update. Increasing retry risk can repeat effects and cannot recover the original
 reply.
 
+Generated catalog commands, such as `RespireCommands.String.SET`, do not inspect
+their caller arguments. They use the descriptor's category for every argument
+list. To allow a narrower category, declare it with `WithRetryCategory`.
+
 ## Topologies
 
 Standalone and Sentinel clients share the owner that consumes transport write
