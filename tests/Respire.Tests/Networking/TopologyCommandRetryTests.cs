@@ -316,6 +316,113 @@ public class TopologyCommandRetryTests
     }
 
     [Test]
+    public async Task ClusterRetryFollowsFailoverInsteadOfWaitingForTheLostOwner()
+    {
+        // "key" hashes to slot 12539. Its owner stops serving; the survivor then reports that
+        // it owns every slot, as Cluster does after promoting the lost primary's replica.
+        var failedOver = 0;
+        Task? stopping = null;
+        await using var survivor = new FakeRespServer(32, FakeRespServer.OkReply);
+        await using var owner = new FakeRespServer(32, FakeRespServer.OkReply);
+        byte[] Map() => Volatile.Read(ref failedOver) == 0 ? SplitSlots(survivor.Port, owner.Port) : Slots(survivor.Port);
+        survivor.ReplyOverride = (_, command) => command switch
+        {
+            "CLUSTER SLOTS" => Map(),
+            "GET key" => Value,
+            _ => null,
+        };
+        owner.ReplyOverride = (_, command) =>
+        {
+            if (command == "CLUSTER SLOTS") return Map();
+            if (command != "GET key") return null;
+            Volatile.Write(ref failedOver, 1);
+            // Stop listening before the connection drops, so the owner cannot reconnect.
+            stopping = owner.DisposeAsync().AsTask();
+            owner.CloseConnections();
+            return null;
+        };
+        await using var client = await RespireClient.ConnectAsync(ClusterOptions(owner) with
+        {
+            CommandTimeout = TimeSpan.FromSeconds(10),
+            RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero },
+        });
+        var elapsed = Stopwatch.StartNew();
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
+        elapsed.Stop();
+        if (stopping is not null) await stopping;
+        await Assert.That(owner.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
+        await Assert.That(survivor.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
+        // The retry must not hold the lost owner until the logical command deadline.
+        await Assert.That(elapsed.Elapsed).IsLessThan(TimeSpan.FromSeconds(5));
+    }
+
+    [Test]
+    public async Task ClusterRetryWaitsForALoneOwnerThatReconnectsSlowly()
+    {
+        // With no other master, nothing can take the slot over. A reconnect slower than the
+        // refresh window must not turn the retry into "No healthy connections".
+        var reads = 0;
+        await using var server = ClusterNode((command, current) =>
+        {
+            if (command != "GET key") return null;
+            if (Interlocked.Increment(ref reads) > 1) return Value;
+            current.CloseConnections();
+            return null;
+        });
+        await using var client = await RespireClient.ConnectAsync(ClusterOptions(server) with
+        {
+            ReconnectPolicy = new() { InitialDelay = TimeSpan.FromMilliseconds(1500), MaxDelay = TimeSpan.FromMilliseconds(1500), JitterRatio = 0 },
+            RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero },
+        });
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
+        await Assert.That(reads).IsEqualTo(2);
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task ClusterRetryStartsReplacementForDisconnectedRoute(bool clearSlotOwner, bool cancel)
+    {
+        await using var server = ClusterNode((command, _) => command == "GET key" ? Value : null);
+        await using var client = await RespireClient.ConnectAsync(ClusterOptions(server) with { ClientName = "retry-seed" });
+        var router = client.Core.Cluster!;
+        var owner = router.GetKnownSlotOwner(12539)!;
+        var connection = owner.GetConnection();
+        var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        // Hold replacement handshakes so route selection cannot race with a ready seed.
+        server.ReadGate = handshake.Task;
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        try
+        {
+            if (clearSlotOwner) router.ClearSlotOwner(12539, owner);
+            await connection.DisposeAsync();
+            var wait = router.WaitForRouteReplacementAsync(12539, cancellation.Token).AsTask();
+            await Assert.That(wait.IsCompleted).IsFalse();
+            await Assert.That(owner.IsReconnecting).IsTrue();
+            if (cancel)
+            {
+                cancellation.Cancel();
+                var error = await Failure(async () => await wait);
+                await Assert.That(error).IsTypeOf<OperationCanceledException>();
+                await Assert.That(((OperationCanceledException)error).CancellationToken).IsEqualTo(cancellation.Token);
+            }
+            else
+            {
+                handshake.TrySetResult();
+                await wait;
+                await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
+            }
+        }
+        finally
+        {
+            cancellation.Cancel();
+            handshake.TrySetResult();
+        }
+    }
+
+    [Test]
     public async Task FailoverGroupRetryUsesTheNewlyActiveMember()
     {
         var down = 0;
@@ -566,6 +673,10 @@ public class TopologyCommandRetryTests
 
     private static byte[] Slots(int port) => Encoding.ASCII.GetBytes(
         $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{port}\r\n");
+
+    private static byte[] SplitSlots(int lowPort, int highPort) => Encoding.ASCII.GetBytes(
+        $"*2\r\n*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{lowPort}\r\n"
+        + $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{highPort}\r\n");
 
     private static FakeRespServer Primary(Func<string, byte[]?> reply) => new(16, FakeRespServer.OkReply)
     { ReplyOverride = (_, command) => reply(command) ?? (command == "ROLE" ? RoleReply("master") : null) };

@@ -529,17 +529,65 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         return slot is { } affinity ? node.GetConnection(affinity) : node.GetConnection();
     }
 
-    // A logical retry waits for the routed owner's replacement socket, as the standalone owner does,
+    // A logical retry waits briefly for the routed owner's replacement socket, as the standalone owner does,
     // instead of spending its attempt on a lost one. Uninitialized and retired owners stay with discovery.
-    internal async ValueTask WaitForRouteReplacementAsync(int? slot, CancellationToken cancellationToken)
+    internal ValueTask WaitForRouteReplacementAsync(int? slot, CancellationToken cancellationToken)
     {
+        // Normal routing sends a keyless command to any connected master.
+        if (slot is null && TryGetConnectedNode() is not null) return default;
         var node = (slot is { } value ? RoutingSnapshot[value].Primary : null) ?? Volatile.Read(ref _seed);
-        if (node is not { IsInitialized: true, IsRetired: false, IsConnected: false }) return;
-        // An open circuit rejects before the wait, and again at dispatch admission.
+        if (node is not { IsInitialized: true, IsRetired: false, IsConnected: false }) return default;
+        // An open circuit rejects before the wait, and again at dispatch admission. The ignored
+        // permit releases half-open probe capacity without completing the probe or recording a sample.
         _circuits?.Acquire(node.ActiveConnectionEndpoint, cancellationToken).Dispose();
-        try { _ = await node.GetHealthyConnectionAsync(cancellationToken).ConfigureAwait(false); }
-        catch (RespireConnectionRetiredException) { /* Retirement moves selection back to discovery. */ }
+        return WaitForRouteReplacementCoreAsync(slot, node, cancellationToken);
     }
+
+    // The owner's disconnect already requested a topology refresh. Stop waiting when that refresh
+    // moves the route, or when another master can serve a keyless command. After one refresh
+    // spacing window, also stop if another master is known: normal routing then clears a stale
+    // owner and refreshes through it. A lone owner has no alternative, so its retry keeps waiting.
+    private async ValueTask WaitForRouteReplacementCoreAsync(int? slot, RespireConnectionMultiplexer node,
+        CancellationToken cancellationToken)
+    {
+        var started = Stopwatch.GetTimestamp();
+        while (IsRouteReplacementPending(slot, node)
+            && (Stopwatch.GetElapsedTime(started) < RouteReplacementWait || !HasAlternateMaster(node)))
+        {
+            // Probing through GetConnection schedules a reconnect for each lost socket, as
+            // GetHealthyConnectionAsync does. Retirement and an exhausted reconnect policy go to routing.
+            try
+            {
+                _ = node.GetConnection();
+                return;
+            }
+            catch (RespireConnectionException error) when (error is not RespireReconnectLimitException && !node.IsRetired)
+            {
+                // The replacement socket is still connecting.
+            }
+            catch (Exception error) when (error is RespireConnectionException or RespireConnectionRetiredException)
+            {
+                return;
+            }
+            await Task.Delay(RouteReplacementPollInterval, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private const int RouteReplacementPollInterval = 25;
+    private static readonly TimeSpan RouteReplacementWait = ClusterTopologyRefreshScheduler.PrimaryDisconnectSpacing;
+
+    private bool HasAlternateMaster(RespireConnectionMultiplexer node)
+    {
+        foreach (var master in RoutingSnapshot.Masters)
+            if (!ReferenceEquals(master, node) && !master.IsRetired) return true;
+        return false;
+    }
+
+    // An uncovered slot routes through the seed until discovery publishes a new owner.
+    private bool IsRouteReplacementPending(int? slot, RespireConnectionMultiplexer node)
+        => slot is { } value
+            ? ReferenceEquals(RoutingSnapshot[value].Primary ?? Volatile.Read(ref _seed), node)
+            : TryGetConnectedNode() is null;
 
     private static RespireEndpoint Endpoint(RespireConnectionMultiplexer node) => new(node.Host, node.Port);
 
