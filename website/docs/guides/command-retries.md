@@ -641,7 +641,8 @@ one hash slot. It runs on standalone, Sentinel and a single-primary Cluster, eac
 policy, a disabled policy (`MaxAttempts = 1`) and an enabled policy. The enabled policy owns a
 whole-unit retry on every topology, so the enabled rows measure the retry owner's healthy cost.
 The `run-unit-retry-benchmarks` PR label starts two pinned net10.0 MediumRun comparisons with the
-identical fixture and owner/policy retention by stage:
+identical fixture and owner/policy/method retention by stage. Each method verifies and churns
+only its own unit before taking retention snapshots:
 
 - `unit-policies`: 18 cases, current base against the candidate. Compare Default, Disabled and
   Enabled rows within each phase.

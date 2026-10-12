@@ -95,7 +95,7 @@ jobs:
       retry-topologies: true
       retained-memory: true
       retained-memory-stages: before-connect,connected-idle,after-churn,after-dispose
-      retained-memory-dimensions: owner,policy
+      retained-memory-dimensions: owner,policy,method
 
   unit-historical-default:
     if: github.event.label.name == 'run-unit-retry-benchmarks'
@@ -118,4 +118,4 @@ jobs:
       retry-topologies: true
       retained-memory: true
       retained-memory-stages: before-connect,connected-idle,after-churn,after-dispose
-      retained-memory-dimensions: owner,policy
+      retained-memory-dimensions: owner,policy,method

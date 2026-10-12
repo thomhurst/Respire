@@ -13,6 +13,7 @@ namespace Respire.Benchmarks;
 public class UnitRetryBenchmarks
 {
     private RespireClient _client = null!;
+    private string _method = null!;
     private readonly RespireKey _first = "{retry-units}:first";
     private readonly RespireKey _second = "{retry-units}:second";
 
@@ -27,9 +28,15 @@ public class UnitRetryBenchmarks
     public IEnumerable<string> Policies => Environment.GetEnvironmentVariable("RESPIRE_BENCH_DEFAULT_ONLY") == "true"
         ? ["Default"] : ["Default", "Disabled", "Enabled"];
 
-    [GlobalSetup]
-    public async Task Setup()
+    [GlobalSetup(Target = nameof(Batch))]
+    public Task SetupBatch() => Setup(nameof(Batch));
+
+    [GlobalSetup(Target = nameof(Transaction))]
+    public Task SetupTransaction() => Setup(nameof(Transaction));
+
+    private async Task Setup(string method)
     {
+        _method = method;
         ReportMemory("before-connect");
         var host = Environment.GetEnvironmentVariable("REDIS_HOST") ?? "127.0.0.1";
         var port = Owner switch
@@ -103,7 +110,13 @@ public class UnitRetryBenchmarks
 
     private async Task Verify()
     {
-        if (await Batch().ConfigureAwait(false) != 1 || await Transaction().ConfigureAwait(false) != 1)
+        var result = _method switch
+        {
+            nameof(Batch) => await Batch().ConfigureAwait(false),
+            nameof(Transaction) => await Transaction().ConfigureAwait(false),
+            _ => throw new InvalidOperationException("Unknown unit retry benchmark method."),
+        };
+        if (result != 1)
             throw new InvalidOperationException("Unit retry fixture returned an unexpected result.");
     }
 
@@ -125,7 +138,7 @@ public class UnitRetryBenchmarks
         using var process = Process.GetCurrentProcess();
         Console.WriteLine("RECEIVE_MEMORY " + JsonSerializer.Serialize(new
         {
-            stage, owner = Owner, policy = Policy, managedBytes = GC.GetTotalMemory(false),
+            stage, owner = Owner, policy = Policy, method = _method, managedBytes = GC.GetTotalMemory(false),
             pohBytes = info.GenerationInfo[4].SizeAfterBytes,
             pohFragmentedBytes = info.GenerationInfo[4].FragmentationAfterBytes,
             workingSetBytes = process.WorkingSet64,
