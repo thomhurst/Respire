@@ -210,25 +210,13 @@ public readonly struct RespireValue : IEquatable<RespireValue>
                 writer.WriteBulkInteger(_number);
                 break;
             case Kind.UnsignedInteger:
-                // stackalloc-audit[7b127f565a4bf29c]: init: Utf8Formatter.TryFormat writes the ulong digits it reports;
-                // read: only the reported prefix is read; failure: 20 bytes hold any such value, and a false result would report zero bytes.
-                Span<byte> unsignedDigits = stackalloc byte[20];
-                Utf8Formatter.TryFormat(unchecked((ulong)_number), unsignedDigits, out var unsignedWritten);
-                writer.WriteBulkString(unsignedDigits[..unsignedWritten]);
+                writer.WriteBulkUInt64(unchecked((ulong)_number));
                 break;
             case Kind.Single:
-                // stackalloc-audit[7b127f565a4bf29c]: init: Utf8Formatter.TryFormat writes the float digits it reports;
-                // read: only the reported prefix is read; failure: 16 bytes hold any such value, and a false result would report zero bytes.
-                Span<byte> singleDigits = stackalloc byte[16];
-                Utf8Formatter.TryFormat(BitConverter.Int32BitsToSingle((int)_number), singleDigits, out var singleWritten);
-                writer.WriteBulkString(singleDigits[..singleWritten]);
+                writer.WriteBulkSingle(BitConverter.Int32BitsToSingle((int)_number));
                 break;
             case Kind.Double:
-                // stackalloc-audit[7b127f565a4bf29c]: init: Utf8Formatter.TryFormat writes the double digits it reports;
-                // read: only the reported prefix is read; failure: 32 bytes hold any such value, and a false result would report zero bytes.
-                Span<byte> digits = stackalloc byte[32];
-                Utf8Formatter.TryFormat(BitConverter.Int64BitsToDouble(_number), digits, out var written);
-                writer.WriteBulkString(digits[..written]);
+                writer.WriteBulkDouble(BitConverter.Int64BitsToDouble(_number));
                 break;
             case Kind.Boolean:
                 writer.WriteRaw(_number != 0 ? "$1\r\n1\r\n"u8 : "$1\r\n0\r\n"u8);
