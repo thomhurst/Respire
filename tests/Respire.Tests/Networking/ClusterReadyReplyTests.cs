@@ -156,6 +156,37 @@ public class ClusterReadyReplyTests
     }
 
     [Test]
+    public async Task PooledReadyRepliesRecycleAcrossConcurrentRedirects()
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.None });
+        await using var source = Primary();
+        await using var target = Primary();
+        var slot = ClusterHash.GetSlot("ready");
+        var reads = 0;
+        source.ReplyOverride = (_, command) => command switch
+        {
+            "CLUSTER SLOTS" => Slots(source.Port),
+            // ASK leaves the route on the source, so every round mixes direct and replayed replies.
+            "GET ready" => Interlocked.Increment(ref reads) % 2 == 0
+                ? Encoding.ASCII.GetBytes($"-ASK {slot} 127.0.0.1:{target.Port}\r\n")
+                : "$5\r\nvalue\r\n"u8.ToArray(),
+            "PING" => FakeRespServer.PongReply,
+            _ => null,
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(source));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        for (var round = 0; round < 4; round++)
+        {
+            var results = await Task.WhenAll(Enumerable.Range(0, 64)
+                .Select(_ => client.Strings.GetStringAsync("ready", timeout.Token).AsTask()));
+            await Assert.That(results.All(static value => value == "value")).IsTrue();
+        }
+
+        await Assert.That(target.ReceivedCommands.Count(command => command == "GET ready")).IsEqualTo(reads / 2);
+        await Assert.That(client.Core.Cluster!.GetKnownSlotOwner(slot)!.Port).IsEqualTo(source.Port);
+    }
+
+    [Test]
     [Arguments("string")]
     [Arguments("bytes")]
     [Arguments("integer")]
