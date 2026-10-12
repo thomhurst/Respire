@@ -240,7 +240,9 @@ enough to block the unit:
 
 A lost `EXEC` reply counts as a possible execution, not as an abort. A selected queue error,
 such as `LOADING`, makes Redis discard the transaction with `EXECABORT`. The frame was still
-written, so the same category rule applies.
+written, so the same category rule applies. Selected member errors inside an `EXEC` result
+array also retry the complete unit before any member result is published. Other members may
+already have succeeded, so permission for every member remains necessary.
 
 The retry keeps one logical deadline and the caller's token across attempts and backoff.
 Member pendings complete once, from the final attempt. Telemetry reports `attempted` for each
@@ -251,8 +253,9 @@ accepted resend records neither outcome. The category tag names the riskiest mem
 The client never resends these units:
 
 - Watched transactions. Their `WATCH` state belongs to the lost connection.
-  `RunTransactionAsync` can rebuild the whole callback; transient retries there are
-  tracked by [#1525](https://github.com/thomhurst/Respire/issues/1525).
+  `RunTransactionAsync` and `RunTransactionWithReadsAsync` rebuild the whole callback for
+  permitted transient failures, as described in
+  [watched transaction retries](./batches-and-transactions#automatic-watched-transaction-retries).
 - Hash import sessions.
 - Units that hold a server-local cursor continuation.
 - Cluster transactions, tracked by [#1524](https://github.com/thomhurst/Respire/issues/1524).

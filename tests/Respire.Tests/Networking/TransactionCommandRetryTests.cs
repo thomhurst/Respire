@@ -119,6 +119,73 @@ public class TransactionCommandRetryTests
     }
 
     [Test]
+    [Arguments("READONLY", RespireCommandRetryCategory.ReadOnly, 1)]
+    [Arguments("READONLY", RespireCommandRetryCategory.WriteAccumulating, 2)]
+    [Arguments("TRYAGAIN", RespireCommandRetryCategory.WriteAccumulating, 2)]
+    [Arguments("LOADING", RespireCommandRetryCategory.WriteAccumulating, 2)]
+    [Arguments("BUSY", RespireCommandRetryCategory.WriteAccumulating, 1)]
+    public async Task ExecMemberErrorsResendCompleteUnitOnlyWithEveryMembersPermission(
+        string code, RespireCommandRetryCategory maximum, int expectedExecs)
+    {
+        var execs = 0;
+        await using var server = Server(exec: _ => Interlocked.Increment(ref execs) == 1
+            ? System.Text.Encoding.UTF8.GetBytes($"*2\r\n:1\r\n-{code} injected member error\r\n")
+            : "*2\r\n:2\r\n$5\r\nvalue\r\n"u8.ToArray());
+        await using var client = await RespireClient.ConnectAsync(Options(server) with
+        {
+            RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = maximum },
+        });
+        await using var transaction = client.CreateTransaction();
+        var counter = transaction.Increment("counter");
+        var value = transaction.GetString("key");
+        await transaction.CommitAsync();
+
+        await Assert.That(await counter).IsEqualTo((long)expectedExecs);
+        if (expectedExecs == 2) await Assert.That(await value).IsEqualTo("value");
+        else await Assert.That(async () => await value).Throws<RespireServerException>();
+        await Assert.That(execs).IsEqualTo(expectedExecs);
+        await Assert.That(server.ReceivedCommands.Count(command => command == "MULTI")).IsEqualTo(expectedExecs);
+        await Assert.That(server.ReceivedCommands.Count(command => command == "INCR counter")).IsEqualTo(expectedExecs);
+    }
+
+    [Test]
+    public async Task ExhaustedExecMemberErrorsPublishFinalResultsAndExhaustedTelemetry()
+    {
+        var events = new ConcurrentDictionary<string, long>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = static (instrument, meter) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.command.retries")
+                meter.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
+        {
+            foreach (var tag in tags)
+                if (tag.Key == "respire.command.retry.outcome") events.AddOrUpdate((string)tag.Value!, value, (_, old) => old + value);
+        });
+        listener.Start();
+        var execs = 0;
+        await using var server = Server(exec: _ => System.Text.Encoding.UTF8.GetBytes(
+            $"*2\r\n:{Interlocked.Increment(ref execs)}\r\n-TRYAGAIN injected member error\r\n"));
+        await using var client = await RespireClient.ConnectAsync(Options(server) with
+        {
+            RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero,
+                MaxCommandRetryCategory = RespireCommandRetryCategory.WriteAccumulating },
+        });
+        await using var transaction = client.CreateTransaction();
+        var counter = transaction.Increment("counter");
+        var value = transaction.GetString("key");
+        await transaction.CommitAsync();
+
+        await Assert.That(await counter).IsEqualTo(2L);
+        await Assert.That(async () => await value).Throws<RespireServerException>();
+        await Assert.That(execs).IsEqualTo(2);
+        await Assert.That(events.GetValueOrDefault("attempted")).IsEqualTo(1L);
+        await Assert.That(events.GetValueOrDefault("exhausted")).IsEqualTo(1L);
+        await Assert.That(events.ContainsKey("succeeded")).IsFalse();
+    }
+
+    [Test]
     public async Task UnselectedQueueErrorIsNotResent()
     {
         await using var server = Server(

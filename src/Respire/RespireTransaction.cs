@@ -637,20 +637,20 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                     catch (Exception error)
                     {
                         admission.Failed(error, cancellationToken);
-                        if (!retryUnit || !TryGetUnitRetryDelay(error, outcome, out var delay)) throw;
+                        if (!retryUnit || unitAttempts == 0 || !TryGetUnitRetryDelay(error, outcome, out var delay)) throw;
                         observation.Handled(error);
                         retryDelay = delay;
                     }
                     finally { admission.Dispose(); }
-                    if (retryUnit && retryDelay is null && reply.IsError)
+                    Exception? unitResponseError = null;
+                    if (retryUnit && retryDelay is null)
                     {
-                        // A top-level error means EXEC returned no results, but the frame was written.
-                        // The unit's write outcome, not the error kind, decides whether a resend is safe.
-                        var serverError = ResponseReader.ServerError(in reply, "MULTI/EXEC");
-                        if (TryGetUnitRetryDelay(serverError, outcome, out var delay))
+                        // EXEC can contain both successful members and transient errors. Apply the
+                        // whole frame's write evidence and every member's category before publishing any result.
+                        if (TryGetUnitResponseRetryDelay(in reply, outcome, out var delay, out unitResponseError))
                         {
                             reply.Dispose();
-                            observation.Handled(serverError);
+                            observation.Handled(unitResponseError!);
                             retryDelay = delay;
                         }
                     }
@@ -680,7 +680,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                     if (!reply.IsError || cluster is null)
                     {
                         if (retryTelemetry is { AcceptedResends: > 0 })
-                            RespireTelemetry.RecordCommandRetry(_retryCategories.Label, reply.IsError ? "exhausted" : "succeeded");
+                            RespireTelemetry.RecordCommandRetry(_retryCategories.Label, unitResponseError is not null ? "exhausted" : "succeeded");
                         return reply;
                     }
 
@@ -773,6 +773,31 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                 => core.CommandRetries!.TryGetUnitDelay(error, outcome, _retryCategories, unitAttempts,
                     deadline.IsSet ? TimeSpan.FromMilliseconds(deadline.RemainingMilliseconds) : TimeSpan.MaxValue,
                     cancellationToken, out delay);
+
+            bool TryGetUnitResponseRetryDelay(in RespValue reply, CommandWriteOutcome outcome,
+                out TimeSpan delay, out Exception? responseError)
+            {
+                delay = default;
+                responseError = null;
+                if (reply.IsError)
+                {
+                    responseError = ResponseReader.ServerError(in reply, "MULTI/EXEC");
+                    return TryGetUnitRetryDelay(responseError, outcome, out delay);
+                }
+                if (reply.Type != RespDataType.Array) return false;
+                var elements = reply.AsArray();
+                for (var i = 0; i < Math.Min(elements.Length, _ops.Count); i++)
+                {
+                    ref readonly var element = ref elements[i];
+                    if (!element.IsError) continue;
+                    var error = ResponseReader.ServerError(in element, _ops[i].Operation);
+                    responseError ??= error;
+                    if (!TryGetUnitRetryDelay(error, outcome, out delay)) continue;
+                    responseError = error;
+                    return true;
+                }
+                return false;
+            }
         }
     }
 
