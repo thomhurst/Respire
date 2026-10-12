@@ -28,7 +28,8 @@ jobs:
       expected-case-count: 6
       expected-methods: Set10KiB,Set1MiB,Set5MiB,LargeThenSmallPipeline,ConcurrentSmallSetPipelines,SustainedSet5MiB
       improvement-methods: ${{ github.event.label.name == 'run-large-command-original-benchmarks' && 'Set10KiB,Set1MiB,Set5MiB' || '' }}
-      redis-server: true
+      # Each fixture process owns Redis, isolating database and allocator state.
+      redis-server: false
       retained-memory: true
       retained-memory-stages: before-connect,connected-idle,after-sustained,after-dispose
       large-set-stress: true
