@@ -126,20 +126,30 @@ internal sealed class DispatchedWakeEventLog : EventListener
             .OrderBy(e => e.TimestampUtc).ToList();
         var calibration = entries.FirstOrDefault(e => e.Payload.Contains($"MethodName={nameof(CalibrationProbe)} "));
         var offset = TimeSpan.Zero;
+        // The offset is only an estimate, and a measured interval can be shorter than its error
+        // (CI once placed the ordinary interval's own JIT event outside it). Widen the window so an
+        // event inside the interval is never dropped; neighbours may appear at the edges instead.
+        TimeSpan margin;
         var text = new StringBuilder($"measuring OS thread {measuringThread}, listener dispatcher {dispatcher}; ");
-        if (calibration.Name is null) text.Append("clock offset unknown (no calibration JIT event), boundaries uncorrected");
+        if (calibration.Name is null)
+        {
+            margin = TimeSpan.FromMilliseconds(5);
+            text.Append("clock offset unknown (no calibration JIT event), boundaries uncorrected");
+        }
         else
         {
-            offset = calibration.TimestampUtc - (_calibrationBeforeUtc + (_calibrationAfterUtc - _calibrationBeforeUtc) / 2);
+            var halfWidth = (_calibrationAfterUtc - _calibrationBeforeUtc) / 2;
+            offset = calibration.TimestampUtc - (_calibrationBeforeUtc + halfWidth);
+            margin = TimeSpan.FromMilliseconds(Math.Max(1, 4 * halfWidth.TotalMilliseconds));
             text.Append($"event clock offset {offset.TotalMilliseconds:F3} ms "
-                + $"(+/- {(_calibrationAfterUtc - _calibrationBeforeUtc).TotalMilliseconds / 2:F3} ms)");
+                + $"(+/- {halfWidth.TotalMilliseconds:F3} ms)");
         }
-        var from = boundaries.Min(b => b.Utc) + offset;
-        var to = boundaries.Max(b => b.Utc) + offset;
+        var from = boundaries.Min(b => b.Utc) + offset - margin;
+        var to = boundaries.Max(b => b.Utc) + offset + margin;
         var lines = entries.Where(e => e.TimestampUtc >= from && e.TimestampUtc <= to)
             .Select(e => (e.TimestampUtc, Line: $"os={e.OsThreadId}{(e.OsThreadId == measuringThread ? " (measuring)" : "")} {e.Name}{e.Payload}"))
             .ToList();
-        text.Append($"; {lines.Count} events in the interval.");
+        text.Append($"; {lines.Count} events in the interval widened by {margin.TotalMilliseconds:F3} ms each side.");
         var events = 0;
         foreach (var (utc, line) in lines.Concat(boundaries.Select(b => (b.Utc + offset, Line: $"--- {b.Name}")))
                      .OrderBy(l => l.Item1))
