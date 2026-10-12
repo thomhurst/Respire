@@ -6,7 +6,8 @@ namespace Respire.Benchmarks;
 
 internal static class TransportBatchTraceReport
 {
-    internal static void Write(string tracePath, string reportPath)
+    internal static void Write(string tracePath, string reportPath,
+        string providerName = BatchDiagnosticEvents.ProviderName)
     {
         var converted = TraceLog.CreateFromEventPipeDataFile(tracePath);
         using var trace = new TraceLog(converted);
@@ -22,7 +23,7 @@ internal static class TransportBatchTraceReport
         var types = 0;
         foreach (var entry in trace.Events)
         {
-            if (entry.ProviderName == BatchDiagnosticEvents.ProviderName && entry.ID == (Microsoft.Diagnostics.Tracing.TraceEventID)1)
+            if (entry.ProviderName == providerName && entry.ID == (Microsoft.Diagnostics.Tracing.TraceEventID)1)
             {
                 var name = entry.PayloadByName("control").ToString()!;
                 var boundary = entry.PayloadByName("boundary").ToString()!;

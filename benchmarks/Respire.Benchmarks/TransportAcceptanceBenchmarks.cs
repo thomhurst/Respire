@@ -31,6 +31,7 @@ public class TransportAcceptanceBenchmarks
     public int Connections { get; set; }
 
     internal RespireClient DiagnosticClient => _client;
+    internal RespireClient DiagnosticCircuitClient => _circuitClient;
 
     [GlobalSetup]
     public async Task Setup()

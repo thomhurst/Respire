@@ -3,8 +3,10 @@
 Checks diagnostic build provenance without running Redis or allocation tracing.
 #>
 [CmdletBinding()]
-param()
+param([ValidateSet('batch', 'stream')][string]$Kind = 'batch')
 $ErrorActionPreference = 'Stop'
+$captureScript = if ($Kind -eq 'stream') { 'Invoke-TransportStreamDiagnostics.ps1' } else { 'Invoke-TransportBatchDiagnostics.ps1' }
+$captureCount = if ($Kind -eq 'stream') { 24 } else { 16 }
 $fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ('respire-diagnostic-test-' + [Guid]::NewGuid())
 $previousMetrics = $env:RESPIRE_BENCH_ERRORS
 try {
@@ -13,7 +15,7 @@ try {
         $scripts = Join-Path $fixture 'scripts'
         $source = Join-Path $fixture 'benchmarks/Respire.Benchmarks'
         New-Item -ItemType Directory -Path $scripts, $source -Force | Out-Null
-        Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Invoke-TransportBatchDiagnostics.ps1') -Destination $scripts
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot $captureScript) -Destination $scripts
         Set-Content -LiteralPath (Join-Path $source 'Respire.Benchmarks.csproj') -Value '<Project />'
         Set-Content -LiteralPath (Join-Path $fixture '.gitignore') -Value 'bin/'
         Set-Content -LiteralPath (Join-Path $fixture 'global.json') -Value '{}'
@@ -46,7 +48,7 @@ else {
     if ((Get-Content -LiteralPath $DotNetArguments[0] -Raw).Trim() -ne $revision) {
         throw 'Capture used a stale assembly.'
     }
-    if ($DotNetArguments[1] -eq '--transport-batch-diagnostics' -and $DotNetArguments[3] -ne $revision) {
+    if ($DotNetArguments[1] -like '--transport-*-diagnostics' -and $DotNetArguments[3] -ne $revision) {
         throw 'Capture used a stale revision.'
     }
     Add-Content -LiteralPath (Join-Path $repo 'captures.log') -Value $DotNetArguments[1]
@@ -69,7 +71,7 @@ exit 0
         $env:RESPIRE_BENCH_ERRORS = 'original'
         $failure = $null
         try {
-            & (Join-Path $scripts 'Invoke-TransportBatchDiagnostics.ps1') -Framework $framework -OutputDirectory (Join-Path $fixture 'output')
+            & (Join-Path $scripts $captureScript) -Framework $framework -OutputDirectory (Join-Path $fixture 'output')
         }
         catch { $failure = $_.Exception.Message }
         $expected = switch ($case) {
@@ -88,9 +90,9 @@ exit 0
         }
         else {
             $captures = @(Get-Content -LiteralPath $captureLog)
-            if (@($captures | Where-Object { $_ -eq '--transport-batch-diagnostics' }).Count -ne 16 -or
-                @($captures | Where-Object { $_ -eq '--transport-batch-trace-report' }).Count -ne 16) {
-                throw "${case}: expected 16 captures and 16 conversions."
+            if (@($captures | Where-Object { $_ -eq "--transport-$Kind-diagnostics" }).Count -ne $captureCount -or
+                @($captures | Where-Object { $_ -eq "--transport-$Kind-trace-report" }).Count -ne $captureCount) {
+                throw "${case}: expected $captureCount captures and $captureCount conversions."
             }
         }
         if ($env:RESPIRE_BENCH_ERRORS -ne 'original') { throw "${case}: metric environment was not restored." }
