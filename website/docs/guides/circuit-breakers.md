@@ -199,6 +199,35 @@ metrics only. It does not emit these data-endpoint counters. A failover member's
 application commands can emit them when its own `CircuitBreaker` option is enabled.
 See [observability](../integrations/observability.md#endpoint-circuit-metrics) for subscription details.
 
+## Retries
+
+`RetryPolicy` and `CircuitBreaker` compose. A circuit rejection is never a retryable failure, even
+though `RespireCircuitOpenException.IsCommandNotSubmitted` is true: the rejected command was not
+written, but the endpoint is unhealthy. `RetryAfter` is a snapshot, not permission to resend.
+Every attempt acquires its own admission immediately before dispatch.
+
+- **Same endpoint.** When an attempt's failure opens its endpoint's circuit, the retry is rejected
+  before it waits for a replacement connection or sends anything. The same applies when every
+  half-open probe slot is taken, including by the failed attempt's own successful probe; that
+  rejection has a null `RetryAfter`. Immediate commands, batches and transactions all stop there.
+  A batch faults every pending with the rejection, and a transaction sends neither `MULTI` nor `EXEC`.
+- **Another endpoint.** A retry that reaches a different endpoint acquires fresh admission on it.
+  A Sentinel retry after a connection loss discovers the replacement primary, whose circuit is
+  independent of the failed one. A failover-group retry runs on the newly active member and is
+  admitted by that member's circuit. A Cluster `MOVED` or `ASK` target, including one reached
+  during a retry, is admitted before the command or `ASKING` is sent; an open target rejects with
+  its own `Endpoint`.
+- **Cluster slot owners.** When a disconnected slot owner's circuit is open and other masters are
+  known, the retry asks those masters for the slot's current owner instead of contacting the open
+  node. If the slot moved, the new owner admits the retry. If the refresh still names the open
+  owner, or finds no owner, the retry is rejected without connecting to it. A lone owner is rejected
+  immediately.
+
+Retry metrics never count a circuit rejection as a retry. A resend that is rejected by circuit
+admission records no `attempted`, `succeeded` or `exhausted` measurement on any retry owner, and
+the operation ends with the rejection. Circuit rejection metrics still record each rejected admission.
+Disabled retries and a null `CircuitBreaker` keep their existing dispatch paths.
+
 ## Current scope
 
 This option covers standalone and Sentinel immediate typed, raw, interpolated, fire-and-forget, cache-miss,
@@ -223,6 +252,5 @@ Scan cursor pages, WATCH state, import sessions, and durability acknowledgements
 They cannot move to another primary to bypass circuit rejection or retirement.
 
 Configuration with standalone replica endpoints is rejected. This option does not change
-`RespireFailoverGroup` probe/failback behavior. The wider
-[resilience work](https://github.com/thomhurst/Respire/issues/863) remains open for
-[retry composition](https://github.com/thomhurst/Respire/issues/1256).
+`RespireFailoverGroup` probe/failback behavior. Composition with the
+[command retry policy](./command-retries) is described in [Retries](#retries).

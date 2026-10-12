@@ -12,7 +12,8 @@ namespace Respire.Internal;
 /// therefore treated as a possible execution, so only the category permission can admit another
 /// attempt. One deadline and cancellation budget span every attempt, route selection and backoff.
 /// Each attempt reads its route again; a retry never reuses a circuit-rejected endpoint, because
-/// circuit rejection is never a selected failure.
+/// circuit rejection is never a selected failure. A resend that ends in circuit rejection sent
+/// nothing the policy can observe, so it is not reported as an attempted retry.
 /// </remarks>
 internal static class LogicalCommandRetry
 {
@@ -59,20 +60,20 @@ internal static class LogicalCommandRetry
                 try
                 {
                     var result = await send(state, new Attempt(attempt, token, deadline)).ConfigureAwait(false);
+                    RecordAttempted(category, attempt, ref retries);
                     if (retries != 0) RespireTelemetry.RecordCommandRetry(category, "succeeded");
                     return result;
                 }
                 catch (Exception error)
                 {
+                    // Circuit rejection is never a selected failure, so it always ends the operation.
+                    if (error is not RespireCircuitOpenException) RecordAttempted(category, attempt, ref retries);
                     var remaining = deadline.IsSet ? TimeSpan.FromMilliseconds(deadline.RemainingMilliseconds) : TimeSpan.MaxValue;
                     if (!policy.TryGetDelay(error, CommandWriteOutcome.Unknown, category, attempt, remaining, token, out var delay))
                         throw;
                     observation.Handled(error);
                     if (delay != TimeSpan.Zero) await Task.Delay(delay, token).ConfigureAwait(false);
                     ThrowIfStopped(operation, commandTimeout, token, deadline);
-                    retries++;
-                    // Without transport evidence, a started resend is the attempted retry.
-                    RespireTelemetry.RecordCommandRetry(category, "attempted");
                 }
             }
         }
@@ -94,6 +95,16 @@ internal static class LogicalCommandRetry
             if (finalError is not null && retries != 0)
                 RespireTelemetry.RecordCommandRetry(category, "exhausted");
         }
+    }
+
+    // Without transport evidence, a resend that was not rejected by circuit admission is the
+    // attempted retry. It is recorded once the resend finishes, so a circuit rejection on the
+    // route the retry selected cannot be reported as another attempt.
+    private static void RecordAttempted(RespireCommandRetryCategory category, int attempt, ref int retries)
+    {
+        if (attempt == 1) return;
+        retries++;
+        RespireTelemetry.RecordCommandRetry(category, "attempted");
     }
 
     private static void ThrowIfStopped(string operation, TimeSpan? commandTimeout, CancellationToken token, CommandDeadline deadline)

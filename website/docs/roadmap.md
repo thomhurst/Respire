@@ -32,8 +32,9 @@ Server and protocol requirements vary by feature; each linked guide describes it
   member-local maintenance handoffs and bounded pauses in health failure counting.
 - [Opt-in endpoint circuit breakers](guides/circuit-breakers.md) reject standalone, Sentinel and Cluster
   immediate, batch, and transaction commands during endpoint failures, with independent data-endpoint
-  histories, bounded half-open probes, and transition/rejection metrics. Remaining resilience integration stays
-  tracked by [the circuit breaker issue](https://github.com/thomhurst/Respire/issues/863).
+  histories, bounded half-open probes, and transition/rejection metrics. They
+  [compose with command retries](guides/circuit-breakers.md#retries): an open endpoint is never retried,
+  while a retry that moves to another endpoint acquires fresh admission there.
 - [Renewable credentials](guides/renewable-credentials.md), independent Sentinel authentication,
   and [Azure Managed Redis](guides/azure-managed-redis.md) / [AWS IAM](guides/aws-iam-credentials.md) adapters.
 
@@ -157,7 +158,7 @@ acceptance criteria, dependencies, and current status:
   [#1216](https://github.com/thomhurst/Respire/issues/1216) open: real Redis and lifetime coverage
   ([#1537](https://github.com/thomhurst/Respire/issues/1537)), a Cluster replica cursor-affinity defect
   ([#1536](https://github.com/thomhurst/Respire/issues/1536)) and the healthy-path unit comparisons are
-  unmet. The full circuit composition remains in [#1256](https://github.com/thomhurst/Respire/issues/1256).
+  unmet. Retries [compose with endpoint circuit breakers](guides/circuit-breakers.md#retries).
   [#1499](https://github.com/thomhurst/Respire/issues/1499) and
   [#1215](https://github.com/thomhurst/Respire/issues/1215) are closed, but their performance gaps below
   are still unmet. Public fault tests include discovery,

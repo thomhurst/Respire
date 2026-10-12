@@ -539,8 +539,28 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         if (node is not { IsInitialized: true, IsRetired: false, IsConnected: false }) return default;
         // An open circuit rejects before the wait, and again at dispatch admission. The ignored
         // permit releases half-open probe capacity without completing the probe or recording a sample.
-        _circuits?.Acquire(node.ActiveConnectionEndpoint, cancellationToken).Dispose();
+        if (_circuits is not null)
+        {
+            try { _circuits.Acquire(node.ActiveConnectionEndpoint, cancellationToken).Dispose(); }
+            catch (RespireCircuitOpenException) when (slot is { } owned && HasAlternateMaster(node))
+            {
+                // The open owner is never retried, but another master can report that the slot
+                // moved to a healthy node. Dispatch then acquires fresh admission on that owner.
+                return RefreshRouteAfterCircuitRejectionAsync(owned, node, cancellationToken);
+            }
+        }
         return WaitForRouteReplacementCoreAsync(slot, node, cancellationToken);
+    }
+
+    // Asks the other known masters for the slot's owner without contacting the rejected node, as
+    // ordinary routing does after a failed owner. A refresh that still names the open owner
+    // rejects there again, before connecting or sending; so does a refresh that finds no owner.
+    private async ValueTask RefreshRouteAfterCircuitRejectionAsync(int slot, RespireConnectionMultiplexer node,
+        CancellationToken cancellationToken)
+    {
+        if (await TryRefreshSlotThroughKnownMastersAsync(slot, node, cancellationToken, discovery: null).ConfigureAwait(false) is not null)
+            return;
+        _circuits!.Acquire(node.ActiveConnectionEndpoint, cancellationToken).Dispose();
     }
 
     // The owner's disconnect already requested a topology refresh. Stop waiting when that refresh
