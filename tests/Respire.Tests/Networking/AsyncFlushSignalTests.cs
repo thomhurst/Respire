@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Text;
 using Respire.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -214,6 +216,26 @@ public class AsyncFlushSignalTests
         await RunProbeAsync(start, TimeSpan.FromSeconds(30));
     }
 
+    // A nonzero sample must explain itself: the report control injects one escaping allocation
+    // at a known wake and checks that the failure names that wake, re-measures and lists runtime events.
+    [Test, ParallelLimiter<ChildProcessProbes>]
+    public async Task DispatchedWakeFailureReportsAllocatingWakeAndRuntimeEvents()
+    {
+        var start = CreateProbeStartInfo(Environment.ProcessPath,
+            Environment.GetEnvironmentVariable("DOTNET_HOST_PATH"), typeof(AsyncFlushSignalTests).Assembly.Location);
+        start.Environment[AllocationProbeMode] = "report-control";
+        start.Environment[AllocationProbeRuntime] = Environment.Version.ToString();
+        var error = await Assert.That(() => RunProbeAsync(start, TimeSpan.FromSeconds(60)))
+            .Throws<InvalidOperationException>();
+        await Assert.That(error!.Message).Contains("Expected zero wake allocations");
+        await Assert.That(error.Message).Contains($"1 of {Wakes} wakes allocated");
+        await Assert.That(error.Message).Contains($"wake {ReportControlWake}: +");
+        await Assert.That(error.Message).Contains($"Re-measured sample {Remeasurements}/{Remeasurements} (not clean)");
+        await Assert.That(error.Message).Contains("Runtime events in the failing interval:");
+        await Assert.That(error.Message).Contains("(measuring) MethodJittingStarted");
+        await Assert.That(error.Message).Contains($"MethodName={nameof(ReportControlAllocation)} ");
+    }
+
     internal static ProcessStartInfo CreateProbeStartInfo(string? processPath, string? dotnetHostPath, string assemblyPath)
     {
         var processName = Path.GetFileName(processPath);
@@ -346,7 +368,7 @@ public class AsyncFlushSignalTests
             if (mode == "timeout-control") Thread.Sleep(Timeout.Infinite);
             return 17;
         }
-        if (mode is not ("pool" or "dedicated")) return null;
+        if (mode is not ("pool" or "dedicated" or "report-control")) return null;
         try
         {
             var expectedRuntime = Environment.GetEnvironmentVariable(AllocationProbeRuntime);
@@ -356,6 +378,10 @@ public class AsyncFlushSignalTests
             ThreadPool.GetMaxThreads(out _, out var maxIo);
             if (!ThreadPool.SetMinThreads(2, minIo) || !ThreadPool.SetMaxThreads(2, maxIo))
                 throw new InvalidOperationException("Could not configure the isolated two-worker pool.");
+            s_reportControl = mode == "report-control";
+
+            // Started before the pool warms, so its dispatcher thread exists before measurement.
+            using var events = new DispatchedWakeEventLog();
 
             // Occupy both workers together so capacity is established before any measurement.
             using var entered = new CountdownEvent(2);
@@ -378,46 +404,112 @@ public class AsyncFlushSignalTests
                 if (!finished.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Workers did not finish warming.");
             }
 
-            MeasureSteadyState();
-            if (mode == "pool") Task.Run(MeasureSteadyState).GetAwaiter().GetResult();
+            MeasureSteadyState(events);
+            if (mode == "pool") Task.Run(() => MeasureSteadyState(events)).GetAwaiter().GetResult();
             return 0;
         }
         catch (Exception error) { Console.Error.WriteLine(error); return 1; }
     }
 
-    private static void MeasureSteadyState()
+    // After warmup, the report control injects one escaping allocation at this wake of the ordinary
+    // path. Its first call JITs inside the measured interval, which the runtime event log must show.
+    private const int ReportControlWake = 57;
+    private const int Remeasurements = 8;
+    private static bool s_reportControl;
+    private static int s_allocateAtWake = -1;
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static byte[] ReportControlAllocation() => new byte[37];
+
+    private static void MeasureSteadyState(DispatchedWakeEventLog events)
     {
         var waiter = new ParkedWaiter();
-        for (var i = 0; i < 20; i++) { Measure(waiter, false); Measure(waiter, true); }
-        var measured = AllocationMeasurement.WithoutConcurrentGc(() =>
-        {
-            var gen0 = GC.CollectionCount(0);
-            var gen1 = GC.CollectionCount(1);
-            var gen2 = GC.CollectionCount(2);
-            var workers = ThreadPool.ThreadCount;
-            var bytes = Measure(waiter, false);
-            var control = Measure(waiter, true);
-            return (Bytes: bytes, Control: control, WorkersBefore: workers, WorkersAfter: ThreadPool.ThreadCount,
-                Gen0: GC.CollectionCount(0) - gen0, Gen1: GC.CollectionCount(1) - gen1, Gen2: GC.CollectionCount(2) - gen2);
-        });
+        var ordinary = new WakeTrace(Wakes);
+        var control = new WakeTrace(Wakes);
+        for (var i = 0; i < 20; i++) { Measure(waiter, false, ordinary); Measure(waiter, true, control); }
+        if (s_reportControl) s_allocateAtWake = ReportControlWake;
+        var measuringThread = events.MarkMeasuringThread();
+        var measured = AllocationMeasurement.WithoutConcurrentGc(() => MeasurePair(waiter, ordinary, control));
         Console.WriteLine($"poolProducer={Thread.CurrentThread.IsThreadPoolThread}; {measured}");
-        if (measured.Bytes != 0 || measured.Control < 37L * Wakes
-            || measured.WorkersBefore != 2 || measured.WorkersAfter != 2
-            || measured.Gen0 != 0 || measured.Gen1 != 0 || measured.Gen2 != 0)
+        if (!IsClean(measured))
             throw new InvalidOperationException($"Expected zero wake allocations, a positive allocation control, "
-                + $"two existing workers and no collections; observed {measured}.");
+                + $"two existing workers and no collections; observed {measured}."
+                + DescribeFailure(events, waiter, ordinary, control, measuringThread));
+    }
+
+    private static bool IsClean(WakeSample measured) =>
+        measured.Bytes == 0 && measured.Control >= 37L * Wakes
+        && measured.WorkersBefore == 2 && measured.WorkersAfter == 2
+        && measured.Gen0 == 0 && measured.Gen1 == 0 && measured.Gen2 == 0;
+
+    private static WakeSample MeasurePair(ParkedWaiter waiter, WakeTrace ordinary, WakeTrace control)
+    {
+        var gen0 = GC.CollectionCount(0);
+        var gen1 = GC.CollectionCount(1);
+        var gen2 = GC.CollectionCount(2);
+        var workers = ThreadPool.ThreadCount;
+        var completed = ThreadPool.CompletedWorkItemCount;
+        var bytes = Measure(waiter, false, ordinary);
+        var controlBytes = Measure(waiter, true, control);
+        return new WakeSample(bytes, controlBytes, workers, ThreadPool.ThreadCount,
+            GC.CollectionCount(0) - gen0, GC.CollectionCount(1) - gen1, GC.CollectionCount(2) - gen2,
+            ThreadPool.CompletedWorkItemCount - completed, ThreadPool.PendingWorkItemCount);
+    }
+
+    // Runs only after a failed sample, which already decides the outcome. It reports where the
+    // failing interval allocated, the runtime events around it, and whether fresh samples repeat it.
+    private static string DescribeFailure(DispatchedWakeEventLog events, ParkedWaiter waiter,
+        WakeTrace ordinary, WakeTrace control, long measuringThread)
+    {
+        var nl = Environment.NewLine;
+        var report = new StringBuilder($"{nl}Failing interval on runtime {Environment.Version}, "
+            + $"{RuntimeInformation.OSDescription}, {Environment.ProcessorCount} CPUs, "
+            + $"managed thread {Environment.CurrentManagedThreadId}, pool thread {Thread.CurrentThread.IsThreadPoolThread}:");
+        report.Append($"{nl}  ordinary: {ordinary.Describe()}{nl}  control: {control.Describe(maxWakes: 2)}");
+        (string, DateTime)[] boundaries =
+        [
+            ("ordinary interval starts", ordinary.StartedUtc), ("ordinary interval ends", ordinary.EndedUtc),
+            ("control interval starts", control.StartedUtc), ("control interval ends", control.EndedUtc),
+        ];
+        for (var sample = 1; sample <= Remeasurements; sample++)
+        {
+            // A diagnostic failure must not replace the original failing sample's message.
+            try
+            {
+                var measured = AllocationMeasurement.WithoutConcurrentGc(() => MeasurePair(waiter, ordinary, control));
+                report.Append($"{nl}Re-measured sample {sample}/{Remeasurements} ({(IsClean(measured) ? "clean" : "not clean")}): "
+                    + $"{measured}{nl}  ordinary: {ordinary.Describe(maxWakes: 4)}");
+            }
+            catch (Exception error)
+            {
+                report.Append($"{nl}Re-measured sample {sample}/{Remeasurements} failed: {error.GetType().Name}: {error.Message}");
+            }
+        }
+        events.WaitForDispatch();
+        report.Append($"{nl}Runtime events in the failing interval: {events.Describe(measuringThread, 60, boundaries)}");
+        return report.ToString();
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static long Measure(ParkedWaiter waiter, bool control)
+    private static long Measure(ParkedWaiter waiter, bool control, WakeTrace trace)
     {
+        var allocated = trace.AllocatedAfterWake;
+        var workers = trace.WorkersAfterWake;
+        var allocateAt = s_allocateAtWake;
+        trace.StartedUtc = DateTime.UtcNow;
         var start = GC.GetAllocatedBytesForCurrentThread();
         for (var i = 0; i < Wakes; i++)
         {
             waiter.ParkThenWake();
             if (control) GC.KeepAlive(new byte[37]);
+            else if (i == allocateAt) GC.KeepAlive(ReportControlAllocation());
+            // Per-wake readings go to preallocated arrays, so they add no bytes to the interval.
+            allocated[i] = GC.GetAllocatedBytesForCurrentThread() - start;
+            workers[i] = ThreadPool.ThreadCount;
         }
-        return GC.GetAllocatedBytesForCurrentThread() - start;
+        var bytes = GC.GetAllocatedBytesForCurrentThread() - start;
+        trace.EndedUtc = DateTime.UtcNow;
+        return bytes;
     }
 
     /// <summary>Parks a continuation on the signal, as the flush loop does, and wakes it from the pool.</summary>

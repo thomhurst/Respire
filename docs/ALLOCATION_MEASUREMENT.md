@@ -177,6 +177,37 @@ workers. Post-kill process waits and pipe cleanup retain separate five-second bo
 Preserve the environment and child coverage configuration when running this control
 under a coverage collector.
 
+### Failure report
+
+Issue [#937](https://github.com/thomhurst/Respire/issues/937) records one net8.0 CI
+failure of 272 bytes, from before the child process existed. That is exactly twice the
+136 bytes one worker start allocated in #1067's controlled pool-growth probe, so it fits
+two worker starts in the shared pool. No allocation stack was kept, so this is a
+consistent explanation, not a proven one. A later investigation could not reproduce it in
+full Linux suite runs, and in-process `EventListener` sessions do not receive per-object
+allocation events (`GCSampledObjectAllocationHigh` takes effect only at runtime startup).
+
+So each measured interval now carries its own evidence:
+
+- `Measure` writes the thread's cumulative allocated bytes and `ThreadPool.ThreadCount`
+  after every wake into preallocated arrays, and records the interval's start and end
+  time. The writes allocate nothing, and the counted work is unchanged.
+- The child runs a `DispatchedWakeEventLog` listener on `Microsoft-Windows-DotNETRuntime`
+  (GC, loader, JIT, exception and threading keywords). Native runtime events reach it on
+  its own dispatcher thread, so the measured thread does not allocate for them. A
+  first-call JIT event at startup calibrates the offset between event timestamps and
+  `DateTime.UtcNow`.
+
+When a sample fails, the exception message lists which wakes allocated and how much, the
+worker count after each one, completed and pending pool work items, the runtime events
+inside the failing interval (marked when they ran on the measuring thread), and eight
+fresh samples that show whether the delta repeats. The failing sample still decides the
+result. Nothing is retried, discarded or tolerated.
+`DispatchedWakeFailureReportsAllocatingWakeAndRuntimeEvents` checks the report: it adds
+one escaping allocation, through a method that is first JIT-compiled inside the interval,
+at wake 57 of the ordinary path. The report must name that wake and the JIT event on the
+measuring thread.
+
 ## Unknown-slot Cluster replica discovery
 
 `ClusterReplicaDiscoveryTests` compares the previous per-slot
