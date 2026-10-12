@@ -111,6 +111,8 @@ internal static class TransportBatchDiagnostics
                 }
                 await ObserveAsync("idle-after", iterations, observations,
                     async () => { await Task.Delay(250).ConfigureAwait(false); return 0; }).ConfigureAwait(false);
+                await ObserveAsync("background-positive", 128, observations,
+                    () => Task.Run(AllocateBackgroundControl)).ConfigureAwait(false);
                 BatchDiagnosticEvents.Log.Boundary("ready", "stop");
             }
             finally
@@ -146,6 +148,15 @@ internal static class TransportBatchDiagnostics
         var processBytes = GC.GetTotalAllocatedBytes(precise: true) - before;
         BatchDiagnosticEvents.Log.Boundary(name, "stop");
         observations.Add(new { control = name, operations, incompleteAtCall, processBytes, elapsedMilliseconds = elapsed });
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static int AllocateBackgroundControl()
+    {
+        // A known worker allocation calibrates process-wide capture independently
+        // of all batch activity. Its stack must never be called a transport cost.
+        for (var i = 0; i < 128; i++) GC.KeepAlive(new byte[64 * 1024]);
+        return 0;
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]

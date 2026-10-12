@@ -517,6 +517,7 @@ allocation timestamps, thread IDs, sampled types, object sizes and resolved stac
 | `gated-pool-demand` | Construct outside the boundary, then hold 128 batch executions concurrently | Require simultaneously live completion/builder state; observe pool-growth allocations independently of construction. At most 12,800 commands fit the unchanged default 16,384-command limit |
 | `gated-direct` / `gated-task` | Hold replies for each batch, then release and consume execution and pending results | Distinguish direct execution from an added Task wrapper under a forced reply suspension |
 | `idle-before` / `idle-after` | Keep the original fixture connected for 250 ms without batch traffic | Expose sampled background/collector activity; absence of a sample does not prove zero background allocation |
+| `background-positive` | Queue 128 escaping 64 KiB arrays on a worker without batch traffic | Calibrate process-wide capture with a known allocation type and distinct worker stack, without assigning that work to transport |
 
 The socket gate forwards real writes unchanged and holds bytes after the socket
 read, before the RESP parser. Its own TaskCompletionSource, linked cancellation,
