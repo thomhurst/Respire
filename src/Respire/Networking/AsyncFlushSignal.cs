@@ -28,6 +28,7 @@ internal sealed class AsyncFlushSignal : IValueTaskSource, IThreadPoolWorkItem
 
     // Read-only diagnostic seam; observing it adds no work to the signaling path.
     internal bool IsWaiting => Volatile.Read(ref _state) == Waiting;
+    internal bool IsSignaled => Volatile.Read(ref _state) == Signaled;
 
     /// <summary>Single consumer only.</summary>
     public ValueTask WaitAsync()

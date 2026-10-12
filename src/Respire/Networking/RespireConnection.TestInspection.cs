@@ -10,6 +10,8 @@ internal sealed partial class RespireConnection
         /// <summary>Borrowed ring. Arrange quiescent admission and reply consumption before inspecting slots.</summary>
         /// <remarks>This does not acquire a source reference or transfer enqueue/dequeue ownership.</remarks>
         internal InflightRing Inflight => owner._inflight;
+        /// <summary>Snapshot of an unconsumed flush wake. Read only while a controlled send is parked.</summary>
+        internal bool FlushSignalPending => owner._flushSignal.IsSignaled;
 #if DEBUG
         /// <summary>Primitive copy; inspect only while the controlled receive stream is parked.</summary>
         internal int ResumedScalarCount => owner._resumedScalarCountForTests;

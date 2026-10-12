@@ -1,3 +1,4 @@
+using System.Threading.Channels;
 using Respire.Commands;
 using Respire.Networking;
 using Respire.Protocol;
@@ -67,6 +68,99 @@ public class FlushWakeTests
             if (!release.Wait(TimeSpan.FromSeconds(15))) throw new TimeoutException("Producer was not released.");
             return admissionToken;
         }
+    }
+
+    [Test]
+    public async Task CommandWrittenDuringASendIsFlushedByTheLoopsRecheck()
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var stream = new HeldWriteStream();
+        await using var connection = await RespireConnection.ConnectAsync("scripted", 6379,
+            new RespireConnectionOptions
+            {
+                Protocol = RespProtocol.Resp2,
+                TestingStreamFactory = (_, _, _) => ValueTask.FromResult<Stream>(stream),
+            });
+        var first = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame), deadline.Token).AsTask();
+        await stream.FirstWriteStarted.WaitAsync(deadline.Token);
+
+        // The flush loop is parked inside the first send. This append is covered by the
+        // loop's re-check after that send, so it leaves no wake behind.
+        var second = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame), deadline.Token).AsTask();
+        await Assert.That(connection.InspectForTests().FlushSignalPending).IsFalse();
+        await Assert.That(connection.IsFlushLoopWaiting).IsFalse();
+        await Assert.That(stream.WrittenBytes).IsEqualTo(FakeRespServer.PingFrame.Length);
+
+        // No other producer runs: only the re-check can send the second command.
+        stream.ReleaseFirstWrite();
+        await stream.WaitForWrittenAsync(2 * FakeRespServer.PingFrame.Length, deadline.Token);
+        stream.Publish([.. FakeRespServer.PongReply, .. FakeRespServer.PongReply]);
+        using var firstReply = await first.WaitAsync(deadline.Token);
+        using var secondReply = await second.WaitAsync(deadline.Token);
+        await Assert.That(firstReply.AsString()).IsEqualTo("PONG");
+        await Assert.That(secondReply.AsString()).IsEqualTo("PONG");
+    }
+
+    /// <summary>Holds the first write open until released; replies come from <see cref="Publish"/>.</summary>
+    private sealed class HeldWriteStream : Stream
+    {
+        private readonly Channel<byte[]> _segments = Channel.CreateUnbounded<byte[]>();
+        private readonly Channel<bool> _writes = Channel.CreateUnbounded<bool>();
+        private readonly TaskCompletionSource _firstWriteStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _releaseFirstWrite = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _writeCount;
+        private long _writtenBytes;
+
+        public Task FirstWriteStarted => _firstWriteStarted.Task;
+        public long WrittenBytes => Interlocked.Read(ref _writtenBytes);
+        public void ReleaseFirstWrite() => _releaseFirstWrite.TrySetResult();
+        public void Publish(byte[] bytes) => _segments.Writer.TryWrite(bytes);
+
+        public async Task WaitForWrittenAsync(int count, CancellationToken token)
+        {
+            while (WrittenBytes < count)
+                await _writes.Reader.ReadAsync(token);
+        }
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            byte[] segment;
+            try { segment = await _segments.Reader.ReadAsync(cancellationToken); }
+            catch (ChannelClosedException) { return 0; }
+            segment.CopyTo(buffer);
+            return segment.Length;
+        }
+
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            Interlocked.Add(ref _writtenBytes, buffer.Length);
+            if (Interlocked.Increment(ref _writeCount) == 1)
+            {
+                _firstWriteStarted.TrySetResult();
+                await _releaseFirstWrite.Task;
+            }
+
+            _writes.Writer.TryWrite(true);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            _releaseFirstWrite.TrySetResult();
+            _segments.Writer.TryComplete();
+            _writes.Writer.TryComplete();
+            base.Dispose(disposing);
+        }
+
+        public override bool CanRead => true;
+        public override bool CanWrite => true;
+        public override bool CanSeek => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
     }
 
     [Test]
