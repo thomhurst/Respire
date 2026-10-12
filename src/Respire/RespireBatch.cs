@@ -326,6 +326,20 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             }
 
             RespireConnection? connection = null;
+            if (core.CommandRetries is not null && !ConnectionPolicy.IsImportSession
+                && _ops.TrueForAll(static op => !op.IsCursorRead && op.RetryCategory != RespireCommandRetryCategory.Never))
+            {
+                if (core.Sentinel is not null)
+                    telemetry = RespireTelemetry.StartBatchOperation("PIPELINE", _ops, static op => op.Operation,
+                        core.Options.Database, out telemetryOperation, sentinelStarted);
+                connection = await RunRetryableBatchAsync(cancellationToken).ConfigureAwait(false);
+                if (core.Sentinel is not null && connection is not null)
+                    telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
+                var failures = CompleteMutationAndCollectFailures(ref cacheToInvalidate, in mutationFence);
+                telemetry.Complete(core, telemetryOperation, error: failures is { Length: > 0 } ? failures[0].Error : null,
+                    connection: connection, batchSize: _ops.Count == 1 ? null : _ops.Count);
+                return new RespireBatchResult(_ops.Count, failures);
+            }
             try
             {
                 connection = ConnectionPolicy.PinnedConnection ?? await _client.AcquireConnectionAsync(cancellationToken).ConfigureAwait(false);
@@ -380,6 +394,131 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             return new RespireBatchResult(_ops.Count, batchFailures);
         }
         finally { cacheToInvalidate?.CompleteMutation(in mutationFence); }
+    }
+
+    private async ValueTask<RespireConnection?> RunRetryableBatchAsync(CancellationToken callerToken)
+    {
+        var core = _client.Core;
+        var deadline = LogicalCommandRetry.CreateDeadline(core.Options.CommandTimeout);
+        using var timeout = deadline.IsSet
+            ? CommandTimeoutCancellation.Create(callerToken, TimeSpan.FromMilliseconds(Math.Max(1, deadline.RemainingMilliseconds)))
+            : null;
+        var token = timeout?.Token ?? callerToken;
+        var sends = ArrayPool<ValueTask<RespValue>>.Shared.Rent(_ops.Count);
+        RespireConnection? connection = null;
+        var retries = 0;
+        // Numeric ordering describes risk only; permission is checked separately for every member.
+        var category = _ops.Max(static op => op.RetryCategory);
+        try
+        {
+            callerToken.ThrowIfCancellationRequested();
+            // Serialize before any asynchronous route selection. Borrowed arguments may change
+            // after execution starts, but every attempt must send the original bytes.
+            foreach (var op in _ops) op.Snapshot();
+            for (var attempt = 1; ; attempt++)
+            {
+                token.ThrowIfCancellationRequested();
+                var outcome = CommandWriteOutcome.DefinitelyUnwritten;
+                try
+                {
+                    if (attempt > 1)
+                    {
+                        await core.EnsureConnectedAsync(token, _ops[0].Observation).ConfigureAwait(false);
+                        // An open circuit rejects before waiting for a replacement. Admission
+                        // still takes a separate permit for each member below.
+                        core.Circuits?.Acquire(core.Multiplexer.ActiveConnectionEndpoint, token).Dispose();
+                        connection = await core.Multiplexer.GetHealthyConnectionAsync(token).ConfigureAwait(false);
+                    }
+                    else connection = await _client.AcquireConnectionAsync(null, token, _ops[0].Observation).ConfigureAwait(false);
+                    // Ordered admission has no immutable per-member write evidence. Once any
+                    // send starts, treat the complete unit as a possible execution.
+                    outcome = CommandWriteOutcome.Unknown;
+                    var acceptedRetry = false;
+                    for (var i = 0; i < _ops.Count; i++)
+                    {
+                        var accepted = await _ops[i].StartOrderedSendAsync(_client, connection, token,
+                            _ops[i].Observation, deadline, core.Circuits).ConfigureAwait(false);
+                        sends[i] = accepted.Reply;
+                        if (accepted.Connection is { } endpoint)
+                        {
+                            connection = endpoint;
+                            acceptedRetry = true;
+                        }
+                    }
+                    if (attempt > 1 && acceptedRetry)
+                    {
+                        retries++;
+                        RespireTelemetry.RecordCommandRetry(category, "attempted");
+                    }
+                    // Consume every native source once, even when an earlier member fails.
+                    for (var i = 0; i < _ops.Count; i++)
+                        await _ops[i].CaptureReplyAsync(sends[i]).ConfigureAwait(false);
+                }
+                catch (Exception error)
+                {
+                    foreach (var op in _ops) op.CaptureFailure(error);
+                }
+
+                if (!TryGetBatchRetryDelay(attempt, outcome, deadline, token, out var delay)) break;
+                foreach (var op in _ops)
+                {
+                    if (op.AttemptError is { } error) op.Observation.Handled(error);
+                    op.DiscardReply();
+                }
+                DeferredOperation.SetAttempts(_ops, _ops.Max(static op => op.Observation.Attempts));
+                if (delay != TimeSpan.Zero) await Task.Delay(delay, token).ConfigureAwait(false);
+            }
+        }
+        catch (Exception error)
+        {
+            if (error is OperationCanceledException canceled && canceled.CancellationToken == token
+                && token.IsCancellationRequested)
+                error = callerToken.IsCancellationRequested
+                    ? new OperationCanceledException(canceled.Message, canceled, callerToken)
+                    : new RespireTimeoutException("PIPELINE", core.Options.CommandTimeout!.Value, canceled);
+            foreach (var op in _ops) op.CaptureFailure(error);
+        }
+        finally
+        {
+            DeferredOperation.ShareEndpoint(_ops, _ops[0].Observation);
+            foreach (var op in _ops)
+            {
+                op.NormalizeCancellation(callerToken, token, core.Options.CommandTimeout);
+                op.PublishReply(_client);
+                op.ReleaseSnapshot();
+            }
+            if (retries != 0)
+                RespireTelemetry.RecordCommandRetry(category, _ops.Exists(static op => op.Error is not null) ? "exhausted" : "succeeded");
+            ArrayPool<ValueTask<RespValue>>.Shared.Return(sends, clearArray: true);
+        }
+        return connection;
+    }
+
+    private bool TryGetBatchRetryDelay(int attempt, CommandWriteOutcome outcome, CommandDeadline deadline,
+        CancellationToken token, out TimeSpan delay)
+    {
+        delay = default;
+        var remaining = deadline.IsSet ? TimeSpan.FromMilliseconds(deadline.RemainingMilliseconds) : TimeSpan.MaxValue;
+        foreach (var failed in _ops)
+        {
+            if (failed.AttemptError is not { } error) continue;
+            var permitted = true;
+            var candidate = TimeSpan.Zero;
+            foreach (var member in _ops)
+            {
+                if (!_client.Core.CommandRetries!.TryGetDelay(error, outcome, member.RetryCategory,
+                    attempt, remaining, token, out var memberDelay))
+                {
+                    permitted = false;
+                    break;
+                }
+                if (memberDelay > candidate) candidate = memberDelay;
+            }
+            if (!permitted) continue;
+            delay = candidate;
+            return true;
+        }
+        return false;
     }
 
 #if NET
@@ -658,6 +797,88 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
     private abstract class Op(string operation) : DeferredOperation(operation), RespireConnection.IBatchCommand
     {
         internal ClientSideCacheCoordinator.MutationFence MutationFence;
+        // Only retry-enabled execution retains replies and snapshot state. Default batches
+        // keep their existing native reply completion path.
+        private RetryAttempt? _attempt;
+        private sealed class RetryAttempt
+        {
+            internal RespValue Reply;
+            internal bool HasReply;
+            internal Exception? Error;
+            internal ImmediateRetryState? Snapshot;
+            internal Exception? SnapshotError;
+        }
+        internal Exception? AttemptError => _attempt?.Error;
+        protected ImmediateRetryState? SnapshotState => _attempt?.Snapshot;
+        protected Exception? SnapshotError => _attempt?.SnapshotError;
+
+        public abstract RespireCommandRetryCategory RetryCategory { get; }
+        protected abstract ImmediateRetryState SnapshotArguments();
+        protected abstract void PublishResponse(RespireClient client, RespValue value);
+
+        internal void Snapshot()
+        {
+            _attempt = new();
+            try { _attempt.Snapshot = SnapshotArguments(); }
+            catch (Exception error) { _attempt.SnapshotError = error; }
+        }
+
+        internal void ReleaseSnapshot()
+        {
+            _attempt?.Snapshot?.Return();
+            _attempt = null;
+        }
+
+        internal async ValueTask CaptureReplyAsync(ValueTask<RespValue> reply)
+        {
+            try
+            {
+                _attempt!.Reply = await reply.ConfigureAwait(false);
+                _attempt.HasReply = true;
+                _attempt.Error = _attempt.Reply.IsError ? ResponseReader.ServerError(in _attempt.Reply, Operation) : null;
+            }
+            catch (Exception error) { (_attempt ??= new()).Error = error; }
+        }
+
+        internal void DiscardReply()
+        {
+            if (_attempt is null) return;
+            if (_attempt.HasReply) _attempt.Reply.Dispose();
+            _attempt.Reply = default;
+            _attempt.HasReply = false;
+            _attempt.Error = null;
+        }
+
+        internal void CaptureFailure(Exception error)
+        {
+            DiscardReply();
+            (_attempt ??= new()).Error = error;
+        }
+
+        internal void NormalizeCancellation(CancellationToken callerToken, CancellationToken token, TimeSpan? timeout)
+        {
+            if (AttemptError is not OperationCanceledException error || error.CancellationToken != token
+                || !token.IsCancellationRequested) return;
+            _attempt!.Error = callerToken.IsCancellationRequested
+                ? new OperationCanceledException(error.Message, error, callerToken)
+                : timeout is { } duration ? new RespireTimeoutException(Operation, duration, error) : error;
+        }
+
+        internal void PublishReply(RespireClient client)
+        {
+            if (AttemptError is { } error)
+            {
+                Fail(error);
+                DiscardReply();
+            }
+            else if (_attempt is { HasReply: true })
+            {
+                var value = _attempt.Reply;
+                _attempt.Reply = default;
+                _attempt.HasReply = false;
+                PublishResponse(client, value);
+            }
+        }
 
         public abstract Exception? Error { get; }
 
@@ -705,6 +926,10 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         Func<RespireClient, RespValue, T> convert) : Op(operation)
         where TCommand : struct, IRespCommand
     {
+        public override RespireCommandRetryCategory RetryCategory => command.RetryCategory;
+        protected override ImmediateRetryState SnapshotArguments() => ImmediateRetryState.Rent(in command);
+        protected override void PublishResponse(RespireClient client, RespValue value) => Complete(client, value);
+
         public override Exception? Error => pending.Error;
 
         public override bool IsCompleted => pending.IsCompleted;
@@ -825,6 +1050,16 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             try
             {
                 var bound = new MutationCommand<TCommand>(command, MutationFence);
+                if (SnapshotError is { } error) throw error;
+                if (SnapshotState is { } snapshot)
+                {
+                    var replay = new SnapshotCommand<TCommand>(bound, snapshot);
+                    if (circuits is not null)
+                        return await QueuedCircuitDispatch.EnqueueWithConnectionAsync(circuits, connection, replay, Operation,
+                            cancellationToken, observation, deadline, client).ConfigureAwait(false);
+                    return (await connection.EnqueuePinnedAsync(replay, cancellationToken, Operation, observation,
+                        pinToConnection: false, deadline: deadline).ConfigureAwait(false), connection);
+                }
                 if (circuits is not null)
                 {
                     return await QueuedCircuitDispatch.EnqueueWithConnectionAsync(circuits, connection, bound, Operation,
@@ -883,5 +1118,25 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
                 value.Dispose();
             }
         }
+    }
+
+    private readonly struct SnapshotCommand<TCommand>(MutationCommand<TCommand> command, ImmediateRetryState snapshot) : IRespCommandWrapper
+        where TCommand : struct, IRespCommand
+    {
+        public void Write(ref RespWriter writer) => writer.WriteRaw(snapshot.Frame.Span);
+        public int GetWriteSizeHint() => snapshot.Frame.Length;
+        public void ValidateAdmission() => command.ValidateAdmission();
+        public void OnAccepted() => command.OnAccepted();
+        public CancellationToken GetResponseCancellationToken(CancellationToken token) => command.GetResponseCancellationToken(token);
+        public ClientSideCacheCoordinator.MutationFence GetMutationFence() => command.GetMutationFence();
+        public ReadCommandKind ReadKind => command.ReadKind;
+        public RespireCommandRetryCategory RetryCategory => command.RetryCategory;
+        public bool IsConnectionProtocol => command.IsConnectionProtocol;
+        public RespireCacheMutation GetCacheMutation(string operation) => command.GetCacheMutation(operation);
+        public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => command.GetClientCacheMetadata(operation);
+        public int CursorArgumentIndex => command.CursorArgumentIndex;
+        public bool TryGetArgument(int index, out RespireValue value) => command.TryGetArgument(index, out value);
+        public bool TryGetPrimaryKey(out RespireValue key) => command.TryGetPrimaryKey(out key);
+        public bool TryGetClusterSlot(out int slot) => snapshot.TryGetClusterSlot(out slot);
     }
 }
