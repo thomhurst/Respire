@@ -17,8 +17,25 @@ public sealed partial class RespireClient
         var tail = BuildScriptTail(keys, args);
         var cache = _core.ClientCache;
         var fence = cache is null || script.IsCacheReadOnly ? default : cache.BeginUnknownMutation();
-        var response = ExecuteScriptCoreAsync(script, tail, cancellationToken, fence, observation);
+        var response = ExecuteScriptWithRetriesAsync(script, tail, cancellationToken, fence, observation);
         return fence.IsRequired ? CompleteMutationAsync(response, cache!, fence) : response;
+    }
+
+    // A declared script category retries the whole EVALSHA/EVAL exchange on the current route.
+    // The cache fence spans every attempt. Argument bytes are copied before the first send.
+    private ValueTask<RespireResult> ExecuteScriptWithRetriesAsync(RespireScript script, RespireValue[] tail,
+        CancellationToken cancellationToken, ClientSideCacheCoordinator.MutationFence mutationFence,
+        RespireTelemetry.ErrorObservation observation)
+    {
+        if (!CanRetryDeclared(script.RetryCategory))
+            return ExecuteScriptCoreAsync(script, tail, cancellationToken, mutationFence, observation);
+        var stable = new RespireValue[tail.Length];
+        for (var index = 0; index < tail.Length; index++) stable[index] = tail[index].Snapshot();
+        return RunWithDeclaredRetriesAsync(script.EvalShaOperation, script.RetryCategory,
+            (Client: this, Script: script, Tail: stable, Fence: mutationFence, Observation: observation),
+            static (state, attempt) => state.Client.ExecuteScriptCoreAsync(state.Script, state.Tail, attempt.Token,
+                state.Fence, state.Observation),
+            observation, cancellationToken);
     }
 
     // The facet owns final publication; dispatch borrows its failure-only observation.
@@ -36,7 +53,7 @@ public sealed partial class RespireClient
         if (core.Disposed) ThrowIfDisposedForCommand(observeErrors: false);
         var cache = core.ClientCache;
         var mutationFence = cache is null || script.IsCacheReadOnly ? default : cache.BeginUnknownMutation();
-        var response = ExecuteScriptCoreAsync(script, tail, cancellationToken, mutationFence, observation);
+        var response = ExecuteScriptWithRetriesAsync(script, tail, cancellationToken, mutationFence, observation);
         return mutationFence.IsRequired ? CompleteMutationAsync(response, cache!, mutationFence) : response;
     }
 
@@ -284,7 +301,7 @@ public sealed partial class RespireClient
         if (_core.Disposed) ThrowIfDisposedForCommand(observeErrors: false);
         var cache = _core.ClientCache;
         var fence = cache is null || script.IsCacheReadOnly ? default : cache.BeginUnknownMutation();
-        var response = ExecuteScriptCoreAsync(script, tail, cancellationToken, fence, transferred);
+        var response = ExecuteScriptWithRetriesAsync(script, tail, cancellationToken, fence, transferred);
         using var result = await (fence.IsRequired ? CompleteMutationAsync(response, cache!, fence) : response)
             .ConfigureAwait(false);
         return convert(result);

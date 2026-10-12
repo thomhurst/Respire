@@ -8,9 +8,16 @@ namespace Respire;
 
 public sealed partial class RespireClient
 {
+    // Standalone and Sentinel primaries share the write-evidence owner. Every attempt resolves the
+    // current Sentinel generation; a READONLY reply retires its generation before the retry selects one.
     private bool CanRetryImmediate<TCommand>(in TCommand command) where TCommand : struct, IRespCommand
-        => _core.CommandRetries is not null && _core.Cluster is null && _core.Sentinel is null
-            && !_snapshotPrefixedBinaryKeys && command is not IStreamingRespCommand
+        => _core.CommandRetries is not null && _core.Cluster is null && IsImmediateRetryEligible(in command);
+
+    private bool CanRetryCluster<TCommand>(in TCommand command) where TCommand : struct, IRespCommand
+        => _core.CommandRetries is not null && _core.Cluster is not null && IsImmediateRetryEligible(in command);
+
+    private bool IsImmediateRetryEligible<TCommand>(in TCommand command) where TCommand : struct, IRespCommand
+        => !_snapshotPrefixedBinaryKeys && command is not IStreamingRespCommand
             && !CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in command)
             && !CursorCommandMetadata.IsServerCursorContinuation(in command)
             && command.RetryCategory != RespireCommandRetryCategory.Never;
@@ -127,6 +134,76 @@ public sealed partial class RespireClient
         }
     }
 
+    // Cluster dispatch keeps MOVED, ASK, retirement and READONLY recovery inside each attempt. The
+    // retry owner only sees the attempt's final failure, without write evidence, and passes its one
+    // deadline into every attempt. Arguments are copied before any asynchronous selection.
+    private ValueTask<RespValue> SendClusterWithRetriesAsync<TCommand>(string operation, ClusterRouter cluster,
+        TCommand command, CancellationToken cancellationToken, bool noRedirect, bool observeErrors,
+        RespireTelemetry.ErrorObservation observation) where TCommand : struct, IRespCommand
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var frame = SnapshotCommand.Create(in command, captureCacheMetadata: false);
+        var state = new ImmediateRetryState(command.RetryCategory);
+        return SendClusterRetryCoreAsync(operation, cluster, new ImmediateRetryCommand<TCommand>(command, frame, state, track: false),
+            state.Category, cancellationToken, noRedirect, observeErrors, observation);
+    }
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private async ValueTask<RespValue> SendClusterRetryCoreAsync<TCommand>(string operation, ClusterRouter cluster,
+        TCommand command, RespireCommandRetryCategory category, CancellationToken cancellationToken, bool noRedirect,
+        bool observeErrors, RespireTelemetry.ErrorObservation observation) where TCommand : struct, IRespCommand
+    {
+        // Attempts borrow one logical owner, so handled attempt failures never publish as final errors.
+        var ownsObservation = observeErrors && observation.IsEmpty;
+        if (ownsObservation) observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        try
+        {
+            return await LogicalCommandRetry.RunAsync(_core.CommandRetries!, operation, category, _core.Options.CommandTimeout,
+                (Client: this, Operation: operation, Cluster: cluster, Command: command, NoRedirect: noRedirect, Observation: observation),
+                static (state, attempt) => state.Client.SendClusterAsync(state.Operation, state.Cluster, state.Command, attempt.Token,
+                    noRedirect: state.NoRedirect, retryDeadline: attempt.Deadline, observation: state.Observation),
+                observation, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception error)
+        {
+            if (observeErrors) observation.Final(error);
+            throw;
+        }
+        finally
+        {
+            if (ownsObservation) observation.Dispose();
+        }
+    }
+
+    // Scripts and functions retry only with an explicit category.
+    internal ValueTask<TResult> RunWithDeclaredRetriesAsync<TState, TResult>(string operation,
+        RespireCommandRetryCategory category, TState state,
+        Func<TState, LogicalCommandRetry.Attempt, ValueTask<TResult>> send,
+        RespireTelemetry.ErrorObservation observation, CancellationToken cancellationToken)
+        => LogicalCommandRetry.RunAsync(_core.CommandRetries!, operation, category, _core.Options.CommandTimeout,
+            (Client: this, State: state, Send: send, Observation: observation),
+            static (retry, attempt) => retry.Client.SendDeclaredAttemptAsync(retry.State, retry.Send, attempt, retry.Observation),
+            observation, cancellationToken);
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private async ValueTask<TResult> SendDeclaredAttemptAsync<TState, TResult>(TState state,
+        Func<TState, LogicalCommandRetry.Attempt, ValueTask<TResult>> send, LogicalCommandRetry.Attempt attempt,
+        RespireTelemetry.ErrorObservation observation)
+    {
+        // Initialization alone does not wait for an established socket's replacement. As in the
+        // standalone owner, an open circuit rejects before the wait and again at admission.
+        if (attempt.Number > 1 && _core.Cluster is null)
+        {
+            await _core.EnsureConnectedAsync(attempt.Token, observation).ConfigureAwait(false);
+            if (_core.Circuits is not null) RejectOpenCircuit(attempt.Token);
+            _ = await _core.Multiplexer.GetHealthyConnectionAsync(attempt.Token).ConfigureAwait(false);
+        }
+        return await send(state, attempt).ConfigureAwait(false);
+    }
+
+    internal bool CanRetryDeclared(RespireCommandRetryCategory category)
+        => _core.CommandRetries is not null && category != RespireCommandRetryCategory.Never;
+
     // Waiting for a replacement records no availability samples. The ignored permit
     // releases half-open probe capacity without completing the probe.
     private void RejectOpenCircuit(CancellationToken token)
@@ -163,6 +240,8 @@ public sealed partial class RespireClient
             frame.Write(ref writer);
         }
         public ReadCommandKind ReadKind => command.ReadKind;
+        public RespireCommandRetryCategory RetryCategory => command.RetryCategory;
+        public bool TryGetClusterSlot(out int slot) => frame.TryGetClusterSlot(out slot);
         public bool IsConnectionProtocol => false;
         public void ValidateAdmission() => command.ValidateAdmission();
         public CancellationToken GetResponseCancellationToken(CancellationToken admissionToken) => admissionToken;
