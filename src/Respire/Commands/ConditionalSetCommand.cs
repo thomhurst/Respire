@@ -7,6 +7,7 @@ internal readonly struct ConditionalSetCommand(RespireValue key, RespireValue va
     RespireValueCondition condition, RespireExpiry expiry, bool returnOld) : IRespCommand
 {
     public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => Verbs.Set.CacheMetadata;
+    public RespireCommandRetryCategory RetryCategory => Verbs.Set.RetryCategory;
     public RespireCacheMutation GetCacheMutation(string operation) => Verbs.Set.CacheMetadata.Policy;
     public int GetWriteSizeHint() => CommandWriteSizeHint.For(Verbs.Set,
         key.GetWriteSizeHint(), value.GetWriteSizeHint(), condition.Operand.GetWriteSizeHint(),

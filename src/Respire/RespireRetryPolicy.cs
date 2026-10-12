@@ -2,8 +2,8 @@ namespace Respire;
 
 /// <summary>Safety and delay settings for immediate-command retry dispatch.</summary>
 /// <remarks>
-/// This policy foundation does not enable automatic retries. Dispatch integration is tracked by
-/// issue #1215. It does not recover a lost reply or provide exactly-once execution. Batches and
+/// Assign to RespireOptions.RetryPolicy to enable standalone buffered immediate-command retries.
+/// It does not recover a lost reply or provide exactly-once execution. Batches and
 /// transactions require a separate policy that owns the complete unit.
 /// </remarks>
 public sealed record RespireRetryPolicy

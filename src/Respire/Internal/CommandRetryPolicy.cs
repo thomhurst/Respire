@@ -15,6 +15,10 @@ internal sealed class CommandRetryPolicy
         _settings = settings;
     }
 
+    internal bool IsEnabled => _settings.MaxAttempts > 1
+        && _settings.MaxCommandRetryCategory != RespireCommandRetryCategory.Never
+        && _settings.RetryableErrors != RespireRetryableErrors.None;
+
     internal bool TryGetDelay(Exception failure, CommandWriteOutcome outcome, RespireCommandRetryCategory category,
         int completedAttempts, TimeSpan remaining, CancellationToken cancellationToken, out TimeSpan delay)
     {

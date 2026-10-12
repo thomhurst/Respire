@@ -17,6 +17,7 @@ internal readonly struct MutationCommand<TCommand>(TCommand command,
         => command.GetResponseCancellationToken(admissionToken);
     public ClientSideCacheCoordinator.MutationFence GetMutationFence() => fence;
     public ReadCommandKind ReadKind => command.ReadKind;
+    public RespireCommandRetryCategory RetryCategory => command.RetryCategory;
     public int CursorArgumentIndex => command.CursorArgumentIndex;
     public RespireCacheMutation GetCacheMutation(string operation) => command.GetCacheMutation(operation);
     public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => command.GetClientCacheMetadata(operation);

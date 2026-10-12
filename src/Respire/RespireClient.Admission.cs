@@ -16,6 +16,7 @@ public sealed partial class RespireClient
         public void Write(ref RespWriter writer) => command.Write(ref writer);
         public int GetWriteSizeHint() => command.GetWriteSizeHint();
         public ReadCommandKind ReadKind => command.ReadKind;
+        public RespireCommandRetryCategory RetryCategory => command.RetryCategory;
         public int CursorArgumentIndex => command.CursorArgumentIndex;
         public bool IsConnectionProtocol => false;
         // CatalogCommand owns no fence. SendCoreAsync applies MutationCommand outside this decorator,

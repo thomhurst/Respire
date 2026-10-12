@@ -2433,6 +2433,10 @@ public sealed partial class RespireClient : IRespireClient
                 operation, cluster, command, cancellationToken, onRedirect, track, observation).ConfigureAwait(false);
         }
 
+        if (CanRetryImmediate(in command))
+            return await SendImmediateWithRetriesAsync(operation, command, cancellationToken, observation,
+                track && !_broadcastTracking).ConfigureAwait(false);
+
         RespValue response;
         for (var attempt = 0; ; attempt++)
         {
@@ -2746,6 +2750,8 @@ public sealed partial class RespireClient : IRespireClient
         RespireTelemetry.ErrorObservation observation, bool observeErrors) where TCommand : struct, IRespCommand
     {
         var core = _core;
+        if (readKind == ReadCommandKind.None && CanRetryImmediate(in command))
+            return SendImmediateWithRetriesAsync(operation, command, cancellationToken, observation);
         if (readKind == ReadCommandKind.Read && core.HedgedReads is { } hedgeBudget
             && command is not IRespCommandWrapper && HedgedReadPolicy.IsEligible(operation)
             && (core.Cluster is null || command.TryGetClusterSlot(out _)))

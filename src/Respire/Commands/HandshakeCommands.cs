@@ -5,6 +5,26 @@ namespace Respire.Commands;
 /// <summary>A fully pre-encoded command frame (PING, FLUSHDB, ...).</summary>
 internal readonly struct RawCommand(byte[] preEncoded, ReadCommandKind readKind = ReadCommandKind.None) : IRespCommand
 {
+    // Only these library-owned constant frames carry audited permission. Equal caller bytes
+    // and a familiar diagnostic name do not authorize replay of an arbitrary raw request.
+    public RespireCommandRetryCategory RetryCategory
+    {
+        get
+        {
+            if (ReferenceEquals(preEncoded, RespCommands.Ping)) return CommandRetryCategoryMetadata.Get("PING");
+            if (ReferenceEquals(preEncoded, RespCommands.DbSize)) return CommandRetryCategoryMetadata.Get("DBSIZE");
+            if (ReferenceEquals(preEncoded, RespCommands.Info)) return CommandRetryCategoryMetadata.Get("INFO");
+            if (ReferenceEquals(preEncoded, RespCommands.Time)) return CommandRetryCategoryMetadata.Get("TIME");
+            if (ReferenceEquals(preEncoded, RespCommands.LastSave)) return CommandRetryCategoryMetadata.Get("LASTSAVE");
+            if (ReferenceEquals(preEncoded, RespCommands.Role)) return CommandRetryCategoryMetadata.Get("ROLE");
+            if (ReferenceEquals(preEncoded, RespCommands.RandomKey)) return CommandRetryCategoryMetadata.Get("RANDOMKEY");
+            if (ReferenceEquals(preEncoded, RespCommands.FlushDb)) return CommandRetryCategoryMetadata.Get("FLUSHDB");
+            if (ReferenceEquals(preEncoded, RespCommands.FlushAll)) return CommandRetryCategoryMetadata.Get("FLUSHALL");
+            if (ReferenceEquals(preEncoded, RespCommands.Save)) return CommandRetryCategoryMetadata.Get("SAVE");
+            if (ReferenceEquals(preEncoded, RespCommands.BgSave)) return CommandRetryCategoryMetadata.Get("BGSAVE");
+            return RespireCommandRetryCategory.Never;
+        }
+    }
     public int GetWriteSizeHint() => preEncoded.Length;
     public ReadCommandKind ReadKind => readKind;
     public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => ClientCacheCommandMetadata.Get(operation);
