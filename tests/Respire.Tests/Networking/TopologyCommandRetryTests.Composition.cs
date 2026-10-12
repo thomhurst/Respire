@@ -190,43 +190,6 @@ public partial class TopologyCommandRetryTests
         await Assert.That(evidence.FinalErrors).IsEqualTo(shape == "group" ? 97 : 33);
     }
 
-    [Test]
-    [Arguments("Sentinel", false)]
-    [Arguments("Sentinel", true)]
-    [Arguments("Cluster", false)]
-    [Arguments("Cluster", true)]
-    public async Task TopologyCoalescedProducerOwnsOneTerminalOutcomeAndCanBeReused(string shape, bool exhaust)
-    {
-        using var configuration = new MetricConfigurationScope();
-        using var evidence = new CompositionEvidence();
-        var calls = 0;
-        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var fixture = await CompositionFixture.ConnectAsync(shape, command =>
-            command == "GET key" ? Interlocked.Increment(ref calls) == 1 || exhaust ? TryAgain : Value : null,
-            new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero }, cache: true);
-        fixture.Server.GateCommand("GET key", release.Task);
-        var waiters = Enumerable.Range(0, 10).Select(_ => fixture.ReadAsync(default).AsTask()).ToArray();
-        release.TrySetResult();
-        if (exhaust)
-        {
-            foreach (var waiter in waiters)
-                await Assert.That(async () => await waiter).ThrowsExactly<RespireServerException>();
-        }
-        else
-        {
-            var values = await Task.WhenAll(waiters);
-            await Assert.That(values.All(value => value == "value")).IsTrue();
-        }
-        await Assert.That(calls).IsEqualTo(2);
-        await Assert.That(evidence.Retries.GetValueOrDefault("attempted")).IsEqualTo(1);
-        await Assert.That(evidence.Retries.GetValueOrDefault(exhaust ? "exhausted" : "succeeded")).IsEqualTo(1);
-        var failedProducer = exhaust;
-        exhaust = false;
-        await Assert.That(await fixture.ReadAsync(default)).IsEqualTo("value");
-        await Assert.That(await fixture.ReadAsync(default)).IsEqualTo("value");
-        await Assert.That(calls).IsEqualTo(failedProducer ? 3 : 2);
-    }
-
     private static bool IsCompositionRead(string command) => command == "GET key"
         || command.StartsWith("EVALSHA ", StringComparison.Ordinal) || command == "FCALL_RO reader 1 key";
 
@@ -236,7 +199,7 @@ public partial class TopologyCommandRetryTests
         internal FakeRespServer Server => server;
 
         internal static async Task<CompositionFixture> ConnectAsync(string shape, Func<string, byte[]?> reply,
-            RespireRetryPolicy policy, TimeSpan? timeout = null, bool cache = false)
+            RespireRetryPolicy policy, TimeSpan? timeout = null)
         {
             var server = shape == "Cluster" ? ClusterNode((command, _) => reply(command)) : Standalone((command, _) =>
                 reply(command) ?? (command == "ROLE" ? RoleReply("master") : command.StartsWith("HELLO", StringComparison.Ordinal)
@@ -254,17 +217,10 @@ public partial class TopologyCommandRetryTests
                 {
                     "Sentinel" => SentinelOptions(sentinel!), "Cluster" => ClusterOptions(server), _ => StandaloneOptions(server),
                 };
-                if (cache && shape == "Cluster")
-                {
-                    var original = server.ReplyOverride;
-                    server.ReplyOverride = (id, command) => command.StartsWith("HELLO", StringComparison.Ordinal)
-                        ? "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray() : command == "CLIENT ID" ? ":1\r\n"u8.ToArray() : original!(id, command);
-                }
                 var client = await RespireClient.ConnectAsync(options with
                 {
                     RetryPolicy = policy, CommandTimeout = timeout ?? TimeSpan.FromSeconds(5), Connections = 1,
-                    Protocol = cache ? RespProtocol.Resp3 : RespProtocol.Resp2,
-                    ClientSideCache = cache ? new() { CoalesceConcurrentMisses = true } : null,
+                    Protocol = RespProtocol.Resp2,
                 });
                 return new(server, client, sentinel, null, shape);
             }

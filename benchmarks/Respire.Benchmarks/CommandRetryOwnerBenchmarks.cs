@@ -14,7 +14,7 @@ public class CommandRetryOwnerBenchmarks
     private readonly RespireKey[] _keys = ["retry:owners"];
     private readonly string _value = "value";
 
-    [Params("Standalone", "Sentinel", "Cluster", "Function", "CacheProducer")]
+    [Params("Standalone", "Sentinel", "Cluster", "Function", "CacheProducer", "ClusterCacheProducer")]
     public string Owner { get; set; } = "Standalone";
 
     [ParamsSource(nameof(Policies))]
@@ -33,18 +33,18 @@ public class CommandRetryOwnerBenchmarks
         var port = Owner switch
         {
             "Sentinel" => Port("SENTINEL_PORT", 26379),
-            "Cluster" => Port("CLUSTER_PORT", 6380),
+            "Cluster" or "ClusterCacheProducer" => Port("CLUSTER_PORT", 6380),
             _ => Port("REDIS_PORT", 6379),
         };
         var options = new RespireOptions
         {
             Endpoints = [new(host, port)], Connections = 1, ThreadPoolMonitoring = false,
-            Protocol = Owner == "CacheProducer" ? RespProtocol.Resp3 : RespProtocol.Resp2,
+            Protocol = IsCacheProducer ? RespProtocol.Resp3 : RespProtocol.Resp2,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
             SentinelPrimaryName = Owner == "Sentinel" ? "mymaster" : null,
-            UseCluster = Owner == "Cluster",
+            UseCluster = Owner is "Cluster" or "ClusterCacheProducer",
             ClusterTopologyRefreshInterval = null,
-            ClientSideCache = Owner == "CacheProducer" ? new() : null,
+            ClientSideCache = IsCacheProducer ? new() : null,
         };
         SetPolicy(options);
         _client = await RespireClient.ConnectAsync(options).ConfigureAwait(false);
@@ -104,7 +104,7 @@ public class CommandRetryOwnerBenchmarks
     public ValueTask<long> Read()
     {
         if (Owner == "Function") return _client.Functions.ExecuteIntegerAsync(_function, _keys);
-        if (Owner == "CacheProducer") return ClearAndRead();
+        if (IsCacheProducer) return ClearAndRead();
         return _client.Strings.LengthAsync(_key);
     }
 
@@ -115,6 +115,8 @@ public class CommandRetryOwnerBenchmarks
         _client.ClientSideCache!.Clear();
         return (await _client.GetStringAsync(_key).ConfigureAwait(false))?.Length ?? -1;
     }
+
+    private bool IsCacheProducer => Owner is "CacheProducer" or "ClusterCacheProducer";
 
     private async Task VerifyRead()
     {
