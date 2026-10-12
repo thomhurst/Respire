@@ -55,6 +55,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private readonly Stream? _stream;
     private readonly ConnectionTelemetry.State? _connectionMetrics;
     private bool _peerClosed;
+    // Peer close observed before Abort won. Abort closes the socket itself, so a receive
+    // loop that observes that local close later must not reclassify it as a server close.
+    private bool _abortPeerClosed;
     private readonly Lock _writeGate = new();
     private readonly SemaphoreSlim _streamingGate = new(1, 1);
     // Cancelled by Abort so a streamed SET blocked on its source or on a stalled socket write
@@ -3791,7 +3794,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                         $"Connection to {Host}:{Port} received no data for {effectiveTimeout} while responses were pending."),
                         publishConnectionMetrics: false);
                 }
-                if (closed) _connectionMetrics?.Closed(_abortReason, Volatile.Read(ref _peerClosed));
+                if (closed) _connectionMetrics?.Closed(_abortReason, _abortPeerClosed);
                 return;
             }
         }
@@ -4054,6 +4057,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 RespireTelemetry.MarkConnectionError(reason);
             _dead = true;
             _abortReason = reason;
+            _abortPeerClosed = Volatile.Read(ref _peerClosed);
             // The flush loop owns an in-progress send: it completes that buffer when the socket
             // accepted every byte, or fails it when the closed socket rejects the write.
             _activeBuffer.FailWrite(writeFailure);
@@ -4088,7 +4092,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         _flushSignal.Signal();
         try { ObserveCancellationCallbacks(_closedCancellation.CancelAsync()); }
         catch (ObjectDisposedException) { }
-        if (publishConnectionMetrics) _connectionMetrics?.Closed(reason, Volatile.Read(ref _peerClosed));
+        if (publishConnectionMetrics) _connectionMetrics?.Closed(reason, _abortPeerClosed);
         return true;
     }
 

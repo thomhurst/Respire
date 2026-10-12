@@ -120,7 +120,7 @@ internal sealed partial class RespireConnection
                 $"Connection to {Host}:{Port} gathered SET write made no progress for {effectiveTimeout}."),
                 publishConnectionMetrics: false);
         }
-        if (closed) _connectionMetrics?.Closed(_abortReason, Volatile.Read(ref _peerClosed));
+        if (closed) _connectionMetrics?.Closed(_abortReason, _abortPeerClosed);
         return closed;
     }
 }
