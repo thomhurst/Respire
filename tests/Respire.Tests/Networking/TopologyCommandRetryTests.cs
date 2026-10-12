@@ -10,7 +10,7 @@ using TUnit.Core;
 namespace Respire.Tests.Networking;
 
 [NotInParallel]
-public class TopologyCommandRetryTests
+public partial class TopologyCommandRetryTests
 {
     private static readonly byte[] TryAgain = "-TRYAGAIN busy\r\n"u8.ToArray();
     private static readonly byte[] Value = "$5\r\nvalue\r\n"u8.ToArray();
