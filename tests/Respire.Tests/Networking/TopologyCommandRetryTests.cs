@@ -379,6 +379,50 @@ public class TopologyCommandRetryTests
     }
 
     [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task ClusterRetryStartsReplacementForDisconnectedRoute(bool clearSlotOwner, bool cancel)
+    {
+        await using var server = ClusterNode((command, _) => command == "GET key" ? Value : null);
+        await using var client = await RespireClient.ConnectAsync(ClusterOptions(server) with { ClientName = "retry-seed" });
+        var router = client.Core.Cluster!;
+        var owner = router.GetKnownSlotOwner(12539)!;
+        var connection = owner.GetConnection();
+        var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        // Hold replacement handshakes so route selection cannot race with a ready seed.
+        server.ReadGate = handshake.Task;
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        try
+        {
+            if (clearSlotOwner) router.ClearSlotOwner(12539, owner);
+            await connection.DisposeAsync();
+            var wait = router.WaitForRouteReplacementAsync(12539, cancellation.Token).AsTask();
+            await Assert.That(wait.IsCompleted).IsFalse();
+            await Assert.That(owner.IsReconnecting).IsTrue();
+            if (cancel)
+            {
+                cancellation.Cancel();
+                var error = await Failure(async () => await wait);
+                await Assert.That(error).IsTypeOf<OperationCanceledException>();
+                await Assert.That(((OperationCanceledException)error).CancellationToken).IsEqualTo(cancellation.Token);
+            }
+            else
+            {
+                handshake.TrySetResult();
+                await wait;
+                await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
+            }
+        }
+        finally
+        {
+            cancellation.Cancel();
+            handshake.TrySetResult();
+        }
+    }
+
+    [Test]
     public async Task FailoverGroupRetryUsesTheNewlyActiveMember()
     {
         var down = 0;

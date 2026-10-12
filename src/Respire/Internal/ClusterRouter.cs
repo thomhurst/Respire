@@ -569,10 +569,11 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             {
                 return;
             }
-            await Task.Delay(25, cancellationToken).ConfigureAwait(false);
+            await Task.Delay(RouteReplacementPollInterval, cancellationToken).ConfigureAwait(false);
         }
     }
 
+    private const int RouteReplacementPollInterval = 25;
     private static readonly TimeSpan RouteReplacementWait = ClusterTopologyRefreshScheduler.PrimaryDisconnectSpacing;
 
     private bool HasAlternateMaster(RespireConnectionMultiplexer node)
@@ -582,9 +583,10 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         return false;
     }
 
+    // An uncovered slot routes through the seed until discovery publishes a new owner.
     private bool IsRouteReplacementPending(int? slot, RespireConnectionMultiplexer node)
         => slot is { } value
-            ? ReferenceEquals(RoutingSnapshot[value].Primary, node)
+            ? ReferenceEquals(RoutingSnapshot[value].Primary ?? Volatile.Read(ref _seed), node)
             : TryGetConnectedNode() is null;
 
     private static RespireEndpoint Endpoint(RespireConnectionMultiplexer node) => new(node.Host, node.Port);
