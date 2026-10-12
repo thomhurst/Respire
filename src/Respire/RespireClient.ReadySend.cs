@@ -14,8 +14,10 @@ public sealed partial class RespireClient
     // Callers retain their response-specific streaming exclusions.
     private bool CanUseDirectReplySource<TCommand>(string operation, in TCommand command)
         where TCommand : struct, IRespCommand
+        // With no listeners, IsOperationEnabled reduces to the command metric check, which only
+        // scripting commands need here; the ready send captures that decision once afterwards.
         => _core.CommandRetries is null && !RespireTelemetry.Source.HasListeners()
-            && (!RespireTelemetry.IsOperationEnabled(operation) || !ScriptingEngineInfo.IsScriptingCommand(operation))
+            && (!ScriptingEngineInfo.IsScriptingCommand(operation) || !RespireTelemetry.IsCommandMetricEnabled(operation))
             && (_readFrom == RespireReadFrom.Primary || command.ReadKind == ReadCommandKind.None)
             && (ReadCache is null || !command.GetClientCacheMetadata(operation).CacheableRead);
 
@@ -36,7 +38,8 @@ public sealed partial class RespireClient
         where TCommand : struct, IRespCommand
         where TSend : struct, IReadySend<TResult>
     {
-        var durationStarted = sender.ObserveDuration ? RespireTelemetry.CaptureOperationStart(operation) : default;
+        // Duration senders are reached only through CanUseDirectReplySource, which excluded listeners.
+        var durationStarted = sender.ObserveDuration ? RespireTelemetry.CaptureCommandDurationStart(operation) : default;
         RespireConnection connection;
         try { connection = GetCircuitAwareConnection(multiplexer, cancellationToken); }
         catch (Exception error)

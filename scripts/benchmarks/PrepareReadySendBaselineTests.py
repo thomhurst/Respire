@@ -87,7 +87,7 @@ class PrepareReadySendBaselineTests(unittest.TestCase):
                     body = control[start:control.index('\n    private ', start)]
                     sender_value = ('new ConvertedReadySend<TState, TResult>(state, converter, transferOwnership)'
                                     if method == 'ConvertResponseCoreAsync' else 'default')
-                    expected = f'''                var durationStarted = RespireTelemetry.CaptureOperationStart(operation);
+                    expected = f'''                var durationStarted = RespireTelemetry.CaptureCommandDurationStart(operation);
                 RespireConnection connection;
                 try {{ connection = GetCircuitAwareConnection(readyMultiplexer, ct); }}
                 catch (Exception error)

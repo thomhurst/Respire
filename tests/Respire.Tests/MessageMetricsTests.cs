@@ -148,6 +148,27 @@ public class MessageMetricsTests
     }
 
     [Test]
+    [Arguments("PUBLISH", 1)]
+    [Arguments("publish", 1)]
+    [Arguments("SPUBLISH", 1)]
+    [Arguments("sPublish", 1)]
+    [Arguments("HINCRBY", 0)]
+    [Arguments("INCRBYFLOAT", 0)]
+    [Arguments("INCR", 0)]
+    [Arguments(null, 0)]
+    public async Task PublicationKindMatchesCaseInsensitivelyAndOnlyPublishCommands(string? operation, int expected)
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.PubSub });
+        using var capture = new Capture();
+        var response = RespValue.Integer(2);
+        RespireTelemetry.RecordPublication(operation, in response);
+        await Assert.That(capture.Items.Count(item => item.Name == "redis.client.pubsub.messages")).IsEqualTo(expected);
+        if (expected == 1)
+            await Assert.That(capture.Items.Single().Tags["redis.client.pubsub.sharded"])
+                .IsEqualTo(operation!.Length == 8);
+    }
+
+    [Test]
     [Arguments(RespireMetricGroups.None, 0, 0)]
     [Arguments(RespireMetricGroups.Default, 0, 0)]
     [Arguments(RespireMetricGroups.PubSub, 1, 0)]

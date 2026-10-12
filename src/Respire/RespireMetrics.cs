@@ -84,7 +84,7 @@ public static class RespireMetrics
         /// <summary>Requires every bit in a composite group; None is always included.</summary>
         internal bool Includes(RespireMetricGroups group) => (Groups & group) == group;
         internal bool IncludesCommand(string operation)
-            => !_block.Contains(operation) && (_allow.Count == 0 || _allow.Contains(operation));
+            => !HasCommandFilters || !_block.Contains(operation) && (_allow.Count == 0 || _allow.Contains(operation));
 
         internal RespireMetricsOptions ToOptions() => new()
         {

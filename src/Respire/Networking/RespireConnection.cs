@@ -3383,7 +3383,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             ObserveMaintenanceAcknowledgement(in value);
         }
 
-        RespireTelemetry.RecordPublication(discardedOperation ?? source.CommandName, in value);
+        if (RespireTelemetry.ShouldRecordPublication(in value))
+            RespireTelemetry.RecordPublication(discardedOperation ?? source.CommandName, in value);
 
         if (ReferenceEquals(source, InflightRing.DiscardSentinel))
         {
