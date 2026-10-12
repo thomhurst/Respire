@@ -71,8 +71,10 @@ internal sealed class BatchScriptCommands(IPendingSink sink) : IBatchScriptComma
 }
 
 internal readonly struct BatchScriptCommand(
-    Verb verb, RespireValue source, RespireValue[] tail, int keyCount) : IRespCommand
+    Verb verb, RespireValue source, RespireValue[] tail, int keyCount,
+    RespireCommandRetryCategory retryCategory = RespireCommandRetryCategory.Never) : IRespCommand
 {
+    public RespireCommandRetryCategory RetryCategory => retryCategory;
     public int GetWriteSizeHint() => CommandWriteSizeHint.Add(
         CommandWriteSizeHint.For(verb, source.GetWriteSizeHint()), tail);
     public bool TryGetArgument(int index, out RespireValue value)

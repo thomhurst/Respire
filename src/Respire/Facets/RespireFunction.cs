@@ -28,6 +28,15 @@ public sealed class RespireFunction
     public bool IsReadOnly { get; }
     /// <summary>The optional library used for bounded reload after a missing-function error.</summary>
     public RespireFunctionLibrary? Library { get; }
+    /// <summary>The caller's explicit retry risk; read-only routing alone does not grant replay permission.</summary>
+    public RespireCommandRetryCategory RetryCategory { get; private init; }
+
+    /// <summary>Returns a function with the caller's explicit retry category for its complete invocation.</summary>
+    public RespireFunction WithRetryCategory(RespireCommandRetryCategory category)
+    {
+        if (!Enum.IsDefined(category)) throw new ArgumentOutOfRangeException(nameof(category));
+        return new RespireFunction(Name, IsReadOnly, Library) { RetryCategory = category };
+    }
     /// <summary>References a function that the application loads separately.</summary>
     public static RespireFunction Create(string name, bool readOnly = false) => new(name, readOnly, null);
     internal string Operation => IsReadOnly ? "FCALL_RO" : "FCALL";

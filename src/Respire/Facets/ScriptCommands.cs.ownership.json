@@ -42,6 +42,10 @@
   ],
   "NonRoutes": [
     {
+      "Member": "Respire.RespireScript.WithRetryCategory(RespireCommandRetryCategory):RespireScript",
+      "Reason": "Returns a local script descriptor with an explicit caller declaration; no command dispatch."
+    },
+    {
       "Member": "Respire.RespireScript.Create(string):RespireScript",
       "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
     },

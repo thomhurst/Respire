@@ -127,7 +127,7 @@
     {
       "Name": "raw-dispatch-helper",
       "Role": "helper",
-      "Member": "Respire.RespireClient.ExecuteRawAsync(string,RespireValue[],RespireCommandFlags,CancellationToken,RespireCacheMutation,bool,ReadCommandKind,bool,RespireTelemetry.ErrorObservation):ValueTask<RespireResult>",
+      "Member": "Respire.RespireClient.ExecuteRawAsync(string,RespireValue[],RespireCommandFlags,CancellationToken,RespireCacheMutation,bool,ReadCommandKind,bool,RespireTelemetry.ErrorObservation,RespireCommandRetryCategory):ValueTask<RespireResult>",
       "Owner": "Respire.RespireClient.ExecuteAsync(RespireCommand,RespireValue[],RespireCommandFlags,CancellationToken):ValueTask<RespireResult>",
       "Contract": "Borrow the enclosing Execute caller owner; raw retry and conversion cannot independently publish that caller failure."
     },

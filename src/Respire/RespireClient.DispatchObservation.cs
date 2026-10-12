@@ -53,7 +53,7 @@ public sealed partial class RespireClient
         RespireEndpoint? endpoint = null;
         try
         {
-            if (core.CommandRetries is not null || core.Cluster is not null || core.Sentinel is not null || core.Circuits is not null
+            if (ImmediateRetries is not null || core.Cluster is not null || core.Sentinel is not null || core.Circuits is not null
                 || core.ClientCache is not null || command is IStreamingRespCommand
                 || ScriptingEngineInfo.IsScriptingCommand(operation)
                 || !CanUseDirectReplySource(operation, in command)

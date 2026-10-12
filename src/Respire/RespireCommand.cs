@@ -14,6 +14,9 @@ public readonly struct RespireCommand
     private const int CacheMutationMask = 0xF << CacheMutationShift;
     private const int ReadOnlyMetadataFlag = 1 << 12;
     private const int ExplicitCacheMutationFlag = 1 << 13;
+    private const int CallerRetryCategoryFlag = 1 << 14;
+    private const int CallerRetryCategoryShift = 15;
+    private const int CallerRetryCategoryMask = 0x7 << CallerRetryCategoryShift;
     private readonly Verb _verb;
     private readonly int _sourceAndMutationMetadata;
 
@@ -55,10 +58,31 @@ public readonly struct RespireCommand
 
     /// <summary>
     /// Conservative retry-risk metadata. This does not enable retries or recover the original reply.
-    /// Caller-supplied commands, including recognized names, always return
-    /// <see cref="RespireCommandRetryCategory.Never"/>.
+    /// Caller-supplied commands, including recognized names, return
+    /// <see cref="RespireCommandRetryCategory.Never"/> unless explicitly declared with WithRetryCategory.
     /// </summary>
-    public RespireCommandRetryCategory RetryCategory => _verb.RetryCategory;
+    public RespireCommandRetryCategory RetryCategory => HasCallerRetryCategory
+        ? (RespireCommandRetryCategory)((_sourceAndMutationMetadata & CallerRetryCategoryMask) >> CallerRetryCategoryShift)
+        : _verb.RetryCategory;
+
+    /// <summary>Returns a descriptor with the caller's explicit retry risk for this complete invocation.</summary>
+    /// <remarks>This declaration does not enable retries or change read routing. Repeated effects and lost replies remain possible.</remarks>
+    public RespireCommand WithRetryCategory(RespireCommandRetryCategory category)
+    {
+        if (!Enum.IsDefined(category)) throw new ArgumentOutOfRangeException(nameof(category));
+        return new RespireCommand(this, category);
+    }
+
+    private RespireCommand(RespireCommand command, RespireCommandRetryCategory category)
+    {
+        Name = command.Name;
+        _verb = command._verb;
+        _sourceAndMutationMetadata = (command._sourceAndMutationMetadata & ~CallerRetryCategoryMask)
+            | CallerRetryCategoryFlag | ((int)category << CallerRetryCategoryShift);
+        Behavior = command.Behavior;
+    }
+
+    internal bool HasCallerRetryCategory => (_sourceAndMutationMetadata & CallerRetryCategoryFlag) != 0;
 
     /// <summary>How this command affects keys tracked by client-side caching.</summary>
     public RespireCacheMutation CacheMutation
@@ -85,7 +109,7 @@ public readonly struct RespireCommand
     /// Key-prefixed views rewrite keys for recognized module commands with explicitly registered
     /// prefixable layouts. Other caller-supplied commands keep physical keys and do not infer layouts.
     /// This does not declare the command read-only or associate it with an official command source.
-    /// Its retry category is always <see cref="RespireCommandRetryCategory.Never"/>.
+    /// Its retry category defaults to <see cref="RespireCommandRetryCategory.Never"/>.
     /// </remarks>
     /// <exception cref="ArgumentException">The name is empty or contains spaces, control characters, or non-ASCII characters.</exception>
     public static RespireCommand Create(string name)

@@ -5,7 +5,8 @@
       "OwnerType": "Respire.RespireFailoverGroup",
       "Members": [
         "ConnectAsync(IEnumerable<RespireFailoverCandidate>,RespireFailoverGroupOptions?,CancellationToken):ValueTask<RespireFailoverGroup>",
-        "DisposeAsync():ValueTask"
+        "DisposeAsync():ValueTask",
+        "ExecuteAsync(RespireCommand,RespireValue[],RespireCommandRetryCategory,RespireCommandFlags,CancellationToken):ValueTask<RespireResult>"
       ],
       "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
     }

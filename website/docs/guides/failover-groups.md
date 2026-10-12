@@ -2,6 +2,11 @@
 title: Failover groups
 ---
 
+For immediate command retries that reselect the active deployment, set
+`RespireFailoverGroupOptions.RetryPolicy` and call `group.ExecuteAsync` with an
+explicit `RespireCommandRetryCategory`. See [command retries](./command-retries).
+Calls dispatched directly through `ActiveClient` retain their original client.
+
 :::note Endpoint circuit breaker foundation
 
 [Endpoint command circuit breaking](circuit-breakers.md) is available for standalone,

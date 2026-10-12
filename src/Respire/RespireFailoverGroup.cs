@@ -16,6 +16,9 @@ public sealed record RespireFailoverCandidate(RespireOptions Options, int Priori
 /// <summary>Health and failback settings for a Redis failover group.</summary>
 public sealed record RespireFailoverGroupOptions
 {
+    /// <summary>Optional immediate-command retry policy. Each retry reads the current active candidate.</summary>
+    /// <remarks>Independent deployments can contain different data. This policy does not migrate or reconcile their state.</remarks>
+    public RespireRetryPolicy? RetryPolicy { get; init; }
     /// <summary>Delay between health probe rounds. Defaults to one second.</summary>
     public TimeSpan ProbeInterval { get; init; } = TimeSpan.FromSeconds(1);
 
@@ -36,6 +39,7 @@ public sealed record RespireFailoverGroupOptions
 
     internal void Validate()
     {
+        RetryPolicy?.Validate();
         if (!IsTimerCompatible(ProbeInterval)) throw new ArgumentOutOfRangeException(nameof(ProbeInterval));
         if (!IsTimerCompatible(ProbeTimeout)) throw new ArgumentOutOfRangeException(nameof(ProbeTimeout));
         if (FailureThreshold < 1) throw new ArgumentOutOfRangeException(nameof(FailureThreshold));
@@ -144,6 +148,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         internal CancellationToken StopToken => group._stop.Token;
         internal Task ProbeAsync(int index, CancellationToken cancellationToken = default)
             => group.ProbeAsync(group._candidates[index], cancellationToken);
+        internal ValueTask SelectAsync() => group.SelectActiveAsync();
         internal CircuitSnapshot Circuit(int index) => group._candidates[index].CircuitSnapshot();
     }
 
@@ -185,6 +190,30 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
             return Volatile.Read(ref _active)?.Client
                 ?? throw new RespireConnectionException("No healthy Redis endpoint is available in the failover group.");
         }
+    }
+
+    /// <summary>Executes one immediate command with the caller's explicit retry category.</summary>
+    /// <remarks>
+    /// Group RetryPolicy owns retries and reads ActiveClient for each attempt. Calls made directly
+    /// through ActiveClient remain bound to that client. Streams, blocking calls and deferred work
+    /// do not gain group replay permission. Writes across independent deployments require application reconciliation.
+    /// </remarks>
+    public ValueTask<RespireResult> ExecuteAsync(RespireCommand command, RespireValue[] args,
+        RespireCommandRetryCategory retryCategory, RespireCommandFlags flags = RespireCommandFlags.None,
+        CancellationToken cancellationToken = default)
+        => DispatchResponseSource<RespireResult>.Run(
+            (Group: this, Command: command, Args: args, Category: retryCategory, Flags: flags, Token: cancellationToken),
+            static (state, observation) => state.Group.ExecuteCoreAsync(state.Command, state.Args,
+                state.Category, state.Flags, state.Token, observation));
+
+    private ValueTask<RespireResult> ExecuteCoreAsync(RespireCommand command, RespireValue[] args,
+        RespireCommandRetryCategory retryCategory, RespireCommandFlags flags,
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+    {
+        var client = (RespireClient)ActiveClient;
+        if (_options.RetryPolicy is { } policy)
+            client = client.WithRetrySelection(() => (RespireClient)ActiveClient, policy);
+        return client.ExecuteGroupCommandAsync(command.WithRetryCategory(retryCategory), args, flags, cancellationToken, observation);
     }
 
     /// <summary>Returns a snapshot of endpoint health and circuit state.</summary>

@@ -476,7 +476,7 @@ public sealed partial class RespireClient : IRespireClient
                 cacheMutation: command.CacheMutation,
                 hasExplicitCacheMutation: command.HasExplicitCacheMutation,
                 readKind: RawCommandDescriptorLookup.GetReadKind(command.Name, args),
-                allowReadFrom: false, observation: observation);
+                allowReadFrom: false, observation: observation, retryCategory: command.RetryCategory);
         }
 
         // Catalog execution handles typed commands; explicit prefixable layouts also allow raw module commands.
@@ -497,13 +497,15 @@ public sealed partial class RespireClient : IRespireClient
             operation, rawArguments, flags, cancellationToken,
             cacheMutation: cacheMutation,
             hasExplicitCacheMutation: command.HasExplicitCacheMutation,
-            readKind: readKind, allowReadFrom: command.Sources != RespireCommandSource.None, observation: observation);
+            readKind: readKind, allowReadFrom: command.Sources != RespireCommandSource.None, observation: observation,
+            retryCategory: command.RetryCategory);
         var prefixError = PrefixModuleKeysOrError(operation, rawArguments, out var prefixedArguments);
         return prefixError is null
             ? ExecuteRawAsync(operation, prefixedArguments, flags, cancellationToken,
                 cacheMutation: cacheMutation,
                 hasExplicitCacheMutation: command.HasExplicitCacheMutation,
-                readKind: readKind, allowReadFrom: command.Sources != RespireCommandSource.None, observation: observation)
+                readKind: readKind, allowReadFrom: command.Sources != RespireCommandSource.None, observation: observation,
+                retryCategory: command.RetryCategory)
             : ValueTask.FromException<RespireResult>(prefixError);
     }
 
@@ -781,13 +783,14 @@ public sealed partial class RespireClient : IRespireClient
         RespireCacheMutation cacheMutation = RespireCacheMutation.Unknown,
         bool hasExplicitCacheMutation = false,
         ReadCommandKind readKind = ReadCommandKind.None,
-        bool allowReadFrom = false, RespireTelemetry.ErrorObservation observation = default)
+        bool allowReadFrom = false, RespireTelemetry.ErrorObservation observation = default,
+        RespireCommandRetryCategory retryCategory = RespireCommandRetryCategory.Never)
     {
         if (observation.IsEmpty)
         {
             return await DispatchResponseSource<RespireResult>.Run(
-                (Client: this, Command: command, Args: args, Flags: flags, Token: cancellationToken, Mutation: cacheMutation, Explicit: hasExplicitCacheMutation, Read: readKind, AllowRead: allowReadFrom),
-                static (state, owner) => state.Client.ExecuteRawAsync(state.Command, state.Args, state.Flags, state.Token, state.Mutation, state.Explicit, state.Read, state.AllowRead, owner)).ConfigureAwait(false);
+                (Client: this, Command: command, Args: args, Flags: flags, Token: cancellationToken, Mutation: cacheMutation, Explicit: hasExplicitCacheMutation, Read: readKind, AllowRead: allowReadFrom, Category: retryCategory),
+                static (state, owner) => state.Client.ExecuteRawAsync(state.Command, state.Args, state.Flags, state.Token, state.Mutation, state.Explicit, state.Read, state.AllowRead, owner, state.Category)).ConfigureAwait(false);
         }
         string operation;
         string? storedProcedureName;
@@ -797,7 +800,7 @@ public sealed partial class RespireClient : IRespireClient
         ValidateResultFlags(flags);
         (operation, var words, var firstArgumentIndex) = ParseRawCommand(command, ref args);
         (storedProcedureName, commandValue) = CreateRawCommand(
-            operation, words, firstArgumentIndex, args, cacheMutation, hasExplicitCacheMutation, readKind);
+            operation, words, firstArgumentIndex, args, cacheMutation, hasExplicitCacheMutation, readKind, retryCategory);
         isBlocking = RespireCommand.IsBlocking(
             operation,
             RespireCommand.Classify(operation),
@@ -1148,7 +1151,8 @@ public sealed partial class RespireClient : IRespireClient
         RespireValue[] args,
         RespireCacheMutation cacheMutation = RespireCacheMutation.Unknown,
         bool hasExplicitCacheMutation = false,
-        ReadCommandKind readKind = ReadCommandKind.None)
+        ReadCommandKind readKind = ReadCommandKind.None,
+        RespireCommandRetryCategory retryCategory = RespireCommandRetryCategory.Never)
     {
         var tokens = new RespireValue[words.Length + args.Length];
         for (var i = 0; i < words.Length; i++)
@@ -1165,7 +1169,7 @@ public sealed partial class RespireClient : IRespireClient
         return (storedProcedureName,
             new DynamicCommand(tokens, routingKeyIndex, firstArgumentIndex, cacheMutation, readKind,
                 Verb.GetCursorArgumentIndex(operation), hasExplicitCacheMutation,
-                _core.ClientCache is null ? default : ClientCacheCommandMetadata.Get(operation)));
+                _core.ClientCache is null ? default : ClientCacheCommandMetadata.Get(operation), retryCategory));
     }
 
     private RawCommandKeyLayouts.KeyRouting ValidateClusterRawKeys(string operation, ReadOnlySpan<RespireValue> arguments)
@@ -2427,15 +2431,15 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
+        if (CanRetryImmediate(in command))
+            return await SendImmediateWithRetriesAsync(operation, command, cancellationToken, observation,
+                track && !_broadcastTracking).ConfigureAwait(false);
+
         if (core.Cluster is { } cluster)
         {
             return await SendTrackedClusterAsync(
                 operation, cluster, command, cancellationToken, onRedirect, track, observation).ConfigureAwait(false);
         }
-
-        if (CanRetryImmediate(in command))
-            return await SendImmediateWithRetriesAsync(operation, command, cancellationToken, observation,
-                track && !_broadcastTracking).ConfigureAwait(false);
 
         RespValue response;
         for (var attempt = 0; ; attempt++)
@@ -2750,8 +2754,9 @@ public sealed partial class RespireClient : IRespireClient
         RespireTelemetry.ErrorObservation observation, bool observeErrors) where TCommand : struct, IRespCommand
     {
         var core = _core;
-        if (readKind == ReadCommandKind.None && CanRetryImmediate(in command))
-            return SendImmediateWithRetriesAsync(operation, command, cancellationToken, observation);
+        if (CanRetryImmediate(in command) && cursorAffinity is null)
+            return SendImmediateWithRetriesAsync(operation, command, cancellationToken, observation,
+                noRedirect: HasFlag(flags, RespireCommandFlags.NoRedirect));
         if (readKind == ReadCommandKind.Read && core.HedgedReads is { } hedgeBudget
             && command is not IRespCommandWrapper && HedgedReadPolicy.IsEligible(operation)
             && (core.Cluster is null || command.TryGetClusterSlot(out _)))
@@ -3019,6 +3024,9 @@ public sealed partial class RespireClient : IRespireClient
             var mutationFence = cache is null ? default : cache.BeginUnknownMutation();
             try
             {
+                if (CanRetryImmediate(in command))
+                    return await SendImmediateWithRetriesAsync(operation, new MutationCommand<TCommand>(command, mutationFence),
+                        cancellationToken, observation, noRedirect: HasFlag(flags, RespireCommandFlags.NoRedirect)).ConfigureAwait(false);
                 if (core.Cluster is { } cluster)
                 {
                     return await SendClusterAsync(
@@ -3808,7 +3816,9 @@ public sealed partial class RespireClient : IRespireClient
         string operation, RespireConnection connection, in TCommand command, CancellationToken cancellationToken,
         bool sendAsking, CommandDeadline commandDeadline, bool allowStreamingConnectionReroute,
         bool pinToConnection = false, RespireTelemetry.ErrorObservation observation = default) where TCommand : struct, IRespCommand
-        => sendAsking
+        => command is IImmediateRetryCommand
+            ? SendRetryAttemptAsync(operation, connection, command, cancellationToken, sendAsking, observation)
+            : sendAsking
             ? ClusterRouter.SendAskingAsync(connection, in command, cancellationToken, operation,
                 commandDeadline, allowStreamingConnectionReroute, preferredZone: GetTransportReadZone(in command),
                 pinToConnection: pinToConnection, observation: observation)
@@ -4909,6 +4919,22 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         var started = RespireTelemetry.CaptureOperationStart(script.EvalShaOperation);
+        if (ImmediateRetries is { IsEnabled: true } && script.RetryCategory != RespireCommandRetryCategory.Never
+            && (_readFrom == RespireReadFrom.Primary || !script.IsReadOnly))
+        {
+            var deadline = CreateCircuitDeadline();
+            var stableTail = new RespireValue[tail.Length];
+            for (var i = 0; i < tail.Length; i++) stableTail[i] = tail[i].Snapshot();
+            stableTail[0].TryGetInt64(out var count);
+            var keyCount = checked((int)count);
+            var fallback = new BatchScriptCommand(script.EvalVerb, script.Source, stableTail, keyCount, script.RetryCategory);
+            var reply = await SendImmediateWithRetriesAsync(script.EvalShaOperation,
+                new MutationCommand<BatchScriptCommand>(new BatchScriptCommand(script.EvalShaVerb,
+                    script.Sha1, stableTail, keyCount, script.RetryCategory), mutationFence),
+                cancellationToken, observation, deadline: deadline,
+                noScriptFallback: SnapshotCommand.Create(in fallback, captureCacheMetadata: false)).ConfigureAwait(false);
+            return new RespireResult(in reply, core.Options.Serializer);
+        }
         if (core.Cluster is { } cluster)
         {
             var arguments = tail[1..];

@@ -513,8 +513,10 @@ internal readonly struct DynamicCommand(
     ReadCommandKind readKind = ReadCommandKind.None,
     int cursorArgumentIndex = -1,
     bool hasExplicitCacheMutation = false,
-    ClientCacheCommandMetadata cacheMetadata = default) : IRespCommand
+    ClientCacheCommandMetadata cacheMetadata = default,
+    RespireCommandRetryCategory retryCategory = RespireCommandRetryCategory.Never) : IRespCommand
 {
+    public RespireCommandRetryCategory RetryCategory => retryCategory;
     public int GetWriteSizeHint() => CommandWriteSizeHint.Add(CommandWriteSizeHint.HeaderLength, tokens);
     // Keep constrained response admission from boxing the raw command for the interface default.
     public CancellationToken GetResponseCancellationToken(CancellationToken admissionToken) => admissionToken;
@@ -733,7 +735,7 @@ internal static class DynamicCommandRouting
 internal readonly struct CatalogCommand(RespireCommand command, RespireValue[] args,
     RawCommandKeyLayouts.KeyRouting routing = default) : IRespCommand
 {
-    public RespireCommandRetryCategory RetryCategory => command.RetryCategory != RespireCommandRetryCategory.Never
+    public RespireCommandRetryCategory RetryCategory => !command.HasCallerRetryCategory && command.RetryCategory != RespireCommandRetryCategory.Never
         && command.Name == "SET" && args.Length == 2
         ? RespireCommandRetryCategory.WriteLastWins : command.RetryCategory;
     public int GetWriteSizeHint() => CommandWriteSizeHint.For(command.Verb, args);
@@ -913,8 +915,13 @@ internal readonly struct SetCommand(
     RespireValue key, RespireValue value, RespireExpiry expiry, SetWhen when, bool returnOld) : IRespCommand
 {
     public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => Verbs.Set.CacheMetadata;
-    public RespireCommandRetryCategory RetryCategory => expiry.IsNone && when == SetWhen.Always && !returnOld
-        ? RespireCommandRetryCategory.WriteLastWins : Verbs.Set.RetryCategory;
+    public RespireCommandRetryCategory RetryCategory => expiry.IsNone && !returnOld
+        ? when switch
+        {
+            SetWhen.Always or SetWhen.Exists => RespireCommandRetryCategory.WriteLastWins,
+            SetWhen.NotExists => RespireCommandRetryCategory.WriteChecked,
+            _ => Verbs.Set.RetryCategory,
+        } : Verbs.Set.RetryCategory;
     public RespireCacheMutation GetCacheMutation(string operation) => Verbs.Set.CacheMetadata.Policy;
     public int GetWriteSizeHint() => CommandWriteSizeHint.For(Verbs.Set,
         key.GetWriteSizeHint(), value.GetWriteSizeHint(), CommandWriteSizeHint.SetOptions);

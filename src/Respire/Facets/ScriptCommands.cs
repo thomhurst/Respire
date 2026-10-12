@@ -42,6 +42,16 @@ public sealed class RespireScript
 
     internal bool IsCacheReadOnly { get; }
 
+    /// <summary>The caller's explicit retry risk. Read-only script routing does not imply replay permission.</summary>
+    public RespireCommandRetryCategory RetryCategory { get; private init; }
+
+    /// <summary>Returns a script with an explicit retry category for its complete invocation.</summary>
+    public RespireScript WithRetryCategory(RespireCommandRetryCategory category)
+    {
+        if (!Enum.IsDefined(category)) throw new ArgumentOutOfRangeException(nameof(category));
+        return new RespireScript(Source, Sha1, IsReadOnly, IsCacheReadOnly) { RetryCategory = category };
+    }
+
     internal string EvalOperation => IsReadOnly ? "EVAL_RO" : "EVAL";
     internal string EvalShaOperation => IsReadOnly ? "EVALSHA_RO" : "EVALSHA";
     internal Verb EvalVerb => IsReadOnly ? Verbs.EvalRo : Verbs.Eval;

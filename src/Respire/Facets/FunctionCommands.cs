@@ -275,7 +275,7 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
                 if (tail[i].TryGetClusterSlot(out var slot) && slot != expected)
                     throw new RespireServerException("CROSSSLOT Keys in request don't hash to the same slot", function.Operation);
         }
-        return new(function.Verb, function.Name, tail, keys.Length);
+        return new(function.Verb, function.Name, tail, keys.Length, function.RetryCategory);
     }
 
     public ValueTask<string> LoadAsync(string source, bool replace = false, CancellationToken cancellationToken = default)
