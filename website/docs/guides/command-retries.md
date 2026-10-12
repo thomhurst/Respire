@@ -172,7 +172,8 @@ and Sentinel dispatch selects the current generation. The full circuit and retry
 composition, including half-open contention and failover switches, remains tracked by
 [#1256](https://github.com/thomhurst/Respire/issues/1256).
 
-Replica read routing, streams, fire-and-forget operations, deferred batch/transaction members, connection
+Replica read routing, streams, fire-and-forget operations, individual deferred batch/transaction
+members (standalone and Sentinel batches retry only as complete units, described below), connection
 protocol commands, cursor continuations, and
 commands categorized as `Never` do not use a retry owner. Caller-supplied raw names
 never acquire retry permission from their diagnostic name. Use an audited
@@ -192,9 +193,29 @@ Failed circuit admission does not invent an attempt. Coalesced waiters do not du
 producer retry events. Handled attempt failures and final caller errors retain their
 separate error owners. Exporter exceptions cannot change retry decisions or replies.
 
-Deferred batches and transactions remain conservative: resending an
-individual member can violate complete-unit ownership or atomicity. Whole-unit retry
-work stays tracked by [#1216](https://github.com/thomhurst/Respire/issues/1216).
+Standalone and Sentinel batches use `RetryPolicy` to retry the complete pipeline.
+A batch is not atomic: Redis can execute some or all members before a failure.
+Replies remain pending until the retry decision is final, and only the final
+attempt's results are published. A selected transient failure permits a resend
+only when the policy permits every member's category. Without per-member write
+evidence, starting any send makes the whole unit a possible execution; a connection
+acquisition failure before any send is definitely unwritten. A successful `INCR`
+alongside a failed `GET`, for example, prevents replay under the default read-only
+policy. Retrying such a batch requires explicitly accepting accumulating effects.
+With that permission, a transient failure from the read-only `GET` replays the
+already-successful `INCR`, duplicating its effect. Cancellation or timeout during
+backoff faults every pending, including members that already executed successfully;
+the abandoned attempt's successful replies are not published.
+Every retry resends every member in queue order, retains the original argument
+bytes and cache mutation fence, and acquires circuit admission per command. One
+deadline and caller cancellation token cover acquisition, admission, replies and
+backoff. Retry telemetry counts accepted resends and one terminal outcome per
+batch that accepted a resend, using its most conservative member category. A retry
+decision followed only by failed acquisition or admission produces no retry event.
+Hash import sessions and server cursor continuations do not retry. Cluster batches
+and direct transaction commits do not replay; watched transaction helpers retain
+their complete-callback retries. Further whole-unit work remains tracked by
+[#1216](https://github.com/thomhurst/Respire/issues/1216).
 
 ## Correctness and performance evidence
 
@@ -523,6 +544,6 @@ complete reclamation. A successful workflow validates reports, not acceptance.
 
 Aggregate acceptance remains open in [#1499](https://github.com/thomhurst/Respire/issues/1499),
 [#1215](https://github.com/thomhurst/Respire/issues/1215) and
-[#862](https://github.com/thomhurst/Respire/issues/862). Conservative deferred
-batch/transaction scope remains [#1216](https://github.com/thomhurst/Respire/issues/1216);
+[#862](https://github.com/thomhurst/Respire/issues/862). Cluster batch and transaction
+whole-unit scope remains [#1216](https://github.com/thomhurst/Respire/issues/1216);
 full circuit composition remains [#1256](https://github.com/thomhurst/Respire/issues/1256).

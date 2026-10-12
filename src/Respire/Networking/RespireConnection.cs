@@ -1037,12 +1037,15 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             {
                 try
                 {
+                    // Cancellation can arrive while this gate is contended or an earlier
+                    // frame is copied. Keep accepted replies, but do not admit unsent members.
+                    cancellationToken.ThrowIfCancellationRequested();
                     sends[index] = commands[index].StartSend(this, cancellationToken, observations[index], deferFlush: true,
                         deadline: deadline);
                 }
                 catch (Exception error)
                 {
-                    // A serialization/admission failure must not suppress other commands.
+                    // Retain a reply task for every member, including canceled unsent members.
                     sends[index] = ValueTask.FromException<RespValue>(error);
                 }
             }
