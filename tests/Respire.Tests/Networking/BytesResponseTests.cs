@@ -132,28 +132,42 @@ public class BytesResponseTests
     }
 
     [Test]
+    [NotInParallel] // Allocation measurement; see docs/ALLOCATION_MEASUREMENT.md.
     public async Task DirectBulkCompletionSkipsCopyForAbandonedHead()
     {
-        const int length = 1 << 20;
+        const int length = 64 * 1024;
+        byte[] warmFrame = "$1\r\nw\r\n"u8.ToArray();
         byte[] header = Encoding.ASCII.GetBytes($"${length}\r\n");
         byte[] frame = [.. header, .. new byte[length], 13, 10];
         await using var server = new FakeRespServer { SuppressReply = _ => true };
         await using var connection = await Connect(server);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var command = new Cmd1(Verbs.Get, "key");
+        using var warmCancellation = new CancellationTokenSource();
         using var cancellation = new CancellationTokenSource();
+        // Ring order: canceled, live (warm-up pair), then canceled, live (measured pair).
+        var warmCanceled = connection.SendBytesAsync(command, warmCancellation.Token, "GET").AsTask();
+        var warmLive = connection.SendBytesAsync(command, deadline.Token, "GET").AsTask();
         var canceled = connection.SendBytesAsync(command, cancellation.Token, "GET").AsTask();
         var live = connection.SendBytesAsync(command, deadline.Token, "GET").AsTask();
-        await WaitForCommands(server, 2, deadline.Token);
+        await WaitForCommands(server, 4, deadline.Token);
+        warmCancellation.Cancel();
         cancellation.Cancel();
+        await Assert.That(async () => await warmCanceled.WaitAsync(deadline.Token)).Throws<OperationCanceledException>();
         await Assert.That(async () => await canceled.WaitAsync(deadline.Token)).Throws<OperationCanceledException>();
 
-        // A megabyte-scale threshold stays far above concurrent-GC counter noise.
-        var abandonedBytes = MeasureDirectCompletion(connection, frame, header.Length, length);
-        var liveBytes = MeasureDirectCompletion(connection, frame, header.Length, length);
+        // Warm both branches of the measured method before counting.
+        MeasureDirectCompletion(connection, warmFrame, 4, 1);
+        MeasureDirectCompletion(connection, warmFrame, 4, 1);
+        var abandonedBytes = AllocationMeasurement.WithoutConcurrentGc(
+            () => MeasureDirectCompletion(connection, frame, header.Length, length));
+        // Positive control: the same measurement observes the live head's owned copy.
+        var liveBytes = AllocationMeasurement.WithoutConcurrentGc(
+            () => MeasureDirectCompletion(connection, frame, header.Length, length));
         Completions(connection).Flush();
-        await Assert.That(abandonedBytes).IsLessThan(length / 4);
+        await Assert.That(abandonedBytes).IsEqualTo(0);
         await Assert.That(liveBytes).IsGreaterThanOrEqualTo(length);
+        await Assert.That((await warmLive.WaitAsync(deadline.Token))![0]).IsEqualTo((byte)'w');
         await Assert.That((await live.WaitAsync(deadline.Token))!.Length).IsEqualTo(length);
     }
 
@@ -161,9 +175,11 @@ public class BytesResponseTests
     private static long MeasureDirectCompletion(RespireConnection connection, byte[] frame, int headerEnd, long length)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
-        if (!TryCompleteBulkDirect(connection, frame, headerEnd, length, out var frameEnd) || frameEnd != frame.Length)
+        var completed = TryCompleteBulkDirect(connection, frame, headerEnd, length, out var frameEnd);
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        if (!completed || frameEnd != frame.Length)
             throw new InvalidOperationException("Direct completion did not consume the frame.");
-        return GC.GetAllocatedBytesForCurrentThread() - before;
+        return allocated;
     }
 
     // Called while the receive loop is parked on an empty socket, so the test thread is the
